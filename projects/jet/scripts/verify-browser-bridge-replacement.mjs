@@ -345,7 +345,7 @@ async function provisionPlaywrightWithJet(args, tmpRoot) {
     )}\n`,
   );
   const install = await run(
-    [path.resolve(repoRoot, args.jetBin), "install"],
+    [path.resolve(repoRoot, args.jetBin), "install", "--no-frozen-lockfile"],
     root,
     args.baselineTimeoutMs,
   );

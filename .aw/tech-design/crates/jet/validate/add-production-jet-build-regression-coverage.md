@@ -408,7 +408,7 @@ e2e_tests:
 
 ```yaml
 changes:
-  - path: projects/jet/tests/production_build_regression.rs
+  - path: projects/jet/tests/build/production_build_regression.rs
     action: create
     section: e2e-test
     impl_mode: hand-written

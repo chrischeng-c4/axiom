@@ -8,7 +8,7 @@ app compiled to WASM.
 examples/counter-demo/
 ├── src/
 │   └── Counter.tsx   ← the only source file you write
-├── jet.config.toml   ← says "entry = src/Counter.tsx, root = Counter(0)"
+├── jet.toml   ← says "entry = src/Counter.tsx, root = Counter(0)"
 └── README.md
 ```
 

@@ -57,7 +57,7 @@ branch: project-jet
   - Added `validate_text_runs`.
   - Added `RendererHandle.renderFrameWithText(cells, textRuns)` for wasm32.
   - Tracks `last_text_run_count`.
-- Done and tested: `projects/jet/tests/wasm_build_end_to_end.rs`
+- Done and tested: `projects/jet/tests/wasm/wasm_build_end_to_end.rs`
   - Added WebGPU scaffold selector smoke.
   - Added runtime browser smoke with Chromium `--enable-unsafe-webgpu`.
   - Added assertion that bridge mode is `text` and text-run count is nonzero.

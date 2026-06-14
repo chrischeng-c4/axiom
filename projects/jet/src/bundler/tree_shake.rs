@@ -12,6 +12,7 @@
 //! the static code analysis would otherwise conservatively keep them.
 
 use anyhow::Result;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -84,6 +85,9 @@ pub(crate) fn tree_shake_module_path_matches_any_glob(
 pub struct TreeShakeResult {
     /// Module path → set of used export names.
     pub used_exports: HashMap<PathBuf, HashSet<String>>,
+    /// Module path → every export name the module declares (ESM + CJS).
+    /// Star re-export materialization needs the leaf's full surface.
+    pub all_exports: HashMap<PathBuf, Vec<String>>,
     /// Modules entirely eliminated (no used exports, no side effects).
     pub eliminated_modules: Vec<PathBuf>,
     /// Estimated bytes eliminated.
@@ -93,34 +97,91 @@ pub struct TreeShakeResult {
 /// Analyze which exports are used across the module graph.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeResult> {
-    let mut all_exports: HashMap<PathBuf, Vec<String>> = HashMap::new();
+    // Callers without an explicit entry (tests, legacy paths) treat the
+    // first module as the root of the import graph.
+    let entry = modules.first().map(|(p, _)| p.clone()).unwrap_or_default();
+    analyze_used_exports_from(modules, &entry, None)
+}
+
+/// Demand-driven variant: usage flows outward from `entry` only.
+///
+/// Marking every module's imports as "used" let eliminated subtrees keep
+/// themselves alive — MUI's cssVars/extendTheme cluster imports itself
+/// into liveness even though nothing reachable from the entry ever
+/// imports it. Liveness now spreads from the entry across import /
+/// require / dynamic-import edges (and the re-export fixed point below)
+/// so a dead subtree can no longer keep itself or its dependencies live.
+pub fn analyze_used_exports_from(
+    modules: &[(PathBuf, String)],
+    entry: &Path,
+    resolver: Option<&(dyn Fn(&str, &Path) -> Option<PathBuf> + Sync)>,
+) -> Result<TreeShakeResult> {
     let mut used: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    let lookup = match resolver {
+        Some(r) => ModuleLookup::with_resolver(modules, r),
+        None => ModuleLookup::new(modules),
+    };
 
-    // Step 1: Collect all exports per module (ESM + CJS)
-    for (path, source) in modules {
-        let mut exports = extract_export_names(source, is_ts(path));
-        exports.extend(extract_cjs_export_names(source));
-        all_exports.insert(path.clone(), exports);
-    }
+    // Step 1: Collect all exports per module (ESM + CJS). Per-module extraction
+    // is pure byte-scanning with no shared state — parallel across the corpus.
+    // On barrel-heavy bundles (MUI/antd, hundreds of modules) the sequential
+    // extraction dominated tree shaking; rayon cuts it near-linearly.
+    let all_exports: HashMap<PathBuf, Vec<String>> = modules
+        .par_iter()
+        .map(|(path, source)| {
+            let mut exports = extract_export_names(source, is_ts(path));
+            exports.extend(extract_cjs_export_names(source));
+            (path.clone(), exports)
+        })
+        .collect();
 
-    // Step 2: Mark all ESM imports as used
-    for (_path, source) in modules {
-        let imports = extract_import_bindings(source, modules);
-        for (target_path, names) in imports {
-            let entry = used.entry(target_path).or_default();
-            for name in names {
-                entry.insert(name);
+    // Steps 2+3: extract every module's outgoing edges once (also parallel;
+    // `lookup` is read-only and `Sync`).
+    let static_edges: HashMap<&Path, Vec<(PathBuf, Vec<String>)>> = modules
+        .par_iter()
+        .map(|(path, source)| {
+            let mut edges = extract_import_bindings(path, source, &lookup);
+            edges.extend(extract_cjs_require_bindings(path, source, &lookup));
+            (path.as_path(), edges)
+        })
+        .collect();
+    let dynamic_edges: HashMap<&Path, Vec<PathBuf>> = modules
+        .par_iter()
+        .map(|(path, source)| {
+            (
+                path.as_path(),
+                extract_dynamic_import_targets_from(path, source, &lookup),
+            )
+        })
+        .collect();
+
+    // Liveness worklist from the entry: each live module marks its import
+    // targets' names used and pulls those targets live.
+    let mut live: HashSet<PathBuf> = HashSet::new();
+    let mut queue: Vec<PathBuf> = vec![entry.to_path_buf()];
+    while let Some(path) = queue.pop() {
+        if !live.insert(path.clone()) {
+            continue;
+        }
+        if let Some(edges) = static_edges.get(path.as_path()) {
+            for (target_path, names) in edges {
+                let target_used = used.entry(target_path.clone()).or_default();
+                for name in names {
+                    target_used.insert(name.clone());
+                }
+                if !live.contains(target_path) {
+                    queue.push(target_path.clone());
+                }
             }
         }
-    }
-
-    // Step 3: Mark CJS require bindings as used
-    for (_path, source) in modules {
-        let cjs_imports = extract_cjs_require_bindings(source, modules);
-        for (target_path, names) in cjs_imports {
-            let entry = used.entry(target_path).or_default();
-            for name in names {
-                entry.insert(name);
+        if let Some(targets) = dynamic_edges.get(path.as_path()) {
+            for target_path in targets {
+                used.entry(target_path.clone())
+                    .or_default()
+                    .insert("*".to_string());
+                if !live.contains(target_path) {
+                    queue.push(target_path.clone());
+                }
             }
         }
     }
@@ -140,33 +201,36 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
     //                                          used, mark `y`'s `x` used
     //                                          (the original name lives
     //                                          on the leaf).
-    //   3. `export * from './y'`             → mark every export of `y`
-    //                                          as used unconditionally.
-    //                                          A star re-export keeps the
-    //                                          whole leaf alive even when
-    //                                          the consumer is selective,
-    //                                          because the analyzer can't
-    //                                          tell which leaf each
-    //                                          consumed name came from.
+    //   3. `export * from './y'`             → if barrel's `x` is used,
+    //                                          mark `y`'s `x` used. Only a
+    //                                          wildcard/namespace consumer
+    //                                          expands the whole leaf.
+    // Re-export bindings are pure in (path, source) — extract once, not
+    // once per fixed-point round. Re-extracting every module's bindings
+    // each round made this phase O(rounds × modules × source) and
+    // dominated tree shaking on barrel-heavy corpora like MUI.
+    let reexport_bindings: Vec<(&PathBuf, Vec<(PathBuf, ReexportKind)>)> = modules
+        .par_iter()
+        .map(|(path, source)| (path, extract_reexport_bindings(path, source, &lookup)))
+        .collect();
     loop {
         let mut changed = false;
-        for (path, source) in modules {
-            let reexports = extract_reexport_bindings(source, modules);
-            let barrel_used: HashSet<String> = used.get(path).cloned().unwrap_or_default();
-            for (target_path, kind) in reexports {
+        for (path, reexports) in &reexport_bindings {
+            let path: &PathBuf = path;
+            let barrel_used: HashSet<String> =
+                used.get(path.as_path()).cloned().unwrap_or_default();
+            for (target_path, kind) in reexports.iter().cloned() {
                 match kind {
                     ReexportKind::Star => {
-                        // `export * from './y'` — keep the leaf wholly alive.
                         if let Some(leaf_exports) = all_exports.get(&target_path) {
-                            // Collect every non-default name we'd want
-                            // to insert first, then only create the
-                            // `used` entry when we'd actually add
-                            // something. Otherwise we'd leak an empty
-                            // `target_path → {}` entry that downstream
-                            // snapshot/observability code (rightly)
-                            // treats as a real "used" record.
-                            let to_add: Vec<&String> =
-                                leaf_exports.iter().filter(|n| *n != "default").collect();
+                            let to_add: Vec<&String> = if barrel_used.contains("*") {
+                                leaf_exports.iter().filter(|n| *n != "default").collect()
+                            } else {
+                                leaf_exports
+                                    .iter()
+                                    .filter(|n| *n != "default" && barrel_used.contains(*n))
+                                    .collect()
+                            };
                             if to_add.is_empty() {
                                 continue;
                             }
@@ -207,12 +271,49 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
                 }
             }
         }
+        // Names propagated onto leaves can make new modules live; spread
+        // their own edges before the next fixed-point round.
+        let newly_used: Vec<PathBuf> = used
+            .keys()
+            .filter(|p| !live.contains(p.as_path()))
+            .cloned()
+            .collect();
+        if !newly_used.is_empty() {
+            changed = true;
+            let mut queue = newly_used;
+            while let Some(path) = queue.pop() {
+                if !live.insert(path.clone()) {
+                    continue;
+                }
+                if let Some(edges) = static_edges.get(path.as_path()) {
+                    for (target_path, names) in edges {
+                        let target_used = used.entry(target_path.clone()).or_default();
+                        for name in names {
+                            target_used.insert(name.clone());
+                        }
+                        if !live.contains(target_path) {
+                            queue.push(target_path.clone());
+                        }
+                    }
+                }
+                if let Some(targets) = dynamic_edges.get(path.as_path()) {
+                    for target_path in targets {
+                        used.entry(target_path.clone())
+                            .or_default()
+                            .insert("*".to_string());
+                        if !live.contains(target_path) {
+                            queue.push(target_path.clone());
+                        }
+                    }
+                }
+            }
+        }
         if !changed {
             break;
         }
     }
 
-    // Step 3.6: Mark dynamic `import("./x")` call-expression targets
+    // Step 3.6 (legacy): dynamic `import("./x")` targets are handled by
     // with the wildcard `"*"`. A dynamic import loads the target
     // module's whole namespace at runtime, so the static analyzer
     // cannot narrow which exports survive — conservative behavior
@@ -226,15 +327,14 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
     // by this pass — the `find_module_by_specifier` API needs a
     // literal specifier, and treating templates as a wildcard over
     // the whole graph would be too coarse.
-    for (_path, source) in modules {
-        for target_path in extract_dynamic_import_targets(source, modules) {
-            used.entry(target_path).or_default().insert("*".to_string());
-        }
-    }
+    // the liveness worklist above; nothing left to do here.
 
     // Step 4: Find eliminated modules
     let mut eliminated = Vec::new();
     let mut eliminated_bytes = 0u64;
+
+    let mut package_side_effects_cache: HashMap<(PathBuf, String), SideEffectsDecl> =
+        HashMap::new();
 
     for (path, source) in modules {
         if let Some(exports) = all_exports.get(path) {
@@ -242,7 +342,13 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
                 let used_set = used.get(path);
                 let has_used = used_set.map(|s| !s.is_empty()).unwrap_or(false);
 
-                if !has_used && !has_side_effects(source) {
+                if !has_used
+                    && !module_has_side_effects_with_package_json(
+                        source,
+                        path,
+                        &mut package_side_effects_cache,
+                    )
+                {
                     eliminated.push(path.clone());
                     eliminated_bytes += source.len() as u64;
                 }
@@ -252,6 +358,7 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
 
     Ok(TreeShakeResult {
         used_exports: used,
+        all_exports,
         eliminated_modules: eliminated,
         eliminated_bytes,
     })
@@ -366,8 +473,9 @@ fn extract_single_export_name(line: &str) -> Option<String> {
 
 /// Extract ESM import bindings: returns (target_module_path, imported names).
 fn extract_import_bindings(
+    importer: &Path,
     source: &str,
-    modules: &[(PathBuf, String)],
+    lookup: &ModuleLookup<'_>,
 ) -> Vec<(PathBuf, Vec<String>)> {
     let mut results = Vec::new();
 
@@ -382,17 +490,154 @@ fn extract_import_bindings(
             continue;
         }
 
-        let target = find_module_by_specifier(&specifier, modules);
+        let target = lookup.find(&specifier, importer);
 
         if let Some((target_path, _)) = target {
             let names = extract_imported_names(trimmed);
-            if !names.is_empty() {
-                results.push((target_path.clone(), names));
-            }
+            // Drop imported names whose LOCAL binding is never referenced in
+            // this module's body (esbuild does this; jet did not). After
+            // define replacement folds out `process.env.NODE_ENV` dev
+            // branches, a `propTypes` import like `elementAcceptingRef` /
+            // `chainPropTypes` / `exactProp` is bound but unreferenced — and
+            // marking it used kept the whole @mui/utils PropTypes validation
+            // chain alive in production. The check is CONSERVATIVE: a binding
+            // is dropped only when its name appears literally nowhere outside
+            // its own import statement (so a short or coincidentally-matching
+            // name is always kept). `*` namespace imports and bare
+            // side-effect imports are never narrowed.
+            let names = filter_referenced_import_names(trimmed, source, names);
+            results.push((target_path.clone(), names));
         }
     }
 
     results
+}
+
+/// Keep only imported names whose local binding is referenced in `source`
+/// beyond the import line itself. Conservative by construction: if a
+/// binding's name occurs anywhere else (even inside a string or a longer
+/// token we don't perfectly tokenize), it is retained — only a name that
+/// appears *exclusively* in its import statement is dropped.
+fn filter_referenced_import_names(
+    import_line: &str,
+    source: &str,
+    names: Vec<String>,
+) -> Vec<String> {
+    // `*` (namespace) and empty (bare side-effect import) are never narrowed.
+    if names.iter().any(|n| n == "*") || names.is_empty() {
+        return names;
+    }
+    names
+        .into_iter()
+        .filter(|imported| {
+            let binding = local_binding_for(import_line, imported);
+            // Total whole-word occurrences across the module, minus the one
+            // declaration in the import line. >0 means a real reference.
+            let total = count_word_occurrences(source, &binding);
+            let in_import = count_word_occurrences(import_line, &binding);
+            total > in_import
+        })
+        .collect()
+}
+
+/// The local binding name an imported export is bound to in `import_line`:
+/// `import { a as b }` → `b`, `import { a }` → `a`, `import D from` →
+/// the default identifier `D`. Falls back to the imported name.
+fn local_binding_for(import_line: &str, imported: &str) -> String {
+    if imported == "default" {
+        let after = import_line.trim_start_matches("import ").trim_start();
+        if !after.starts_with('{') {
+            if let Some(id) = after
+                .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                .next()
+            {
+                if !id.is_empty() {
+                    return id.to_string();
+                }
+            }
+        }
+        return imported.to_string();
+    }
+    if let (Some(bs), Some(be)) = (import_line.find('{'), import_line.find('}')) {
+        if bs < be {
+            for item in import_line[bs + 1..be].split(',') {
+                let item = item.trim();
+                let (orig, alias) = match item.split_once(" as ") {
+                    Some((o, a)) => (o.trim(), Some(a.trim())),
+                    None => (item, None),
+                };
+                if orig == imported {
+                    return alias.unwrap_or(orig).to_string();
+                }
+            }
+        }
+    }
+    imported.to_string()
+}
+
+#[cfg(test)]
+mod binding_usage_tests {
+    use super::{count_word_occurrences, filter_referenced_import_names, local_binding_for};
+
+    #[test]
+    fn drops_unreferenced_named_import() {
+        let src = "import { used, unused } from 'm';\nconsole.log(used);\n";
+        let line = "import { used, unused } from 'm';";
+        let names = vec!["used".to_string(), "unused".to_string()];
+        let kept = filter_referenced_import_names(line, src, names);
+        assert_eq!(kept, vec!["used".to_string()]);
+    }
+
+    #[test]
+    fn keeps_aliased_and_default_when_referenced() {
+        let src = "import D, { a as b } from 'm';\nb();D.x;\n";
+        let line = "import D, { a as b } from 'm';";
+        assert_eq!(local_binding_for(line, "a"), "b");
+        assert_eq!(local_binding_for(line, "default"), "D");
+        let kept =
+            filter_referenced_import_names(line, src, vec!["a".to_string(), "default".to_string()]);
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn never_narrows_namespace_or_substring() {
+        let names = vec!["*".to_string()];
+        assert_eq!(
+            filter_referenced_import_names("import * as ns from 'm';", "ns.x", names.clone()),
+            names
+        );
+        assert_eq!(
+            count_word_occurrences("elementAcceptingRefThing", "elementAcceptingRef"),
+            0
+        );
+        assert_eq!(
+            count_word_occurrences("a.elementAcceptingRef()", "elementAcceptingRef"),
+            1
+        );
+    }
+}
+
+/// Count whole-word (identifier-boundary) occurrences of `word` in `text`.
+fn count_word_occurrences(text: &str, word: &str) -> usize {
+    if word.is_empty() {
+        return 0;
+    }
+    let bytes = text.as_bytes();
+    let wb = word.as_bytes();
+    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut count = 0usize;
+    let mut from = 0usize;
+    while let Some(rel) = text[from..].find(word) {
+        let start = from + rel;
+        let end = start + wb.len();
+        let before_ok = start == 0 || !is_id(bytes[start - 1]);
+        let after_ok = end >= bytes.len() || !is_id(bytes[end]);
+        if before_ok && after_ok {
+            count += 1;
+        }
+        from = start + 1;
+    }
+    count
 }
 
 /// Classification of an `export ... from '...'` re-export line.
@@ -418,8 +663,9 @@ enum ReexportKind {
 /// already handled by `extract_export_names`. Only lines with both
 /// `from` and a resolvable specifier are returned here.
 fn extract_reexport_bindings(
+    importer: &Path,
     source: &str,
-    modules: &[(PathBuf, String)],
+    lookup: &ModuleLookup<'_>,
 ) -> Vec<(PathBuf, ReexportKind)> {
     let mut results = Vec::new();
 
@@ -437,7 +683,7 @@ fn extract_reexport_bindings(
         if specifier.is_empty() {
             continue;
         }
-        let target = match find_module_by_specifier(&specifier, modules) {
+        let target = match lookup.find(&specifier, importer) {
             Some(t) => t,
             None => continue,
         };
@@ -501,6 +747,15 @@ fn extract_reexport_bindings(
 /// over-retain.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn extract_dynamic_import_targets(source: &str, modules: &[(PathBuf, String)]) -> Vec<PathBuf> {
+    let lookup = ModuleLookup::new(modules);
+    extract_dynamic_import_targets_from(Path::new(""), source, &lookup)
+}
+
+fn extract_dynamic_import_targets_from(
+    importer: &Path,
+    source: &str,
+    lookup: &ModuleLookup<'_>,
+) -> Vec<PathBuf> {
     let mut results = Vec::new();
     let bytes = source.as_bytes();
     let needle = b"import(";
@@ -557,7 +812,7 @@ pub fn extract_dynamic_import_targets(source: &str, modules: &[(PathBuf, String)
             Err(_) => continue,
         };
 
-        if let Some((target_path, _)) = find_module_by_specifier(specifier, modules) {
+        if let Some((target_path, _)) = lookup.find(specifier, importer) {
             results.push(target_path.clone());
         }
     }
@@ -604,19 +859,22 @@ pub fn extract_imported_names(line: &str) -> Vec<String> {
         }
     }
 
-    // import Default from '...'
-    if line.starts_with("import ")
-        && !line.contains('{')
-        && !line.contains("* as ")
-        && line.contains(" from ")
-    {
-        let after_import = &line["import ".len()..];
-        if let Some(name) = after_import
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .next()
-        {
-            if !name.is_empty() && name != "type" && name != "from" {
-                names.push("default".to_string());
+    // import Default from '...'  AND  import Default, { a, b } from '...'
+    // The default binding is whatever identifier precedes the brace group
+    // (if any). Requiring "no braces on the line" dropped the default half
+    // of mixed imports — `import FormLabel, { formLabelClasses } from
+    // '../FormLabel'` lost "default", and demand-driven shaking then
+    // eliminated FormLabel.js entirely (React error #130 at runtime).
+    if line.starts_with("import ") && !line.contains("* as ") && line.contains(" from ") {
+        let after_import = line["import ".len()..].trim_start();
+        if !after_import.starts_with('{') {
+            if let Some(name) = after_import
+                .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                .next()
+            {
+                if !name.is_empty() && name != "type" && name != "from" {
+                    names.push("default".to_string());
+                }
             }
         }
     }
@@ -672,34 +930,43 @@ fn extract_cjs_export_names(source: &str) -> Vec<String> {
 
 /// Extract CJS require bindings: which properties are used from required modules.
 fn extract_cjs_require_bindings(
+    importer: &Path,
     source: &str,
-    modules: &[(PathBuf, String)],
+    lookup: &ModuleLookup<'_>,
 ) -> Vec<(PathBuf, Vec<String>)> {
     let mut results = Vec::new();
 
     for line in source.lines() {
         let trimmed = line.trim();
 
-        // Pattern 1: const { a, b } = require('mod')
-        if let Some(req_source) = extract_require_specifier(trimmed) {
-            if let Some(target) = find_module_by_specifier(&req_source, modules) {
-                let names = extract_destructured_names(trimmed);
-                if !names.is_empty() {
-                    results.push((target.0.clone(), names));
-                }
-            }
-        }
+        let Some(req_source) = extract_require_specifier(trimmed) else {
+            continue;
+        };
+        let Some(target) = lookup.find(&req_source, importer) else {
+            continue;
+        };
 
-        // Pattern 2: const mod = require('mod'); later mod.prop
-        // This is harder to track across lines — we handle the simple
-        // single-line property access pattern: require('mod').prop
-        if let Some(req_source) = extract_require_specifier(trimmed) {
-            if let Some(target) = find_module_by_specifier(&req_source, modules) {
-                let names = extract_require_property_access(trimmed);
-                if !names.is_empty() {
-                    results.push((target.0.clone(), names));
-                }
-            }
+        // Pattern 1: const { a, b } = require('mod')
+        let destructured = extract_destructured_names(trimmed);
+        // Pattern 2: require('mod').prop (single-line property access)
+        let accessed = extract_require_property_access(trimmed);
+
+        if destructured.is_empty() && accessed.is_empty() {
+            // Namespace-style require (`var m = require('mod')`,
+            // `module.exports = require('mod')` interop wrappers). Whole-
+            // module usage cannot be narrowed line-wise, so keep every
+            // export of the target. Dropping this edge entirely left CJS
+            // package wrappers' ESM twins dead in the liveness walk and
+            // the glue pruner deleted their genuinely-used exports
+            // (internal_processStyles vanished from @mui/styled-engine).
+            results.push((target.0.clone(), vec!["*".to_string()]));
+            continue;
+        }
+        if !destructured.is_empty() {
+            results.push((target.0.clone(), destructured));
+        }
+        if !accessed.is_empty() {
+            results.push((target.0.clone(), accessed));
         }
     }
 
@@ -797,17 +1064,174 @@ pub fn find_module_by_specifier<'a>(
     specifier: &str,
     modules: &'a [(PathBuf, String)],
 ) -> Option<&'a (PathBuf, String)> {
-    let bare = specifier.strip_prefix("./").unwrap_or(specifier);
-    modules.iter().find(|(p, _)| {
-        let p_str = p.to_string_lossy();
-        p_str.ends_with(bare)
-            || p_str.ends_with(specifier)
-            || p_str.ends_with(&format!("{}.js", bare))
-            || p_str.ends_with(&format!("{}.ts", bare))
-            || p_str.ends_with(&format!("{}.tsx", bare))
-            || p_str.ends_with(&format!("{}/index.js", bare))
-            || p_str.ends_with(&format!("{}/index.ts", bare))
-    })
+    let lookup = ModuleLookup::new(modules);
+    lookup.find(specifier, Path::new(""))
+}
+
+struct ModuleLookup<'a> {
+    modules: &'a [(PathBuf, String)],
+    by_path: HashMap<PathBuf, usize>,
+    by_specifier: HashMap<String, usize>,
+    /// Exact specifier resolution from the bundler's resolver. The textual
+    /// variants above cannot map bare package specifiers whose entry comes
+    /// from package.json (`@ant-design/colors` -> `es/index.js`); missing
+    /// those edges starved the demand-driven liveness walk and shook
+    /// genuinely-used modules out of the bundle.
+    resolver: Option<&'a (dyn Fn(&str, &Path) -> Option<PathBuf> + Sync)>,
+}
+
+impl<'a> ModuleLookup<'a> {
+    fn new(modules: &'a [(PathBuf, String)]) -> Self {
+        let mut by_path = HashMap::new();
+        let mut by_specifier = HashMap::new();
+
+        for (idx, (path, _)) in modules.iter().enumerate() {
+            let normalized = normalize_tree_shake_path(path);
+            by_path.entry(normalized.clone()).or_insert(idx);
+            for specifier in package_specifier_variants(&normalized) {
+                by_specifier.entry(specifier).or_insert(idx);
+            }
+        }
+
+        Self {
+            modules,
+            by_path,
+            by_specifier,
+            resolver: None,
+        }
+    }
+
+    fn with_resolver(
+        modules: &'a [(PathBuf, String)],
+        resolver: &'a (dyn Fn(&str, &Path) -> Option<PathBuf> + Sync),
+    ) -> Self {
+        let mut lookup = Self::new(modules);
+        lookup.resolver = Some(resolver);
+        lookup
+    }
+
+    fn find(&self, specifier: &str, importer: &Path) -> Option<&'a (PathBuf, String)> {
+        if specifier.starts_with('.') {
+            if let Some(importer_dir) = importer.parent() {
+                let target = normalize_tree_shake_path(importer_dir.join(specifier));
+                if let Some(found) = self.find_exact_candidate(&target) {
+                    return Some(found);
+                }
+            }
+        }
+
+        if let Some(idx) = self.by_specifier.get(specifier) {
+            return self.modules.get(*idx);
+        }
+
+        let bare = specifier.strip_prefix("./").unwrap_or(specifier);
+        for candidate in [
+            bare.to_string(),
+            format!("{bare}.js"),
+            format!("{bare}.jsx"),
+            format!("{bare}.ts"),
+            format!("{bare}.tsx"),
+            format!("{bare}/index.js"),
+            format!("{bare}/index.ts"),
+            format!("{bare}/index.tsx"),
+        ] {
+            if let Some(idx) = self.by_specifier.get(&candidate) {
+                return self.modules.get(*idx);
+            }
+        }
+
+        if let Some(resolver) = self.resolver {
+            if let Some(resolved) = resolver(specifier, importer) {
+                let normalized = normalize_tree_shake_path(&resolved);
+                if let Some(idx) = self.by_path.get(&normalized) {
+                    return self.modules.get(*idx);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn find_exact_candidate(&self, target: &Path) -> Option<&'a (PathBuf, String)> {
+        const EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs"];
+        for candidate in exact_candidate_paths(target) {
+            if let Some(idx) = self.by_path.get(&candidate) {
+                return self.modules.get(*idx);
+            }
+            for ext in EXTENSIONS {
+                if let Some(idx) = self.by_path.get(&candidate.with_extension(ext)) {
+                    return self.modules.get(*idx);
+                }
+                let index = normalize_tree_shake_path(candidate.join(format!("index.{ext}")));
+                if let Some(idx) = self.by_path.get(&index) {
+                    return self.modules.get(*idx);
+                }
+            }
+        }
+        None
+    }
+}
+
+fn exact_candidate_paths(target: &Path) -> Vec<PathBuf> {
+    let normalized = normalize_tree_shake_path(target);
+    vec![normalized]
+}
+
+fn normalize_tree_shake_path(path: impl AsRef<Path>) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.as_ref().components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() && !out.has_root() {
+                    out.push("..");
+                }
+            }
+            _ => out.push(component.as_os_str()),
+        }
+    }
+    out
+}
+
+fn package_specifier_variants(path: &Path) -> Vec<String> {
+    let path_str = path.to_string_lossy();
+    let mut variants = Vec::new();
+
+    if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
+        variants.push(file_name.to_string());
+        for ext in [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"] {
+            if let Some(no_ext) = file_name.strip_suffix(ext) {
+                variants.push(no_ext.to_string());
+            }
+        }
+    }
+
+    let Some(after_nm) = path_str.rsplit_once("node_modules/").map(|(_, rest)| rest) else {
+        return variants;
+    };
+
+    variants.push(after_nm.to_string());
+
+    for ext in [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"] {
+        if let Some(no_ext) = after_nm.strip_suffix(ext) {
+            variants.push(no_ext.to_string());
+        }
+    }
+
+    for suffix in [
+        "/index.js",
+        "/index.jsx",
+        "/index.ts",
+        "/index.tsx",
+        "/index.mjs",
+        "/index.cjs",
+    ] {
+        if let Some(no_index) = after_nm.strip_suffix(suffix) {
+            variants.push(no_index.to_string());
+        }
+    }
+
+    variants
 }
 
 /// Check if source code has side effects (top-level statements that aren't declarations).
@@ -963,6 +1387,41 @@ pub fn module_has_side_effects(source: &str, module_path: &Path, decl: &SideEffe
         // Conservative: fall back to code analysis.
         SideEffectsDecl::All => has_side_effects(source),
     }
+}
+
+pub(crate) fn module_has_side_effects_with_package_json(
+    source: &str,
+    module_path: &Path,
+    package_side_effects_cache: &mut HashMap<(PathBuf, String), SideEffectsDecl>,
+) -> bool {
+    if let Some((node_modules_dir, package_name)) = find_package_info(module_path) {
+        let decl = package_side_effects_cache
+            .entry((node_modules_dir.clone(), package_name.clone()))
+            .or_insert_with(|| read_package_side_effects(&node_modules_dir, &package_name));
+        module_has_side_effects(source, module_path, decl)
+    } else {
+        has_side_effects(source)
+    }
+}
+
+pub(crate) fn find_package_info(module_path: &Path) -> Option<(PathBuf, String)> {
+    let path_str = module_path.to_string_lossy();
+    let nm_marker = "node_modules/";
+    let nm_pos = path_str.rfind(nm_marker)?;
+    let node_modules_dir = PathBuf::from(&path_str[..nm_pos + nm_marker.len() - 1]);
+    let after_nm = &path_str[nm_pos + nm_marker.len()..];
+
+    let package_name = if after_nm.starts_with('@') {
+        let parts: Vec<&str> = after_nm.splitn(3, '/').collect();
+        if parts.len() < 2 {
+            return None;
+        }
+        format!("{}/{}", parts[0], parts[1])
+    } else {
+        after_nm.split('/').next()?.to_string()
+    };
+
+    Some((node_modules_dir, package_name))
 }
 
 /// Minimal glob matcher supporting `*` (any non-separator chars) and `**`
@@ -1362,6 +1821,44 @@ const internal = 2;
     }
 
     #[test]
+    fn test_analyze_eliminates_unused_package_module_when_side_effects_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg_dir = tmp.path().join("node_modules/side-free");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join("package.json"), r#"{"sideEffects":false}"#).unwrap();
+
+        let entry = tmp.path().join("src/entry.js");
+        let used = pkg_dir.join("used.js");
+        let unused = pkg_dir.join("unused.js");
+        let modules = vec![
+            (
+                entry,
+                "import { used } from 'side-free/used.js';\nconsole.log(used);\n".to_string(),
+            ),
+            (
+                used.clone(),
+                "export const used = 1;\nconsole.log('top-level but package says pure');\n"
+                    .to_string(),
+            ),
+            (
+                unused.clone(),
+                "export const unused = 2;\nconsole.log('drop me despite heuristic side effect');\n"
+                    .to_string(),
+            ),
+        ];
+
+        let result = analyze_used_exports(&modules).unwrap();
+        assert!(
+            !result.eliminated_modules.contains(&used),
+            "imported package module must stay live"
+        );
+        assert!(
+            result.eliminated_modules.contains(&unused),
+            "sideEffects:false package metadata must allow unused module elimination"
+        );
+    }
+
+    #[test]
     fn test_glob_matches_star() {
         assert!(glob_matches("*.js", "index.js"));
         assert!(glob_matches("*.js", "main.js"));
@@ -1468,6 +1965,35 @@ const internal = 2;
                 .contains(&PathBuf::from("/fixture/lazy.js")),
             "dynamic-import target must NOT be eliminated; got {:?}",
             result.eliminated_modules,
+        );
+    }
+
+    #[test]
+    fn test_star_reexport_propagates_only_used_same_name_export() {
+        let modules = vec![
+            (
+                PathBuf::from("/fixture/entry.js"),
+                "import { used } from './barrel';\nconsole.log(used);\n".to_string(),
+            ),
+            (
+                PathBuf::from("/fixture/barrel.js"),
+                "export * from './leaf';\n".to_string(),
+            ),
+            (
+                PathBuf::from("/fixture/leaf.js"),
+                "export const used = 1;\nexport const unused = 2;\n".to_string(),
+            ),
+        ];
+
+        let result = analyze_used_exports(&modules).unwrap();
+        let leaf_used = result
+            .used_exports
+            .get(&PathBuf::from("/fixture/leaf.js"))
+            .expect("leaf export usage should propagate through star barrel");
+        assert!(leaf_used.contains("used"), "{leaf_used:?}");
+        assert!(
+            !leaf_used.contains("unused"),
+            "star re-export should not mark unrelated leaf exports live: {leaf_used:?}"
         );
     }
 

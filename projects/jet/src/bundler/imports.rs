@@ -57,6 +57,22 @@ pub enum ExportKind {
 /// Extract imports from JavaScript/TypeScript source code
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn extract_imports(source: &str, is_typescript: bool) -> Result<ModuleImports> {
+    extract_imports_with_tree(source, is_typescript).map(|(imports, _tree)| imports)
+}
+
+/// Like [`extract_imports`] but also hands back the parsed tree-sitter tree.
+///
+/// jet otherwise tree-sitter-parses every module twice — once here during
+/// graph construction to discover imports, and again in the module transform
+/// for codegen. For a plain-JS module (`.js`/`.cjs`/`.mjs`) whose source the
+/// transform does not rewrite first, this tree (parsed with the JS grammar) is
+/// byte-for-byte the same parse the transform would redo, so the caller can
+/// stash it and skip the second parse. TS/TSX/JSX trees are NOT reusable: their
+/// source is rewritten before the module transform parses it.
+pub fn extract_imports_with_tree(
+    source: &str,
+    is_typescript: bool,
+) -> Result<(ModuleImports, tree_sitter::Tree)> {
     let mut parser = Parser::new();
 
     let language = if is_typescript {
@@ -81,7 +97,7 @@ pub fn extract_imports(source: &str, is_typescript: bool) -> Result<ModuleImport
 
     extract_from_node(source, &root, &mut imports);
 
-    Ok(imports)
+    Ok((imports, tree))
 }
 
 /// Recursively extract imports/exports from AST node

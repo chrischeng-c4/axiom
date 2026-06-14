@@ -52,7 +52,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/mui_visual_regression.rs"
+      - path: "projects/jet/tests/wasm/mui_visual_regression.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -75,7 +75,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/production_build_regression.rs"
+      - path: "projects/jet/tests/build/production_build_regression.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -95,7 +95,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/web_server_tests.rs"
+      - path: "projects/jet/tests/test-runner/web_server_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -133,7 +133,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tsx_to_rust_boolean_literal_state.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_boolean_literal_state.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -162,7 +162,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tsx_to_rust_controlled_input.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_controlled_input.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -179,7 +179,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/jet_test_api_compat.rs"
+      - path: "projects/jet/tests/test-runner/jet_test_api_compat.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -208,7 +208,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tsx_to_rust_effect_fetch.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_effect_fetch.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -225,7 +225,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/list_render_debug.rs"
+      - path: "projects/jet/tests/wasm/list_render_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -245,7 +245,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/nested_debug.rs"
+      - path: "projects/jet/tests/wasm/nested_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -265,7 +265,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/big_list_debug.rs"
+      - path: "projects/jet/tests/wasm/big_list_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -285,7 +285,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tsx_to_rust_counter.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_counter.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -323,7 +323,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/react_dom_oracle_conformance.rs"
+      - path: "projects/jet/tests/wasm/react_dom_oracle_conformance.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -364,7 +364,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/pm_report_acceptance.rs"
+      - path: "projects/jet/tests/browser-bridge/pm_report_acceptance.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -393,7 +393,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/fixture_timeout_tests.rs"
+      - path: "projects/jet/tests/test-runner/fixture_timeout_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -413,7 +413,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/parity_oracle_reexport.rs"
+      - path: "projects/jet/tests/wasm/parity_oracle_reexport.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -427,7 +427,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/workspace_protocol.rs"
+      - path: "projects/jet/tests/pkg-mgmt/workspace_protocol.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -480,7 +480,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/browser_cli_smoke.rs"
+      - path: "projects/jet/tests/browser-bridge/browser_cli_smoke.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -500,7 +500,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/fixture_lifecycle_tests.rs"
+      - path: "projects/jet/tests/test-runner/fixture_lifecycle_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -529,7 +529,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/usememo_debug.rs"
+      - path: "projects/jet/tests/wasm/usememo_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -549,7 +549,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/storage_state_tests.rs"
+      - path: "projects/jet/tests/browser-bridge/storage_state_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -590,7 +590,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/self_closing_debug.rs"
+      - path: "projects/jet/tests/wasm/self_closing_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -610,7 +610,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/html_reporter_tests.rs"
+      - path: "projects/jet/tests/test-runner/html_reporter_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -654,7 +654,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/page_api_parity.rs"
+      - path: "projects/jet/tests/browser-bridge/page_api_parity.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -785,7 +785,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/trace_viewer.rs"
+      - path: "projects/jet/tests/browser-bridge/trace_viewer.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -811,7 +811,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/items_list_debug.rs"
+      - path: "projects/jet/tests/wasm/items_list_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -828,7 +828,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/nx_support.rs"
+      - path: "projects/jet/tests/task-runner/nx_support.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -896,7 +896,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/locator_js_api.rs"
+      - path: "projects/jet/tests/browser-bridge/locator_js_api.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -949,7 +949,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/trace_capture.rs"
+      - path: "projects/jet/tests/browser-bridge/trace_capture.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -984,7 +984,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/large_int_debug.rs"
+      - path: "projects/jet/tests/wasm/large_int_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -1004,7 +1004,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/jet_test_dogfood.rs"
+      - path: "projects/jet/tests/test-runner/jet_test_dogfood.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1024,7 +1024,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/matchers_state_value_a11y.rs"
+      - path: "projects/jet/tests/browser-bridge/matchers_state_value_a11y.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1071,7 +1071,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/classname_debug.rs"
+      - path: "projects/jet/tests/wasm/classname_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1088,7 +1088,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/to_have_screenshot_tests.rs"
+      - path: "projects/jet/tests/browser-bridge/to_have_screenshot_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1120,7 +1120,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/playwright_compat_tests.rs"
+      - path: "projects/jet/tests/browser-bridge/playwright_compat_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["test_case"]
@@ -1179,7 +1179,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/test_runner_smoke.rs"
+      - path: "projects/jet/tests/test-runner/test_runner_smoke.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1199,7 +1199,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tree_shaking.rs"
+      - path: "projects/jet/tests/build/tree_shaking.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1267,7 +1267,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/string_state_debug.rs"
+      - path: "projects/jet/tests/wasm/string_state_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1284,7 +1284,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/wasm_dev_smoke.rs"
+      - path: "projects/jet/tests/wasm/wasm_dev_smoke.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1304,7 +1304,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/no_state_debug.rs"
+      - path: "projects/jet/tests/wasm/no_state_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1321,7 +1321,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/toggle_debug.rs"
+      - path: "projects/jet/tests/wasm/toggle_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1338,7 +1338,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/e2e_playwright_residue.rs"
+      - path: "projects/jet/tests/browser-bridge/e2e_playwright_residue.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1355,7 +1355,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tsx_to_rust_ast_probe.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_ast_probe.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -1375,7 +1375,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/worker_pool_tests.rs"
+      - path: "projects/jet/tests/test-runner/worker_pool_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1416,7 +1416,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tsx_to_rust_imports.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_imports.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1442,7 +1442,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/auto_artifacts_tests.rs"
+      - path: "projects/jet/tests/browser-bridge/auto_artifacts_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -1480,7 +1480,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/route_intercept_tests.rs"
+      - path: "projects/jet/tests/browser-bridge/route_intercept_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1527,7 +1527,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/text_snapshot_tests.rs"
+      - path: "projects/jet/tests/test-runner/text_snapshot_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1559,7 +1559,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tsx_to_rust_toggle.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_toggle.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -1591,7 +1591,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/browser_install.rs"
+      - path: "projects/jet/tests/browser-bridge/browser_install.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1611,7 +1611,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/page_fixture_auto_inject.rs"
+      - path: "projects/jet/tests/browser-bridge/page_fixture_auto_inject.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1664,7 +1664,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/product_step_timeline.rs"
+      - path: "projects/jet/tests/browser-bridge/product_step_timeline.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1696,7 +1696,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/pm_report_static_smoke.rs"
+      - path: "projects/jet/tests/browser-bridge/pm_report_static_smoke.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1725,7 +1725,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/cue_artifact_studio_dogfood.rs"
+      - path: "projects/jet/tests/browser-bridge/cue_artifact_studio_dogfood.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1763,7 +1763,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/playwright_compat_shim_tests.rs"
+      - path: "projects/jet/tests/browser-bridge/playwright_compat_shim_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1792,7 +1792,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tsx_to_rust_i18n_probe.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_i18n_probe.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -1812,7 +1812,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/tsx_to_rust_i18n_copy_constants.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_i18n_copy_constants.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -1838,7 +1838,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/wasm_build_end_to_end.rs"
+      - path: "projects/jet/tests/wasm/wasm_build_end_to_end.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method", "test_case"]
@@ -1945,7 +1945,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/browser_context.rs"
+      - path: "projects/jet/tests/browser-bridge/browser_context.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -1986,7 +1986,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/bundler_monorepo.rs"
+      - path: "projects/jet/tests/build/bundler_monorepo.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -2012,7 +2012,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/fixture_di_tests.rs"
+      - path: "projects/jet/tests/test-runner/fixture_di_tests.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -2047,7 +2047,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/multi_handler_debug.rs"
+      - path: "projects/jet/tests/wasm/multi_handler_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
@@ -2067,7 +2067,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/unicode_debug.rs"
+      - path: "projects/jet/tests/wasm/unicode_debug.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -2087,7 +2087,7 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/tests"
-      - path: "projects/jet/tests/incremental_rebuild_bench.rs"
+      - path: "projects/jet/tests/build/incremental_rebuild_bench.rs"
         language: "rust"
         ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
@@ -2136,67 +2136,67 @@ tests:
   strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
   evidence:
     source_tests:
-      - path: "projects/jet/tests/web_server_tests.rs"
-      - path: "projects/jet/tests/tsx_to_rust_boolean_literal_state.rs"
-      - path: "projects/jet/tests/tsx_to_rust_controlled_input.rs"
-      - path: "projects/jet/tests/jet_test_api_compat.rs"
-      - path: "projects/jet/tests/tsx_to_rust_effect_fetch.rs"
-      - path: "projects/jet/tests/list_render_debug.rs"
-      - path: "projects/jet/tests/nested_debug.rs"
-      - path: "projects/jet/tests/big_list_debug.rs"
-      - path: "projects/jet/tests/tsx_to_rust_counter.rs"
-      - path: "projects/jet/tests/react_dom_oracle_conformance.rs"
-      - path: "projects/jet/tests/pm_report_acceptance.rs"
-      - path: "projects/jet/tests/fixture_timeout_tests.rs"
-      - path: "projects/jet/tests/parity_oracle_reexport.rs"
-      - path: "projects/jet/tests/workspace_protocol.rs"
-      - path: "projects/jet/tests/browser_cli_smoke.rs"
-      - path: "projects/jet/tests/fixture_lifecycle_tests.rs"
-      - path: "projects/jet/tests/usememo_debug.rs"
-      - path: "projects/jet/tests/storage_state_tests.rs"
-      - path: "projects/jet/tests/self_closing_debug.rs"
-      - path: "projects/jet/tests/html_reporter_tests.rs"
-      - path: "projects/jet/tests/page_api_parity.rs"
-      - path: "projects/jet/tests/trace_viewer.rs"
-      - path: "projects/jet/tests/items_list_debug.rs"
-      - path: "projects/jet/tests/nx_support.rs"
-      - path: "projects/jet/tests/locator_js_api.rs"
-      - path: "projects/jet/tests/trace_capture.rs"
-      - path: "projects/jet/tests/large_int_debug.rs"
-      - path: "projects/jet/tests/jet_test_dogfood.rs"
-      - path: "projects/jet/tests/matchers_state_value_a11y.rs"
-      - path: "projects/jet/tests/classname_debug.rs"
-      - path: "projects/jet/tests/to_have_screenshot_tests.rs"
-      - path: "projects/jet/tests/playwright_compat_tests.rs"
-      - path: "projects/jet/tests/test_runner_smoke.rs"
-      - path: "projects/jet/tests/tree_shaking.rs"
-      - path: "projects/jet/tests/string_state_debug.rs"
-      - path: "projects/jet/tests/wasm_dev_smoke.rs"
-      - path: "projects/jet/tests/no_state_debug.rs"
-      - path: "projects/jet/tests/toggle_debug.rs"
-      - path: "projects/jet/tests/e2e_playwright_residue.rs"
-      - path: "projects/jet/tests/tsx_to_rust_ast_probe.rs"
-      - path: "projects/jet/tests/worker_pool_tests.rs"
-      - path: "projects/jet/tests/tsx_to_rust_imports.rs"
-      - path: "projects/jet/tests/auto_artifacts_tests.rs"
-      - path: "projects/jet/tests/route_intercept_tests.rs"
-      - path: "projects/jet/tests/text_snapshot_tests.rs"
-      - path: "projects/jet/tests/tsx_to_rust_toggle.rs"
-      - path: "projects/jet/tests/browser_install.rs"
-      - path: "projects/jet/tests/page_fixture_auto_inject.rs"
-      - path: "projects/jet/tests/product_step_timeline.rs"
-      - path: "projects/jet/tests/pm_report_static_smoke.rs"
-      - path: "projects/jet/tests/cue_artifact_studio_dogfood.rs"
-      - path: "projects/jet/tests/playwright_compat_shim_tests.rs"
-      - path: "projects/jet/tests/tsx_to_rust_i18n_probe.rs"
-      - path: "projects/jet/tests/tsx_to_rust_i18n_copy_constants.rs"
-      - path: "projects/jet/tests/wasm_build_end_to_end.rs"
-      - path: "projects/jet/tests/browser_context.rs"
-      - path: "projects/jet/tests/bundler_monorepo.rs"
-      - path: "projects/jet/tests/fixture_di_tests.rs"
-      - path: "projects/jet/tests/multi_handler_debug.rs"
-      - path: "projects/jet/tests/unicode_debug.rs"
-      - path: "projects/jet/tests/incremental_rebuild_bench.rs"
+      - path: "projects/jet/tests/test-runner/web_server_tests.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_boolean_literal_state.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_controlled_input.rs"
+      - path: "projects/jet/tests/test-runner/jet_test_api_compat.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_effect_fetch.rs"
+      - path: "projects/jet/tests/wasm/list_render_debug.rs"
+      - path: "projects/jet/tests/wasm/nested_debug.rs"
+      - path: "projects/jet/tests/wasm/big_list_debug.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_counter.rs"
+      - path: "projects/jet/tests/wasm/react_dom_oracle_conformance.rs"
+      - path: "projects/jet/tests/browser-bridge/pm_report_acceptance.rs"
+      - path: "projects/jet/tests/test-runner/fixture_timeout_tests.rs"
+      - path: "projects/jet/tests/wasm/parity_oracle_reexport.rs"
+      - path: "projects/jet/tests/pkg-mgmt/workspace_protocol.rs"
+      - path: "projects/jet/tests/browser-bridge/browser_cli_smoke.rs"
+      - path: "projects/jet/tests/test-runner/fixture_lifecycle_tests.rs"
+      - path: "projects/jet/tests/wasm/usememo_debug.rs"
+      - path: "projects/jet/tests/browser-bridge/storage_state_tests.rs"
+      - path: "projects/jet/tests/wasm/self_closing_debug.rs"
+      - path: "projects/jet/tests/test-runner/html_reporter_tests.rs"
+      - path: "projects/jet/tests/browser-bridge/page_api_parity.rs"
+      - path: "projects/jet/tests/browser-bridge/trace_viewer.rs"
+      - path: "projects/jet/tests/wasm/items_list_debug.rs"
+      - path: "projects/jet/tests/task-runner/nx_support.rs"
+      - path: "projects/jet/tests/browser-bridge/locator_js_api.rs"
+      - path: "projects/jet/tests/browser-bridge/trace_capture.rs"
+      - path: "projects/jet/tests/wasm/large_int_debug.rs"
+      - path: "projects/jet/tests/test-runner/jet_test_dogfood.rs"
+      - path: "projects/jet/tests/browser-bridge/matchers_state_value_a11y.rs"
+      - path: "projects/jet/tests/wasm/classname_debug.rs"
+      - path: "projects/jet/tests/browser-bridge/to_have_screenshot_tests.rs"
+      - path: "projects/jet/tests/browser-bridge/playwright_compat_tests.rs"
+      - path: "projects/jet/tests/test-runner/test_runner_smoke.rs"
+      - path: "projects/jet/tests/build/tree_shaking.rs"
+      - path: "projects/jet/tests/wasm/string_state_debug.rs"
+      - path: "projects/jet/tests/wasm/wasm_dev_smoke.rs"
+      - path: "projects/jet/tests/wasm/no_state_debug.rs"
+      - path: "projects/jet/tests/wasm/toggle_debug.rs"
+      - path: "projects/jet/tests/browser-bridge/e2e_playwright_residue.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_ast_probe.rs"
+      - path: "projects/jet/tests/test-runner/worker_pool_tests.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_imports.rs"
+      - path: "projects/jet/tests/browser-bridge/auto_artifacts_tests.rs"
+      - path: "projects/jet/tests/browser-bridge/route_intercept_tests.rs"
+      - path: "projects/jet/tests/test-runner/text_snapshot_tests.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_toggle.rs"
+      - path: "projects/jet/tests/browser-bridge/browser_install.rs"
+      - path: "projects/jet/tests/browser-bridge/page_fixture_auto_inject.rs"
+      - path: "projects/jet/tests/browser-bridge/product_step_timeline.rs"
+      - path: "projects/jet/tests/browser-bridge/pm_report_static_smoke.rs"
+      - path: "projects/jet/tests/browser-bridge/cue_artifact_studio_dogfood.rs"
+      - path: "projects/jet/tests/browser-bridge/playwright_compat_shim_tests.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_i18n_probe.rs"
+      - path: "projects/jet/tests/wasm/tsx_to_rust_i18n_copy_constants.rs"
+      - path: "projects/jet/tests/wasm/wasm_build_end_to_end.rs"
+      - path: "projects/jet/tests/browser-bridge/browser_context.rs"
+      - path: "projects/jet/tests/build/bundler_monorepo.rs"
+      - path: "projects/jet/tests/test-runner/fixture_di_tests.rs"
+      - path: "projects/jet/tests/wasm/multi_handler_debug.rs"
+      - path: "projects/jet/tests/wasm/unicode_debug.rs"
+      - path: "projects/jet/tests/build/incremental_rebuild_bench.rs"
 ```
 
 ## Changes
@@ -2205,367 +2205,367 @@ tests:
 ```yaml
 coverage_kind: semantic
 changes:
-  - path: "projects/jet/tests/web_server_tests.rs"
+  - path: "projects/jet/tests/test-runner/web_server_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tsx_to_rust_boolean_literal_state.rs"
+  - path: "projects/jet/tests/wasm/tsx_to_rust_boolean_literal_state.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tsx_to_rust_controlled_input.rs"
+  - path: "projects/jet/tests/wasm/tsx_to_rust_controlled_input.rs"
     action: modify
     section: schema
     description: |
       Controlled input TSX lowering behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/jet_test_api_compat.rs"
+  - path: "projects/jet/tests/test-runner/jet_test_api_compat.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tsx_to_rust_effect_fetch.rs"
+  - path: "projects/jet/tests/wasm/tsx_to_rust_effect_fetch.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/list_render_debug.rs"
+  - path: "projects/jet/tests/wasm/list_render_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/nested_debug.rs"
+  - path: "projects/jet/tests/wasm/nested_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/big_list_debug.rs"
+  - path: "projects/jet/tests/wasm/big_list_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tsx_to_rust_counter.rs"
+  - path: "projects/jet/tests/wasm/tsx_to_rust_counter.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/react_dom_oracle_conformance.rs"
+  - path: "projects/jet/tests/wasm/react_dom_oracle_conformance.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/pm_report_acceptance.rs"
+  - path: "projects/jet/tests/browser-bridge/pm_report_acceptance.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/fixture_timeout_tests.rs"
+  - path: "projects/jet/tests/test-runner/fixture_timeout_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/parity_oracle_reexport.rs"
+  - path: "projects/jet/tests/wasm/parity_oracle_reexport.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/workspace_protocol.rs"
+  - path: "projects/jet/tests/pkg-mgmt/workspace_protocol.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/browser_cli_smoke.rs"
+  - path: "projects/jet/tests/browser-bridge/browser_cli_smoke.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/fixture_lifecycle_tests.rs"
+  - path: "projects/jet/tests/test-runner/fixture_lifecycle_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/usememo_debug.rs"
+  - path: "projects/jet/tests/wasm/usememo_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/storage_state_tests.rs"
+  - path: "projects/jet/tests/browser-bridge/storage_state_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/self_closing_debug.rs"
+  - path: "projects/jet/tests/wasm/self_closing_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/html_reporter_tests.rs"
+  - path: "projects/jet/tests/test-runner/html_reporter_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/page_api_parity.rs"
+  - path: "projects/jet/tests/browser-bridge/page_api_parity.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/trace_viewer.rs"
+  - path: "projects/jet/tests/browser-bridge/trace_viewer.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/items_list_debug.rs"
+  - path: "projects/jet/tests/wasm/items_list_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/nx_support.rs"
+  - path: "projects/jet/tests/task-runner/nx_support.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/locator_js_api.rs"
+  - path: "projects/jet/tests/browser-bridge/locator_js_api.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/trace_capture.rs"
+  - path: "projects/jet/tests/browser-bridge/trace_capture.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/large_int_debug.rs"
+  - path: "projects/jet/tests/wasm/large_int_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/jet_test_dogfood.rs"
+  - path: "projects/jet/tests/test-runner/jet_test_dogfood.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/matchers_state_value_a11y.rs"
+  - path: "projects/jet/tests/browser-bridge/matchers_state_value_a11y.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/classname_debug.rs"
+  - path: "projects/jet/tests/wasm/classname_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/to_have_screenshot_tests.rs"
+  - path: "projects/jet/tests/browser-bridge/to_have_screenshot_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/playwright_compat_tests.rs"
+  - path: "projects/jet/tests/browser-bridge/playwright_compat_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/test_runner_smoke.rs"
+  - path: "projects/jet/tests/test-runner/test_runner_smoke.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tree_shaking.rs"
+  - path: "projects/jet/tests/build/tree_shaking.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/string_state_debug.rs"
+  - path: "projects/jet/tests/wasm/string_state_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/wasm_dev_smoke.rs"
+  - path: "projects/jet/tests/wasm/wasm_dev_smoke.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/no_state_debug.rs"
+  - path: "projects/jet/tests/wasm/no_state_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/toggle_debug.rs"
+  - path: "projects/jet/tests/wasm/toggle_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/e2e_playwright_residue.rs"
+  - path: "projects/jet/tests/browser-bridge/e2e_playwright_residue.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tsx_to_rust_ast_probe.rs"
+  - path: "projects/jet/tests/wasm/tsx_to_rust_ast_probe.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/worker_pool_tests.rs"
+  - path: "projects/jet/tests/test-runner/worker_pool_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tsx_to_rust_imports.rs"
+  - path: "projects/jet/tests/wasm/tsx_to_rust_imports.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/auto_artifacts_tests.rs"
+  - path: "projects/jet/tests/browser-bridge/auto_artifacts_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/route_intercept_tests.rs"
+  - path: "projects/jet/tests/browser-bridge/route_intercept_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/text_snapshot_tests.rs"
+  - path: "projects/jet/tests/test-runner/text_snapshot_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tsx_to_rust_toggle.rs"
+  - path: "projects/jet/tests/wasm/tsx_to_rust_toggle.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/browser_install.rs"
+  - path: "projects/jet/tests/browser-bridge/browser_install.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/page_fixture_auto_inject.rs"
+  - path: "projects/jet/tests/browser-bridge/page_fixture_auto_inject.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/product_step_timeline.rs"
+  - path: "projects/jet/tests/browser-bridge/product_step_timeline.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/pm_report_static_smoke.rs"
+  - path: "projects/jet/tests/browser-bridge/pm_report_static_smoke.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/cue_artifact_studio_dogfood.rs"
+  - path: "projects/jet/tests/browser-bridge/cue_artifact_studio_dogfood.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/playwright_compat_shim_tests.rs"
+  - path: "projects/jet/tests/browser-bridge/playwright_compat_shim_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tsx_to_rust_i18n_probe.rs"
+  - path: "projects/jet/tests/wasm/tsx_to_rust_i18n_probe.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/tsx_to_rust_i18n_copy_constants.rs"
+  - path: "projects/jet/tests/wasm/tsx_to_rust_i18n_copy_constants.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/wasm_build_end_to_end.rs"
+  - path: "projects/jet/tests/wasm/wasm_build_end_to_end.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/browser_context.rs"
+  - path: "projects/jet/tests/browser-bridge/browser_context.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/bundler_monorepo.rs"
+  - path: "projects/jet/tests/build/bundler_monorepo.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/fixture_di_tests.rs"
+  - path: "projects/jet/tests/test-runner/fixture_di_tests.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/multi_handler_debug.rs"
+  - path: "projects/jet/tests/wasm/multi_handler_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/unicode_debug.rs"
+  - path: "projects/jet/tests/wasm/unicode_debug.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-  - path: "projects/jet/tests/incremental_rebuild_bench.rs"
+  - path: "projects/jet/tests/build/incremental_rebuild_bench.rs"
     action: modify
     section: schema
     description: |

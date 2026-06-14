@@ -487,7 +487,7 @@ changes:
       Add `jet-parity-oracle` as a dev-dependency so the jet test harness
       can call `jet_parity_oracle::run_fixture` from integration tests. No
       runtime dep.
-  - path: projects/jet/tests/parity_oracle_reexport.rs
+  - path: projects/jet/tests/wasm/parity_oracle_reexport.rs
     action: create
     section: unit-test
     impl_mode: hand-written

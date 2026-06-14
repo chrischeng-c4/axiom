@@ -7,6 +7,8 @@
 //! `transform_tsx` walker in `transform_tsx.rs`.
 
 use anyhow::Result;
+use regex::Regex;
+use std::sync::OnceLock;
 use tree_sitter::Node;
 
 use super::transform_tsx::transform_node;
@@ -19,6 +21,7 @@ use super::TransformOptions;
 /// - `export type { Foo }`
 /// - `export interface Foo { ... }`
 /// - `export type Foo = ...`
+/// - `export namespace Foo { ... }`
 /// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
 pub fn is_type_only_export(source: &str, node: &Node) -> bool {
     let text = &source[node.byte_range()];
@@ -56,12 +59,192 @@ pub fn is_type_only_export(source: &str, node: &Node) -> bool {
     // `export type Foo = ...` (type alias export)
     let mut cursor3 = node.walk();
     for child in node.children(&mut cursor3) {
-        if child.kind() == "type_alias_declaration" {
+        if child.kind() == "type_alias_declaration" || child.kind() == "internal_module" {
+            return true;
+        }
+    }
+
+    // TypeScript overload signatures are type-only declarations. The
+    // implementation appears as a later function_declaration.
+    let mut cursor4 = node.walk();
+    for child in node.children(&mut cursor4) {
+        if child.kind() == "function_signature" {
             return true;
         }
     }
 
     false
+}
+
+/// Drop named import specifiers that are no longer referenced after type
+/// stripping. Many ecosystem packages still write value-form imports for
+/// type-only names; TypeScript erases them, so Jet must do the same before the
+/// browser validates ESM export names.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-transform.md#schema
+pub fn strip_unused_named_imports(code: &str) -> String {
+    let import_ranges = collect_named_import_ranges(code);
+    if import_ranges.is_empty() {
+        return code.to_string();
+    }
+
+    let mut usage = String::with_capacity(code.len());
+    let mut cursor = 0usize;
+    for (start, end) in &import_ranges {
+        usage.push_str(&code[cursor..*start]);
+        cursor = *end;
+    }
+    usage.push_str(&code[cursor..]);
+
+    let mut result = String::with_capacity(code.len());
+    let mut cursor = 0usize;
+    for (start, end) in import_ranges {
+        result.push_str(&code[cursor..start]);
+        let statement = &code[start..end];
+        if let Some(rewritten) = rewrite_named_import(statement, &usage) {
+            result.push_str(&rewritten);
+        }
+        cursor = end;
+    }
+    result.push_str(&code[cursor..]);
+    result
+}
+
+fn collect_named_import_ranges(code: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut offset = 0usize;
+    let lines: Vec<&str> = code.split_inclusive('\n').collect();
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("import ") || !line.contains('{') {
+            offset += line.len();
+            i += 1;
+            continue;
+        }
+
+        let start = offset;
+        let mut end = offset + line.len();
+        let mut statement = line.to_string();
+        let mut j = i + 1;
+        while !statement.contains(" from ") && j < lines.len() {
+            statement.push_str(lines[j]);
+            end += lines[j].len();
+            j += 1;
+        }
+
+        if statement.contains(" from ") && statement.contains('}') {
+            ranges.push((start, end));
+        }
+
+        offset = end;
+        i = j;
+    }
+
+    ranges
+}
+
+fn rewrite_named_import(statement: &str, usage: &str) -> Option<String> {
+    static NAMED_IMPORT_RE: OnceLock<Regex> = OnceLock::new();
+    let re = NAMED_IMPORT_RE.get_or_init(|| {
+        Regex::new(
+            r#"(?s)^(\s*import\s+)(?:(?P<default>[A-Za-z_$][\w$]*)\s*,\s*)?\{(?P<named>.*?)\}\s+from\s+(?P<module>['"][^'"]+['"])\s*;?\s*(?P<newline>\r?\n?)$"#,
+        )
+        .expect("valid named import regex")
+    });
+    let Some(captures) = re.captures(statement) else {
+        return Some(statement.to_string());
+    };
+
+    let default_import = captures.name("default").map(|m| m.as_str());
+    let named = captures
+        .name("named")
+        .map(|m| m.as_str())
+        .unwrap_or_default();
+    let module = captures
+        .name("module")
+        .map(|m| m.as_str())
+        .unwrap_or_default();
+    let newline = captures
+        .name("newline")
+        .map(|m| m.as_str())
+        .unwrap_or_default();
+
+    let kept: Vec<String> = named
+        .split(',')
+        .filter_map(|raw| {
+            let spec = raw.trim();
+            if spec.is_empty() {
+                return None;
+            }
+            let spec = spec
+                .strip_prefix("type ")
+                .or_else(|| spec.strip_prefix("type\t"))
+                .unwrap_or(spec)
+                .trim();
+            if spec.is_empty() {
+                return None;
+            }
+            let local = import_specifier_local_name(spec)?;
+            if identifier_is_used(usage, local)
+                || (default_import.is_none() && !looks_like_type_import_name(local))
+            {
+                Some(spec.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    match (default_import, kept.is_empty()) {
+        (Some(default_name), true) => {
+            Some(format!("import {default_name} from {module};{newline}"))
+        }
+        (None, true) => None,
+        (Some(default_name), false) => Some(format!(
+            "import {default_name}, {{ {} }} from {module};{newline}",
+            kept.join(", ")
+        )),
+        (None, false) => Some(format!(
+            "import {{ {} }} from {module};{newline}",
+            kept.join(", ")
+        )),
+    }
+}
+
+fn import_specifier_local_name(spec: &str) -> Option<&str> {
+    if let Some((_, local)) = spec.rsplit_once(" as ") {
+        return Some(local.trim());
+    }
+    spec.split_whitespace().next().map(str::trim)
+}
+
+fn identifier_is_used(haystack: &str, ident: &str) -> bool {
+    if ident.is_empty() {
+        return false;
+    }
+    let mut start = 0usize;
+    while let Some(pos) = haystack[start..].find(ident) {
+        let absolute = start + pos;
+        let before = haystack[..absolute].chars().next_back();
+        let after = haystack[absolute + ident.len()..].chars().next();
+        if !is_identifier_part(before) && !is_identifier_part(after) {
+            return true;
+        }
+        start = absolute + ident.len();
+    }
+    false
+}
+
+fn looks_like_type_import_name(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_uppercase())
+}
+
+fn is_identifier_part(ch: Option<char>) -> bool {
+    ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
 }
 
 /// Check if an import_statement is type-only: `import type { ... } from '...'`

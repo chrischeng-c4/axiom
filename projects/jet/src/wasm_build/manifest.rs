@@ -65,7 +65,7 @@ pub struct Build {
 pub struct Source {
     pub entry: String,
     pub root_component: String,
-    /// `sha256:<hex>` of `jet.config.toml` so manifest diffs are
+    /// `sha256:<hex>` of `jet.toml` so manifest diffs are
     /// reproducible.
     pub jet_config_hash: String,
 }
@@ -204,7 +204,7 @@ mod tests {
     }
 
     fn write_cfg(dir: &Path, contents: &str) -> std::path::PathBuf {
-        let p = dir.join("jet.config.toml");
+        let p = dir.join("jet.toml");
         fs::write(&p, contents).unwrap();
         p
     }

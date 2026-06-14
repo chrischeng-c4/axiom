@@ -82,6 +82,7 @@ pub fn production_defines() -> std::collections::HashMap<String, String> {
         "process.env.NODE_ENV".to_string(),
         "\"production\"".to_string(),
     );
+    defines.insert("process.env".to_string(), "{}".to_string());
     defines.insert("__DEV__".to_string(), "false".to_string());
     defines
 }
@@ -174,6 +175,7 @@ mod tests {
     fn test_production_defaults() {
         let defs = production_defines();
         assert_eq!(defs.get("process.env.NODE_ENV").unwrap(), "\"production\"");
+        assert_eq!(defs.get("process.env").unwrap(), "{}");
         assert_eq!(defs.get("__DEV__").unwrap(), "false");
     }
 

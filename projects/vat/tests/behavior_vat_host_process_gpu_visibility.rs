@@ -11,6 +11,9 @@
 #[test]
 #[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
 fn vat_host_process_gpu_visibility() {
-    panic!("AW EC placeholder for vat-host-process-gpu-visibility");
+    panic!(
+        "AW EC placeholder for {}",
+        "vat-host-process-gpu-visibility"
+    );
 }
 // CODEGEN-END

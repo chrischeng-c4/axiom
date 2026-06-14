@@ -3,6 +3,7 @@
 use anyhow::Result;
 use tree_sitter::{Node, Parser};
 
+use super::type_strip::strip_unused_named_imports;
 use super::{TransformOptions, TransformResult};
 
 /// Transform TypeScript to JavaScript by removing type annotations
@@ -19,7 +20,7 @@ pub fn transform_typescript(source: &str, options: &TransformOptions) -> Result<
 
     let root = tree.root_node();
 
-    let transformed = remove_types(source, &root)?;
+    let transformed = strip_unused_named_imports(&remove_types(source, &root)?);
 
     Ok(TransformResult {
         code: transformed,
@@ -61,7 +62,9 @@ fn visit_node<'a>(
             | "type_parameters"
             | "type_predicate_annotation"
             | "interface_declaration"
-            | "type_alias_declaration" => {
+            | "type_alias_declaration"
+            | "function_signature"
+            | "internal_module" => {
                 if *last_pos < child.start_byte() {
                     result.push_str(&source[*last_pos..child.start_byte()]);
                 }
@@ -182,7 +185,10 @@ fn child_has_only_type(node: &Node) -> bool {
                 continue;
             }
             ";" | "comment" => continue,
-            "type_alias_declaration" | "interface_declaration" => {
+            "type_alias_declaration"
+            | "interface_declaration"
+            | "function_signature"
+            | "internal_module" => {
                 return true;
             }
             // `export type { ... } from '...'`
@@ -485,6 +491,82 @@ const user: User = { name: "Alice", age: 30 };
         assert!(
             result.code.contains("export function useState"),
             "got: {:?}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_export_function_overload_signature_stripped() {
+        let source = r#"export function withTheme<C>(Component: C): C;
+export function withTheme(Component) { return Component; }"#;
+        let options = TransformOptions::default();
+        let result = transform_typescript(source, &options).unwrap();
+
+        assert!(
+            !result.code.contains("withTheme<C>") && !result.code.contains("Component: C"),
+            "must strip overload-only type syntax: {}",
+            result.code
+        );
+        assert_eq!(
+            result.code.matches("export function withTheme").count(),
+            1,
+            "must preserve only the implementation export: {}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_exported_type_namespace_stripped() {
+        let source = r#"import { Interpolation } from '@emotion/serialize'
+import { Theme } from './theming'
+export namespace ReactJSX {
+  export type ElementType = string
+  export interface Element {}
+}
+export const value = 1"#;
+        let options = TransformOptions::default();
+        let result = transform_typescript(source, &options).unwrap();
+
+        assert!(
+            !result.code.contains("namespace")
+                && !result.code.contains("Interpolation")
+                && !result.code.contains("Theme"),
+            "must strip type-only namespace and imports: {}",
+            result.code
+        );
+        assert!(
+            result.code.contains("export const value = 1"),
+            "must preserve value export: {}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_named_type_only_imports_removed_after_strip() {
+        let source = r#"import createCache, { EmotionCache } from '@emotion/cache'
+import { Theme, ThemeContext } from './theming'
+const cache = createCache()
+export const value = ThemeContext"#;
+        let options = TransformOptions::default();
+        let result = transform_typescript(source, &options).unwrap();
+
+        assert!(
+            result
+                .code
+                .contains("import createCache from '@emotion/cache';"),
+            "must preserve default value import: {}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("import { ThemeContext } from './theming';"),
+            "must preserve used named value import: {}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("EmotionCache") && !result.code.contains("Theme,"),
+            "must remove unused type-only named imports: {}",
             result.code
         );
     }

@@ -1,6 +1,6 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
 // CODEGEN-BEGIN
-//! `[wasm]` section of `jet.config.toml`.
+//! `[wasm]` section of `jet.toml`.
 //!
 //! @spec `.aw/tech-design/projects/jet/config/jet-config-validation.md`
 //! @issue #1233 — Slice 2 (typed ConfigError + deny_unknown_fields +
@@ -54,10 +54,10 @@ impl Default for WasmRenderer {
 /// `schemars::JsonSchema` instead of hand-listing it.)
 const WASM_SECTION_KEYS: &[&str] = &["entry", "root_component", "renderer", "root_props"];
 
-/// Top-level keys we accept in `jet.config.toml`. The WASM loader
+/// Top-level keys we accept in `jet.toml`. The WASM loader
 /// only *consumes* `[wasm]`, but it also tolerates every section the
 /// non-WASM `JetConfig` (`task_runner::config`) recognises so that a
-/// single `jet.config.toml` can drive both the WASM and the non-WASM
+/// single `jet.toml` can drive both the WASM and the non-WASM
 /// pipelines (issue #1403 — Cue dogfood). Sections other than `wasm`
 /// are stored as raw `toml::Value` on `ConfigFile`; the WASM build
 /// neither re-validates them nor depends on the `JetConfig` schema.
@@ -68,7 +68,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
 ];
 
 /// Shared config sections accepted by the WASM loader as raw TOML so
-/// one `jet.config.toml` can serve both build modes. A legacy
+/// one `jet.toml` can serve both build modes. A legacy
 /// `renderer` knob inside these sections is different: it is stale
 /// renderer selection state and must fail loudly instead of being
 /// accepted-and-discarded.
@@ -177,7 +177,7 @@ impl std::fmt::Display for RootPropValue {
     }
 }
 
-/// In-memory shape of `jet.config.toml` as seen by the WASM loader.
+/// In-memory shape of `jet.toml` as seen by the WASM loader.
 /// `wasm` is the only field consumed downstream; the remaining
 /// sections mirror the non-WASM `JetConfig` schema (`pipeline`,
 /// `dev`, `alias`, `build`, `resolve`, `test`) and are accepted as
@@ -226,14 +226,14 @@ pub struct ConfigSpan {
     pub column: usize,
 }
 
-/// Typed errors for `jet.config.toml` validation. Caller wraps into
+/// Typed errors for `jet.toml` validation. Caller wraps into
 /// `anyhow::Error` for the legacy `WasmConfig::load` path; the
 /// upcoming `jet config lint` subcommand consumes the typed variants
 /// directly to format structured diagnostics.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("no jet.config.toml at {0}")]
+    #[error("no jet.toml at {0}")]
     NotFound(PathBuf),
 
     #[error("reading {path}: {source}")]
@@ -278,7 +278,7 @@ impl WasmConfig {
     /// `jet config lint` subcommand can pattern-match on variants
     /// and emit structured diagnostics.
     pub fn load_typed(project_root: &Path) -> Result<Self, ConfigError> {
-        let path = project_root.join("jet.config.toml");
+        let path = project_root.join("jet.toml");
         if !path.exists() {
             return Err(ConfigError::NotFound(path));
         }
@@ -628,7 +628,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn p() -> PathBuf {
-        PathBuf::from("/tmp/jet.config.toml")
+        PathBuf::from("/tmp/jet.toml")
     }
 
     #[test]
@@ -870,7 +870,7 @@ mod tests {
         // typed error round-tripped into anyhow with the same hint.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
-            dir.path().join("jet.config.toml"),
+            dir.path().join("jet.toml"),
             r#"
 [wasm]
 entry = "x"
@@ -936,7 +936,7 @@ old-component = "Root"
     #[test]
     fn deprecated_key_warning_display_includes_replacement_and_version() {
         let w = DeprecatedKeyWarning {
-            path: PathBuf::from("/x/jet.config.toml"),
+            path: PathBuf::from("/x/jet.toml"),
             key: "dev-port".into(),
             replacement: "dev.port".into(),
             removal_version: "0.4.0".into(),
@@ -1019,7 +1019,7 @@ root_component = "App"
 
     #[test]
     fn accepts_cue_dogfood_shape_with_dev_alias_build_sections() {
-        // Cue's 2026-05-08 jet.config.toml shape. Pre-#1403 this hit
+        // Cue's 2026-05-08 jet.toml shape. Pre-#1403 this hit
         // `unknown field 'dev'` and the build aborted. The WASM
         // loader now tolerates `[dev]`, `[dev.proxy]`, `[alias]`,
         // and `[build]` as raw sections without re-validating them.
@@ -1130,6 +1130,6 @@ impl WasmConfig {
 // the same wrapping prose as before.
 #[allow(dead_code)]
 fn _typecheck_context_compat(root: &Path) -> anyhow::Result<WasmConfig> {
-    WasmConfig::load(root).context("failed to read [wasm] from jet.config.toml")
+    WasmConfig::load(root).context("failed to read [wasm] from jet.toml")
 }
 // CODEGEN-END

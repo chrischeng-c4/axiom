@@ -182,7 +182,7 @@ changes:
     section: doc
     impl_mode: hand-written
     summary: Thread the renderer selector into generated wasm entrypoint code, scaffolded jet-wasm features, and jet-target.json cargo feature metadata.
-  - path: projects/jet/tests/wasm_build_end_to_end.rs
+  - path: projects/jet/tests/wasm/wasm_build_end_to_end.rs
     kind: update
     section: doc
     impl_mode: hand-written
@@ -227,7 +227,7 @@ changes:
       Slice #2191. Add lastTextGlyphCount to window.__jet_webgpu_status by
       reading RendererHandle.lastTextGlyphCount() via JS reflection on
       each repaint; falls back to 0 on older bridge builds.
-  - path: projects/jet/tests/wasm_build_end_to_end.rs
+  - path: projects/jet/tests/wasm/wasm_build_end_to_end.rs
     kind: update
     section: doc
     impl_mode: hand-written

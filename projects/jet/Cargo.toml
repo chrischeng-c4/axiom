@@ -40,6 +40,13 @@ tree-sitter = "0.25"
 tree-sitter-javascript = "0.25"
 tree-sitter-typescript = "0.23"
 
+# Native JS minifier candidate for production polish.
+oxc_allocator = "0.135.0"
+oxc_codegen = { version = "0.135.0", default-features = false }
+oxc_minifier = "0.135.0"
+oxc_parser = { version = "0.135.0", features = ["regular_expression"] }
+oxc_span = "0.135.0"
+
 # Regex for simple transformations
 regex = { workspace = true }
 
@@ -59,6 +66,7 @@ petgraph = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
+httpdate = "1"
 
 # WebSocket
 tokio-tungstenite = { workspace = true }
@@ -115,6 +123,221 @@ which = "7"
 # @spec parity-dom-reference-runner.md#Changes (jet/Cargo.toml modify)
 jet-parity-oracle = { path = "parity/oracle" }
 
+# Test targets are grouped by verification block under tests/<block>/;
+# target names are flat so `cargo test --test <name>` references in README/scripts keep working.
+
+# tests/pkg-mgmt/ — jet install/add/remove/update replaces npm/pnpm and beats them on speed
+[[test]]
+name = "pkg_replacement_gate"
+path = "tests/pkg-mgmt/pkg_replacement_gate.rs"
+[[test]]
+name = "workspace_protocol"
+path = "tests/pkg-mgmt/workspace_protocol.rs"
+
+# tests/browser-bridge/ — jet bb replaces Playwright (CLI + MCP; see tests/browser-bridge/README.md)
+[[test]]
+name = "auto_artifacts_tests"
+path = "tests/browser-bridge/auto_artifacts_tests.rs"
+[[test]]
+name = "bb_mcp_server"
+path = "tests/browser-bridge/bb_mcp_server.rs"
+[[test]]
+name = "bb_semantic_surface"
+path = "tests/browser-bridge/bb_semantic_surface.rs"
+[[test]]
+name = "browser_cli_smoke"
+path = "tests/browser-bridge/browser_cli_smoke.rs"
+[[test]]
+name = "browser_context"
+path = "tests/browser-bridge/browser_context.rs"
+[[test]]
+name = "browser_install"
+path = "tests/browser-bridge/browser_install.rs"
+[[test]]
+name = "cue_artifact_studio_dogfood"
+path = "tests/browser-bridge/cue_artifact_studio_dogfood.rs"
 [[test]]
 name = "e2e_playwright_residue"
-path = "tests/e2e_playwright_residue.rs"
+path = "tests/browser-bridge/e2e_playwright_residue.rs"
+[[test]]
+name = "locator_js_api"
+path = "tests/browser-bridge/locator_js_api.rs"
+[[test]]
+name = "matchers_state_value_a11y"
+path = "tests/browser-bridge/matchers_state_value_a11y.rs"
+[[test]]
+name = "page_api_parity"
+path = "tests/browser-bridge/page_api_parity.rs"
+[[test]]
+name = "page_fixture_auto_inject"
+path = "tests/browser-bridge/page_fixture_auto_inject.rs"
+[[test]]
+name = "playwright_compat_shim_tests"
+path = "tests/browser-bridge/playwright_compat_shim_tests.rs"
+[[test]]
+name = "playwright_compat_tests"
+path = "tests/browser-bridge/playwright_compat_tests.rs"
+[[test]]
+name = "pm_report_acceptance"
+path = "tests/browser-bridge/pm_report_acceptance.rs"
+[[test]]
+name = "pm_report_static_smoke"
+path = "tests/browser-bridge/pm_report_static_smoke.rs"
+[[test]]
+name = "product_step_timeline"
+path = "tests/browser-bridge/product_step_timeline.rs"
+[[test]]
+name = "route_intercept_tests"
+path = "tests/browser-bridge/route_intercept_tests.rs"
+[[test]]
+name = "storage_state_tests"
+path = "tests/browser-bridge/storage_state_tests.rs"
+[[test]]
+name = "to_have_screenshot_tests"
+path = "tests/browser-bridge/to_have_screenshot_tests.rs"
+[[test]]
+name = "trace_capture"
+path = "tests/browser-bridge/trace_capture.rs"
+[[test]]
+name = "trace_viewer"
+path = "tests/browser-bridge/trace_viewer.rs"
+
+# tests/build/ — jet build matches Vite/Webpack output correctness and bundle size, and beats them on speed
+[[test]]
+name = "build_parity_gate"
+path = "tests/build/build_parity_gate.rs"
+[[test]]
+name = "bundler_monorepo"
+path = "tests/build/bundler_monorepo.rs"
+[[test]]
+name = "incremental_rebuild_bench"
+path = "tests/build/incremental_rebuild_bench.rs"
+[[test]]
+name = "production_build_regression"
+path = "tests/build/production_build_regression.rs"
+[[test]]
+name = "tree_shaking"
+path = "tests/build/tree_shaking.rs"
+
+# tests/task-runner/ — jet task running replaces Nx/Turbo-style workspace task execution
+[[test]]
+name = "nx_support"
+path = "tests/task-runner/nx_support.rs"
+
+# tests/test-runner/ — jet test replaces Vitest/Jest with a Jet-owned TS test runtime
+[[test]]
+name = "fixture_di_tests"
+path = "tests/test-runner/fixture_di_tests.rs"
+[[test]]
+name = "fixture_lifecycle_tests"
+path = "tests/test-runner/fixture_lifecycle_tests.rs"
+[[test]]
+name = "fixture_timeout_tests"
+path = "tests/test-runner/fixture_timeout_tests.rs"
+[[test]]
+name = "html_reporter_tests"
+path = "tests/test-runner/html_reporter_tests.rs"
+[[test]]
+name = "jet_test_api_compat"
+path = "tests/test-runner/jet_test_api_compat.rs"
+[[test]]
+name = "jet_test_dogfood"
+path = "tests/test-runner/jet_test_dogfood.rs"
+[[test]]
+name = "test_runner_smoke"
+path = "tests/test-runner/test_runner_smoke.rs"
+[[test]]
+name = "text_snapshot_tests"
+path = "tests/test-runner/text_snapshot_tests.rs"
+[[test]]
+name = "web_server_tests"
+path = "tests/test-runner/web_server_tests.rs"
+[[test]]
+name = "worker_pool_tests"
+path = "tests/test-runner/worker_pool_tests.rs"
+
+# tests/wasm/ — FE-on-WASM runtime matches the FE-on-DOM oracle
+[[test]]
+name = "wasm_dom_parity_gate"
+path = "tests/wasm/wasm_dom_parity_gate.rs"
+[[test]]
+name = "big_list_debug"
+path = "tests/wasm/big_list_debug.rs"
+[[test]]
+name = "classname_debug"
+path = "tests/wasm/classname_debug.rs"
+[[test]]
+name = "items_list_debug"
+path = "tests/wasm/items_list_debug.rs"
+[[test]]
+name = "large_int_debug"
+path = "tests/wasm/large_int_debug.rs"
+[[test]]
+name = "list_render_debug"
+path = "tests/wasm/list_render_debug.rs"
+[[test]]
+name = "mui_visual_regression"
+path = "tests/wasm/mui_visual_regression.rs"
+[[test]]
+name = "multi_handler_debug"
+path = "tests/wasm/multi_handler_debug.rs"
+[[test]]
+name = "nested_debug"
+path = "tests/wasm/nested_debug.rs"
+[[test]]
+name = "no_state_debug"
+path = "tests/wasm/no_state_debug.rs"
+[[test]]
+name = "parity_oracle_reexport"
+path = "tests/wasm/parity_oracle_reexport.rs"
+[[test]]
+name = "react_dom_oracle_conformance"
+path = "tests/wasm/react_dom_oracle_conformance.rs"
+[[test]]
+name = "self_closing_debug"
+path = "tests/wasm/self_closing_debug.rs"
+[[test]]
+name = "string_state_debug"
+path = "tests/wasm/string_state_debug.rs"
+[[test]]
+name = "toggle_debug"
+path = "tests/wasm/toggle_debug.rs"
+[[test]]
+name = "tsx_to_rust_ast_probe"
+path = "tests/wasm/tsx_to_rust_ast_probe.rs"
+[[test]]
+name = "tsx_to_rust_boolean_literal_state"
+path = "tests/wasm/tsx_to_rust_boolean_literal_state.rs"
+[[test]]
+name = "tsx_to_rust_controlled_input"
+path = "tests/wasm/tsx_to_rust_controlled_input.rs"
+[[test]]
+name = "tsx_to_rust_counter"
+path = "tests/wasm/tsx_to_rust_counter.rs"
+[[test]]
+name = "tsx_to_rust_effect_fetch"
+path = "tests/wasm/tsx_to_rust_effect_fetch.rs"
+[[test]]
+name = "tsx_to_rust_i18n_copy_constants"
+path = "tests/wasm/tsx_to_rust_i18n_copy_constants.rs"
+[[test]]
+name = "tsx_to_rust_i18n_probe"
+path = "tests/wasm/tsx_to_rust_i18n_probe.rs"
+[[test]]
+name = "tsx_to_rust_imports"
+path = "tests/wasm/tsx_to_rust_imports.rs"
+[[test]]
+name = "tsx_to_rust_toggle"
+path = "tests/wasm/tsx_to_rust_toggle.rs"
+[[test]]
+name = "unicode_debug"
+path = "tests/wasm/unicode_debug.rs"
+[[test]]
+name = "usememo_debug"
+path = "tests/wasm/usememo_debug.rs"
+[[test]]
+name = "wasm_build_end_to_end"
+path = "tests/wasm/wasm_build_end_to_end.rs"
+[[test]]
+name = "wasm_dev_smoke"
+path = "tests/wasm/wasm_dev_smoke.rs"

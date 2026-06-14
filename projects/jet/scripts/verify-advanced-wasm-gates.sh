@@ -22,8 +22,11 @@ cargo test -p jet --test wasm_build_end_to_end webgpu_renderer_reports_runtime_s
 echo "[jet advanced wasm gate] Library WASM lowering fixtures"
 cargo test -p jet --test tsx_to_rust_imports -- --nocapture
 
-echo "[jet advanced wasm gate] MUI visual DOM/WASM parity"
+echo "[jet advanced wasm gate] MUI visual DOM/WASM parity via jet bb capture/screenshot"
 cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture
+
+echo "[jet advanced wasm gate] AntD visual DOM/WASM parity via jet bb capture/screenshot"
+cargo test -p jet --test mui_visual_regression antd_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture
 
 echo "[jet advanced wasm gate] DOM oracle parity skeleton"
 projects/jet/scripts/verify-parity-oracle-gate.sh

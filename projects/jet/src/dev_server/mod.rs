@@ -1113,6 +1113,31 @@ async fn serve_root_file(config: &ServerConfig, path: &str) -> Option<Response> 
         }
     }
 
+    if !file_path.exists() && path.starts_with("node_modules/") {
+        if let Some((pkg_name, subpath)) = split_node_modules_package_path(path) {
+            if let Some(pkg_dir) = find_node_modules_package_dir(&config.root_dir, &pkg_name) {
+                if let Some(candidate) = resolve_package_layout_fallback_file(&pkg_dir, &subpath) {
+                    file_path = candidate;
+                }
+            }
+        }
+    }
+
+    if !file_path.exists() {
+        if let Some(source) = virtual_node_module_fallback_source(path) {
+            return Some(
+                (
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "application/javascript; charset=utf-8",
+                    )],
+                    source,
+                )
+                    .into_response(),
+            );
+        }
+    }
+
     // Resolve extensionless imports: try .tsx, .ts, .jsx, .js, /index.tsx, /index.ts
     if path.contains("platform/node") {}
     let mut index_redirect = None;
@@ -1338,7 +1363,8 @@ async fn serve_root_file(config: &ServerConfig, path: &str) -> Option<Response> 
             }
         }
 
-        let resolved_source = rewrite_bare_specifiers(&resolved_source, &config.root_dir);
+        let resolved_source =
+            rewrite_bare_specifiers_for_path(&resolved_source, &config.root_dir, &file_path);
 
         let output = if is_cjs {
             let named = extract_named_reexports(&resolved_source);
@@ -1551,7 +1577,7 @@ async fn serve_root_file(config: &ServerConfig, path: &str) -> Option<Response> 
                 }
 
                 // Rewrite bare npm specifiers to URL paths the browser can resolve
-                let code = rewrite_bare_specifiers(&code, &config.root_dir);
+                let code = rewrite_bare_specifiers_for_path(&code, &config.root_dir, &file_path);
 
                 let mut final_code = String::with_capacity(hot_preamble.len() + code.len());
                 final_code.push_str(&hot_preamble);
@@ -2496,6 +2522,22 @@ fn generate_importmap(root_dir: &PathBuf) -> String {
 /// Specifiers starting with `/`, `./`, `../`, `http://`, or `https://` are
 /// skipped (already resolvable by the browser).
 fn rewrite_bare_specifiers(code: &str, root_dir: &std::path::Path) -> String {
+    rewrite_bare_specifiers_with_context(code, root_dir, None)
+}
+
+fn rewrite_bare_specifiers_for_path(
+    code: &str,
+    root_dir: &std::path::Path,
+    served_file_path: &std::path::Path,
+) -> String {
+    rewrite_bare_specifiers_with_context(code, root_dir, Some(served_file_path))
+}
+
+fn rewrite_bare_specifiers_with_context(
+    code: &str,
+    root_dir: &std::path::Path,
+    served_file_path: Option<&std::path::Path>,
+) -> String {
     // Match import/export from clauses with both single and double quotes.
     // We use two separate patterns to avoid backreferences (unsupported by regex crate).
     //
@@ -2518,7 +2560,14 @@ fn rewrite_bare_specifiers(code: &str, root_dir: &std::path::Path) -> String {
         .replace_all(code, |caps: &regex::Captures| {
             let prefix = &caps[1];
             let specifier = &caps[2];
-            rewrite_single_specifier(prefix, specifier, "'", &jet_dir, &node_modules)
+            rewrite_single_specifier(
+                prefix,
+                specifier,
+                "'",
+                &jet_dir,
+                &node_modules,
+                served_file_path,
+            )
         })
         .to_string();
 
@@ -2527,7 +2576,14 @@ fn rewrite_bare_specifiers(code: &str, root_dir: &std::path::Path) -> String {
         .replace_all(&code, |caps: &regex::Captures| {
             let prefix = &caps[1];
             let specifier = &caps[2];
-            rewrite_single_specifier(prefix, specifier, "\"", &jet_dir, &node_modules)
+            rewrite_single_specifier(
+                prefix,
+                specifier,
+                "\"",
+                &jet_dir,
+                &node_modules,
+                served_file_path,
+            )
         })
         .to_string()
 }
@@ -2539,7 +2595,12 @@ fn rewrite_single_specifier(
     quote: &str,
     jet_dir: &std::path::Path,
     node_modules: &std::path::Path,
+    served_file_path: Option<&std::path::Path>,
 ) -> String {
+    if let Some(relative_index) = rewrite_relative_index_specifier(specifier, served_file_path) {
+        return format!("{}{}{}{}", prefix, quote, relative_index, quote);
+    }
+
     // Skip non-bare specifiers (relative, absolute, URLs)
     if specifier.starts_with('/')
         || specifier.starts_with("./")
@@ -2578,6 +2639,28 @@ fn rewrite_single_specifier(
 
     // Fallback: leave unchanged (importmap or browser might handle it)
     format!("{}{}{}{}", prefix, quote, specifier, quote)
+}
+
+fn rewrite_relative_index_specifier(
+    specifier: &str,
+    served_file_path: Option<&std::path::Path>,
+) -> Option<String> {
+    let served_file_path = served_file_path?;
+    let base_dir = served_file_path.parent()?;
+    let (relative_prefix, index_base) = match specifier {
+        "." => ("./", base_dir.join("index")),
+        ".." => ("../", base_dir.parent()?.join("index")),
+        _ => return None,
+    };
+
+    for ext in ["js", "mjs", "cjs", "jsx", "ts", "tsx"] {
+        let candidate = index_base.with_extension(ext);
+        if candidate.exists() && candidate.is_file() {
+            return Some(format!("{relative_prefix}index.{ext}"));
+        }
+    }
+
+    None
 }
 
 /// Convert a bare specifier to the `.jet/` filename using the same convention
@@ -2682,7 +2765,11 @@ fn resolve_bare_specifier_to_url(
         {
             if let Some(resolved) = prebundle::resolve_exports_entry(target) {
                 let resolved = resolved.trim_start_matches("./");
-                return Some(format!("{}/{}", pkg_name, resolved));
+                if let Some(url) =
+                    resolve_existing_package_file(&pkg_name, &pkg_dir, &pkg_dir.join(resolved))
+                {
+                    return Some(url);
+                }
             }
         }
         if let Some((pattern, target)) =
@@ -2698,7 +2785,11 @@ fn resolve_bare_specifier_to_url(
         {
             if let Some(resolved) = prebundle::resolve_exports_entry(target) {
                 let resolved = resolved.trim_start_matches("./").replace('*', pattern);
-                return Some(format!("{}/{}", pkg_name, resolved));
+                if let Some(url) =
+                    resolve_existing_package_file(&pkg_name, &pkg_dir, &pkg_dir.join(resolved))
+                {
+                    return Some(url);
+                }
             }
         }
         let direct = pkg_dir.join(subpath);
@@ -2724,6 +2815,9 @@ fn resolve_bare_specifier_to_url(
         }
         if let Some(resolved) = resolve_subpath_via_module_entry(&pkg_name, &pkg_dir, &pkg, subpath)
         {
+            return Some(resolved);
+        }
+        if let Some(resolved) = resolve_package_layout_fallback_url(&pkg_name, &pkg_dir, subpath) {
             return Some(resolved);
         }
         // Direct file path: react/jsx-runtime → node_modules/react/jsx-runtime(.js)
@@ -2757,6 +2851,311 @@ fn resolve_bare_specifier_to_url(
         let entry = entry.trim_start_matches("./");
         Some(format!("{}/{}", pkg_name, entry))
     }
+}
+
+fn split_node_modules_package_path(path: &str) -> Option<(String, String)> {
+    let rel = path.strip_prefix("node_modules/")?;
+    if rel.starts_with('@') {
+        let parts: Vec<&str> = rel.splitn(3, '/').collect();
+        if parts.len() >= 3 {
+            Some((format!("{}/{}", parts[0], parts[1]), parts[2].to_string()))
+        } else {
+            None
+        }
+    } else {
+        let parts: Vec<&str> = rel.splitn(2, '/').collect();
+        if parts.len() == 2 {
+            Some((parts[0].to_string(), parts[1].to_string()))
+        } else {
+            None
+        }
+    }
+}
+
+fn find_node_modules_package_dir(root_dir: &std::path::Path, pkg_name: &str) -> Option<PathBuf> {
+    let local = root_dir.join("node_modules").join(pkg_name);
+    if local.exists() {
+        return Some(local);
+    }
+
+    let mut parent = root_dir.parent();
+    while let Some(dir) = parent {
+        let candidate = dir.join("node_modules").join(pkg_name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        if dir.join(".git").exists() || dir.join("pnpm-workspace.yaml").exists() {
+            break;
+        }
+        parent = dir.parent();
+    }
+
+    None
+}
+
+fn resolve_package_layout_fallback_url(
+    pkg_name: &str,
+    pkg_dir: &std::path::Path,
+    subpath: &str,
+) -> Option<String> {
+    let file = resolve_package_layout_fallback_file(pkg_dir, subpath)?;
+    package_file_url(pkg_name, pkg_dir, &file)
+}
+
+fn resolve_package_layout_fallback_file(
+    pkg_dir: &std::path::Path,
+    subpath: &str,
+) -> Option<PathBuf> {
+    let subpath_path = std::path::Path::new(subpath);
+    if subpath_path.is_absolute()
+        || subpath_path.components().any(|component| {
+            !matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    {
+        return None;
+    }
+
+    let mut candidates = Vec::new();
+
+    if let Some(stripped) = subpath.strip_prefix("esm/") {
+        let stripped_path = std::path::Path::new(stripped);
+        for flavor in ["modern", "node", "legacy"] {
+            candidates.push(pkg_dir.join(flavor).join(stripped_path));
+        }
+    }
+
+    for flavor in ["modern", "esm", "node", "legacy"] {
+        if !subpath.starts_with(&format!("{flavor}/")) {
+            candidates.push(pkg_dir.join(flavor).join(subpath_path));
+        }
+    }
+
+    let mut without_esm = PathBuf::new();
+    let mut removed_esm = false;
+    for component in subpath_path.components() {
+        let std::path::Component::Normal(part) = component else {
+            continue;
+        };
+        if !removed_esm && part == std::ffi::OsStr::new("esm") {
+            removed_esm = true;
+            continue;
+        }
+        without_esm.push(part);
+    }
+    if removed_esm && !without_esm.as_os_str().is_empty() {
+        candidates.push(pkg_dir.join(without_esm));
+    }
+
+    for candidate in candidates {
+        if let Some(file) = resolve_existing_abs_package_file(&candidate) {
+            return Some(file);
+        }
+    }
+    None
+}
+
+fn resolve_existing_abs_package_file(candidate: &std::path::Path) -> Option<PathBuf> {
+    if candidate.exists() && candidate.is_file() {
+        return Some(candidate.to_path_buf());
+    }
+    for ext in &["mjs", "js", "cjs"] {
+        let with_ext = candidate.with_extension(ext);
+        if with_ext.exists() && with_ext.is_file() {
+            return Some(with_ext);
+        }
+    }
+    for ext in &["js", "mjs"] {
+        let index = candidate.join(format!("index.{ext}"));
+        if index.exists() && index.is_file() {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn virtual_node_module_fallback_source(path: &str) -> Option<&'static str> {
+    babel_runtime_helper_fallback_source(path)
+        .or_else(|| emotion_use_insertion_effect_fallback_source(path))
+        .or_else(|| emotion_react_companion_fallback_source(path))
+}
+
+fn babel_runtime_helper_fallback_source(path: &str) -> Option<&'static str> {
+    let helper = path.strip_prefix("node_modules/@babel/runtime/helpers/")?;
+    let helper = helper.strip_prefix("esm/").unwrap_or(helper);
+
+    match helper {
+        "arrayWithoutHoles.js" => Some(
+            r#"export default function _arrayWithoutHoles(arr) {
+  if (Array.isArray(arr)) return Array.prototype.slice.call(arr);
+}
+"#,
+        ),
+        "arrayWithHoles.js" => Some(
+            r#"export default function _arrayWithHoles(arr) {
+  if (Array.isArray(arr)) return arr;
+}
+"#,
+        ),
+        "assertThisInitialized.js" => Some(
+            r#"export default function _assertThisInitialized(self) {
+  if (self === void 0) {
+    throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+  }
+  return self;
+}
+"#,
+        ),
+        "asyncToGenerator.js" => Some(
+            r#"function asyncGeneratorStep(gen, resolve, reject, next, throw_, key, arg) {
+  try {
+    var info = gen[key](arg);
+    var value = info.value;
+  } catch (error) {
+    reject(error);
+    return;
+  }
+  if (info.done) {
+    resolve(value);
+  } else {
+    Promise.resolve(value).then(next, throw_);
+  }
+}
+
+export default function _asyncToGenerator(fn) {
+  return function() {
+    var self = this;
+    var args = arguments;
+    return new Promise(function(resolve, reject) {
+      var gen = fn.apply(self, args);
+      function _next(value) {
+        asyncGeneratorStep(gen, resolve, reject, _next, _throw, "next", value);
+      }
+      function _throw(err) {
+        asyncGeneratorStep(gen, resolve, reject, _next, _throw, "throw", err);
+      }
+      _next(undefined);
+    });
+  };
+}
+"#,
+        ),
+        "callSuper.js" => Some(
+            r#"import getPrototypeOf from "./getPrototypeOf.js";
+import isNativeReflectConstruct from "./isNativeReflectConstruct.js";
+import possibleConstructorReturn from "./possibleConstructorReturn.js";
+
+export default function _callSuper(self, derived, args) {
+  derived = getPrototypeOf(derived);
+  return possibleConstructorReturn(
+    self,
+    isNativeReflectConstruct()
+      ? Reflect.construct(derived, args || [], getPrototypeOf(self).constructor)
+      : derived.apply(self, args)
+  );
+}
+"#,
+        ),
+        "createClass.js" => Some(
+            r#"function _defineProperties(target, props) {
+  for (var i = 0; i < props.length; i++) {
+    var descriptor = props[i];
+    descriptor.enumerable = descriptor.enumerable || false;
+    descriptor.configurable = true;
+    if ("value" in descriptor) descriptor.writable = true;
+    Object.defineProperty(target, descriptor.key, descriptor);
+  }
+}
+
+export default function _createClass(Constructor, protoProps, staticProps) {
+  if (protoProps) _defineProperties(Constructor.prototype, protoProps);
+  if (staticProps) _defineProperties(Constructor, staticProps);
+  Object.defineProperty(Constructor, "prototype", { writable: false });
+  return Constructor;
+}
+"#,
+        ),
+        "getPrototypeOf.js" => Some(
+            r#"export default function _getPrototypeOf(o) {
+  _getPrototypeOf = Object.setPrototypeOf
+    ? Object.getPrototypeOf.bind()
+    : function _getPrototypeOf(o) {
+        return o.__proto__ || Object.getPrototypeOf(o);
+      };
+  return _getPrototypeOf(o);
+}
+"#,
+        ),
+        "isNativeReflectConstruct.js" => Some(
+            r#"export default function _isNativeReflectConstruct() {
+  try {
+    var result = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function() {}));
+  } catch (_) {
+    return false;
+  }
+  return (_isNativeReflectConstruct = function() {
+    return !!result;
+  })();
+}
+"#,
+        ),
+        _ => None,
+    }
+}
+
+fn emotion_use_insertion_effect_fallback_source(path: &str) -> Option<&'static str> {
+    if path
+        != "node_modules/@emotion/use-insertion-effect-with-fallbacks/dist/emotion-use-insertion-effect-with-fallbacks.esm.js"
+    {
+        return None;
+    }
+
+    Some(
+        r#"import * as React from 'react';
+
+const syncFallback = function(create) {
+  return create();
+};
+
+const useInsertionEffect = React.useInsertionEffect || false;
+
+export const useInsertionEffectAlwaysWithSyncFallback = useInsertionEffect || syncFallback;
+export const useInsertionEffectWithLayoutFallback = useInsertionEffect || React.useLayoutEffect;
+export default {
+  useInsertionEffectAlwaysWithSyncFallback,
+  useInsertionEffectWithLayoutFallback,
+};
+"#,
+    )
+}
+
+fn emotion_react_companion_fallback_source(path: &str) -> Option<&'static str> {
+    if path.starts_with("node_modules/@emotion/react/dist/emotion-element-")
+        && path.ends_with(".esm.js")
+    {
+        return Some(
+            r#"export { hasOwn as h } from '/node_modules/@emotion/react/src/utils.ts';
+export { default as E, createEmotionProps as c } from '/node_modules/@emotion/react/src/emotion-element.tsx';
+export { withEmotionCache as w, CacheProvider as C, __unsafe_useEmotionCache as _ } from '/node_modules/@emotion/react/src/context.tsx';
+export { ThemeContext as T, ThemeProvider as a, useTheme as u, withTheme as b } from '/node_modules/@emotion/react/src/theming.tsx';
+export const i = false;
+"#,
+        );
+    }
+
+    if path
+        .starts_with("node_modules/@emotion/react/_isolated-hnrs/dist/emotion-react-_isolated-hnrs")
+        && path.ends_with(".esm.js")
+    {
+        return Some(
+            r#"export { default } from '/node_modules/@emotion/react/src/_isolated-hnrs.ts';
+"#,
+        );
+    }
+
+    None
 }
 
 fn resolve_subpath_via_module_entry(
@@ -3274,6 +3673,47 @@ exports.__esModule = true;
         );
     }
 
+    #[tokio::test]
+    async fn node_modules_js_rewrites_dot_index_imports() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let tab_nav_dir = root.join("node_modules/rc-tabs/es/TabNavList");
+        std::fs::create_dir_all(&tab_nav_dir).unwrap();
+        std::fs::write(
+            tab_nav_dir.join("Wrapper.js"),
+            "import TabNavList from '.';\nexport default TabNavList;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tab_nav_dir.join("index.js"),
+            "export default function TabNavList() {}\n",
+        )
+        .unwrap();
+
+        let config = ServerConfig {
+            root_dir: root.to_path_buf(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            entry: PathBuf::from("index.ts"),
+            public_dir: None,
+            proxy: HashMap::new(),
+            aliases: HashMap::new(),
+        };
+
+        let response = serve_root_file(&config, "node_modules/rc-tabs/es/TabNavList/Wrapper.js")
+            .await
+            .expect("node_modules JS response with dot index import");
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let output = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(
+            output.contains("from './index.js'"),
+            "dot index import must be browser-resolvable: {output}"
+        );
+    }
+
     #[test]
     fn resolve_bare_specifier_uses_subpath_directory_package_json_module() {
         let dir = tempfile::tempdir().unwrap();
@@ -3328,6 +3768,287 @@ exports.__esModule = true;
         let resolved = resolve_bare_specifier_to_url("@mui/system/createStyled", &node_modules);
 
         assert_eq!(resolved.as_deref(), Some("@mui/system/esm/createStyled.js"));
+    }
+
+    #[test]
+    fn resolve_bare_specifier_falls_back_when_export_target_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let node_modules = dir.path().join("node_modules");
+        let pkg_dir = node_modules.join("@babel/runtime");
+        std::fs::create_dir_all(pkg_dir.join("helpers")).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{
+  "name": "@babel/runtime",
+  "exports": {
+    "./helpers/esm/extends": "./helpers/esm/extends.js"
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pkg_dir.join("helpers/extends.js"),
+            "export default function _extends() {}",
+        )
+        .unwrap();
+
+        let resolved =
+            resolve_bare_specifier_to_url("@babel/runtime/helpers/esm/extends", &node_modules);
+
+        assert_eq!(
+            resolved.as_deref(),
+            Some("@babel/runtime/helpers/extends.js")
+        );
+    }
+
+    #[test]
+    fn resolve_bare_specifier_uses_modern_layout_for_mui_module_subpath() {
+        let dir = tempfile::tempdir().unwrap();
+        let node_modules = dir.path().join("node_modules");
+        let pkg_dir = node_modules.join("@mui/system");
+        std::fs::create_dir_all(pkg_dir.join("modern")).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"@mui/system","main":"./index.js","module":"./esm/index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pkg_dir.join("modern/colorManipulator.js"),
+            "export function alpha() {}",
+        )
+        .unwrap();
+
+        let resolved = resolve_bare_specifier_to_url("@mui/system/colorManipulator", &node_modules);
+
+        assert_eq!(
+            resolved.as_deref(),
+            Some("@mui/system/modern/colorManipulator.js")
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_root_file_uses_modern_layout_for_mui_relative_context_import() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let context_dir = root.join("node_modules/@mui/material/modern/ButtonGroup");
+        std::fs::create_dir_all(&context_dir).unwrap();
+        std::fs::write(
+            context_dir.join("ButtonGroupContext.js"),
+            "export const ButtonGroupContext = {};",
+        )
+        .unwrap();
+
+        let config = ServerConfig {
+            root_dir: root.to_path_buf(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            entry: PathBuf::from("index.ts"),
+            public_dir: None,
+            proxy: HashMap::new(),
+            aliases: HashMap::new(),
+        };
+
+        let response = serve_root_file(
+            &config,
+            "node_modules/@mui/material/ButtonGroup/ButtonGroupContext",
+        )
+        .await
+        .expect("MUI modern layout fallback response");
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let output = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(
+            output.contains("ButtonGroupContext"),
+            "modern layout file must be served: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_root_file_uses_modern_layout_for_mui_esm_subpath() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let system_dir = root.join("node_modules/@mui/system/modern");
+        std::fs::create_dir_all(&system_dir).unwrap();
+        std::fs::write(
+            system_dir.join("colorManipulator.js"),
+            "export function alpha() {}",
+        )
+        .unwrap();
+
+        let config = ServerConfig {
+            root_dir: root.to_path_buf(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            entry: PathBuf::from("index.ts"),
+            public_dir: None,
+            proxy: HashMap::new(),
+            aliases: HashMap::new(),
+        };
+
+        let response = serve_root_file(&config, "node_modules/@mui/system/esm/colorManipulator")
+            .await
+            .expect("MUI esm layout fallback response");
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let output = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(
+            output.contains("alpha"),
+            "modern esm layout file must be served: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_root_file_serves_babel_runtime_helper_virtual_fallbacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let config = ServerConfig {
+            root_dir: root.to_path_buf(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            entry: PathBuf::from("index.ts"),
+            public_dir: None,
+            proxy: HashMap::new(),
+            aliases: HashMap::new(),
+        };
+
+        for (path, expected) in [
+            (
+                "node_modules/@babel/runtime/helpers/esm/assertThisInitialized.js",
+                "export default function _assertThisInitialized",
+            ),
+            (
+                "node_modules/@babel/runtime/helpers/assertThisInitialized.js",
+                "export default function _assertThisInitialized",
+            ),
+            (
+                "node_modules/@babel/runtime/helpers/esm/arrayWithoutHoles.js",
+                "export default function _arrayWithoutHoles",
+            ),
+            (
+                "node_modules/@babel/runtime/helpers/esm/arrayWithHoles.js",
+                "export default function _arrayWithHoles",
+            ),
+            (
+                "node_modules/@babel/runtime/helpers/esm/asyncToGenerator.js",
+                "export default function _asyncToGenerator",
+            ),
+            (
+                "node_modules/@babel/runtime/helpers/esm/callSuper.js",
+                "export default function _callSuper",
+            ),
+            (
+                "node_modules/@babel/runtime/helpers/esm/createClass.js",
+                "export default function _createClass",
+            ),
+            (
+                "node_modules/@babel/runtime/helpers/esm/getPrototypeOf.js",
+                "export default function _getPrototypeOf",
+            ),
+            (
+                "node_modules/@babel/runtime/helpers/esm/isNativeReflectConstruct.js",
+                "export default function _isNativeReflectConstruct",
+            ),
+        ] {
+            let response = serve_root_file(&config, path)
+                .await
+                .expect("Babel runtime helper fallback response");
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            let output = String::from_utf8(body.to_vec()).unwrap();
+            assert!(
+                output.contains(expected),
+                "fallback must be an ESM default helper for {path}: {output}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_root_file_serves_emotion_use_insertion_effect_virtual_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let config = ServerConfig {
+            root_dir: root.to_path_buf(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            entry: PathBuf::from("index.ts"),
+            public_dir: None,
+            proxy: HashMap::new(),
+            aliases: HashMap::new(),
+        };
+
+        let response = serve_root_file(
+            &config,
+            "node_modules/@emotion/use-insertion-effect-with-fallbacks/dist/emotion-use-insertion-effect-with-fallbacks.esm.js",
+        )
+        .await
+        .expect("Emotion use-insertion-effect fallback response");
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let output = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(
+            output.contains("useInsertionEffectAlwaysWithSyncFallback"),
+            "fallback must export Emotion's always-sync hook helper: {output}"
+        );
+        assert!(
+            output.contains("useInsertionEffectWithLayoutFallback"),
+            "fallback must export Emotion's layout hook helper: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_root_file_serves_emotion_react_companion_virtual_fallbacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let config = ServerConfig {
+            root_dir: root.to_path_buf(),
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            entry: PathBuf::from("index.ts"),
+            public_dir: None,
+            proxy: HashMap::new(),
+            aliases: HashMap::new(),
+        };
+
+        let emotion_element = serve_root_file(
+            &config,
+            "node_modules/@emotion/react/dist/emotion-element-f0de968e.browser.esm.js",
+        )
+        .await
+        .expect("Emotion React emotion-element companion fallback response");
+        assert_eq!(emotion_element.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(emotion_element.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let output = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            output.contains("default as E") && output.contains("createEmotionProps as c"),
+            "emotion-element fallback must bridge bundle aliases to source TSX: {output}"
+        );
+
+        let isolated = serve_root_file(
+            &config,
+            "node_modules/@emotion/react/_isolated-hnrs/dist/emotion-react-_isolated-hnrs.browser.esm.js",
+        )
+        .await
+        .expect("Emotion React isolated-hnrs companion fallback response");
+        assert_eq!(isolated.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(isolated.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let output = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            output.contains("/node_modules/@emotion/react/src/_isolated-hnrs.ts"),
+            "isolated-hnrs fallback must bridge to the source helper: {output}"
+        );
     }
 
     /// T33: Line-Based Post-Filter Removed From serve_root_file

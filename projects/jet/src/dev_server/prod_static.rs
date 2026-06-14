@@ -5,17 +5,22 @@
 
 use anyhow::{Context, Result};
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::{Path as AxumPath, State},
-    http::{header, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
+use httpdate::{fmt_http_date, parse_http_date};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::{oneshot, Mutex};
+use walkdir::WalkDir;
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-dev-server.md#schema
 #[derive(Debug, Clone)]
@@ -27,8 +32,30 @@ pub struct ProdOptions {
 
 #[derive(Clone)]
 struct ProdState {
-    dist: Arc<PathBuf>,
+    manifest: Arc<StaticManifest>,
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+}
+
+#[derive(Debug, Clone)]
+struct StaticManifest {
+    assets: HashMap<String, StaticAsset>,
+    index: StaticAsset,
+    total_bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+struct StaticAsset {
+    bytes: Bytes,
+    content_type: &'static str,
+    cache_control: &'static str,
+    etag: String,
+    last_modified: Option<SystemTime>,
+}
+
+impl StaticAsset {
+    fn len(&self) -> u64 {
+        self.bytes.len() as u64
+    }
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-dev-server.md#schema
@@ -42,6 +69,7 @@ pub async fn serve(root_dir: &Path, opts: ProdOptions) -> Result<()> {
         );
     }
 
+    let manifest = load_static_manifest(&dist)?;
     let addr: SocketAddr = format!("{}:{}", opts.host, opts.port)
         .parse()
         .with_context(|| format!("invalid host:port {}:{}", opts.host, opts.port))?;
@@ -52,14 +80,16 @@ pub async fn serve(root_dir: &Path, opts: ProdOptions) -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let app = router(ProdState {
-        dist: Arc::new(dist.clone()),
+        manifest: Arc::new(manifest.clone()),
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
     });
 
     eprintln!(
-        "[jet serve --prod] serving {} at http://{}/",
+        "[jet serve --prod] serving {} at http://{}/ ({} files, {} bytes preloaded)",
         dist.display(),
-        bound
+        bound,
+        manifest.assets.len(),
+        manifest.total_bytes
     );
     println!(
         "jet-prod-server:listening {{\"port\":{},\"host\":\"{}\"}}",
@@ -87,32 +117,71 @@ pub async fn serve(root_dir: &Path, opts: ProdOptions) -> Result<()> {
 
 fn router(state: ProdState) -> Router {
     Router::new()
-        .route("/", get(handle_index))
+        .route("/", get(handle_index).head(handle_index_head))
+        .route("/__jet_health", get(handle_health).head(handle_health_head))
+        .route("/__jet_ready", get(handle_ready).head(handle_ready_head))
         .route("/__jet_shutdown", post(handle_shutdown))
-        .route("/{*path}", get(handle_static))
+        .route("/{*path}", get(handle_static).head(handle_static_head))
         .with_state(state)
 }
 
-async fn handle_index(State(state): State<ProdState>) -> Response {
-    serve_file_or_status(&state.dist.join("index.html"), StatusCode::OK).await
+async fn handle_index(headers: HeaderMap, State(state): State<ProdState>) -> Response {
+    asset_response(&state.manifest.index, &headers, true)
+}
+
+async fn handle_index_head(headers: HeaderMap, State(state): State<ProdState>) -> Response {
+    asset_response(&state.manifest.index, &headers, false)
 }
 
 async fn handle_static(
+    headers: HeaderMap,
     State(state): State<ProdState>,
     AxumPath(path): AxumPath<String>,
 ) -> Response {
-    let Some(rel) = sanitize_rel_path(&path) else {
+    static_response(&state.manifest, &path, &headers, true)
+}
+
+async fn handle_static_head(
+    headers: HeaderMap,
+    State(state): State<ProdState>,
+    AxumPath(path): AxumPath<String>,
+) -> Response {
+    static_response(&state.manifest, &path, &headers, false)
+}
+
+fn static_response(
+    manifest: &StaticManifest,
+    path: &str,
+    headers: &HeaderMap,
+    send_body: bool,
+) -> Response {
+    let Some(rel) = sanitize_rel_path(path) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let candidate = state.dist.join(&rel);
-    if candidate.is_file() {
-        return serve_file_or_status(&candidate, StatusCode::OK).await;
+    let key = rel_path_to_url_key(&rel);
+    if let Some(asset) = manifest.assets.get(&key) {
+        return asset_response(asset, headers, send_body);
     }
-
     if Path::new(&rel).extension().is_none() {
-        return serve_file_or_status(&state.dist.join("index.html"), StatusCode::OK).await;
+        return asset_response(&manifest.index, headers, send_body);
     }
-    StatusCode::NOT_FOUND.into_response()
+    text_response(StatusCode::NOT_FOUND, "not found\n", "no-store", send_body)
+}
+
+async fn handle_health() -> Response {
+    text_response(StatusCode::OK, "ok\n", "no-store", true)
+}
+
+async fn handle_health_head() -> Response {
+    text_response(StatusCode::OK, "ok\n", "no-store", false)
+}
+
+async fn handle_ready() -> Response {
+    text_response(StatusCode::OK, "ready\n", "no-store", true)
+}
+
+async fn handle_ready_head() -> Response {
+    text_response(StatusCode::OK, "ready\n", "no-store", false)
 }
 
 async fn handle_shutdown(State(state): State<ProdState>) -> Response {
@@ -131,25 +200,285 @@ async fn handle_shutdown(State(state): State<ProdState>) -> Response {
     }
 }
 
-async fn serve_file_or_status(path: &Path, missing_status: StatusCode) -> Response {
-    match tokio::fs::read(path).await {
-        Ok(bytes) => {
-            let mut response = Response::new(Body::from(bytes));
-            response.headers_mut().insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(content_type_for(path)),
+fn asset_response(asset: &StaticAsset, headers: &HeaderMap, send_body: bool) -> Response {
+    if request_etag_matches(headers, &asset.etag)
+        || request_not_modified_since(headers, asset.last_modified)
+    {
+        let mut response = Response::builder().status(StatusCode::NOT_MODIFIED);
+        apply_common_asset_headers(response.headers_mut().unwrap(), asset);
+        return response.body(Body::empty()).expect("valid 304 response");
+    }
+
+    match parse_range(headers, asset.len()) {
+        RangeSelection::Full => {
+            let mut response = Response::builder().status(StatusCode::OK);
+            apply_common_asset_headers(response.headers_mut().unwrap(), asset);
+            response.headers_mut().unwrap().insert(
+                header::CONTENT_LENGTH,
+                header_value(&asset.len().to_string()),
+            );
+            let body = if send_body {
+                Body::from(asset.bytes.clone())
+            } else {
+                Body::empty()
+            };
+            response.body(body).expect("valid static response")
+        }
+        RangeSelection::Partial { start, end } => {
+            let range_len = end - start + 1;
+            let mut response = Response::builder().status(StatusCode::PARTIAL_CONTENT);
+            apply_common_asset_headers(response.headers_mut().unwrap(), asset);
+            response.headers_mut().unwrap().insert(
+                header::CONTENT_RANGE,
+                header_value(&format!("bytes {start}-{end}/{}", asset.len())),
             );
             response
+                .headers_mut()
+                .unwrap()
+                .insert(header::CONTENT_LENGTH, header_value(&range_len.to_string()));
+            let body = if send_body {
+                Body::from(asset.bytes.slice(start as usize..(end as usize + 1)))
+            } else {
+                Body::empty()
+            };
+            response.body(body).expect("valid range response")
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => missing_status.into_response(),
-        Err(err) => Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .body(Body::from(format!(
-                "failed to read {}: {err}\n",
-                path.display()
-            )))
-            .expect("valid error response"),
+        RangeSelection::Unsatisfiable => {
+            let mut response = Response::builder().status(StatusCode::RANGE_NOT_SATISFIABLE);
+            apply_common_asset_headers(response.headers_mut().unwrap(), asset);
+            response.headers_mut().unwrap().insert(
+                header::CONTENT_RANGE,
+                header_value(&format!("bytes */{}", asset.len())),
+            );
+            response.body(Body::empty()).expect("valid 416 response")
+        }
     }
+}
+
+fn apply_common_asset_headers(headers: &mut HeaderMap, asset: &StaticAsset) {
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(asset.content_type),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(asset.cache_control),
+    );
+    headers.insert(header::ETAG, header_value(&asset.etag));
+    headers.insert(
+        header::HeaderName::from_static("accept-ranges"),
+        HeaderValue::from_static("bytes"),
+    );
+    headers.insert(
+        header::HeaderName::from_static("x-jet-prod-static"),
+        HeaderValue::from_static("memory-manifest"),
+    );
+    if let Some(last_modified) = asset.last_modified {
+        headers.insert(
+            header::LAST_MODIFIED,
+            header_value(&fmt_http_date(last_modified)),
+        );
+    }
+}
+
+fn text_response(
+    status: StatusCode,
+    body: &'static str,
+    cache_control: &'static str,
+    send_body: bool,
+) -> Response {
+    let mut response = Response::builder().status(status);
+    response.headers_mut().unwrap().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    response.headers_mut().unwrap().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control),
+    );
+    response.headers_mut().unwrap().insert(
+        header::CONTENT_LENGTH,
+        header_value(&body.len().to_string()),
+    );
+    response
+        .body(if send_body {
+            Body::from(body)
+        } else {
+            Body::empty()
+        })
+        .expect("valid text response")
+}
+
+fn request_etag_matches(headers: &HeaderMap, etag: &str) -> bool {
+    let Some(value) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    value
+        .split(',')
+        .map(str::trim)
+        .any(|candidate| candidate == "*" || candidate == etag)
+}
+
+fn request_not_modified_since(headers: &HeaderMap, last_modified: Option<SystemTime>) -> bool {
+    let Some(last_modified) = last_modified else {
+        return false;
+    };
+    let Some(value) = headers
+        .get(header::IF_MODIFIED_SINCE)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    let Ok(since) = parse_http_date(value) else {
+        return false;
+    };
+    last_modified <= since + Duration::from_secs(1)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RangeSelection {
+    Full,
+    Partial { start: u64, end: u64 },
+    Unsatisfiable,
+}
+
+fn parse_range(headers: &HeaderMap, len: u64) -> RangeSelection {
+    let Some(raw) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) else {
+        return RangeSelection::Full;
+    };
+    let Some(spec) = raw.strip_prefix("bytes=") else {
+        return RangeSelection::Full;
+    };
+    if spec.contains(',') || len == 0 {
+        return RangeSelection::Unsatisfiable;
+    }
+    let Some((start_raw, end_raw)) = spec.split_once('-') else {
+        return RangeSelection::Unsatisfiable;
+    };
+    if start_raw.is_empty() {
+        let Ok(suffix_len) = end_raw.parse::<u64>() else {
+            return RangeSelection::Unsatisfiable;
+        };
+        if suffix_len == 0 {
+            return RangeSelection::Unsatisfiable;
+        }
+        let start = len.saturating_sub(suffix_len);
+        return RangeSelection::Partial {
+            start,
+            end: len - 1,
+        };
+    }
+    let Ok(start) = start_raw.parse::<u64>() else {
+        return RangeSelection::Unsatisfiable;
+    };
+    if start >= len {
+        return RangeSelection::Unsatisfiable;
+    }
+    let end = if end_raw.is_empty() {
+        len - 1
+    } else {
+        let Ok(parsed) = end_raw.parse::<u64>() else {
+            return RangeSelection::Unsatisfiable;
+        };
+        parsed.min(len - 1)
+    };
+    if end < start {
+        return RangeSelection::Unsatisfiable;
+    }
+    RangeSelection::Partial { start, end }
+}
+
+fn load_static_manifest(dist: &Path) -> Result<StaticManifest> {
+    let mut assets = HashMap::new();
+    let mut total_bytes = 0u64;
+
+    for entry in WalkDir::new(dist).into_iter() {
+        let entry = entry.with_context(|| format!("walking {}", dist.display()))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(dist)
+            .with_context(|| format!("relativizing {} under {}", path.display(), dist.display()))?;
+        let key = rel_path_to_url_key(rel);
+        let metadata =
+            std::fs::metadata(path).with_context(|| format!("metadata {}", path.display()))?;
+        let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+        total_bytes += bytes.len() as u64;
+        let asset = StaticAsset {
+            content_type: content_type_for(path),
+            cache_control: cache_control_for(path),
+            etag: etag_for_bytes(&bytes),
+            last_modified: metadata.modified().ok(),
+            bytes: Bytes::from(bytes),
+        };
+        assets.insert(key, asset);
+    }
+
+    let Some(index) = assets.get("index.html").cloned() else {
+        anyhow::bail!(
+            "jet serve --prod expected {} to exist",
+            dist.join("index.html").display()
+        );
+    };
+
+    Ok(StaticManifest {
+        assets,
+        index,
+        total_bytes,
+    })
+}
+
+fn etag_for_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("\"{:x}\"", hasher.finalize())
+}
+
+fn header_value(value: &str) -> HeaderValue {
+    HeaderValue::from_str(value).expect("static header value must be valid")
+}
+
+fn rel_path_to_url_key(rel: &Path) -> String {
+    rel.components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn cache_control_for(path: &Path) -> &'static str {
+    if path.extension().and_then(|ext| ext.to_str()) == Some("html") {
+        return "no-cache";
+    }
+    if is_hashed_asset(path) {
+        return "public, max-age=31536000, immutable";
+    }
+    "no-cache"
+}
+
+fn is_hashed_asset(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let mut run = 0usize;
+    for byte in name.bytes() {
+        if byte.is_ascii_hexdigit() {
+            run += 1;
+            if run >= 8 {
+                return true;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    false
 }
 
 fn sanitize_rel_path(raw: &str) -> Option<PathBuf> {
@@ -193,6 +522,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
 
     #[test]
     fn sanitize_rejects_path_traversal() {
@@ -215,6 +545,116 @@ mod tests {
             "text/javascript; charset=utf-8"
         );
         assert_eq!(content_type_for(Path::new("app.wasm")), "application/wasm");
+    }
+
+    #[test]
+    fn cache_policy_marks_html_revalidate_and_hashed_assets_immutable() {
+        assert_eq!(cache_control_for(Path::new("index.html")), "no-cache");
+        assert_eq!(
+            cache_control_for(Path::new("assets/app.1234abcd.js")),
+            "public, max-age=31536000, immutable"
+        );
+        assert_eq!(cache_control_for(Path::new("brand.svg")), "no-cache");
+    }
+
+    #[test]
+    fn byte_range_parser_supports_prefix_open_and_suffix_ranges() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=1-3"));
+        assert_eq!(
+            parse_range(&headers, 6),
+            RangeSelection::Partial { start: 1, end: 3 }
+        );
+
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=4-"));
+        assert_eq!(
+            parse_range(&headers, 6),
+            RangeSelection::Partial { start: 4, end: 5 }
+        );
+
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=-2"));
+        assert_eq!(
+            parse_range(&headers, 6),
+            RangeSelection::Partial { start: 4, end: 5 }
+        );
+
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=9-12"));
+        assert_eq!(parse_range(&headers, 6), RangeSelection::Unsatisfiable);
+    }
+
+    #[tokio::test]
+    async fn asset_response_honors_range_headers() {
+        let asset = test_asset("assets/app.1234abcd.js", b"abcdef");
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=1-3"));
+
+        let response = asset_response(&asset, &headers, true);
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes 1-3/6"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::HeaderName::from_static("accept-ranges"))
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes"
+        );
+        let body = to_bytes(response.into_body(), 16).await.unwrap();
+        assert_eq!(&body[..], b"bcd");
+    }
+
+    #[tokio::test]
+    async fn asset_response_honors_if_none_match() {
+        let asset = test_asset("assets/app.1234abcd.js", b"abcdef");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_str(&asset.etag).unwrap(),
+        );
+
+        let response = asset_response(&asset, &headers, true);
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        let body = to_bytes(response.into_body(), 16).await.unwrap();
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn asset_response_head_mode_keeps_length_without_body() {
+        let asset = test_asset("assets/app.1234abcd.js", b"abcdef");
+        let headers = HeaderMap::new();
+
+        let response = asset_response(&asset, &headers, false);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "6"
+        );
+        let body = to_bytes(response.into_body(), 16).await.unwrap();
+        assert!(body.is_empty());
+    }
+
+    fn test_asset(path: &str, bytes: &'static [u8]) -> StaticAsset {
+        StaticAsset {
+            bytes: Bytes::from_static(bytes),
+            content_type: content_type_for(Path::new(path)),
+            cache_control: cache_control_for(Path::new(path)),
+            etag: etag_for_bytes(bytes),
+            last_modified: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(10)),
+        }
     }
 }
 // CODEGEN-END

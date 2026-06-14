@@ -5,7 +5,7 @@
 //! Combines alias entries from two sources (in priority order):
 //!
 //! 1. `tsconfig.json` → `compilerOptions.paths` (lower priority)
-//! 2. `jet.config.toml` → `alias` map (higher priority; overrides tsconfig)
+//! 2. `jet.toml` → `alias` map (higher priority; overrides tsconfig)
 //!
 //! The resulting entries are used to populate [`crate::resolver::ResolveOptions::alias`]
 //! so that both the JIT dev server and production build resolve `@/foo` → `./src/foo`
@@ -29,7 +29,7 @@ pub struct AliasResolver {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 impl AliasResolver {
     /// Build an `AliasResolver` by merging `tsconfig.json` paths and the
-    /// `jet.config.toml` alias map.
+    /// `jet.toml` alias map.
     ///
     /// `config_aliases` entries take precedence — any tsconfig path whose
     /// prefix matches a jet-config key is replaced.
@@ -41,7 +41,7 @@ impl AliasResolver {
             entries.extend(tsconfig_entries);
         }
 
-        // 2. Apply jet.config.toml aliases (overrides any tsconfig entry for the same prefix)
+        // 2. Apply jet.toml aliases (overrides any tsconfig entry for the same prefix)
         for (alias_key, target) in config_aliases {
             // Normalise: strip glob suffix ("@/*" → "@/")
             let prefix = alias_key.trim_end_matches('*').to_string();
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(resolver.to_resolve_aliases().len(), 2);
     }
 
-    /// REQ-JET-06: jet.config.toml alias takes precedence over tsconfig.json paths for the same prefix.
+    /// REQ-JET-06: jet.toml alias takes precedence over tsconfig.json paths for the same prefix.
     #[test]
     fn alias_config_overrides_tsconfig() {
         let dir = tempfile::tempdir().unwrap();

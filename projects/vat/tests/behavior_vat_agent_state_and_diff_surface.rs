@@ -11,6 +11,9 @@
 #[test]
 #[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
 fn vat_agent_state_and_diff_surface() {
-    panic!("AW EC placeholder for vat-agent-state-and-diff-surface");
+    panic!(
+        "AW EC placeholder for {}",
+        "vat-agent-state-and-diff-surface"
+    );
 }
 // CODEGEN-END

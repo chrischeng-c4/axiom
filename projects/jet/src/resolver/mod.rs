@@ -1,6 +1,7 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 // CODEGEN-BEGIN
 use anyhow::Result;
+use dashmap::DashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,12 @@ pub mod package;
 /// @spec .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 pub struct ModuleResolver {
     options: ResolveOptions,
+    /// (importer directory, specifier) -> resolution. Resolution is a pure
+    /// function of these two inputs for the lifetime of one build; without
+    /// the memo the antd corpus re-resolved `react` 481 times and
+    /// `@babel/runtime/*` 628 times, re-reading and re-parsing the same
+    /// package.json files (~85MB of JSON) serially — ~70% of build_graph.
+    resolution_cache: DashMap<(PathBuf, String), ResolvedModule>,
 }
 
 /// Module resolution options
@@ -41,7 +48,7 @@ pub struct ResolveOptions {
     /// insertion order and accepts the first key that is a member of this slice.
     ///
     /// Default: `["import", "browser", "default"]` (browser ESM dev mode).
-    /// Override via `jet.config.toml` `[resolve] conditions` for build mode.
+    /// Override via `jet.toml` `[resolve] conditions` for build mode.
     ///
     // @spec .aw/changes/enhancement-resolver-conditional-exports-import-require-browse/specs/enhancement-resolver-conditional-exports-import-require-browse-spec.md#R1
     // @spec .aw/changes/enhancement-resolver-conditional-exports-import-require-browse/specs/enhancement-resolver-conditional-exports-import-require-browse-spec.md#R4
@@ -66,7 +73,7 @@ pub struct ResolvedModule {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolveKind {
-    /// Relative import (./foo, ../bar)
+    /// Relative import (./foo, ../bar, ., ..)
     Relative,
 
     /// Absolute import (/foo/bar)
@@ -104,6 +111,34 @@ fn is_singleton_package(package_name: &str) -> bool {
     matches!(package_name, "react" | "react-dom")
 }
 
+/// The nearest enclosing package root for bare-specifier resolution:
+/// the path up to and including the last `node_modules/<pkg>` (or
+/// `node_modules/@scope/<pkg>`) segment, or the directory itself when the
+/// importer is project code outside node_modules.
+fn bare_specifier_cache_root(dir: &Path) -> PathBuf {
+    let components: Vec<&std::ffi::OsStr> = dir.iter().collect();
+    let mut last_nm: Option<usize> = None;
+    for (i, c) in components.iter().enumerate() {
+        if *c == "node_modules" {
+            last_nm = Some(i);
+        }
+    }
+    let Some(nm) = last_nm else {
+        return dir.to_path_buf();
+    };
+    let mut end = nm + 1;
+    if let Some(first) = components.get(end) {
+        if first.to_string_lossy().starts_with('@') {
+            end += 1;
+        }
+    }
+    end += 1;
+    if end > components.len() {
+        return dir.to_path_buf();
+    }
+    components[..end].iter().collect()
+}
+
 fn package_version(package_dir: &Path) -> Option<String> {
     package::read_package_json(&package_dir.join("package.json"))
         .ok()
@@ -114,13 +149,37 @@ fn package_version(package_dir: &Path) -> Option<String> {
 impl ModuleResolver {
     /// Create a new module resolver
     pub fn new(options: ResolveOptions) -> Result<Self> {
-        Ok(Self { options })
+        Ok(Self {
+            options,
+            resolution_cache: DashMap::new(),
+        })
     }
 
     /// Resolve a module specifier
     pub fn resolve(&self, specifier: &str, from: &Path) -> Result<ResolvedModule> {
         tracing::debug!("Resolving '{}' from {:?}", specifier, from);
 
+        // Only bare package specifiers are worth memoizing, and their
+        // resolution depends on the importer's nearest node_modules
+        // package root, not its exact directory — every file inside one
+        // package resolves `react` identically. Keying by importer dir
+        // gave 481 distinct keys for `react` alone on the antd corpus.
+        if specifier.starts_with('.') || specifier.starts_with('/') || self.is_alias(specifier) {
+            return self.resolve_uncached(specifier, from);
+        }
+        let cache_key = (
+            bare_specifier_cache_root(from.parent().unwrap_or(from)),
+            specifier.to_string(),
+        );
+        if let Some(hit) = self.resolution_cache.get(&cache_key) {
+            return Ok(hit.clone());
+        }
+        let resolved = self.resolve_uncached(specifier, from)?;
+        self.resolution_cache.insert(cache_key, resolved.clone());
+        Ok(resolved)
+    }
+
+    fn resolve_uncached(&self, specifier: &str, from: &Path) -> Result<ResolvedModule> {
         if self.is_external(specifier) {
             return Ok(ResolvedModule {
                 path: PathBuf::from(specifier),
@@ -246,6 +305,7 @@ impl ModuleResolver {
 
     fn resolve_package_dir(&self, package_dir: &Path, subpath: Option<&str>) -> Result<PathBuf> {
         let package_json = package_dir.join("package.json");
+        let is_root_entry = subpath.is_none() || subpath == Some(".");
 
         if package_json.exists() {
             let cond_refs: Vec<&str> = self.options.conditions.iter().map(|s| s.as_str()).collect();
@@ -255,10 +315,20 @@ impl ModuleResolver {
                 let resolved_path =
                     package_dir.join(export_path.trim_start_matches('.').trim_start_matches('/'));
                 if let Ok(resolved) = self.try_extensions(&resolved_path) {
-                    return Ok(resolved);
+                    return self.apply_browser_field(
+                        &package_json,
+                        package_dir,
+                        &resolved,
+                        is_root_entry,
+                    );
                 }
                 if resolved_path.exists() {
-                    return Ok(resolved_path);
+                    return self.apply_browser_field(
+                        &package_json,
+                        package_dir,
+                        &resolved_path,
+                        is_root_entry,
+                    );
                 }
             }
         }
@@ -267,7 +337,11 @@ impl ModuleResolver {
             let subpath_resolved =
                 package_dir.join(sub.trim_start_matches('.').trim_start_matches('/'));
             if let Ok(resolved) = self.try_extensions(&subpath_resolved) {
-                return Ok(resolved);
+                return if package_json.exists() {
+                    self.apply_browser_field(&package_json, package_dir, &resolved, false)
+                } else {
+                    Ok(resolved)
+                };
             }
         }
 
@@ -276,7 +350,12 @@ impl ModuleResolver {
                 if let Ok(main) = package::get_package_main(&package_json) {
                     let main_path = package_dir.join(main);
                     if let Ok(resolved) = self.try_extensions(&main_path) {
-                        return Ok(resolved);
+                        return self.apply_browser_field(
+                            &package_json,
+                            package_dir,
+                            &resolved,
+                            true,
+                        );
                     }
                 }
             }
@@ -294,6 +373,71 @@ impl ModuleResolver {
             package_dir,
             subpath
         )
+    }
+
+    fn apply_browser_field(
+        &self,
+        package_json: &Path,
+        package_dir: &Path,
+        resolved: &Path,
+        is_root_entry: bool,
+    ) -> Result<PathBuf> {
+        if !self
+            .options
+            .conditions
+            .iter()
+            .any(|condition| condition == "browser")
+        {
+            return Ok(resolved.to_path_buf());
+        }
+
+        let Ok(content) = std::fs::read_to_string(package_json) else {
+            return Ok(resolved.to_path_buf());
+        };
+        let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return Ok(resolved.to_path_buf());
+        };
+        let Some(browser) = pkg.get("browser") else {
+            return Ok(resolved.to_path_buf());
+        };
+
+        if is_root_entry {
+            if let Some(replacement) = browser.as_str() {
+                if let Some(path) = self.try_browser_replacement(package_dir, replacement) {
+                    return Ok(path);
+                }
+            }
+        }
+
+        let Some(map) = browser.as_object() else {
+            return Ok(resolved.to_path_buf());
+        };
+        let Ok(relative) = resolved.strip_prefix(package_dir) else {
+            return Ok(resolved.to_path_buf());
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let relative_with_dot = format!("./{relative}");
+
+        for key in [relative_with_dot.as_str(), relative.as_str()] {
+            let Some(value) = map.get(key) else {
+                continue;
+            };
+            if let Some(replacement) = value.as_str() {
+                if let Some(path) = self.try_browser_replacement(package_dir, replacement) {
+                    return Ok(path);
+                }
+            }
+        }
+
+        Ok(resolved.to_path_buf())
+    }
+
+    fn try_browser_replacement(&self, package_dir: &Path, replacement: &str) -> Option<PathBuf> {
+        let candidate =
+            package_dir.join(replacement.trim_start_matches('.').trim_start_matches('/'));
+        self.try_extensions(&candidate)
+            .ok()
+            .or_else(|| candidate.exists().then_some(candidate))
     }
 
     fn resolve_alias(&self, specifier: &str, _from: &Path) -> Result<PathBuf> {
@@ -370,6 +514,22 @@ impl Default for ResolveOptions {
     }
 }
 
+impl ResolveOptions {
+    /// Browser production builds should prefer package ESM/browser production
+    /// entries when package `exports` exposes bundler-oriented conditions.
+    pub fn for_browser_production() -> Self {
+        let mut options = Self::default();
+        options.conditions = vec![
+            "browser".to_string(),
+            "module".to_string(),
+            "import".to_string(),
+            "production".to_string(),
+            "default".to_string(),
+        ];
+        options
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,6 +544,163 @@ mod tests {
         assert_eq!(resolver.detect_kind(".."), ResolveKind::Relative);
         assert_eq!(resolver.detect_kind("/abs/path"), ResolveKind::Absolute);
         assert_eq!(resolver.detect_kind("react"), ResolveKind::Package);
+    }
+
+    #[test]
+    fn test_relative_dot_import_resolves_directory_index() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let style_dir = tmp
+            .path()
+            .join("node_modules")
+            .join("antd")
+            .join("es")
+            .join("tag")
+            .join("style");
+        std::fs::create_dir_all(&style_dir).unwrap();
+        let importer = style_dir.join("statusCmp.js");
+        let index = style_dir.join("index.js");
+        std::fs::write(&importer, "import './statusCmp.css';").unwrap();
+        std::fs::write(&index, "export {};").unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::default()).unwrap();
+        let resolved = resolver.resolve(".", &importer).unwrap();
+
+        assert_eq!(resolved.kind, ResolveKind::Relative);
+        assert_eq!(resolved.path, index);
+    }
+
+    #[test]
+    fn package_browser_map_replaces_module_entry_when_browser_condition_is_active() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let package_dir = tmp.path().join("node_modules").join("styled-components");
+        let dist_dir = package_dir.join("dist");
+        std::fs::create_dir_all(&dist_dir).unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            br#"{
+              "main": "dist/styled-components.cjs.js",
+              "module": "./dist/styled-components.esm.js",
+              "browser": {
+                "./dist/styled-components.cjs.js": "./dist/styled-components.browser.cjs.js",
+                "./dist/styled-components.esm.js": "./dist/styled-components.browser.esm.js"
+              }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dist_dir.join("styled-components.esm.js"),
+            "require('stream');",
+        )
+        .unwrap();
+        std::fs::write(
+            dist_dir.join("styled-components.browser.esm.js"),
+            "export default {};",
+        )
+        .unwrap();
+        let importer = tmp.path().join("src").join("main.tsx");
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        std::fs::write(&importer, "import styled from 'styled-components';").unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::default()).unwrap();
+        let resolved = resolver.resolve("styled-components", &importer).unwrap();
+
+        assert_eq!(
+            resolved.path,
+            dist_dir.join("styled-components.browser.esm.js")
+        );
+    }
+
+    #[test]
+    fn package_browser_map_is_skipped_without_browser_condition() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let package_dir = tmp.path().join("node_modules").join("pkg");
+        let dist_dir = package_dir.join("dist");
+        std::fs::create_dir_all(&dist_dir).unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            br#"{
+              "module": "./dist/pkg.esm.js",
+              "browser": {
+                "./dist/pkg.esm.js": "./dist/pkg.browser.esm.js"
+              }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(dist_dir.join("pkg.esm.js"), "export const target = 'node';").unwrap();
+        std::fs::write(
+            dist_dir.join("pkg.browser.esm.js"),
+            "export const target = 'browser';",
+        )
+        .unwrap();
+        let importer = tmp.path().join("src").join("main.tsx");
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        std::fs::write(&importer, "import 'pkg';").unwrap();
+
+        let mut options = ResolveOptions::default();
+        options.conditions = vec!["import".to_string(), "default".to_string()];
+        let resolver = ModuleResolver::new(options).unwrap();
+        let resolved = resolver.resolve("pkg", &importer).unwrap();
+
+        assert_eq!(resolved.path, dist_dir.join("pkg.esm.js"));
+    }
+
+    #[test]
+    fn browser_production_conditions_accept_module_export_condition() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let package_dir = tmp
+            .path()
+            .join("node_modules")
+            .join("@emotion")
+            .join("is-prop-valid");
+        let dist_dir = package_dir.join("dist");
+        std::fs::create_dir_all(&dist_dir).unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{
+              "name": "@emotion/is-prop-valid",
+              "exports": {
+                ".": {
+                  "types": {
+                    "import": "./dist/emotion-is-prop-valid.cjs.mjs",
+                    "default": "./dist/emotion-is-prop-valid.cjs.js"
+                  },
+                  "module": "./dist/emotion-is-prop-valid.esm.js",
+                  "import": "./dist/emotion-is-prop-valid.cjs.mjs",
+                  "default": "./dist/emotion-is-prop-valid.cjs.js"
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dist_dir.join("emotion-is-prop-valid.esm.js"),
+            "export const flavor = 'esm';",
+        )
+        .unwrap();
+        std::fs::write(
+            dist_dir.join("emotion-is-prop-valid.cjs.mjs"),
+            "export const flavor = 'cjs-mjs';",
+        )
+        .unwrap();
+        std::fs::write(
+            dist_dir.join("emotion-is-prop-valid.cjs.js"),
+            "exports.flavor = 'cjs';",
+        )
+        .unwrap();
+        let importer = tmp.path().join("src").join("main.tsx");
+        std::fs::create_dir_all(importer.parent().unwrap()).unwrap();
+        std::fs::write(
+            &importer,
+            "import isPropValid from '@emotion/is-prop-valid';",
+        )
+        .unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::for_browser_production()).unwrap();
+        let resolved = resolver
+            .resolve("@emotion/is-prop-valid", &importer)
+            .unwrap();
+
+        assert_eq!(resolved.path, dist_dir.join("emotion-is-prop-valid.esm.js"));
     }
 
     #[test]
