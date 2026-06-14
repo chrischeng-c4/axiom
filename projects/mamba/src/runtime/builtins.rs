@@ -4232,7 +4232,10 @@ pub fn mb_sorted(iterable: MbValue, reverse: MbValue) -> MbValue {
     {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str("object is not iterable".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "'{}' object is not iterable",
+                value_type_name(iterable)
+            ))),
         );
         return MbValue::none();
     }
