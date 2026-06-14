@@ -1,5 +1,11 @@
 ---
 id: projects-arena-src-compare-rs
+capability_refs:
+  - id: ratio-ratchet-gates
+    role: primary
+    claim: win-exempt-target-classification
+    coverage: partial
+    rationale: "This source unit implements arena peer/base ratio classification for ratchet gates."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,17 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/arena/src/compare.rs`, captured as a rust-source-unit (td_ast) item-tree
-during arena standardization onto the codegen ladder.
+Public API manifest for `projects/arena/src/compare.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Classification` | projects/arena/src/compare.rs | enum | pub | 10 |  |
+| `classify` | projects/arena/src/compare.rs | function | pub | 47 | classify(     gate: &str,     ratio: f64,     ratchet: f64,     baseline: Option<f64>,     floor: Option<f64>, ) -> Classification |
+| `is_target_red` | projects/arena/src/compare.rs | function | pub | 39 | is_target_red(&self) -> bool |
+| `is_win_breach` | projects/arena/src/compare.rs | function | pub | 34 | is_win_breach(&self) -> bool |
+| `label` | projects/arena/src/compare.rs | function | pub | 22 | label(&self) -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
