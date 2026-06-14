@@ -112,6 +112,22 @@ unsafe extern "C" fn dispatch_load(args_ptr: *const MbValue, nargs: usize) -> Mb
     let Some(arg) = args.first().copied() else {
         return MbValue::from_ptr(MbObject::new_dict());
     };
+    // tomllib.load reads bytes; a text file object (io.StringIO) is a TypeError
+    // in CPython — the source must be opened in binary mode.
+    if let Some(p) = arg.as_ptr() {
+        if let super::super::rc::ObjData::Instance { ref class_name, .. } = (*p).data {
+            if class_name == "StringIO" {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "File must be opened in binary mode, e.g. use `open('foo.toml', 'rb')`"
+                            .to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+        }
+    }
     if let Some(path) = as_string(arg) {
         match std::fs::read_to_string(&path) {
             Ok(src) => parse_toml_string(&src),

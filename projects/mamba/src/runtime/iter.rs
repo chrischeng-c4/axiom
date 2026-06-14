@@ -275,7 +275,7 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
     // Remove the iterator from storage to avoid borrowing issues.
     let iter = ITERATORS.with(|iters| iters.borrow_mut().remove(&id))?;
 
-    match iter.kind {
+    let result = match iter.kind {
         IterKind::Range { current, stop, step } => {
             // Compute the number of elements and build Vec in one allocation.
             let count = if step > 0 {
@@ -308,10 +308,14 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
                 unsafe {
                     if let ObjData::List(ref lock) = (*ptr).data {
                         let items = lock.read().unwrap();
-                        for &it in &items[iter.index..] {
+                        // The list may have shrunk below the iterator's cursor
+                        // after it was advanced (CPython then drains to empty);
+                        // clamp so the slice cannot panic on an out-of-range start.
+                        let start = iter.index.min(items.len());
+                        for &it in &items[start..] {
                             super::rc::retain_if_ptr(it);
                         }
-                        items[iter.index..].to_vec()
+                        items[start..].to_vec()
                     } else {
                         vec![]
                     }
@@ -326,10 +330,11 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             let out = if let Some(ptr) = val.as_ptr() {
                 unsafe {
                     if let ObjData::Tuple(ref items) = (*ptr).data {
-                        for &it in &items[iter.index..] {
+                        let start = iter.index.min(items.len());
+                        for &it in &items[start..] {
                             super::rc::retain_if_ptr(it);
                         }
-                        items[iter.index..].to_vec()
+                        items[start..].to_vec()
                     } else {
                         vec![]
                     }
@@ -342,14 +347,50 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
         }
         IterKind::Reversed { items, index } => {
             // Remaining items from the reversed iterator.
-            Some(items[index..].to_vec())
+            let start = index.min(items.len());
+            Some(items[start..].to_vec())
+        }
+        IterKind::DictKeys(ref keys) => {
+            // Dict-key iterators (dict / Counter / defaultdict views) drain to
+            // the original key values.
+            let start = iter.index.min(keys.len());
+            Some(keys[start..].iter().map(dict_key_to_mbvalue).collect())
+        }
+        IterKind::Str(ref chars) => {
+            let start = iter.index.min(chars.len());
+            Some(
+                chars[start..]
+                    .iter()
+                    .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
+                    .collect(),
+            )
         }
         _ => {
             // Put the iterator back for fallback protocol.
             ITERATORS.with(|iters| iters.borrow_mut().insert(id, iter));
             None
         }
+    };
+
+    // A CPython iterator re-iterates to empty once exhausted rather than
+    // raising on the (now stale) handle. The eagerly-drained kinds above
+    // consumed the registry entry; re-insert an exhausted empty placeholder
+    // under the same id so a second `list(it)` / `tuple(it)` yields `[]`
+    // instead of treating the bare int handle as a non-iterable. This matches
+    // the incremental `mb_next` path, which marks `exhausted` and keeps the
+    // entry. (The `_` fallback arm re-inserted the live iterator and returned
+    // None, so only re-place when we actually drained — `result.is_some()`.)
+    if result.is_some() {
+        ITERATORS.with(|iters| {
+            iters.borrow_mut().insert(id, MbIterator {
+                kind: IterKind::Str(Vec::new()),
+                index: 0,
+                exhausted: true,
+                peeked: None,
+            });
+        });
     }
+    result
 }
 
 // ── Iterator Creation ──
@@ -396,8 +437,46 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     super::rc::retain_if_ptr(obj);
                     IterKind::Tuple(obj)
                 }
-                ObjData::Str(s) => IterKind::Str(s.chars().collect()),
-                ObjData::Dict(ref lock) => IterKind::DictKeys(lock.read().unwrap().keys().cloned().collect()),
+                ObjData::Str(s) => {
+                    // Class-body enum classes iterate canonical members in
+                    // definition order (`for c in Color`), not the class-name
+                    // string's characters. Gated: one flag read for programs
+                    // without enums.
+                    if let Some(members) =
+                        super::stdlib::enum_class::class_canonical_members(s)
+                    {
+                        IterKind::List(MbValue::from_ptr(
+                            MbObject::new_list_borrowed(members),
+                        ))
+                    } else {
+                        IterKind::Str(s.chars().collect())
+                    }
+                }
+                ObjData::Dict(ref lock) => {
+                    // ET.Element stub dicts iterate their children, not keys.
+                    if let Some(children) =
+                        super::stdlib::xml_mod::element_stub_children(obj)
+                    {
+                        if let Some(cp) = children.as_ptr() {
+                            if let ObjData::List(ref clock) = (*cp).data {
+                                let items = clock.read().unwrap().to_vec();
+                                IterKind::List(MbValue::from_ptr(
+                                    MbObject::new_list_borrowed(items),
+                                ))
+                            } else {
+                                IterKind::DictKeys(
+                                    lock.read().unwrap().keys().cloned().collect(),
+                                )
+                            }
+                        } else {
+                            IterKind::DictKeys(
+                                lock.read().unwrap().keys().cloned().collect(),
+                            )
+                        }
+                    } else {
+                        IterKind::DictKeys(lock.read().unwrap().keys().cloned().collect())
+                    }
+                }
                 ObjData::Set(ref lock) => {
                     let items = lock.read().unwrap();
                     IterKind::List(
@@ -405,6 +484,13 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     )
                 }
                 ObjData::Instance { ref class_name, ref fields } => {
+                    // tempfile NamedTemporaryFile / SpooledTemporaryFile
+                    // iterate their remaining lines, like a real file object.
+                    if let Some(lines) =
+                        super::stdlib::tempfile_mod::tempfile_iter_lines(obj)
+                    {
+                        IterKind::List(lines)
+                    } else
                     // namedtuple instances iterate over declared field values
                     // in order, matching CPython tuple-iter semantics. Built
                     // from a fresh tuple so the values stay alive via the
@@ -414,6 +500,29 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     {
                         let t = MbValue::from_ptr(MbObject::new_tuple(vals));
                         IterKind::Tuple(t)
+                    } else
+                    // Functional-API enum class objects (`enum.Enum('M', 'a b')`)
+                    // iterate their members in definition order (`for m in M`).
+                    if let Some(items) =
+                        super::stdlib::enum_mod::functional_enum_members(obj)
+                    {
+                        IterKind::List(MbValue::from_ptr(
+                            MbObject::new_list_borrowed(items),
+                        ))
+                    } else
+                    // UserDict / UserList / UserString iterate their payload
+                    // (dict keys / list items / characters).
+                    if let Some((_, data)) =
+                        super::stdlib::collections_mod::user_wrapper_data(obj)
+                    {
+                        return mb_iter(data);
+                    } else
+                    // memoryview iterates its underlying buffer's byte values —
+                    // delegate to the bytes/bytearray iterator.
+                    if class_name == "memoryview" {
+                        let buf = fields.read().unwrap().get("_buffer").copied()
+                            .unwrap_or(MbValue::none());
+                        return mb_iter(buf);
                     } else
                     // Dict-like collections classes: iterate over backing _data dict keys.
                     if class_name == "collections.defaultdict"
@@ -760,6 +869,29 @@ pub fn mb_count_iter(start: MbValue, step: MbValue) -> MbValue {
 
 /// Create a lazy `itertools.repeat(value[, times])` iterator handle.
 /// `times` of `None` (not an int) yields the infinite form.
+/// CPython-style repr for named itertools iterator handles. Returns None for
+/// any handle that is not a recognized named iterator (callers fall back to
+/// the default int formatting). Currently covers `repeat`.
+pub fn mb_iter_repr(handle: MbValue) -> Option<(String)> {
+    let id = handle.as_int()? as u64;
+    let repeat = ITERATORS.with(|iters| {
+        let iters = iters.borrow();
+        match iters.get(&id).map(|it| &it.kind) {
+            Some(IterKind::Repeat { val, remaining }) => Some((*val, *remaining)),
+            _ => None,
+        }
+    })?;
+    let (val, remaining) = repeat;
+    let vr = super::builtins::mb_repr(val);
+    let vr_s = vr.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+    }).unwrap_or_default();
+    Some(match remaining {
+        Some(n) => format!("repeat({vr_s}, {n})"),
+        None => format!("repeat({vr_s})"),
+    })
+}
+
 pub fn mb_repeat_iter(val: MbValue, times: MbValue) -> MbValue {
     let remaining = times.as_int().map(|n| n.max(0) as usize);
     unsafe { super::rc::retain_if_ptr(val); }
@@ -895,6 +1027,28 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
                 ObjData::Bytes(ref data) => data.iter().rev()
                     .map(|&b| MbValue::from_int(b as i64))
                     .collect(),
+                // reversed(dict) yields keys in reverse insertion order (3.8+).
+                ObjData::Dict(ref lock) => lock.read().unwrap().keys().rev()
+                    .map(|k| super::dict_ops::dict_key_to_mbvalue(k))
+                    .collect(),
+                ObjData::Instance { ref class_name, .. } => {
+                    // User __reversed__ dunder returns its own iterator;
+                    // without one, reversed(obj) is a TypeError, not None.
+                    let cls = class_name.clone();
+                    let m = super::class::lookup_method(&cls, "__reversed__");
+                    if !m.is_none() {
+                        let method = MbValue::from_ptr(MbObject::new_str("__reversed__".to_string()));
+                        let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                        return super::class::mb_call_method(seq, method, args);
+                    }
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{cls}' object is not reversible"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
                 _ => return MbValue::none(),
             };
             let iter = MbIterator {
@@ -2040,7 +2194,27 @@ fn advance_userdefined_if_applicable(id: u64) -> Option<MbValue> {
     let result = class::mb_call_method1(next_method, iter_obj);
 
     // Check StopIteration — set either by mb_stop_iteration() or signal_stop_iteration().
-    if check_stop_iteration() || result.is_none() {
+    let stopped = check_stop_iteration();
+    // A non-StopIteration exception raised inside __next__ (e.g. RuntimeError)
+    // is a real error: CPython propagates it out of the drive loop rather than
+    // treating it as end-of-iteration. Mark exhausted so the loop stops, but
+    // PRESERVE the pending exception so the caller (for-loop, list(),
+    // extract_list, zip_longest, ...) propagates it instead of silently
+    // truncating. Only StopIteration / a bare None result is normal exhaustion.
+    let real_exc = !stopped
+        && super::exception::current_exception_type()
+            .map(|t| t != "StopIteration")
+            .unwrap_or(false);
+    if real_exc {
+        ITERATORS.with(|iters| {
+            if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                iter.exhausted = true;
+            }
+        });
+        unsafe { super::rc::release_if_ptr(iter_obj); }
+        return Some(MbValue::none());
+    }
+    if stopped || result.is_none() {
         // Iterator exhausted — release our retained reference to iter_obj.
         // Also clear the pending exception slot: `raise StopIteration`
         // inside user __next__ sets BOTH the iterator flag and

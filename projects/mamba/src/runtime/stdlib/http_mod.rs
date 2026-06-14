@@ -59,20 +59,92 @@ unsafe extern "C" fn dispatch_unquote_plus(args_ptr: *const MbValue, nargs: usiz
 
 unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_urlencode_full(
-        a.get(0).copied().unwrap_or_else(MbValue::none),
-        a.get(1).copied().unwrap_or_else(MbValue::none),
+    // Trailing kwargs dict carries safe= / quote_via= / doseq=. The params
+    // mapping itself is usually a dict too, so only a SECOND dict (the last
+    // argument) is the kwargs dict.
+    let kwargs = if a.len() >= 2 {
+        a.last().copied().filter(|v| {
+            v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+        })
+    } else {
+        None
+    };
+    let mut doseq = a.get(1).copied()
+        .filter(|v| v.as_bool().is_some())
+        .unwrap_or_else(MbValue::none);
+    let mut safe = String::new();
+    let mut quote_via = MbValue::none();
+    if let Some(kw) = kwargs {
+        let get = |name: &str| -> Option<MbValue> {
+            let sentinel = MbValue::from_bits(u64::MAX);
+            let v = super::super::dict_ops::mb_dict_get(
+                kw,
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+                sentinel,
+            );
+            if v.to_bits() == u64::MAX { None } else { Some(v) }
+        };
+        if let Some(v) = get("doseq") {
+            doseq = v;
+        }
+        if let Some(v) = get("safe").and_then(extract_str) {
+            safe = v;
+        }
+        if let Some(v) = get("quote_via") {
+            quote_via = v;
+        }
+    }
+    mb_urllib_urlencode_with(
+        a.first().copied().unwrap_or_else(MbValue::none),
+        doseq,
+        &safe,
+        quote_via,
     )
+}
+
+/// str url + bytes scheme (or vice versa) is a CPython TypeError.
+fn mixed_str_bytes(a: MbValue, b: MbValue) -> bool {
+    let a_bytes = input_is_bytes(a);
+    let b_bytes = input_is_bytes(b);
+    let a_str = extract_str(a).is_some();
+    let b_str = extract_str(b).is_some();
+    (a_bytes && b_str) || (a_str && b_bytes)
 }
 
 unsafe extern "C" fn dispatch_urlparse(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_urlparse(a.get(0).copied().unwrap_or_else(MbValue::none))
+    let url = a.first().copied().unwrap_or_else(MbValue::none);
+    if let Some(scheme) = a.get(1).copied() {
+        if mixed_str_bytes(url, scheme) {
+            return raise_type_error("Cannot mix str and non-str arguments");
+        }
+    }
+    mb_urllib_urlparse(url)
 }
 
 unsafe extern "C" fn dispatch_urlunparse(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_urlunparse(a.get(0).copied().unwrap_or_else(MbValue::none))
+    let parts = a.get(0).copied().unwrap_or_else(MbValue::none);
+    // Mixed str/bytes components are a CPython TypeError.
+    if let Some(ptr) = parts.as_ptr() {
+        let items: Option<Vec<MbValue>> = unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(t) => Some(t.clone()),
+                ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
+                _ => None,
+            }
+        };
+        if let Some(items) = items {
+            let any_bytes = items.iter().any(|v| input_is_bytes(*v));
+            let any_str = items.iter().any(|v| {
+                extract_str(*v).map(|s| !s.is_empty()).unwrap_or(false)
+            });
+            if any_bytes && any_str {
+                return raise_type_error("Cannot mix str and non-str arguments");
+            }
+        }
+    }
+    mb_urllib_urlunparse(parts)
 }
 
 unsafe extern "C" fn dispatch_urljoin(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -83,14 +155,76 @@ unsafe extern "C" fn dispatch_urljoin(args_ptr: *const MbValue, nargs: usize) ->
     )
 }
 
+/// Pull (keep_blank_values, encoding, errors) from the positional tail and
+/// the trailing kwargs dict.
+fn qs_options(a: &[MbValue]) -> QsOptions {
+    let mut opts = QsOptions::default();
+    let kwargs = a.iter().copied().find(|v| {
+        v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+    });
+    // Second positional (after the kwargs dict is excluded) is
+    // keep_blank_values.
+    if let Some(v) = a.get(1).copied() {
+        if let Some(b) = v.as_bool() {
+            opts.keep_blank = b;
+        }
+    }
+    if let Some(kw) = kwargs {
+        let get = |name: &str| -> Option<MbValue> {
+            let sentinel = MbValue::from_bits(u64::MAX);
+            let v = super::super::dict_ops::mb_dict_get(
+                kw,
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+                sentinel,
+            );
+            if v.to_bits() == u64::MAX { None } else { Some(v) }
+        };
+        if let Some(v) = get("keep_blank_values") {
+            opts.keep_blank = super::super::builtins::mb_bool(v).as_bool() == Some(true);
+        }
+        if let Some(v) = get("strict_parsing") {
+            opts.strict_parsing = super::super::builtins::mb_bool(v).as_bool() == Some(true);
+        }
+        if let Some(v) = get("encoding").and_then(extract_str) {
+            opts.encoding = v;
+        }
+        if let Some(v) = get("errors").and_then(extract_str) {
+            opts.errors = v;
+        }
+        if let Some(v) = get("separator") {
+            // A non-str separator (or empty) is rejected in parse_qsl_core.
+            opts.separator = extract_str(v).unwrap_or_default();
+        }
+        if let Some(v) = get("max_num_fields") {
+            if let Some(n) = v.as_int() {
+                opts.max_num_fields = Some(n);
+            }
+        }
+    }
+    opts
+}
+
 unsafe extern "C" fn dispatch_parse_qs(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_parse_qs(a.get(0).copied().unwrap_or_else(MbValue::none))
+    let opts = qs_options(a);
+    mb_urllib_parse_qs_opts(a.get(0).copied().unwrap_or_else(MbValue::none), &opts)
 }
 
 unsafe extern "C" fn dispatch_parse_qsl(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_parse_qsl(a.get(0).copied().unwrap_or_else(MbValue::none))
+    let opts = qs_options(a);
+    mb_urllib_parse_qsl_opts(a.get(0).copied().unwrap_or_else(MbValue::none), &opts)
+}
+
+unsafe extern "C" fn dispatch_urlsplit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let url = a.first().copied().unwrap_or_else(MbValue::none);
+    if let Some(scheme) = a.get(1).copied() {
+        if mixed_str_bytes(url, scheme) {
+            return raise_type_error("Cannot mix str and non-str arguments");
+        }
+    }
+    mb_urllib_urlsplit(url)
 }
 
 unsafe extern "C" fn dispatch_urlopen(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -157,7 +291,7 @@ pub fn register() {
         ("urlencode", dispatch_urlencode as *const () as usize),
         ("urlparse", dispatch_urlparse as *const () as usize),
         ("urlunparse", dispatch_urlunparse as *const () as usize),
-        ("urlsplit", dispatch_urlparse as *const () as usize),
+        ("urlsplit", dispatch_urlsplit as *const () as usize),
         ("urlunsplit", dispatch_urlunparse as *const () as usize),
         ("urljoin", dispatch_urljoin as *const () as usize),
         ("urldefrag", dispatch_urldefrag as *const () as usize),
@@ -251,6 +385,14 @@ pub fn register() {
         )),
     );
 
+        // Result types behave as 6-/5-field named tuples (index, slice, len,
+    // tuple equality) over their ordered `_entries` backing list.
+    for cls in [
+        "urllib.parse.ParseResult", "urllib.parse.ParseResultBytes",
+        "urllib.parse.SplitResult", "urllib.parse.SplitResultBytes",
+    ] {
+        super::sys_mod::register_struct_seq_class(cls);
+    }
     super::register_module("urllib.parse", parse_attrs);
 
     // urllib.request — urlopen / quote / unquote remain real-ish; class
@@ -304,6 +446,8 @@ pub fn register() {
         set.insert(req_shell as u64);
         set.insert(req_str as u64);
     });
+    // Real Request object (#24 prerequisite) — overwrites the dict shell.
+    register_request_class(&mut request_attrs);
     super::register_module("urllib.request", request_attrs);
 
     // urllib.response — callable class shells matching CPython's documented surface.
@@ -793,28 +937,53 @@ pub fn mb_urllib_urlencode(params: MbValue) -> MbValue {
 /// element (and mapping values expand over their keys). Otherwise a sequence
 /// value is `str()`-ed whole.
 pub fn mb_urllib_urlencode_full(params: MbValue, doseq: MbValue) -> MbValue {
+    mb_urllib_urlencode_with(params, doseq, "", MbValue::none())
+}
+
+/// urlencode honoring doseq, safe=, and a quote_via= callable (CPython
+/// default is quote_plus; passing quote switches space to %20).
+pub fn mb_urllib_urlencode_with(
+    params: MbValue,
+    doseq: MbValue,
+    safe: &str,
+    quote_via: MbValue,
+) -> MbValue {
+    // A bare str/bytes is not a mapping or pair sequence.
+    if extract_str(params).is_some() || extract_bytes_like(params).is_some() {
+        return raise_type_error("not a valid non-string sequence or mapping object");
+    }
     let do_seq = super::super::builtins::mb_bool(doseq).as_bool() == Some(true);
     let pairs = urlencode_pairs(params);
     let mut parts = Vec::new();
-    let safe: &[u8] = b"";
+    let safe_b = safe.as_bytes();
+    let enc = |v: MbValue| -> String {
+        if quote_via.is_none() {
+            encode_query_component(v, safe_b)
+        } else {
+            // quote_via(str(value), safe) through the supplied callable.
+            let s = py_str(v);
+            let args = MbValue::from_ptr(MbObject::new_list(vec![
+                MbValue::from_ptr(MbObject::new_str(s)),
+                MbValue::from_ptr(MbObject::new_str(safe.to_string())),
+            ]));
+            let r = super::super::builtins::mb_call_spread(quote_via, args);
+            extract_str(r).unwrap_or_default()
+        }
+    };
     for (k, v) in pairs {
-        let key_enc = encode_query_component(k, safe);
+        let key_enc = enc(k);
         if do_seq {
-            // bytes / str values are single; other sequences expand.
-            if let Some(b) = extract_bytes_like(v) {
-                parts.push(format!("{key_enc}={}", percent_encode_bytes(&b, safe, true)));
-            } else if extract_str(v).is_some() {
-                parts.push(format!("{key_enc}={}", encode_query_component(v, safe)));
+            if extract_bytes_like(v).is_some() || extract_str(v).is_some() {
+                parts.push(format!("{key_enc}={}", enc(v)));
             } else if let Some(elems) = sequence_elements(v) {
                 for elt in elems {
-                    parts.push(format!("{key_enc}={}", encode_query_component(elt, safe)));
+                    parts.push(format!("{key_enc}={}", enc(elt)));
                 }
             } else {
-                // scalar (int, None, ...) → str()
-                parts.push(format!("{key_enc}={}", encode_query_component(v, safe)));
+                parts.push(format!("{key_enc}={}", enc(v)));
             }
         } else {
-            parts.push(format!("{key_enc}={}", encode_query_component(v, safe)));
+            parts.push(format!("{key_enc}={}", enc(v)));
         }
     }
     MbValue::from_ptr(MbObject::new_str(parts.join("&")))
@@ -905,35 +1074,121 @@ fn two_elem(item: MbValue) -> Option<(MbValue, MbValue)> {
 /// Fields: scheme, netloc, path, params, query, fragment. Attribute access
 /// works via the standard Instance field lookup; index access is not
 /// supported yet (would require Tuple-backed storage).
-pub fn mb_urllib_urlparse(val: MbValue) -> MbValue {
-    let url = extract_str(val).unwrap_or_default();
-    let (scheme, rest) = match url.find("://") {
-        Some(i) if url[..i].chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') => {
-            (url[..i].to_string(), url[i + 3..].to_string())
+/// CPython scheme split: a valid scheme is alpha followed by alnum/+-.
+/// before the FIRST ':'; it lowercases. No scheme → ("", url).
+fn split_scheme(url: &str) -> (String, String) {
+    if let Some(i) = url.find(':') {
+        let cand = &url[..i];
+        let mut chars = cand.chars();
+        if let Some(c0) = chars.next() {
+            if c0.is_ascii_alphabetic()
+                && chars.all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+            {
+                return (cand.to_ascii_lowercase(), url[i + 1..].to_string());
+            }
         }
-        _ => (String::new(), url.clone()),
-    };
-    let (netloc, path_query_frag) = if !scheme.is_empty() {
-        match rest.find(|c: char| c == '/' || c == '?' || c == '#') {
-            Some(i) => (rest[..i].to_string(), rest[i..].to_string()),
-            None => (rest.clone(), String::new()),
+    }
+    (String::new(), url.to_string())
+}
+
+/// netloc applies only after a literal "//".
+fn split_netloc_part(rest: &str) -> (String, String) {
+    if let Some(r) = rest.strip_prefix("//") {
+        match r.find(|c: char| c == '/' || c == '?' || c == '#') {
+            Some(i) => (r[..i].to_string(), r[i..].to_string()),
+            None => (r.to_string(), String::new()),
         }
     } else {
-        (String::new(), rest)
-    };
+        (String::new(), rest.to_string())
+    }
+}
+
+/// Shared split: (scheme, netloc, path, query, fragment) — path keeps params.
+/// WHATWG-aligned cleanup first: leading/trailing C0-or-space trimmed, then
+/// embedded tab/newline/CR removed from the whole URL.
+fn urlsplit_parts(url: &str) -> (String, String, String, String, String) {
+    let trimmed = url.trim_start_matches(|c: char| c <= ' ');
+    let cleaned: String = trimmed.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+    let url = cleaned.as_str();
+    let (scheme, rest) = split_scheme(url);
+    let (netloc, path_query_frag) = split_netloc_part(&rest);
     let (path_query, fragment) = match path_query_frag.find('#') {
         Some(i) => (path_query_frag[..i].to_string(), path_query_frag[i + 1..].to_string()),
         None => (path_query_frag, String::new()),
     };
-    let (path_params, query) = match path_query.find('?') {
+    let (path, query) = match path_query.find('?') {
         Some(i) => (path_query[..i].to_string(), path_query[i + 1..].to_string()),
         None => (path_query, String::new()),
     };
-    let (path, params) = match path_params.rfind(';') {
-        Some(i) => (path_params[..i].to_string(), path_params[i + 1..].to_string()),
-        None => (path_params, String::new()),
+    (scheme, netloc, path, query, fragment)
+}
+
+fn input_is_bytes(val: MbValue) -> bool {
+    val.as_ptr().map(|p| unsafe {
+        matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+    }).unwrap_or(false)
+}
+
+fn url_input_str(val: MbValue) -> String {
+    if let Some(b) = extract_bytes_like(val) {
+        return String::from_utf8_lossy(&b).to_string();
+    }
+    extract_str(val).unwrap_or_default()
+}
+
+/// urllib.parse.urlparse(url) → ParseResult (6 fields; ';params' split out of
+/// the last path segment). Bytes input yields all-bytes components.
+fn validate_netloc_brackets(netloc: &str) -> bool {
+    let has_open = netloc.contains('[');
+    let has_close = netloc.contains(']');
+    if has_open != has_close {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("Invalid IPv6 URL".to_string())),
+        );
+        return false;
+    }
+    true
+}
+
+pub fn mb_urllib_urlparse(val: MbValue) -> MbValue {
+    let as_bytes = input_is_bytes(val);
+    let url = url_input_str(val);
+    let (scheme, netloc, full_path, query, fragment) = urlsplit_parts(&url);
+    if !validate_netloc_brackets(&netloc) {
+        return MbValue::none();
+    }
+    // params: split at ';' within the LAST path segment only (CPython).
+    let last_seg_start = full_path.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let (path, params) = match full_path[last_seg_start..].find(';') {
+        Some(i) => {
+            let cut = last_seg_start + i;
+            (full_path[..cut].to_string(), full_path[cut + 1..].to_string())
+        }
+        None => (full_path, String::new()),
     };
-    make_parse_result(scheme, netloc, path, params, query, fragment)
+    make_result_instance(
+        if as_bytes { "urllib.parse.ParseResultBytes" } else { "urllib.parse.ParseResult" },
+        &[("scheme", scheme), ("netloc", netloc), ("path", path),
+          ("params", params), ("query", query), ("fragment", fragment)],
+        as_bytes,
+    )
+}
+
+/// urllib.parse.urlsplit(url) → SplitResult (5 fields; params stay in path).
+pub fn mb_urllib_urlsplit(val: MbValue) -> MbValue {
+    let as_bytes = input_is_bytes(val);
+    let url = url_input_str(val);
+    let (scheme, netloc, path, query, fragment) = urlsplit_parts(&url);
+    if !validate_netloc_brackets(&netloc) {
+        return MbValue::none();
+    }
+    make_result_instance(
+        if as_bytes { "urllib.parse.SplitResultBytes" } else { "urllib.parse.SplitResult" },
+        &[("scheme", scheme), ("netloc", netloc), ("path", path),
+          ("query", query), ("fragment", fragment)],
+        as_bytes,
+    )
 }
 
 /// urllib.parse.urlunparse(parts) → URL string. Accepts tuple/list of 6
@@ -1056,58 +1311,142 @@ fn resolve_dot_segments(path: &str) -> String {
 
 /// urllib.parse.parse_qs(qs) → dict of list[str]. Keys appearing more than
 /// once collect all their values in insertion order.
-pub fn mb_urllib_parse_qs(val: MbValue) -> MbValue {
-    let s = extract_str(val).unwrap_or_default();
-    let result = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*result).data {
-            let mut map = lock.write().unwrap();
-            for pair in s.split('&') {
-                if pair.is_empty() {
-                    continue;
-                }
-                let (k, v) = match pair.find('=') {
-                    Some(i) => (&pair[..i], &pair[i + 1..]),
-                    None => (pair, ""),
-                };
-                let key = percent_decode(k, true);
-                let decoded_val = percent_decode(v, true);
-                let dk = super::super::dict_ops::DictKey::Str(key);
-                let entry = map.entry(dk).or_insert_with(|| {
-                    MbValue::from_ptr(MbObject::new_list(vec![]))
-                });
-                if let Some(lp) = entry.as_ptr() {
-                    if let ObjData::List(ref list_lock) = (*lp).data {
-                        list_lock.write().unwrap().push(
-                            MbValue::from_ptr(MbObject::new_str(decoded_val))
-                        );
-                    }
-                }
-            }
+/// Core query-string splitter honoring keep_blank_values / encoding /
+/// errors, with bytes-in → bytes-out pairs.
+fn parse_qsl_core(
+    val: MbValue,
+    opts: &QsOptions,
+) -> Vec<(MbValue, MbValue)> {
+    let keep_blank = opts.keep_blank;
+    let encoding = opts.encoding.as_str();
+    let errors = opts.errors.as_str();
+    let bytes_mode = input_is_bytes(val);
+    let s = url_input_str(val);
+    if opts.separator.is_empty() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "Separator must be of type string or bytes.".to_string(),
+            )),
+        );
+        return Vec::new();
+    }
+    if let Some(max) = opts.max_num_fields {
+        let n = s.matches(opts.separator.as_str()).count() as i64 + 1;
+        if n > max {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("Max number of fields exceeded".to_string())),
+            );
+            return Vec::new();
         }
     }
-    MbValue::from_ptr(result)
+    let mut out = Vec::new();
+    for pair in s.split(opts.separator.as_str()) {
+        if pair.is_empty() {
+            continue;
+        }
+        let (k, v) = match pair.find('=') {
+            Some(i) => (&pair[..i], &pair[i + 1..]),
+            None => {
+                if opts.strict_parsing {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "bad query field: {pair:?}"
+                        ))),
+                    );
+                    return Vec::new();
+                }
+                (pair, "")
+            }
+        };
+        if v.is_empty() && !keep_blank {
+            continue;
+        }
+        let kb = percent_decode_to_bytes(k.as_bytes(), true);
+        let vb = percent_decode_to_bytes(v.as_bytes(), true);
+        if bytes_mode {
+            out.push((
+                MbValue::from_ptr(MbObject::new_bytes(kb)),
+                MbValue::from_ptr(MbObject::new_bytes(vb)),
+            ));
+        } else {
+            out.push((
+                MbValue::from_ptr(MbObject::new_str(decode_bytes(&kb, encoding, errors))),
+                MbValue::from_ptr(MbObject::new_str(decode_bytes(&vb, encoding, errors))),
+            ));
+        }
+    }
+    out
 }
 
-/// urllib.parse.parse_qsl(qs) → list of (key, value) 2-tuples, preserving
-/// order. Empty segments are skipped.
-pub fn mb_urllib_parse_qsl(val: MbValue) -> MbValue {
-    let s = extract_str(val).unwrap_or_default();
-    let items: Vec<MbValue> = s
-        .split('&')
-        .filter(|p| !p.is_empty())
-        .map(|pair| {
-            let (k, v) = match pair.find('=') {
-                Some(i) => (&pair[..i], &pair[i + 1..]),
-                None => (pair, ""),
-            };
-            let key = percent_decode(k, true);
-            let decoded_val = percent_decode(v, true);
-            MbValue::from_ptr(MbObject::new_tuple(vec![
-                MbValue::from_ptr(MbObject::new_str(key)),
-                MbValue::from_ptr(MbObject::new_str(decoded_val)),
-            ]))
-        })
+/// urllib.parse.parse_qs(qs, keep_blank_values=False, ..., encoding='utf-8',
+/// errors='replace') → dict of key → list-of-values.
+pub struct QsOptions {
+    pub keep_blank: bool,
+    pub encoding: String,
+    pub errors: String,
+    pub separator: String,
+    pub strict_parsing: bool,
+    pub max_num_fields: Option<i64>,
+}
+
+impl Default for QsOptions {
+    fn default() -> Self {
+        QsOptions {
+            keep_blank: false,
+            encoding: "utf-8".to_string(),
+            errors: "replace".to_string(),
+            separator: "&".to_string(),
+            strict_parsing: false,
+            max_num_fields: None,
+        }
+    }
+}
+
+pub fn mb_urllib_parse_qs(val: MbValue, keep_blank: bool, encoding: &str, errors: &str) -> MbValue {
+    let opts = QsOptions {
+        keep_blank,
+        encoding: encoding.to_string(),
+        errors: errors.to_string(),
+        ..QsOptions::default()
+    };
+    mb_urllib_parse_qs_opts(val, &opts)
+}
+
+pub fn mb_urllib_parse_qs_opts(val: MbValue, opts: &QsOptions) -> MbValue {
+    let pairs = parse_qsl_core(val, opts);
+    let result = MbObject::new_dict();
+    let rv = MbValue::from_ptr(result);
+    for (k, v) in pairs {
+        let sentinel = MbValue::from_bits(u64::MAX);
+        let existing = super::super::dict_ops::mb_dict_get(rv, k, sentinel);
+        if existing.to_bits() == u64::MAX {
+            let list = MbValue::from_ptr(MbObject::new_list(vec![v]));
+            super::super::dict_ops::mb_dict_setitem(rv, k, list);
+        } else {
+            super::super::list_ops::mb_list_append(existing, v);
+        }
+    }
+    rv
+}
+
+/// urllib.parse.parse_qsl(qs, ...) → ordered (key, value) 2-tuples.
+pub fn mb_urllib_parse_qsl(val: MbValue, keep_blank: bool, encoding: &str, errors: &str) -> MbValue {
+    let opts = QsOptions {
+        keep_blank,
+        encoding: encoding.to_string(),
+        errors: errors.to_string(),
+        ..QsOptions::default()
+    };
+    mb_urllib_parse_qsl_opts(val, &opts)
+}
+
+pub fn mb_urllib_parse_qsl_opts(val: MbValue, opts: &QsOptions) -> MbValue {
+    let items: Vec<MbValue> = parse_qsl_core(val, opts)
+        .into_iter()
+        .map(|(k, v)| MbValue::from_ptr(MbObject::new_tuple(vec![k, v])))
         .collect();
     MbValue::from_ptr(MbObject::new_list(items))
 }
@@ -1179,26 +1518,35 @@ pub fn mb_urllib_urlopen(url: MbValue) -> MbValue {
     MbValue::from_ptr(dict)
 }
 
-fn make_parse_result(
-    scheme: String, netloc: String, path: String,
-    params: String, query: String, fragment: String,
-) -> MbValue {
-    let mut fields = FxHashMap::with_capacity_and_hasher(10, Default::default());
+fn make_result_instance(class_name: &str, parts: &[(&str, String)], as_bytes: bool) -> MbValue {
+    let mut fields = FxHashMap::with_capacity_and_hasher(12, Default::default());
+    let mk = |s: &str| -> MbValue {
+        if as_bytes {
+            MbValue::from_ptr(MbObject::new_bytes(s.as_bytes().to_vec()))
+        } else {
+            MbValue::from_ptr(MbObject::new_str(s.to_string()))
+        }
+    };
+    let mut entries: Vec<MbValue> = Vec::new();
+    let mut netloc = String::new();
+    for (name, value) in parts {
+        if *name == "netloc" {
+            netloc = value.clone();
+        }
+        let v = mk(value);
+        fields.insert((*name).to_string(), v);
+        entries.push(v);
+    }
+    fields.insert("_entries".into(), MbValue::from_ptr(MbObject::new_list(entries)));
     // Derived authority fields (username/password/hostname/port), computed the
     // way CPython's _NetlocResultMixinStr does from netloc.
     let (username, password, hostname, port) = split_netloc(&netloc);
-    fields.insert("scheme".into(), MbValue::from_ptr(MbObject::new_str(scheme)));
-    fields.insert("netloc".into(), MbValue::from_ptr(MbObject::new_str(netloc)));
-    fields.insert("path".into(), MbValue::from_ptr(MbObject::new_str(path)));
-    fields.insert("params".into(), MbValue::from_ptr(MbObject::new_str(params)));
-    fields.insert("query".into(), MbValue::from_ptr(MbObject::new_str(query)));
-    fields.insert("fragment".into(), MbValue::from_ptr(MbObject::new_str(fragment)));
     fields.insert("username".into(),
-        username.map(|s| MbValue::from_ptr(MbObject::new_str(s))).unwrap_or_else(MbValue::none));
+        username.map(|s| mk(&s)).unwrap_or_else(MbValue::none));
     fields.insert("password".into(),
-        password.map(|s| MbValue::from_ptr(MbObject::new_str(s))).unwrap_or_else(MbValue::none));
+        password.map(|s| mk(&s)).unwrap_or_else(MbValue::none));
     fields.insert("hostname".into(),
-        hostname.map(|s| MbValue::from_ptr(MbObject::new_str(s))).unwrap_or_else(MbValue::none));
+        hostname.map(|s| mk(&s)).unwrap_or_else(MbValue::none));
     fields.insert("port".into(),
         port.map(MbValue::from_int).unwrap_or_else(MbValue::none));
     let obj = Box::new(super::super::rc::MbObject {
@@ -1207,7 +1555,7 @@ fn make_parse_result(
             kind: super::super::rc::ObjKind::Instance,
         },
         data: ObjData::Instance {
-            class_name: "urllib.parse.ParseResult".to_string(),
+            class_name: class_name.to_string(),
             fields: crate::runtime::rc::MbRwLock::new(fields),
         },
     });
@@ -1254,16 +1602,44 @@ fn split_netloc(netloc: &str) -> (Option<String>, Option<String>, Option<String>
             None => (hostport, None),
         }
     };
-    let hostname = if host_str.is_empty() {
+    // A bracketed IPv6 literal loses its brackets in .hostname; the part
+    // before an RFC 6874 '%zone' is lowercased, the zone id keeps its case.
+    let bare = host_str
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host_str);
+    let hostname = if bare.is_empty() {
         None
+    } else if let Some(pi) = bare.find('%') {
+        Some(format!("{}{}", bare[..pi].to_ascii_lowercase(), &bare[pi..]))
     } else {
-        Some(host_str.to_ascii_lowercase())
+        Some(bare.to_ascii_lowercase())
     };
     let port = port_str.and_then(|p| {
         if p.is_empty() {
-            None
-        } else {
-            p.parse::<i64>().ok().filter(|&n| (0..=65535).contains(&n))
+            return None;
+        }
+        match p.parse::<i64>() {
+            Ok(n) if (0..=65535).contains(&n) => Some(n),
+            Ok(n) => {
+                // CPython raises on .port access; mamba validates eagerly.
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "Port out of range 0-65535: {n}"
+                    ))),
+                );
+                None
+            }
+            Err(_) => {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "Port could not be cast to integer value as {p:?}"
+                    ))),
+                );
+                None
+            }
         }
     });
     (username, password, hostname, port)
@@ -1479,7 +1855,7 @@ mod tests {
 
     #[test]
     fn test_parse_qs_multi_values() {
-        let out = mb_urllib_parse_qs(s("a=1&b=2&a=3"));
+        let out = mb_urllib_parse_qs(s("a=1&b=2&a=3"), false, "utf-8", "replace");
         if let Some(ptr) = out.as_ptr() {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -1500,7 +1876,7 @@ mod tests {
 
     #[test]
     fn test_parse_qsl_preserves_order() {
-        let out = mb_urllib_parse_qsl(s("z=1&a=2&m=3"));
+        let out = mb_urllib_parse_qsl(s("z=1&a=2&m=3"), false, "utf-8", "replace");
         if let Some(ptr) = out.as_ptr() {
             unsafe {
                 if let ObjData::List(ref lock) = (*ptr).data {
@@ -1525,4 +1901,261 @@ mod tests {
             "https://example.com/path?q=1#frag"
         );
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// urllib.request.Request — a real object (#24 prerequisite): full_url/host/
+// headers/data/method fields plus the introspection methods cookiejar's
+// request_host/request_path/request_port and user code rely on.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const REQUEST_CLASS: &str = "urllib.request.Request";
+
+fn req_field(self_v: MbValue, name: &str) -> Option<MbValue> {
+    let ptr = self_v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            return fields.read().unwrap().get(name).copied();
+        }
+    }
+    None
+}
+
+fn req_args_vec(args: MbValue) -> Vec<MbValue> {
+    let mut out = Vec::new();
+    if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                out.extend(lock.read().unwrap().iter());
+            }
+        }
+    }
+    out
+}
+
+/// (scheme, netloc, path-with-params-query-fragment) split of a URL.
+fn split_url(url: &str) -> (String, String, String) {
+    let (scheme, rest) = match url.find("://") {
+        Some(i) => (url[..i].to_string(), &url[i + 3..]),
+        None => (String::new(), url),
+    };
+    match rest.find('/') {
+        Some(i) => (scheme, rest[..i].to_string(), rest[i..].to_string()),
+        None => (scheme, rest.to_string(), String::new()),
+    }
+}
+
+unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let raw: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    // Trailing kwargs dict appended by the call lowering.
+    let (positional, kwargs): (&[MbValue], Option<MbValue>) = match raw.last().copied() {
+        Some(last)
+            if raw.len() > 1
+                && last
+                    .as_ptr()
+                    .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+                    .unwrap_or(false) =>
+        {
+            (&raw[..raw.len() - 1], Some(last))
+        }
+        _ => (raw, None),
+    };
+    let kwarg = |name: &str| -> Option<MbValue> {
+        let ptr = kwargs?.as_ptr()?;
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                return lock.read().unwrap().get(name).copied();
+            }
+        }
+        None
+    };
+
+    let url = positional
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let data = positional
+        .get(1)
+        .copied()
+        .or_else(|| kwarg("data"))
+        .unwrap_or_else(MbValue::none);
+    let headers_in = positional
+        .get(2)
+        .copied()
+        .or_else(|| kwarg("headers"))
+        .unwrap_or_else(MbValue::none);
+    let method = kwarg("method").unwrap_or_else(MbValue::none);
+
+    let (scheme, host, path) = split_url(&url);
+    let inst = MbObject::new_instance(REQUEST_CLASS.to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut f = fields.write().unwrap();
+            f.insert("full_url".into(), MbValue::from_ptr(MbObject::new_str(url.clone())));
+            f.insert("host".into(), MbValue::from_ptr(MbObject::new_str(host)));
+            f.insert("type".into(), MbValue::from_ptr(MbObject::new_str(scheme)));
+            // selector: path+query (no fragment); "/" for a bare host URL.
+            let selector = {
+                let p = path.split('#').next().unwrap_or("");
+                if p.is_empty() { "/".to_string() } else { p.to_string() }
+            };
+            f.insert("selector".into(), MbValue::from_ptr(MbObject::new_str(selector)));
+            f.insert("data".into(), data);
+            f.insert("method".into(), method);
+            f.insert("unverifiable".into(), MbValue::from_bool(false));
+            // Header keys are stored capitalized (CPython add_header shape).
+            let hdrs = MbObject::new_dict();
+            if let ObjData::Dict(ref hlock) = (*hdrs).data {
+                let mut hmap = hlock.write().unwrap();
+                if let Some(hin) = headers_in.as_ptr() {
+                    if let ObjData::Dict(ref inlock) = (*hin).data {
+                        for (k, v) in inlock.read().unwrap().iter() {
+                            let kv = super::super::dict_ops::dict_key_to_mbvalue(k);
+                            if let Some(ks) = extract_str(kv) {
+                                super::super::rc::retain_if_ptr(*v);
+                                hmap.insert(
+                                    super::super::dict_ops::DictKey::Str(capitalize_header(&ks)),
+                                    *v,
+                                );
+                            }
+                        }
+                    }
+                }
+                drop(hmap);
+            }
+            f.insert("headers".into(), MbValue::from_ptr(hdrs));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn capitalize_header(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + &c.as_str().to_lowercase(),
+        None => String::new(),
+    }
+}
+
+unsafe extern "C" fn rm_get_method(self_v: MbValue, _args: MbValue) -> MbValue {
+    let m = req_field(self_v, "method").unwrap_or_else(MbValue::none);
+    if let Some(s) = extract_str(m) {
+        return MbValue::from_ptr(MbObject::new_str(s));
+    }
+    let data = req_field(self_v, "data").unwrap_or_else(MbValue::none);
+    MbValue::from_ptr(MbObject::new_str(
+        if data.is_none() { "GET" } else { "POST" }.to_string(),
+    ))
+}
+
+unsafe extern "C" fn rm_get_full_url(self_v: MbValue, _args: MbValue) -> MbValue {
+    let v = req_field(self_v, "full_url").unwrap_or_else(MbValue::none);
+    unsafe { super::super::rc::retain_if_ptr(v) };
+    v
+}
+
+unsafe extern "C" fn rm_get_header(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = req_args_vec(args);
+    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let default = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*hd).data {
+                if let Some(v) = lock.read().unwrap().get(capitalize_header(&name).as_str()) {
+                    let v = *v;
+                    super::super::rc::retain_if_ptr(v);
+                    return v;
+                }
+            }
+        }
+    }
+    unsafe { super::super::rc::retain_if_ptr(default) };
+    default
+}
+
+unsafe extern "C" fn rm_has_header(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = req_args_vec(args);
+    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*hd).data {
+                return MbValue::from_bool(
+                    lock.read()
+                        .unwrap()
+                        .contains_key(capitalize_header(&name).as_str()),
+                );
+            }
+        }
+    }
+    MbValue::from_bool(false)
+}
+
+unsafe extern "C" fn rm_add_header(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = req_args_vec(args);
+    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let val = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*hd).data {
+                unsafe { super::super::rc::retain_if_ptr(val) };
+                lock.write().unwrap().insert(
+                    super::super::dict_ops::DictKey::Str(capitalize_header(&name)),
+                    val,
+                );
+            }
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn rm_header_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    let mut items = Vec::new();
+    if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*hd).data {
+                for (k, v) in lock.read().unwrap().iter() {
+                    let kv = super::super::dict_ops::dict_key_to_mbvalue(k);
+                    items.push(MbValue::from_ptr(MbObject::new_tuple(vec![kv, *v])));
+                }
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+/// Register the Request class + rewire urllib.request.Request.
+pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let methods: Vec<(&str, usize)> = vec![
+        ("get_method", rm_get_method as *const () as usize),
+        ("get_full_url", rm_get_full_url as *const () as usize),
+        ("get_header", rm_get_header as *const () as usize),
+        ("has_header", rm_has_header as *const () as usize),
+        ("add_header", rm_add_header as *const () as usize),
+        ("add_unredirected_header", rm_add_header as *const () as usize),
+        ("header_items", rm_header_items as *const () as usize),
+    ];
+    let mut map: Map<String, MbValue> = Map::new();
+    for (name, addr) in methods {
+        map.insert(name.to_string(), var(addr));
+    }
+    super::super::class::mb_class_register(REQUEST_CLASS, vec!["object".to_string()], map);
+
+    attrs.insert("Request".to_string(), MbValue::from_func(d_request_new as *const () as usize));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(d_request_new as *const () as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut()
+            .insert(d_request_new as *const () as u64, REQUEST_CLASS.to_string());
+    });
 }

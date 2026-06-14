@@ -437,10 +437,13 @@ extern "C" fn suppress_exit(
         return MbValue::from_bool(false);
     };
     for exc_class in items_of(stored) {
-        // mb_isinstance accepts a type-name string (mamba represents exception
-        // types as their name string) and handles the exception hierarchy,
-        // so suppress(ArithmeticError) catches ZeroDivisionError.
-        if super::super::class::mb_isinstance(exc_type, exc_class).as_bool() == Some(true) {
+        // `exc_type` is the exception's CLASS object (CPython __exit__ contract),
+        // so check it with issubclass; also accept the value form via isinstance
+        // for robustness. Both walk the exception hierarchy, so
+        // suppress(ArithmeticError) catches ZeroDivisionError.
+        if super::super::class::mb_issubclass(exc_type, exc_class).as_bool() == Some(true)
+            || super::super::class::mb_isinstance(exc_type, exc_class).as_bool() == Some(true)
+        {
             return MbValue::from_bool(true);
         }
     }

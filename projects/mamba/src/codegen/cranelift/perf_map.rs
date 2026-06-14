@@ -60,8 +60,15 @@ pub fn record(addr: *const u8, size: usize, symbol: &str) {
         .chars()
         .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
         .collect();
+    // Format the whole record first and emit it with a single write under a
+    // process-wide lock: `writeln!` can issue one syscall per format
+    // fragment, so two threads appending concurrently would interleave
+    // fragments and corrupt the map.
+    static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let line = format!("{:x} {:x} {}\n", addr as usize, size, safe_symbol);
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(f, "{:x} {:x} {}", addr as usize, size, safe_symbol);
+        let _ = f.write_all(line.as_bytes());
     }
 }
 

@@ -514,6 +514,23 @@ impl Encoder {
             return Ok(());
         }
         if let Some(i) = val.as_int() {
+            // random.Random handles are NaN-boxed ints; pickling the raw id
+            // would alias the ORIGINAL generator on loads. Snapshot the
+            // generator state and encode a marker dict instead (same-process
+            // round-trip; loads() rehydrates a fresh handle from it).
+            if super::random_mod::is_random_handle(i as u64) {
+                if let Some(state_id) = super::random_mod::pickle_snapshot(i as u64) {
+                    let dict = super::super::dict_ops::mb_dict_new();
+                    super::super::dict_ops::mb_dict_setitem(
+                        dict,
+                        MbValue::from_ptr(MbObject::new_str(
+                            "__mamba_random_state__".to_string(),
+                        )),
+                        MbValue::from_int(state_id as i64),
+                    );
+                    return self.encode(dict);
+                }
+            }
             self.emit_int(i);
             return Ok(());
         }
@@ -1127,7 +1144,23 @@ pub fn mb_pickle_loads(data: MbValue) -> MbValue {
                     return MbValue::none();
                 }
             };
-            return decode_bytes(&bytes);
+            let result = decode_bytes(&bytes);
+            // random.Random marker dict (see encode) → rehydrate a handle.
+            if let Some(rp) = result.as_ptr() {
+                if let ObjData::Dict(ref lock) = (*rp).data {
+                    let sid = lock
+                        .read()
+                        .unwrap()
+                        .get("__mamba_random_state__")
+                        .and_then(|v| v.as_int());
+                    if let Some(sid) = sid {
+                        if let Some(h) = super::random_mod::pickle_restore(sid as u64) {
+                            return h;
+                        }
+                    }
+                }
+            }
+            return result;
         }
     }
     raise_unpickling_error("loads() argument must be bytes-like");

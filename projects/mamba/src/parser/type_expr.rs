@@ -168,9 +168,25 @@ impl<'a> Parser<'a> {
             // resolves to `Any`. Consume the whole expression to stay token-synced,
             // rather than failing the parse. Genuinely invalid syntax still errors via
             // parse_expr below.
+            //
+            // Simple numeric/bool literals keep their textual form as the Named
+            // type so introspection (`str(inspect.signature(f))` rendering
+            // `-> 42`) sees the declared annotation; the checker resolves any
+            // unknown Named type to Any, so typing is unaffected.
             _ => {
-                self.parse_expr()?;
-                Ok(Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(start)))
+                let expr = self.parse_expr()?;
+                let lit_name = match &expr.node {
+                    super::ast::Expr::IntLit(v) => Some(v.to_string()),
+                    super::ast::Expr::FloatLit(v) => Some(v.to_string()),
+                    super::ast::Expr::BoolLit(b) => {
+                        Some(if *b { "True".to_string() } else { "False".to_string() })
+                    }
+                    _ => None,
+                };
+                Ok(Spanned::new(
+                    TypeExpr::Named(lit_name.unwrap_or_else(|| "Any".to_string())),
+                    self.span_from(start),
+                ))
             }
         }
     }
@@ -397,8 +413,11 @@ mod tests {
     fn test_literal_annotation_resolves_to_any() {
         // PEP 3107/526: an annotation is an arbitrary expression, never validated as
         // a type (CPython only stores it in __annotations__). A literal value carries
-        // no type constraint, so `x: 42` must PARSE and resolve to `Any`, not fail.
-        assert_eq!(parse_type("42"), TypeExpr::Named("Any".to_string()));
+        // no type constraint, so `x: 42` must PARSE, not fail. Simple numeric/bool
+        // literals keep their textual form (`Named("42")`) so introspection can
+        // render them (`str(inspect.signature(f))` → `-> 42`); the checker resolves
+        // digit-leading Named types to Any. Non-literal expressions resolve to Any.
+        assert_eq!(parse_type("42"), TypeExpr::Named("42".to_string()));
         assert_eq!(parse_type("{1: 2}"), TypeExpr::Named("Any".to_string()));
         assert_eq!(parse_type("[int]"), TypeExpr::Named("Any".to_string()));
     }

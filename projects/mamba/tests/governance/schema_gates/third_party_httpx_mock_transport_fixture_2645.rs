@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("governance")
         .join("gates")
         .join("third_party")
         .join("httpx_mock_transport_behavioral")

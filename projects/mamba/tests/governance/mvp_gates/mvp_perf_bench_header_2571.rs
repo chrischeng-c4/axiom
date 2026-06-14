@@ -101,7 +101,7 @@ fn shipped_required_fixtures_have_all_three_tier_headers() {
     ] {
         let body = std::fs::read_to_string(
             crate::common::project_root()
-                .join("tests/cpython/fixtures/core/bench")
+                .join("tests/cpython/_regression/core/bench")
                 .join(fixture),
         )
         .expect("read shipped required fixture");
@@ -374,7 +374,7 @@ fn headers_are_pure_comment_lines_in_shipped_fixtures() {
     for fixture in &["int_sum.py", "range_sum.py", "fib30.py", "generator_sum.py"] {
         let body = std::fs::read_to_string(
             crate::common::project_root()
-                .join("tests/cpython/fixtures/core/bench")
+                .join("tests/cpython/_regression/core/bench")
                 .join(fixture),
         )
         .expect("read shipped fixture");

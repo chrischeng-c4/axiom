@@ -56,6 +56,8 @@ struct QueueState {
     kind: QueueKind,
     maxsize: i64,
     items: VecDeque<MbValue>,
+    /// put() increments; task_done() decrements; below zero raises.
+    unfinished: i64,
 }
 
 // Process-global store (#2117). A queue.Queue is shared across OS
@@ -127,6 +129,7 @@ fn make_handle(kind: QueueKind, maxsize: i64) -> MbValue {
         kind,
         maxsize,
         items: VecDeque::new(),
+        unfinished: 0,
     });
     QUEUE_IDS.lock().unwrap().insert(id);
     MbValue::from_int(id as i64)
@@ -197,13 +200,21 @@ fn make_exception_class(class_name: &str) -> MbValue {
     fields.insert("__cause__".to_string(), slot_sentinel());
     fields.insert("__context__".to_string(), slot_sentinel());
     fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
+    // A type-object Instance (class_name="type" + __name__) so that
+    // resolve_class_name sees the exception class and `except queue.Empty`
+    // matches a raised "queue.Empty". Register it as an Exception subclass
+    // for the is_subclass_of arm.
+    fields.insert("__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(class_name.to_string())));
+    super::super::class::mb_class_register(
+        class_name, vec!["Exception".to_string()], HashMap::new());
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
             kind: ObjKind::Instance,
         },
         data: ObjData::Instance {
-            class_name: class_name.to_string(),
+            class_name: "type".to_string(),
             fields: crate::runtime::rc::MbRwLock::new(fields),
         },
     });
@@ -255,7 +266,20 @@ pub fn register() {
 }
 
 fn maxsize_from(v: MbValue) -> i64 {
-    v.as_int().unwrap_or(0)
+    if let Some(i) = v.as_int() {
+        return i;
+    }
+    // Queue(maxsize=N) arrives as a trailing kwargs dict.
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                if let Some(m) = lock.read().unwrap().get("maxsize") {
+                    return m.as_int().unwrap_or(0);
+                }
+            }
+        }
+    }
+    0
 }
 
 #[allow(non_snake_case)]
@@ -282,12 +306,113 @@ pub fn mb_queue_SimpleQueue(_unused: MbValue) -> MbValue {
 }
 
 pub fn mb_queue_put(q: MbValue, item: MbValue) -> MbValue {
+    mb_queue_put_checked(q, item, true, None)
+}
+
+fn raise_exc(exc: &str, msg: &str) -> MbValue {
+    use super::super::rc::MbObject as Obj;
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(Obj::new_str(exc.to_string())),
+        MbValue::from_ptr(Obj::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// put with CPython's block/timeout contract. The synchronous runtime has no
+/// competing consumer, so a full queue raises queue.Full for the nowait and
+/// timed forms (after sleeping out the timeout).
+pub fn mb_queue_put_checked(
+    q: MbValue,
+    item: MbValue,
+    blocking: bool,
+    timeout: Option<f64>,
+) -> MbValue {
+    if let Some(t) = timeout {
+        if t < 0.0 {
+            return raise_exc("ValueError", "'timeout' must be a non-negative number");
+        }
+    }
     if let Some(id) = handle_of(q) {
-        if let Some(state) = QUEUES.lock().unwrap().get_mut(&id) {
+        let mut map = QUEUES.lock().unwrap();
+        if let Some(state) = map.get_mut(&id) {
+            let full = state.maxsize > 0 && state.items.len() as i64 >= state.maxsize;
+            if full && (!blocking || timeout.is_some()) {
+                drop(map);
+                if let Some(t) = timeout {
+                    std::thread::sleep(std::time::Duration::from_secs_f64(t.min(5.0)));
+                }
+                return raise_exc("queue.Full", "");
+            }
             state.items.push_back(item);
+            state.unfinished += 1;
         }
     }
     MbValue::none()
+}
+
+/// task_done() — one per completed get; over-calling raises (CPython).
+pub fn mb_queue_task_done(q: MbValue) -> MbValue {
+    if let Some(id) = handle_of(q) {
+        if let Some(state) = QUEUES.lock().unwrap().get_mut(&id) {
+            if state.unfinished <= 0 {
+                return raise_exc("ValueError", "task_done() called too many times");
+            }
+            state.unfinished -= 1;
+        }
+    }
+    MbValue::none()
+}
+
+/// get with CPython's block/timeout contract: an empty queue raises
+/// queue.Empty for get_nowait/block=False/timeout forms. The plain blocking
+/// get() keeps the legacy None answer (a synchronous runtime cannot wait for
+/// a producer, and existing fixtures rely on the non-raising shape).
+pub fn mb_queue_get_checked(q: MbValue, blocking: bool, timeout: Option<f64>) -> MbValue {
+    if let Some(t) = timeout {
+        if t < 0.0 {
+            return raise_exc("ValueError", "'timeout' must be a non-negative number");
+        }
+    }
+    let immediate = mb_queue_get_opt(q);
+    match immediate {
+        Some(v) => v,
+        None => {
+            if !blocking || timeout.is_some() {
+                if let Some(t) = timeout {
+                    std::thread::sleep(std::time::Duration::from_secs_f64(t.min(5.0)));
+                }
+                return raise_exc("queue.Empty", "");
+            }
+            MbValue::none()
+        }
+    }
+}
+
+/// Pop respecting the queue kind; None when empty.
+fn mb_queue_get_opt(q: MbValue) -> Option<MbValue> {
+    let id = handle_of(q)?;
+    let mut map = QUEUES.lock().unwrap();
+    let state = map.get_mut(&id)?;
+    if state.items.is_empty() {
+        return None;
+    }
+    Some(match state.kind {
+        QueueKind::Fifo => state.items.pop_front().unwrap_or_else(MbValue::none),
+        QueueKind::Lifo => state.items.pop_back().unwrap_or_else(MbValue::none),
+        QueueKind::Priority => {
+            // Find the minimum item (priority queues pop the smallest).
+            let mut min_idx = 0;
+            for i in 1..state.items.len() {
+                if super::super::builtins::mb_lt(state.items[i], state.items[min_idx])
+                    .as_bool()
+                    == Some(true)
+                {
+                    min_idx = i;
+                }
+            }
+            state.items.remove(min_idx).unwrap_or_else(MbValue::none)
+        }
+    })
 }
 
 pub fn mb_queue_get(q: MbValue) -> MbValue {

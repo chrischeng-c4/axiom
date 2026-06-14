@@ -238,7 +238,7 @@ rows = conn.execute(
 print(json.dumps([dict(row) for row in rows], sort_keys=True))
 "#;
     let db_arg = db.to_string_lossy().to_string();
-    let output = Command::new("python3")
+    let output = Command::new(common::python3_bin())
         .args(["-c", script, &db_arg])
         .output()
         .map_err(|err| format!("failed to run python sqlite query: {err}"))?;
@@ -409,7 +409,7 @@ for module in sys.argv[1:]:
     except Exception:
         print(module)
 "#;
-    let output = Command::new("python3")
+    let output = Command::new(common::python3_bin())
         .arg("-c")
         .arg(script)
         .args(modules.iter())

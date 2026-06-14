@@ -9,6 +9,7 @@
 # case = "get_ident_distinct_for_live_threads"
 # subject = "threading.get_ident"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "concurrency_matrix.py (thread identity primitive)"
 # status = "filled"

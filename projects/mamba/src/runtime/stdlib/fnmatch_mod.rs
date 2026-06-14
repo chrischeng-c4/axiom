@@ -79,6 +79,39 @@ fn raise_mixed_type_error(pat_is_bytes: bool) {
     );
 }
 
+/// CPython routes names/patterns through os.path.normcase, which raises
+/// `TypeError: expected str, bytes or os.PathLike object, not <T>` for a
+/// non-strlike argument (`fnmatch(123, "*.py")`, `translate(123)`).
+fn raise_not_strlike(val: MbValue) -> MbValue {
+    let tn = if val.is_none() {
+        "NoneType"
+    } else if val.as_bool().is_some() {
+        "bool"
+    } else if val.as_int().is_some() {
+        "int"
+    } else if val.is_float() {
+        "float"
+    } else if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            match (*ptr).data {
+                super::super::rc::ObjData::List(_) => "list",
+                super::super::rc::ObjData::Tuple(_) => "tuple",
+                super::super::rc::ObjData::Dict(_) => "dict",
+                _ => "object",
+            }
+        }
+    } else {
+        "object"
+    };
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "expected str, bytes or os.PathLike object, not {tn}"
+        ))),
+    );
+    MbValue::none()
+}
+
 /// Perform direct glob matching (no regex crate dependency).
 ///
 /// Supports:
@@ -672,7 +705,8 @@ fn normcase(s: &str) -> std::borrow::Cow<'_, str> {
 pub fn mb_fnmatch_fnmatch(name: MbValue, pat: MbValue) -> MbValue {
     let (name_sl, pat_sl) = match (extract_strlike(name), extract_strlike(pat)) {
         (Some(n), Some(p)) => (n, p),
-        _ => return MbValue::from_bool(false),
+        (None, _) => return raise_not_strlike(name),
+        (_, None) => return raise_not_strlike(pat),
     };
     if name_sl.is_bytes() != pat_sl.is_bytes() {
         raise_mixed_type_error(pat_sl.is_bytes());
@@ -699,7 +733,8 @@ pub fn mb_fnmatch_fnmatch(name: MbValue, pat: MbValue) -> MbValue {
 pub fn mb_fnmatch_fnmatchcase(name: MbValue, pat: MbValue) -> MbValue {
     let (name_sl, pat_sl) = match (extract_strlike(name), extract_strlike(pat)) {
         (Some(n), Some(p)) => (n, p),
-        _ => return MbValue::from_bool(false),
+        (None, _) => return raise_not_strlike(name),
+        (_, None) => return raise_not_strlike(pat),
     };
     if name_sl.is_bytes() != pat_sl.is_bytes() {
         raise_mixed_type_error(pat_sl.is_bytes());
@@ -735,59 +770,89 @@ pub fn mb_fnmatch_filter(names: MbValue, pat: MbValue) -> MbValue {
     };
 
     use super::super::rc::{ObjData, retain_if_ptr};
-    let ptr = match names.as_ptr() {
-        Some(p) => p,
-        None => return MbValue::from_ptr(MbObject::new_list(Vec::new())),
-    };
-    let collected: Result<Vec<MbValue>, ()> = unsafe {
-        if let ObjData::List(ref rw) = (*ptr).data {
-            let guard = match rw.read() {
-                Ok(g) => g,
-                Err(_) => return MbValue::from_ptr(MbObject::new_list(Vec::new())),
-            };
-            let mut results: Vec<MbValue> = Vec::with_capacity(guard.len());
-            for v in guard.iter() {
-                let v = *v;
-                let name_sl = match extract_strlike(v) {
-                    Some(n) => n,
-                    None => continue,
-                };
-                // Mixing str/bytes between a name and the pattern is a
-                // TypeError, exactly as CPython raises during matching.
-                if name_sl.is_bytes() != pat_is_bytes {
-                    return {
-                        drop(guard);
-                        raise_mixed_type_error(pat_is_bytes);
-                        MbValue::none()
-                    };
-                }
-                let nname: String = if pat_is_bytes {
-                    name_sl.text().to_string()
+    // Materialize the names: List directly; Tuple / iterator handles via the
+    // generic protocol. A non-iterable scalar is CPython's iteration
+    // TypeError ("'int' object is not iterable").
+    let items: Vec<MbValue> = unsafe {
+        let from_ptr = names.as_ptr().and_then(|ptr| match &(*ptr).data {
+            ObjData::List(ref rw) => rw.read().ok().map(|g| g.to_vec()),
+            ObjData::Tuple(ref t) => Some(t.clone()),
+            _ => None,
+        });
+        match from_ptr {
+            Some(v) => v,
+            None => {
+                if super::super::iter::is_iter_handle(names) {
+                    super::super::iter::drain_iter_to_vec(names).unwrap_or_default()
                 } else {
-                    normcase(name_sl.text()).into_owned()
-                };
-                if glob_match(&nname, &pat_normalized) {
-                    retain_if_ptr(v);
-                    results.push(v);
+                    let tn = if names.is_none() {
+                        "NoneType"
+                    } else if names.as_bool().is_some() {
+                        "bool"
+                    } else if names.as_int().is_some() {
+                        "int"
+                    } else if names.is_float() {
+                        "float"
+                    } else {
+                        // Strings ARE iterable (per-character names).
+                        if let Some(ptr) = names.as_ptr() {
+                            if let ObjData::Str(ref s) = (*ptr).data {
+                                let chars: Vec<MbValue> = s
+                                    .chars()
+                                    .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
+                                    .collect();
+                                return mb_fnmatch_filter(
+                                    MbValue::from_ptr(MbObject::new_list(chars)),
+                                    pat,
+                                );
+                            }
+                        }
+                        "object"
+                    };
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{tn}' object is not iterable"
+                        ))),
+                    );
+                    return MbValue::none();
                 }
             }
-            Ok(results)
-        } else {
-            Err(())
         }
     };
-
-    match collected {
-        Ok(results) => MbValue::from_ptr(MbObject::new_list(results)),
-        Err(()) => MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    let mut results: Vec<MbValue> = Vec::with_capacity(items.len());
+    for v in items {
+        let name_sl = match extract_strlike(v) {
+            Some(n) => n,
+            None => continue,
+        };
+        // Mixing str/bytes between a name and the pattern is a TypeError,
+        // exactly as CPython raises during matching.
+        if name_sl.is_bytes() != pat_is_bytes {
+            raise_mixed_type_error(pat_is_bytes);
+            return MbValue::none();
+        }
+        let nname: String = if pat_is_bytes {
+            name_sl.text().to_string()
+        } else {
+            normcase(name_sl.text()).into_owned()
+        };
+        if glob_match(&nname, &pat_normalized) {
+            unsafe { retain_if_ptr(v) };
+            results.push(v);
+        }
     }
+    MbValue::from_ptr(MbObject::new_list(results))
 }
 
 /// fnmatch.translate(pat) -> str
 ///
 /// Translate a shell PATTERN to a regular expression (CPython 3.12 compatible).
 pub fn mb_fnmatch_translate(pat: MbValue) -> MbValue {
-    let pat_s = extract_str(pat).unwrap_or_default();
+    let pat_s = match extract_str(pat) {
+        Some(s) => s,
+        None => return raise_not_strlike(pat),
+    };
     let regex_str = translate_pattern(&pat_s);
     MbValue::from_ptr(MbObject::new_str(regex_str))
 }

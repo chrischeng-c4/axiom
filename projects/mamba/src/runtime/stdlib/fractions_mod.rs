@@ -121,7 +121,20 @@ fn alloc_fraction_id() -> u64 {
 /// whether to route `int.method()` / `int.attr` into the fractions
 /// protocol or fall through to primitive int handling.
 pub fn is_fraction_handle(id: u64) -> bool {
+    if id < FRACTION_HANDLE_BASE {
+        return false;
+    }
     FRACTION_IDS.with(|s| s.borrow().contains(&id))
+}
+
+/// Read back `(numerator, denominator)` for a Fraction handle — used by
+/// the shared numeric-handle comparison in `decimal_mod` and the
+/// builtins hash hook. Returns `None` for foreign ids.
+pub fn handle_num_den(id: u64) -> Option<(i64, i64)> {
+    if !is_fraction_handle(id) {
+        return None;
+    }
+    FRACTIONS.with(|m| m.borrow().get(&id).map(|s| (s.num, s.den)))
 }
 
 fn drop_fraction_handle(id: u64) {
@@ -196,6 +209,17 @@ fn coerce(val: MbValue) -> FractionState {
 
 // ── Public surface — free functions used by both dispatch thunks
 //    and class.rs method/attr dispatch on Fraction handles.
+
+/// Box an i64 as an MbValue, spilling to a heap BigInt when it exceeds
+/// the 48-bit NaN-box window (exact `from_float` denominators reach
+/// 2^62; `MbValue::from_int` would abort in debug builds).
+fn int_mb(i: i64) -> MbValue {
+    if (-(1i64 << 47)..(1i64 << 47)).contains(&i) {
+        MbValue::from_int(i)
+    } else {
+        MbValue::from_ptr(MbObject::new_bigint(num_bigint::BigInt::from(i)))
+    }
+}
 
 /// Raise `ValueError(msg)` and return `None` (CPython error contract).
 fn raise_value_error(msg: &str) -> MbValue {
@@ -276,6 +300,14 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
             None => raise_value_error(&format!("Invalid literal for Fraction: {s:?}")),
         };
     }
+    // ── Decimal constructor: Fraction(Decimal('1.5')) → exact 3/2. Decimal
+    //    handles are int-tagged, so this must run before the int coercion
+    //    below (which would treat the handle id as a huge numerator).
+    if den.is_none() {
+        if let Some((n, d)) = super::decimal_mod::decimal_to_num_den(num) {
+            return make_handle(FractionState::new(n, d));
+        }
+    }
     // ── Float constructor: Fraction(0.5). A non-finite float is a hard error in
     //    CPython: +/-inf -> OverflowError, NaN -> ValueError. Detected on the
     //    raw f64 (Python `nan != nan` is unreliable here); never fires on a
@@ -298,22 +330,72 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
     if !den.is_none() && coerce(den).num == 0 {
         return raise_zero_division_error("Fraction(n, 0)");
     }
+    // An argument that is not a number / string / Rational (e.g. a list)
+    // has no Fraction conversion: CPython raises TypeError rather than
+    // silently coercing to Fraction(0).
+    if let Some(p) = num.as_ptr() {
+        if matches!(
+            unsafe { &(*p).data },
+            ObjData::List(_) | ObjData::Tuple(_) | ObjData::Dict(_)
+                | ObjData::Set(_) | ObjData::FrozenSet(_)
+                | ObjData::Bytes(_) | ObjData::ByteArray(_)
+        ) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "argument should be a string or a Rational instance, not '{}'",
+                    super::super::builtins::value_type_name(num)
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
     let a = coerce(num);
-    let b = coerce(den);
+    // Single-argument form: `Fraction(5)` (den omitted → None) means
+    // denominator 1, NOT `coerce(None)` (which is 0/1 and collapsed every
+    // single-arg integer Fraction to zero).
+    let b = if den.is_none() {
+        FractionState { num: 1, den: 1 }
+    } else {
+        coerce(den)
+    };
     // (a_n / a_d) / (b_n / b_d)  =  a_n * b_d / (a_d * b_n)
     let n = a.num.saturating_mul(b.den);
     let d = a.den.saturating_mul(b.num);
     make_handle(FractionState::new(n, d))
 }
 
-/// `Fraction.from_float(f)` — build the nearest exact rational. We
-/// scale by 10^9 (mamba's int is i64; full mantissa-exponent decoding
-/// would overflow on extreme floats and we have no big-int).
+/// `Fraction.from_float(f)` — build the exact rational expansion of the
+/// binary float (mantissa × 2^exp) whenever numerator and denominator
+/// both fit i64; falls back to a 10^9 scaling for extreme magnitudes
+/// (mamba's fraction state is i64-only).
 pub fn mb_fraction_from_float(f: MbValue) -> MbValue {
     let v = f.as_float().unwrap_or(0.0);
     if !v.is_finite() {
         return make_handle(FractionState { num: 0, den: 1 });
     }
+    // Exact decomposition: v = ±mant * 2^e with mant < 2^53.
+    let bits = v.to_bits();
+    let sign = if (bits >> 63) & 1 == 1 { -1i64 } else { 1i64 };
+    let exp_field = ((bits >> 52) & 0x7FF) as i64;
+    let frac = (bits & 0x000F_FFFF_FFFF_FFFF) as i64;
+    let (mut mant, mut e) = if exp_field == 0 {
+        (frac, -1074i64)
+    } else {
+        (frac | (1i64 << 52), exp_field - 1075)
+    };
+    // Reduce the power of two shared with the mantissa.
+    while mant != 0 && mant % 2 == 0 && e < 0 {
+        mant /= 2;
+        e += 1;
+    }
+    if (0..=10).contains(&e) && mant <= (i64::MAX >> e) {
+        return make_handle(FractionState::new(sign * (mant << e), 1));
+    }
+    if (-62..0).contains(&e) {
+        return make_handle(FractionState::new(sign * mant, 1i64 << (-e)));
+    }
+    // Fallback: magnitude outside the exact i64 window.
     let scale: f64 = 1_000_000_000.0;
     let n = (v * scale).round() as i64;
     make_handle(FractionState::new(n, scale as i64))
@@ -321,12 +403,12 @@ pub fn mb_fraction_from_float(f: MbValue) -> MbValue {
 
 /// `f.numerator` attribute read.
 pub fn mb_fraction_numerator(handle: MbValue) -> MbValue {
-    MbValue::from_int(load(handle).num)
+    int_mb(load(handle).num)
 }
 
 /// `f.denominator` attribute read.
 pub fn mb_fraction_denominator(handle: MbValue) -> MbValue {
-    MbValue::from_int(load(handle).den)
+    int_mb(load(handle).den)
 }
 
 /// `f.real` — for rationals, identical to `f` itself.
@@ -353,10 +435,7 @@ pub fn mb_fraction_is_integer(handle: MbValue) -> MbValue {
 /// path hits #2128.
 pub fn mb_fraction_as_integer_ratio(handle: MbValue) -> MbValue {
     let s = load(handle);
-    MbValue::from_ptr(MbObject::new_tuple(vec![
-        MbValue::from_int(s.num),
-        MbValue::from_int(s.den),
-    ]))
+    MbValue::from_ptr(MbObject::new_tuple(vec![int_mb(s.num), int_mb(s.den)]))
 }
 
 /// `f.limit_denominator(max_denominator=1000000)` — Stern-Brocot best
@@ -427,19 +506,27 @@ pub fn mb_fraction_mul(a: MbValue, b: MbValue) -> MbValue {
     make_handle(mul_states(coerce(a), coerce(b)))
 }
 pub fn mb_fraction_truediv(a: MbValue, b: MbValue) -> MbValue {
-    make_handle(div_states(coerce(a), coerce(b)))
+    let bv = coerce(b);
+    if bv.num == 0 {
+        return raise_zero_division_error("Fraction(1, 0)");
+    }
+    make_handle(div_states(coerce(a), bv))
 }
 pub fn mb_fraction_rtruediv(a: MbValue, b: MbValue) -> MbValue {
-    make_handle(div_states(coerce(b), coerce(a)))
+    let av = coerce(a);
+    if av.num == 0 {
+        return raise_zero_division_error("Fraction(1, 0)");
+    }
+    make_handle(div_states(coerce(b), av))
 }
 
 pub fn mb_fraction_floordiv(a: MbValue, b: MbValue) -> MbValue {
     let q = div_states(coerce(a), coerce(b));
-    MbValue::from_int(q.num.div_euclid(q.den))
+    int_mb(q.num.div_euclid(q.den))
 }
 pub fn mb_fraction_rfloordiv(a: MbValue, b: MbValue) -> MbValue {
     let q = div_states(coerce(b), coerce(a));
-    MbValue::from_int(q.num.div_euclid(q.den))
+    int_mb(q.num.div_euclid(q.den))
 }
 
 pub fn mb_fraction_mod(a: MbValue, b: MbValue) -> MbValue {
@@ -504,17 +591,17 @@ pub fn mb_fraction_trunc(handle: MbValue) -> MbValue {
     } else {
         -(s.num.abs() / s.den.abs())
     };
-    MbValue::from_int(q)
+    int_mb(q)
 }
 pub fn mb_fraction_floor(handle: MbValue) -> MbValue {
     let s = load(handle);
-    MbValue::from_int(s.num.div_euclid(s.den))
+    int_mb(s.num.div_euclid(s.den))
 }
 pub fn mb_fraction_ceil(handle: MbValue) -> MbValue {
     let s = load(handle);
     let q = s.num.div_euclid(s.den);
     let r = s.num.rem_euclid(s.den);
-    MbValue::from_int(if r == 0 { q } else { q + 1 })
+    int_mb(if r == 0 { q } else { q + 1 })
 }
 pub fn mb_fraction_round(handle: MbValue, ndigits: MbValue) -> MbValue {
     let s = load(handle);
@@ -533,7 +620,7 @@ pub fn mb_fraction_round(handle: MbValue, ndigits: MbValue) -> MbValue {
         } else {
             q + 1
         };
-        return MbValue::from_int(out);
+        return int_mb(out);
     }
     // ndigits > 0: scale, round, return as Fraction.
     let scale = 10_i64.saturating_pow(nd.unsigned_abs() as u32);
@@ -561,16 +648,38 @@ pub fn mb_fraction_eq(a: MbValue, b: MbValue) -> MbValue {
 pub fn mb_fraction_ne(a: MbValue, b: MbValue) -> MbValue {
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) != std::cmp::Ordering::Equal)
 }
+/// CPython Fraction ordering returns NotImplemented for partners it does not
+/// understand (e.g. a Decimal) so the reflected dunder can run.
+fn fraction_orderable(b: MbValue) -> bool {
+    !(super::super::builtins::is_decimal_handle_value(b)
+        || b.is_none()
+        || b.as_ptr().map(|p| unsafe {
+            matches!((*p).data, ObjData::Str(_) | ObjData::Complex(..))
+        }).unwrap_or(false))
+}
+
 pub fn mb_fraction_lt(a: MbValue, b: MbValue) -> MbValue {
+    if !fraction_orderable(b) {
+        return MbValue::not_implemented();
+    }
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) == std::cmp::Ordering::Less)
 }
 pub fn mb_fraction_le(a: MbValue, b: MbValue) -> MbValue {
+    if !fraction_orderable(b) {
+        return MbValue::not_implemented();
+    }
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) != std::cmp::Ordering::Greater)
 }
 pub fn mb_fraction_gt(a: MbValue, b: MbValue) -> MbValue {
+    if !fraction_orderable(b) {
+        return MbValue::not_implemented();
+    }
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) == std::cmp::Ordering::Greater)
 }
 pub fn mb_fraction_ge(a: MbValue, b: MbValue) -> MbValue {
+    if !fraction_orderable(b) {
+        return MbValue::not_implemented();
+    }
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) != std::cmp::Ordering::Less)
 }
 pub fn mb_fraction_bool(handle: MbValue) -> MbValue {
@@ -578,10 +687,12 @@ pub fn mb_fraction_bool(handle: MbValue) -> MbValue {
 }
 pub fn mb_fraction_hash(handle: MbValue) -> MbValue {
     let s = load(handle);
-    // Same shape as CPython: hash combines num/den; cheap fold is fine
-    // for handle-equality semantics (we only compare via __eq__).
+    // Cheap fold for handle-equality semantics; folded into the 48-bit
+    // NaN-box window (`from_int` aborts beyond ±2^47 in debug builds).
+    // The `hash()` builtin routes equality-consistent hashing through
+    // `decimal_mod::mb_numeric_handle_integral_i64` / `_exact_f64` first.
     let h = s.num.wrapping_mul(0x9E3779B97F4A7C15u64 as i64).wrapping_add(s.den);
-    MbValue::from_int(h)
+    MbValue::from_int((h << 17) >> 17)
 }
 
 // ── Coercion / serialize

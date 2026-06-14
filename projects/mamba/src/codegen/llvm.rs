@@ -194,6 +194,9 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                 MirConst::NotImplemented => {
                     ir.push_str(&format!("  %v{} = add i64 0, {}\n", dest.0, crate::runtime::MbValue::not_implemented().to_bits()));
                 }
+                MirConst::Ellipsis => {
+                    ir.push_str(&format!("  %v{} = add i64 0, {}\n", dest.0, crate::runtime::MbValue::ellipsis().to_bits()));
+                }
                 MirConst::FuncRef(sym) => {
                     // Load function pointer as i64 for async body (#313 R1)
                     let fname = if sym.0 == u32::MAX {

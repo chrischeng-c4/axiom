@@ -164,8 +164,10 @@ impl Repl {
         let file_id = self.source_map.add_file(file_name, input.to_string());
 
         // Parse
-        let module = parser::parse(input, file_id)
+        let mut module = parser::parse(input, file_id)
             .map_err(|e| format!("SyntaxError: {}", self.format_error(&e)))?;
+        crate::lower::pep695::desugar_module(&mut module);
+        let module = module;
 
         // Type check (checker persists across iterations)
         let errors = self.checker.check_module(&module);

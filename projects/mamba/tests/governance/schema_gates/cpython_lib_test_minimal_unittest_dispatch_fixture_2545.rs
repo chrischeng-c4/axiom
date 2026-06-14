@@ -30,8 +30,10 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
-        .join("cpython_lib_test")
+        .join("harness")
+        .join("cpython")
+        .join("config")
+        .join("seeds")
         .join("minimal_unittest_dispatch")
         .join("manifest.toml")
 }

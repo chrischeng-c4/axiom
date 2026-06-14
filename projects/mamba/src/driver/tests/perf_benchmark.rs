@@ -47,7 +47,7 @@ struct BenchResult {
 ///
 /// Returns (total_elapsed across `iters` runs, captured stdout from last run).
 fn run_mamba(src: &str, iters: u32) -> (Duration, String) {
-    let _guard = JIT_LOCK.lock().unwrap();
+    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     cleanup_all_runtime_state();
 
     // Parse -> typecheck -> HIR -> MIR -> JIT codegen

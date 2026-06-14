@@ -148,6 +148,20 @@ pub fn mb_tuple_from_iterable(iterable: MbValue) -> MbValue {
                         .collect();
                     return MbValue::from_ptr(MbObject::new_tuple(items));
                 }
+                ObjData::Bytes(ref data) => {
+                    let items: Vec<MbValue> =
+                        data.iter().map(|&b| MbValue::from_int(b as i64)).collect();
+                    return MbValue::from_ptr(MbObject::new_tuple(items));
+                }
+                ObjData::ByteArray(ref lock) => {
+                    let items: Vec<MbValue> = lock
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .map(|&b| MbValue::from_int(b as i64))
+                        .collect();
+                    return MbValue::from_ptr(MbObject::new_tuple(items));
+                }
                 ObjData::Set(ref lock) => {
                     let items = lock.read().unwrap().to_vec();
                     return MbValue::from_ptr(MbObject::new_tuple_borrowed(items));
@@ -217,6 +231,32 @@ pub fn mb_list_to_tuple(list: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
 }
 
+/// Materialize a packed `*args` value as the tuple Python guarantees, run once
+/// at the entry of every variadic function. Call paths pack the extra
+/// positional args inconsistently — most build a list, but some (e.g.
+/// atexit-forwarded calls) already pass a tuple — so this is idempotent: a list
+/// is converted, an existing tuple is copied (preserving its elements rather
+/// than collapsing to empty like `mb_list_to_tuple` would), and any other value
+/// passes through retained. Always yields a fresh owned value the body releases.
+pub fn mb_star_args_to_tuple(val: MbValue) -> MbValue {
+    unsafe {
+        if let Some(ptr) = val.as_ptr() {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => {
+                    let items = lock.read().unwrap();
+                    return MbValue::from_ptr(MbObject::new_tuple_borrowed(items.to_vec()));
+                }
+                ObjData::Tuple(ref items) => {
+                    return MbValue::from_ptr(MbObject::new_tuple_borrowed(items.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+    unsafe { super::rc::retain_if_ptr(val); }
+    val
+}
+
 // ── Access ──
 
 /// tuple[index] → value
@@ -230,7 +270,15 @@ pub fn mb_tuple_getitem(tup: MbValue, index: MbValue) -> MbValue {
                 super::rc::retain_if_ptr(val);
                 val
             } else {
-                MbValue::none() // IndexError
+                super::exception::mb_raise(
+                    MbValue::from_ptr(super::rc::MbObject::new_str(
+                        "IndexError".to_string(),
+                    )),
+                    MbValue::from_ptr(super::rc::MbObject::new_str(
+                        "tuple index out of range".to_string(),
+                    )),
+                );
+                MbValue::none()
             }
         } else {
             MbValue::none()
@@ -372,7 +420,14 @@ pub fn mb_tuple_index_range(tup: MbValue, value: MbValue, start: MbValue, stop: 
                     }
                 }
             }
-            MbValue::from_int(-1)
+            // CPython: a missing value raises ValueError, never returns -1.
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "tuple.index(x): x not in tuple".to_string(),
+                )),
+            );
+            MbValue::none()
         } else {
             MbValue::from_int(-1)
         }
@@ -430,7 +485,15 @@ pub fn mb_tuple_hash(tup: MbValue) -> MbValue {
             let mut hasher = DefaultHasher::new();
             items.len().hash(&mut hasher);
             for item in items {
-                item.to_bits().hash(&mut hasher);
+                // Content-based element hash via mb_hash, which agrees with
+                // mb_eq: equal values hash equal (ints by value, strings by
+                // content, nested tuples recursively). Hashing raw to_bits()
+                // here made `hash((1, "a")) != hash((1, "a"))` for two "a"
+                // allocations — breaking CPython tuple-hash semantics and
+                // value-equal tuple dict keys. Kinds without a value hash
+                // (lists, plain instances) keep mb_hash's pointer-derived
+                // identity hash, preserving the old behavior for them.
+                super::builtins::mb_hash(*item).as_int().unwrap_or(0).hash(&mut hasher);
             }
             // Truncate to 47 bits to fit MbValue's 48-bit signed int range
             let h = (hasher.finish() >> 17) as i64;
@@ -672,7 +735,10 @@ mod tests {
             MbValue::from_int(10), MbValue::from_int(20), MbValue::from_int(30),
         ]);
         assert_eq!(mb_tuple_index(t, MbValue::from_int(20)).as_int(), Some(1));
-        assert_eq!(mb_tuple_index(t, MbValue::from_int(99)).as_int(), Some(-1));
+        // CPython: a missing value raises ValueError; the runtime entry
+        // returns None after routing through the exception machinery.
+        assert!(mb_tuple_index(t, MbValue::from_int(99)).is_none());
+        crate::runtime::exception::mb_clear_exception();
     }
 
     // ── concat ──

@@ -304,9 +304,13 @@ fn perf_floor_check_reads_tier_from_migrated_baseline() {
 fn baseline_version_bumped_to_2_for_tier_migration() {
     let raw = std::fs::read_to_string(baseline_path()).unwrap();
     let v: Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(
-        v["version"].as_i64(), Some(2),
-        "tier migration is a schema-additive change — bump version to 2",
+    // The tier migration bumped the schema to 2; the v3 memory axis
+    // (`schema_notes_v3`) bumped it again. Both changes are additive, so
+    // this gate pins a version floor rather than an exact value.
+    assert!(
+        v["version"].as_i64() >= Some(2),
+        "tier migration is a schema-additive change — version must be >= 2, got {:?}",
+        v["version"],
     );
 }
 

@@ -83,7 +83,7 @@ macro_rules! disp_variadic {
 
 // Callables (16 surface entries)
 disp_nullary!(d_format_exc,           mb_traceback_format_exc);
-disp_unary!(d_format_exception,       mb_traceback_format_exception);
+disp_variadic!(d_format_exception,    mb_traceback_format_exception);
 disp_variadic!(d_format_exception_only, mb_traceback_format_exception_only);
 disp_unary!(d_format_tb,              mb_traceback_format_tb);
 disp_nullary!(d_format_stack,         mb_traceback_format_stack);
@@ -92,7 +92,7 @@ disp_unary!(d_extract_tb,             mb_traceback_extract_tb);
 disp_nullary!(d_extract_stack,        mb_traceback_extract_stack);
 disp_unary!(d_print_tb,               mb_traceback_print_tb);
 disp_variadic!(d_print_exception,     mb_traceback_print_exception);
-disp_nullary!(d_print_exc,            mb_traceback_print_exc);
+disp_variadic!(d_print_exc,           mb_traceback_print_exc);
 disp_nullary!(d_print_last,           mb_traceback_print_last);
 disp_nullary!(d_print_stack,          mb_traceback_print_stack);
 disp_unary!(d_clear_frames,           mb_traceback_clear_frames);
@@ -137,6 +137,46 @@ pub fn register() {
         });
     }
     super::register_module("traceback", attrs);
+
+    // Class method tables. from_list / from_exception are raw classmethod
+    // dispatchers (NATIVE_FUNC_ADDRS); the instance methods use the variadic
+    // (self, args_list) ABI except the fixed-arity __eq__.
+    {
+        use std::collections::HashMap as Map;
+        let var = |addr: usize| {
+            super::super::module::register_variadic_func(addr as u64);
+            MbValue::from_func(addr)
+        };
+        let mut fs: Map<String, MbValue> = Map::new();
+        fs.insert("__len__".into(), var(fs_len as *const () as usize));
+        super::super::class::mb_class_register("FrameSummary", vec![], fs);
+
+        let mut ss: Map<String, MbValue> = Map::new();
+        ss.insert("from_list".into(), MbValue::from_func(dispatch_ss_from_list as *const () as usize));
+        ss.insert("format".into(),      var(ss_format as *const () as usize));
+        ss.insert("__getitem__".into(), var(ss_getitem as *const () as usize));
+        ss.insert("__setitem__".into(), var(ss_setitem as *const () as usize));
+        ss.insert("__len__".into(),     var(ss_len as *const () as usize));
+        super::super::class::mb_class_register("StackSummary", vec![], ss);
+
+        let mut te: Map<String, MbValue> = Map::new();
+        te.insert("from_exception".into(), MbValue::from_func(dispatch_te_from_exception as *const () as usize));
+        te.insert("__str__".into(), var(te_str as *const () as usize));
+        te.insert("__eq__".into(), MbValue::from_func(te_eq as *const () as usize));
+        super::super::class::mb_class_register("TracebackException", vec![], te);
+
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            let mut s = s.borrow_mut();
+            s.insert(dispatch_ss_from_list as *const () as usize as u64);
+            s.insert(dispatch_te_from_exception as *const () as usize as u64);
+        });
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            let mut map = m.borrow_mut();
+            map.insert(d_frame_summary as *const () as usize as u64, "FrameSummary".to_string());
+            map.insert(d_stack_summary as *const () as usize as u64, "StackSummary".to_string());
+            map.insert(d_traceback_exception as *const () as usize as u64, "TracebackException".to_string());
+        });
+    }
 }
 
 // ── Callables ──
@@ -169,9 +209,67 @@ pub fn mb_traceback_format_exc() -> MbValue {
 /// tb=..., limit=..., chain=True)` returning a list; mamba returns a
 /// single Str matching the legacy mamba shape. Surface-presence callers
 /// only check `callable(...)`.
-pub fn mb_traceback_format_exception(exc: MbValue) -> MbValue {
-    let formatted = format_exception_value(exc);
-    MbValue::from_ptr(MbObject::new_str(formatted))
+pub fn mb_traceback_format_exception(args: &[MbValue]) -> MbValue {
+    let pos = positional(args);
+    match pos.len() {
+        0 => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "format_exception() missing required argument".to_string(),
+                )),
+            );
+            MbValue::none()
+        }
+        1 => {
+            let exc = pos[0];
+            if !is_exception_instance(exc) {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "format_exception() argument must be an exception instance".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+            let line = MbValue::from_ptr(MbObject::new_str(format!("{}\n", final_exc_line(exc))));
+            MbValue::from_ptr(MbObject::new_list(vec![line]))
+        }
+        2 => {
+            // CPython: passing value without tb (or vice versa) is ValueError.
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "Both or neither of value and tb must be given".to_string(),
+                )),
+            );
+            MbValue::none()
+        }
+        _ => {
+            let value = pos[1];
+            let tb = pos[2];
+            let mut lines: Vec<MbValue> = Vec::new();
+            if !tb.is_none() {
+                lines.push(MbValue::from_ptr(MbObject::new_str(
+                    "Traceback (most recent call last):\n".to_string(),
+                )));
+                lines.push(MbValue::from_ptr(MbObject::new_str(
+                    "  File \"<module>\", line 1, in <module>\n".to_string(),
+                )));
+            }
+            // sys.exc_info() carries (type-name str, message str, tb); pair
+            // them back up rather than rendering the bare message as
+            // "Exception: <msg>".
+            let final_line = match (extract_str(pos[0]), extract_str(value)) {
+                (Some(t), Some(v)) if !t.is_empty() => {
+                    if v.is_empty() { t } else { format!("{t}: {v}") }
+                }
+                _ => final_exc_line(value),
+            };
+            lines.push(MbValue::from_ptr(MbObject::new_str(format!("{final_line}\n"))));
+            MbValue::from_ptr(MbObject::new_list(lines))
+        }
+    }
 }
 
 /// traceback.format_exception_only(exc, value=None) -> list[str].
@@ -182,20 +280,50 @@ pub fn mb_traceback_format_exception(exc: MbValue) -> MbValue {
 /// optional `value` second positional is accepted (CPython 3.12
 /// deprecated binary form) but not used.
 pub fn mb_traceback_format_exception_only(args: &[MbValue]) -> MbValue {
-    // CPython 3.12 accepts (exc[, /, value=...]) where the first arg may be a
-    // type (positional, deprecated) and the second the value. Prefer the
-    // value-bearing instance for rendering — `format_exception_value` extracts
-    // type + message from a real Instance, while the bare type passed as
-    // arg[0] only yields its name.
-    let exc = args.get(1).copied()
+    let pos = positional(args);
+    let exc = pos.get(1).copied()
         .filter(|v| !v.is_none())
-        .unwrap_or_else(|| args.first().copied().unwrap_or_else(MbValue::none));
+        .unwrap_or_else(|| pos.first().copied().unwrap_or_else(MbValue::none));
     if exc.is_none() {
         return MbValue::from_ptr(MbObject::new_list(Vec::new()));
     }
-    let mut s = format_exception_value(exc);
-    s.push('\n');
-    let line = MbValue::from_ptr(MbObject::new_str(s));
+    // SyntaxError with (msg, (file, line, col, text)) args renders 3 lines.
+    if let Some(ptr) = exc.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "SyntaxError" {
+                    let args_tuple = fields.read().ok()
+                        .and_then(|f| f.get("args").copied());
+                    if let Some(at) = args_tuple.and_then(|v| v.as_ptr()) {
+                        if let ObjData::Tuple(ref items) = (*at).data {
+                            if items.len() >= 2 {
+                                let msg = extract_str(items[0]).unwrap_or_default();
+                                if let Some(loc) = items[1].as_ptr() {
+                                    if let ObjData::Tuple(ref l) = (*loc).data {
+                                        if l.len() >= 4 {
+                                            let file = extract_str(l[0]).unwrap_or_default();
+                                            let lineno = l[1].as_int().unwrap_or(0);
+                                            let text = extract_str(l[3]).unwrap_or_default();
+                                            let lines = vec![
+                                                MbValue::from_ptr(MbObject::new_str(
+                                                    format!("  File \"{file}\", line {lineno}\n"))),
+                                                MbValue::from_ptr(MbObject::new_str(
+                                                    format!("    {}\n", text.trim()))),
+                                                MbValue::from_ptr(MbObject::new_str(
+                                                    format!("SyntaxError: {msg}\n"))),
+                                            ];
+                                            return MbValue::from_ptr(MbObject::new_list(lines));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let line = MbValue::from_ptr(MbObject::new_str(format!("{}\n", final_exc_line(exc))));
     MbValue::from_ptr(MbObject::new_list(vec![line]))
 }
 
@@ -233,6 +361,22 @@ pub fn mb_traceback_extract_tb(tb: MbValue) -> MbValue {
     if tb.is_none() {
         return MbValue::from_ptr(MbObject::new_list(Vec::new()));
     }
+    // A non-traceback argument fails attribute access on tb.tb_frame.
+    let is_tb = tb.as_ptr().map(|ptr| unsafe {
+        matches!(&(*ptr).data, ObjData::Instance { class_name, .. } if class_name == "traceback")
+    }).unwrap_or(false);
+    if !is_tb {
+        let tn = if tb.is_bool() { "bool" }
+            else if tb.as_int().is_some() { "int" }
+            else if tb.as_float().is_some() { "float" }
+            else { "object" };
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "'{tn}' object has no attribute 'tb_frame'"))),
+        );
+        return MbValue::none();
+    }
     let frame = make_instance(
         "FrameSummary",
         vec![
@@ -259,12 +403,19 @@ pub fn mb_traceback_print_tb(_tb: MbValue) -> MbValue {
 /// traceback.print_exception(exc, /, value=..., tb=..., limit=None,
 ///                           file=None, chain=True) -> None.
 pub fn mb_traceback_print_exception(args: &[MbValue]) -> MbValue {
-    if let Some(exc) = args.first().copied() {
-        if !exc.is_none() {
-            let s = format_exception_value(exc);
-            eprintln!("{s}");
-        }
+    let pos = positional(args);
+    let file = kwarg(args, "file");
+    let value = if pos.len() >= 2 { pos[1] } else { pos.first().copied().unwrap_or_else(MbValue::none) };
+    let tb = pos.get(2).copied().unwrap_or_else(MbValue::none);
+    let mut text = String::new();
+    if !tb.is_none() {
+        text.push_str("Traceback (most recent call last):\n");
+        text.push_str("  File \"<module>\", line 1, in <module>\n");
     }
+    if !value.is_none() {
+        text.push_str(&format!("{}\n", final_exc_line(value)));
+    }
+    write_to_file_or_stderr(file, &text);
     MbValue::none()
 }
 
@@ -272,8 +423,19 @@ pub fn mb_traceback_print_exception(args: &[MbValue]) -> MbValue {
 ///
 /// Prints the canonical "NoneType: None" line to stderr (matching the
 /// `format_exc()` placeholder) and returns None.
-pub fn mb_traceback_print_exc() -> MbValue {
-    eprintln!("NoneType: None");
+pub fn mb_traceback_print_exc(args: &[MbValue]) -> MbValue {
+    let file = kwarg(args, "file");
+    let text = match super::super::exception::last_handled_exception() {
+        Some((etype, msg)) => {
+            if msg.is_empty() {
+                format!("Traceback (most recent call last):\n  File \"<module>\"\n{etype}\n")
+            } else {
+                format!("Traceback (most recent call last):\n  File \"<module>\"\n{etype}: {msg}\n")
+            }
+        }
+        None => "NoneType: None\n".to_string(),
+    };
+    write_to_file_or_stderr(file, &text);
     MbValue::none()
 }
 
@@ -346,11 +508,13 @@ fn make_instance(class_name: &str, fields_kv: Vec<(&str, MbValue)>) -> MbValue {
 ///
 /// Passive container carrying CPython's documented attribute names.
 pub fn mb_traceback_frame_summary_new(args: &[MbValue]) -> MbValue {
-    let filename = args.first().copied().unwrap_or_else(MbValue::none);
-    let lineno   = args.get(1).copied().unwrap_or_else(MbValue::none);
-    let name     = args.get(2).copied().unwrap_or_else(MbValue::none);
-    let locals   = args.get(4).copied().unwrap_or_else(MbValue::none);
-    let line     = args.get(5).copied().unwrap_or_else(MbValue::none);
+    let pos = positional(args);
+    let filename = pos.first().copied().unwrap_or_else(MbValue::none);
+    let lineno   = pos.get(1).copied().unwrap_or_else(MbValue::none);
+    let name     = pos.get(2).copied().unwrap_or_else(MbValue::none);
+    // lookup_line / locals / line are keyword-only in CPython.
+    let locals = kwarg(args, "locals").unwrap_or_else(MbValue::none);
+    let line   = kwarg(args, "line").unwrap_or_else(MbValue::none);
     make_instance("FrameSummary", vec![
         ("filename", filename),
         ("lineno",   lineno),
@@ -358,6 +522,151 @@ pub fn mb_traceback_frame_summary_new(args: &[MbValue]) -> MbValue {
         ("locals",   locals),
         ("line",     line),
     ])
+}
+
+// ── FrameSummary / StackSummary / TracebackException methods ──
+
+/// len(FrameSummary) == 4 (filename, lineno, name, line).
+unsafe extern "C" fn fs_len(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_int(4)
+}
+
+fn make_stack_summary(entries: Vec<MbValue>) -> MbValue {
+    let list = MbValue::from_ptr(MbObject::new_list(entries));
+    make_instance("StackSummary", vec![("entries", list)])
+}
+
+/// `StackSummary.from_list(iterable)` classmethod — accepts a list/tuple of
+/// 4-tuples / FrameSummary entries, or another StackSummary.
+unsafe extern "C" fn dispatch_ss_from_list(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let src = a.first().copied().unwrap_or_else(MbValue::none);
+    let entries: Vec<MbValue> = if let Some(ptr) = src.as_ptr() {
+        match &(*ptr).data {
+            ObjData::Instance { class_name, .. } if class_name == "StackSummary" => {
+                stack_entries(src)
+            }
+            ObjData::List(lock) => lock.read().unwrap().to_vec(),
+            ObjData::Tuple(items) => items.clone(),
+            _ => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+    make_stack_summary(entries)
+}
+
+unsafe extern "C" fn ss_format(self_v: MbValue, _args: MbValue) -> MbValue {
+    let mut lines: Vec<MbValue> = Vec::new();
+    for entry in stack_entries(self_v) {
+        match format_frame_entry(entry) {
+            Some(s) => lines.push(MbValue::from_ptr(MbObject::new_str(s))),
+            None => {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "frame summary entry is not a FrameSummary or 4-sequence".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(lines))
+}
+
+unsafe extern "C" fn ss_getitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let idx = first_arg_of(args).as_int().unwrap_or(0);
+    let entries = stack_entries(self_v);
+    let n = entries.len() as i64;
+    let i = if idx < 0 { idx + n } else { idx };
+    entries.get(i as usize).copied().unwrap_or_else(MbValue::none)
+}
+
+unsafe extern "C" fn ss_setitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = list_items_of(args);
+    let idx = items.first().and_then(|v| v.as_int()).unwrap_or(0);
+    let val = items.get(1).copied().unwrap_or_else(MbValue::none);
+    if let Some(ptr) = self_v.as_ptr() {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let entries = fields.read().unwrap().get("entries").copied();
+            if let Some(e) = entries {
+                super::super::list_ops::mb_list_setitem(e, MbValue::from_int(idx), val);
+            }
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn ss_len(self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_int(stack_entries(self_v).len() as i64)
+}
+
+fn first_arg_of(args: MbValue) -> MbValue {
+    list_items_of(args).first().copied().unwrap_or_else(MbValue::none)
+}
+
+fn list_items_of(args: MbValue) -> Vec<MbValue> {
+    args.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
+            ObjData::Tuple(items) => Some(items.clone()),
+            _ => None,
+        }
+    }).unwrap_or_default()
+}
+
+/// `TracebackException.from_exception(e, ...)` classmethod.
+unsafe extern "C" fn dispatch_te_from_exception(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let e = a.first().copied().unwrap_or_else(MbValue::none);
+    let (cls, msg) = if let Some(ptr) = e.as_ptr() {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            (class_name.clone(), safe_exc_str(e))
+        } else {
+            (String::new(), String::new())
+        }
+    } else {
+        (String::new(), String::new())
+    };
+    make_instance("TracebackException", vec![
+        ("exc_type", MbValue::from_ptr(MbObject::new_str(cls.clone()))),
+        ("exc_value", e),
+        ("_message", MbValue::from_ptr(MbObject::new_str(msg))),
+        ("__cause__", MbValue::none()),
+        ("__context__", MbValue::none()),
+        ("__suppress_context__", MbValue::from_bool(false)),
+        ("stack", make_stack_summary(Vec::new())),
+    ])
+}
+
+/// `str(TracebackException)` -> the captured exception message.
+unsafe extern "C" fn te_str(self_v: MbValue, _args: MbValue) -> MbValue {
+    let msg = self_v.as_ptr().and_then(|ptr| {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().ok().and_then(|f| f.get("_message").copied()).and_then(extract_str)
+        } else { None }
+    }).unwrap_or_default();
+    MbValue::from_ptr(MbObject::new_str(msg))
+}
+
+/// Equality over (exc_type, message) — equivalent captures compare equal.
+unsafe extern "C" fn te_eq(self_v: MbValue, other: MbValue) -> MbValue {
+    let read = |v: MbValue, k: &str| -> Option<String> {
+        v.as_ptr().and_then(|ptr| {
+            if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+                if class_name != "TracebackException" { return None; }
+                fields.read().ok().and_then(|f| f.get(k).copied()).and_then(extract_str)
+            } else { None }
+        })
+    };
+    let (Some(ta), Some(ma)) = (read(self_v, "exc_type"), read(self_v, "_message")) else {
+        return MbValue::not_implemented();
+    };
+    let (Some(tb_), Some(mb_)) = (read(other, "exc_type"), read(other, "_message")) else {
+        return MbValue::not_implemented();
+    };
+    MbValue::from_bool(ta == tb_ && ma == mb_)
 }
 
 /// traceback.StackSummary() -> StackSummary Instance (empty list-shaped).
@@ -420,6 +729,168 @@ pub fn mb_traceback_traceback_exception_new(args: &[MbValue]) -> MbValue {
 // ── Helpers ──
 
 /// Internal helper to format an exception value as a string.
+/// Minimal traceback object: an Instance "traceback" with tb_lineno /
+/// tb_next / tb_frame so `e.__traceback__` / `sys.exc_info()[2]` are
+/// non-None and walk_tb / extract_tb have a shape to consume. Frame data
+/// is synthetic — mamba does not materialize Python frames.
+pub(crate) fn make_tb_instance() -> MbValue {
+    let frame = make_instance("frame", vec![
+        ("f_lineno", MbValue::from_int(1)),
+        ("f_locals", MbValue::from_ptr(MbObject::new_dict())),
+        ("f_globals", MbValue::from_ptr(MbObject::new_dict())),
+    ]);
+    make_instance("traceback", vec![
+        ("tb_lineno", MbValue::from_int(1)),
+        ("tb_next", MbValue::none()),
+        ("tb_frame", frame),
+    ])
+}
+
+/// True iff the value is an exception instance (builtin hierarchy or a
+/// registered user subclass of Exception/BaseException).
+fn is_exception_instance(v: MbValue) -> bool {
+    let Some(ptr) = v.as_ptr() else { return false };
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            return super::super::exception::is_subclass_of(class_name, "BaseException")
+                || super::super::exception::is_subclass_of(class_name, "Exception")
+                || class_name == "Exception"
+                || class_name == "BaseException";
+        }
+    }
+    false
+}
+
+/// str(value) that survives a raising __str__: a pending exception is
+/// cleared and rendered as CPython's '<exception str() failed>'.
+fn safe_exc_str(value: MbValue) -> String {
+    let r = super::super::builtins::mb_str(value);
+    if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+        super::super::exception::mb_clear_exception();
+        return "<exception str() failed>".to_string();
+    }
+    extract_str(r).unwrap_or_default()
+}
+
+/// CPython's final exception line: "Type: message" (or bare "Type").
+fn final_exc_line(value: MbValue) -> String {
+    if let Some(ptr) = value.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let cls = class_name.clone();
+                let msg = safe_exc_str(value);
+                return if msg.is_empty() { cls } else { format!("{cls}: {msg}") };
+            }
+        }
+    }
+    format_exception_value(value)
+}
+
+/// Pull the kwargs dict (mamba folds keywords into a trailing dict arg).
+fn kwargs_of(args: &[MbValue]) -> Option<MbValue> {
+    args.iter().copied().find(|v| {
+        v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+    })
+}
+
+fn kwarg(args: &[MbValue], name: &str) -> Option<MbValue> {
+    let d = kwargs_of(args)?;
+    let v = super::super::dict_ops::mb_dict_get(
+        d,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        MbValue::none(),
+    );
+    if v.is_none() { None } else { Some(v) }
+}
+
+/// Positional (non-kwargs-dict) args.
+fn positional(args: &[MbValue]) -> Vec<MbValue> {
+    args.iter().copied().filter(|v| {
+        !v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+    }).collect()
+}
+
+/// Write text to a `file=` stream when given (StringIO etc.), else stderr.
+fn write_to_file_or_stderr(file: Option<MbValue>, text: &str) {
+    match file {
+        Some(f) if !f.is_none() => {
+            let method = MbValue::from_ptr(MbObject::new_str("write".to_string()));
+            let args = MbValue::from_ptr(MbObject::new_list(vec![
+                MbValue::from_ptr(MbObject::new_str(text.to_string())),
+            ]));
+            super::super::class::mb_call_method(f, method, args);
+        }
+        _ => eprint!("{text}"),
+    }
+}
+
+/// Render one frame entry (FrameSummary instance or 4-sequence) as the
+/// CPython '  File "...", line N, in name\n    line\n' block. None on a
+/// non-frame entry (caller raises TypeError).
+fn format_frame_entry(entry: MbValue) -> Option<String> {
+    let (filename, lineno, name, line) = frame_entry_parts(entry)?;
+    let mut out = format!("  File \"{filename}\", line {lineno}, in {name}\n");
+    if !line.is_empty() {
+        out.push_str(&format!("    {line}\n"));
+    }
+    Some(out)
+}
+
+fn frame_entry_parts(entry: MbValue) -> Option<(String, i64, String, String)> {
+    if let Some(ptr) = entry.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Instance { class_name, fields } if class_name == "FrameSummary" => {
+                    let f = fields.read().ok()?;
+                    let g = |k: &str| f.get(k).copied().unwrap_or_else(MbValue::none);
+                    return Some((
+                        extract_str(g("filename")).unwrap_or_default(),
+                        g("lineno").as_int().unwrap_or(0),
+                        extract_str(g("name")).unwrap_or_default(),
+                        extract_str(g("line")).unwrap_or_default(),
+                    ));
+                }
+                ObjData::Tuple(items) => {
+                    if items.len() < 4 { return None; }
+                    return Some((
+                        extract_str(items[0]).unwrap_or_default(),
+                        items[1].as_int().unwrap_or(0),
+                        extract_str(items[2]).unwrap_or_default(),
+                        extract_str(items[3]).unwrap_or_default(),
+                    ));
+                }
+                ObjData::List(lock) => {
+                    let items = lock.read().ok()?.to_vec();
+                    if items.len() < 4 { return None; }
+                    return Some((
+                        extract_str(items[0]).unwrap_or_default(),
+                        items[1].as_int().unwrap_or(0),
+                        extract_str(items[2]).unwrap_or_default(),
+                        extract_str(items[3]).unwrap_or_default(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Entries list of a StackSummary instance.
+fn stack_entries(self_v: MbValue) -> Vec<MbValue> {
+    self_v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let e = fields.read().ok()?.get("entries").copied()?;
+            if let Some(ep) = e.as_ptr() {
+                if let ObjData::List(ref lock) = (*ep).data {
+                    return lock.read().ok().map(|g| g.to_vec());
+                }
+            }
+        }
+        None
+    }).unwrap_or_default()
+}
+
 fn format_exception_value(exc: MbValue) -> String {
     if exc.is_none() {
         return "NoneType: None".to_string();
@@ -524,7 +995,7 @@ mod tests {
         usize::MAX
     }
 
-    // -- format_exc / format_exception (preserved behavior) --
+    // -- format_exc / format_exception (CPython list semantics) --
 
     #[test]
     fn test_format_exc_default() {
@@ -534,50 +1005,38 @@ mod tests {
     }
 
     #[test]
-    fn test_format_exception_string() {
-        let exc = MbValue::from_ptr(MbObject::new_str("something broke".to_string()));
-        let result = mb_traceback_format_exception(exc);
-        let s = extract_str(result).expect("expected string");
-        assert_eq!(s, "Exception: something broke");
+    fn test_format_exception_non_exception_raises_type_error() {
+        super::super::super::exception::mb_clear_exception();
+        let result = mb_traceback_format_exception(&[MbValue::from_int(42)]);
+        assert!(result.is_none());
+        assert_eq!(
+            super::super::super::exception::mb_has_exception().as_bool(),
+            Some(true)
+        );
+        super::super::super::exception::mb_clear_exception();
     }
 
     #[test]
-    fn test_format_exception_none() {
-        let result = mb_traceback_format_exception(MbValue::none());
-        let s = extract_str(result).expect("expected string");
-        assert_eq!(s, "NoneType: None");
+    fn test_format_exception_two_positional_raises_value_error() {
+        super::super::super::exception::mb_clear_exception();
+        let a = MbValue::from_ptr(MbObject::new_str("Exception".to_string()));
+        let b = make_test_instance("Exception", &[("message", "x")]);
+        let result = mb_traceback_format_exception(&[a, b]);
+        assert!(result.is_none());
+        assert_eq!(
+            super::super::super::exception::mb_has_exception().as_bool(),
+            Some(true)
+        );
+        super::super::super::exception::mb_clear_exception();
     }
 
     #[test]
-    fn test_format_exception_instance_with_message() {
-        let exc = make_test_instance("SomeError", &[("message", "oops")]);
-        let result = mb_traceback_format_exception(exc);
-        let s = extract_str(result).expect("string");
-        assert_eq!(s, "SomeError: oops");
-    }
-
-    #[test]
-    fn test_format_exception_instance_no_fields() {
-        let exc = make_test_instance("MyError", &[]);
-        let result = mb_traceback_format_exception(exc);
-        let s = extract_str(result).expect("string");
-        assert_eq!(s, "MyError");
-    }
-
-    #[test]
-    fn test_format_exception_dict_type_and_message() {
-        let exc = make_dict_exc(Some("TypeError"), Some("bad arg"));
-        let result = mb_traceback_format_exception(exc);
-        let s = extract_str(result).expect("string");
-        assert_eq!(s, "TypeError: bad arg");
-    }
-
-    #[test]
-    fn test_format_exception_int() {
-        let exc = MbValue::from_int(42);
-        let result = mb_traceback_format_exception(exc);
-        let s = extract_str(result).expect("string");
-        assert_eq!(s, "Exception: 42");
+    fn test_format_exception_three_arg_returns_list_with_final_line() {
+        let t = MbValue::from_ptr(MbObject::new_str("IndexError".to_string()));
+        let v = MbValue::from_ptr(MbObject::new_str("idx".to_string()));
+        let tb = make_tb_instance();
+        let result = mb_traceback_format_exception(&[t, v, tb]);
+        assert!(list_len(result) >= 1);
     }
 
     // -- format_exception_only --
@@ -643,7 +1102,7 @@ mod tests {
 
     #[test]
     fn test_print_exc_returns_none() {
-        assert!(mb_traceback_print_exc().is_none());
+        assert!(mb_traceback_print_exc(&[]).is_none());
     }
 
     #[test]

@@ -522,7 +522,7 @@ fn checker_help_documents_manifest_and_format_flags() {
 #[test]
 fn shipped_int_sum_fixture_still_prints_final_answer_to_stdout() {
     let path = crate::common::project_root()
-        .join("tests/cpython/fixtures/core/bench/int_sum.py");
+        .join("tests/cpython/_regression/core/bench/int_sum.py");
     let body = std::fs::read_to_string(&path).expect("read int_sum.py");
     // Internal time marker MUST go to stderr; the golden answer
     // (`print(total)`) MUST stay on stdout. Anything else would

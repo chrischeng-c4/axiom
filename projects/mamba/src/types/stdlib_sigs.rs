@@ -141,6 +141,105 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("x", CoreTy::Unknown)],
         enforceable: false,
     },
+    // NEGATIVE: calendar.setfirstweekday(firstweekday) — CPython's body is
+    // `if not MONDAY <= firstweekday <= SUNDAY`, so a str argument is a
+    // RUNTIME TypeError (from the int/str comparison), not a compile-time
+    // reject. The runtime dispatcher raises it; keep the wall out of the way.
+    StdlibSig {
+        module: "calendar",
+        qualifier: "",
+        name: "setfirstweekday",
+        kind: SigKind::ModuleFn,
+        params: &[p("firstweekday", CoreTy::Unknown)],
+        enforceable: false,
+    },
+    // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
+    // TypeError (normcase raises it); the dispatcher models that contract.
+    StdlibSig {
+        module: "fnmatch",
+        qualifier: "",
+        name: "translate",
+        kind: SigKind::ModuleFn,
+        params: &[p("pat", CoreTy::Unknown)],
+        enforceable: false,
+    },
+    // NEGATIVE: hashlib.new(name, data=b'') — `new(1)` is a RUNTIME
+    // TypeError raised by the dispatcher (CPython: 'name must be a string'),
+    // which the fixture catches; keep the type wall from rejecting it early.
+    StdlibSig {
+        module: "hashlib",
+        qualifier: "",
+        name: "new",
+        kind: SigKind::ModuleFn,
+        params: &[p("name", CoreTy::Unknown), p("data", CoreTy::Unknown)],
+        enforceable: false,
+    },
+    // NEGATIVE: unicodedata.name(chr[, default]) / category(chr) — a non-str
+    // or multi-character argument is a RUNTIME TypeError (the dispatcher
+    // requires a single unicode character: `name(123)`), which the fixture
+    // catches; keep the type wall from rejecting it at compile time.
+    StdlibSig {
+        module: "unicodedata",
+        qualifier: "",
+        name: "name",
+        kind: SigKind::ModuleFn,
+        params: &[p("chr", CoreTy::Unknown), p("default", CoreTy::Unknown)],
+        enforceable: false,
+    },
+    StdlibSig {
+        module: "unicodedata",
+        qualifier: "",
+        name: "category",
+        kind: SigKind::ModuleFn,
+        params: &[p("chr", CoreTy::Unknown)],
+        enforceable: false,
+    },
+    // NEGATIVE: colorsys conversions take three real numbers; a non-numeric
+    // channel (`rgb_to_hsv("x", 0, 0)`) is a RUNTIME TypeError raised by the
+    // dispatcher, so keep the type wall from rejecting it at compile time.
+    StdlibSig { module: "colorsys", qualifier: "", name: "rgb_to_hsv", kind: SigKind::ModuleFn,
+        params: &[p("r", CoreTy::Unknown), p("g", CoreTy::Unknown), p("b", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "hsv_to_rgb", kind: SigKind::ModuleFn,
+        params: &[p("h", CoreTy::Unknown), p("s", CoreTy::Unknown), p("v", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "rgb_to_hls", kind: SigKind::ModuleFn,
+        params: &[p("r", CoreTy::Unknown), p("g", CoreTy::Unknown), p("b", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "hls_to_rgb", kind: SigKind::ModuleFn,
+        params: &[p("h", CoreTy::Unknown), p("l", CoreTy::Unknown), p("s", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "rgb_to_yiq", kind: SigKind::ModuleFn,
+        params: &[p("r", CoreTy::Unknown), p("g", CoreTy::Unknown), p("b", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "yiq_to_rgb", kind: SigKind::ModuleFn,
+        params: &[p("y", CoreTy::Unknown), p("i", CoreTy::Unknown), p("q", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: textwrap.dedent(text) — `dedent(123)` is a RUNTIME TypeError
+    // (CPython runs `_whitespace_only_re.sub` over a non-str → "expected string
+    // or bytes-like object"); the dispatcher raises it. Keep the type wall from
+    // rejecting it at compile time.
+    StdlibSig { module: "textwrap", qualifier: "", name: "dedent", kind: SigKind::ModuleFn,
+        params: &[p("text", CoreTy::Unknown)], enforceable: false },
+    // NOTE: textwrap.indent is deliberately NOT overridden. Its runtime raises
+    // AttributeError on a non-str (CPython's `text.splitlines(True)`), but the
+    // `type/std-libs/textwrap/indent__text_as_str_wrong` STRICT_TYPE fixture
+    // requires the compile-time wall to raise TypeError. Those two contracts
+    // conflict for `indent(<int>, …)`, and the type-dimension enforcement wins,
+    // so the wall stays and errors/indent_non_str_raises remains unmet.
+    // NEGATIVE: shlex.quote(s) — `quote(42)` is a RUNTIME TypeError (CPython's
+    // `_find_unsafe(s)` regex over a non-str → "expected string or bytes-like
+    // object"); the dispatcher raises it. Keep the type wall out of the way.
+    StdlibSig { module: "shlex", qualifier: "", name: "quote", kind: SigKind::ModuleFn,
+        params: &[p("s", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: os.umask(mask) — `umask("x")` is a RUNTIME TypeError ("'str'
+    // object cannot be interpreted as an integer"); the dispatcher raises it.
+    StdlibSig { module: "os", qualifier: "", name: "umask", kind: SigKind::ModuleFn,
+        params: &[p("mask", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: locale.setlocale(category, locale=None) — a non-int category
+    // (`setlocale("not_a_category", ...)`) is a RUNTIME TypeError ("an integer
+    // is required (got type str)"); the dispatcher raises it.
+    StdlibSig { module: "locale", qualifier: "", name: "setlocale", kind: SigKind::ModuleFn,
+        params: &[p("category", CoreTy::Unknown), p("locale", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: signal.setitimer(which, seconds, interval=0.0) — a non-int
+    // `which` (`setitimer("not_int", 1.0)`) is a RUNTIME TypeError; the
+    // dispatcher raises it.
+    StdlibSig { module: "signal", qualifier: "", name: "setitimer", kind: SigKind::ModuleFn,
+        params: &[p("which", CoreTy::Unknown), p("seconds", CoreTy::Unknown), p("interval", CoreTy::Unknown)], enforceable: false },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for

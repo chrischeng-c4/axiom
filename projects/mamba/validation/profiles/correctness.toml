@@ -70,16 +70,17 @@ counted_pass_outcomes = ["pass", "AssertionPass"]
 
 [families.language_semantics]
 kind = "datatest"
-source = "tests/cpython/fixtures"
-# Selector: every `.py` file with a sibling `.expected` is a fixture.
-# The runner enumerates them; any file under the source root that
-# matches this pattern is part of the family.
-selector = "**/*.py+expected_sibling"
+source = "tests/cpython"
+# Selector: every `.py` fixture in the dimension-first record tree
+# (goldens retired by D5.6 — the live CPython oracle is the expected
+# output). The runner enumerates them; any file under the source root
+# that matches this pattern is part of the family.
+selector = "**/*.py"
 description = "Python language semantics fixtures (#2528)."
 
 [families.cpython_seeds]
 kind = "cpython_folder_contract"
-source = "tests/cpython/config/seeds/"
+source = "tests/harness/cpython/config/seeds/"
 # Folder-based contract convention (#3729): per-seed outcome is pinned
 # by parent directory (pass/, spec/, stub/, fail/, import_pass/,
 # timeout/). Only seeds living under `pass/` count toward MVP green —

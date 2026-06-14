@@ -79,10 +79,61 @@ disp_binary!(dispatch_log, mb_cmath_log);
 // positional args and apply defaults for missing ones.
 unsafe extern "C" fn dispatch_isclose(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    // rel_tol / abs_tol are keyword-only: read the trailing kwargs dict.
+    let kw = a.last().copied().filter(|v| {
+        v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+    });
+    let kwarg = |key: &str| -> Option<MbValue> {
+        let ptr = kw?.as_ptr()?;
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                return lock.read().unwrap().get(key).copied();
+            }
+        }
+        None
+    };
     let z1 = a.first().copied().unwrap_or_else(MbValue::none);
     let z2 = a.get(1).copied().unwrap_or_else(MbValue::none);
-    let rel_tol = a.get(2).and_then(|v| as_f64(*v)).unwrap_or(1e-9);
-    let abs_tol = a.get(3).and_then(|v| as_f64(*v)).unwrap_or(0.0);
+    let mut rel_tol = 1e-9;
+    let mut abs_tol = 0.0;
+    for (name, slot, default_pos) in [
+        ("rel_tol", &mut rel_tol as *mut f64, 2usize),
+        ("abs_tol", &mut abs_tol as *mut f64, 3usize),
+    ] {
+        let v = kwarg(name).or_else(|| {
+            a.get(default_pos)
+                .copied()
+                .filter(|x| !x.as_ptr().is_some_and(|p| unsafe {
+                    matches!((*p).data, ObjData::Dict(_))
+                }))
+        });
+        if let Some(v) = v {
+            // A complex tolerance is a TypeError (must be real).
+            let is_complex = v.as_ptr().is_some_and(|p| unsafe {
+                matches!((*p).data, ObjData::Complex(..))
+            });
+            if is_complex {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "can't convert complex to float ({name})"
+                    ))),
+                );
+                return MbValue::none();
+            }
+            let f = as_f64(v).unwrap_or(0.0);
+            if f < 0.0 {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "tolerances must be non-negative".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+            unsafe { *slot = f };
+        }
+    }
     mb_cmath_isclose(z1, z2, rel_tol, abs_tol)
 }
 
@@ -854,6 +905,19 @@ pub fn mb_cmath_log10(z: MbValue) -> MbValue {
 }
 
 pub fn mb_cmath_sqrt(z: MbValue) -> MbValue {
+    // Strings can never be complex: CPython raises before any math.
+    let is_str = z.as_ptr().is_some_and(|p| unsafe {
+        matches!((*p).data, ObjData::Str(_))
+    });
+    if is_str {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "must be a number, not str".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     let mut e = Errno::new();
     let r = csqrt(extract_complex(z), &mut e);
     finish(r, &e)

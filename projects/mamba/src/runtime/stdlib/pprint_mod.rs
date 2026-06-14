@@ -208,6 +208,20 @@ unsafe extern "C" fn dispatch_pretty_printer(args_ptr: *const MbValue, nargs: us
         None => (a, None),
     };
 
+    // PrettyPrinter accepts at most four positional arguments (indent, width,
+    // depth, stream); compact/sort_dicts/underscore_numbers are keyword-only.
+    // A fifth positional is a TypeError.
+    if positional.len() > 4 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "PrettyPrinter expected at most 4 positional arguments, got {}",
+                positional.len()
+            ))),
+        );
+        return MbValue::none();
+    }
+
     let mut cfg = Config::default();
 
     // Capture the raw (unclamped) indent / width / depth so CPython's

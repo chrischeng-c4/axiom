@@ -328,6 +328,14 @@ fn raise_type_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 #[inline]
 fn with_str<R>(val: MbValue, f: impl FnOnce(&str) -> R) -> R {
     if let Some(ptr) = val.as_ptr() {
@@ -434,6 +442,11 @@ pub fn mb_hmac_new_handle(key: MbValue, msg: MbValue, digestmod: MbValue) -> MbV
     let Some(algo) = resolve_digestmod(digestmod) else {
         return raise_missing_digestmod();
     };
+    // An unknown digest name is a ValueError (CPython surfaces hashlib's
+    // "unsupported hash type ..."), not a silent fall back to a default algo.
+    if !ALGOS.contains(&algo.as_str()) {
+        return raise_value_error(&format!("unsupported hash type {algo}"));
+    }
     let h = with_bytes(key, |k| make_handle(&algo, k));
     if !msg.is_none() {
         mb_hmac_update(h, msg);

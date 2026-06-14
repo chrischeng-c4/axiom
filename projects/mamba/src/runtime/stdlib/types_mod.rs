@@ -86,7 +86,28 @@ unsafe extern "C" fn dispatch_simplenamespace(args_ptr: *const MbValue, nargs: u
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
+    // SimpleNamespace takes keyword arguments only (kwargs arrive as a trailing
+    // dict; a positional mapping is tolerated). A non-mapping positional, e.g.
+    // SimpleNamespace(1, 2), is a TypeError in CPython, not a silent no-op.
+    for arg in a {
+        let is_dict = arg
+            .as_ptr()
+            .map_or(false, |p| matches!(unsafe { &(*p).data }, ObjData::Dict(_)));
+        if !is_dict {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "no positional arguments expected".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
     let mut fields = FxHashMap::default();
+    // Instance fields are unordered, but SimpleNamespace's repr must render
+    // attributes in insertion order. Track it in a hidden `__ns_order__` list
+    // (excluded from repr/vars); mb_setattr appends to it for new attributes.
+    let mut order: Vec<MbValue> = Vec::new();
     for arg in a {
         if let Some(ptr) = arg.as_ptr() {
             unsafe {
@@ -94,6 +115,9 @@ unsafe extern "C" fn dispatch_simplenamespace(args_ptr: *const MbValue, nargs: u
                     for (k, v) in lock.read().unwrap().iter() {
                         if let super::super::dict_ops::DictKey::Str(name) = k {
                             super::super::rc::retain_if_ptr(*v);
+                            if !fields.contains_key(name) {
+                                order.push(MbValue::from_ptr(MbObject::new_str(name.clone())));
+                            }
                             fields.insert(name.clone(), *v);
                         }
                     }
@@ -101,6 +125,10 @@ unsafe extern "C" fn dispatch_simplenamespace(args_ptr: *const MbValue, nargs: u
             }
         }
     }
+    fields.insert(
+        "__ns_order__".to_string(),
+        MbValue::from_ptr(MbObject::new_list(order)),
+    );
     let obj = Box::new(MbObject {
         header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
@@ -172,35 +200,31 @@ pub fn register() {
 
 // -- Type object constructor helper --
 
-/// Create a type object instance with a given __name__.
+/// Create a type object instance with a given __name__. Routes through the
+/// builtins TYPE_OBJ_CACHE singleton so `type(x) is types.XType` identity
+/// holds (the same cache backs `type()`), then tops up the extra fields the
+/// types module surfaces (__qualname__, UnionType.__args__) — idempotent
+/// singleton mutation.
 fn make_type_obj(name: &str) -> MbValue {
-    let fields = {
-        let mut m = FxHashMap::default();
-        m.insert("__name__".to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())));
-        m.insert("__qualname__".to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())));
-        m.insert("__module__".to_string(),
-            MbValue::from_ptr(MbObject::new_str("builtins".to_string())));
-        if name == "UnionType" {
-            m.insert(
-                "__args__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("getset_descriptor".to_string())),
-            );
+    let val = super::super::builtins::make_type_object(name);
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut f = fields.write().unwrap();
+                if !f.contains_key("__qualname__") {
+                    f.insert("__qualname__".to_string(),
+                        MbValue::from_ptr(MbObject::new_str(name.to_string())));
+                }
+                if name == "UnionType" && !f.contains_key("__args__") {
+                    f.insert(
+                        "__args__".to_string(),
+                        MbValue::from_ptr(MbObject::new_str("getset_descriptor".to_string())),
+                    );
+                }
+            }
         }
-        m
-    };
-    let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
-        data: ObjData::Instance {
-            class_name: "type".to_string(),
-            fields: RwLock::new(fields),
-        },
-    });
-    MbValue::from_ptr(Box::into_raw(obj))
+    }
+    val
 }
 
 // -- pub helpers — type object accessors (kept for back-compat callers) --
@@ -472,10 +496,17 @@ mod tests {
     }
 
     #[test]
-    fn test_coroutine_is_identity() {
+    fn test_coroutine_rejects_non_callable() {
+        // CPython 3.12: types.coroutine() raises TypeError for a
+        // non-callable argument (identity passthrough applies to callables).
         let f = MbValue::from_int(42);
         let r = mb_types_coroutine(f);
-        assert_eq!(r.as_int(), Some(42));
+        assert!(r.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]

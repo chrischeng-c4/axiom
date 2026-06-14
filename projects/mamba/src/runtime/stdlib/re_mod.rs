@@ -33,6 +33,31 @@ thread_local! {
 
 /// Look up a compiled `Regex` for `pat`, compiling+caching on miss.
 /// Returns `Err(message)` on compile failure (caller raises `re.error`).
+/// Translate Python `re` spellings the Rust `regex` crate spells
+/// differently. Today: `\Z` (Python end-of-string) → `\z` (Rust). Walks
+/// escape state so `\\Z` (literal backslash + Z) is left alone; character
+/// classes need no special casing because `\Z` is invalid inside one in
+/// both dialects.
+fn py_pattern_to_rust(pat: &str) -> String {
+    let mut out = String::with_capacity(pat.len());
+    let mut chars = pat.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('Z') => out.push_str("\\z"),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn compile_cached(pat: &str) -> Result<Rc<regex::Regex>, String> {
     // Fast path: lookup. Move the hit to the back (MRU end) so the
     // cold-eviction policy is true LRU-by-recency rather than FIFO.
@@ -50,7 +75,8 @@ fn compile_cached(pat: &str) -> Result<Rc<regex::Regex>, String> {
         return Ok(hit);
     }
     // Miss: compile, then install (evicting the LRU entry if at cap).
-    let compiled = regex::Regex::new(pat).map_err(|e| e.to_string())?;
+    let compiled =
+        regex::Regex::new(&py_pattern_to_rust(pat)).map_err(|e| e.to_string())?;
     let rc = Rc::new(compiled);
     RE_CACHE.with(|c| {
         let mut cache = c.borrow_mut();
@@ -60,6 +86,29 @@ fn compile_cached(pat: &str) -> Result<Rc<regex::Regex>, String> {
         cache.push((pat.to_string(), rc.clone()));
     });
     Ok(rc)
+}
+
+/// Bake Python `re` flag bits into the pattern as an inline-flag prefix the
+/// Rust `regex` crate understands: IGNORECASE→`i`, MULTILINE→`m`,
+/// DOTALL→`s`, VERBOSE→`x`. Returns the original value when no translatable
+/// flag is set (ASCII/LOCALE/UNICODE have no inline equivalent and are
+/// ignored). Used by the module-level dispatchers (3rd `flags` positional)
+/// and by `re.Pattern` method dispatch (stored `flags` field).
+pub(crate) fn with_flags(pattern: MbValue, flags: MbValue) -> MbValue {
+    let f = flags.as_int().unwrap_or(0);
+    if f == 0 {
+        return pattern;
+    }
+    let Some(pat) = extract_str(pattern) else { return pattern };
+    let mut inline = String::new();
+    if f & 2 != 0 { inline.push('i'); }   // re.IGNORECASE
+    if f & 8 != 0 { inline.push('m'); }   // re.MULTILINE
+    if f & 16 != 0 { inline.push('s'); }  // re.DOTALL
+    if f & 64 != 0 { inline.push('x'); }  // re.VERBOSE
+    if inline.is_empty() {
+        return pattern;
+    }
+    MbValue::from_ptr(MbObject::new_str(format!("(?{inline}){pat}")))
 }
 
 fn extract_str(val: MbValue) -> Option<String> {
@@ -116,14 +165,105 @@ macro_rules! dispatch_ternary {
     };
 }
 
-dispatch_binary!(dispatch_search, mb_re_search);
-dispatch_binary!(dispatch_match, mb_re_match);
-dispatch_binary!(dispatch_fullmatch, mb_re_fullmatch);
-dispatch_binary!(dispatch_findall, mb_re_findall);
-dispatch_binary!(dispatch_finditer, mb_re_finditer);
-dispatch_ternary!(dispatch_sub, mb_re_sub);
-dispatch_ternary!(dispatch_subn, mb_re_subn);
-dispatch_binary!(dispatch_split, mb_re_split);
+/// Keyword arguments lower to a trailing kwargs Dict; pull `key` out of it
+/// when the last argument is such a dict.
+fn trailing_kwarg(a: &[MbValue], key: &str) -> Option<MbValue> {
+    use super::super::dict_ops::DictKey;
+    let last = a.last()?;
+    let ptr = last.as_ptr()?;
+    unsafe {
+        let ObjData::Dict(ref lock) = (*ptr).data else { return None };
+        lock.read()
+            .unwrap()
+            .get(&DictKey::Str(key.to_string()))
+            .copied()
+    }
+}
+
+/// A positional argument that is actually the trailing kwargs dict must not
+/// be consumed as a positional value.
+fn positional(a: &[MbValue], idx: usize) -> MbValue {
+    match a.get(idx).copied() {
+        Some(v) => {
+            let is_kwargs_dict = idx == a.len() - 1
+                && v.as_ptr().is_some_and(|p| unsafe {
+                    matches!((*p).data, ObjData::Dict(_))
+                });
+            if is_kwargs_dict {
+                MbValue::none()
+            } else {
+                v
+            }
+        }
+        None => MbValue::none(),
+    }
+}
+
+/// Dispatcher for the `(pattern, string, flags=0)` module functions:
+/// folds the optional `flags` (3rd positional or keyword) into the pattern
+/// via `with_flags` before delegating to the 2-arg implementation.
+macro_rules! dispatch_binary_with_flags {
+    ($name:ident, $fn:ident) => {
+        unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            let pattern = a.get(0).copied().unwrap_or_else(MbValue::none);
+            let string = a.get(1).copied().unwrap_or_else(MbValue::none);
+            let flags = trailing_kwarg(a, "flags").unwrap_or_else(|| positional(a, 2));
+            $fn(with_flags(pattern, flags), string)
+        }
+    };
+}
+
+dispatch_binary_with_flags!(dispatch_search, mb_re_search);
+dispatch_binary_with_flags!(dispatch_match, mb_re_match);
+dispatch_binary_with_flags!(dispatch_fullmatch, mb_re_fullmatch);
+dispatch_binary_with_flags!(dispatch_findall, mb_re_findall);
+dispatch_binary_with_flags!(dispatch_finditer, mb_re_finditer);
+/// Dispatcher for `re.sub` / `re.subn` `(pattern, repl, string, count=0,
+/// flags=0)`: folds `flags` into the pattern and threads `count` through.
+macro_rules! dispatch_sub_like {
+    ($name:ident, $fn:ident) => {
+        unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            let pattern = a.get(0).copied().unwrap_or_else(MbValue::none);
+            let repl = a.get(1).copied().unwrap_or_else(MbValue::none);
+            let string = a.get(2).copied().unwrap_or_else(MbValue::none);
+            let count = trailing_kwarg(a, "count").unwrap_or_else(|| positional(a, 3));
+            let flags = trailing_kwarg(a, "flags").unwrap_or_else(|| positional(a, 4));
+            $fn(with_flags(pattern, flags), repl, string, count)
+        }
+    };
+}
+
+dispatch_sub_like!(dispatch_sub, mb_re_sub_count);
+dispatch_sub_like!(dispatch_subn, mb_re_subn_count);
+unsafe extern "C" fn dispatch_split(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() { &[] } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let mut maxsplit = a.get(2).copied().unwrap_or_else(MbValue::none);
+    // kwargs dict may carry maxsplit=.
+    if let Some(last) = a.last() {
+        if let Some(p) = last.as_ptr() {
+            if matches!(unsafe { &(*p).data }, ObjData::Dict(_)) {
+                let sentinel = MbValue::from_bits(u64::MAX);
+                let v = super::super::dict_ops::mb_dict_get(
+                    *last,
+                    MbValue::from_ptr(MbObject::new_str("maxsplit".to_string())),
+                    sentinel,
+                );
+                if v.to_bits() != u64::MAX {
+                    maxsplit = v;
+                }
+            }
+        }
+    }
+    mb_re_split_max(
+        a.first().copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+        maxsplit,
+    )
+}
 dispatch_unary!(dispatch_escape, mb_re_escape);
 
 unsafe extern "C" fn dispatch_purge(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -609,13 +749,50 @@ pub fn mb_re_search(pattern: MbValue, string: MbValue) -> MbValue {
 }
 
 /// re.match_(pattern, string) -> Match instance or None (anchored at start)
+/// Validate the (pattern, subject) argument types like CPython.
+/// Returns true when a TypeError was raised.
+fn reject_bad_re_args(pattern: MbValue, string: MbValue) -> bool {
+    let is_bytes = |v: MbValue| -> bool {
+        v.as_ptr().map(|p| unsafe {
+            matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+        }).unwrap_or(false)
+    };
+    let is_str = |v: MbValue| -> bool {
+        v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) }).unwrap_or(false)
+    };
+    let raise_te = |msg: &str| {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+        );
+    };
+    let pat_str = is_str(pattern);
+    let pat_bytes = is_bytes(pattern);
+    if !pat_str && !pat_bytes {
+        raise_te("first argument must be string or compiled pattern");
+        return true;
+    }
+    if pat_str && is_bytes(string) {
+        raise_te("cannot use a string pattern on a bytes-like object");
+        return true;
+    }
+    if pat_bytes && is_str(string) {
+        raise_te("cannot use a bytes pattern on a string-like object");
+        return true;
+    }
+    false
+}
+
 pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
+    if reject_bad_re_args(pattern, string) {
+        return MbValue::none();
+    }
     let pat = match extract_str(pattern) { Some(s) => s, None => return MbValue::none() };
     let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
 
     // Anchor at start by wrapping pattern
     let anchored = format!("^(?:{pat})");
-    match regex::Regex::new(&anchored) {
+    match regex::Regex::new(&py_pattern_to_rust(&anchored)) {
         Ok(re) => {
             match re.captures(&text) {
                 Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
@@ -637,7 +814,7 @@ pub fn mb_re_fullmatch(pattern: MbValue, string: MbValue) -> MbValue {
     let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
 
     let anchored = format!("^(?:{pat})$");
-    match regex::Regex::new(&anchored) {
+    match regex::Regex::new(&py_pattern_to_rust(&anchored)) {
         Ok(re) => {
             match re.captures(&text) {
                 Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
@@ -754,43 +931,164 @@ pub fn mb_re_findall(pattern: MbValue, string: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(results))
 }
 
-/// re.sub(pattern, repl, string) -> string with all matches replaced
-pub fn mb_re_sub(pattern: MbValue, repl: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) { Some(s) => s, None => return string };
-    let replacement = match extract_str(repl) { Some(s) => s, None => return string };
-    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
-
-    match regex::Regex::new(&pat) {
-        Ok(re) => {
-            let result = re.replace_all(&text, replacement.as_str()).to_string();
-            MbValue::from_ptr(MbObject::new_str(result))
+/// Expand a Python replacement template against one match's captures:
+/// `\1`..`\99` numeric backreferences, `\g<name>` / `\g<N>` symbolic
+/// references, `\\` escapes, and `\n`/`\t`/`\r` literals. Unknown groups
+/// expand to the empty string (CPython raises; lenient here).
+fn expand_py_template(caps: &regex::Captures, template: &str) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut chars = template.chars().peekable();
+    let group_str = |out: &mut String, m: Option<regex::Match>| {
+        if let Some(m) = m {
+            out.push_str(m.as_str());
         }
-        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
+    };
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek().copied() {
+            Some(d) if d.is_ascii_digit() => {
+                let mut num = 0usize;
+                let mut digits = 0;
+                while digits < 2 {
+                    match chars.peek().copied() {
+                        Some(d2) if d2.is_ascii_digit() => {
+                            num = num * 10 + (d2 as usize - '0' as usize);
+                            chars.next();
+                            digits += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                group_str(&mut out, caps.get(num));
+            }
+            Some('g') => {
+                chars.next();
+                if chars.peek() == Some(&'<') {
+                    chars.next();
+                    let mut name = String::new();
+                    for nc in chars.by_ref() {
+                        if nc == '>' {
+                            break;
+                        }
+                        name.push(nc);
+                    }
+                    if let Ok(idx) = name.parse::<usize>() {
+                        group_str(&mut out, caps.get(idx));
+                    } else {
+                        group_str(&mut out, caps.name(&name));
+                    }
+                } else {
+                    out.push('\\');
+                    out.push('g');
+                }
+            }
+            Some('\\') => {
+                chars.next();
+                out.push('\\');
+            }
+            Some('n') => { chars.next(); out.push('\n'); }
+            Some('t') => { chars.next(); out.push('\t'); }
+            Some('r') => { chars.next(); out.push('\r'); }
+            Some(other) => {
+                chars.next();
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Shared sub/subn engine. `repl` is either a template string or a callable
+/// receiving the Match instance; `count <= 0` replaces every match.
+fn sub_engine(
+    pattern: MbValue,
+    repl: MbValue,
+    string: MbValue,
+    count: MbValue,
+) -> Option<(String, i64)> {
+    let pat = extract_str(pattern)?;
+    let text = extract_str(string)?;
+    let template = extract_str(repl);
+    let max_count = count.as_int().unwrap_or(0).max(0);
+
+    let re = match compile_cached(&pat) {
+        Ok(r) => r,
+        Err(e) => {
+            raise_re_error(&e);
+            return None;
+        }
+    };
+
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0usize;
+    let mut n = 0i64;
+    for caps in re.captures_iter(&text) {
+        if max_count > 0 && n >= max_count {
+            break;
+        }
+        let m = caps.get(0).expect("group 0 always present");
+        out.push_str(&text[last..m.start()]);
+        if let Some(ref tpl) = template {
+            out.push_str(&expand_py_template(&caps, tpl));
+        } else {
+            // Callable replacement: invoke with the Match instance and
+            // splice in the returned string.
+            let match_inst = captures_to_match_with_input(&re, caps, &text);
+            let result = super::super::class::mb_call1_val(repl, match_inst);
+            if let Some(s) = extract_str(result) {
+                out.push_str(&s);
+            }
+        }
+        last = m.end();
+        n += 1;
+    }
+    out.push_str(&text[last..]);
+    Some((out, n))
+}
+
+/// re.sub(pattern, repl, string, count=0, flags=0) -> string with matches
+/// replaced. `repl` may be a template string (supporting `\1` / `\g<name>`
+/// backreferences) or a callable receiving the Match object.
+pub fn mb_re_sub(pattern: MbValue, repl: MbValue, string: MbValue) -> MbValue {
+    mb_re_sub_count(pattern, repl, string, MbValue::none())
+}
+
+/// `re.sub` with the optional `count` positional.
+pub fn mb_re_sub_count(
+    pattern: MbValue,
+    repl: MbValue,
+    string: MbValue,
+    count: MbValue,
+) -> MbValue {
+    match sub_engine(pattern, repl, string, count) {
+        Some((result, _)) => MbValue::from_ptr(MbObject::new_str(result)),
+        None => string,
     }
 }
 
-/// re.subn(pattern, repl, string) -> (new_str, count)
-///
-/// Like `re.sub`, but returns a tuple `(new_string, number_of_subs_made)`.
+/// re.subn(pattern, repl, string, count=0, flags=0) -> (new_str, count).
 pub fn mb_re_subn(pattern: MbValue, repl: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) {
-        Some(s) => s,
-        None => return MbValue::from_ptr(MbObject::new_tuple(vec![string, MbValue::from_int(0)])),
-    };
-    let replacement = match extract_str(repl) {
-        Some(s) => s,
-        None => return MbValue::from_ptr(MbObject::new_tuple(vec![string, MbValue::from_int(0)])),
-    };
-    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
+    mb_re_subn_count(pattern, repl, string, MbValue::none())
+}
 
-    match regex::Regex::new(&pat) {
-        Ok(re) => {
-            let count = re.find_iter(&text).count() as i64;
-            let result = re.replace_all(&text, replacement.as_str()).to_string();
+/// `re.subn` with the optional `count` positional.
+pub fn mb_re_subn_count(
+    pattern: MbValue,
+    repl: MbValue,
+    string: MbValue,
+    count: MbValue,
+) -> MbValue {
+    match sub_engine(pattern, repl, string, count) {
+        Some((result, n)) => {
             let new_str = MbValue::from_ptr(MbObject::new_str(result));
-            MbValue::from_ptr(MbObject::new_tuple(vec![new_str, MbValue::from_int(count)]))
+            MbValue::from_ptr(MbObject::new_tuple(vec![new_str, MbValue::from_int(n)]))
         }
-        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
+        None => MbValue::none(),
     }
 }
 
@@ -809,7 +1107,7 @@ pub fn mb_re_finditer(pattern: MbValue, string: MbValue) -> MbValue {
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
     };
 
-    let re = match regex::Regex::new(&pat) {
+    let re = match regex::Regex::new(&py_pattern_to_rust(&pat)) {
         Ok(r) => r,
         Err(e) => { raise_re_error(&e.to_string()); return MbValue::from_ptr(MbObject::new_list(vec![])); }
     };
@@ -821,8 +1119,35 @@ pub fn mb_re_finditer(pattern: MbValue, string: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(matches))
 }
 
+/// finditer with the optional pos/endpos window (character indices); match
+/// objects are built against the windowed slice, which is what `.group()`
+/// consumers observe.
+pub fn mb_re_finditer_window(
+    pattern: MbValue,
+    string: MbValue,
+    pos: MbValue,
+    endpos: MbValue,
+) -> MbValue {
+    if pos.is_none() && endpos.is_none() {
+        return mb_re_finditer(pattern, string);
+    }
+    let text = extract_str(string).unwrap_or_default();
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len() as i64;
+    let start = pos.as_int().unwrap_or(0).clamp(0, n) as usize;
+    let stop = endpos.as_int().unwrap_or(n).clamp(0, n) as usize;
+    let window: String = chars[start..stop.max(start)].iter().collect();
+    mb_re_finditer(pattern, MbValue::from_ptr(MbObject::new_str(window)))
+}
+
 /// re.split(pattern, string) -> list of substrings
 pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
+    mb_re_split_max(pattern, string, MbValue::none())
+}
+
+/// re.split with maxsplit; captured separator groups are kept in the result
+/// (CPython semantics).
+pub fn mb_re_split_max(pattern: MbValue, string: MbValue, maxsplit: MbValue) -> MbValue {
     let pat = match extract_str(pattern) {
         Some(s) => s,
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
@@ -831,12 +1156,34 @@ pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
         Some(s) => s,
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
     };
+    let limit = maxsplit.as_int().unwrap_or(0);
 
-    match regex::Regex::new(&pat) {
+    match regex::Regex::new(&py_pattern_to_rust(&pat)) {
         Ok(re) => {
-            let parts: Vec<MbValue> = re.split(&text)
-                .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
-                .collect();
+            let has_groups = re.captures_len() > 1;
+            let mut parts: Vec<MbValue> = Vec::new();
+            let mut last = 0usize;
+            let mut splits = 0i64;
+            for caps in re.captures_iter(&text) {
+                if limit > 0 && splits >= limit {
+                    break;
+                }
+                let m = caps.get(0).unwrap();
+                parts.push(MbValue::from_ptr(MbObject::new_str(
+                    text[last..m.start()].to_string())));
+                if has_groups {
+                    for i in 1..re.captures_len() {
+                        match caps.get(i) {
+                            Some(g) => parts.push(MbValue::from_ptr(
+                                MbObject::new_str(g.as_str().to_string()))),
+                            None => parts.push(MbValue::none()),
+                        }
+                    }
+                }
+                last = m.end();
+                splits += 1;
+            }
+            parts.push(MbValue::from_ptr(MbObject::new_str(text[last..].to_string())));
             MbValue::from_ptr(MbObject::new_list(parts))
         }
         Err(e) => { raise_re_error(&e.to_string()); MbValue::from_ptr(MbObject::new_list(vec![])) }
@@ -958,16 +1305,27 @@ pub fn mb_re_compile(pattern: MbValue, flags: MbValue) -> MbValue {
         return raise_type_error("first argument must be string or compiled pattern");
     };
     // Validate the pattern eagerly so `re.compile` raises on bad regex
-    // before the user threads it through any matcher.
-    let re = match regex::Regex::new(&pat_str) {
+    // before the user threads it through any matcher. Validate the same
+    // flag-prefixed form method dispatch will execute (a VERBOSE pattern
+    // is only valid once `(?x)` is applied).
+    let validate_src = extract_str(with_flags(pattern, flags))
+        .unwrap_or_else(|| pat_str.clone());
+    let re = match regex::Regex::new(&py_pattern_to_rust(&validate_src)) {
         Ok(r) => r,
         Err(e) => { raise_re_error(&e.to_string()); return MbValue::none(); }
     };
     let flag_int = flags.as_int().unwrap_or(0);
+    // Remember whether the pattern was compiled from bytes — a bytes pattern
+    // rejects a str subject (and vice versa) at match time (CPython TypeError).
+    // The decoded `pat_str` loses this, so record it explicitly.
+    let pat_is_bytes = pattern.as_ptr().map_or(false, |p| unsafe {
+        matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+    });
     let mut fields = FxHashMap::default();
     fields.insert("pattern".to_string(),
         MbValue::from_ptr(MbObject::new_str(pat_str)));
     fields.insert("flags".to_string(), MbValue::from_int(flag_int));
+    fields.insert("_is_bytes".to_string(), MbValue::from_bool(pat_is_bytes));
     // .groups — number of capturing groups. (#1624)
     let num_groups = re.captures_len().saturating_sub(1) as i64;
     fields.insert("groups".to_string(), MbValue::from_int(num_groups));

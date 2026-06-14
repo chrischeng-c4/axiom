@@ -59,11 +59,35 @@ impl TypeChecker {
             Expr::IntLit(_) => self.tcx.int(),
             Expr::FloatLit(_) => self.tcx.float(),
             Expr::ComplexLit(_) => self.tcx.any(), // heap ObjData::Complex (ast_to_hir lowers to `complex(0, N)`)
-            Expr::StrLit(_) | Expr::FString(_) => self.tcx.str(),
+            Expr::StrLit(_) => self.tcx.str(),
+            Expr::FString(parts) => {
+                // Walk replacement fields for their binding side effects
+                // (walrus targets must be declared in the enclosing scope:
+                // `f"{(z := 10)}"` leaks z), but suppress any new type
+                // errors — field expressions are formatted dynamically and
+                // were historically unchecked.
+                fn walk(checker: &mut TypeChecker, parts: &[crate::parser::ast::FStringPart]) {
+                    for p in parts {
+                        if let crate::parser::ast::FStringPart::Expr(e, spec) = p {
+                            let mark = checker.errors_mark();
+                            let _ = checker.check_expr(e);
+                            checker.truncate_errors(mark);
+                            if let Some(sp) = spec {
+                                walk(checker, sp);
+                            }
+                        }
+                    }
+                }
+                walk(self, parts);
+                self.tcx.str()
+            }
             Expr::BytesLit(_) => self.tcx.any(),
             Expr::BoolLit(_) => self.tcx.bool(),
             Expr::NoneLit => self.tcx.none(),
-            Expr::Ellipsis => self.tcx.error(),
+            // `...` is a real runtime singleton (the `ellipsis` type) — type
+            // it as Any so stub bodies and Ellipsis-valued expressions
+            // compile and lower to the interned Ellipsis value.
+            Expr::Ellipsis => self.tcx.any(),
             Expr::Ident(name) => {
                 match self.symbols.lookup(name) {
                     Some(sym) => self.get_sym_type(sym.0),
@@ -201,7 +225,24 @@ impl TypeChecker {
                                         );
                                     }
                                     if let Some(&expected) = params.get(param_idx) {
-                                        if !self.types_compatible(expected, at) {
+                                        // chr/hex/oct/bin accept any class
+                                        // defining __index__ (SupportsIndex
+                                        // protocol — CPython calls the dunder
+                                        // at runtime). The wall stays up for
+                                        // scalars without the protocol
+                                        // (chr(1.5) is still rejected here).
+                                        let index_protocol_ok = matches!(
+                                            func_name.as_deref(),
+                                            Some("chr" | "hex" | "oct" | "bin")
+                                        ) && matches!(self.tcx.get(expected), Ty::Int)
+                                            && match self.tcx.get(at) {
+                                                Ty::Class { name, .. } => self
+                                                    .class_methods
+                                                    .get(name)
+                                                    .is_some_and(|m| m.contains_key("__index__")),
+                                                _ => false,
+                                            };
+                                        if !index_protocol_ok && !self.types_compatible(expected, at) {
                                             self.error(
                                                 a.span,
                                                 format!(
@@ -237,7 +278,22 @@ impl TypeChecker {
                                 for err in bound_errors {
                                     self.error(expr.span, err);
                                 }
-                                return subst.apply(ret, &mut self.tcx);
+                                let applied = subst.apply(ret, &mut self.tcx);
+                                // ABI honesty: a bare-TypeVar return crosses
+                                // the call boundary as a boxed MbValue in the
+                                // integer register (the generic callee
+                                // compiles to the boxed I64 ABI). Substituting
+                                // `float` would make codegen read an F64
+                                // register that was never written — degrade to
+                                // Any so the boxed value is handled
+                                // dynamically. Int/Bool share the I64 register
+                                // file and round-trip unchanged.
+                                if matches!(self.tcx.get(ret), Ty::TypeVar(_))
+                                    && matches!(self.tcx.get(applied), Ty::Float)
+                                {
+                                    return self.tcx.any();
+                                }
+                                return applied;
                             }
                         }
                         ret
@@ -684,8 +740,21 @@ impl TypeChecker {
             Ty::List(elem) => elem,
             Ty::Dict(_, v) => v,
             Ty::Tuple(ts) if !ts.is_empty() => {
-                // Static tuple index: return union of all element types
-                self.tcx.intern(Ty::Union(ts))
+                // Static tuple index: return the union of all element types,
+                // deduped like `infer_iter_element` (#1562) so a homogeneous
+                // tuple subscripts to the bare element type rather than a
+                // degenerate Union[Int, Int, ...].
+                let mut uniq: Vec<TypeId> = Vec::with_capacity(ts.len());
+                for t in ts {
+                    if !uniq.contains(&t) {
+                        uniq.push(t);
+                    }
+                }
+                if uniq.len() == 1 {
+                    uniq.into_iter().next().unwrap()
+                } else {
+                    self.tcx.intern(Ty::Union(uniq))
+                }
             }
             Ty::Str => self.tcx.str(),
             Ty::Any | Ty::Error => self.tcx.any(),
@@ -707,6 +776,17 @@ impl TypeChecker {
             (Ty::Bool, Ty::Int) | (Ty::Int, Ty::Bool) => Some(self.tcx.int()),
             (Ty::Bool, Ty::Bool) => Some(self.tcx.int()),
             _ => None,
+        }
+    }
+
+    /// True when `t` is a `Union` whose members are ALL numeric
+    /// (Int/Float/Bool). Such unions arise from subscripting heterogeneous
+    /// numeric tuples; arithmetic on them is safe to defer to runtime
+    /// dispatch. Unions with any non-numeric member return false.
+    fn is_all_numeric_union(&self, t: TypeId) -> bool {
+        match self.tcx.get(t) {
+            Ty::Union(ts) => ts.iter().all(|m| self.tcx.get(*m).is_numeric()),
+            _ => false,
         }
     }
 
@@ -782,6 +862,19 @@ impl TypeChecker {
                 // defer to runtime dunder dispatch via Any.
                 if matches!(self.tcx.get(lt), Ty::Class { .. })
                     || matches!(self.tcx.get(rt), Ty::Class { .. })
+                {
+                    return self.tcx.any();
+                }
+                // Union-of-numerics (e.g. a subscript on a heterogeneous
+                // numeric tuple yields Union[Int, Float]): every member
+                // supports arithmetic, so defer to runtime dispatch via Any.
+                // Unions containing ANY non-numeric member do NOT qualify —
+                // those still hard-error below (force-typed policy, Option A).
+                let l_num_union = self.is_all_numeric_union(lt);
+                let r_num_union = self.is_all_numeric_union(rt);
+                if (l_num_union || r_num_union)
+                    && (l_num_union || self.tcx.get(lt).is_numeric())
+                    && (r_num_union || self.tcx.get(rt).is_numeric())
                 {
                     return self.tcx.any();
                 }
@@ -1270,7 +1363,7 @@ mod tests {
     fn test_check_expr_ellipsis() {
         let mut checker = TypeChecker::new();
         let ty = checker.check_expr(&sp(Expr::Ellipsis));
-        assert_eq!(checker.tcx.get(ty), &Ty::Error);
+        assert_eq!(checker.tcx.get(ty), &Ty::Any);
     }
 
     // --- BinOp type mismatch ---

@@ -39,6 +39,10 @@ const TAG_NOTIMPLEMENTED: u64 = 5;
 /// is exhausted. Distinct from `None` (which is a valid yielded value) and
 /// from any other tagged MbValue. Internal-only; never visible to user code.
 const TAG_STOP_ITER: u64 = 6;
+/// The `Ellipsis` singleton (`...`) — a real interned value so that
+/// `Ellipsis is Ellipsis` holds, `repr(...)` renders `Ellipsis`, and
+/// `type(...)` reports `ellipsis`.
+const TAG_ELLIPSIS: u64 = 7;
 
 /// The NaN prefix: sign=1, exponent=0x7FF, quiet bit=1 → bits 63..51
 const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
@@ -94,6 +98,11 @@ impl MbValue {
         Self(NAN_PREFIX | (TAG_NOTIMPLEMENTED << TAG_SHIFT))
     }
 
+    /// The singleton `Ellipsis` value (`...`).
+    pub fn ellipsis() -> Self {
+        Self(NAN_PREFIX | (TAG_ELLIPSIS << TAG_SHIFT))
+    }
+
     /// The StopIteration sentinel — returned by `mb_next_or_stop` to signal
     /// iterator exhaustion. Internal use only; must never reach user code.
     #[inline(always)]
@@ -137,6 +146,10 @@ impl MbValue {
 
     pub fn is_not_implemented(self) -> bool {
         self.tag() == Some(TAG_NOTIMPLEMENTED)
+    }
+
+    pub fn is_ellipsis(self) -> bool {
+        self.tag() == Some(TAG_ELLIPSIS)
     }
 
     pub fn is_ptr(self) -> bool {
@@ -238,6 +251,8 @@ impl std::fmt::Debug for MbValue {
             write!(f, "None")
         } else if self.is_not_implemented() {
             write!(f, "NotImplemented")
+        } else if self.is_ellipsis() {
+            write!(f, "Ellipsis")
         } else if let Some(i) = self.as_int() {
             write!(f, "{i}")
         } else if let Some(b) = self.as_bool() {
