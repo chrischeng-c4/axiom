@@ -1,5 +1,11 @@
 ---
 id: projects-arena-src-spec-rs
+capability_refs:
+  - id: n-target-comparison-runner
+    role: primary
+    claim: sequential-target-fanout-and-measurement
+    coverage: partial
+    rationale: "This source unit implements arena CLI, spec parsing, measurement, or runner orchestration for N-target comparisons."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,19 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/arena/src/spec.rs`, captured as a rust-source-unit (td_ast) item-tree
-during arena standardization onto the codegen ladder.
+Public API manifest for `projects/arena/src/spec.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Cell` | projects/arena/src/spec.rs | struct | pub | 82 |  |
+| `CellTarget` | projects/arena/src/spec.rs | struct | pub | 96 |  |
+| `LoadShape` | projects/arena/src/spec.rs | struct | pub | 71 |  |
+| `Spec` | projects/arena/src/spec.rs | struct | pub | 34 |  |
+| `TargetSpec` | projects/arena/src/spec.rs | struct | pub | 56 |  |
+| `cell_metric` | projects/arena/src/spec.rs | function | pub | 175 | cell_metric(&'a self, cell: &'a Cell) -> &'a str |
+| `parse` | projects/arena/src/spec.rs | function | pub | 119 | parse(text: &str) -> Result<Spec, String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

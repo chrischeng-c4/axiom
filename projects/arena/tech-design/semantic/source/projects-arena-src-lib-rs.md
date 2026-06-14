@@ -1,5 +1,11 @@
 ---
 id: projects-arena-src-lib-rs
+capability_refs:
+  - id: n-target-comparison-runner
+    role: primary
+    claim: sequential-target-fanout-and-measurement
+    coverage: partial
+    rationale: "This source unit implements arena CLI, spec parsing, measurement, or runner orchestration for N-target comparisons."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,17 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/arena/src/lib.rs`, captured as a rust-source-unit (td_ast) item-tree
-during arena standardization onto the codegen ladder.
+Public API manifest for `projects/arena/src/lib.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `compare` | projects/arena/src/lib.rs | module | pub | 18 |  |
+| `engine` | projects/arena/src/lib.rs | module | pub | 19 |  |
+| `measure` | projects/arena/src/lib.rs | module | pub | 20 |  |
+| `report` | projects/arena/src/lib.rs | module | pub | 21 |  |
+| `spec` | projects/arena/src/lib.rs | module | pub | 22 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
