@@ -4139,6 +4139,11 @@ impl<'a> AstLowerer<'a> {
                     self.next_local_sym += 1;
                     self.local_names.insert(p.name.clone(), pid);
                     self.local_types.insert(pid, any_ty);
+                    // Record the real name in sym_names so introspection
+                    // (inspect.signature, arity-error messages) reports `x`/`y`
+                    // rather than the `arg0`/`arg1` placeholder — local_names is
+                    // restored below, dropping the temporary binding otherwise.
+                    self.result.sym_names.entry(pid).or_insert_with(|| p.name.clone());
                     (pid, any_ty)
                 }).collect();
 

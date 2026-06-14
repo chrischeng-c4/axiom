@@ -5565,6 +5565,52 @@ pub fn mb_print_kwargs_file(args_list: MbValue, sep: MbValue, end: MbValue, file
 }
 
 /// sorted(iterable, key=None, reverse=False) — sort with key function and reverse flag.
+/// Validate that `func` can be called with a single positional argument (the
+/// sort/min/max key contract). Raises and returns true when it declares more
+/// than one REQUIRED positional parameter — CPython: "<lambda>() missing 1
+/// required positional argument: 'y'". A native callable (no recorded params)
+/// or a callable with `*args` is left unchecked.
+pub fn key_unary_arity_error(func: MbValue) -> bool {
+    let params = match super::closure::func_params(func) {
+        Some(p) => p,
+        None => return false,
+    };
+    if params.iter().any(|p| p.kind == 2) {
+        return false; // *args absorbs extra/missing positionals
+    }
+    let required: Vec<String> = params
+        .iter()
+        .filter(|p| p.kind <= 1 && !p.has_default)
+        .map(|p| p.name.clone())
+        .collect();
+    if required.len() <= 1 {
+        return false;
+    }
+    let missing = &required[1..];
+    let n = missing.len();
+    let names = if n == 1 {
+        format!("'{}'", missing[0])
+    } else {
+        let head = missing[..n - 1]
+            .iter()
+            .map(|x| format!("'{x}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{head} and '{}'", missing[n - 1])
+    };
+    let fname = super::closure::mb_func_get_name(func)
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        })
+        .unwrap_or_else(|| "<lambda>".to_string());
+    raise_type_error(format!(
+        "{fname}() missing {n} required positional argument{}: {names}",
+        if n == 1 { "" } else { "s" }
+    ));
+    true
+}
+
 pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> MbValue {
     let items = extract_items(iterable);
     let do_reverse = reverse.as_bool() == Some(true) || reverse.as_int() == Some(1);
@@ -5584,6 +5630,11 @@ pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> Mb
                 "'{}' object is not callable",
                 value_type_name(key)
             ));
+            return MbValue::none();
+        }
+        // The key is invoked with exactly one argument; a key declaring >1
+        // required positional param raises TypeError before any sorting.
+        if key_unary_arity_error(key) {
             return MbValue::none();
         }
     }

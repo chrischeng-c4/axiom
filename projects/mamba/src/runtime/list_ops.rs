@@ -946,6 +946,11 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                         );
                         return;
                     }
+                    // A key declaring >1 required positional param raises before
+                    // any sorting (it is invoked with a single argument).
+                    if super::builtins::key_unary_arity_error(key) {
+                        return;
+                    }
                     let named_key = key.as_ptr().and_then(|p| {
                         if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
                     });
