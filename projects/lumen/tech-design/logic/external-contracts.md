@@ -5,26 +5,44 @@ fill_sections: [e2e-test]
 capability_refs:
   - id: agentic-integration
     role: primary
+    gap: lumen-spec-schema-openapi-json-schema-offline
+    claim: lumen-spec-schema-openapi-json-schema-offline
+    coverage: full
+    rationale: "The EC gate verifies the offline OpenAPI and JSON-schema surfaces used by agents."
+  - id: agentic-integration
+    role: primary
+    gap: query-shape-cookbook-field-analyzer-catalog
+    claim: query-shape-cookbook-field-analyzer-catalog
+    coverage: full
+    rationale: "The EC gate verifies the offline query-shape, field, analyzer, and vector-metric catalogs used by agents."
+  - id: agentic-integration
+    role: primary
     gap: lumen-llm-agent-integration-playbook-guide-quickstart-recipes
     claim: lumen-llm-agent-integration-playbook-guide-quickstart-recipes
     coverage: full
     rationale: "The EC gate verifies the offline spec and llm CLI surfaces used by agents."
-  - id: ops-speed
+  - id: ops-operability
     role: primary
-    gap: ops-speed-competitive-benchmark-vs-db
-    claim: ops-speed-competitive-benchmark-vs-db
+    gap: competitive-regression-gate-beat-pg-os-per-cell-ratcheting
+    claim: competitive-regression-gate-beat-pg-os-per-cell-ratcheting
     coverage: full
     rationale: "The EC benchmark gate verifies lumen's standing commitment to beat Postgres on the contracted search-latency cells (the ratcheting competitive gate)."
   - id: security-auth
     role: primary
-    gap: security-auth-bearer-rbac-enforced
-    claim: security-auth-bearer-rbac-enforced
+    gap: bearer-token-auth-lumen-auth
+    claim: bearer-token-auth-lumen-auth
     coverage: full
-    rationale: "The EC security gate verifies bearer-token auth and the per-route RBAC authz matrix are enforced on every API route (lumen's own auth_e2e + authz_matrix_e2e; no external tool — security maps to cargo)."
+    rationale: "The EC security gate verifies bearer-token auth is enforced on every API route."
+  - id: security-auth
+    role: primary
+    gap: role-based-authz-matrix-per-route
+    claim: role-based-authz-matrix-per-route
+    coverage: full
+    rationale: "The EC security gate verifies the per-route RBAC authz matrix is enforced on every API route."
   - id: resilience
     role: primary
-    gap: resilience-survival-under-fault
-    claim: resilience-survival-under-fault
+    gap: broker-kill-pod-kill-survival
+    claim: broker-kill-pod-kill-survival
     coverage: full
     rationale: "The EC stability gate verifies search survives a network partition and 5% packet loss within the latency budget; dispatched to rig (resilience scenarios over toxiproxy) by the ec.stability binding, with a cargo recovery/drain fallback."
 ---
@@ -57,6 +75,7 @@ workloads are also driven self-provisioning as `vat run` runners in
 e2e_tests:
   - id: lumen-agentic-integration-offline-cli
     capability_id: agentic-integration
+    claim_id: lumen-spec-schema-openapi-json-schema-offline
     contract_id: offline-cli-agent-onboarding
     category: behavior
     command: "cargo test -p lumen --test spec_cli -- --nocapture"
@@ -66,15 +85,49 @@ e2e_tests:
       - "lumen llm guide, quickstart, and recipes preserve the ingest-search-hydrate agent workflow and non-goals."
 ```
 
+## Agentic Integration Query Catalog EC
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: lumen-agentic-integration-query-catalog
+    capability_id: agentic-integration
+    claim_id: query-shape-cookbook-field-analyzer-catalog
+    contract_id: query-shape-cookbook-field-analyzer-catalog
+    category: behavior
+    command: "cargo test -p lumen --test spec_cli -- --nocapture"
+    assertions:
+      - "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs."
+      - "agent-facing query catalog output remains deterministic and offline."
+```
+
+## Agentic Integration LLM Playbook EC
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: lumen-agentic-integration-llm-playbook
+    capability_id: agentic-integration
+    claim_id: lumen-llm-agent-integration-playbook-guide-quickstart-recipes
+    contract_id: lumen-llm-agent-integration-playbook-guide-quickstart-recipes
+    category: behavior
+    command: "cargo test -p lumen --test spec_cli -- --nocapture"
+    assertions:
+      - "lumen llm guide, quickstart, and recipes preserve the ingest-search-hydrate agent workflow."
+      - "agent-facing playbook output remains deterministic and offline."
+```
+
 ## Competitive Search Benchmark vs DB EC
 <!-- type: e2e-test lang: yaml -->
 
 ```yaml
 e2e_tests:
   - id: lumen-ops-speed-benchmark-vs-db
-    capability_id: ops-speed
-    contract_id: ops-speed-competitive-benchmark-vs-db
+    capability_id: ops-operability
+    claim_id: competitive-regression-gate-beat-pg-os-per-cell-ratcheting
+    contract_id: competitive-regression-gate-beat-pg-os-per-cell-ratcheting
     category: benchmark
+    required_for_production: false
     command: "cargo test -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
     assertions:
       - "lumen wins the contracted search-latency cells against Postgres (text_bm25 WIN; ratcheted floor holds)."
@@ -88,8 +141,10 @@ e2e_tests:
 e2e_tests:
   - id: lumen-security-auth-bearer-rbac
     capability_id: security-auth
-    contract_id: security-auth-bearer-rbac-enforced
+    claim_id: bearer-token-auth-lumen-auth
+    contract_id: bearer-token-auth-lumen-auth
     category: security
+    required_for_production: false
     command: "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
     assertions:
       - "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens."
@@ -103,8 +158,10 @@ e2e_tests:
 e2e_tests:
   - id: lumen-stability-resilience-survival
     capability_id: resilience
-    contract_id: resilience-survival-under-fault
+    claim_id: broker-kill-pod-kill-survival
+    contract_id: broker-kill-pod-kill-survival
     category: stability
+    required_for_production: false
     command: "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture"
     assertions:
       - "Search p99 stays within 2x baseline under 5% packet loss (toxiproxy timeout toxic; rig resilience scenario)."

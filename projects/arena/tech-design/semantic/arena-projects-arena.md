@@ -1,6 +1,12 @@
 ---
 id: semantic-arena-projects-arena
 summary: Semantic coverage for "projects/arena"
+capability_refs:
+  - id: n-target-comparison-runner
+    role: primary
+    claim: sequential-target-fanout-and-measurement
+    coverage: partial
+    rationale: "Project-root agent context keeps arena's comparison runner capability discoverable and runnable."
 fill_sections: [schema, changes]
 ---
 

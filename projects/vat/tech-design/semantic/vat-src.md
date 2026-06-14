@@ -2,6 +2,37 @@
 id: semantic-vat-src
 summary: Semantic coverage for "projects/vat/src"
 fill_sections: [schema, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: host-process-execution-and-gpu-visibility
+    claim: host-process-execution-and-gpu-visibility
+    coverage: partial
+    rationale: "The vat source graph contains the host-process runner and GPU visibility implementation surfaces behind the README GPU claim."
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: agent-legible-state-and-diff-surface
+    claim: agent-legible-state-and-diff-surface
+    coverage: partial
+    rationale: "The vat source graph contains structured state, diff, logs, and JSON event surfaces used by agents."
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "The vat source graph contains vat.toml runner loading, service readiness, setup, and run evidence surfaces."
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: copy-on-write-fork-and-snapshot-lifecycle
+    claim: copy-on-write-fork-and-snapshot-lifecycle
+    coverage: partial
+    rationale: "The vat source graph contains the copy-on-write workspace lifecycle and retained state implementation surfaces."
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: resource-isolation-boundary
+    claim: resource-isolation-boundary
+    coverage: partial
+    rationale: "The vat source graph contains sandbox and isolation boundary implementation surfaces."
 ---
 
 # Semantic TD: vat/src

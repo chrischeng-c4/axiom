@@ -37,13 +37,13 @@ cleans up according to the run policy.
 | Production readiness | ready |
 | Tech design root | `projects/vat/tech-design` |
 | TD lock | `projects/vat/tech-design/td.lock` |
-| External-contract inventory | `projects/vat/tests/aw-ec.toml` |
+| External-contract inventory | `projects/vat/aw.toml` |
 | Source ownership | full codegen, 100.0% (32/32) |
 | Semantic coverage | 100.0% |
 | Traceability coverage | 93.9% |
 | External-contract gate | passed, 6/6 |
 | Test gate | `cargo test -p vat` passed |
-| Health gate | `aw health vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
+| Health gate | `aw health --project vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
 
 ## Agent-Native GPU-Native Dev Containers
 

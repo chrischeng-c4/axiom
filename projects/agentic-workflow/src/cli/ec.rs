@@ -309,9 +309,13 @@ struct E2eYamlCase {
     #[serde(default)]
     capability_id: Option<String>,
     #[serde(default)]
+    claim_id: Option<String>,
+    #[serde(default)]
     contract_id: Option<String>,
     #[serde(default)]
     category: Option<String>,
+    #[serde(default)]
+    required_for_production: Option<bool>,
     #[serde(default)]
     evidence: Option<E2eEvidenceYaml>,
     #[serde(default, alias = "evals", alias = "agent_evals")]
@@ -1132,7 +1136,11 @@ fn extract_e2e_cases_from_markdown(
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| "unmapped".to_string()),
-                    claim_id: id.clone(),
+                    claim_id: raw
+                        .claim_id
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| id.clone()),
                     contract_id: raw
                         .contract_id
                         .map(|value| value.trim().to_string())
@@ -1142,7 +1150,7 @@ fn extract_e2e_cases_from_markdown(
                     td_ref: format!("{}#{}", relative_to(&ctx.project_root, path), id),
                     test_path: relative_to(&ctx.project_root, &test_path),
                     command,
-                    required_for_production: true,
+                    required_for_production: raw.required_for_production.unwrap_or(true),
                     assertions,
                     evidence,
                     evaluators,

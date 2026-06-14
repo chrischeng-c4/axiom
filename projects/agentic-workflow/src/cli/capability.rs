@@ -3636,7 +3636,9 @@ fn extract_hash_numbers(text: &str) -> Vec<u64> {
 }
 
 fn run_verification_command(project_root: &Path, command: &str) -> VerificationRuntimeResult {
-    let output = std::process::Command::new("sh")
+    let mut command_process = std::process::Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let output = command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)
@@ -3712,7 +3714,9 @@ fn run_next_action_command(
         };
     }
     let executed_command = command_for_current_aw_binary(&action.command);
-    let output = std::process::Command::new("sh")
+    let mut command_process = std::process::Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let output = command_process
         .arg("-c")
         .arg(&executed_command)
         .current_dir(project_root)

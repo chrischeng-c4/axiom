@@ -19,20 +19,172 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "guard"
-generated_from_td_digest = "sha256:ae4c54312de217c63d9746808304d83ff5f28405b0cab417a664c2b15b0e39c2"
+generated_from_td_digest = "sha256:ce42352b8831f1f164b47bc61b63825810b59c68f3ad38f02e5928e8c42e498f"
+
+[[aw.ec.generated.cases]]
+id = "guard-arena-security-budget-bridge"
+capability_id = "dynamic-security-evidence"
+claim_id = "arena-security-budget-bridge"
+contract_id = "arena-security-budget-bridge"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-arena-security-budget-bridge"
+test_path = "projects/guard/tests/security_guard_arena_security_budget_bridge.rs"
+command = 'target/debug/guard scan projects/guard --compact --no-persist --arena-command "target/debug/arena spec --compact"'
+required_for_production = true
+assertions = [
+    "guard can fold arena budget evidence into its report",
+    "security-performance budget evidence remains visible in guard.report/1",
+]
+
+[[aw.ec.generated.cases]]
+id = "guard-aw-health-security-metric"
+capability_id = "security-ec-profile"
+claim_id = "aw-health-security-metric"
+contract_id = "aw-health-security-metric"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-aw-health-security-metric"
+test_path = "projects/guard/tests/security_guard_aw_health_security_metric.rs"
+command = "./target/debug/aw ec check --project guard"
+required_for_production = true
+assertions = [
+    "AW EC check consumes guard report evidence as a first-class security metric",
+    "guard EC inventory remains generated and drift-free",
+]
+
+[[aw.ec.generated.cases]]
+id = "guard-baseline-static-policy"
+capability_id = "security-policy-profile"
+claim_id = "baseline-static-policy"
+contract_id = "baseline-static-policy"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-baseline-static-policy"
+test_path = "projects/guard/tests/security_guard_baseline_static_policy.rs"
+command = 'CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard detects_javascript_eval_as_security_finding'
+required_for_production = true
+assertions = [
+    "baseline static policy maps compass diagnostics into guard findings",
+    "policy severity normalization remains covered by guard tests",
+]
+
+[[aw.ec.generated.cases]]
+id = "guard-cli-module-registration"
+capability_id = "security-policy-profile"
+claim_id = "cli-module-registration"
+contract_id = "cli-module-registration"
+category = "behavior"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-cli-module-registration"
+test_path = "projects/guard/tests/behavior_guard_cli_module_registration.rs"
+command = 'CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard-cli registered_in_slice'
+required_for_production = true
+assertions = [
+    "guard-cli registers through the CLI distributed slice",
+    "the guard command remains discoverable by the root binary",
+]
+
+[[aw.ec.generated.cases]]
+id = "guard-compass-backed-diagnostic-scan"
+capability_id = "static-security-scan"
+claim_id = "compass-backed-diagnostic-scan"
+contract_id = "compass-backed-diagnostic-scan"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-compass-backed-diagnostic-scan"
+test_path = "projects/guard/tests/security_guard_compass_backed_diagnostic_scan.rs"
+command = 'CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard scan::tests::detects_javascript_eval_as_security_finding'
+required_for_production = true
+assertions = [
+    "compass-backed scan tests detect security diagnostics",
+    "guard preserves the static security engine integration",
+]
+
+[[aw.ec.generated.cases]]
+id = "guard-ec-security-evidence-command"
+capability_id = "security-ec-profile"
+claim_id = "ec-security-evidence-command"
+contract_id = "ec-security-evidence-command"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-ec-security-evidence-command"
+test_path = "projects/guard/tests/security_guard_ec_security_evidence_command.rs"
+command = 'target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command "target/debug/arena spec --compact"'
+required_for_production = true
+assertions = [
+    "guard scan runs the full configured EC evidence command",
+    "vat, rig, meter, and arena evidence adapters fold into guard.report/1",
+]
+
+[[aw.ec.generated.cases]]
+id = "guard-meter-dos-resource-evidence-bridge"
+capability_id = "dynamic-security-evidence"
+claim_id = "meter-dos-resource-evidence-bridge"
+contract_id = "meter-dos-resource-evidence-bridge"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-meter-dos-resource-evidence-bridge"
+test_path = "projects/guard/tests/security_guard_meter_dos_resource_evidence_bridge.rs"
+command = "target/debug/guard scan projects/guard --compact --no-persist --meter-target projects/guard"
+required_for_production = true
+assertions = [
+    "guard can fold meter resource evidence into its report",
+    "resource-abuse evidence remains visible in guard.report/1",
+]
+
+[[aw.ec.generated.cases]]
+id = "guard-rig-exploit-journey-bridge"
+capability_id = "dynamic-security-evidence"
+claim_id = "rig-exploit-journey-bridge"
+contract_id = "rig-exploit-journey-bridge"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-rig-exploit-journey-bridge"
+test_path = "projects/guard/tests/security_guard_rig_exploit_journey_bridge.rs"
+command = "target/debug/guard scan projects/guard --compact --no-persist --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml"
+required_for_production = true
+assertions = [
+    "guard can fold rig scenario evidence into its report",
+    "exploit journey evidence remains executable through the guard bridge",
+]
+
+[[aw.ec.generated.cases]]
+id = "guard-security-lint-policy"
+capability_id = "security-policy-profile"
+claim_id = "security-lint-policy"
+contract_id = "security-lint-policy"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-security-lint-policy"
+test_path = "projects/guard/tests/security_guard_security_lint_policy.rs"
+command = "target/debug/guard scan projects/guard --profile security-lint --compact --no-persist"
+required_for_production = true
+assertions = [
+    "security-lint profile runs on the guard source tree",
+    "security-impacting lint remains part of the guard policy profile",
+]
 
 [[aw.ec.generated.cases]]
 id = "guard-static-scan-clean-report"
 capability_id = "static-security-scan"
+claim_id = "json-report-envelope"
 contract_id = "guard-report-clean-static-scan"
 category = "security"
 td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-static-scan-clean-report"
 test_path = "projects/guard/tests/security_guard_static_scan_clean_report.rs"
 command = "target/debug/guard scan projects/guard --compact --no-persist"
+required_for_production = true
 assertions = [
     "command exits zero",
     "stdout is a guard.report/1 JSON envelope",
     "summary.security_findings is zero for the guard source tree",
     "integrations.static_engine is compass",
+]
+
+[[aw.ec.generated.cases]]
+id = "guard-vat-isolated-security-runner"
+capability_id = "dynamic-security-evidence"
+claim_id = "vat-isolated-security-runner"
+contract_id = "vat-isolated-security-runner"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-vat-isolated-security-runner"
+test_path = "projects/guard/tests/security_guard_vat_isolated_security_runner.rs"
+command = "target/debug/guard scan projects/guard --compact --no-persist --vat-runner guard-security-smoke"
+required_for_production = true
+assertions = [
+    "guard can fold a vat-isolated runner into its report",
+    "isolated evidence is visible without persisting guard state",
 ]
 # AW-EC-END

@@ -75,7 +75,7 @@ one report.
 | Production readiness | ready for the public meter surface |
 | Tech design root | `projects/meter/tech-design` |
 | TD lock | `projects/meter/tech-design/td.lock` |
-| External-contract inventory | `projects/meter/tests/aw-ec.toml` |
+| External-contract inventory | `projects/meter/aw.toml` |
 | Source ownership | generator-managed semantic source snapshots |
 | Test gate | `cargo test -p meter`; `cargo test -p meter-cli` |
 | Health gate | `aw health meter --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |

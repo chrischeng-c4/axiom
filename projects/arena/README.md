@@ -89,6 +89,14 @@ Gate classes (a direct port of lumen's `judge()`):
 First run records the baseline: `arena run --spec <toml> --update-baselines`.
 Later runs gate against it; a regression below the ratcheted floor exits 2.
 
+## Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| n-target-comparison-runner | - | implemented | verified | smoke | ready | sequential N-target fanout, scalar reduction, and `arena.report/1` output |
+| ratio-ratchet-gates | - | implemented | verified | smoke | ready | peer/base ratio classification plus host-scoped ratcheted baseline gates |
+| vat-runner-integration | - | implemented | verified | smoke | ready | vat can provision comparison targets and run arena as the comparison runner |
+
 ## As a vat runner
 
 `vat` brings up every target's services, then runs arena as a runner that talks
@@ -124,6 +132,38 @@ mamba-vs-CPython); other transports (redis, opaque command); OpenAPI-driven
 request scaffolding (lumen's published OpenAPI is a human reference for now);
 migrating lumen's full `perf_gate_vs_db.rs`; correctness-diff comparison;
 concurrent driving; http/2 (the loadgen client is h1 ureq today).
+
+## N-Target Comparison Runner
+
+| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
+|---|---:|---|---|---|---|
+| n-target-comparison-runner | - | verified | `arena run --spec` fans the same logical workload across a base target and peers, reduces each result to a comparable scalar, and emits one `arena.report/1` JSON report. | smoke | `cargo test -p arena` |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Sequential target fanout and measurement | epic | - | implemented | verified | smoke | `cargo test -p arena` |
+| Arena report envelope | epic | - | implemented | verified | smoke | `cargo test -p arena` |
+
+## Ratio Ratchet Gates
+
+| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
+|---|---:|---|---|---|---|
+| ratio-ratchet-gates | - | verified | arena computes peer/base ratios, classifies win/exempt/target cells, and gates WIN cells against ratcheted host-scoped baselines. | smoke | `cargo test -p arena` |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Win exempt target classification | epic | - | implemented | verified | smoke | `cargo test -p arena` |
+| Host scoped baseline ratchet | epic | - | implemented | verified | smoke | `cargo test -p arena` |
+
+## Vat Runner Integration
+
+| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
+|---|---:|---|---|---|---|
+| vat-runner-integration | - | verified | vat can run arena as a normal runner after provisioning every comparison target, while arena stays protocol-agnostic. | smoke | `cargo test -p arena` |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Vat managed comparison runner | epic | - | implemented | verified | smoke | `cargo test -p arena` |
 
 ## Build & test
 
