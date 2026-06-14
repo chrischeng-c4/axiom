@@ -517,6 +517,13 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     {
                         return mb_iter(data);
                     } else
+                    // memoryview iterates its underlying buffer's byte values —
+                    // delegate to the bytes/bytearray iterator.
+                    if class_name == "memoryview" {
+                        let buf = fields.read().unwrap().get("_buffer").copied()
+                            .unwrap_or(MbValue::none());
+                        return mb_iter(buf);
+                    } else
                     // Dict-like collections classes: iterate over backing _data dict keys.
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"

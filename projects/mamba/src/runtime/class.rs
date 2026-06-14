@@ -3272,8 +3272,38 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 return MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(1)]));
                             }
                             "format" => return MbValue::from_ptr(MbObject::new_str("B".to_string())),
-                            "readonly" => return MbValue::from_bool(true),
+                            "readonly" => {
+                                // Explicit flag (set by toreadonly / a bytes
+                                // source) wins; otherwise a bytearray-backed
+                                // view is writable.
+                                let g = fields.read().unwrap();
+                                if let Some(ro) = g.get("_readonly") {
+                                    return MbValue::from_bool(ro.as_bool() == Some(true));
+                                }
+                                let writable = g.get("_buffer").and_then(|b| b.as_ptr())
+                                    .map_or(false, |bp| matches!((*bp).data, ObjData::ByteArray(_)));
+                                return MbValue::from_bool(!writable);
+                            }
+                            // Byte-flat views are always contiguous in every layout.
+                            "contiguous" | "c_contiguous" | "f_contiguous" =>
+                                return MbValue::from_bool(true),
+                            // `mv.obj` is the underlying object the view exposes.
+                            "obj" => {
+                                if let Some(b) = fields.read().unwrap().get("_buffer").copied() {
+                                    super::rc::retain_if_ptr(b);
+                                    return b;
+                                }
+                                return MbValue::none();
+                            }
                             _ => {}
+                        }
+                        // memoryview methods as bound callables (`callable(mv.cast)`,
+                        // `f = mv.tobytes; f()`), dispatched via mb_call_method.
+                        if matches!(attr_name.as_str(),
+                            "tobytes" | "tolist" | "hex" | "release" | "toreadonly"
+                            | "cast" | "count" | "index")
+                        {
+                            return make_bound_native_method(obj, &attr_name);
                         }
                     }
                     // functools.lru_cache wrapper: expose cache_info / cache_clear
@@ -7648,6 +7678,37 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
 
 /// Runtime-dispatched __setitem__: list or dict.
 pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
+    // memoryview[i] = v / memoryview[a:b] = v → forward to the backing buffer
+    // (a bytearray), which handles both index and slice assignment. A read-only
+    // view (bytes source or toreadonly()) rejects the store.
+    if let Some(ptr) = obj.as_ptr() {
+        let mv_buf = unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "memoryview" {
+                    let g = fields.read().unwrap();
+                    let readonly = if let Some(ro) = g.get("_readonly") {
+                        ro.as_bool() == Some(true)
+                    } else {
+                        g.get("_buffer").and_then(|b| b.as_ptr())
+                            .map_or(true, |bp| !matches!((*bp).data, ObjData::ByteArray(_)))
+                    };
+                    if readonly {
+                        drop(g);
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "cannot modify read-only memoryview object".to_string())),
+                        );
+                        return MbValue::none();
+                    }
+                    g.get("_buffer").copied()
+                } else { None }
+            } else { None }
+        };
+        if let Some(buf) = mv_buf {
+            return mb_obj_setitem(buf, key, value);
+        }
+    }
     // ET.Element subscript assignment: e[i] = child / e[a:b] = [children].
     if let Some(kids) = element_children_list(obj) {
         let slice_parts: Option<(Option<i64>, Option<i64>)> =
@@ -9074,6 +9135,32 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             return MbValue::from_ptr(MbObject::new_list(vec![]));
                         }
                         "release" => return MbValue::none(),
+                        "hex" => {
+                            let buf = fields.read().unwrap().get("_buffer").copied();
+                            let bytes_vec: Option<Vec<u8>> = buf.and_then(|b| b.as_ptr())
+                                .and_then(|bp| match &(*bp).data {
+                                    ObjData::Bytes(d) => Some(d.clone()),
+                                    ObjData::ByteArray(lk) => Some(lk.read().unwrap().clone()),
+                                    _ => None,
+                                });
+                            let hexs = bytes_vec.unwrap_or_default().iter()
+                                .map(|b| format!("{b:02x}")).collect::<String>();
+                            return MbValue::from_ptr(MbObject::new_str(hexs));
+                        }
+                        // toreadonly() returns a new view over the same buffer,
+                        // marked read-only.
+                        "toreadonly" => {
+                            let buf = fields.read().unwrap().get("_buffer").copied()
+                                .unwrap_or_else(MbValue::none);
+                            let inst = MbObject::new_instance("memoryview".to_string());
+                            if let ObjData::Instance { fields: ref nf, .. } = (*inst).data {
+                                let mut g = nf.write().unwrap();
+                                super::rc::retain_if_ptr(buf);
+                                g.insert("_buffer".to_string(), buf);
+                                g.insert("_readonly".to_string(), MbValue::from_bool(true));
+                            }
+                            return MbValue::from_ptr(inst);
+                        }
                         _ => {}
                     }
                 }
