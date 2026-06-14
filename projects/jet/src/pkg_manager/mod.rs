@@ -747,49 +747,13 @@ impl PackageManager {
     async fn install_resolved(&self, resolved: &HashMap<String, ResolvedPackage>) -> Result<()> {
         let node_modules = self.root_dir.join("node_modules");
         std::fs::create_dir_all(&node_modules)?;
+        let mut resolved = resolved.clone();
 
         // Phase 1: Download + extract + hardlink (parallel)
-        let futures: Vec<_> = resolved
-            .values()
-            .map(|pkg| {
-                let store = self.store.clone();
-                let registry = self.registry.clone();
-                let semaphore = self.semaphore.clone();
-                let node_modules = node_modules.clone();
-                let pkg = pkg.clone();
-
-                async move {
-                    // Fast-path: skip link if already installed
-                    let link_target = if let Some(ref parent) = pkg.nested_in {
-                        let nested_nm = node_modules.join(parent).join("node_modules");
-                        nested_nm
-                    } else {
-                        node_modules.clone()
-                    };
-
-                    // Ensure store has the package
-                    if !store.has_package(&pkg.name, &pkg.version, &pkg.shasum) {
-                        let _permit = semaphore.acquire().await.unwrap();
-                        let tarball = registry.download_package(&pkg.name, &pkg.version).await?;
-                        store.install_package(&pkg.name, &pkg.version, &tarball, &pkg.shasum)?;
-                    }
-
-                    if is_pkg_installed(&link_target, &pkg.name, &pkg.version) {
-                        return Ok::<_, anyhow::Error>(());
-                    }
-
-                    // Link from store into node_modules
-                    if pkg.nested_in.is_some() {
-                        std::fs::create_dir_all(&link_target)?;
-                    }
-                    store.link_package(&pkg.name, &pkg.version, &link_target)?;
-
-                    Ok::<_, anyhow::Error>(())
-                }
-            })
-            .collect();
-
-        futures::future::try_join_all(futures).await?;
+        self.download_and_link_resolved(&resolved, &node_modules)
+            .await?;
+        self.hydrate_current_platform_optional_deps(&mut resolved, &node_modules)
+            .await?;
 
         // Phase 2: Create nested node_modules for transitive dep resolution
         {
@@ -837,6 +801,178 @@ impl PackageManager {
         prune_third_party_node_modules_layout(&node_modules)?;
 
         Ok(())
+    }
+
+    async fn download_and_link_resolved(
+        &self,
+        resolved: &HashMap<String, ResolvedPackage>,
+        node_modules: &Path,
+    ) -> Result<()> {
+        let futures: Vec<_> = resolved
+            .values()
+            .map(|pkg| {
+                let store = self.store.clone();
+                let registry = self.registry.clone();
+                let semaphore = self.semaphore.clone();
+                let node_modules = node_modules.to_path_buf();
+                let pkg = pkg.clone();
+
+                async move {
+                    // Fast-path: skip link if already installed
+                    let link_target = if let Some(ref parent) = pkg.nested_in {
+                        let nested_nm = node_modules.join(parent).join("node_modules");
+                        nested_nm
+                    } else {
+                        node_modules.clone()
+                    };
+
+                    // Ensure store has the package
+                    if !store.has_package(&pkg.name, &pkg.version, &pkg.shasum) {
+                        let _permit = semaphore.acquire().await.unwrap();
+                        let tarball = registry.download_package(&pkg.name, &pkg.version).await?;
+                        store.install_package(&pkg.name, &pkg.version, &tarball, &pkg.shasum)?;
+                    }
+
+                    if is_pkg_installed(&link_target, &pkg.name, &pkg.version) {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+
+                    // Link from store into node_modules
+                    if pkg.nested_in.is_some() {
+                        std::fs::create_dir_all(&link_target)?;
+                    }
+                    store.link_package(&pkg.name, &pkg.version, &link_target)?;
+
+                    Ok::<_, anyhow::Error>(())
+                }
+            })
+            .collect();
+
+        futures::future::try_join_all(futures).await?;
+        Ok(())
+    }
+
+    async fn hydrate_current_platform_optional_deps(
+        &self,
+        resolved: &mut HashMap<String, ResolvedPackage>,
+        node_modules: &Path,
+    ) -> Result<()> {
+        let overrides = HashMap::new();
+        let mut attempted = HashSet::new();
+
+        loop {
+            let mut missing = Vec::new();
+            for pkg in resolved.values() {
+                for (dep_name, dep_range) in self.store_optional_dependencies(pkg)? {
+                    if resolved.contains_key(&dep_name) || !attempted.insert(dep_name.clone()) {
+                        continue;
+                    }
+                    missing.push((dep_name, dep_range));
+                }
+            }
+
+            if missing.is_empty() {
+                break;
+            }
+
+            let missing_deps: HashMap<String, String> = missing.into_iter().collect();
+            let mut extra = HashMap::new();
+            match self
+                .resolver
+                .resolve(&missing_deps, &self.registry, &overrides)
+                .await
+            {
+                Ok(resolved_optional) => {
+                    for (name, pkg) in resolved_optional {
+                        if !resolved.contains_key(&name) {
+                            extra.insert(name, pkg);
+                        }
+                    }
+                }
+                Err(batch_err) => {
+                    tracing::warn!(
+                        target: "jet::pkg_manager::install",
+                        error = %batch_err,
+                        "Optional dependency batch could not be resolved for current-platform hydration; retrying individually"
+                    );
+                    for (dep_name, dep_range) in missing_deps {
+                        let optional_dep = HashMap::from([(dep_name.clone(), dep_range)]);
+                        match self
+                            .resolver
+                            .resolve(&optional_dep, &self.registry, &overrides)
+                            .await
+                        {
+                            Ok(resolved_optional) => {
+                                for (name, pkg) in resolved_optional {
+                                    if !resolved.contains_key(&name) {
+                                        extra.insert(name, pkg);
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    target: "jet::pkg_manager::install",
+                                    package = %dep_name,
+                                    error = %err,
+                                    "Optional dependency could not be resolved for current-platform hydration; continuing install"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            if extra.is_empty() {
+                continue;
+            }
+
+            self.download_and_link_resolved(&extra, node_modules)
+                .await?;
+            resolved.extend(extra);
+        }
+        Ok(())
+    }
+
+    fn store_optional_dependencies(
+        &self,
+        pkg: &ResolvedPackage,
+    ) -> Result<HashMap<String, String>> {
+        let pkg_json_path = self
+            .store
+            .get_package_path(&pkg.name, &pkg.version)
+            .join("package.json");
+        let content = match std::fs::read_to_string(&pkg_json_path) {
+            Ok(content) => content,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "Failed to read optional dependencies from {}",
+                        pkg_json_path.display()
+                    )
+                });
+            }
+        };
+        let value: serde_json::Value = serde_json::from_str(&content).with_context(|| {
+            format!(
+                "Failed to parse optional dependencies from {}",
+                pkg_json_path.display()
+            )
+        })?;
+        let Some(optional_deps) = value
+            .get("optionalDependencies")
+            .and_then(|deps| deps.as_object())
+        else {
+            return Ok(HashMap::new());
+        };
+        Ok(optional_deps
+            .iter()
+            .filter_map(|(name, range)| {
+                range
+                    .as_str()
+                    .map(|range| (name.clone(), range.to_string()))
+            })
+            .collect())
     }
 
     fn read_package_json(&self) -> Result<PackageJson> {
