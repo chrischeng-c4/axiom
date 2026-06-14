@@ -21,8 +21,8 @@ Public API manifest for `projects/meter/src/capture/run.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `RunOptions` | projects/meter/src/capture/run.rs | struct | pub | 50 |  |
-| `run_sweep` | projects/meter/src/capture/run.rs | function | pub | 88 | run_sweep(opts: &RunOptions) -> MeterReport |
+| `RunOptions` | projects/meter/src/capture/run.rs | struct | pub | 45 |  |
+| `run_sweep` | projects/meter/src/capture/run.rs | function | pub | 79 | run_sweep(opts: &RunOptions) -> MeterReport |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

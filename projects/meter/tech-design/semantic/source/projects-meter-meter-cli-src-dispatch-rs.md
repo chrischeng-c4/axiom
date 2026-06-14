@@ -21,19 +21,17 @@ Public API manifest for `projects/meter/meter-cli/src/dispatch.rs` generated fro
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AuditArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 108 |  |
-| `BenchArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 117 |  |
-| `Dispatched` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 256 |  |
-| `FuzzArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 183 |  |
-| `LlmArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 96 |  |
-| `OutputOpts` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 39 |  |
-| `ProfileArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 137 |  |
-| `MeterCommand` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 27 |  |
-| `RunArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 212 |  |
-| `SpecArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 84 |  |
-| `Verb` | projects/meter/meter-cli/src/dispatch.rs | enum | pub | 52 |  |
-| `dispatch` | projects/meter/meter-cli/src/dispatch.rs | function | pub | 273 | dispatch(cmd: MeterCommand, out: &OutputOpts) -> Dispatched |
-| `print_report` | projects/meter/meter-cli/src/dispatch.rs | function | pub | 909 | print_report(report: &MeterReport, out: &OutputOpts) |
+| `BenchArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 104 |  |
+| `Dispatched` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 215 |  |
+| `LlmArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 92 |  |
+| `MeterCommand` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 28 |  |
+| `OutputOpts` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 40 |  |
+| `ProfileArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 124 |  |
+| `RunArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 177 |  |
+| `SpecArgs` | projects/meter/meter-cli/src/dispatch.rs | struct | pub | 80 |  |
+| `Verb` | projects/meter/meter-cli/src/dispatch.rs | enum | pub | 53 |  |
+| `dispatch` | projects/meter/meter-cli/src/dispatch.rs | function | pub | 232 | dispatch(cmd: MeterCommand, out: &OutputOpts) -> Dispatched |
+| `print_report` | projects/meter/meter-cli/src/dispatch.rs | function | pub | 807 | print_report(report: &MeterReport, out: &OutputOpts) |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
