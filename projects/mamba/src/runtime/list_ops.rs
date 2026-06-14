@@ -929,6 +929,23 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                 let do_reverse = reverse.as_bool() == Some(true) || reverse.as_int() == Some(1);
                 let has_key = !key.is_none();
                 if has_key {
+                    // The key must be callable (CPython: `xs.sort(key=42)` →
+                    // "'int' object is not callable").
+                    let key_callable = super::builtins::resolve_callable_pub(key).is_some()
+                        || matches!(
+                            key.as_ptr().map(|p| &(*p).data),
+                            Some(ObjData::Str(_)) | Some(ObjData::Instance { .. })
+                        );
+                    if !key_callable {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "'{}' object is not callable",
+                                super::builtins::value_type_name(key)
+                            ))),
+                        );
+                        return;
+                    }
                     let named_key = key.as_ptr().and_then(|p| {
                         if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
                     });

@@ -5548,6 +5548,24 @@ pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> Mb
     let has_key = !key.is_none();
 
     if has_key {
+        // The key must be callable (CPython: `sorted(xs, key=42)` →
+        // "'int' object is not callable"). Callables are functions, named
+        // builtins (Str), or instances with __call__; a bare scalar/container
+        // is rejected up front rather than silently producing None keys.
+        let key_callable = resolve_callable(key).is_some()
+            || key.as_ptr().map_or(false, |p| unsafe {
+                matches!(&(*p).data, ObjData::Str(_) | ObjData::Instance { .. })
+            });
+        if !key_callable {
+            raise_type_error(format!(
+                "'{}' object is not callable",
+                value_type_name(key)
+            ));
+            return MbValue::none();
+        }
+    }
+
+    if has_key {
         // Apply key function to each element, sort by key result
         let key_fn_addr = resolve_callable(key);
         let named_key = if key_fn_addr.is_none() {
