@@ -161,7 +161,7 @@ Active same-name replacements:
 | Command | Replaced subset | Gate | Notes |
 |---|---|---|---|
 | `ls` | simple `ls -1` / `ls -a` / `ls -A` over one path | dual-win | High-entry-count directories. |
-| `cat` | regular file arguments without flags | dual-win | Large regular-file reads; missing-file errors are parity-tested. |
+| `cat` | regular file arguments without flags | dual-win | **Deferral candidate** — only RSS-neutral vs system `cat` (near-tie, not a real win); see [Deferred and planned direction](#deferred-and-planned-direction). |
 | `uniq` | one input file | dual-win | Especially large adjacent-duplicate or stdout-discard cases. |
 | `find` | `<root> -type f -name "*.txt"` | dual-win | Simple name/type walk only. |
 | `du` | `du -sk <root>` | dual-win | Includes stdout-discard fast path; missing-root errors are parity-tested. |
@@ -202,6 +202,43 @@ Already tested but not replaced by default:
 
 Use `cap explain -- <command> ...` to see whether a command will use a native
 implementation or the original command.
+
+## Deferred and planned direction
+
+A pass over the resource gates surfaced where the 1:1 same-name replacement
+model runs out of road, and where the real wins actually are. The following are
+deliberately **on hold**:
+
+- **`cat` (deferral candidate → native passthrough).** cap's `cat` only *ties*
+  system `cat` on peak RSS — both just stream through a small buffer, so it is
+  RSS-neutral, not a win. Replacing an already-cheap command for a 0.99x
+  near-tie is not worth the complexity; the plan is to drop `cat` to the
+  original-command path. The same reasoning applies to any same-name candidate
+  that can only reach a near-tie rather than a clear dual-win.
+
+- **Pure-Rust front-end (removing the C dispatcher) — deferred.** A `no_std`,
+  no-startfiles Rust front-end was prototyped and is functionally identical to
+  `cap_frontend.c` (full parity) with the same direct-syscall shape. It lands
+  within ~16 KB of the C binary — but that ~16 KB is exactly one 16 KiB page,
+  and it is enough to lose the razor-thin `cat` gate (Rust *ties* system `cat`
+  at 1.00x where C *wins* at 0.99x). The page is Rust-runtime/dyld overhead that
+  survives `fixup_chains`, LTO, strip, reloc, and zero-import builds. Conclusion:
+  the C hot path stays for now, and the language question becomes moot once the
+  marginal single-command gates (above) are dropped — at pipeline scale the
+  16 KB is <2% of one process floor.
+
+- **Pipeline fusion — planned (this is where the real win is).** The large
+  savings are not in replacing individual cheap commands but in collapsing a
+  shell pipeline `A | B | C` into a **single in-process streaming pipeline**. A
+  shell pipeline pays N process floors (~1.3 MiB each) plus OS pipe overhead and
+  N fork/execs; one fused process pays one floor and none of the pipe cost.
+  Rough envelope: `A | B` ≈ 0.54x RSS, `A | B | C` ≈ 0.36x — a 2–3x win, not a
+  0.99x near-tie. cap already has in-process `grep`/`find`/`sort`/`sed`/`uniq`;
+  fusion refactors them into pull-based stream stages (a `head -n N` sink that
+  stops pulling makes the upstream stop, matching shell SIGPIPE early-exit) and
+  composes them, with a `bash -c` fallback for any unfusable stage and the same
+  byte-for-byte parity tests guarding correctness. At that scale the front-end
+  language no longer matters.
 
 Command replacement is resource-benchmarked, not assumed. The benchmark compares
 both public surfaces, `cap <cmd>` and hook-emitted `cap run "<command string>"`,
@@ -420,5 +457,9 @@ cap daemon stop      # next `cap run` auto-spawns the new one
 * No live RSS→config promotion or per-command memory profiles yet.
 * Memory floors are derived once at daemon start; changing `[protect]`
   requires a `cap daemon stop`.
+* Same-name command replacement is the early model; marginal single-command
+  gates (e.g. `cat`) are being retired toward native passthrough, and the next
+  real win is pipeline fusion — see
+  [Deferred and planned direction](#deferred-and-planned-direction).
 </content>
 </invoke>
