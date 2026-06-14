@@ -3504,6 +3504,7 @@ impl<'a> AstLowerer<'a> {
                             ast::AugOp::Add => Some("mb_iadd"),
                             ast::AugOp::Sub => Some("mb_isub"),
                             ast::AugOp::Mul => Some("mb_imul"),
+                            ast::AugOp::Pow => Some("mb_ipow"),
                             ast::AugOp::BitAnd => Some("mb_iand"),
                             ast::AugOp::BitOr => Some("mb_ior"),
                             ast::AugOp::BitXor => Some("mb_ixor"),

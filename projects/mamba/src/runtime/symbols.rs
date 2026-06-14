@@ -569,6 +569,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64],
             I64
         ),
+        rt_sym!(
+            "mb_ipow",
+            class::mb_ipow as fn(super::MbValue, super::MbValue) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
         // ── String ops ──
         rt_sym!(
             "mb_str_concat",
