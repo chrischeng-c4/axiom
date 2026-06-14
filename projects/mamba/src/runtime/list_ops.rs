@@ -953,7 +953,8 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                     // key callable runs: mb_call1_val can re-enter the runtime
                     // (and even this list) arbitrarily.
                     let snapshot: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
-                    let mut indexed: Vec<(MbValue, MbValue)> = snapshot.into_iter().map(|item| {
+                    let mut indexed: Vec<(MbValue, MbValue)> = Vec::with_capacity(snapshot.len());
+                    for item in snapshot {
                         let k = if let Some(ref name) = named_key {
                             call_named_callable_pub(name, item).unwrap_or(item)
                         } else {
@@ -963,8 +964,13 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                             // `fn(MbValue)` would violate (#1132).
                             super::class::mb_call1_val(key, item)
                         };
-                        (item, k)
-                    }).collect();
+                        // A raising key aborts the sort with the list left
+                        // unchanged (the write-back below never runs).
+                        if super::exception::mb_has_exception().as_bool() == Some(true) {
+                            return;
+                        }
+                        indexed.push((item, k));
+                    }
                     indexed.sort_by(|a, b| mb_value_cmp_pub(a.1, b.1));
                     if do_reverse { indexed.reverse(); }
                     let mut items = lock.write().unwrap();

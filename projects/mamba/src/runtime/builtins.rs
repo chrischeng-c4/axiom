@@ -5576,7 +5576,8 @@ pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> Mb
             None
         };
 
-        let mut indexed: Vec<(MbValue, MbValue)> = items.iter().map(|&item| {
+        let mut indexed: Vec<(MbValue, MbValue)> = Vec::with_capacity(items.len());
+        for &item in &items {
             let k = if let Some(addr) = key_fn_addr {
                 let _ = addr;
                 super::class::mb_call1_val(key, item)
@@ -5590,8 +5591,13 @@ pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> Mb
             } else {
                 item
             };
-            (item, k)
-        }).collect();
+            // A key function that raises aborts the sort (CPython propagates the
+            // exception rather than swallowing it and sorting partial keys).
+            if super::exception::mb_has_exception().as_bool() == Some(true) {
+                return MbValue::none();
+            }
+            indexed.push((item, k));
+        }
 
         indexed.sort_by(|a, b| mb_value_cmp(a.1, b.1));
         if do_reverse { indexed.reverse(); }
