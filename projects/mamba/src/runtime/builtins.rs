@@ -3549,8 +3549,31 @@ fn try_reflected_eq(obj: MbValue, other: MbValue) -> bool {
     false
 }
 
+/// If `v` is a `slice` instance, return its (start, stop, step) as a tuple
+/// MbValue so the value-comparison paths can compare/hash slices the way
+/// CPython does (slices compare and hash as the 3-tuple of their fields).
+fn slice_as_tuple(v: MbValue) -> Option<MbValue> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if class_name == "slice" {
+                let g = fields.read().unwrap();
+                let get = |k: &str| g.get(k).copied().unwrap_or_else(MbValue::none);
+                return Some(MbValue::from_ptr(MbObject::new_tuple(vec![
+                    get("start"), get("stop"), get("step"),
+                ])));
+            }
+        }
+    }
+    None
+}
+
 /// Deep structural equality for MbValues.
 fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
+    // slice == slice compares (start, stop, step) structurally (CPython).
+    if let (Some(ta), Some(tb)) = (slice_as_tuple(a), slice_as_tuple(b)) {
+        return mb_values_eq(ta, tb);
+    }
     // functools.cmp_to_key key objects compare via the wrapped cmp (sign == 0).
     if super::stdlib::functools_mod::is_cmp_to_key_obj(a)
         || super::stdlib::functools_mod::is_cmp_to_key_obj(b)
@@ -4185,6 +4208,10 @@ pub fn mb_lt(a: MbValue, b: MbValue) -> MbValue {
 
 /// Ordering comparison: supports int, float, mixed int/float, lists, tuples, strings.
 fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
+    // slice < slice orders by (start, stop, step) like the equivalent tuple.
+    if let (Some(ta), Some(tb)) = (slice_as_tuple(a), slice_as_tuple(b)) {
+        return mb_values_lt(ta, tb);
+    }
     // complex < complex (or complex vs anything) is a TypeError in CPython —
     // raise instead of silently answering False. Catches `<` directly and the
     // sort/min/max paths that funnel through mb_values_lt.

@@ -3310,10 +3310,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             return make_bound_native_method(obj, &attr_name);
                         }
                     }
-                    // slice.indices(length) as a bound callable
-                    // (`callable(slice(0, 5).indices)`); dispatched via
+                    // slice methods as bound callables (`callable(slice(0,5)
+                    // .indices)`, `slice(1,2,3).__hash__()`); dispatched via
                     // mb_call_method. start/stop/step remain plain fields.
-                    if class_name == "slice" && attr_name == "indices" {
+                    if class_name == "slice"
+                        && matches!(attr_name.as_str(), "indices" | "__hash__")
+                    {
                         return make_bound_native_method(obj, &attr_name);
                     }
                     // functools.lru_cache wrapper: expose cache_info / cache_clear
@@ -9196,6 +9198,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // slice.indices(length) — CPython 3.12 returns the (start, stop,
             // step) tuple a Python sequence would use for `seq[s]` against a
             // sequence of length `length`. Filed under #1256 long-tail.
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "slice" && name == "__hash__" {
+                    return super::builtins::mb_hash(receiver);
+                }
+            }
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 if class_name == "slice" && name == "indices" {
                     let arg_items = super::builtins::extract_items(args);
