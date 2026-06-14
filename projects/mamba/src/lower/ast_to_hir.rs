@@ -193,6 +193,12 @@ enum FloatHint {
     Float,
     Int,
     Unknown,
+    /// Call sites pass a float at this position AND a non-float at another
+    /// (or float mixed with an unknown). The param cannot use the raw-int or
+    /// raw-float convention — a raw f64 in an int slot reinterprets its bits as
+    /// an int — so it must be `any` (NaN-boxed). Only ever produced by the
+    /// call-site hint merge, never by `ast_expr_float_hint`.
+    Boxed,
 }
 
 /// Names of `math.*` (and `cmath.*`) functions that always return a Python
@@ -517,7 +523,17 @@ fn collect_call_arg_hints(
                 entry.push(h);
             } else {
                 let cur = entry[i];
-                entry[i] = if cur == h { cur } else { FloatHint::Unknown };
+                entry[i] = if cur == h {
+                    cur
+                } else if cur == FloatHint::Boxed || h == FloatHint::Boxed
+                    || cur == FloatHint::Float || h == FloatHint::Float
+                {
+                    // A float at one site mixed with anything else at another:
+                    // the param must be NaN-boxed (`any`), never raw-int.
+                    FloatHint::Boxed
+                } else {
+                    FloatHint::Unknown
+                };
             }
         }
     }
@@ -633,7 +649,9 @@ fn infer_return_float_hint(
                     match ast_expr_float_hint(&e.node, env, func_ret) {
                         FloatHint::Float => *any_float = true,
                         FloatHint::Int => *any_int = true,
-                        FloatHint::Unknown => {}
+                        // `Boxed` is a call-site-merge-only state; ast_expr_float_hint
+                        // never yields it. Treat like Unknown for return inference.
+                        FloatHint::Unknown | FloatHint::Boxed => {}
                     }
                 }
                 ast::Stmt::If { body: b, else_body, .. }
@@ -2080,14 +2098,14 @@ impl<'a> AstLowerer<'a> {
                         _ if is_gen_fn => any_ty,
                         _ => {
                             // Unannotated param: default int, but promote to float
-                            // when every call site passes a float at this position.
-                            if param_float_hints.as_ref()
-                                .and_then(|h| h.get(idx))
-                                .copied() == Some(FloatHint::Float)
-                            {
-                                float_ty
-                            } else {
-                                int_ty
+                            // when every call site passes a float at this position,
+                            // or to `any` (boxed) when float is mixed with a
+                            // non-float — a raw f64 in an int slot leaks its bits
+                            // as an int (e.g. `isinstance(0.5, int)` → True).
+                            match param_float_hints.as_ref().and_then(|h| h.get(idx)).copied() {
+                                Some(FloatHint::Float) => float_ty,
+                                Some(FloatHint::Boxed) => any_ty,
+                                _ => int_ty,
                             }
                         }
                     }
