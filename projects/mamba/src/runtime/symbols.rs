@@ -162,6 +162,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_iand", class::mb_iand as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_ior", class::mb_ior as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_ixor", class::mb_ixor as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_ipow", class::mb_ipow as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         // ── String ops ──
         rt_sym!("mb_str_concat", string_ops::mb_str_concat as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_str_upper", string_ops::mb_str_upper as fn(super::MbValue) -> super::MbValue, [I64], I64),
