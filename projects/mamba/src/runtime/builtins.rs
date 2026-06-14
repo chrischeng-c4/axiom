@@ -601,12 +601,12 @@ fn print_value_str(val: MbValue) {
                                 1 => {
                                     let a0 = items[0];
                                     if class_name == "KeyError" {
-                                        if let Some(p) = a0.as_ptr() {
-                                            if let ObjData::Str(ref s) = (*p).data {
-                                                mb_out!("'{}'", s.replace('\'', "\\'"));
-                                                return;
-                                            }
-                                        }
+                                        // KeyError.__str__ is repr(key); use the
+                                        // shared repr so quote selection matches
+                                        // CPython (a key containing `'` is
+                                        // double-quoted, not single-escaped).
+                                        print_repr(a0);
+                                        return;
                                     }
                                     print_value_str(a0);
                                     return;
@@ -623,12 +623,10 @@ fn print_value_str(val: MbValue) {
                     }
                     if let Some(msg) = fields.get("message") {
                         if class_name == "KeyError" {
-                            if let Some(ptr) = msg.as_ptr() {
-                                if let ObjData::Str(ref s) = (*ptr).data {
-                                    mb_out!("'{}'", s.replace('\'', "\\'"));
-                                    return;
-                                }
-                            }
+                            // KeyError.__str__ is repr(key) — defer to the shared
+                            // repr for CPython-matching quote selection.
+                            print_repr(*msg);
+                            return;
                         }
                         print_value_str(*msg);
                     } else {
@@ -2801,7 +2799,17 @@ pub fn mb_bitand(a: MbValue, b: MbValue) -> MbValue {
             }
             // `set & <non-set>` (e.g. `{1,2} & [3]`) is unsupported — only
             // set/frozenset operands intersect (CPython raises TypeError).
+            // Skip when the other operand is an Instance — it may be a set-like
+            // wrapper with its own __and__/__rand__ (e.g. weakref.WeakSet),
+            // which the dunder-dispatch / NotImplemented path handles; only a
+            // plainly-incompatible builtin (list/tuple/dict/...) is rejected.
+            let other_is_instance = if a_is_setlike {
+                matches!(&(*pb).data, ObjData::Instance { .. })
+            } else {
+                matches!(&(*pa).data, ObjData::Instance { .. })
+            };
             if (a_is_setlike || b_is_setlike)
+                && !other_is_instance
                 && !super::stdlib::collections_mod::is_counter_instance(a)
                 && !super::stdlib::collections_mod::is_counter_instance(b)
             {

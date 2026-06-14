@@ -1897,7 +1897,10 @@ fn cm_binop_operand(raw: MbValue) -> MbValue {
 }
 
 fn cm_key_repr(key: MbValue) -> String {
-    extract_str(key).unwrap_or_else(|| "key".to_string())
+    // CPython's ChainMap KeyError message repr's the missing key, so a string
+    // key is quoted ("...: 'b'", not "...: b").
+    let r = super::super::builtins::mb_repr(key);
+    extract_str(r).unwrap_or_else(|| "key".to_string())
 }
 
 unsafe extern "C" fn cm_getitem(self_v: MbValue, args: MbValue) -> MbValue {

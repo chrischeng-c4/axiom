@@ -6953,6 +6953,33 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                             .unwrap_or_else(MbValue::none);
                     }
                 }
+                // collections.deque[i] — index the backing `_items` list with
+                // deque bounds semantics (CPython: "deque index out of range").
+                if class_name == "collections.deque" {
+                    if let (Some(items_v), Some(idx)) =
+                        (fields.read().unwrap().get("_items").copied(), key.as_int())
+                    {
+                        if let Some(ip) = items_v.as_ptr() {
+                            if let ObjData::List(ref lock) = (*ip).data {
+                                let items = lock.read().unwrap();
+                                let len = items.len() as i64;
+                                let actual = if idx < 0 { idx + len } else { idx };
+                                if actual >= 0 && actual < len {
+                                    let v = items[actual as usize];
+                                    super::rc::retain_if_ptr(v);
+                                    return v;
+                                }
+                                super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                                    MbValue::from_ptr(MbObject::new_str(
+                                        "deque index out of range".to_string(),
+                                    )),
+                                );
+                                return MbValue::none();
+                            }
+                        }
+                    }
+                }
             }
         }
     }

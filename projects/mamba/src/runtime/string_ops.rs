@@ -2929,9 +2929,14 @@ pub fn value_to_string(val: MbValue) -> String {
                                 1 => {
                                     let a0 = items[0];
                                     if class_name == "KeyError" {
-                                        if let Some(p) = a0.as_ptr() {
-                                            if let ObjData::Str(ref s) = (*p).data {
-                                                return format!("'{}'", s.replace('\'', "\\'"));
+                                        // KeyError.__str__ is repr(key); use the
+                                        // shared repr for CPython-matching quote
+                                        // selection (a `'`-containing key is
+                                        // double-quoted, not single-escaped).
+                                        let r = super::builtins::mb_repr(a0);
+                                        if let Some(p) = r.as_ptr() {
+                                            if let ObjData::Str(ref rs) = (*p).data {
+                                                return rs.clone();
                                             }
                                         }
                                     }
@@ -2954,7 +2959,12 @@ pub fn value_to_string(val: MbValue) -> String {
                         if let Some(msg_ptr) = msg_val.as_ptr() {
                             if let ObjData::Str(ref s) = (*msg_ptr).data {
                                 if class_name == "KeyError" {
-                                    return format!("'{}'", s.replace('\'', "\\'"));
+                                    let r = super::builtins::mb_repr(*msg_val);
+                                    if let Some(p) = r.as_ptr() {
+                                        if let ObjData::Str(ref rs) = (*p).data {
+                                            return rs.clone();
+                                        }
+                                    }
                                 }
                                 return s.clone();
                             }
