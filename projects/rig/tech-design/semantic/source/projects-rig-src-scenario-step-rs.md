@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-scenario-step-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,23 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/scenario/step.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/scenario/step.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `AssertStep` | projects/rig/src/scenario/step.rs | struct | pub | 109 |  |
+| `ExecStep` | projects/rig/src/scenario/step.rs | struct | pub | 148 |  |
+| `HttpExpect` | projects/rig/src/scenario/step.rs | struct | pub | 15 |  |
+| `HttpRequest` | projects/rig/src/scenario/step.rs | struct | pub | 66 |  |
+| `HttpStep` | projects/rig/src/scenario/step.rs | struct | pub | 78 |  |
+| `MeasureRssStep` | projects/rig/src/scenario/step.rs | struct | pub | 132 |  |
+| `SampleStep` | projects/rig/src/scenario/step.rs | struct | pub | 91 |  |
+| `Step` | projects/rig/src/scenario/step.rs | enum | pub | 169 |  |
+| `WaitUntilStep` | projects/rig/src/scenario/step.rs | struct | pub | 117 |  |
+| `name` | projects/rig/src/scenario/step.rs | function | pub | 181 | name(&self) -> &str |
+| `status_ok` | projects/rig/src/scenario/step.rs | function | pub | 34 | status_ok(&self, status: u16) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
