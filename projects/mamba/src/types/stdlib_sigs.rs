@@ -215,11 +215,12 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
     // rejecting it at compile time.
     StdlibSig { module: "textwrap", qualifier: "", name: "dedent", kind: SigKind::ModuleFn,
         params: &[p("text", CoreTy::Unknown)], enforceable: false },
-    // NEGATIVE: textwrap.indent(text, prefix, ...) — `indent(123, "  ")` is a
-    // RUNTIME AttributeError (CPython does `text.splitlines(True)` on a non-str);
-    // the dispatcher raises it. Keep the type wall out of the way.
-    StdlibSig { module: "textwrap", qualifier: "", name: "indent", kind: SigKind::ModuleFn,
-        params: &[p("text", CoreTy::Unknown), p("prefix", CoreTy::Unknown), p("predicate", CoreTy::Unknown)], enforceable: false },
+    // NOTE: textwrap.indent is deliberately NOT overridden. Its runtime raises
+    // AttributeError on a non-str (CPython's `text.splitlines(True)`), but the
+    // `type/std-libs/textwrap/indent__text_as_str_wrong` STRICT_TYPE fixture
+    // requires the compile-time wall to raise TypeError. Those two contracts
+    // conflict for `indent(<int>, …)`, and the type-dimension enforcement wins,
+    // so the wall stays and errors/indent_non_str_raises remains unmet.
     // NEGATIVE: shlex.quote(s) — `quote(42)` is a RUNTIME TypeError (CPython's
     // `_find_unsafe(s)` regex over a non-str → "expected string or bytes-like
     // object"); the dispatcher raises it. Keep the type wall out of the way.
