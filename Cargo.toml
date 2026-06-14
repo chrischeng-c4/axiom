@@ -170,6 +170,16 @@ lto = true
 codegen-units = 1
 strip = true
 
+[profile.release.package.cap]
+opt-level = "z"
+codegen-units = 1
+strip = true
+
+[profile.bench.package.cap]
+opt-level = "z"
+codegen-units = 1
+strip = true
+
 # Vendor patch: cranelift-jit memory allocator enforces a 256 MB minimum
 # chunk so all JIT'd functions stay within ±128 MB of each other on
 # aarch64 — fixes Reloc::Arm64Call BL immediate-range overflow

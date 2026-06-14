@@ -71,6 +71,61 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
         assert_success_parity(&cap, &case)?;
     }
 
+    let run_success_cases = [
+        (
+            "run ls",
+            format!("ls -1 {}", fixture.list_dir()),
+            "/bin/ls",
+            vec!["-1", fixture.list_dir()],
+        ),
+        (
+            "run cat",
+            format!("cat {}", fixture.cat_file()),
+            "/bin/cat",
+            vec![fixture.cat_file()],
+        ),
+        (
+            "run uniq",
+            format!("uniq {}", fixture.uniq_file()),
+            "/usr/bin/uniq",
+            vec![fixture.uniq_file()],
+        ),
+        (
+            "run find",
+            format!("find {} -type f -name '*.txt'", fixture.find_root()),
+            "/usr/bin/find",
+            vec![fixture.find_root(), "-type", "f", "-name", "*.txt"],
+        ),
+        (
+            "run du",
+            format!("du -sk {}", fixture.du_root()),
+            "/usr/bin/du",
+            vec!["-sk", fixture.du_root()],
+        ),
+        (
+            "run sort",
+            format!("sort {}", fixture.sort_file()),
+            "/usr/bin/sort",
+            vec![fixture.sort_file()],
+        ),
+        (
+            "run sed",
+            format!("sed -n 2,4p {}", fixture.sed_file()),
+            "/usr/bin/sed",
+            vec!["-n", "2,4p", fixture.sed_file()],
+        ),
+        (
+            "run grep",
+            format!("grep -R NEEDLE {}", fixture.grep_root()),
+            "/usr/bin/grep",
+            vec!["-R", "NEEDLE", fixture.grep_root()],
+        ),
+    ];
+
+    for (name, command, original_program, original_args) in run_success_cases {
+        assert_run_string_success_parity(&cap, name, &command, original_program, &original_args)?;
+    }
+
     let missing = temp.path().join("missing-target").display().to_string();
     let error_cases = [
         Case::new(
@@ -125,6 +180,68 @@ fn active_replacements_match_success_and_error_behavior() -> Result<()> {
 
     for case in error_cases {
         assert_error_parity(&cap, &case, &missing)?;
+    }
+
+    let run_error_cases = [
+        (
+            "run ls",
+            format!("ls {}", missing),
+            "/bin/ls",
+            vec![missing.as_str()],
+        ),
+        (
+            "run cat",
+            format!("cat {}", missing),
+            "/bin/cat",
+            vec![missing.as_str()],
+        ),
+        (
+            "run uniq",
+            format!("uniq {}", missing),
+            "/usr/bin/uniq",
+            vec![missing.as_str()],
+        ),
+        (
+            "run find",
+            format!("find {} -type f -name '*.txt'", missing),
+            "/usr/bin/find",
+            vec![missing.as_str(), "-type", "f", "-name", "*.txt"],
+        ),
+        (
+            "run du",
+            format!("du -sk {}", missing),
+            "/usr/bin/du",
+            vec!["-sk", missing.as_str()],
+        ),
+        (
+            "run sort",
+            format!("sort {}", missing),
+            "/usr/bin/sort",
+            vec![missing.as_str()],
+        ),
+        (
+            "run sed",
+            format!("sed -n 1,2p {}", missing),
+            "/usr/bin/sed",
+            vec!["-n", "1,2p", missing.as_str()],
+        ),
+        (
+            "run grep",
+            format!("grep -R NEEDLE {}", missing),
+            "/usr/bin/grep",
+            vec!["-R", "NEEDLE", missing.as_str()],
+        ),
+    ];
+
+    for (name, command, original_program, original_args) in run_error_cases {
+        assert_run_string_error_parity(
+            &cap,
+            name,
+            &command,
+            original_program,
+            &original_args,
+            &missing,
+        )?;
     }
 
     let no_match = Case::new(
@@ -223,6 +340,57 @@ fn assert_quiet_nonzero_parity(cap: &Path, case: &Case<'_>) -> Result<()> {
     );
     assert_eq!(cap_out.stdout, original_out.stdout, "{} stdout", case.name);
     assert_eq!(cap_out.stderr, original_out.stderr, "{} stderr", case.name);
+    Ok(())
+}
+
+fn assert_run_string_success_parity(
+    cap: &Path,
+    name: &str,
+    command: &str,
+    original_program: &str,
+    original_args: &[&str],
+) -> Result<()> {
+    let cap_out = run(cap, &["run", command])?;
+    let original_out = run(Path::new(original_program), original_args)?;
+    assert_eq!(exit_code(&cap_out), exit_code(&original_out), "{name} exit");
+    assert_eq!(cap_out.stdout, original_out.stdout, "{name} stdout");
+    assert_eq!(cap_out.stderr, original_out.stderr, "{name} stderr");
+    Ok(())
+}
+
+fn assert_run_string_error_parity(
+    cap: &Path,
+    name: &str,
+    command: &str,
+    original_program: &str,
+    original_args: &[&str],
+    missing: &str,
+) -> Result<()> {
+    let cap_out = run(cap, &["run", command])?;
+    let original_out = run(Path::new(original_program), original_args)?;
+    assert_ne!(
+        exit_code(&original_out),
+        Some(0),
+        "{name} original must fail"
+    );
+    assert_eq!(exit_code(&cap_out), exit_code(&original_out), "{name} exit");
+    assert_eq!(cap_out.stdout, original_out.stdout, "{name} stdout");
+    assert!(
+        !cap_out.stderr.is_empty(),
+        "{name} cap stderr should explain the failure"
+    );
+    let cap_stderr = String::from_utf8_lossy(&cap_out.stderr);
+    let command_name = name.strip_prefix("run ").unwrap_or(name);
+    assert!(
+        cap_stderr.contains(command_name),
+        "{name} stderr should name the command: {cap_stderr}",
+    );
+    if command_name != "sort" {
+        assert!(
+            cap_stderr.contains(missing),
+            "{name} stderr should name the failed path: {cap_stderr}",
+        );
+    }
     Ok(())
 }
 

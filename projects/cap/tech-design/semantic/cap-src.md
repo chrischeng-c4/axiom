@@ -2150,6 +2150,7 @@ changes:
     exports:
       - { module: "cli", symbols: [] }
       - { module: "client", symbols: [] }
+      - { module: "command_planner", symbols: [] }
       - { module: "config", symbols: [] }
       - { module: "daemon", symbols: [] }
       - { module: "eventlog", symbols: [] }
