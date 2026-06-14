@@ -3129,6 +3129,21 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("%", a, b) {
         return r;
     }
+    // complex doesn't support the numeric modulo operator (CPython TypeError).
+    // Don't intercept `str % complex` — that's printf-style formatting, where
+    // the left operand is a string — so only guard a complex left operand or a
+    // complex right operand against a non-string (numeric) left.
+    let a_is_str = unsafe {
+        a.as_ptr().map_or(false, |p| matches!(&(*p).data, ObjData::Str(_)))
+    };
+    if is_complex_obj(a) || (is_complex_obj(b) && !a_is_str) {
+        raise_type_error(format!(
+            "unsupported operand type(s) for %: '{}' and '{}'",
+            value_type_name(a),
+            value_type_name(b)
+        ));
+        return MbValue::none();
+    }
     // timedelta % timedelta -> timedelta remainder (floor semantics).
     if let (Some(ua), Some(ub)) = (
         super::stdlib::datetime_mod::timedelta_total_us(a),
@@ -7170,6 +7185,15 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
 pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("//", a, b) {
         return r;
+    }
+    // complex doesn't support floor division (CPython TypeError).
+    if is_complex_obj(a) || is_complex_obj(b) {
+        raise_type_error(format!(
+            "unsupported operand type(s) for //: '{}' and '{}'",
+            value_type_name(a),
+            value_type_name(b)
+        ));
+        return MbValue::none();
     }
     // timedelta // timedelta -> int; timedelta // int -> timedelta.
     if let Some(ua) = super::stdlib::datetime_mod::timedelta_total_us(a) {
