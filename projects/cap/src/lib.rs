@@ -35,6 +35,7 @@ pub use daemon::is_running;
 
 pub mod cli;
 pub mod client;
+pub mod command_planner;
 pub mod config;
 pub mod daemon;
 pub mod eventlog;

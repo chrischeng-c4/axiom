@@ -36,13 +36,22 @@ pub enum Scope {
 pub fn run(agent: Agent, scope: Scope, print: bool) -> Result<()> {
     // Use the absolute path so the hook fires correctly even when
     // the parent process's PATH doesn't include cap's install dir.
-    let cap = std::env::current_exe().context("locating cap binary")?;
-    let cap_path = cap.to_string_lossy().to_string();
+    let cap_path = public_cap_exe().context("locating cap binary")?;
 
     match agent {
         Agent::Claude => install_claude(&cap_path, scope, print),
         Agent::Codex => install_codex(&cap_path, scope, print),
     }
+}
+
+fn public_cap_exe() -> Result<String> {
+    if let Ok(path) = std::env::var("CAP_PUBLIC_EXE") {
+        if !path.trim().is_empty() {
+            return Ok(path);
+        }
+    }
+    let cap = std::env::current_exe().context("locating cap binary")?;
+    Ok(cap.to_string_lossy().to_string())
 }
 
 // ---------------------------------------------------------------- Claude

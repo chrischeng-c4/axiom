@@ -16,7 +16,9 @@ pub use ast::{
     render_python_module, PythonClassDef, PythonClassStmt, PythonFunctionDef, PythonFunctionStmt,
     PythonImportStmt, PythonModuleAst, PythonModuleStmt,
 };
-pub use lower::{lower_backend_spec_value, lower_backend_spec_yaml, parse_http_method};
+pub use lower::{
+    lower_backend_spec_value, lower_backend_spec_yaml, lower_openapi_payload, parse_http_method,
+};
 pub use module::emit_python_module;
 pub use pydantic_model::{emit_pydantic_model, emit_pydantic_module};
 pub use router::emit_router;

@@ -362,10 +362,10 @@ test_cmd = "cargo test -p cclab-cmd"
 [[projects]]
 name = "compass"
 aliases = ["cclab-compass"]
-path = "projects/compass"
+path = "libs/compass"
 
 [[projects.workspaces]]
-paths = ["projects/compass/**"]
+paths = ["libs/compass/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-compass"
 

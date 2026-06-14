@@ -112,8 +112,7 @@ Build + install, then run `cap init`:
 
 ```bash
 # 1. build & put `cap` on your PATH (e.g. ~/.local/bin)
-cargo build --release -p cap
-cp target/release/cap ~/.local/bin/cap        # or use install.sh
+projects/cap/build.sh debug
 
 # 2. wire the PreToolUse hook into your agents (user-global)
 cap init        # installs into BOTH Claude Code and Codex CLI
@@ -124,14 +123,96 @@ cap init        # installs into BOTH Claude Code and Codex CLI
 Bash command the agent runs is transparently rewritten to:
 
 ```
-/abs/path/to/cap run --label='<original>' -- bash -c '<original>'
+/abs/path/to/cap run '<original Bash command>'
 ```
 
-so the daemon sees one process group per command and can pause / kill it
-under memory pressure. The `--label` keeps the original command in the
-run log (otherwise every entry would read `bash -c …`). The hook uses
-cap's **absolute path** (not a bare `cap`), so it works regardless of
-the agent shell's `PATH`.
+The hook uses cap's **absolute path** (not a bare `cap`), so it works
+regardless of the agent shell's `PATH`. It does not decide whether `find`,
+`grep`, pipes, or any other command should be optimized. That decision belongs
+inside cap.
+
+Cap's planner owns automatic command replacement. It preserves the familiar
+command shape while selecting faster implementations only for safe subsets
+that satisfy a measured resource gate. The preferred gate is dual-win: cap must
+beat the original command on both CPU time and peak RSS. When a tiny command is
+blocked by platform process-floor CPU cost, cap can use an RSS fallback gate
+only when the RSS improvement is large enough to justify the CPU regression.
+Other same-name commands may have candidate hot paths, but they are not claimed
+as replacements until their benchmark wins the dual-win gate or a material
+RSS-fallback gate.
+
+Hook boundary:
+
+| Layer | Responsibility |
+|---|---|
+| Agent Bash hook | Receives the Bash tool's command string and rewrites it to `cap run '<original>'`. It should stay thin: empty-command and recursion prevention only. |
+| `cap run "<command string>"` | Owns command-string wrapping. It parses shell-free simple commands into argv, sends them through the command planner, and falls back to `bash -c` for pipes, redirects, globs, shell variables, `cd && ...`, and shell builtins. |
+| `cap run -- <argv...>` | Manual explicit argv mode. It skips shell-string parsing and plans the exact argv the user supplied. |
+| cap command planner | Owns same-name command replacement decisions and benchmark-gated fallback behavior. |
+
+For example, the hook emits `cap run 'find . -type f -name "*.txt"'`; cap
+parses that string internally and can run the same native `find` replacement as
+`cap find . -type f -name "*.txt"`. For `find . -type f | xargs wc -l`, cap
+detects shell syntax and wraps the original string as `bash -c` internally so
+the shell keeps pipe behavior.
+
+Active same-name replacements:
+
+| Command | Replaced subset | Gate | Notes |
+|---|---|---|---|
+| `ls` | simple `ls -1` / `ls -a` / `ls -A` over one path | dual-win | High-entry-count directories. |
+| `cat` | regular file arguments without flags | dual-win | Large regular-file reads; missing-file errors are parity-tested. |
+| `uniq` | one input file | dual-win | Especially large adjacent-duplicate or stdout-discard cases. |
+| `find` | `<root> -type f -name "*.txt"` | dual-win | Simple name/type walk only. |
+| `du` | `du -sk <root>` | dual-win | Includes stdout-discard fast path; missing-root errors are parity-tested. |
+| `sort` | one regular file of at least 1 MiB | dual-win | Large single-file sorting. |
+| `sed` | `sed -n <start>,<end>p <file>` | dual-win | Bounded line-range reads. |
+| `grep` | recursive literal `grep -R <pattern> <root>` subset | dual-win | Literal recursive search; no-match and missing-root behavior are parity-tested. |
+
+Promotion requires both resource evidence and behavior parity. The installed
+binary shape is tested against system commands for successful stdout, nonzero
+exit codes, missing-path stderr diagnostics, and quiet nonzero cases such as
+recursive `grep` no-match.
+
+Pipe behavior is deliberate:
+
+| Input shape | Current hook rewrite | Replacement behavior |
+|---|---|---|
+| `find ... | xargs ...` | `cap run '<original>'` | Cap wraps the whole pipeline as one command and internally uses `bash -c`. |
+| `grep -R ... | head ...` | `cap run '<original>'` | The shell still owns pipe semantics and early close behavior. |
+| `awk ... | xargs ...` | `cap run '<original>'` | `awk` and `xargs` stay as original PATH commands. |
+
+The hook does not currently rewrite each pipeline segment into `cap find |
+cap xargs`, no matter how many commands appear in the pipe. That avoids subtle
+shell-behavior drift around quoting, file descriptors, SIGPIPE, xargs batching,
+empty input, and per-segment exit status. Pipe-shaped commands are measured as
+a compatibility fallback today; future promotion needs a pipe-aware planner or
+fused native path with its own CPU/RSS benchmark and behavior parity tests.
+
+Already tested but not replaced by default:
+
+| Command / shape | Status | Reason |
+|---|---|---|
+| `true`, `false` | scout-only | CPU regresses heavily and RSS does not beat Apple-signed process floor. |
+| `pwd`, `basename`, `dirname` | scout-only | Tiny-command CPU regression is not justified by small or absent RSS gains. |
+| `head`, `tail` | scout-only | Candidate paths miss the RSS gate; `tail` also has workload-sensitive CPU behavior. |
+| `mkdir`, `touch` | scout-only | Existing-path cases lose both CPU and RSS after wrapper overhead. |
+| `awk`, `xargs` | scout-only | Current cap path falls through to the original command behind cap-full, so CPU/RSS both lose. |
+| shell pipes such as `grep -R ... | head`, `awk ... | xargs`, `find ... | xargs` | compatibility fallback | The hook emits `cap run '<original>'`; cap internally keeps shell semantics through `bash -c`. Measured wrapper cost loses CPU/RSS, so there is no pipe replacement yet. |
+
+Use `cap explain -- <command> ...` to see whether a command will use a native
+implementation or the original command.
+
+Command replacement is resource-benchmarked, not assumed. The benchmark compares
+both public surfaces, `cap <cmd>` and hook-emitted `cap run "<command string>"`,
+against the original system command with CPU time (`user + system`) and peak
+RSS as the decision metrics:
+
+```bash
+cargo bench -p cap --bench command_resources
+```
+
+The latest baseline and interpretation live in `projects/cap/BENCHMARKS.md`.
 
 Narrowing it down:
 
@@ -224,7 +305,10 @@ cap config show
 > Note: in the default form, cap's own subcommand names shadow programs
 > of the same name — `cap status` always means cap's status, never the
 > system `status` binary. Use `cap run -- <cmd>` to be unambiguous. The
-> agent hook always emits `cap bash -c '…'`, so it's never affected.
+> agent hook always emits `cap run '<original Bash command>'`; cap then parses
+> shell-free strings internally or falls back to `bash -c` when shell semantics
+> are required, so hook-wrapped commands are not affected by cap subcommand
+> shadowing.
 
 ## Config
 

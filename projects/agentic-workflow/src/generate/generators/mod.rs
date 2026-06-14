@@ -59,7 +59,7 @@ pub use quality_primitives::{
     PrimitiveReviewSeverity, PrimitiveSelectionCitation, PrimitiveSelectionRequest,
     QualityPrimitiveProfile,
 };
-pub use react::ReactGenerator;
+pub use react::{render_react_wireframe_file, ReactGenerator};
 pub use sequence_plus_gen::SequencePlusGenerator;
 pub use state_machine_gen::StateMachineGenerator;
 pub use test_generator::{CoverageIssue, TestGenError, TestGenResult, TestGenerator};

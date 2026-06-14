@@ -97,6 +97,8 @@ pub struct SetupStep {
 pub struct ServiceConfig {
     pub id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cmd: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<ServicePreset>,
@@ -244,6 +246,22 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
             bail!("duplicate service id `{}`", service.id);
         }
     }
+    for service in &cfg.services {
+        for required in &service.requires {
+            if !service_ids.contains(required.as_str()) {
+                bail!(
+                    "service `{}` requires unknown service `{}`",
+                    service.id,
+                    required
+                );
+            }
+        }
+    }
+    for service in &cfg.services {
+        let mut visiting = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        validate_service_dependency_cycle(cfg, &service.id, &mut visiting, &mut visited)?;
+    }
 
     let mut runner_ids = BTreeSet::new();
     for runner in &cfg.runners {
@@ -270,6 +288,27 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
             bail!("default_runner `{default_runner}` does not match any runner id");
         }
     }
+    Ok(())
+}
+
+fn validate_service_dependency_cycle(
+    cfg: &VatConfig,
+    service_id: &str,
+    visiting: &mut BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+) -> Result<()> {
+    if visited.contains(service_id) {
+        return Ok(());
+    }
+    if !visiting.insert(service_id.to_string()) {
+        bail!("service dependency cycle includes `{service_id}`");
+    }
+    let service = cfg.service(service_id)?;
+    for required in &service.requires {
+        validate_service_dependency_cycle(cfg, required, visiting, visited)?;
+    }
+    visiting.remove(service_id);
+    visited.insert(service_id.to_string());
     Ok(())
 }
 
@@ -389,8 +428,13 @@ when = "missing:node_modules"
 
 [[services]]
 id = "web"
+requires = ["db"]
 cmd = ["sh", "-c", "sleep 1"]
 ready_http = "http://127.0.0.1:1/"
+
+[[services]]
+id = "db"
+cmd = ["sh", "-c", "sleep 1"]
 
 [[runners]]
 id = "e2e"
@@ -403,6 +447,7 @@ artifacts = ["out.txt"]
 
         let cfg = load_file(&path).unwrap();
         assert_eq!(cfg.version, 1);
+        assert_eq!(cfg.service("web").unwrap().requires, vec!["db"]);
         assert_eq!(cfg.runner("e2e").unwrap().requires, vec!["web"]);
         assert!(cfg.digest.starts_with("fnv1a64:"));
     }
@@ -417,6 +462,90 @@ artifacts = ["out.txt"]
             env: BTreeMap::new(),
             setup: Vec::new(),
             services: Vec::new(),
+            runners: vec![RunnerConfig {
+                id: "e2e".into(),
+                requires: vec!["web".into()],
+                cmd: vec!["true".into()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            path: PathBuf::from("vat.toml"),
+            root: PathBuf::from("."),
+            digest: String::new(),
+        };
+        assert!(validate(&cfg).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_required_service_dependency() {
+        let cfg = VatConfig {
+            version: 1,
+            name: None,
+            default_runner: None,
+            workspace: WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: vec![ServiceConfig {
+                id: "web".into(),
+                requires: vec!["db".into()],
+                cmd: vec!["true".into()],
+                preset: None,
+                version: None,
+                port: PortSpec::default(),
+                seed: Vec::new(),
+                export: BTreeMap::new(),
+                ready_http: None,
+                timeout_s: default_service_timeout(),
+            }],
+            runners: vec![RunnerConfig {
+                id: "e2e".into(),
+                requires: vec!["web".into()],
+                cmd: vec!["true".into()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            path: PathBuf::from("vat.toml"),
+            root: PathBuf::from("."),
+            digest: String::new(),
+        };
+        assert!(validate(&cfg).is_err());
+    }
+
+    #[test]
+    fn rejects_service_dependency_cycle() {
+        let cfg = VatConfig {
+            version: 1,
+            name: None,
+            default_runner: None,
+            workspace: WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: vec![
+                ServiceConfig {
+                    id: "web".into(),
+                    requires: vec!["api".into()],
+                    cmd: vec!["true".into()],
+                    preset: None,
+                    version: None,
+                    port: PortSpec::default(),
+                    seed: Vec::new(),
+                    export: BTreeMap::new(),
+                    ready_http: None,
+                    timeout_s: default_service_timeout(),
+                },
+                ServiceConfig {
+                    id: "api".into(),
+                    requires: vec!["web".into()],
+                    cmd: vec!["true".into()],
+                    preset: None,
+                    version: None,
+                    port: PortSpec::default(),
+                    seed: Vec::new(),
+                    export: BTreeMap::new(),
+                    ready_http: None,
+                    timeout_s: default_service_timeout(),
+                },
+            ],
             runners: vec![RunnerConfig {
                 id: "e2e".into(),
                 requires: vec!["web".into()],

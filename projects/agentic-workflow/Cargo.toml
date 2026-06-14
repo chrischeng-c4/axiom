@@ -16,7 +16,7 @@ path = "src/bin/aw.rs"
 
 [dependencies]
 # Code intelligence (extracted to separate crate in #1164)
-cclab-compass = { path = "../compass" }
+cclab-compass = { path = "../../libs/compass" }
 
 # LLM agent framework
 agent = { path = "../mamba/mambalibs/agentkit/core" }
