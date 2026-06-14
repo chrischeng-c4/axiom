@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-report-finding-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,21 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/report/finding.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/report/finding.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Finding` | projects/rig/src/report/finding.rs | struct | pub | 108 |  |
+| `Invoke` | projects/rig/src/report/finding.rs | struct | pub | 91 |  |
+| `Kind` | projects/rig/src/report/finding.rs | enum | pub | 53 |  |
+| `Severity` | projects/rig/src/report/finding.rs | enum | pub | 17 |  |
+| `as_str` | projects/rig/src/report/finding.rs | function | pub | 27 | as_str(&self) -> &'static str |
+| `as_str` | projects/rig/src/report/finding.rs | function | pub | 74 | as_str(&self) -> &'static str |
+| `command` | projects/rig/src/report/finding.rs | function | pub | 97 | command(cmd: impl Into<String>) -> Self |
+| `finding_id` | projects/rig/src/report/finding.rs | function | pub | 122 | finding_id(kind: Kind, subject: &str) -> String |
+| `rank` | projects/rig/src/report/finding.rs | function | pub | 38 | rank(&self) -> u8 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

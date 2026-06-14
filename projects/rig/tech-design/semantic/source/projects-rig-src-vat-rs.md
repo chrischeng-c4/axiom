@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-vat-rs
+capability_refs:
+  - id: vat-wrapped-runs
+    role: primary
+    claim: vat-delegated-scenario-execution
+    coverage: partial
+    rationale: "This source unit implements rig delegation through vat-wrapped scenario execution."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,17 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/vat.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/vat.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `VatRun` | projects/rig/src/vat.rs | struct | pub | 26 |  |
+| `extract_report` | projects/rig/src/vat.rs | function | pub | 121 | extract_report(log: &str) -> Option<RigReport> |
+| `remove` | projects/rig/src/vat.rs | function | pub | 114 | remove(vat_id: &str) |
+| `run_runner` | projects/rig/src/vat.rs | function | pub | 37 | run_runner(runner: &str) -> Result<VatRun, String> |
+| `runner_log` | projects/rig/src/vat.rs | function | pub | 97 | runner_log(vat_id: &str) -> Result<String, String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
