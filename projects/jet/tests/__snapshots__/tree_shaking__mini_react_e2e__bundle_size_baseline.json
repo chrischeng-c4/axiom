@@ -3,8 +3,8 @@
     "/fixture/app/devtools.js": 0,
     "/fixture/app/hooks.js": 43,
     "/fixture/app/main.js": 202,
-    "/fixture/react-dom/index.js": 0,
-    "/fixture/react/index.js": 0
+    "/fixture/react-dom/index.js": 65,
+    "/fixture/react/index.js": 54
   },
-  "post_shake_bytes_total": 245
+  "post_shake_bytes_total": 364
 }

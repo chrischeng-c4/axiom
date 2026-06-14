@@ -2044,6 +2044,20 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 code = crate::bundler::minify::strip_use_client_directives(&code);
                 lap("strip_directives");
                 dump_stage("2-bool-literals", &code);
+                let mut module_glue_base = None;
+                {
+                    let optimized =
+                        crate::bundler::scope_hoist_opt::optimize_generated_module_glue(&code);
+                    if optimized.len() < code.len() {
+                        if oxc_minify_enabled {
+                            module_glue_base = Some(code);
+                            code = optimized;
+                        } else if crate::bundler::dce::js_parses_without_errors(&optimized) {
+                            code = optimized;
+                        }
+                    }
+                }
+                lap("module_glue");
                 if std::env::var_os("JET_ENABLE_DIRECT_EXPORT_READS").is_some() {
                     let lowered = crate::bundler::scope_hoist_opt::lower_direct_export_reads(&code);
                     if lowered != code && crate::bundler::dce::js_parses_without_errors(&lowered) {
@@ -2054,12 +2068,12 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 let mut oxc_applied = false;
                 if oxc_minify_enabled {
                     if let Some(polished) = crate::bundler::minify::oxc_minify_js_candidate(&code) {
-                        if polished.len() < code.len()
-                            && crate::bundler::dce::js_parses_without_errors(&polished)
-                        {
+                        if polished.len() < code.len() {
                             code = polished;
                             oxc_applied = true;
                         }
+                    } else if let Some(base) = module_glue_base.take() {
+                        code = base;
                     }
                 }
                 lap("oxc_minify");
@@ -2162,9 +2176,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                         if let Some(polished) =
                             crate::bundler::minify::oxc_minify_js_candidate(&code)
                         {
-                            if polished.len() < code.len()
-                                && crate::bundler::dce::js_parses_without_errors(&polished)
-                            {
+                            if polished.len() < code.len() {
                                 code = polished;
                             }
                         }

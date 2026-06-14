@@ -259,28 +259,45 @@ fn count_identifier_refs_in_range(b: &[u8], ident_bytes: &[u8], start: usize, en
 /// scope hoisting).
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn eliminate_unused_exports(code: &str) -> String {
-    let mut result = code.to_string();
+    let mut result = inline_direct_literal_export_reads(code);
 
     // Phase 1: Remove unused _m{i}e.NAME export assignments
     // Match pattern: _m{i}e.NAME = <expr>;
     let export_assign_re = Regex::new(r"(_m\d+e)\.([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=[^=]").unwrap();
 
-    let mut exports_to_remove: Vec<(String, String)> = Vec::new();
+    let mut export_candidates: HashSet<(String, String)> = HashSet::new();
 
     for cap in export_assign_re.captures_iter(&result) {
         let export_obj = cap[1].to_string();
         let export_name = cap[2].to_string();
-        let full_ref = format!("{}.{}", export_obj, export_name);
+        export_candidates.insert((export_obj, export_name));
+    }
+    let direct_export_assignments = collect_direct_export_assignments(&result);
+    for (id, export_name) in direct_export_assignments.keys() {
+        export_candidates.insert((format!("_m{id}e"), export_name.clone()));
+    }
 
-        // Count read references (not the assignment site itself)
-        // A "read" is `_m{i}e.NAME` not followed by `=` (or `==`/`===`).
-        // Only zero-vs-nonzero matters here, so cap at 1: a used export
-        // stops scanning at its first read instead of sweeping the bundle.
-        let read_count = count_export_reads_capped(&result, &full_ref, 1);
+    // Count all read references in one lexical sweep. The previous path
+    // scanned the whole MUI bundle once per export candidate; even capped at
+    // the first read, unused exports still paid O(exports x bundle) work.
+    let used_exports = collect_used_export_refs(&result, &export_candidates);
+    let bare_required_modules = collect_bare_require_module_ids(&result);
+    let exports_to_remove: Vec<(String, String)> = export_candidates
+        .into_iter()
+        .filter(|candidate| !used_exports.contains(candidate))
+        .collect();
 
-        if read_count == 0 {
-            exports_to_remove.push((export_obj, export_name));
-        }
+    let direct_exports_to_remove: Vec<(usize, usize, String)> = direct_export_assignments
+        .iter()
+        .filter_map(|((id, export_name), assignment)| {
+            let canonical = (format!("_m{id}e"), export_name.clone());
+            (!used_exports.contains(&canonical) && !bare_required_modules.contains(id))
+                .then(|| (assignment.span.0, assignment.span.1, String::new()))
+        })
+        .collect();
+
+    if !direct_exports_to_remove.is_empty() {
+        result = apply_static_replacements(&result, direct_exports_to_remove);
     }
 
     // Remove unused export assignment statements
@@ -347,6 +364,456 @@ struct DirectExportAssignment {
     expr: String,
 }
 
+fn inline_direct_literal_export_reads(code: &str) -> String {
+    let assignments = collect_direct_export_assignments(code);
+    if assignments.is_empty() {
+        return code.to_string();
+    }
+
+    let literal_assignments: HashMap<(usize, String), String> = assignments
+        .iter()
+        .filter_map(|(key, assignment)| {
+            let expr = assignment.expr.trim();
+            is_inlineable_literal_export_expr(expr).then(|| (key.clone(), expr.to_string()))
+        })
+        .collect();
+    if literal_assignments.is_empty() {
+        return code.to_string();
+    }
+
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0usize;
+    let mut prev = b'(';
+    let mut bare_requires: HashSet<usize> = HashSet::new();
+    let mut reads: HashMap<(usize, String), Vec<(usize, usize)>> = HashMap::new();
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            i = next.min(len);
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+
+        if is_require_call_ident_at(b, i) {
+            if let Some((module_id, after_require)) = match_require_call_any(b, i) {
+                let id = module_id.parse::<usize>().unwrap_or(usize::MAX);
+                if let Some((prop, end_ref, is_assignment)) =
+                    match_any_property_access_after_base(b, after_require, false)
+                {
+                    if !is_assignment && is_literal_inline_boundary(b, end_ref) {
+                        let key = (id, prop);
+                        if literal_assignments.contains_key(&key) {
+                            reads.entry(key).or_default().push((i, end_ref));
+                        }
+                    }
+                    i = end_ref;
+                    prev = b'a';
+                    continue;
+                }
+                bare_requires.insert(id);
+                i = after_require;
+                prev = b')';
+                continue;
+            }
+        }
+
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    for (key, spans) in reads {
+        if bare_requires.contains(&key.0) {
+            continue;
+        }
+        let Some(expr) = literal_assignments.get(&key) else {
+            continue;
+        };
+        for (start, end) in spans {
+            replacements.push((start, end, expr.clone()));
+        }
+    }
+
+    if replacements.is_empty() {
+        return code.to_string();
+    }
+    apply_static_replacements(code, replacements)
+}
+
+fn collect_bare_require_module_ids(code: &str) -> HashSet<usize> {
+    let object_keys_reexports = collect_object_keys_reexport_mappings(code);
+    let wrapper_ids: HashSet<usize> = object_keys_reexports
+        .iter()
+        .map(|mapping| mapping.wrapper_id)
+        .collect();
+    let escaped_wrapper_ids = collect_module_namespace_escape_ids(code, &wrapper_ids);
+    let mut reexport_counts: HashMap<usize, usize> = HashMap::new();
+    for mapping in object_keys_reexports {
+        if escaped_wrapper_ids.contains(&mapping.wrapper_id) {
+            continue;
+        }
+        *reexport_counts.entry(mapping.source_id).or_default() += 1;
+    }
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0usize;
+    let mut prev = b'(';
+    let mut bare_counts: HashMap<usize, usize> = HashMap::new();
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            i = next.min(len);
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+
+        if is_require_call_ident_at(b, i) {
+            if let Some((module_id, after_require)) = match_require_call_any(b, i) {
+                if let Some((_, end_ref, _)) =
+                    match_any_property_access_after_base(b, after_require, false)
+                {
+                    i = end_ref;
+                    prev = b'a';
+                    continue;
+                }
+                if let Ok(id) = module_id.parse::<usize>() {
+                    *bare_counts.entry(id).or_default() += 1;
+                }
+                i = after_require;
+                prev = b')';
+                continue;
+            }
+        }
+
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    bare_counts
+        .into_iter()
+        .filter_map(|(id, count)| {
+            (count > reexport_counts.get(&id).copied().unwrap_or(0)).then_some(id)
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+struct NamespaceAlias {
+    module_id: usize,
+    decl_range: (usize, usize),
+    alias_range: (usize, usize),
+}
+
+fn collect_module_namespace_escape_ids(code: &str, module_ids: &HashSet<usize>) -> HashSet<usize> {
+    if module_ids.is_empty() {
+        return HashSet::new();
+    }
+
+    let aliases = namespace_aliases_for_modules(code, module_ids);
+    let mut alias_by_name: HashMap<String, NamespaceAlias> = HashMap::new();
+    let mut duplicate_aliases: HashSet<String> = HashSet::new();
+    for alias in aliases {
+        let name = alias_name_at(code, alias.alias_range).to_string();
+        if alias_by_name.insert(name.clone(), alias).is_some() {
+            duplicate_aliases.insert(name);
+        }
+    }
+
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0usize;
+    let mut prev = b'(';
+    let mut escaped = HashSet::new();
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            i = next.min(len);
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+
+        if is_id_cont_byte(b[i]) && !b[i].is_ascii_digit() {
+            let ident_start = i;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let ident = match std::str::from_utf8(&b[ident_start..i]) {
+                Ok(ident) => ident,
+                Err(_) => {
+                    prev = b'a';
+                    continue;
+                }
+            };
+
+            if ident == "_r" || ident == "require" {
+                if let Some((module_id, after_require)) = match_require_call_any(b, ident_start) {
+                    if let Ok(id) = module_id.parse::<usize>() {
+                        if module_ids.contains(&id) {
+                            if is_namespace_alias_require_call(&alias_by_name, id, ident_start) {
+                                i = after_require;
+                                prev = b')';
+                                continue;
+                            }
+                            if let Some((_, end_ref, _)) =
+                                match_any_property_access_after_base(b, after_require, true)
+                            {
+                                i = end_ref;
+                                prev = b'a';
+                                continue;
+                            }
+                            escaped.insert(id);
+                        }
+                    }
+                    i = after_require;
+                    prev = b')';
+                    continue;
+                }
+            } else if let Some(alias) = alias_by_name.get(ident) {
+                if ident_start >= alias.alias_range.0 && ident_start < alias.alias_range.1 {
+                    prev = b'a';
+                    continue;
+                }
+                if duplicate_aliases.contains(ident) {
+                    escaped.insert(alias.module_id);
+                    prev = b'a';
+                    continue;
+                }
+                if let Some((_, end_ref, _)) = match_any_property_access_after_base(b, i, true) {
+                    i = end_ref;
+                    prev = b'a';
+                    continue;
+                }
+                if is_namespace_reflection_arg(b, ident_start, i) {
+                    escaped.insert(alias.module_id);
+                }
+            }
+
+            prev = b'a';
+            continue;
+        }
+
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    escaped
+}
+
+fn namespace_aliases_for_modules(code: &str, module_ids: &HashSet<usize>) -> Vec<NamespaceAlias> {
+    let re = Regex::new(
+        r"(?:^|[;{}\n])\s*(?:var|let|const)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:_r|require)\s*\(\s*(\d+)\s*\)\s*;",
+    )
+    .unwrap();
+    re.captures_iter(code)
+        .filter_map(|cap| {
+            let alias = cap.get(1)?;
+            let module_id = cap.get(2)?.as_str().parse::<usize>().ok()?;
+            module_ids.contains(&module_id).then(|| NamespaceAlias {
+                module_id,
+                decl_range: (cap.get(0).unwrap().start(), cap.get(0).unwrap().end()),
+                alias_range: (alias.start(), alias.end()),
+            })
+        })
+        .collect()
+}
+
+fn alias_name_at(code: &str, range: (usize, usize)) -> &str {
+    code.get(range.0..range.1).unwrap_or("")
+}
+
+fn is_namespace_alias_require_call(
+    aliases: &HashMap<String, NamespaceAlias>,
+    module_id: usize,
+    require_start: usize,
+) -> bool {
+    aliases.values().any(|alias| {
+        alias.module_id == module_id
+            && require_start >= alias.decl_range.0
+            && require_start < alias.decl_range.1
+    })
+}
+
+fn is_namespace_reflection_arg(b: &[u8], start: usize, end: usize) -> bool {
+    let before = skip_ascii_ws_back(b, start);
+    if before == 0 {
+        return false;
+    }
+    if b[before - 1] == b'.' && before >= 3 && &b[before - 3..before] == b"..." {
+        return true;
+    }
+    if b[before - 1] != b'(' {
+        return false;
+    }
+
+    let Some((method, method_start)) = previous_identifier(b, before - 1) else {
+        return false;
+    };
+    let Some((object, _)) = previous_identifier_before_dot(b, method_start) else {
+        return false;
+    };
+    let reflected = matches!(
+        (object, method),
+        ("Object", "keys" | "values" | "entries") | ("Reflect", "ownKeys")
+    );
+    if !reflected {
+        return false;
+    }
+
+    let after = skip_ascii_ws(b, end);
+    after >= b.len() || matches!(b[after], b')' | b',')
+}
+
+fn skip_ascii_ws_back(b: &[u8], mut i: usize) -> usize {
+    while i > 0 && b[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    i
+}
+
+fn previous_identifier<'a>(b: &'a [u8], before: usize) -> Option<(&'a str, usize)> {
+    let end = skip_ascii_ws_back(b, before);
+    let mut start = end;
+    while start > 0 && is_id_cont_byte(b[start - 1]) {
+        start -= 1;
+    }
+    if start == end || b[start].is_ascii_digit() {
+        return None;
+    }
+    Some((std::str::from_utf8(&b[start..end]).ok()?, start))
+}
+
+fn previous_identifier_before_dot<'a>(b: &'a [u8], before: usize) -> Option<(&'a str, usize)> {
+    let dot = skip_ascii_ws_back(b, before);
+    if dot == 0 || b[dot - 1] != b'.' {
+        return None;
+    }
+    previous_identifier(b, dot - 1)
+}
+
+fn is_inlineable_literal_export_expr(expr: &str) -> bool {
+    let expr = expr.trim();
+    if expr.is_empty() || expr.starts_with('-') {
+        return false;
+    }
+    if matches!(expr, "true" | "false" | "null" | "undefined" | "void 0") {
+        return true;
+    }
+    let b = expr.as_bytes();
+    if matches!(b.first(), Some(b'"' | b'\'')) {
+        return skip_quoted_literal(b, 0) == b.len();
+    }
+    b[0].is_ascii_digit()
+        && b.iter()
+            .all(|c| c.is_ascii_digit() || matches!(c, b'.' | b'e' | b'E' | b'+' | b'-'))
+}
+
+fn is_literal_inline_boundary(b: &[u8], mut i: usize) -> bool {
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    !matches!(b.get(i), Some(b'.' | b'[' | b'?' | b'`'))
+}
+
 /// Lower direct `require(id).export` reads to local bindings.
 ///
 /// Scope-hoisted production bundles still carry CommonJS-shaped export glue
@@ -369,6 +836,18 @@ struct DirectExportAssignment {
 /// The follow-up mangle pass then compresses the generated local names, and
 /// orphan slot/alias declarations can be dropped.
 pub fn lower_direct_export_reads(code: &str) -> String {
+    let mut result = code.to_string();
+    for _ in 0..8 {
+        let next = lower_direct_export_reads_once(&result);
+        if next == result {
+            break;
+        }
+        result = next;
+    }
+    result
+}
+
+fn lower_direct_export_reads_once(code: &str) -> String {
     let assignments = collect_direct_export_assignments(code);
     if assignments.is_empty() {
         return code.to_string();
@@ -408,8 +887,10 @@ pub fn lower_direct_export_reads(code: &str) -> String {
         return code.to_string();
     }
 
-    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
-    let mut lowered_modules: HashSet<usize> = HashSet::new();
+    let mut bare_replacements: Vec<(usize, usize, String)> = Vec::new();
+    let mut candidate_modules: HashMap<usize, HashMap<String, Vec<(usize, usize)>>> =
+        HashMap::new();
+    let mut planned_read_spans: Vec<(usize, usize)> = Vec::new();
 
     for (id, prop_reads) in reads_by_module {
         if bare_requires.contains(&id) {
@@ -417,11 +898,14 @@ pub fn lower_direct_export_reads(code: &str) -> String {
                 let Some(assign) = assignments.get(&(id, prop.clone())) else {
                     continue;
                 };
-                if !is_direct_export_alias_expr(&assign.expr) {
+                if !is_direct_export_alias_expr(&assign.expr)
+                    || is_module_local_export_alias(&assign.expr, id)
+                {
                     continue;
                 }
                 for (start, end) in read_spans {
-                    replacements.push((start, end, assign.expr.clone()));
+                    bare_replacements.push((start, end, assign.expr.clone()));
+                    planned_read_spans.push((start, end));
                 }
             }
             continue;
@@ -430,6 +914,31 @@ pub fn lower_direct_export_reads(code: &str) -> String {
             .keys()
             .any(|prop| !assignments.contains_key(&(id, prop.clone())))
         {
+            continue;
+        }
+        for read_spans in prop_reads.values() {
+            planned_read_spans.extend(read_spans.iter().copied());
+        }
+        candidate_modules.insert(id, prop_reads);
+    }
+
+    let mut replacements = bare_replacements;
+    let mut lowered_modules: HashSet<usize> = HashSet::new();
+
+    for (id, prop_reads) in candidate_modules {
+        let assignment_spans: Vec<(usize, usize)> = prop_reads
+            .keys()
+            .filter_map(|prop| {
+                assignments
+                    .get(&(id, prop.clone()))
+                    .map(|assignment| assignment.span)
+            })
+            .collect();
+        if planned_read_spans.iter().any(|span| {
+            assignment_spans
+                .iter()
+                .any(|assignment_span| span_within(*span, *assignment_span))
+        }) {
             continue;
         }
 
@@ -461,6 +970,535 @@ pub fn lower_direct_export_reads(code: &str) -> String {
     out
 }
 
+fn span_within(inner: (usize, usize), outer: (usize, usize)) -> bool {
+    inner.0 >= outer.0 && inner.1 <= outer.1
+}
+
+/// Shrink generated CommonJS glue before final AST minification.
+///
+/// Scope-hoisted output starts every module slot as `{exports:{}}`, even when
+/// the slot is only ever used as an export-object container:
+///
+/// ```js
+/// var _m1={exports:{}};
+/// _m1.exports.default=value;
+/// var x=_r(1).default||_r(1);
+/// ```
+///
+/// For those simple slots, the slot itself can be the export object:
+///
+/// ```js
+/// var _m1={};
+/// _m1.default=value;
+/// var x=_r(1,1);
+/// ```
+///
+/// Modules that are passed as a retained CommonJS `module` object, reassign
+/// `module.exports`, or export a property literally named `exports` are left
+/// untouched. The caller keeps the existing parse guard around this pass.
+pub fn optimize_generated_module_glue(code: &str) -> String {
+    if !code.contains("var _mods=[") || !code.contains("function _r") {
+        return code.to_string();
+    }
+
+    let slots = collect_generated_module_slots(code);
+    if slots.is_empty() {
+        return code.to_string();
+    }
+    let Some(mods_array_range) = generated_mods_array_range(code) else {
+        return code.to_string();
+    };
+    let simple_slots = collect_simple_export_container_slots(code, &slots, mods_array_range);
+
+    let optimized = rewrite_generated_module_glue(code, &simple_slots);
+    let optimized = prune_unrequired_generated_mods_slots(&optimized);
+    if optimized == code {
+        return code.to_string();
+    }
+
+    let helper_from = "function _r(id){var m=_mods[id];return m?m.exports:{}}";
+    let helper_to = r#"function _r(id,d){var m=_mods[id];if(!m)return{};m="exports"in m?m.exports:m;return d?m.default||m:m}"#;
+    optimized.replacen(helper_from, helper_to, 1)
+}
+
+fn collect_generated_module_slots(code: &str) -> HashSet<String> {
+    let re = Regex::new(r"\bvar (_m\d+)=\{exports:\{\}\}").unwrap();
+    re.captures_iter(code)
+        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+        .collect()
+}
+
+fn generated_mods_array_range(code: &str) -> Option<(usize, usize)> {
+    let start = code.find("var _mods=[")?;
+    let rest = &code[start..];
+    let end_rel = rest.find("];function _r")?;
+    Some((start, start + end_rel + 1))
+}
+
+fn prune_unrequired_generated_mods_slots(code: &str) -> String {
+    let Some(mods_array_range) = generated_mods_array_range(code) else {
+        return code.to_string();
+    };
+    let Some(required_ids) = collect_static_generated_require_ids(code) else {
+        return code.to_string();
+    };
+
+    let open = code[mods_array_range.0..mods_array_range.1]
+        .find('[')
+        .map(|offset| mods_array_range.0 + offset);
+    let Some(open) = open else {
+        return code.to_string();
+    };
+    let close = mods_array_range.1.saturating_sub(1);
+    if open >= close || close > code.len() {
+        return code.to_string();
+    }
+
+    let entries_src = &code[open + 1..close];
+    let entries: Vec<&str> = entries_src.split(',').collect();
+    if entries.is_empty() {
+        return code.to_string();
+    }
+
+    let mut changed = false;
+    let mut rewritten_entries = String::with_capacity(entries_src.len());
+    for (id, entry) in entries.iter().enumerate() {
+        if id > 0 {
+            rewritten_entries.push(',');
+        }
+        let trimmed = entry.trim();
+        if required_ids.contains(&id) || !is_generated_module_slot_name(trimmed) {
+            rewritten_entries.push_str(entry);
+        } else {
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return code.to_string();
+    }
+
+    let mut out = String::with_capacity(code.len());
+    out.push_str(&code[..open + 1]);
+    out.push_str(&rewritten_entries);
+    out.push_str(&code[close..]);
+    out
+}
+
+fn is_generated_module_slot_name(value: &str) -> bool {
+    let Some(digits) = value.strip_prefix("_m") else {
+        return false;
+    };
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn collect_static_generated_require_ids(code: &str) -> Option<HashSet<usize>> {
+    let mut ids = HashSet::new();
+    collect_static_generated_require_ids_in_range(code.as_bytes(), 0, code.len(), &mut ids)
+        .then_some(ids)
+}
+
+fn collect_static_generated_require_ids_in_range(
+    b: &[u8],
+    start: usize,
+    end: usize,
+    ids: &mut HashSet<usize>,
+) -> bool {
+    let len = end.min(b.len());
+    let mut i = start.min(len);
+    let mut prev = b'(';
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let mut ok = true;
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
+                if !collect_static_generated_require_ids_in_range(b, expr_start, expr_end, ids) {
+                    ok = false;
+                }
+                0
+            });
+            if !ok {
+                return false;
+            }
+            i = next.min(len);
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+
+        if is_id_start_byte(b[i]) {
+            let ident_start = i;
+            i += 1;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let ident = &b[ident_start..i];
+            if (ident == b"_r" || ident == b"require")
+                && !is_property_access_at(b, ident_start)
+                && !is_function_declaration_name_at(b, ident_start)
+            {
+                let call_start = skip_ascii_ws(b, i);
+                if call_start < len && b[call_start] == b'(' {
+                    let arg_start = skip_ascii_ws(b, call_start + 1);
+                    let mut arg_end = arg_start;
+                    while arg_end < len && b[arg_end].is_ascii_digit() {
+                        arg_end += 1;
+                    }
+                    if arg_end == arg_start {
+                        return false;
+                    }
+                    let after_arg = skip_ascii_ws(b, arg_end);
+                    if after_arg >= len || !matches!(b[after_arg], b')' | b',') {
+                        return false;
+                    }
+                    let Ok(id_text) = std::str::from_utf8(&b[arg_start..arg_end]) else {
+                        return false;
+                    };
+                    let Ok(id) = id_text.parse::<usize>() else {
+                        return false;
+                    };
+                    ids.insert(id);
+                }
+            }
+            prev = b'a';
+            continue;
+        }
+
+        if !b[i].is_ascii_whitespace() {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    true
+}
+
+fn is_id_start_byte(byte: u8) -> bool {
+    byte == b'_' || byte == b'$' || byte.is_ascii_alphabetic()
+}
+
+fn is_property_access_at(b: &[u8], start: usize) -> bool {
+    let mut p = start;
+    while p > 0 && b[p - 1].is_ascii_whitespace() {
+        p -= 1;
+    }
+    p > 0 && b[p - 1] == b'.'
+}
+
+fn is_function_declaration_name_at(b: &[u8], start: usize) -> bool {
+    let mut p = start;
+    while p > 0 && b[p - 1].is_ascii_whitespace() {
+        p -= 1;
+    }
+    const FUNCTION: &[u8] = b"function";
+    if p < FUNCTION.len() || &b[p - FUNCTION.len()..p] != FUNCTION {
+        return false;
+    }
+    let before = p - FUNCTION.len();
+    before == 0 || !is_id_cont_byte(b[before - 1])
+}
+
+fn collect_simple_export_container_slots(
+    code: &str,
+    slots: &HashSet<String>,
+    mods_array_range: (usize, usize),
+) -> HashSet<String> {
+    let b = code.as_bytes();
+    let mut bad: HashSet<String> = HashSet::new();
+    let mut i = 0usize;
+    let mut prev = b'(';
+
+    while i < b.len() {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            i = next;
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < b.len()
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i);
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < b.len() {
+            if b[i + 1] == b'/' {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                continue;
+            }
+        }
+
+        if let Some((slot, end)) = parse_module_slot_ident(b, i) {
+            if slots.contains(slot) && !is_generated_slot_allowed_use(b, i, end, mods_array_range) {
+                bad.insert(slot.to_string());
+            }
+            i = end;
+            prev = b'a';
+            continue;
+        }
+
+        if !b[i].is_ascii_whitespace() {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    slots
+        .iter()
+        .filter(|slot| !bad.contains(*slot))
+        .cloned()
+        .collect()
+}
+
+fn is_generated_slot_allowed_use(
+    b: &[u8],
+    start: usize,
+    end: usize,
+    mods_array_range: (usize, usize),
+) -> bool {
+    if start >= mods_array_range.0 && end <= mods_array_range.1 {
+        return true;
+    }
+    if is_generated_slot_decl_at(b, start, end) {
+        return true;
+    }
+    if !b[end..].starts_with(b".exports") {
+        return false;
+    }
+
+    let after_exports = end + ".exports".len();
+    let after = skip_ascii_ws(b, after_exports);
+    if after < b.len() && b[after] == b'=' && !matches!(b.get(after + 1), Some(b'=')) {
+        return false;
+    }
+    if b[after_exports..].starts_with(b".exports")
+        || b[after_exports..].starts_with(br#"["exports"]"#)
+        || b[after_exports..].starts_with(br#"['exports']"#)
+        || b[after_exports..].starts_with(b"[`exports`]")
+    {
+        return false;
+    }
+    true
+}
+
+fn is_generated_slot_decl_at(b: &[u8], start: usize, end: usize) -> bool {
+    start >= "var ".len()
+        && &b[start - "var ".len()..start] == b"var "
+        && b[end..].starts_with(b"={exports:{}}")
+}
+
+fn rewrite_generated_module_glue(code: &str, simple_slots: &HashSet<String>) -> String {
+    let b = code.as_bytes();
+    let mut out = Vec::with_capacity(code.len());
+    let mut i = 0usize;
+    let mut prev = b'(';
+
+    while i < b.len() {
+        if matches!(b[i], b'"' | b'\'') {
+            let next = skip_quoted_literal(b, i);
+            out.extend_from_slice(&b[i..next]);
+            i = next;
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            out.extend_from_slice(&b[i..next]);
+            i = next;
+            prev = b'`';
+            continue;
+        }
+        if b[i] == b'/'
+            && i + 1 < b.len()
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            let next = skip_regex_literal(b, i);
+            out.extend_from_slice(&b[i..next]);
+            i = next;
+            prev = b'/';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < b.len() {
+            if b[i + 1] == b'/' {
+                let start = i;
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                out.extend_from_slice(&b[start..i]);
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                let start = i;
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                out.extend_from_slice(&b[start..i]);
+                continue;
+            }
+        }
+
+        if let Some((end, id)) = match_default_fallback_require(b, i) {
+            out.extend_from_slice(format!("_r({id},1)").as_bytes());
+            i = end;
+            prev = b')';
+            continue;
+        }
+
+        if let Some((slot, end)) = parse_module_slot_ident(b, i) {
+            if simple_slots.contains(slot) {
+                if is_generated_slot_decl_at(b, i, end) {
+                    out.extend_from_slice(slot.as_bytes());
+                    out.extend_from_slice(b"={}");
+                    i = end + "={exports:{}}".len();
+                    prev = b'}';
+                    continue;
+                }
+                if b[end..].starts_with(b".exports") {
+                    let after_exports = end + ".exports".len();
+                    let after = skip_ascii_ws(b, after_exports);
+                    let prev_sig = out
+                        .iter()
+                        .rev()
+                        .find(|c| !c.is_ascii_whitespace())
+                        .copied()
+                        .unwrap_or(b';');
+                    if after < b.len() && b[after] == b';' && matches!(prev_sig, b'{' | b';') {
+                        i = after + 1;
+                        continue;
+                    }
+                    out.extend_from_slice(slot.as_bytes());
+                    i = after_exports;
+                    prev = b'a';
+                    continue;
+                }
+            }
+        }
+
+        out.push(b[i]);
+        if !b[i].is_ascii_whitespace() {
+            prev = b[i];
+        }
+        i += 1;
+    }
+
+    String::from_utf8(out).unwrap_or_else(|_| code.to_string())
+}
+
+fn parse_module_slot_ident(b: &[u8], i: usize) -> Option<(&str, usize)> {
+    if i + 3 > b.len() || !b[i..].starts_with(b"_m") || !b[i + 2].is_ascii_digit() {
+        return None;
+    }
+    if i > 0 && is_id_cont_byte(b[i - 1]) {
+        return None;
+    }
+    let mut end = i + 3;
+    while end < b.len() && b[end].is_ascii_digit() {
+        end += 1;
+    }
+    if end < b.len() && is_id_cont_byte(b[end]) {
+        return None;
+    }
+    Some((std::str::from_utf8(&b[i..end]).ok()?, end))
+}
+
+fn match_default_fallback_require(b: &[u8], i: usize) -> Option<(usize, String)> {
+    let (id, mut j) = match_require_id_at(b, i)?;
+    if b[j..].starts_with(b".default") {
+        j += ".default".len();
+    } else if b[j..].starts_with(br#"["default"]"#)
+        || b[j..].starts_with(br#"['default']"#)
+        || b[j..].starts_with(b"[`default`]")
+    {
+        j += br#"["default"]"#.len();
+    } else {
+        return None;
+    }
+    j = skip_ascii_ws(b, j);
+    if !b[j..].starts_with(b"||") {
+        return None;
+    }
+    j = skip_ascii_ws(b, j + 2);
+    let (rhs_id, end) = match_require_id_at(b, j)?;
+    (id == rhs_id).then_some((end, id))
+}
+
+fn match_require_id_at(b: &[u8], i: usize) -> Option<(String, usize)> {
+    if !b[i..].starts_with(b"_r(") {
+        return None;
+    }
+    let mut j = skip_ascii_ws(b, i + 3);
+    let start = j;
+    while j < b.len() && b[j].is_ascii_digit() {
+        j += 1;
+    }
+    if j == start {
+        return None;
+    }
+    let id = std::str::from_utf8(&b[start..j]).ok()?.to_string();
+    j = skip_ascii_ws(b, j);
+    if j >= b.len() || b[j] != b')' {
+        return None;
+    }
+    Some((id, j + 1))
+}
+
+fn skip_ascii_ws(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
 fn is_direct_export_alias_expr(expr: &str) -> bool {
     let mut parts = expr.split('.');
     let Some(first) = parts.next() else {
@@ -470,6 +1508,12 @@ fn is_direct_export_alias_expr(expr: &str) -> bool {
         return false;
     }
     parts.all(is_js_identifier)
+}
+
+fn is_module_local_export_alias(expr: &str, module_id: usize) -> bool {
+    expr.split('.')
+        .next()
+        .is_some_and(|ident| ident.starts_with(&format!("_m{module_id}_")))
 }
 
 fn is_js_identifier(value: &str) -> bool {
@@ -1353,87 +2397,153 @@ fn collect_prefixed_refs_in_range(
     }
 }
 
-/// Count read references to an export property like `_m0e.foo`, excluding
-/// assignment sites (where it's followed by `=` but not `==`).
-fn count_export_reads(code: &str, full_ref: &str) -> usize {
-    count_export_reads_capped(code, full_ref, usize::MAX)
-}
+fn collect_used_export_refs(
+    code: &str,
+    candidates: &HashSet<(String, String)>,
+) -> HashSet<(String, String)> {
+    if candidates.is_empty() {
+        return HashSet::new();
+    }
 
-/// Like [`count_export_reads`] but stops scanning once `stop_at` reads are
-/// seen. Phase 1 only needs zero-vs-nonzero, so passing `stop_at = 1` turns a
-/// whole-bundle scan per export (O(exports * bundle), the dominant r5 cost on
-/// MUI) into an early-exit at the first read for every export that IS used —
-/// i.e. nearly all of them. Byte-identical: a capped count of 0 means the same
-/// thing as a full count of 0.
-fn count_export_reads_capped(code: &str, full_ref: &str, stop_at: usize) -> usize {
-    let b = code.as_bytes();
-    let ref_bytes = full_ref.as_bytes();
-    let (export_obj, export_name) = full_ref.rsplit_once('.').unwrap_or((full_ref, ""));
-    let obj_bytes = export_obj.as_bytes();
-    let module_id = module_id_from_export_obj(export_obj);
-    let require_aliases = module_id
-        .map(|id| require_aliases_for_module(code, id))
-        .unwrap_or_default();
-    count_export_reads_in_range(
-        b,
+    let mut original_names_by_module_id: HashMap<String, HashSet<String>> = HashMap::new();
+    for (obj, name) in candidates {
+        if let Some(id) = module_id_from_export_obj(obj) {
+            original_names_by_module_id
+                .entry(id.to_string())
+                .or_default()
+                .insert(name.clone());
+        }
+    }
+
+    let object_keys_reexports = collect_object_keys_reexport_mappings(code);
+    let mut virtual_candidates: HashSet<(String, String)> = HashSet::new();
+    for mapping in &object_keys_reexports {
+        if let Some(names) = original_names_by_module_id.get(&mapping.source_id.to_string()) {
+            for name in names {
+                virtual_candidates.insert((format!("_m{}e", mapping.wrapper_id), name.clone()));
+            }
+        }
+    }
+
+    let mut names_by_obj: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let mut names_by_module_id: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for (obj, name) in candidates.iter().chain(virtual_candidates.iter()) {
+        names_by_obj
+            .entry(obj.as_str())
+            .or_default()
+            .insert(name.as_str());
+        if let Some(id) = module_id_from_export_obj(obj) {
+            names_by_module_id
+                .entry(id)
+                .or_default()
+                .insert(name.as_str());
+        }
+    }
+
+    let alias_to_module_id = require_aliases_for_modules(code, &names_by_module_id);
+    let mut used = HashSet::new();
+    collect_used_export_refs_in_range(
+        code.as_bytes(),
         0,
-        b.len(),
-        ref_bytes,
-        export_name,
-        obj_bytes,
-        module_id,
-        &require_aliases,
-        stop_at,
-    )
+        code.len(),
+        &names_by_obj,
+        &names_by_module_id,
+        &alias_to_module_id,
+        &mut used,
+    );
+    for mapping in &object_keys_reexports {
+        let Some(names) = original_names_by_module_id.get(&mapping.source_id.to_string()) else {
+            continue;
+        };
+        for name in names {
+            if used.contains(&(format!("_m{}e", mapping.wrapper_id), name.clone())) {
+                used.insert((format!("_m{}e", mapping.source_id), name.clone()));
+            }
+        }
+    }
+    used
 }
 
-fn count_export_reads_in_range(
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ObjectKeysReexportMapping {
+    source_id: usize,
+    wrapper_id: usize,
+}
+
+fn collect_object_keys_reexport_mappings(code: &str) -> Vec<ObjectKeysReexportMapping> {
+    let re = Regex::new(
+        r#"var\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:_r|require)\s*\(\s*(\d+)\s*\)\s*;\s*Object\.keys\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*\.forEach\s*\(\s*function\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*\{\s*if\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*!==\s*["']default["']\s*\)\s*_m(\d+)\.exports\s*\[\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\]\s*=\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\[\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\]\s*;\s*\}\s*\)"#,
+    )
+    .unwrap();
+    re.captures_iter(code)
+        .filter_map(|cap| {
+            let alias = cap.get(1)?.as_str();
+            let source_id = cap.get(2)?.as_str().parse::<usize>().ok()?;
+            let object_keys_alias = cap.get(3)?.as_str();
+            let key_param = cap.get(4)?.as_str();
+            let if_key = cap.get(5)?.as_str();
+            let wrapper_id = cap.get(6)?.as_str().parse::<usize>().ok()?;
+            let output_key = cap.get(7)?.as_str();
+            let rhs_alias = cap.get(8)?.as_str();
+            let rhs_key = cap.get(9)?.as_str();
+            (alias == object_keys_alias
+                && alias == rhs_alias
+                && key_param == if_key
+                && key_param == output_key
+                && key_param == rhs_key)
+                .then_some(ObjectKeysReexportMapping {
+                    source_id,
+                    wrapper_id,
+                })
+        })
+        .collect()
+}
+
+fn collect_used_export_refs_in_range(
     b: &[u8],
     start: usize,
     end: usize,
-    ref_bytes: &[u8],
-    export_name: &str,
-    obj_bytes: &[u8],
-    module_id: Option<&str>,
-    require_aliases: &[String],
-    stop_at: usize,
-) -> usize {
-    let ref_len = ref_bytes.len();
+    names_by_obj: &HashMap<&str, HashSet<&str>>,
+    names_by_module_id: &HashMap<&str, HashSet<&str>>,
+    alias_to_module_id: &HashMap<String, String>,
+    used: &mut HashSet<(String, String)>,
+) {
     let len = end.min(b.len());
-    let mut count = 0;
     let mut i = start.min(len);
+    let mut prev = b'(';
 
     while i < len {
-        // Early-exit once the caller's budget is reached (Phase 1 passes 1).
-        if count >= stop_at {
-            return count;
-        }
-        // Skip plain string literals.
         if matches!(b[i], b'"' | b'\'') {
             i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
             continue;
         }
-
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
+            continue;
+        }
         if b[i] == b'`' {
-            let (next, refs) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
-                count_export_reads_in_range(
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
+                collect_used_export_refs_in_range(
                     b,
                     expr_start,
                     expr_end,
-                    ref_bytes,
-                    export_name,
-                    obj_bytes,
-                    module_id,
-                    require_aliases,
-                    stop_at.saturating_sub(count),
-                )
+                    names_by_obj,
+                    names_by_module_id,
+                    alias_to_module_id,
+                    used,
+                );
+                0
             });
-            count += refs;
             i = next.min(len);
+            prev = b'`';
             continue;
         }
-
-        // Skip comments
         if b[i] == b'/' && i + 1 < len {
             if b[i + 1] == b'/' {
                 while i < len && b[i] != b'\n' {
@@ -1446,109 +2556,145 @@ fn count_export_reads_in_range(
                 while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
                     i += 1;
                 }
-                if i + 1 < len {
-                    i += 2;
-                }
+                i = (i + 2).min(len);
                 continue;
             }
         }
 
-        // Try to match dot export reads: `_m0e.foo`.
-        if i + ref_len <= len && &b[i..i + ref_len] == ref_bytes {
-            // Check it's not part of a longer identifier
-            let next_ok = i + ref_len >= len || !is_id_cont_byte(b[i + ref_len]);
-            if next_ok {
-                // Check if this is an assignment (followed by `=` but not `==`)
-                let mut j = i + ref_len;
-                while j < len && matches!(b[j], b' ' | b'\t') {
-                    j += 1;
-                }
-                let is_assignment = j < len && b[j] == b'=' && (j + 1 >= len || b[j + 1] != b'=');
-
-                if !is_assignment {
-                    count += 1;
-                }
-                i += ref_len;
-                continue;
+        if is_id_cont_byte(b[i]) && !b[i].is_ascii_digit() {
+            let ident_start = i;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
             }
-        }
+            let ident = match std::str::from_utf8(&b[ident_start..i]) {
+                Ok(ident) => ident,
+                Err(_) => {
+                    prev = b'a';
+                    continue;
+                }
+            };
 
-        // Try to match bracket export reads: `_m0e["foo"]` / `_m0e['foo']`.
-        if !export_name.is_empty()
-            && i + obj_bytes.len() <= len
-            && &b[i..i + obj_bytes.len()] == obj_bytes
-        {
-            let prev_ok = i == 0 || !is_id_cont_byte(b[i - 1]);
-            let next = i + obj_bytes.len();
-            let next_ok = next >= len || !is_id_cont_byte(b[next]);
-            if prev_ok && next_ok {
-                if let Some((end_ref, is_assignment)) =
-                    match_bracket_property_access(b, next, export_name)
+            if let Some(names) = names_by_obj.get(ident) {
+                if let Some((prop, end_ref, is_assignment)) =
+                    match_any_property_access_after_base(b, i, false)
                 {
-                    if !is_assignment {
-                        count += 1;
+                    if !is_assignment && names.contains(prop.as_str()) {
+                        used.insert((ident.to_string(), prop));
                     }
                     i = end_ref;
+                    prev = b'a';
                     continue;
                 }
             }
+
+            if ident == "_r" || ident == "require" {
+                if let Some((module_id, after_require)) = match_require_call_any(b, ident_start) {
+                    if let Some(names) = names_by_module_id.get(module_id.as_str()) {
+                        if let Some((prop, end_ref, is_assignment)) =
+                            match_any_property_access_after_base(b, after_require, true)
+                        {
+                            if !is_assignment && names.contains(prop.as_str()) {
+                                used.insert((format!("_m{}e", module_id), prop));
+                            }
+                            i = end_ref;
+                            prev = b'a';
+                            continue;
+                        }
+                    }
+                }
+            } else if let Some(module_id) = alias_to_module_id.get(ident) {
+                if let Some(names) = names_by_module_id.get(module_id.as_str()) {
+                    if let Some((prop, end_ref, is_assignment)) =
+                        match_any_property_access_after_base(b, i, true)
+                    {
+                        if !is_assignment && names.contains(prop.as_str()) {
+                            used.insert((format!("_m{}e", module_id), prop));
+                        }
+                        i = end_ref;
+                        prev = b'a';
+                        continue;
+                    }
+                }
+            }
+
+            prev = b'a';
+            continue;
         }
 
-        // Try to match require export reads: `_r(672)["getContrastRatio"]`,
-        // `_r(672).getContrastRatio`, or aliases such as
-        // `var color = _r(672); color.getContrastRatio`.
-        if let Some(id) = module_id {
-            if let Some((end_ref, is_assignment)) =
-                match_require_export_access(b, i, id, export_name)
-            {
-                if !is_assignment {
-                    count += 1;
-                }
-                i = end_ref;
-                continue;
-            }
-            if let Some((end_ref, is_assignment)) =
-                match_require_alias_export_access(b, i, &require_aliases, export_name)
-            {
-                if !is_assignment {
-                    count += 1;
-                }
-                i = end_ref;
-                continue;
-            }
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
         }
-
         i += 1;
     }
-
-    count
 }
 
-fn module_id_from_export_obj(export_obj: &str) -> Option<&str> {
-    let id = export_obj.strip_prefix("_m")?.strip_suffix('e')?;
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    Some(id)
-}
-
-fn require_aliases_for_module(code: &str, module_id: &str) -> Vec<String> {
-    let pattern = format!(
-        r"(?:^|[;{{}}\n])\s*(?:var|let|const)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*_r\s*\(\s*{}\s*\)\s*;",
-        regex::escape(module_id)
-    );
-    let re = Regex::new(&pattern).unwrap();
+fn require_aliases_for_modules(
+    code: &str,
+    names_by_module_id: &HashMap<&str, HashSet<&str>>,
+) -> HashMap<String, String> {
+    let re = Regex::new(
+        r"(?:^|[;{}\n])\s*(?:var|let|const)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*_r\s*\(\s*(\d+)\s*\)\s*;",
+    )
+    .unwrap();
     re.captures_iter(code)
-        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+        .filter_map(|cap| {
+            let alias = cap.get(1)?.as_str();
+            let id = cap.get(2)?.as_str();
+            names_by_module_id
+                .contains_key(id)
+                .then(|| (alias.to_string(), id.to_string()))
+        })
         .collect()
 }
 
-fn match_bracket_property_access(
+fn match_any_property_access_after_base(
     b: &[u8],
-    after_obj: usize,
-    export_name: &str,
-) -> Option<(usize, bool)> {
-    let mut i = after_obj;
+    after_base: usize,
+    allow_exports_prefix: bool,
+) -> Option<(String, usize, bool)> {
+    let mut i = after_base;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+
+    if allow_exports_prefix {
+        if let Some(end_exports) = match_dot_property(b, i, "exports") {
+            i = end_exports;
+            while i < b.len() && b[i].is_ascii_whitespace() {
+                i += 1;
+            }
+        }
+    }
+
+    if i < b.len() && b[i] == b'.' {
+        let mut prop_start = i + 1;
+        while prop_start < b.len() && b[prop_start].is_ascii_whitespace() {
+            prop_start += 1;
+        }
+        if prop_start >= b.len()
+            || !is_id_cont_byte(b[prop_start])
+            || b[prop_start].is_ascii_digit()
+        {
+            return None;
+        }
+        let mut end_ref = prop_start + 1;
+        while end_ref < b.len() && is_id_cont_byte(b[end_ref]) {
+            end_ref += 1;
+        }
+        let prop = std::str::from_utf8(&b[prop_start..end_ref])
+            .ok()?
+            .to_string();
+        return Some((prop, end_ref, is_assignment_after_ref(b, end_ref)));
+    }
+
+    match_string_property_access_after_base(b, i)
+}
+
+fn match_string_property_access_after_base(
+    b: &[u8],
+    after_base: usize,
+) -> Option<(String, usize, bool)> {
+    let mut i = after_base;
     while i < b.len() && b[i].is_ascii_whitespace() {
         i += 1;
     }
@@ -1574,9 +2720,10 @@ fn match_bracket_property_access(
         }
         i += 1;
     }
-    if i >= b.len() || &b[name_start..i] != export_name.as_bytes() {
+    if i >= b.len() {
         return None;
     }
+    let prop = std::str::from_utf8(&b[name_start..i]).ok()?.to_string();
     i += 1;
     while i < b.len() && b[i].is_ascii_whitespace() {
         i += 1;
@@ -1584,60 +2731,25 @@ fn match_bracket_property_access(
     if i >= b.len() || b[i] != b']' {
         return None;
     }
-    i += 1;
-
-    let mut j = i;
-    while j < b.len() && b[j].is_ascii_whitespace() {
-        j += 1;
-    }
-    let is_assignment = j < b.len() && b[j] == b'=' && (j + 1 >= b.len() || b[j + 1] != b'=');
-    Some((i, is_assignment))
+    let end_ref = i + 1;
+    Some((prop, end_ref, is_assignment_after_ref(b, end_ref)))
 }
 
-fn match_require_export_access(
-    b: &[u8],
-    start: usize,
-    module_id: &str,
-    export_name: &str,
-) -> Option<(usize, bool)> {
-    let after_require = match_require_call_for_module(b, start, module_id)?;
-    match_property_access_after_base(b, after_require, export_name)
-}
-
-fn match_require_alias_export_access(
-    b: &[u8],
-    start: usize,
-    aliases: &[String],
-    export_name: &str,
-) -> Option<(usize, bool)> {
-    for alias in aliases {
-        let alias_bytes = alias.as_bytes();
-        if start + alias_bytes.len() > b.len()
-            || &b[start..start + alias_bytes.len()] != alias_bytes
-        {
-            continue;
-        }
-        let prev_ok = start == 0 || !is_id_cont_byte(b[start - 1]);
-        let next = start + alias_bytes.len();
-        let next_ok = next >= b.len() || !is_id_cont_byte(b[next]);
-        if prev_ok && next_ok {
-            if let Some(access) = match_property_access_after_base(b, next, export_name) {
-                return Some(access);
-            }
-        }
-    }
-    None
-}
-
-fn match_require_call_for_module(b: &[u8], start: usize, module_id: &str) -> Option<usize> {
-    let req = b"_r";
-    if start + req.len() > b.len() || &b[start..start + req.len()] != req {
+fn match_require_call_any(b: &[u8], start: usize) -> Option<(String, usize)> {
+    let req_len = if b[start..].starts_with(b"_r") {
+        2
+    } else if b[start..].starts_with(b"require") {
+        "require".len()
+    } else {
         return None;
-    }
+    };
     if start > 0 && is_id_cont_byte(b[start - 1]) {
         return None;
     }
-    let mut i = start + req.len();
+    if start + req_len < b.len() && is_id_cont_byte(b[start + req_len]) {
+        return None;
+    }
+    let mut i = start + req_len;
     if i < b.len() && is_id_cont_byte(b[i]) {
         return None;
     }
@@ -1651,42 +2763,33 @@ fn match_require_call_for_module(b: &[u8], start: usize, module_id: &str) -> Opt
     while i < b.len() && b[i].is_ascii_whitespace() {
         i += 1;
     }
-    let id_bytes = module_id.as_bytes();
-    if i + id_bytes.len() > b.len() || &b[i..i + id_bytes.len()] != id_bytes {
+    let id_start = i;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == id_start {
         return None;
     }
-    i += id_bytes.len();
+    let module_id = std::str::from_utf8(&b[id_start..i]).ok()?.to_string();
     while i < b.len() && b[i].is_ascii_whitespace() {
         i += 1;
     }
     if i >= b.len() || b[i] != b')' {
         return None;
     }
-    Some(i + 1)
+    Some((module_id, i + 1))
 }
 
-fn match_property_access_after_base(
-    b: &[u8],
-    after_base: usize,
-    export_name: &str,
-) -> Option<(usize, bool)> {
-    let mut i = after_base;
-    while i < b.len() && b[i].is_ascii_whitespace() {
-        i += 1;
-    }
+fn is_require_call_ident_at(b: &[u8], start: usize) -> bool {
+    match_require_call_any(b, start).is_some()
+}
 
-    if let Some(end_exports) = match_dot_property(b, i, "exports") {
-        i = end_exports;
-        while i < b.len() && b[i].is_ascii_whitespace() {
-            i += 1;
-        }
+fn module_id_from_export_obj(export_obj: &str) -> Option<&str> {
+    let id = export_obj.strip_prefix("_m")?.strip_suffix('e')?;
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
     }
-
-    if let Some(end_ref) = match_dot_property(b, i, export_name) {
-        return Some((end_ref, is_assignment_after_ref(b, end_ref)));
-    }
-
-    match_bracket_property_access(b, i, export_name)
+    Some(id)
 }
 
 fn match_dot_property(b: &[u8], start: usize, property: &str) -> Option<usize> {
@@ -2386,6 +3489,140 @@ Button();
     }
 
     #[test]
+    fn test_lower_direct_export_reads_keeps_block_local_alias_fallback() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _mods=[_m0,_m1];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+{
+const _m1_Local=makeButton();
+_m1.exports["default"]=_m1_Local;
+}
+var Button=_r(1)["default"]||_r(1);
+Button();
+})();"#;
+
+        let result = lower_direct_export_reads(code);
+
+        assert_eq!(
+            result, code,
+            "block-local module bindings are not visible at fallback read sites"
+        );
+    }
+
+    #[test]
+    fn test_lower_direct_export_reads_iterates_nested_export_deps() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _m2={exports:{}};
+var _mods=[_m0,_m1,_m2];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+_m1.exports["foo"]=makeFoo();
+_m2.exports["bar"]=_r(1)["foo"];
+var Bar=_r(2)["bar"];
+Bar();
+})();"#;
+
+        let result = lower_direct_export_reads(code);
+
+        assert!(
+            result.contains("var _m1_export_foo=makeFoo();")
+                && result.contains("var _m2_export_bar=_m1_export_foo;")
+                && result.contains("var Bar=_m2_export_bar;"),
+            "nested direct export reads should lower over multiple passes, got: {result}"
+        );
+        assert!(
+            !result.contains("_r(1)[\"foo\"]")
+                && !result.contains("_r(2)[\"bar\"]")
+                && !result.contains("_m1.exports[\"foo\"]")
+                && !result.contains("_m2.exports[\"bar\"]"),
+            "lowered output should not keep direct require/export glue, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_optimize_generated_module_glue_collapses_simple_export_slot() {
+        let code = r#"(function(){var _m0={exports:{}};var _m1={exports:{}};var _mods=[_m0,_m1];function _r(id){var m=_mods[id];return m?m.exports:{}}{_m1.exports;_m1.exports.default=makeButton();var Button=_r(1).default||_r(1);Button();}})();"#;
+
+        let result = optimize_generated_module_glue(code);
+
+        assert!(result.contains("var _m1={}"), "{result}");
+        assert!(result.contains("_m1.default=makeButton()"), "{result}");
+        assert!(result.contains("var Button=_r(1,1);"), "{result}");
+        assert!(!result.contains("_m1.exports;"), "{result}");
+        assert!(
+            result.contains(r#""exports"in m?m.exports:m"#),
+            "mixed direct-export/module-object helper must be installed: {result}"
+        );
+    }
+
+    #[test]
+    fn test_optimize_generated_module_glue_keeps_retained_module_objects() {
+        let code = r#"(function(){var _m0={exports:{}};var _m1={exports:{}};var _mods=[_m0,_m1];function _r(id){var m=_mods[id];return m?m.exports:{}}!function(module,exports){module.exports=makeButton();}(_m1,_m1.exports);var Button=_r(1).default||_r(1);Button();})();"#;
+
+        let result = optimize_generated_module_glue(code);
+
+        assert!(result.contains("var _m1={exports:{}}"), "{result}");
+        assert!(result.contains("}(_m1,_m1.exports)"), "{result}");
+        assert!(
+            result.contains("var Button=_r(1,1);"),
+            "default fallback can still shrink independently: {result}"
+        );
+    }
+
+    #[test]
+    fn test_optimize_generated_module_glue_keeps_module_exports_reassignment() {
+        let code = r#"(function(){var _m0={exports:{}};var _m1={exports:{}};var _mods=[_m0,_m1];function _r(id){var m=_mods[id];return m?m.exports:{}}{_m1.exports=makeButton();var Button=_r(1).default||_r(1);Button();}})();"#;
+
+        let result = optimize_generated_module_glue(code);
+
+        assert!(result.contains("var _m1={exports:{}}"), "{result}");
+        assert!(result.contains("_m1.exports=makeButton()"), "{result}");
+    }
+
+    #[test]
+    fn test_optimize_generated_module_glue_keeps_literal_exports_export() {
+        let code = r#"(function(){var _m0={exports:{}};var _m1={exports:{}};var _mods=[_m0,_m1];function _r(id){var m=_mods[id];return m?m.exports:{}}{_m1.exports.exports=makeButton();var Button=_r(1).exports;Button();}})();"#;
+
+        let result = optimize_generated_module_glue(code);
+
+        assert!(result.contains("var _m1={exports:{}}"), "{result}");
+        assert!(
+            result.contains("_m1.exports.exports=makeButton()"),
+            "{result}"
+        );
+    }
+
+    #[test]
+    fn test_optimize_generated_module_glue_prunes_unrequired_mods_slots() {
+        let code = r#"(function(){var _m0={exports:{}};var _m1={exports:{}};var _m2={exports:{}};var _mods=[_m0,_m1,_m2];function _r(id){var m=_mods[id];return m?m.exports:{}}{_m0.exports.side=side();_m1.exports.default=makeButton();}var Button=_r(1).default||_r(1);!function(module,exports,require){exports.value=require(2).default;}(_m2,_m2.exports,_r);Button();})();"#;
+
+        let result = optimize_generated_module_glue(code);
+
+        assert!(
+            result.contains("var _mods=[,_m1,_m2]"),
+            "unrequired slot must not stay pinned in the runtime table: {result}"
+        );
+        assert!(result.contains("_m0.side=side()"), "{result}");
+        assert!(result.contains("var Button=_r(1,1);"), "{result}");
+        assert!(result.contains("require(2).default"), "{result}");
+    }
+
+    #[test]
+    fn test_optimize_generated_module_glue_keeps_mods_array_for_dynamic_require() {
+        let code = r#"(function(){var _m0={exports:{}};var _m1={exports:{}};var _mods=[_m0,_m1];function _r(id){var m=_mods[id];return m?m.exports:{}}{_m1.exports.default=makeButton();}var id=1;var Button=_r(id).default||_r(id);Button();})();"#;
+
+        let result = optimize_generated_module_glue(code);
+
+        assert!(
+            result.contains("var _mods=[_m0,_m1]"),
+            "dynamic require keeps every slot addressable: {result}"
+        );
+    }
+
+    #[test]
     fn test_eliminate_unused_exports() {
         // An export assignment `_m0e.unusedFn = ...` with zero read references
         // in the bundle should be removed entirely.
@@ -2407,6 +3644,123 @@ var _m1_result = _m0e.usedFn();"#;
             !result.contains("unusedFn"),
             "unused export should be removed, got: {}",
             result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_removes_unread_direct_exports() {
+        let code = r#"(function(){var _m19={exports:{}};var _mods=[_m19];function _r(id){var m=_mods[id];return m?m.exports:{}}
+function makePrefix(){return "-ms-";}
+{_m19.exports["MS"]=makePrefix();_m19.exports["PAGE"]="@page";_m19.exports["SCOPE"]="@scope";}
+var prefix=_r(19).MS;console.log(prefix);})();"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m19.exports[\"MS\"]"),
+            "read direct export should survive, got: {result}"
+        );
+        assert!(
+            !result.contains("_m19.exports[\"PAGE\"]"),
+            "unread direct export should be removed, got: {result}"
+        );
+        assert!(
+            !result.contains("_m19.exports[\"SCOPE\"]"),
+            "unread direct export should be removed, got: {result}"
+        );
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&result),
+            "result should remain valid JS, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_inlines_direct_literal_export_reads() {
+        let code = r#"(function(){var _m19={exports:{}};var _mods=[_m19];function _r(id){var m=_mods[id];return m?m.exports:{}}
+{_m19.exports["MS"]="-ms-";_m19.exports["RULESET"]="rule";}
+var prefix=_r(19).MS;var kind=_r(19).RULESET;console.log(prefix,kind);})();"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains(r#"var prefix="-ms-";"#),
+            "direct literal export read should be inlined, got: {result}"
+        );
+        assert!(
+            result.contains(r#"var kind="rule";"#),
+            "direct literal export read should be inlined, got: {result}"
+        );
+        assert!(
+            !result.contains("_m19.exports[\"MS\"]"),
+            "inlined direct literal export assignment should be removed, got: {result}"
+        );
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&result),
+            "result should remain valid JS, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_keeps_alias_read_direct_exports() {
+        let code = r#"(function(){var _m19={exports:{}};var _mods=[_m19];function _r(id){var m=_mods[id];return m?m.exports:{}}
+{_m19.exports["MS"]="-ms-";_m19.exports["PAGE"]="@page";}
+var enum_ns=_r(19);console.log(enum_ns["MS"]);})();"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m19.exports[\"MS\"]"),
+            "alias-read direct export should survive, got: {result}"
+        );
+        assert!(
+            result.contains("_m19.exports[\"PAGE\"]"),
+            "bare namespace require should keep sibling direct exports, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_tracks_generated_object_keys_reexports() {
+        let code = r#"(function(){var _m13={exports:{}};var _m19={exports:{}};var _mods=[_m13,_m19];function _r(id){var m=_mods[id];return m?m.exports:{}}
+{_m19.exports["MS"]="-ms-";_m19.exports["PAGE"]="@page";_m19.exports["SCOPE"]="@scope";}
+var _m13___re=_r(19);Object.keys(_m13___re).forEach(function(k){if(k!=="default")_m13.exports[k]=_m13___re[k];});
+var stylis=_r(13);console.log(stylis.MS);})();"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m19.exports[\"MS\"]"),
+            "statically-read re-export source export should survive, got: {result}"
+        );
+        assert!(
+            !result.contains("_m19.exports[\"PAGE\"]"),
+            "unread re-export source export should be removed, got: {result}"
+        );
+        assert!(
+            !result.contains("_m19.exports[\"SCOPE\"]"),
+            "unread re-export source export should be removed, got: {result}"
+        );
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&result),
+            "result should remain valid JS, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_keeps_object_keys_reexports_when_wrapper_escapes() {
+        let code = r#"(function(){var _m13={exports:{}};var _m19={exports:{}};var _mods=[_m13,_m19];function _r(id){var m=_mods[id];return m?m.exports:{}}
+{_m19.exports["MS"]="-ms-";_m19.exports["PAGE"]="@page";}
+var _m13___re=_r(19);Object.keys(_m13___re).forEach(function(k){if(k!=="default")_m13.exports[k]=_m13___re[k];});
+var stylis=_r(13);console.log(Object.keys(stylis));})();"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m19.exports[\"MS\"]"),
+            "escaped wrapper namespace should keep source exports, got: {result}"
+        );
+        assert!(
+            result.contains("_m19.exports[\"PAGE\"]"),
+            "escaped wrapper namespace should keep sibling source exports, got: {result}"
         );
     }
 
@@ -2565,6 +3919,36 @@ console.log(_m0_getContrastRatio("#000", "#fff"));"##;
         );
         assert!(
             !result.contains("_m672e.darken"),
+            "unread sibling export should still be removed, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_keeps_retained_cjs_require_refs() {
+        let code = r##"_m376e.h = function hasOwn() { return true; };
+_m376e.w = function withEmotionCache() { return function Wrapped() {}; };
+_m376e.unused = function unused() { return 3; };
+!function(module, exports, require) {
+  var hasOwn = require(376)["h"];
+  var withEmotionCache = require(376).w;
+  exports.Component = withEmotionCache(function() { return hasOwn(); });
+}(_m375, _m375.exports, _r);"##;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m376e.h"),
+            "retained CJS require(id)[name] read should keep export, got: {}",
+            result
+        );
+        assert!(
+            result.contains("_m376e.w"),
+            "retained CJS require(id).name read should keep export, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("_m376e.unused"),
             "unread sibling export should still be removed, got: {}",
             result
         );
