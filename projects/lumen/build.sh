@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# <HANDWRITE gap="project-root-build-script" tracker="#4158" reason="project-specific aw:build dispatch contract">
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-build-script.md#text-source-unit
+# CODEGEN-BEGIN
 set -euo pipefail
 
 usage() {
@@ -102,4 +103,4 @@ echo ""
 echo "Build complete. lumen ${TAG} installed and tagged."
 echo "Push the tag to trigger cross-platform release binaries:"
 echo "  git push origin ${TAG}"
-# </HANDWRITE>
+# CODEGEN-END

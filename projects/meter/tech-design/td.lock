@@ -1,8 +1,8 @@
 version = 1
 project = "meter"
 td_path = "projects/meter/tech-design"
-generated_at = "2026-06-12T09:13:30.550092+00:00"
-digest = "sha256:b38f99df3dfaf9493711ecfcdc532465e33ef42906bcc92ee9cd0a8d897ab629"
+generated_at = "2026-06-13T02:45:55.240439+00:00"
+digest = "sha256:50c364ebdd48a4b6f59098f79581d3d934cc0e9cfa68d031cb188741c1e5b87d"
 
 [[files]]
 path = ".gitkeep"
@@ -17,8 +17,16 @@ path = "logic/single-knob-meter-toml-level-gate-l1-vitals-in-capture-until-exi.m
 digest = "sha256:b79850ae0401374a1dc9b73b2b18e6d23c50587f7a91a9d2bcfcb3c3b553db60"
 
 [[files]]
+path = "semantic/meter-build-script.md"
+digest = "sha256:6ff49417686db05cefc82cc7c3caef6968c96fc5f72cb0efa0a4bc6314cbf455"
+
+[[files]]
+path = "semantic/meter-install-script.md"
+digest = "sha256:5138ebed824c60bae131e99efd4dbd08afd97ce2ace749ed480fb4c7e3dcb29a"
+
+[[files]]
 path = "semantic/meter-projects-meter.md"
-digest = "sha256:f7bdc8d956c683ff19663827f31c16d3541d00904b43a7fe1bfb5572fd687243"
+digest = "sha256:6a9c4a8c3ad8376e59b5465836e6c3a96fea29ab5eaaf93bb1e3b02f0d50d59c"
 
 [[files]]
 path = "semantic/source/projects-meter-benches-discovery-benchmark-rs.md"
@@ -165,6 +173,10 @@ path = "semantic/source/projects-meter-src-capture-sampler-rs.md"
 digest = "sha256:0a2871b94432aac0c8863e600917a2a1faf9fd7ffb4fd5fd4e06755d40f684cf"
 
 [[files]]
+path = "semantic/source/projects-meter-src-capture-vitals-rs.md"
+digest = "sha256:0c24e9c0e2c8af585f136731917acdb8e7aaa09d1fb4cee934f20c245566f4f1"
+
+[[files]]
 path = "semantic/source/projects-meter-src-discovery-rs.md"
 digest = "sha256:38f851a96b543461d430e3f412f393dfa03391e7da61cb908ab379290ee362a8"
 
@@ -181,8 +193,12 @@ path = "semantic/source/projects-meter-src-http-server-rs.md"
 digest = "sha256:8baa5efba5aae62ae6752741a0c5b2d7ccc16a9cb295d641bac03c6a36aa36df"
 
 [[files]]
+path = "semantic/source/projects-meter-src-instrument-mod-rs.md"
+digest = "sha256:18ac978260f86f090a768365292126f816d894df45df297cd451a3df97d21657"
+
+[[files]]
 path = "semantic/source/projects-meter-src-lib-rs.md"
-digest = "sha256:039756e12a2f21a63cb1d53e2a7ab5a481870356505e72981260bbe3a5539c07"
+digest = "sha256:c2235aca07f8a66c8d8f7ce375c16a105b52fc7a196c572f924adfc4076da7dc"
 
 [[files]]
 path = "semantic/source/projects-meter-src-parametrize-rs.md"

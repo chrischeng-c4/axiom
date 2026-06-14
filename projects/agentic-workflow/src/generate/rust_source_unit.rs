@@ -265,7 +265,11 @@ fn classify(node: &ra_ap_syntax::SyntaxNode) -> (ItemKind, Option<String>, Optio
         return (ItemKind::MacroRules, name_of(mr.name()), None);
     }
     if let Some(md) = ast::MacroDef::cast(node.clone()) {
-        return (ItemKind::MacroDef, name_of(md.name()), vis_of(md.visibility()));
+        return (
+            ItemKind::MacroDef,
+            name_of(md.name()),
+            vis_of(md.visibility()),
+        );
     }
 
     (ItemKind::Other(format!("{:?}", node.kind())), None, None)
@@ -275,10 +279,7 @@ fn classify(node: &ra_ap_syntax::SyntaxNode) -> (ItemKind, Option<String>, Optio
 fn outer_attrs(node: &ra_ap_syntax::SyntaxNode) -> Vec<String> {
     use ast::HasAttrs;
     match ast::AnyHasAttrs::cast(node.clone()) {
-        Some(any) => any
-            .attrs()
-            .map(|a| a.syntax().text().to_string())
-            .collect(),
+        Some(any) => any.attrs().map(|a| a.syntax().text().to_string()).collect(),
         None => Vec::new(),
     }
 }
@@ -359,7 +360,10 @@ impl Foo {
     fn regenerate_round_trips_clean_source_and_rejects_broken() {
         let src = "pub fn answer() -> i32 {\n    42 // the answer\n}\n";
         assert_eq!(regenerate(src).expect("clean source regenerates"), src);
-        assert!(regenerate("fn broken( {").is_err(), "broken source must reject");
+        assert!(
+            regenerate("fn broken( {").is_err(),
+            "broken source must reject"
+        );
     }
 
     #[test]
@@ -397,15 +401,24 @@ impl Bar {}
             ]
         );
 
-        let bar = items.iter().find(|i| i.name.as_deref() == Some("Bar")).unwrap();
+        let bar = items
+            .iter()
+            .find(|i| i.name.as_deref() == Some("Bar"))
+            .unwrap();
         assert_eq!(bar.kind, ItemKind::Struct);
         assert_eq!(bar.visibility.as_deref(), Some("pub"));
 
-        let run = items.iter().find(|i| i.name.as_deref() == Some("run")).unwrap();
+        let run = items
+            .iter()
+            .find(|i| i.name.as_deref() == Some("run"))
+            .unwrap();
         assert_eq!(run.kind, ItemKind::Fn);
         assert_eq!(run.visibility.as_deref(), Some("pub"));
 
-        let color = items.iter().find(|i| i.name.as_deref() == Some("Color")).unwrap();
+        let color = items
+            .iter()
+            .find(|i| i.name.as_deref() == Some("Color"))
+            .unwrap();
         assert_eq!(color.kind, ItemKind::Enum);
         assert_eq!(color.visibility, None);
     }

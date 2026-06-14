@@ -21,8 +21,7 @@ use chrono::Utc;
 use walkdir::WalkDir;
 
 use crate::config::{
-    self, PortSpec, RetentionPolicy, RunnerConfig, RunnerSelectionReason, ServiceConfig,
-    ServicePreset, VatConfig,
+    self, PortSpec, RetentionPolicy, RunnerConfig, ServiceConfig, ServicePreset, VatConfig,
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
@@ -295,10 +294,16 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
 
     let source = std::fs::canonicalize(cfg.base_dir())
         .with_context(|| format!("resolve workspace base {}", cfg.base_dir().display()))?;
+    let mut env = cfg.env.clone();
+    env.entry("VAT_CONFIG_ROOT".to_string())
+        .or_insert_with(|| cfg.root.to_string_lossy().into_owned());
+    env.entry("VAT_WORKSPACE_BASE".to_string())
+        .or_insert_with(|| source.to_string_lossy().into_owned());
+
     let spec = EnvSpec {
         base: Some(Base::Dir(source.clone())),
         workdir: cfg.workspace.workdir.clone(),
-        env: cfg.env.clone(),
+        env,
         isolation: args.isolation,
         gpu: args.gpu,
         ..EnvSpec::default()
@@ -476,7 +481,9 @@ fn run_configured(
             "id": runner.id.as_str(),
             "state": "started",
         }))?;
-        procs.push(spawn_runner_process(runner, &cwd, logs_dir, &run_env, single)?);
+        procs.push(spawn_runner_process(
+            runner, &cwd, logs_dir, &run_env, single,
+        )?);
     }
     let records = wait_runner_processes(procs)?;
 
@@ -484,13 +491,7 @@ fn run_configured(
     let code = records
         .iter()
         .map(|r| r.exit_code.unwrap_or(-1))
-        .fold(0, |acc, c| {
-            if acc < 0 || c < 0 {
-                -1
-            } else {
-                acc.max(c)
-            }
-        });
+        .fold(0, |acc, c| if acc < 0 || c < 0 { -1 } else { acc.max(c) });
     for record in &records {
         emit_jsonl(serde_json::json!({
             "type": "runner",
@@ -641,7 +642,10 @@ fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunReco
             all_done = false;
         }
         if all_done {
-            return Ok(records.into_iter().map(|r| r.expect("all recorded")).collect());
+            return Ok(records
+                .into_iter()
+                .map(|r| r.expect("all recorded"))
+                .collect());
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -1102,7 +1106,6 @@ fn sorted_keys(env: &BTreeMap<String, String>) -> Vec<String> {
     env.keys().cloned().collect()
 }
 
-
 fn service_preset_name(preset: ServicePreset) -> &'static str {
     match preset {
         ServicePreset::Postgres => "postgres",
@@ -1211,7 +1214,6 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
     }
     Ok(())
 }
-
 
 fn record_runner_failure(
     vat: &mut store::Vat,
@@ -1421,7 +1423,6 @@ fn set_process_group(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn set_process_group(_command: &mut Command) {}
-
 
 #[cfg(unix)]
 fn kill_child(child: &mut Child) {

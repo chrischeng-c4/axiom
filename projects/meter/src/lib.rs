@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/meter/tech-design/semantic/source/projects-meter-src-lib-rs.md#source
+// SPEC-MANAGED: projects/meter/tech-design/semantic/source/projects-meter-src-lib-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! meter: Rust profiling + security issue finder
 //!

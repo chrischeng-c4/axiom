@@ -1,6 +1,6 @@
 ---
 id: projects-meter-src-lib-rs
-fill_sections: [overview, source, changes]
+fill_sections: [overview, rust-source-unit, changes]
 capability_refs:
   - id: agent-use-first-cli
     role: primary
@@ -40,10 +40,8 @@ Public API manifest for `projects/meter/src/lib.rs` generated from AST during Sc
 | `security` | projects/meter/src/lib.rs | module | pub | 39 |  |
 | `ts_runner` | projects/meter/src/lib.rs | module | pub | 40 |  |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/lib.rs -->
 ````rust
 //! meter: Rust profiling + security issue finder
 //!
@@ -173,8 +171,8 @@ pub use report::{
 changes:
   - path: projects/meter/src/lib.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
-      Source template for `projects/meter/src/lib.rs` captured during meter full-codegen standardization.
+      Lossless rust-source-unit for `projects/meter/src/lib.rs` captured during meter full-codegen standardization.
 ```

@@ -1,7 +1,14 @@
 ---
 id: semantic-guard-projects-guard
 summary: Semantic coverage for "projects/guard"
-fill_sections: [schema, unit-test, changes]
+capability_refs:
+  - id: static-security-scan
+    role: primary
+    gap: json-report-envelope
+    claim: json-report-envelope
+    coverage: full
+    rationale: "Project-root agent/build artifacts keep guard's static scan command discoverable and runnable."
+fill_sections: [schema, changes]
 ---
 
 # Semantic TD: guard/projects/guard
@@ -48,23 +55,6 @@ semantic_domain:
           domain: "projects/guard"
 ```
 
-## Unit Test
-<!-- type: unit-test lang: mermaid -->
-
-```mermaid
----
-id: unit-test
-coverage_kind: semantic
-strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
-evidence:
-  source_tests: []
----
-requirementDiagram
-
-element UT_SOURCE_TESTS {
-  type: "TestEvidence"
-}
-```
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -77,21 +67,17 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/guard/install.sh"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/guard/llms.txt"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-  - action: annotate
-    section: unit-test
-    impl_mode: hand-written
-    description: "Traceability metadata edge for the unit-test section."
+    impl_mode: codegen
 ```

@@ -127,6 +127,10 @@ clones are APFS `clonefile(2)` (near-instant, block-shared until written),
 fork/snapshot are cheap — an agent can try two approaches, fail, and roll back
 without rebuilding.
 
+Vat state is repo-local by default: the store root is `<repo>/.vat` (ignored by
+git). Set `VAT_HOME` only when an external runner intentionally wants a
+different store root.
+
 ### vat state
 
 The command an agent calls to understand a vat. One document, no log-scraping:

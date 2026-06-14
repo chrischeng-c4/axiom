@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 
 use agentic_workflow::cli::cb::{CbCodegenOriginSummary, CbColdVerifySummary, CbVerifySummary};
 use agentic_workflow::cli::project::{
+    project_health_compact_summary_with_payload_path, project_health_section_summary,
     project_health_summary, project_health_summary_with_payload_path, ProjectEcCommandReport,
-    ProjectEcGateReport, ProjectEcGateStatus, ProjectHealthReport, ProjectHealthStatus,
-    ProjectTestCommandReport, ProjectTestCommandStatus, ProjectTestGateReport,
+    ProjectEcGateReport, ProjectEcGateStatus, ProjectHealthReport, ProjectHealthSection,
+    ProjectHealthStatus, ProjectTestCommandReport, ProjectTestCommandStatus, ProjectTestGateReport,
     ProjectTestGateStatus,
 };
 use agentic_workflow::cli::regenerability_policy::RegenerabilityAuthority;
@@ -15,10 +16,174 @@ use agentic_workflow::cli::standardize::{
     SemanticCoverage, SemanticGap, StackMigrationCoverage, StandardizationCoverage,
     TraceabilityBlocker, TraceabilityBlockerKind, TraceabilityCoverage, WorkspaceStackMigration,
 };
+use agentic_workflow::cli::Commands;
 use agentic_workflow::models::{
     default_preflight_gates, ArtifactKind, PreFlightEvidence, PreFlightEvidenceKind,
     PreFlightEvidenceStatus, PreFlightGate, PreFlightGateReport, PreFlightGateSeverity,
 };
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "aw")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+fn parse_cli<const N: usize>(argv: [&str; N]) -> Commands {
+    let parsed = Cli::try_parse_from(argv).expect("health command parses");
+    parsed.command
+}
+
+fn parse_health_args<const N: usize>(
+    argv: [&str; N],
+) -> agentic_workflow::cli::project::ProjectHealthArgs {
+    let command = parse_cli(argv);
+    match command {
+        Commands::Health(args) => args,
+        _ => panic!("expected health command"),
+    }
+}
+
+#[test]
+fn project_option_is_health_only_project_selector() {
+    let args = parse_health_args(["aw", "health", "--project", "demo", "regenerable"]);
+    assert_eq!(args.project, "demo");
+    assert_eq!(args.section, Some(ProjectHealthSection::Regenerable));
+
+    let args = parse_health_args(["aw", "health", "regenerable", "--project", "demo"]);
+    assert_eq!(args.project, "demo");
+    assert_eq!(args.section, Some(ProjectHealthSection::Regenerable));
+    assert!(!args.verbose);
+
+    let args = parse_health_args(["aw", "health", "--project", "demo", "--verbose"]);
+    assert_eq!(args.project, "demo");
+    assert_eq!(args.section, None);
+    assert!(args.verbose);
+}
+
+#[test]
+fn project_option_propagates_to_nested_project_commands() {
+    let command = parse_cli(["aw", "capability", "--project", "demo", "report"]);
+    match command {
+        Commands::Capability(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                agentic_workflow::cli::capability::CapabilityCommand::Report(_)
+            ));
+        }
+        _ => panic!("expected capability command"),
+    }
+
+    let command = parse_cli(["aw", "capability", "report", "--project", "demo"]);
+    match command {
+        Commands::Capability(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                agentic_workflow::cli::capability::CapabilityCommand::Report(_)
+            ));
+        }
+        _ => panic!("expected capability command"),
+    }
+
+    let command = parse_cli(["aw", "standardize", "managed", "run", "--project", "demo"]);
+    match command {
+        Commands::Standardize(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                Some(agentic_workflow::cli::standardize::StandardizeCommand::Managed(_))
+            ));
+        }
+        _ => panic!("expected standardize command"),
+    }
+
+    let command = parse_cli(["aw", "standardize", "--project", "demo", "managed", "run"]);
+    match command {
+        Commands::Standardize(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                Some(agentic_workflow::cli::standardize::StandardizeCommand::Managed(_))
+            ));
+        }
+        _ => panic!("expected standardize command"),
+    }
+
+    let command = parse_cli(["aw", "generator", "--project", "demo", "check"]);
+    match command {
+        Commands::Generator(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                agentic_workflow::cli::generator::GeneratorCommand::Check(_)
+            ));
+        }
+        _ => panic!("expected generator command"),
+    }
+
+    let command = parse_cli(["aw", "generator", "check", "--project", "demo"]);
+    match command {
+        Commands::Generator(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                agentic_workflow::cli::generator::GeneratorCommand::Check(_)
+            ));
+        }
+        _ => panic!("expected generator command"),
+    }
+
+    let command = parse_cli(["aw", "ec", "--project", "demo", "doc", "gen"]);
+    match command {
+        Commands::Ec(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                agentic_workflow::cli::ec::EcCommand::Doc(_)
+            ));
+        }
+        _ => panic!("expected ec command"),
+    }
+
+    let command = parse_cli(["aw", "ec", "doc", "gen", "--project", "demo"]);
+    match command {
+        Commands::Ec(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                agentic_workflow::cli::ec::EcCommand::Doc(_)
+            ));
+        }
+        _ => panic!("expected ec command"),
+    }
+
+    let command = parse_cli(["aw", "td", "--project", "demo", "lock"]);
+    match command {
+        Commands::Td(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                agentic_workflow::cli::td::TdCommand::Lock(_)
+            ));
+        }
+        _ => panic!("expected td command"),
+    }
+
+    let command = parse_cli(["aw", "td", "lock", "--project", "demo"]);
+    match command {
+        Commands::Td(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            assert!(matches!(
+                args.command,
+                agentic_workflow::cli::td::TdCommand::Lock(_)
+            ));
+        }
+        _ => panic!("expected td command"),
+    }
+}
 
 fn managed(percent: f64, uncovered_files: Vec<String>) -> StandardizationCoverage {
     StandardizationCoverage {
@@ -50,6 +215,7 @@ fn regenerable(
         unmarked_files,
         unsupported_codegen_files: Vec::new(),
         non_replayable_codegen_files: Vec::new(),
+        snapshot_codegen_files: Vec::new(),
         codegen_drift_evaluated: false,
         codegen_drift_files: Vec::new(),
         percent,
@@ -333,6 +499,8 @@ fn project_health_summary_with_payload_path_is_bounded_result() {
         manifest_path: "projects/demo/tests/aw-ec.toml".to_string(),
         expected_case_count: 1,
         case_count: 1,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
         command_count: 1,
         passed_count: 0,
         failed_count: 1,
@@ -393,6 +561,88 @@ fn project_health_summary_with_payload_path_is_bounded_result() {
 }
 
 #[test]
+fn project_health_compact_summary_is_low_token_default() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.blockers = (0..30).map(|idx| format!("blocker {idx}")).collect();
+
+    let summary = project_health_compact_summary_with_payload_path(
+        &report,
+        "/tmp/aw/demo/health/report.json",
+    );
+
+    assert_eq!(summary["action"].as_str(), Some("health"));
+    assert_eq!(
+        summary["payload_path"].as_str(),
+        Some("/tmp/aw/demo/health/report.json")
+    );
+    assert!(summary.get("report").is_none());
+    assert_eq!(
+        summary["metrics"]["coverage"]["regenerable_percent"].as_f64(),
+        Some(100.0)
+    );
+    assert_eq!(
+        summary["blockers"]["blockers_preview"]
+            .as_array()
+            .map(|items| items.len()),
+        Some(5)
+    );
+    let rendered = serde_json::to_string(&summary).expect("compact summary renders");
+    assert!(!rendered.contains("blocker 29"));
+}
+
+#[test]
+fn project_health_section_full_preserves_detailed_report() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    let summary = project_health_section_summary(&report, ProjectHealthSection::Full);
+
+    assert_eq!(summary["report"]["project"].as_str(), Some("demo"));
+    assert_eq!(
+        summary["readiness"]["regenerable_percent"].as_f64(),
+        Some(100.0)
+    );
+}
+
+#[test]
+fn project_health_section_regenerable_is_focused() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    let summary = project_health_section_summary(&report, ProjectHealthSection::Regenerable);
+
+    assert_eq!(summary["section"].as_str(), Some("regenerable"));
+    assert!(summary.get("report").is_none());
+    assert_eq!(summary["data"]["regenerable_percent"].as_f64(), Some(100.0));
+    assert!(summary["data"].get("codegen_origin").is_some());
+}
+
+#[test]
 fn project_health_summary_points_to_full_verify_when_gates_are_missing() {
     let mut report = ProjectHealthReport::from_components(
         "demo",
@@ -418,7 +668,10 @@ fn project_health_summary_points_to_full_verify_when_gates_are_missing() {
         Some(false)
     );
     assert_eq!(summary["next"]["kind"].as_str(), Some("run_command"));
-    assert_eq!(summary["next"]["command"].as_str(), Some("aw health demo"));
+    assert_eq!(
+        summary["next"]["command"].as_str(),
+        Some("aw health --project demo")
+    );
 }
 
 #[test]
@@ -440,7 +693,7 @@ fn project_health_summary_routes_managed_blockers_to_standardize() {
     assert_eq!(summary["next"]["kind"].as_str(), Some("run_command"));
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw standardize managed run demo --non-interactive --max-ticks 1")
+        Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
     );
 }
 
@@ -466,7 +719,10 @@ fn no_cold_rebuild_workspace_routes_back_to_health() {
 
     let summary = project_health_summary(&report);
 
-    assert_eq!(summary["next"]["command"].as_str(), Some("aw health demo"));
+    assert_eq!(
+        summary["next"]["command"].as_str(),
+        Some("aw health --project demo")
+    );
     let missing = summary["completion"]["missing"].as_array().unwrap();
     assert!(missing
         .iter()

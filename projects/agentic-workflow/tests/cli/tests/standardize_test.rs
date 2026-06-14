@@ -228,13 +228,13 @@ fn standardize_subcommands_registered() {
 }
 
 #[test]
-fn standardize_accepts_project_shorthand_without_layer_subcommand() {
-    let parsed = Cli::try_parse_from(["aw", "standardize", "cap"])
-        .expect("standardize project shorthand parses");
+fn standardize_accepts_project_option_without_layer_subcommand() {
+    let parsed = Cli::try_parse_from(["aw", "standardize", "--project", "cap"])
+        .expect("standardize project option parses");
     let Commands::Standardize(args) = parsed.command else {
         panic!("expected standardize command");
     };
-    assert_eq!(args.project_arg.as_deref(), Some("cap"));
+    assert_eq!(args.project.as_deref(), Some("cap"));
     assert!(args.command.is_none());
 }
 
@@ -267,10 +267,10 @@ test_cmd = "false"
     write(tmp.path(), "src/lib.rs", "pub fn cap() {}\n");
 
     let out = Command::new(score)
-        .args(["standardize", "cap"])
+        .args(["standardize", "--project", "cap"])
         .current_dir(tmp.path())
         .output()
-        .expect("run aw standardize project shorthand");
+        .expect("run aw standardize project option");
     assert!(
         !out.status.success(),
         "stdout:\n{}\nstderr:\n{}",
@@ -314,7 +314,7 @@ fn standardize_project_health_gate_verifies_ec_cases() {
     }
 
     let ec_gen = Command::new(&score)
-        .args(["ec", "gen", "demo"])
+        .args(["ec", "gen", "--project", "demo"])
         .current_dir(tmp.path())
         .output()
         .expect("run aw ec gen");
@@ -337,6 +337,7 @@ fn standardize_project_health_gate_verifies_ec_cases() {
             "standardize",
             "managed",
             "run",
+            "--project",
             "demo",
             "--non-interactive",
             "--max-ticks",
@@ -355,7 +356,7 @@ fn standardize_project_health_gate_verifies_ec_cases() {
     write_llms_semantic_td(tmp.path());
 
     let out = Command::new(score)
-        .args(["standardize", "demo"])
+        .args(["standardize", "--project", "demo"])
         .current_dir(tmp.path())
         .output()
         .expect("run aw standardize health gate");
@@ -388,7 +389,14 @@ fn standardize_traceability_report_next_and_run_surface_blockers() {
     write_traceability_fixture(tmp.path(), false);
 
     let report = Command::new(&score)
-        .args(["standardize", "traceability", "report", "demo", "--json"])
+        .args([
+            "standardize",
+            "traceability",
+            "report",
+            "--project",
+            "demo",
+            "--json",
+        ])
         .current_dir(tmp.path())
         .output()
         .expect("run aw standardize traceability report");
@@ -405,7 +413,14 @@ fn standardize_traceability_report_next_and_run_surface_blockers() {
     assert!(report_json["blocker_count"].as_u64().unwrap() > 0);
 
     let next = Command::new(&score)
-        .args(["standardize", "traceability", "next", "demo", "--json"])
+        .args([
+            "standardize",
+            "traceability",
+            "next",
+            "--project",
+            "demo",
+            "--json",
+        ])
         .current_dir(tmp.path())
         .output()
         .expect("run aw standardize traceability next");
@@ -431,6 +446,7 @@ fn standardize_traceability_report_next_and_run_surface_blockers() {
             "standardize",
             "traceability",
             "run",
+            "--project",
             "demo",
             "--non-interactive",
             "--json",
@@ -445,7 +461,7 @@ fn standardize_traceability_report_next_and_run_surface_blockers() {
     assert_eq!(run_json["layer"], "traceability");
     assert_eq!(
         run_json["invoke"]["command"],
-        "aw standardize traceability next demo --json"
+        "aw standardize traceability next --project demo --json"
     );
     assert!(run_json["mainthread_task"]["success_criteria"]
         .as_array()
@@ -505,7 +521,7 @@ fn standardize_run_claims_mixed_language_repo() {
 }
 
 #[test]
-fn standardize_run_accepts_project_positional_from_config() {
+fn standardize_run_accepts_project_option_from_config() {
     let Some(score) = aw_bin() else {
         eprintln!("skipping: CARGO_BIN_EXE_aw not set");
         return;
@@ -546,7 +562,8 @@ test_cmd = "true"
             "standardize",
             "managed",
             "run",
-            "sdd",
+            "--project",
+            "agentic-workflow",
             "--max-ticks",
             "1",
             "--json",

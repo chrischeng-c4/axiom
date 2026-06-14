@@ -1,12 +1,12 @@
 version = 1
 project = "lumen"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-06-11T16:41:26.453914+00:00"
-digest = "sha256:c18b725293df9d05955905381ebf7459189e4c8c75ac1bb16be9067f2be8800d"
+generated_at = "2026-06-13T02:45:55.136783+00:00"
+digest = "sha256:fa2c2ca2aa3b3ec6485d6d6d20bbe260e9bd7cfeb8e2f78b6a36e8da54bd2aaa"
 
 [[files]]
 path = "logic/external-contracts.md"
-digest = "sha256:0b764f3dd57b14f8313b7357c51066b3cbdaa8691b31733ee6e734ef9282d94f"
+digest = "sha256:8e1cf5fb384316a8c0e81bb52c87f46e4d2cc2e97d176ca555a89260461e2fa2"
 
 [[files]]
 path = "semantic/lumen-benches.md"
@@ -17,8 +17,16 @@ path = "semantic/lumen-bin.md"
 digest = "sha256:354a47126dcce0cd2e189c183bf7042e403d62189f9964864303eeff68b4da31"
 
 [[files]]
+path = "semantic/lumen-build-script.md"
+digest = "sha256:6d47825d76401e5fb4db22117def4ff9712297c835bfdea0015b1d93bb32668f"
+
+[[files]]
 path = "semantic/lumen-examples.md"
 digest = "sha256:30c1164b9a30035c114e85068a62e83e3f36129f907de131082b5468ff701934"
+
+[[files]]
+path = "semantic/lumen-install-script.md"
+digest = "sha256:f9623e29a16333261a3e82fa9cb4b4bc772a0026707ccaf23af1fa230e6b0f07"
 
 [[files]]
 path = "semantic/lumen-k8s-base.md"

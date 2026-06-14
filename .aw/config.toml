@@ -153,6 +153,21 @@ codegen.profile = "rust/score-crate"
 
 
 [[projects]]
+name = "guard"
+path = "projects/guard"
+cap_path = "projects/guard/README.md"
+label = "project:guard"
+
+[[projects.workspaces]]
+name = "guard"
+paths = ["projects/guard/**"]
+target = "rust"
+test_cmd = 'CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -p guard-cli'
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+
+[[projects]]
 name = "rig"
 path = "projects/rig"
 cap_path = "projects/rig/README.md"

@@ -9,7 +9,7 @@ capability_refs:
     coverage: full
     rationale: "The CLI source unit exposes the guard scan/report envelope as the agent-facing command surface."
   - id: security-policy-profile
-    role: contributes
+    role: primary
     gap: cli-module-registration
     claim: cli-module-registration
     coverage: full

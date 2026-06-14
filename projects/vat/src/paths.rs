@@ -2,12 +2,12 @@
 // CODEGEN-BEGIN
 //! On-disk layout for vat state.
 //!
-//! Everything lives under a single root (default `~/.vat`, override with
+//! Everything lives under a single root (default `<repo>/.vat`, override with
 //! `$VAT_HOME`). One directory per vat keeps the store trivially inspectable
 //! by a human *or* an agent with nothing but `ls`:
 //!
 //! ```text
-//! ~/.vat/
+//! .vat/
 //!   vats/
 //!     vat-7f3k1q9/
 //!       meta.json          persisted VatMeta (id, status, spec, lineage, last_run)
@@ -19,16 +19,28 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
-/// Root of all vat state. Honors `$VAT_HOME`, else `~/.vat`.
+/// Root of all vat state. Honors `$VAT_HOME`, else `<repo>/.vat`, else `./.vat`.
 /// @spec projects/vat/tech-design/semantic/source/projects-vat-src-paths-rs.md#source
 pub fn root() -> Result<PathBuf> {
     if let Some(custom) = std::env::var_os("VAT_HOME") {
         return Ok(PathBuf::from(custom));
     }
-    let home = dirs::home_dir().context("could not determine home directory (set $VAT_HOME)")?;
-    Ok(home.join(".vat"))
+    let cwd = std::env::current_dir()?;
+    Ok(repo_root_from(&cwd).unwrap_or(cwd).join(".vat"))
+}
+
+fn repo_root_from(start: &std::path::Path) -> Option<PathBuf> {
+    let mut dir = start.to_path_buf();
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
 }
 
 /// Directory holding every vat (`<root>/vats`).
