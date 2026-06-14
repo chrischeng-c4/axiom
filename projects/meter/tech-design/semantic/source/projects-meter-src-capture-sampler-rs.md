@@ -28,8 +28,12 @@ Public API manifest for `projects/meter/src/capture/sampler.rs` generated from A
 | `label` | projects/meter/src/capture/sampler.rs | function | pub | 120 | label(&self) -> String |
 | `leaf` | projects/meter/src/capture/sampler.rs | function | pub | 50 | leaf(&self) -> Option<&str> |
 | `new` | projects/meter/src/capture/sampler.rs | function | pub | 45 | new(frames: Vec<String>, count: u64) -> Self |
-| `parse_sample_report` | projects/meter/src/capture/sampler.rs | function | pub | 456 | parse_sample_report(report: &str) -> Vec<FoldedStack> |
+| `parse_perf_script` | projects/meter/src/capture/sampler.rs | function | pub | 649 | parse_perf_script(text: &str) -> Vec<FoldedStack> |
+| `parse_perf_script` | projects/meter/src/capture/sampler.rs | function | pub | 687 | parse_perf_script(_text: &str) -> Vec<FoldedStack> |
+| `parse_sample_report` | projects/meter/src/capture/sampler.rs | function | pub | 461 | parse_sample_report(report: &str) -> Vec<FoldedStack> |
+| `resolve_target_exec` | projects/meter/src/capture/sampler.rs | function | pub | 363 | resolve_target_exec(target: &Target) -> Result<PathBuf, SampleError> |
 | `sample_target` | projects/meter/src/capture/sampler.rs | function | pub | 138 | sample_target(     target: &Target,     extra_args: &[String],     duration_secs: u64,     hz: Option<u64>, ) -> Result<SampleRun, SampleError> |
+| `spawn_exec` | projects/meter/src/capture/sampler.rs | function | pub | 433 | spawn_exec(     exec: &std::path::Path,     extra_args: &[String], ) -> Result<Child, SampleError> |
 | `to_folded_line` | projects/meter/src/capture/sampler.rs | function | pub | 55 | to_folded_line(&self) -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->

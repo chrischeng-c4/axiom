@@ -1,5 +1,11 @@
 ---
 id: projects-meter-src-instrument-mod-rs
+capability_refs:
+  - id: runtime-resource-attribution
+    role: primary
+    claim: capture-vitals-and-measurement-contract
+    coverage: partial
+    rationale: "AST-assisted instrumentation points extend meter's runtime resource attribution surface by locating finer measurement boundaries."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,19 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/meter/src/instrument/mod.rs`, captured as a rust-source-unit (td_ast) item-tree
-during meter standardization onto the codegen ladder.
+Public API manifest for `projects/meter/src/instrument/mod.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `InstrumentError` | projects/meter/src/instrument/mod.rs | enum | pub | 86 |  |
+| `ProbeKind` | projects/meter/src/instrument/mod.rs | enum | pub | 37 |  |
+| `ProbePoint` | projects/meter/src/instrument/mod.rs | struct | pub | 59 |  |
+| `discover_probe_points` | projects/meter/src/instrument/mod.rs | function | pub | 122 | discover_probe_points(path: impl AsRef<Path>) -> Result<Vec<ProbePoint>, InstrumentError> |
+| `discover_probe_points_in_source` | projects/meter/src/instrument/mod.rs | function | pub | 140 | discover_probe_points_in_source(     source: &str,     language: Language,     file_label: &str, ) -> Result<Vec<ProbePoint>, InstrumentError> |
+| `language_for_extension` | projects/meter/src/instrument/mod.rs | function | pub | 105 | language_for_extension(ext: &str) -> Option<Language> |
+| `line_span` | projects/meter/src/instrument/mod.rs | function | pub | 78 | line_span(&self) -> usize |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
