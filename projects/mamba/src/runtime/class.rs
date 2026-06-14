@@ -13032,10 +13032,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Cannot create a consistent method resolution order")]
-    fn test_p1_t5_3_inconsistent_mro_panics() {
-        // T5.3: Inconsistent hierarchy must panic (TypeError in Python)
-        // Create X(A, B) and Y(B, A) — then Z(X, Y) is inconsistent
+    fn test_p1_t5_3_inconsistent_mro_sets_typeerror() {
+        // T5.3: an inconsistent hierarchy sets a *catchable* TypeError (CPython
+        // raises at the class statement) rather than panicking and aborting.
+        // Create X(A, B) and Y(B, A) — then Z(X, Y) is inconsistent.
+        crate::runtime::exception::clear_current_exception();
         mb_class_register("IncA001", vec![], HashMap::new());
         mb_class_register("IncB001", vec![], HashMap::new());
         mb_class_register(
@@ -13048,12 +13049,18 @@ mod tests {
             vec!["IncB001".to_string(), "IncA001".to_string()],
             HashMap::new(),
         );
-        // This should panic with inconsistent MRO
+        // This sets a pending TypeError (no panic).
         mb_class_register(
             "IncZ001",
             vec!["IncX001".to_string(), "IncY001".to_string()],
             HashMap::new(),
         );
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
+            "inconsistent MRO should set a pending TypeError"
+        );
+        crate::runtime::exception::clear_current_exception();
     }
 
     #[test]
