@@ -1167,7 +1167,21 @@ extern "C" fn m_template_is_valid(this: MbValue) -> MbValue {
 /// string.capwords(s, sep=None):
 ///   (sep or ' ').join(x.capitalize() for x in s.split(sep))
 pub fn mb_string_capwords(val: MbValue, sep: MbValue) -> MbValue {
-    let s = match str_of(val) { Some(s) => s, None => return MbValue::none() };
+    let s = match str_of(val) {
+        Some(s) => s,
+        // capwords calls `val.split(...)`; a non-string raises AttributeError
+        // ("'int' object has no attribute 'split'"), matching CPython, not a
+        // silent None.
+        None => {
+            return raise(
+                "AttributeError",
+                &format!(
+                    "'{}' object has no attribute 'split'",
+                    super::super::builtins::value_type_name(val)
+                ),
+            );
+        }
+    };
     let sep_str = if sep.is_none() { None } else { str_of(sep) };
 
     let words: Vec<String> = match &sep_str {
