@@ -182,6 +182,8 @@ fn audit_block(
         project_root,
     );
     let expected_raw = generated_block_content(&expected_generated, spec_ref);
+    let expected_raw =
+        expected_block_content_for_target(target_rel_path, &section_id, &expected_raw);
     // Apply the same `use`-dedup the write path runs so audit's expected
     // content matches what actually lands on disk. The generator emits one
     // `use serde::...` per type inside a multi-type block; the write-side
@@ -217,6 +219,24 @@ fn is_rust_source_path(target_rel_path: &str) -> bool {
         .extension()
         .and_then(|ext| ext.to_str())
         == Some("rs")
+}
+
+fn expected_block_content_for_target(
+    target_rel_path: &str,
+    section_id: &str,
+    expected_raw: &str,
+) -> String {
+    let path = Path::new(target_rel_path);
+    if path.extension().and_then(|ext| ext.to_str()) == Some("sh")
+        && matches!(section_id, "source" | "text-source-unit")
+        && expected_raw.starts_with("#!")
+    {
+        return expected_raw
+            .split_once('\n')
+            .map(|(_, body)| body.to_string())
+            .unwrap_or_default();
+    }
+    expected_raw.to_string()
 }
 
 fn is_handwritten_change_entry(
@@ -1482,6 +1502,53 @@ fn demo_contract() {}
             ),
             ReportKind::Unresolvable { .. }
         ));
+    }
+
+    #[test]
+    fn audit_text_source_unit_compares_script_block_without_shebang() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let td_dir = root.join("projects/demo/tech-design/semantic");
+        std::fs::create_dir_all(&td_dir).unwrap();
+        std::fs::write(
+            td_dir.join("demo-build.md"),
+            r#"---
+id: demo-build
+fill_sections: [text-source-unit, changes]
+---
+
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+echo "build"
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/demo/build.sh
+    action: modify
+    section: text-source-unit
+    impl_mode: codegen
+```
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            audit_block(
+                "projects/demo/tech-design/semantic/demo-build.md#text-source-unit",
+                "set -euo pipefail\necho \"build\"",
+                "projects/demo/build.sh",
+                root,
+            ),
+            ReportKind::Clean
+        );
     }
 
     /// End-to-end: after running `run_apply` on a tiny spec, audit the

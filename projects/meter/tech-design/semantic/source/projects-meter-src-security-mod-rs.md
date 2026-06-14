@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/src/security/mod.rs` generated from AST 
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/security/mod.rs -->
 ````rust
 //! Security testing framework for cclab
 //!
@@ -80,7 +78,7 @@ pub use sql_injection::{InjectionResult, InjectionTest, SqlInjectionTester};
 changes:
   - path: projects/meter/src/security/mod.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/security/mod.rs` captured during meter full-codegen standardization.

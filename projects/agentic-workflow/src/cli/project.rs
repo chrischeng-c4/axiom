@@ -1,8 +1,8 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 // CODEGEN-BEGIN
 use anyhow::{Context, Result};
-use clap::Args;
-use serde::{Deserialize, Serialize};
+use clap::{Args, ValueEnum};
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
@@ -20,10 +20,17 @@ use crate::cli::standardize::{
     TraceabilityCoverage,
 };
 use crate::models::preflight::PreFlightGateReport;
+use crate::models::project::EcBinding;
 
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#cli
 #[derive(Debug, Args, Clone)]
-#[command(after_help = r#"Output schema (JSON default):
+#[command(after_help = r#"Default output is a low-token metrics envelope.
+Use `aw health --project <project> full` for the previous detailed report, or a
+focused section: metrics, capability, gates, tests, ec, cb, cold, traceability,
+regenerable, api, stack, td-lock, claims, blockers.
+Use `-v/--verbose` to include progress events.
+
+Output schema (JSON default):
 {
   "schema_version": "aw.cli.v1",
   "event": "result",
@@ -33,13 +40,20 @@ use crate::models::preflight::PreFlightGateReport;
   "completion": { "workflow_complete": bool, "requires_hitl": bool, "missing": [string] },
   "next": { "kind": "run_command" | "hitl" | "blocked" | "done" | "error", "command": string?, "reason": string },
   "readiness": object,
-  "report": object,
+  "metrics": object,
+  "gates": object,
+  "blockers": object,
   "payload_path": string
 }"#)]
 /// @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#cli
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectHealthArgs {
     // Configured project name from [[projects]] in .aw/config.toml.
+    #[arg(long)]
     pub project: String,
+    // Optional focused view. Omit for low-token top-level health metrics.
+    #[arg(value_enum)]
+    pub section: Option<ProjectHealthSection>,
     // Run expensive TD/source/CB traceability closure verification.
     #[arg(long)]
     pub verify_traceability: bool,
@@ -55,7 +69,7 @@ pub struct ProjectHealthArgs {
     // Run TD-derived external contract commands from tests/aw-ec.toml.
     #[arg(long)]
     pub verify_ec: bool,
-    // DEPRECATED compatibility no-op. Agents should invoke `aw health <project>`.
+    // DEPRECATED compatibility no-op. Agents should invoke `aw health --project <project>`.
     #[arg(long, hide = true)]
     pub json: bool,
     // Emit the legacy human-readable health report.
@@ -64,10 +78,36 @@ pub struct ProjectHealthArgs {
     // Pretty-print the JSON report.
     #[arg(long)]
     pub pretty: bool,
+    // Emit progress events before the final result envelope.
+    #[arg(short, long)]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+#[value(rename_all = "kebab-case")]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+pub enum ProjectHealthSection {
+    Full,
+    Metrics,
+    Capability,
+    Gates,
+    Tests,
+    Ec,
+    Cb,
+    Cold,
+    Traceability,
+    Regenerable,
+    Api,
+    Stack,
+    TdLock,
+    Claims,
+    Blockers,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectHealthReport {
     pub project: String,
     pub status: ProjectHealthStatus,
@@ -86,6 +126,7 @@ pub struct ProjectHealthReport {
     pub capability: CapabilityHealthReport,
     pub test_gates: ProjectTestGateReport,
     pub ec: ProjectEcGateReport,
+    pub claim_closure: ProjectClaimClosureReport,
     /// @spec projects/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#schema
     pub preflight_gate_reports: Vec<PreFlightGateReport>,
     /// @spec projects/agentic-workflow/tech-design/surface/specs/aw-artifact-preflight-gates.md#schema
@@ -100,7 +141,6 @@ pub struct ProjectHealthReport {
     pub fully_codegen_files: usize,
     pub cb_ownership: CbOwnershipSummary,
     pub codegen_origin: CbCodegenOriginSummary,
-    pub td_ast_codegen_percent: f64,
     pub traceability_evaluated: bool,
     pub traceability_note: Option<String>,
     pub traceability_percent: f64,
@@ -153,6 +193,7 @@ pub struct CbOwnershipSummary {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct CapabilityHealthReport {
     pub evaluated: bool,
     pub production_evaluated: bool,
@@ -215,6 +256,7 @@ impl CapabilityHealthReport {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct RegenerabilityAuthorityReport {
     pub authority: RegenerabilityAuthority,
     pub required_for_production: bool,
@@ -227,6 +269,7 @@ pub struct RegenerabilityAuthorityReport {
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub enum ProjectHealthStatus {
     Healthy,
     Blocked,
@@ -277,6 +320,7 @@ pub enum ProjectTestCommandStatus {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 /// TD-derived external-contract gate report.
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectEcGateReport {
     pub evaluated: bool,
     pub check_clean: bool,
@@ -286,6 +330,8 @@ pub struct ProjectEcGateReport {
     pub manifest_path: String,
     pub expected_case_count: usize,
     pub case_count: usize,
+    pub expected_tool_manifest_count: usize,
+    pub tool_manifest_count: usize,
     pub command_count: usize,
     pub passed_count: usize,
     pub failed_count: usize,
@@ -295,6 +341,7 @@ pub struct ProjectEcGateReport {
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub enum ProjectEcGateStatus {
     NotEvaluated,
     NotConfigured,
@@ -305,6 +352,7 @@ pub enum ProjectEcGateStatus {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectEcCommandReport {
     pub case_id: String,
     pub command: String,
@@ -315,6 +363,84 @@ pub struct ProjectEcCommandReport {
     pub stderr_tail: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+/// Capability claim graph-closure report across caps, EC, TD, and artifact health.
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+pub struct ProjectClaimClosureReport {
+    pub evaluated: bool,
+    pub note: Option<String>,
+    pub claim_total: usize,
+    pub closed_claim_count: usize,
+    pub claim_closure_percent: f64,
+    pub claims_with_ec: usize,
+    pub claims_with_passing_ec: usize,
+    pub claims_with_primary_td: usize,
+    pub claims_with_artifact_evidence: usize,
+    pub blocker_count: usize,
+    pub blockers: Vec<String>,
+    pub claims: Vec<ProjectClaimClosureItem>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+pub struct ProjectClaimClosureItem {
+    pub capability_id: String,
+    pub claim_id: String,
+    pub ec_case_ids: Vec<String>,
+    pub passing_ec_case_ids: Vec<String>,
+    pub primary_td_refs: Vec<String>,
+    pub artifact_evidence: bool,
+    pub status: ProjectClaimClosureStatus,
+    pub blockers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+pub enum ProjectClaimClosureStatus {
+    Closed,
+    Blocked,
+}
+
+impl ProjectClaimClosureReport {
+    pub(crate) fn not_evaluated(project: &str) -> Self {
+        Self {
+            evaluated: false,
+            note: Some(format!(
+                "claim closure not evaluated; run `aw health --project {project} claims`"
+            )),
+            claim_total: 0,
+            closed_claim_count: 0,
+            claim_closure_percent: 100.0,
+            claims_with_ec: 0,
+            claims_with_passing_ec: 0,
+            claims_with_primary_td: 0,
+            claims_with_artifact_evidence: 0,
+            blocker_count: 0,
+            blockers: Vec::new(),
+            claims: Vec::new(),
+        }
+    }
+
+    fn from_blocker(project: &str, blocker: String) -> Self {
+        Self {
+            evaluated: true,
+            note: Some(format!("claim closure blocked for project `{project}`")),
+            claim_total: 0,
+            closed_claim_count: 0,
+            claim_closure_percent: 0.0,
+            claims_with_ec: 0,
+            claims_with_passing_ec: 0,
+            claims_with_primary_td: 0,
+            claims_with_artifact_evidence: 0,
+            blocker_count: 1,
+            blockers: vec![blocker],
+            claims: Vec::new(),
+        }
+    }
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 impl ProjectEcGateReport {
     pub(crate) fn not_evaluated(project: &str) -> Self {
         Self {
@@ -323,11 +449,13 @@ impl ProjectEcGateReport {
             verify_evaluated: false,
             status: ProjectEcGateStatus::NotEvaluated,
             note: Some(format!(
-                "EC not evaluated; run `aw health {project} --verify-ec`"
+                "EC not evaluated; run `aw health --project {project} --verify-ec`"
             )),
             manifest_path: format!("projects/{project}/tests/aw-ec.toml"),
             expected_case_count: 0,
             case_count: 0,
+            expected_tool_manifest_count: 0,
+            tool_manifest_count: 0,
             command_count: 0,
             passed_count: 0,
             failed_count: 0,
@@ -339,19 +467,19 @@ impl ProjectEcGateReport {
     fn from_check(summary: crate::cli::ec::EcCheckSummary) -> Self {
         let status = if !summary.clean {
             ProjectEcGateStatus::CheckFailed
-        } else if summary.case_count == 0 {
+        } else if summary.case_count == 0 && summary.tool_manifest_count == 0 {
             ProjectEcGateStatus::NotConfigured
         } else {
             ProjectEcGateStatus::NotVerified
         };
         let note = match status {
             ProjectEcGateStatus::NotConfigured => Some(
-                "EC inventory has no cases; add TD e2e-test sections and run `aw ec gen`"
+                "EC inventory has no cases; add TD e2e-test sections and run `aw ec gen --project <project>`"
                     .to_string(),
             ),
             ProjectEcGateStatus::CheckFailed => Some("EC manifest/check is blocked".to_string()),
             ProjectEcGateStatus::NotVerified => Some(format!(
-                "EC commands not evaluated; run `aw health {} --verify-ec`",
+                "EC commands not evaluated; run `aw health --project {} --verify-ec`",
                 summary.project
             )),
             _ => None,
@@ -365,6 +493,8 @@ impl ProjectEcGateReport {
             manifest_path: summary.manifest_path,
             expected_case_count: summary.expected_case_count,
             case_count: summary.case_count,
+            expected_tool_manifest_count: summary.expected_tool_manifest_count,
+            tool_manifest_count: summary.tool_manifest_count,
             command_count: 0,
             passed_count: 0,
             failed_count: 0,
@@ -375,8 +505,9 @@ impl ProjectEcGateReport {
 }
 
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#logic
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub fn build_health_report(project: &str) -> Result<ProjectHealthReport> {
-    build_health_report_with_options(project, true, true, true, true)
+    build_health_report_with_options(project, true, true, true, true, true)
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -386,6 +517,7 @@ pub(crate) fn build_health_report_with_options(
     verify_cb: bool,
     verify_cold: bool,
     verify_tests: bool,
+    verify_ec: bool,
 ) -> Result<ProjectHealthReport> {
     build_health_report_with_options_internal(
         project,
@@ -393,16 +525,19 @@ pub(crate) fn build_health_report_with_options(
         verify_cb,
         verify_cold,
         verify_tests,
+        verify_ec,
         false,
     )
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn build_health_report_with_options_internal(
     project: &str,
     verify_traceability: bool,
     verify_cb: bool,
     verify_cold: bool,
     verify_tests: bool,
+    verify_ec: bool,
     emit_progress: bool,
 ) -> Result<ProjectHealthReport> {
     let project_root = crate::find_project_root()?;
@@ -417,14 +552,20 @@ fn build_health_report_with_options_internal(
         verify_cb,
         verify_cold,
         test_gates,
-        verify_tests && verify_cb && verify_traceability,
+        verify_tests && verify_cb && verify_traceability && verify_ec,
         None,
         &progress,
     )
+    .and_then(|mut report| {
+        apply_ec_to_report(&mut report, verify_ec)?;
+        apply_claim_closure_to_report(&mut report)?;
+        Ok(report)
+    })
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 #[allow(dead_code)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn build_health_report_with_test_gates(
     project: &str,
     verify_traceability: bool,
@@ -467,6 +608,7 @@ pub(crate) fn build_health_report_with_test_gates_and_capability_verified(
     )
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn build_health_report_with_test_gates_and_capability_verified_internal(
     project: &str,
     verify_traceability: bool,
@@ -496,7 +638,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
         None
     } else {
         Some(format!(
-            "traceability not evaluated; run `aw health {project}`"
+            "traceability not evaluated; run `aw health --project {project}`"
         ))
     };
     let (cb, cb_verify_note) = if verify_cb {
@@ -511,7 +653,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
         (
             cb_verify_not_evaluated(),
             Some(format!(
-                "cb verify not evaluated; run `aw health {project}`"
+                "cb verify not evaluated; run `aw health --project {project}`"
             )),
         )
     };
@@ -574,7 +716,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
             None
         } else {
             Some(format!(
-                "cold rebuild not evaluated; run `aw health {project}`"
+                "cold rebuild not evaluated; run `aw health --project {project}`"
             ))
         };
         if let Some(note) = &report.cold_rebuild_note {
@@ -589,46 +731,18 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
     Ok(report)
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn resolve_health_project_name(project_root: &std::path::Path, requested: &str) -> Result<String> {
-    let config_path = project_root.join(".aw/config.toml");
-    if !config_path.is_file() {
-        return Ok(requested.to_string());
-    }
-    let content = std::fs::read_to_string(&config_path)
-        .with_context(|| format!("failed to read {}", config_path.display()))?;
-    let config: HealthProjectConfig = toml::from_str(&content)
-        .with_context(|| format!("failed to parse {}", config_path.display()))?;
-    Ok(config
-        .projects
-        .into_iter()
-        .find(|project| project.matches(requested))
-        .map(|project| project.name)
-        .unwrap_or_else(|| requested.to_string()))
+    Ok(
+        crate::services::project_registry::load_project_config_rows(project_root)?
+            .into_iter()
+            .find(|project| project.matches(requested))
+            .map(|project| project.name)
+            .unwrap_or_else(|| requested.to_string()),
+    )
 }
 
-/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
-#[derive(Debug, Default, Deserialize)]
-struct HealthProjectConfig {
-    #[serde(default)]
-    projects: Vec<HealthProjectRow>,
-}
-
-/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
-#[derive(Debug, Default, Deserialize)]
-struct HealthProjectRow {
-    name: String,
-    #[serde(default)]
-    aliases: Vec<String>,
-}
-
-/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
-impl HealthProjectRow {
-    /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
-    fn matches(&self, requested: &str) -> bool {
-        self.name == requested || self.aliases.iter().any(|alias| alias == requested)
-    }
-}
-
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn cb_verify_not_evaluated() -> CbVerifySummary {
     CbVerifySummary {
         clean: true,
@@ -639,6 +753,7 @@ fn cb_verify_not_evaluated() -> CbVerifySummary {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn apply_scoped_production_readiness(
     report: &mut ProjectHealthReport,
     production_gates_evaluated: bool,
@@ -646,115 +761,109 @@ fn apply_scoped_production_readiness(
 ) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let mut capability_health;
-    let production =
-        match crate::cli::capability::resolve_capability_path(&project_root, &report.project, None)
-        {
-            Ok(cap_path) => match std::fs::read_to_string(&cap_path) {
-                Ok(body) => {
-                    match crate::cli::capability::parse_capability_document(&body, &cap_path) {
-                        Ok(document) => {
-                            let capability_count = if document.is_legacy_only() {
-                                document.legacy_rows.len()
-                            } else {
-                                document
-                                    .capabilities
-                                    .iter()
-                                    .filter(|capability| {
-                                        capability.status
-                                            != crate::cli::capability::CapabilityStatus::Retired
-                                    })
-                                    .count()
-                            };
-                            let release_scope_count = document
-                                .capabilities
-                                .iter()
-                                .filter(|capability| {
-                                    capability.status
-                                        != crate::cli::capability::CapabilityStatus::Retired
-                                        && capability.release_scope
-                                })
-                                .count();
-                            let root_runner_ready = matches!(
-                                document.format,
-                                crate::cli::capability::CapabilityDocumentFormat::MarkdownTables
-                            ) && document.findings.is_empty()
-                                && !document.capabilities.is_empty();
-                            capability_health = CapabilityHealthReport {
-                                evaluated: true,
-                                production_evaluated: production_gates_evaluated,
-                                note: if production_gates_evaluated {
-                                    None
-                                } else {
-                                    Some(format!(
-                                "capability production readiness not evaluated; run `aw health {}`",
-                                report.project
-                            ))
-                                },
-                                cap_path: cap_path.display().to_string(),
-                                format: document.format.as_str().to_string(),
-                                format_version: document.format_version(),
-                                capability_count,
-                                release_scope_count,
-                                root_runner_ready,
-                                production_ready_count: 0,
-                                production_scope_count: 0,
-                                production_percent: 0.0,
-                                blocker_count: document.findings.len(),
-                                blockers: document.findings.clone(),
-                            };
-                            let verified_by_id =
-                                capability_verified_by_id.clone().unwrap_or_else(|| {
-                                    crate::cli::capability::runtime_verified_by_id_from_sections(
-                                        &document.capabilities,
-                                        &project_root,
-                                        production_gates_evaluated,
-                                    )
-                                });
-                            evaluate_release_scope_with_regenerability(
-                                inputs_from_sections(&document.capabilities, &verified_by_id),
-                                report.blockers.clone(),
-                                production_gates_evaluated,
-                                report.regenerability_authority.gap_count,
-                            )
-                        }
-                        Err(err) => {
-                            let blocker = format!("capability document parse failed: {err}");
-                            capability_health = CapabilityHealthReport::blocked(
-                                &report.project,
-                                cap_path.display().to_string(),
-                                "unparseable",
-                                blocker.clone(),
-                            );
-                            evaluate_release_scope(
-                                Vec::new(),
-                                vec![blocker],
-                                production_gates_evaluated,
-                            )
-                        }
-                    }
+    let production = match crate::cli::capability::resolve_capability_path(
+        &project_root,
+        &report.project,
+        None,
+    ) {
+        Ok(cap_path) => match std::fs::read_to_string(&cap_path) {
+            Ok(body) => match crate::cli::capability::parse_capability_document(&body, &cap_path) {
+                Ok(document) => {
+                    let capability_count = if document.is_legacy_only() {
+                        document.legacy_rows.len()
+                    } else {
+                        document
+                            .capabilities
+                            .iter()
+                            .filter(|capability| {
+                                capability.status
+                                    != crate::cli::capability::CapabilityStatus::Retired
+                            })
+                            .count()
+                    };
+                    let release_scope_count = document
+                        .capabilities
+                        .iter()
+                        .filter(|capability| {
+                            capability.status != crate::cli::capability::CapabilityStatus::Retired
+                                && capability.release_scope
+                        })
+                        .count();
+                    let root_runner_ready = matches!(
+                        document.format,
+                        crate::cli::capability::CapabilityDocumentFormat::MarkdownTables
+                    ) && document.findings.is_empty()
+                        && !document.capabilities.is_empty();
+                    capability_health = CapabilityHealthReport {
+                        evaluated: true,
+                        production_evaluated: production_gates_evaluated,
+                        note: if production_gates_evaluated {
+                            None
+                        } else {
+                            Some(format!(
+                                        "capability production readiness not evaluated; run `aw health --project {}`",
+                                        report.project
+                                    ))
+                        },
+                        cap_path: cap_path.display().to_string(),
+                        format: document.format.as_str().to_string(),
+                        format_version: document.format_version(),
+                        capability_count,
+                        release_scope_count,
+                        root_runner_ready,
+                        production_ready_count: 0,
+                        production_scope_count: 0,
+                        production_percent: 0.0,
+                        blocker_count: document.findings.len(),
+                        blockers: document.findings.clone(),
+                    };
+                    let verified_by_id = capability_verified_by_id.clone().unwrap_or_else(|| {
+                        crate::cli::capability::runtime_verified_by_id_from_sections(
+                            &document.capabilities,
+                            &project_root,
+                            production_gates_evaluated,
+                        )
+                    });
+                    evaluate_release_scope_with_regenerability(
+                        inputs_from_sections(&document.capabilities, &verified_by_id),
+                        report.blockers.clone(),
+                        production_gates_evaluated,
+                        report.regenerability_authority.gap_count,
+                    )
                 }
                 Err(err) => {
-                    let blocker = format!("capability document read failed: {err}");
+                    let blocker = format!("capability document parse failed: {err}");
                     capability_health = CapabilityHealthReport::blocked(
                         &report.project,
                         cap_path.display().to_string(),
-                        "missing",
+                        "unparseable",
                         blocker.clone(),
                     );
                     evaluate_release_scope(Vec::new(), vec![blocker], production_gates_evaluated)
                 }
             },
             Err(err) => {
-                let blocker = format!("capability path resolution failed: {err}");
+                let blocker = format!("capability document read failed: {err}");
                 capability_health = CapabilityHealthReport::blocked(
                     &report.project,
-                    String::new(),
-                    "unresolved",
+                    cap_path.display().to_string(),
+                    "missing",
                     blocker.clone(),
                 );
                 evaluate_release_scope(Vec::new(), vec![blocker], production_gates_evaluated)
             }
-        };
+        },
+        Err(err) => {
+            let blocker = format!("capability path resolution failed: {err}");
+            capability_health = CapabilityHealthReport::blocked(
+                &report.project,
+                String::new(),
+                "unresolved",
+                blocker.clone(),
+            );
+            evaluate_release_scope(Vec::new(), vec![blocker], production_gates_evaluated)
+        }
+    };
 
     for blocker in &production.production_blockers {
         if !report.blockers.contains(blocker) {
@@ -790,6 +899,7 @@ fn apply_scoped_production_readiness(
 }
 
 // @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 impl ProjectHealthReport {
     // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#logic
     pub fn from_components(
@@ -857,6 +967,12 @@ impl ProjectHealthReport {
             regenerability_gaps.push(format!(
                 "{} CODEGEN file(s) are backed by hand-written TD changes and are not full codegen",
                 regenerable.non_replayable_codegen_files.len()
+            ));
+        }
+        if !regenerable.snapshot_codegen_files.is_empty() {
+            regenerability_gaps.push(format!(
+                "{} CODEGEN file(s) use source-template/artifact replay instead of lossless TD AST codegen",
+                regenerable.snapshot_codegen_files.len()
             ));
         }
         if !regenerable.codegen_drift_files.is_empty() {
@@ -963,8 +1079,6 @@ impl ProjectHealthReport {
             regenerable.handwrite_files,
             regenerable.unmarked_files,
         );
-        let td_ast_codegen_percent =
-            percent_of(codegen_origin.td_ast_files, codegen_origin.target_files);
         if stack_migration.incomplete_workspace_count > 0 {
             blockers.push(format!(
                 "stack migration classification incomplete: {}/{} workspace(s)",
@@ -1050,6 +1164,7 @@ impl ProjectHealthReport {
             capability: CapabilityHealthReport::ready_fixture(project),
             test_gates,
             ec: ProjectEcGateReport::not_evaluated(project),
+            claim_closure: ProjectClaimClosureReport::not_evaluated(project),
             preflight_gate_reports: Vec::new(),
             optional_quality_warnings: Vec::new(),
             managed_percent: managed.percent,
@@ -1066,7 +1181,6 @@ impl ProjectHealthReport {
             fully_codegen_files: regenerable.fully_codegen_files,
             cb_ownership,
             codegen_origin,
-            td_ast_codegen_percent,
             traceability_evaluated: true,
             traceability_note: None,
             traceability_percent: traceability.traceability_percent,
@@ -1186,6 +1300,7 @@ impl ProjectHealthReport {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn regenerability_authority_report(
     project: &str,
     coverage: &RegenerabilityCoverage,
@@ -1217,16 +1332,19 @@ fn regenerability_authority_report(
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn regenerability_gap_count(coverage: &RegenerabilityCoverage) -> usize {
     coverage.handwrite_files
         + coverage.unmarked_files
         + coverage.unsupported_codegen_files.len()
+        + coverage.snapshot_codegen_files.len()
         + coverage.codegen_drift_files.len()
         + coverage.missing_generator_primitive_gaps
         + coverage.insufficient_td_section_gaps
         + coverage.human_decision_required_gaps
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 struct HealthProgressSink<'a> {
     project: &'a str,
     started: Instant,
@@ -1271,7 +1389,7 @@ impl ProjectTestGateReport {
             evaluated: false,
             status: ProjectTestGateStatus::NotEvaluated,
             note: Some(format!(
-                "test gates not evaluated; run `aw health {project}`"
+                "test gates not evaluated; run `aw health --project {project}`"
             )),
             command_count: 0,
             passed_count: 0,
@@ -1313,6 +1431,7 @@ pub(crate) fn project_test_gate_report(
     project_test_gate_report_with_progress(project, project_root, verify_tests, &progress)
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_test_gate_report_with_progress(
     project: &str,
     project_root: &std::path::Path,
@@ -1399,6 +1518,7 @@ fn project_test_gate_report_with_progress(
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn run_project_test_command(
     workspace: &str,
     command: &str,
@@ -1485,6 +1605,7 @@ fn run_project_test_command(
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn tail_lossy(bytes: &[u8], max_chars: usize) -> String {
     let text = String::from_utf8_lossy(bytes);
     let len = text.chars().count();
@@ -1496,9 +1617,158 @@ fn tail_lossy(bytes: &[u8], max_chars: usize) -> String {
 }
 
 const HEALTH_SUMMARY_PREVIEW_LIMIT: usize = 20;
+const HEALTH_COMPACT_PREVIEW_LIMIT: usize = 5;
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+pub fn project_health_compact_summary(report: &ProjectHealthReport) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "event": "result",
+        "status": project_health_loop_status(report),
+        "action": "health",
+        "project": &report.project,
+        "completion": project_health_compact_completion(report),
+        "next": project_health_next(report),
+        "readiness": project_health_compact_readiness(report),
+        "metrics": project_health_metrics_summary(report),
+        "gates": project_health_gate_metrics_summary(report),
+        "blockers": project_health_compact_blockers(report),
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+pub fn project_health_compact_summary_with_payload_path(
+    report: &ProjectHealthReport,
+    payload_path: &str,
+) -> serde_json::Value {
+    with_payload_path(project_health_compact_summary(report), payload_path)
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+pub fn project_health_section_summary(
+    report: &ProjectHealthReport,
+    section: ProjectHealthSection,
+) -> serde_json::Value {
+    if section == ProjectHealthSection::Full {
+        return project_health_summary(report);
+    }
+    let payload = match section {
+        ProjectHealthSection::Full => unreachable!(),
+        ProjectHealthSection::Metrics => serde_json::json!({
+            "readiness": project_health_compact_readiness(report),
+            "metrics": project_health_metrics_summary(report),
+            "gates": project_health_gate_metrics_summary(report),
+        }),
+        ProjectHealthSection::Capability => project_health_capability_summary(&report.capability),
+        ProjectHealthSection::Gates => serde_json::json!({
+            "tests": project_test_gate_summary(&report.test_gates),
+            "ec": project_ec_gate_summary(&report.ec),
+            "claim_closure": project_claim_closure_summary(&report.claim_closure),
+            "cb_verify_evaluated": report.cb_verify_evaluated,
+            "cb_verify_clean": report.cb_verify_clean,
+            "cold_rebuild_evaluated": report.cold_rebuild_evaluated,
+            "cold_rebuild_clean": report.cold_rebuild_clean,
+            "td_lock": project_td_lock_summary(&report.td_lock),
+            "workflow_lock_count": report.workflow_lock_count,
+        }),
+        ProjectHealthSection::Tests => project_test_gate_summary(&report.test_gates),
+        ProjectHealthSection::Ec => project_ec_gate_summary(&report.ec),
+        ProjectHealthSection::Claims => project_claim_closure_detail(&report.claim_closure),
+        ProjectHealthSection::Cb => serde_json::json!({
+            "cb_verify_evaluated": report.cb_verify_evaluated,
+            "cb_verify_clean": report.cb_verify_clean,
+            "cb_verify_note": &report.cb_verify_note,
+            "cb_ownership": &report.cb_ownership,
+            "codegen_origin": &report.codegen_origin,
+            "codegen_percent": report.codegen_percent,
+            "full_codegen_percent": report.full_codegen_percent,
+            "codegen_eligible_files": report.codegen_eligible_files,
+            "codegen_files": report.codegen_files,
+            "fully_codegen_files": report.fully_codegen_files,
+        }),
+        ProjectHealthSection::Cold => serde_json::json!({
+            "cold_rebuild_evaluated": report.cold_rebuild_evaluated,
+            "cold_rebuild_clean": report.cold_rebuild_clean,
+            "cold_rebuild_note": &report.cold_rebuild_note,
+            "cold_rebuild_workspace_count": report.cold_rebuild_workspace_count,
+            "cold_rebuild_failures": &report.cold_rebuild_failures,
+            "cold_rebuilds": &report.cold_rebuilds,
+        }),
+        ProjectHealthSection::Traceability => serde_json::json!({
+            "traceability_evaluated": report.traceability_evaluated,
+            "traceability_note": &report.traceability_note,
+            "traceability_percent": report.traceability_percent,
+            "traceability_blocker_count": report.traceability_blocker_count,
+            "traceability_internal_td_count": report.traceability_internal_td_count,
+            "traceability_orphan_td_count": report.traceability_orphan_td_count,
+            "command_traceability_percent": report.command_traceability_percent,
+            "command_traceability_blocker_count": report.command_traceability_blocker_count,
+            "command_traceability_hidden_command_count": report.command_traceability_hidden_command_count,
+            "command_traceability_orphan_command_count": report.command_traceability_orphan_command_count,
+            "traceability": &report.traceability,
+        }),
+        ProjectHealthSection::Regenerable => serde_json::json!({
+            "regenerable_percent": report.regenerable_percent,
+            "codegen_percent": report.codegen_percent,
+            "full_codegen_percent": report.full_codegen_percent,
+            "codegen_eligible_files": report.codegen_eligible_files,
+            "codegen_files": report.codegen_files,
+            "fully_codegen_files": report.fully_codegen_files,
+            "cb_ownership": &report.cb_ownership,
+            "codegen_origin": &report.codegen_origin,
+            "regenerability_authority": &report.regenerability_authority,
+            "optional_regenerability_gaps": &report.optional_regenerability_gaps,
+        }),
+        ProjectHealthSection::Api => serde_json::json!({
+            "public_api_covered": report.public_api_covered,
+            "public_api_total": report.public_api_total,
+            "semantic_review_required": report.semantic_review_required,
+        }),
+        ProjectHealthSection::Stack => serde_json::json!({
+            "stack_migration_percent": report.stack_migration_percent,
+            "stack_migration_incomplete_workspaces": report.stack_migration_incomplete_workspaces,
+            "stack_migration": &report.stack_migration,
+        }),
+        ProjectHealthSection::TdLock => project_td_lock_summary(&report.td_lock),
+        ProjectHealthSection::Blockers => serde_json::json!({
+            "blocker_count": report.blockers.len(),
+            "blockers": &report.blockers,
+            "production_blocker_count": report.production_blockers.len(),
+            "production_blockers": &report.production_blockers,
+            "global_blocker_count": report.global_blockers.len(),
+            "global_blockers": &report.global_blockers,
+            "next_gap": &report.next_gap,
+            "blocked_gap_count": report.blocked_gap_count,
+            "human_decision_required_count": report.human_decision_required_count,
+        }),
+    };
+    serde_json::json!({
+        "schema_version": "aw.cli.v1",
+        "event": "result",
+        "status": project_health_loop_status(report),
+        "action": "health",
+        "project": &report.project,
+        "section": section,
+        "next": project_health_next(report),
+        "data": payload,
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+pub fn project_health_section_summary_with_payload_path(
+    report: &ProjectHealthReport,
+    section: ProjectHealthSection,
+    payload_path: &str,
+) -> serde_json::Value {
+    with_payload_path(
+        project_health_section_summary(report, section),
+        payload_path,
+    )
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
         "schema_version": "aw.cli.v1",
@@ -1518,7 +1788,11 @@ pub fn project_health_summary_with_payload_path(
     report: &ProjectHealthReport,
     payload_path: &str,
 ) -> serde_json::Value {
-    let mut summary = project_health_summary(report);
+    with_payload_path(project_health_summary(report), payload_path)
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn with_payload_path(mut summary: serde_json::Value, payload_path: &str) -> serde_json::Value {
     if let serde_json::Value::Object(map) = &mut summary {
         map.insert(
             "payload_path".to_string(),
@@ -1528,6 +1802,95 @@ pub fn project_health_summary_with_payload_path(
     summary
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_compact_completion(report: &ProjectHealthReport) -> serde_json::Value {
+    let missing = project_health_missing(report);
+    serde_json::json!({
+        "root_complete": report.production_ready,
+        "workflow_complete": report.production_ready,
+        "requires_hitl": project_health_requires_hitl(report),
+        "missing_count": missing.len(),
+        "missing_preview": preview_strings_limited(&missing, HEALTH_COMPACT_PREVIEW_LIMIT),
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_compact_readiness(report: &ProjectHealthReport) -> serde_json::Value {
+    serde_json::json!({
+        "production_ready": report.production_ready,
+        "production_status": &report.production_status,
+        "takeover_ready": report.takeover_ready,
+        "generator_request_ready": report.generator_request_ready,
+        "capability_ready": report.capability_ready,
+        "managed_ready": report.managed_ready,
+        "semantic_ready": report.semantic_ready,
+        "traceability_ready": report.traceability_ready,
+        "claim_closure_ready": report.claim_closure.evaluated && report.claim_closure.blocker_count == 0,
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_metrics_summary(report: &ProjectHealthReport) -> serde_json::Value {
+    serde_json::json!({
+        "capability": {
+            "format": &report.capability.format,
+            "capability_count": report.capability.capability_count,
+            "release_scope_count": report.capability.release_scope_count,
+            "production_percent": report.capability.production_percent,
+            "claim_closure_percent": report.claim_closure.claim_closure_percent,
+        },
+        "coverage": {
+            "managed_percent": report.managed_percent,
+            "semantic_percent": report.semantic_percent,
+            "traceability_percent": report.traceability_percent,
+            "command_traceability_percent": report.command_traceability_percent,
+            "regenerable_percent": report.regenerable_percent,
+        },
+        "codegen": {
+            "codegen_percent": report.codegen_percent,
+            "full_codegen_percent": report.full_codegen_percent,
+            "codegen_eligible_files": report.codegen_eligible_files,
+            "codegen_files": report.codegen_files,
+            "fully_codegen_files": report.fully_codegen_files,
+        },
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_gate_metrics_summary(report: &ProjectHealthReport) -> serde_json::Value {
+    serde_json::json!({
+        "test_gate_status": &report.test_gates.status,
+        "ec_status": &report.ec.status,
+        "ec_check_clean": report.ec.check_clean,
+        "ec_verify_evaluated": report.ec.verify_evaluated,
+        "claim_closure_percent": report.claim_closure.claim_closure_percent,
+        "claim_closure_blocker_count": report.claim_closure.blocker_count,
+        "cb_verify_evaluated": report.cb_verify_evaluated,
+        "cb_verify_clean": report.cb_verify_clean,
+        "cold_rebuild_evaluated": report.cold_rebuild_evaluated,
+        "cold_rebuild_clean": report.cold_rebuild_clean,
+        "td_lock_status": &report.td_lock.status,
+        "td_lock_clean": report.td_lock.clean,
+        "workflow_lock_count": report.workflow_lock_count,
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_compact_blockers(report: &ProjectHealthReport) -> serde_json::Value {
+    serde_json::json!({
+        "blocker_count": report.blockers.len(),
+        "blockers_preview": preview_strings_limited(&report.blockers, HEALTH_COMPACT_PREVIEW_LIMIT),
+        "production_blocker_count": report.production_blockers.len(),
+        "production_blockers_preview": preview_strings_limited(&report.production_blockers, HEALTH_COMPACT_PREVIEW_LIMIT),
+        "global_blocker_count": report.global_blockers.len(),
+        "global_blockers_preview": preview_strings_limited(&report.global_blockers, HEALTH_COMPACT_PREVIEW_LIMIT),
+        "next_gap": &report.next_gap,
+        "blocked_gap_count": report.blocked_gap_count,
+        "human_decision_required_count": report.human_decision_required_count,
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_report_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
         "project": &report.project,
@@ -1542,6 +1905,7 @@ fn project_health_report_summary(report: &ProjectHealthReport) -> serde_json::Va
         "capability": project_health_capability_summary(&report.capability),
         "test_gates": project_test_gate_summary(&report.test_gates),
         "ec": project_ec_gate_summary(&report.ec),
+        "claim_closure": project_claim_closure_summary(&report.claim_closure),
         "managed_percent": report.managed_percent,
         "semantic_percent": report.semantic_percent,
         "traceability_evaluated": report.traceability_evaluated,
@@ -1556,7 +1920,6 @@ fn project_health_report_summary(report: &ProjectHealthReport) -> serde_json::Va
         "fully_codegen_files": report.fully_codegen_files,
         "cb_ownership": &report.cb_ownership,
         "codegen_origin": &report.codegen_origin,
-        "td_ast_codegen_percent": report.td_ast_codegen_percent,
         "regenerable_percent": report.regenerable_percent,
         "cb_verify_evaluated": report.cb_verify_evaluated,
         "cb_verify_clean": report.cb_verify_clean,
@@ -1574,6 +1937,7 @@ fn project_health_report_summary(report: &ProjectHealthReport) -> serde_json::Va
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_capability_summary(report: &CapabilityHealthReport) -> serde_json::Value {
     serde_json::json!({
         "evaluated": report.evaluated,
@@ -1593,6 +1957,7 @@ fn project_health_capability_summary(report: &CapabilityHealthReport) -> serde_j
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_test_gate_summary(report: &ProjectTestGateReport) -> serde_json::Value {
     serde_json::json!({
         "evaluated": report.evaluated,
@@ -1612,6 +1977,7 @@ fn project_test_gate_summary(report: &ProjectTestGateReport) -> serde_json::Valu
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_test_command_summary(command: &ProjectTestCommandReport) -> serde_json::Value {
     serde_json::json!({
         "workspace": &command.workspace,
@@ -1622,6 +1988,7 @@ fn project_test_command_summary(command: &ProjectTestCommandReport) -> serde_jso
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
     serde_json::json!({
         "evaluated": report.evaluated,
@@ -1632,6 +1999,8 @@ fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
         "manifest_path": &report.manifest_path,
         "expected_case_count": report.expected_case_count,
         "case_count": report.case_count,
+        "expected_tool_manifest_count": report.expected_tool_manifest_count,
+        "tool_manifest_count": report.tool_manifest_count,
         "command_count": report.command_count,
         "passed_count": report.passed_count,
         "failed_count": report.failed_count,
@@ -1647,6 +2016,7 @@ fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_ec_command_summary(command: &ProjectEcCommandReport) -> serde_json::Value {
     serde_json::json!({
         "case_id": &command.case_id,
@@ -1657,6 +2027,33 @@ fn project_ec_command_summary(command: &ProjectEcCommandReport) -> serde_json::V
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_claim_closure_summary(report: &ProjectClaimClosureReport) -> serde_json::Value {
+    serde_json::json!({
+        "evaluated": report.evaluated,
+        "note": &report.note,
+        "claim_total": report.claim_total,
+        "closed_claim_count": report.closed_claim_count,
+        "claim_closure_percent": report.claim_closure_percent,
+        "claims_with_ec": report.claims_with_ec,
+        "claims_with_passing_ec": report.claims_with_passing_ec,
+        "claims_with_primary_td": report.claims_with_primary_td,
+        "claims_with_artifact_evidence": report.claims_with_artifact_evidence,
+        "blocker_count": report.blocker_count,
+        "blockers_preview": preview_strings(&report.blockers),
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_claim_closure_detail(report: &ProjectClaimClosureReport) -> serde_json::Value {
+    serde_json::json!({
+        "summary": project_claim_closure_summary(report),
+        "claims": &report.claims,
+        "blockers": &report.blockers,
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_td_lock_summary(lock: &crate::cli::td_lock::TdLockStatus) -> serde_json::Value {
     serde_json::json!({
         "project": &lock.project,
@@ -1675,15 +2072,18 @@ fn project_td_lock_summary(lock: &crate::cli::td_lock::TdLockStatus) -> serde_js
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn preview_strings(values: &[String]) -> Vec<&str> {
-    values
-        .iter()
-        .take(HEALTH_SUMMARY_PREVIEW_LIMIT)
-        .map(String::as_str)
-        .collect()
+    preview_strings_limited(values, HEALTH_SUMMARY_PREVIEW_LIMIT)
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn preview_strings_limited(values: &[String], limit: usize) -> Vec<&str> {
+    values.iter().take(limit).map(String::as_str).collect()
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_loop_status(report: &ProjectHealthReport) -> &'static str {
     if report.production_ready {
         "done"
@@ -1696,6 +2096,7 @@ fn project_health_loop_status(report: &ProjectHealthReport) -> &'static str {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_completion(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
         "root_complete": report.production_ready,
@@ -1705,16 +2106,19 @@ fn project_health_completion(report: &ProjectHealthReport) -> serde_json::Value 
             "capability roots are defined and runtime verified",
             "managed, semantic, and traceability takeover gates are ready",
             "CB/cold/test/EC production gates are evaluated and clean",
+            "capability claims have EC, TD, and artifact closure",
             "no workflow locks or artifact quality blockers remain"
         ],
         "missing": project_health_missing(report),
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_requires_hitl(report: &ProjectHealthReport) -> bool {
     report.workflow_lock_count > 0 || report.human_decision_required_count > 0
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_missing(report: &ProjectHealthReport) -> Vec<String> {
     if report.production_ready {
         return Vec::new();
@@ -1736,6 +2140,7 @@ fn project_health_missing(report: &ProjectHealthReport) -> Vec<String> {
     missing
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn push_project_health_missing(
     missing: &mut Vec<String>,
     seen: &mut BTreeSet<String>,
@@ -1746,12 +2151,13 @@ fn push_project_health_missing(
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<String> {
     let mut missing = Vec::new();
     if !report.traceability_evaluated {
         missing.push(report.traceability_note.clone().unwrap_or_else(|| {
             format!(
-                "traceability not evaluated; run `aw health {}`",
+                "traceability not evaluated; run `aw health --project {}`",
                 report.project
             )
         }));
@@ -1759,7 +2165,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     if !report.cb_verify_evaluated {
         missing.push(report.cb_verify_note.clone().unwrap_or_else(|| {
             format!(
-                "cb verify not evaluated; run `aw health {}`",
+                "cb verify not evaluated; run `aw health --project {}`",
                 report.project
             )
         }));
@@ -1769,7 +2175,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     {
         missing.push(report.cold_rebuild_note.clone().unwrap_or_else(|| {
             format!(
-                "cold rebuild not evaluated; run `aw health {}`",
+                "cold rebuild not evaluated; run `aw health --project {}`",
                 report.project
             )
         }));
@@ -1777,7 +2183,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     if report.test_gates.status == ProjectTestGateStatus::NotEvaluated {
         missing.push(report.test_gates.note.clone().unwrap_or_else(|| {
             format!(
-                "test gates not evaluated; run `aw health {}`",
+                "test gates not evaluated; run `aw health --project {}`",
                 report.project
             )
         }));
@@ -1785,7 +2191,15 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     if matches!(report.ec.status, ProjectEcGateStatus::NotVerified) {
         missing.push(report.ec.note.clone().unwrap_or_else(|| {
             format!(
-                "EC commands not evaluated; run `aw health {} --verify-ec`",
+                "EC commands not evaluated; run `aw health --project {} --verify-ec`",
+                report.project
+            )
+        }));
+    }
+    if !report.claim_closure.evaluated {
+        missing.push(report.claim_closure.note.clone().unwrap_or_else(|| {
+            format!(
+                "claim closure not evaluated; run `aw health --project {} claims`",
                 report.project
             )
         }));
@@ -1794,6 +2208,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next(report: &ProjectHealthReport) -> serde_json::Value {
     let command = project_health_next_command(report);
     let mut next = serde_json::Map::new();
@@ -1811,6 +2226,7 @@ fn project_health_next(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::Value::Object(next)
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_kind(report: &ProjectHealthReport, has_command: bool) -> &'static str {
     if report.production_ready {
         "done"
@@ -1823,6 +2239,7 @@ fn project_health_next_kind(report: &ProjectHealthReport, has_command: bool) -> 
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     if report.production_ready || report.workflow_lock_count > 0 {
         return None;
@@ -1830,25 +2247,31 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     if !report.td_lock.clean {
         return Some(
             if report.td_lock.status == crate::cli::td_lock::TdLockState::Missing {
-                format!("aw td lock {}", report.project)
+                format!("aw td lock --project {}", report.project)
             } else {
-                format!("aw td lock {} --show", report.project)
+                format!("aw td lock --project {} --show", report.project)
             },
         );
     }
     if !report.ec.check_clean {
-        return Some(format!("aw ec gen {} --verify", report.project));
+        return Some(format!("aw ec gen --project {} --verify", report.project));
     }
     if matches!(report.ec.status, ProjectEcGateStatus::NotConfigured)
-        && report.ec.expected_case_count > 0
+        && (report.ec.expected_case_count > 0 || report.ec.expected_tool_manifest_count > 0)
     {
-        return Some(format!("aw ec gen {} --verify", report.project));
+        return Some(format!("aw ec gen --project {} --verify", report.project));
     }
     if matches!(report.ec.status, ProjectEcGateStatus::Failed) {
-        return Some(format!("aw health {} --verify-ec", report.project));
+        return Some(format!(
+            "aw health --project {} --verify-ec",
+            report.project
+        ));
     }
     if !project_health_missing_evaluations(report).is_empty() {
-        return Some(format!("aw health {}", report.project));
+        return Some(format!("aw health --project {}", report.project));
+    }
+    if report.claim_closure.blocker_count > 0 {
+        return Some(format!("aw health --project {} claims", report.project));
     }
     if !report.capability_ready {
         if matches!(
@@ -1858,13 +2281,13 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             return None;
         }
         return Some(format!(
-            "aw capability run {} --non-interactive --max-ticks 1",
+            "aw capability run --project {} --non-interactive --max-ticks 1",
             report.project
         ));
     }
     if !report.managed_ready {
         return Some(format!(
-            "aw standardize managed run {} --non-interactive --max-ticks 1",
+            "aw standardize managed run --project {} --non-interactive --max-ticks 1",
             report.project
         ));
     }
@@ -1874,19 +2297,20 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
         || report.human_decision_required_count > 0
     {
         return Some(format!(
-            "aw standardize semantic run {} --non-interactive --max-ticks 1",
+            "aw standardize semantic run --project {} --non-interactive --max-ticks 1",
             report.project
         ));
     }
     if !report.traceability_ready {
         return Some(format!(
-            "aw standardize traceability run {} --non-interactive --max-ticks 1",
+            "aw standardize traceability run --project {} --non-interactive --max-ticks 1",
             report.project
         ));
     }
     Some(format!("aw run --project {} --max-ticks 1", report.project))
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     if report.production_ready {
         return "project production readiness is complete".to_string();
@@ -1929,6 +2353,14 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     if matches!(report.ec.status, ProjectEcGateStatus::Failed) {
         return "external contract gate commands failed".to_string();
     }
+    if report.claim_closure.blocker_count > 0 {
+        return report
+            .claim_closure
+            .blockers
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "capability claim closure is incomplete".to_string());
+    }
     if !report.capability_ready {
         if matches!(
             report.capability.format.as_str(),
@@ -1964,6 +2396,7 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_readiness_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
         "production_ready": report.production_ready,
@@ -1984,7 +2417,6 @@ fn project_health_readiness_summary(report: &ProjectHealthReport) -> serde_json:
         "fully_codegen_files": report.fully_codegen_files,
         "cb_ownership": &report.cb_ownership,
         "codegen_origin": &report.codegen_origin,
-        "td_ast_codegen_percent": report.td_ast_codegen_percent,
         "regenerable_percent": report.regenerable_percent,
         "command_traceability_percent": report.command_traceability_percent,
         "blocker_count": report.blockers.len(),
@@ -2012,18 +2444,30 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
         verification.cb,
         verification.cold,
         verification.tests,
-        !args.human,
+        verification.ec,
+        args.verbose,
     )?;
     apply_td_lock_to_report(&mut report)?;
-    apply_ec_to_report(&mut report, verification.ec)?;
     apply_workflow_locks_to_report(&mut report).await?;
     let payload_path = write_health_payload(&report)?;
     if args.human {
-        print_health_report(&report);
+        match args.section {
+            Some(ProjectHealthSection::Full) => print_health_report(&report),
+            Some(section) => print_health_section(&report, section),
+            None => print_health_compact_report(&report),
+        }
+    } else if let Some(section) = args.section {
+        let summary =
+            project_health_section_summary_with_payload_path(&report, section, &payload_path);
+        if args.pretty || args.json {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        } else {
+            println!("{}", serde_json::to_string(&summary)?);
+        }
     } else if args.pretty || args.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&project_health_summary_with_payload_path(
+            serde_json::to_string_pretty(&project_health_compact_summary_with_payload_path(
                 &report,
                 &payload_path,
             ))?
@@ -2031,7 +2475,7 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
     } else {
         println!(
             "{}",
-            serde_json::to_string(&project_health_summary_with_payload_path(
+            serde_json::to_string(&project_health_compact_summary_with_payload_path(
                 &report,
                 &payload_path,
             ))?
@@ -2044,6 +2488,7 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 struct HealthVerificationFlags {
     traceability: bool,
     cb: bool,
@@ -2052,6 +2497,7 @@ struct HealthVerificationFlags {
     ec: bool,
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerificationFlags {
     let targeted = args.verify_traceability
         || args.verify_cb
@@ -2066,8 +2512,38 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
             tests: args.verify_tests,
             ec: args.verify_ec,
         }
+    } else if let Some(section) = args.section {
+        match section {
+            ProjectHealthSection::Full => HealthVerificationFlags::all(),
+            ProjectHealthSection::Tests => HealthVerificationFlags::tests(),
+            ProjectHealthSection::Ec => HealthVerificationFlags::ec(),
+            ProjectHealthSection::Cb | ProjectHealthSection::Api => HealthVerificationFlags::cb(),
+            ProjectHealthSection::Cold => HealthVerificationFlags::cold(),
+            ProjectHealthSection::Claims => HealthVerificationFlags {
+                traceability: true,
+                cb: false,
+                cold: false,
+                tests: false,
+                ec: true,
+            },
+            ProjectHealthSection::Traceability
+            | ProjectHealthSection::Regenerable
+            | ProjectHealthSection::Stack => HealthVerificationFlags::traceability(),
+            ProjectHealthSection::Metrics
+            | ProjectHealthSection::Capability
+            | ProjectHealthSection::Gates
+            | ProjectHealthSection::TdLock
+            | ProjectHealthSection::Blockers => HealthVerificationFlags::none(),
+        }
     } else {
-        HealthVerificationFlags {
+        HealthVerificationFlags::all()
+    }
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+impl HealthVerificationFlags {
+    fn all() -> Self {
+        Self {
             traceability: true,
             cb: true,
             cold: true,
@@ -2075,8 +2551,54 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
             ec: true,
         }
     }
+
+    fn none() -> Self {
+        Self {
+            traceability: false,
+            cb: false,
+            cold: false,
+            tests: false,
+            ec: false,
+        }
+    }
+
+    fn tests() -> Self {
+        Self {
+            tests: true,
+            ..Self::none()
+        }
+    }
+
+    fn ec() -> Self {
+        Self {
+            ec: true,
+            ..Self::none()
+        }
+    }
+
+    fn cb() -> Self {
+        Self {
+            cb: true,
+            ..Self::none()
+        }
+    }
+
+    fn cold() -> Self {
+        Self {
+            cold: true,
+            ..Self::none()
+        }
+    }
+
+    fn traceability() -> Self {
+        Self {
+            traceability: true,
+            ..Self::none()
+        }
+    }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn write_health_payload(report: &ProjectHealthReport) -> Result<String> {
     let dir = std::env::temp_dir()
         .join("aw")
@@ -2090,6 +2612,7 @@ fn write_health_payload(report: &ProjectHealthReport) -> Result<String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn sanitize_tmp_path_segment(value: &str) -> String {
     let mut segment = String::new();
     for ch in value.chars() {
@@ -2106,6 +2629,7 @@ fn sanitize_tmp_path_segment(value: &str) -> String {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Result<()> {
     let status = crate::cli::td_lock::check_project_td_lock(&report.project)?;
     if !status.clean {
@@ -2123,6 +2647,7 @@ pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Resul
     Ok(())
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bool) -> Result<()> {
     let summary = crate::cli::ec::project_ec_check_summary(&report.project)?;
     let mut ec_report = ProjectEcGateReport::from_check(summary);
@@ -2141,8 +2666,8 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
     }
 
     if verify_ec {
-        if ec_report.case_count == 0 {
-            let finding = "EC inventory has no cases; add TD e2e-test sections and run `aw ec gen`"
+        if ec_report.case_count == 0 && ec_report.tool_manifest_count == 0 {
+            let finding = "EC inventory has no cases; add TD e2e-test sections and run `aw ec gen --project <project>`"
                 .to_string();
             ec_report.findings.push(finding.clone());
             ec_report.status = ProjectEcGateStatus::NotConfigured;
@@ -2153,7 +2678,7 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                 crate::cli::ec::load_project_ec_manifest(&report.project)?
             else {
                 let finding = format!(
-                    "EC manifest not generated; run `aw ec gen {} --verify`",
+                    "EC manifest not generated; run `aw ec gen --project {} --verify`",
                     report.project
                 );
                 ec_report.findings.push(finding.clone());
@@ -2165,9 +2690,19 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                 return Ok(());
             };
             let project_root = crate::find_project_root()?;
+            // wi-13: a category bound in the project's `ec` map dispatches to
+            // its external tool command; unbound categories keep the manifest
+            // command.
+            let project_model = crate::services::project_registry::load_projects(&project_root)?
+                .into_iter()
+                .find(|project| project.name == report.project);
             let mut commands = Vec::new();
             for case in &manifest.cases {
-                commands.push(run_project_ec_command(case, &project_root)?);
+                commands.push(run_project_ec_command(
+                    case,
+                    project_model.as_ref(),
+                    &project_root,
+                )?);
             }
             let passed_count = commands
                 .iter()
@@ -2217,6 +2752,255 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
     Ok(())
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+pub(crate) fn apply_claim_closure_to_report(report: &mut ProjectHealthReport) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let closure = match build_project_claim_closure_report(&project_root, report) {
+        Ok(closure) => closure,
+        Err(err) => ProjectClaimClosureReport::from_blocker(
+            &report.project,
+            format!("claim closure unavailable: {err}"),
+        ),
+    };
+    for blocker in &closure.blockers {
+        if !report.blockers.contains(blocker) {
+            block_health_report(report, blocker.clone());
+        }
+    }
+    report.claim_closure = closure;
+    report.refresh_takeover_readiness();
+    Ok(())
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn build_project_claim_closure_report(
+    project_root: &std::path::Path,
+    report: &ProjectHealthReport,
+) -> Result<ProjectClaimClosureReport> {
+    let cap_path =
+        crate::cli::capability::resolve_capability_path(project_root, &report.project, None)?;
+    let cap_body = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
+    let document = crate::cli::capability::parse_capability_document(&cap_body, &cap_path)
+        .with_context(|| format!("failed to parse capability map from {}", cap_path.display()))?;
+    let td_refs = crate::cli::capability::collect_td_capability_refs(
+        project_root,
+        &report.project,
+        &document,
+    )
+    .with_context(|| "failed to scan TD capability_refs")?;
+    let manifest =
+        crate::cli::ec::load_project_ec_manifest(&report.project)?.map(|(_, manifest)| manifest);
+    Ok(build_claim_closure_report(
+        &report.project,
+        &document,
+        &td_refs,
+        manifest.as_ref(),
+        &report.ec,
+        report.managed_ready && report.semantic_ready && report.traceability_ready,
+    ))
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn build_claim_closure_report(
+    _project: &str,
+    document: &crate::cli::capability::CapabilityDocument,
+    td_refs: &[crate::cli::capability::TdCapabilityEvidence],
+    manifest: Option<&crate::cli::ec::EcManifest>,
+    ec_report: &ProjectEcGateReport,
+    artifact_evidence_ready: bool,
+) -> ProjectClaimClosureReport {
+    let ec_cases = manifest
+        .map(|manifest| manifest.cases.as_slice())
+        .unwrap_or(&[]);
+    let capability_ids = document.capability_ids();
+    let mut global_blockers = Vec::new();
+
+    for case in ec_cases.iter().filter(|case| case.required_for_production) {
+        if case.capability_id.trim().is_empty() || case.capability_id == "unmapped" {
+            push_unique_string(
+                &mut global_blockers,
+                format!(
+                    "claim closure EC case `{}` is unmapped; production cases must name capability_id and claim_id",
+                    case.id
+                ),
+            );
+            continue;
+        }
+        if !capability_ids.contains(&case.capability_id) {
+            push_unique_string(
+                &mut global_blockers,
+                format!(
+                    "claim closure EC case `{}` references unknown capability `{}`",
+                    case.id, case.capability_id
+                ),
+            );
+            continue;
+        }
+        if case.claim_id.trim().is_empty()
+            || !document
+                .claim_ids_for(&case.capability_id)
+                .contains(&case.claim_id)
+        {
+            push_unique_string(
+                &mut global_blockers,
+                format!(
+                    "claim closure EC case `{}` references unknown claim `{}` for capability `{}`",
+                    case.id, case.claim_id, case.capability_id
+                ),
+            );
+        }
+    }
+
+    let passed_ec_case_ids = ec_report
+        .commands
+        .iter()
+        .filter(|command| command.status == ProjectTestCommandStatus::Passed)
+        .map(|command| command.case_id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut claims = Vec::new();
+
+    for capability in &document.capabilities {
+        let Some(contract) = capability.verification_contract.as_ref() else {
+            continue;
+        };
+        for claim in contract
+            .claims
+            .iter()
+            .filter(|claim| claim.required_for_verified)
+        {
+            let ec_case_ids = ec_cases
+                .iter()
+                .filter(|case| {
+                    case.required_for_production
+                        && case.capability_id == capability.id
+                        && case.claim_id == claim.id
+                })
+                .map(|case| case.id.clone())
+                .collect::<Vec<_>>();
+            let passing_ec_case_ids = if ec_report.verify_evaluated {
+                ec_case_ids
+                    .iter()
+                    .filter(|case_id| passed_ec_case_ids.contains(*case_id))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            let primary_td_refs = td_refs
+                .iter()
+                .filter(|td_ref| {
+                    td_ref.capability_id == capability.id
+                        && td_ref.claim.as_deref() == Some(claim.id.as_str())
+                        && td_ref.role == crate::cli::capability::CapabilityRefRole::Primary
+                })
+                .map(td_ref_display)
+                .collect::<Vec<_>>();
+            let artifact_evidence = !primary_td_refs.is_empty() && artifact_evidence_ready;
+            let mut blockers = Vec::new();
+            if ec_case_ids.is_empty() {
+                blockers.push("missing required production EC case".to_string());
+            }
+            if !ec_report.verify_evaluated {
+                blockers.push("EC verify not evaluated".to_string());
+            } else if passing_ec_case_ids.is_empty() {
+                blockers.push("no required EC case passed verification".to_string());
+            }
+            if primary_td_refs.is_empty() {
+                blockers.push("missing primary TD capability_ref".to_string());
+            }
+            if !artifact_evidence {
+                blockers.push(
+                    "artifact evidence not closed by managed/semantic/traceability health"
+                        .to_string(),
+                );
+            }
+            let status = if blockers.is_empty() {
+                ProjectClaimClosureStatus::Closed
+            } else {
+                ProjectClaimClosureStatus::Blocked
+            };
+            for blocker in &blockers {
+                push_unique_string(
+                    &mut global_blockers,
+                    format!(
+                        "claim closure `{}`:`{}`: {}",
+                        capability.id, claim.id, blocker
+                    ),
+                );
+            }
+            claims.push(ProjectClaimClosureItem {
+                capability_id: capability.id.clone(),
+                claim_id: claim.id.clone(),
+                ec_case_ids,
+                passing_ec_case_ids,
+                primary_td_refs,
+                artifact_evidence,
+                status,
+                blockers,
+            });
+        }
+    }
+
+    let claim_total = claims.len();
+    let closed_claim_count = claims
+        .iter()
+        .filter(|claim| claim.status == ProjectClaimClosureStatus::Closed)
+        .count();
+    let claims_with_ec = claims
+        .iter()
+        .filter(|claim| !claim.ec_case_ids.is_empty())
+        .count();
+    let claims_with_passing_ec = claims
+        .iter()
+        .filter(|claim| !claim.passing_ec_case_ids.is_empty())
+        .count();
+    let claims_with_primary_td = claims
+        .iter()
+        .filter(|claim| !claim.primary_td_refs.is_empty())
+        .count();
+    let claims_with_artifact_evidence = claims
+        .iter()
+        .filter(|claim| claim.artifact_evidence)
+        .count();
+
+    ProjectClaimClosureReport {
+        evaluated: true,
+        note: None,
+        claim_total,
+        closed_claim_count,
+        claim_closure_percent: if claim_total == 0 {
+            100.0
+        } else {
+            percent_of(closed_claim_count, claim_total)
+        },
+        claims_with_ec,
+        claims_with_passing_ec,
+        claims_with_primary_td,
+        claims_with_artifact_evidence,
+        blocker_count: global_blockers.len(),
+        blockers: global_blockers,
+        claims,
+    }
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn td_ref_display(td_ref: &crate::cli::capability::TdCapabilityEvidence) -> String {
+    td_ref
+        .spec_id
+        .as_ref()
+        .map(|spec_id| format!("{}#{}", td_ref.spec_path, spec_id))
+        .unwrap_or_else(|| td_ref.spec_path.clone())
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn push_unique_string(values: &mut Vec<String>, value: String) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn block_health_report(report: &mut ProjectHealthReport, blocker: String) {
     report.status = ProjectHealthStatus::Blocked;
     report.blockers.push(blocker.clone());
@@ -2229,12 +3013,113 @@ fn block_health_report(report: &mut ProjectHealthReport, blocker: String) {
     report.production_status = ProductionStatus::Blocked;
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+impl EcBinding {
+    /// wi-13 R2: deterministic verify command for one EC tool binding. Total
+    /// over the four known tools; a missing argument or an unknown tool is
+    /// an error the dispatch surfaces as a Failed EC command, not a
+    /// health-run abort.
+    pub fn command(&self) -> Result<String> {
+        if let Some(command) = self
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(command.to_string());
+        }
+        match self.tool.as_str() {
+            "arena" => {
+                let spec = self
+                    .spec
+                    .as_deref()
+                    .context("ec binding `arena` requires `spec`")?;
+                Ok(format!("arena run --spec {spec}"))
+            }
+            "rig" => {
+                let dir = self
+                    .dir
+                    .as_deref()
+                    .context("ec binding `rig` requires `dir`")?;
+                Ok(format!("rig run --dir {dir}"))
+            }
+            "meter" => {
+                let target = self
+                    .meter
+                    .as_deref()
+                    .context("ec binding `meter` requires `meter`")?;
+                Ok(format!("meter run --target {target}"))
+            }
+            "vat" => {
+                let runner = self
+                    .dir
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                Ok(match runner {
+                    Some(runner) => format!("vat run {runner}"),
+                    None => "vat run".to_string(),
+                })
+            }
+            "guard" => {
+                let target = self
+                    .dir
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(".");
+                Ok(format!("guard scan {target} --compact --no-persist"))
+            }
+            other => {
+                anyhow::bail!(
+                    "unknown ec binding tool `{other}` (expected arena|rig|meter|vat|guard)"
+                )
+            }
+        }
+    }
+}
+
+/// wi-13 R3: the command a case actually runs — the bound tool command when
+/// the case category is bound in the owning project's `ec` map, else the
+/// manifest command (the cargo-test fallback).
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn resolve_project_ec_command(
+    case: &crate::cli::ec::EcManifestCase,
+    project: Option<&crate::models::project::Project>,
+) -> Result<String> {
+    match project.and_then(|project| project.ec.get(&case.category)) {
+        Some(binding) => binding.command(),
+        None => Ok(case.command.clone()),
+    }
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn run_project_ec_command(
     case: &crate::cli::ec::EcManifestCase,
+    project: Option<&crate::models::project::Project>,
     project_root: &std::path::Path,
 ) -> Result<ProjectEcCommandReport> {
     let started = Instant::now();
-    let command = &case.command;
+    let command = match resolve_project_ec_command(case, project) {
+        Ok(command) => command,
+        Err(err) => {
+            // Logic terminal `bad_tool`: an unbuildable binding fails the
+            // case with the reason in stderr_tail and no spawn.
+            return Ok(ProjectEcCommandReport {
+                case_id: case.id.clone(),
+                command: case.command.clone(),
+                status: ProjectTestCommandStatus::Failed,
+                exit_code: None,
+                duration_ms: started.elapsed().as_millis(),
+                stdout_tail: String::new(),
+                stderr_tail: format!(
+                    "invalid ec binding for category `{}`: {err:#}",
+                    case.category
+                ),
+            });
+        }
+    };
+    let command = &command;
     let stdout_file = tempfile::NamedTempFile::new()
         .with_context(|| format!("create stdout capture for EC command `{command}`"))?;
     let stderr_file = tempfile::NamedTempFile::new()
@@ -2273,6 +3158,7 @@ fn run_project_ec_command(
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) async fn apply_workflow_locks_to_report(report: &mut ProjectHealthReport) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let locks = crate::cli::workflow_guard::issue_locks(&project_root).await?;
@@ -2301,6 +3187,71 @@ pub(crate) async fn apply_workflow_locks_to_report(report: &mut ProjectHealthRep
     Ok(())
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn print_health_compact_report(report: &ProjectHealthReport) {
+    println!("project health: {} ({:?})", report.project, report.status);
+    println!(
+        "ready: production={}, takeover={}, generator={}",
+        report.production_ready, report.takeover_ready, report.generator_request_ready
+    );
+    println!(
+        "layers: capability={}, managed={} ({:.1}%), semantic={} ({:.1}%), traceability={} ({:.1}%), regenerable {:.1}%",
+        report.capability_ready,
+        report.managed_ready,
+        report.managed_percent,
+        report.semantic_ready,
+        report.semantic_percent,
+        report.traceability_ready,
+        report.traceability_percent,
+        report.regenerable_percent
+    );
+    println!(
+        "gates: tests={:?}, ec={:?}, cb={}, cold={}, td_lock={:?}/{}",
+        report.test_gates.status,
+        report.ec.status,
+        if report.cb_verify_clean {
+            "clean"
+        } else {
+            "blocked"
+        },
+        if report.cold_rebuild_clean {
+            "clean"
+        } else {
+            "blocked"
+        },
+        report.td_lock.status,
+        if report.td_lock.clean {
+            "clean"
+        } else {
+            "blocked"
+        }
+    );
+    println!(
+        "blockers: total={}, production={}, global={}",
+        report.blockers.len(),
+        report.production_blockers.len(),
+        report.global_blockers.len()
+    );
+    for blocker in report.blockers.iter().take(HEALTH_COMPACT_PREVIEW_LIMIT) {
+        println!("  - {blocker}");
+    }
+    let next = project_health_next(report);
+    if let Some(command) = next.get("command").and_then(|value| value.as_str()) {
+        println!("next: {command}");
+    } else if let Some(reason) = next.get("reason").and_then(|value| value.as_str()) {
+        println!("next: {reason}");
+    }
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn print_health_section(report: &ProjectHealthReport, section: ProjectHealthSection) {
+    match serde_json::to_string_pretty(&project_health_section_summary(report, section)) {
+        Ok(value) => println!("{value}"),
+        Err(err) => println!("failed to render health section {section:?}: {err}"),
+    }
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn print_health_report(report: &ProjectHealthReport) {
     println!("project health: {} ({:?})", report.project, report.status);
     println!(
@@ -2350,15 +3301,12 @@ fn print_health_report(report: &ProjectHealthReport) {
         println!("  blocker: {blocker}");
     }
     println!(
-        "coverage: managed {:.1}%, semantic {:.1}%, traceability {:.1}%, codegen {:.1}% ({}/{}), td_ast_codegen {:.1}% ({}/{}), full_codegen {:.1}% ({}/{}), regenerable maturity {:.1}%",
+        "coverage: managed {:.1}%, semantic {:.1}%, traceability {:.1}%, codegen {:.1}% ({}/{}), full_codegen {:.1}% ({}/{}), regenerable maturity {:.1}%",
         report.managed_percent,
         report.semantic_percent,
         report.traceability_percent,
         report.codegen_percent,
         report.codegen_files,
-        report.codegen_eligible_files,
-        report.td_ast_codegen_percent,
-        report.codegen_origin.td_ast_files,
         report.codegen_eligible_files,
         report.full_codegen_percent,
         report.fully_codegen_files,
@@ -2472,12 +3420,14 @@ fn print_health_report(report: &ProjectHealthReport) {
         );
     }
     println!(
-        "ec: {:?}; check_clean={}, verify_evaluated={}, cases {}/{}, commands {}/{} passed",
+        "ec: {:?}; check_clean={}, verify_evaluated={}, cases {}/{}, tool_manifests {}/{}, commands {}/{} passed",
         report.ec.status,
         report.ec.check_clean,
         report.ec.verify_evaluated,
         report.ec.case_count,
         report.ec.expected_case_count,
+        report.ec.tool_manifest_count,
+        report.ec.expected_tool_manifest_count,
         report.ec.passed_count,
         report.ec.command_count
     );
@@ -2602,6 +3552,7 @@ fn print_health_report(report: &ProjectHealthReport) {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn percent_of(part: usize, total: usize) -> f64 {
     if total == 0 {
         0.0
@@ -2610,10 +3561,12 @@ fn percent_of(part: usize, total: usize) -> f64 {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn semantic_gap_blocks_readiness(primitive: &str) -> bool {
     matches!(primitive, "semantic_td_missing" | "semantic_td_legacy")
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn aggregate_codegen_origin(cold_rebuilds: &[CbColdVerifySummary]) -> CbCodegenOriginSummary {
     let mut summary = CbCodegenOriginSummary::default();
     for cold in cold_rebuilds {
@@ -2625,6 +3578,7 @@ fn aggregate_codegen_origin(cold_rebuilds: &[CbColdVerifySummary]) -> CbCodegenO
     summary
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn cb_ownership_summary(
     eligible_files: usize,
     codegen_files: usize,
@@ -2643,6 +3597,7 @@ fn cb_ownership_summary(
 }
 
 #[cfg(test)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 mod tests {
     use super::*;
 
@@ -2655,6 +3610,7 @@ mod tests {
     ) -> ProjectHealthArgs {
         ProjectHealthArgs {
             project: "demo".to_string(),
+            section: None,
             verify_traceability,
             verify_cb,
             verify_cold,
@@ -2663,6 +3619,14 @@ mod tests {
             json: false,
             human: false,
             pretty: false,
+            verbose: false,
+        }
+    }
+
+    fn health_section_args(section: ProjectHealthSection) -> ProjectHealthArgs {
+        ProjectHealthArgs {
+            section: Some(section),
+            ..health_args(false, false, false, false, false)
         }
     }
 
@@ -2715,6 +3679,484 @@ mod tests {
                 ec: true,
             }
         );
+    }
+
+    #[test]
+    fn focused_capability_health_does_not_run_expensive_gates_by_default() {
+        let flags = effective_health_verification_flags(&health_section_args(
+            ProjectHealthSection::Capability,
+        ));
+
+        assert_eq!(
+            flags,
+            HealthVerificationFlags {
+                traceability: false,
+                cb: false,
+                cold: false,
+                tests: false,
+                ec: false,
+            }
+        );
+    }
+
+    #[test]
+    fn focused_tests_health_runs_only_test_gates_by_default() {
+        let flags =
+            effective_health_verification_flags(&health_section_args(ProjectHealthSection::Tests));
+
+        assert_eq!(
+            flags,
+            HealthVerificationFlags {
+                traceability: false,
+                cb: false,
+                cold: false,
+                tests: true,
+                ec: false,
+            }
+        );
+    }
+
+    #[test]
+    fn focused_claims_health_runs_traceability_and_ec_by_default() {
+        let flags =
+            effective_health_verification_flags(&health_section_args(ProjectHealthSection::Claims));
+
+        assert_eq!(
+            flags,
+            HealthVerificationFlags {
+                traceability: true,
+                cb: false,
+                cold: false,
+                tests: false,
+                ec: true,
+            }
+        );
+    }
+
+    fn claim_document(required_for_verified: bool) -> crate::cli::capability::CapabilityDocument {
+        crate::cli::capability::CapabilityDocument {
+            cap_path: std::path::PathBuf::from("projects/demo/README.md"),
+            format: crate::cli::capability::CapabilityDocumentFormat::MarkdownTables,
+            capabilities: vec![crate::cli::capability::CapabilitySection {
+                title: "Demo Capability".to_string(),
+                id: "cap".to_string(),
+                status: crate::cli::capability::CapabilityStatus::Verified,
+                promise: "promise".to_string(),
+                current_state: "state".to_string(),
+                gaps: Vec::new(),
+                verification_contract: Some(
+                    crate::cli::capability::CapabilityVerificationContract {
+                        required_maturity: vec![crate::cli::capability::CapabilityMaturity::Smoke],
+                        claims: vec![crate::cli::capability::CapabilityClaim {
+                            id: "claim".to_string(),
+                            user_story: "story".to_string(),
+                            required_for_verified,
+                            maturity: crate::cli::capability::CapabilityMaturity::Smoke,
+                            oracle: "oracle".to_string(),
+                            fixtures: Vec::new(),
+                            negative_cases: Vec::new(),
+                            gates: Vec::new(),
+                        }],
+                        full_regenerability_required: false,
+                    },
+                ),
+                evidence: crate::cli::capability::CapabilityEvidence::default(),
+                done_when: Vec::new(),
+                out_of_scope: Vec::new(),
+                release_scope: true,
+                dependencies: Vec::new(),
+                line: 1,
+            }],
+            legacy_rows: Vec::new(),
+            findings: Vec::new(),
+        }
+    }
+
+    fn td_claim_ref() -> crate::cli::capability::TdCapabilityEvidence {
+        crate::cli::capability::TdCapabilityEvidence {
+            spec_path: "projects/demo/tech-design/logic/claim.md".to_string(),
+            spec_id: Some("demo-claim".to_string()),
+            capability_id: "cap".to_string(),
+            role: crate::cli::capability::CapabilityRefRole::Primary,
+            gap: None,
+            claim: Some("claim".to_string()),
+            coverage: crate::cli::capability::CapabilityCoverage::Full,
+            rationale: None,
+        }
+    }
+
+    fn ec_manifest(cases: Vec<crate::cli::ec::EcManifestCase>) -> crate::cli::ec::EcManifest {
+        crate::cli::ec::EcManifest {
+            version: 1,
+            project: "demo".to_string(),
+            generated_from_td_digest: "digest".to_string(),
+            cases,
+            tool_manifests: Vec::new(),
+        }
+    }
+
+    fn ec_report_for(case_id: &str, status: ProjectTestCommandStatus) -> ProjectEcGateReport {
+        ProjectEcGateReport {
+            evaluated: true,
+            check_clean: true,
+            verify_evaluated: true,
+            status: if status == ProjectTestCommandStatus::Passed {
+                ProjectEcGateStatus::Passed
+            } else {
+                ProjectEcGateStatus::Failed
+            },
+            note: None,
+            manifest_path: "projects/demo/aw.toml".to_string(),
+            expected_case_count: 1,
+            case_count: 1,
+            expected_tool_manifest_count: 0,
+            tool_manifest_count: 0,
+            command_count: 1,
+            passed_count: if status == ProjectTestCommandStatus::Passed {
+                1
+            } else {
+                0
+            },
+            failed_count: if status == ProjectTestCommandStatus::Failed {
+                1
+            } else {
+                0
+            },
+            findings: Vec::new(),
+            commands: vec![ProjectEcCommandReport {
+                case_id: case_id.to_string(),
+                command: "true".to_string(),
+                status,
+                exit_code: Some(0),
+                duration_ms: 1,
+                stdout_tail: String::new(),
+                stderr_tail: String::new(),
+            }],
+        }
+    }
+
+    #[test]
+    fn claim_closure_closes_when_required_edges_are_present() {
+        let document = claim_document(true);
+        let case = ec_case("behavior");
+        let manifest = ec_manifest(vec![case]);
+        let ec_report = ec_report_for("case-1", ProjectTestCommandStatus::Passed);
+
+        let report = build_claim_closure_report(
+            "demo",
+            &document,
+            &[td_claim_ref()],
+            Some(&manifest),
+            &ec_report,
+            true,
+        );
+
+        assert_eq!(report.claim_total, 1);
+        assert_eq!(report.closed_claim_count, 1);
+        assert_eq!(report.claim_closure_percent, 100.0);
+        assert!(report.blockers.is_empty());
+        assert_eq!(report.claims[0].status, ProjectClaimClosureStatus::Closed);
+    }
+
+    #[test]
+    fn claim_closure_blocks_missing_ec_case() {
+        let document = claim_document(true);
+        let manifest = ec_manifest(Vec::new());
+        let ec_report = ec_report_for("case-1", ProjectTestCommandStatus::Passed);
+
+        let report = build_claim_closure_report(
+            "demo",
+            &document,
+            &[td_claim_ref()],
+            Some(&manifest),
+            &ec_report,
+            true,
+        );
+
+        assert_eq!(report.closed_claim_count, 0);
+        assert!(report
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("missing required production EC case")));
+    }
+
+    #[test]
+    fn claim_closure_blocks_unmapped_production_ec_case() {
+        let document = claim_document(true);
+        let mut case = ec_case("behavior");
+        case.capability_id = "unmapped".to_string();
+        let manifest = ec_manifest(vec![case]);
+        let ec_report = ec_report_for("case-1", ProjectTestCommandStatus::Passed);
+
+        let report = build_claim_closure_report(
+            "demo",
+            &document,
+            &[td_claim_ref()],
+            Some(&manifest),
+            &ec_report,
+            true,
+        );
+
+        assert_eq!(report.closed_claim_count, 0);
+        assert!(report
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("is unmapped")));
+    }
+
+    #[test]
+    fn claim_closure_blocks_missing_primary_td_ref() {
+        let document = claim_document(true);
+        let case = ec_case("behavior");
+        let manifest = ec_manifest(vec![case]);
+        let ec_report = ec_report_for("case-1", ProjectTestCommandStatus::Passed);
+
+        let report =
+            build_claim_closure_report("demo", &document, &[], Some(&manifest), &ec_report, true);
+
+        assert_eq!(report.closed_claim_count, 0);
+        assert!(report
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("missing primary TD capability_ref")));
+    }
+
+    #[test]
+    fn claim_closure_ignores_optional_claims() {
+        let document = claim_document(false);
+        let manifest = ec_manifest(Vec::new());
+        let ec_report = ec_report_for("case-1", ProjectTestCommandStatus::Passed);
+
+        let report =
+            build_claim_closure_report("demo", &document, &[], Some(&manifest), &ec_report, true);
+
+        assert_eq!(report.claim_total, 0);
+        assert_eq!(report.claim_closure_percent, 100.0);
+        assert!(report.blockers.is_empty());
+    }
+
+    fn ec_case(category: &str) -> crate::cli::ec::EcManifestCase {
+        crate::cli::ec::EcManifestCase {
+            id: "case-1".into(),
+            capability_id: "cap".into(),
+            claim_id: "claim".into(),
+            contract_id: "contract".into(),
+            category: category.into(),
+            td_ref: "td".into(),
+            test_path: "tests/x.rs".into(),
+            command: "cargo test -p demo".into(),
+            required_for_production: true,
+            assertions: vec![],
+            evidence: vec![],
+            evaluators: vec![],
+        }
+    }
+
+    fn ec_project(ec: BTreeMap<String, EcBinding>) -> crate::models::project::Project {
+        crate::models::project::Project {
+            name: "demo".into(),
+            path: "projects/demo".into(),
+            tech_design_dir: None,
+            ec,
+            workspaces: vec![],
+        }
+    }
+
+    /// wi-38 AC2: the builder emits deterministic tool shapes, including vat and guard.
+    #[test]
+    fn ec_binding_command_builds_arena_rig_meter_vat_guard() {
+        let arena = EcBinding {
+            tool: "arena".into(),
+            command: None,
+            spec: Some("tests/arena/x.toml".into()),
+            dir: None,
+            meter: None,
+        };
+        assert_eq!(
+            arena.command().unwrap(),
+            "arena run --spec tests/arena/x.toml"
+        );
+
+        let rig = EcBinding {
+            tool: "rig".into(),
+            command: None,
+            spec: None,
+            dir: Some("tests/rig/scenarios".into()),
+            meter: None,
+        };
+        assert_eq!(rig.command().unwrap(), "rig run --dir tests/rig/scenarios");
+
+        let meter = EcBinding {
+            tool: "meter".into(),
+            command: None,
+            spec: None,
+            dir: None,
+            meter: Some(".".into()),
+        };
+        assert_eq!(meter.command().unwrap(), "meter run --target .");
+
+        let vat_default = EcBinding {
+            tool: "vat".into(),
+            command: None,
+            spec: None,
+            dir: None,
+            meter: None,
+        };
+        assert_eq!(vat_default.command().unwrap(), "vat run");
+
+        let vat_blank_runner = EcBinding {
+            tool: "vat".into(),
+            command: None,
+            spec: None,
+            dir: Some("   ".into()),
+            meter: None,
+        };
+        assert_eq!(vat_blank_runner.command().unwrap(), "vat run");
+
+        let vat_named_runner = EcBinding {
+            tool: "vat".into(),
+            command: None,
+            spec: None,
+            dir: Some("rig-load".into()),
+            meter: None,
+        };
+        assert_eq!(vat_named_runner.command().unwrap(), "vat run rig-load");
+
+        let guard_default = EcBinding {
+            tool: "guard".into(),
+            command: None,
+            spec: None,
+            dir: None,
+            meter: None,
+        };
+        assert_eq!(
+            guard_default.command().unwrap(),
+            "guard scan . --compact --no-persist"
+        );
+
+        let guard_project = EcBinding {
+            tool: "guard".into(),
+            command: None,
+            spec: None,
+            dir: Some("projects/guard".into()),
+            meter: None,
+        };
+        assert_eq!(
+            guard_project.command().unwrap(),
+            "guard scan projects/guard --compact --no-persist"
+        );
+
+        let guard_override = EcBinding {
+            tool: "guard".into(),
+            command: Some("target/debug/guard scan projects/guard --compact --no-persist".into()),
+            spec: None,
+            dir: Some("projects/guard".into()),
+            meter: None,
+        };
+        assert_eq!(
+            guard_override.command().unwrap(),
+            "target/debug/guard scan projects/guard --compact --no-persist"
+        );
+    }
+
+    /// wi-13 AC2: unknown tool and missing per-tool argument are errors.
+    #[test]
+    fn ec_binding_command_rejects_unknown_tool_and_missing_arg() {
+        let unknown = EcBinding {
+            tool: "valgrind".into(),
+            command: None,
+            spec: None,
+            dir: None,
+            meter: None,
+        };
+        assert!(unknown
+            .command()
+            .unwrap_err()
+            .to_string()
+            .contains("expected arena|rig|meter|vat|guard"));
+
+        let armless = EcBinding {
+            tool: "arena".into(),
+            command: None,
+            spec: None,
+            dir: None,
+            meter: None,
+        };
+        assert!(armless
+            .command()
+            .unwrap_err()
+            .to_string()
+            .contains("requires `spec`"));
+    }
+
+    /// wi-13 AC3: a bound category resolves to the tool command; an unbound
+    /// category on the same project falls back to the manifest command.
+    #[test]
+    fn resolve_ec_command_dispatches_bound_category() {
+        let mut ec = BTreeMap::new();
+        ec.insert(
+            "benchmark".to_string(),
+            EcBinding {
+                tool: "arena".into(),
+                command: None,
+                spec: Some("tests/arena/x.toml".into()),
+                dir: None,
+                meter: None,
+            },
+        );
+        let project = ec_project(ec);
+
+        let bound = resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap();
+        assert_eq!(bound, "arena run --spec tests/arena/x.toml");
+
+        let unbound = resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
+        assert_eq!(unbound, "cargo test -p demo");
+    }
+
+    /// wi-13 AC4: no `ec` map (or no project model at all) is today's
+    /// behavior — pure manifest-command verify-ec.
+    #[test]
+    fn resolve_ec_command_defaults_without_bindings() {
+        let project = ec_project(BTreeMap::new());
+        assert_eq!(
+            resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap(),
+            "cargo test -p demo"
+        );
+        assert_eq!(
+            resolve_project_ec_command(&ec_case("benchmark"), None).unwrap(),
+            "cargo test -p demo"
+        );
+    }
+
+    /// wi-13 AC1: `[[projects]] ... ec.<category>` round-trips through the
+    /// Project model; absence of the field serializes to nothing.
+    #[test]
+    fn project_ec_map_roundtrips_through_toml() {
+        let doc = r#"
+[[projects]]
+name = "lumen"
+path = "projects/lumen"
+ec.benchmark = { tool = "arena", spec = "tests/arena/x.toml" }
+
+[[projects.workspaces]]
+paths = ["projects/lumen/**"]
+target = "rust"
+"#;
+        let parsed: crate::models::project::ProjectsToml = toml::from_str(doc).unwrap();
+        let project = &parsed.projects[0];
+        assert_eq!(project.ec["benchmark"].tool, "arena");
+        assert_eq!(
+            project.ec["benchmark"].spec.as_deref(),
+            Some("tests/arena/x.toml")
+        );
+
+        let reserialized = toml::to_string(&parsed).unwrap();
+        assert!(
+            reserialized.contains("[projects.ec.benchmark]")
+                || reserialized.contains("ec.benchmark")
+        );
+        let reparsed: crate::models::project::ProjectsToml = toml::from_str(&reserialized).unwrap();
+        assert_eq!(parsed, reparsed);
     }
 }
 // CODEGEN-END

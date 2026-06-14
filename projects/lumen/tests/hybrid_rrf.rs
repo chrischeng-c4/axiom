@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! End-to-end test for hybrid retrieval via Reciprocal Rank Fusion
 //! (`QueryNode::Rrf`). Asserts the defining RRF property: a document
 //! that ranks in *both* legs outranks one that is #1 in only a single
@@ -112,3 +114,4 @@ async fn rrf_default_k_is_applied_when_omitted() {
         "rrf with default k should fuse the single leg's two hits: {body}"
     );
 }
+// CODEGEN-END

@@ -1,0 +1,151 @@
+# vat environment for lumen's rig scenarios: vat owns the services
+# (toxiproxy + a serving lumen) and the COW workspace; each runner's cmd
+# re-invokes rig inside the clone, and the outer `rig run --vat` lifts the
+# inner report back out.
+#
+# Prereqs on the host: `projects/rig/build.sh debug` (installs ~/.cargo/bin/rig),
+# `cargo build --release -p lumen --bin lumen`, `brew install toxiproxy`.
+version = 1
+name = "lumen-rig"
+default_runner = "rig-resilience"
+
+[workspace]
+# Clone the whole repo (APFS clonefile, O(1)): the lumen service binary and
+# the rig binary live in target/ at the repo root.
+base = "../.."
+workdir = "projects/lumen"
+# `always`: rig must read the runner's captured stdout (the inner report)
+# AFTER the run, then removes the vat itself — `failed` would delete a
+# successful vat before the report can be lifted.
+keep = "always"
+
+[env]
+# vat children get spec.env ONLY (no parent-env inheritance); commands
+# resolved from PATH (pgrep, python3, toxiproxy-server) need it explicit.
+PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin"
+
+[[services]]
+id = "lumen"
+cmd = ["../../target/release/lumen", "serve"]
+ready_http = "http://127.0.0.1:7373/healthz"
+timeout_s = 60
+
+[[services]]
+id = "toxiproxy"
+cmd = ["toxiproxy-server", "-host", "127.0.0.1", "-port", "8474"]
+ready_http = "http://127.0.0.1:8474/version"
+timeout_s = 30
+
+# Runner cmds use the repo-relative debug rig so no PATH entry is needed
+# for rig itself: `cargo build -p rig-cli` keeps it fresh.
+[[runners]]
+id = "rig-resilience"
+requires = ["lumen", "toxiproxy"]
+cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/scenarios/resilience"]
+timeout_s = 600
+
+[[runners]]
+id = "rig-endurance"
+requires = ["lumen"]
+cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/scenarios/endurance"]
+timeout_s = 900
+
+[[runners]]
+id = "rig-load"
+requires = ["lumen"]
+cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/scenarios/load", "--pins", "tests/rig/config/pins"]
+timeout_s = 300
+
+# Competitive comparison runners: vat owns the serving lumen process; arena
+# fans the workload across lumen and the external peer named by the spec.
+[[runners]]
+id = "arena-pg"
+requires = ["lumen"]
+cmd = [
+  "sh",
+  "-c",
+  """
+python3 - <<'PY'
+import json, urllib.request
+
+upstream = "127.0.0.1:7373"
+headers = {"content-type": "application/json"}
+
+def send(method, path, payload):
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(f"http://{upstream}{path}", data=body, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        if resp.status >= 400:
+            raise SystemExit(resp.status)
+
+send("PUT", "/collections/docs", {
+    "fields": {
+        "bio": {"type": "text"},
+        "city": {"type": "keyword"},
+        "age": {"type": "number"}
+    }
+})
+items = []
+for i in range(2000):
+    external_id = f"doc-{i}"
+    city = "taipei" if i % 3 == 0 else "tokyo"
+    items.append({"external_id": external_id, "field": "bio", "value": f"engineer search document {i} in {city}"})
+    items.append({"external_id": external_id, "field": "city", "value": city})
+    items.append({"external_id": external_id, "field": "age", "value": 20 + (i % 50)})
+send("POST", "/collections/docs/index", {"items": items})
+PY
+exec ../../target/debug/arena run --spec ../../projects/arena/examples/lumen-vs-pg.toml
+""",
+]
+timeout_s = 900
+
+[[runners]]
+id = "arena-opensearch"
+requires = ["lumen"]
+cmd = [
+  "sh",
+  "-c",
+  """
+python3 - <<'PY'
+import json, urllib.request
+
+upstream = "127.0.0.1:7373"
+headers = {"content-type": "application/json"}
+
+def send(method, path, payload):
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(f"http://{upstream}{path}", data=body, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        if resp.status >= 400:
+            raise SystemExit(resp.status)
+
+send("PUT", "/collections/docs", {
+    "fields": {
+        "bio": {"type": "text"},
+        "city": {"type": "keyword"},
+        "age": {"type": "number"}
+    }
+})
+items = []
+for i in range(2000):
+    external_id = f"doc-{i}"
+    city = "taipei" if i % 3 == 0 else "tokyo"
+    items.append({"external_id": external_id, "field": "bio", "value": f"engineer search document {i} in {city}"})
+    items.append({"external_id": external_id, "field": "city", "value": city})
+    items.append({"external_id": external_id, "field": "age", "value": 20 + (i % 50)})
+send("POST", "/collections/docs/index", {"items": items})
+PY
+exec ../../target/debug/arena run --spec ../../projects/arena/examples/lumen-vs-opensearch.toml
+""",
+]
+timeout_s = 900
+
+# Concurrent-profiling companion: `vat run rig-load meter-profile` drives
+# load against the serving lumen WHILE meter samples an engine workload in
+# the same workspace. (Attaching meter to the serving pid itself needs a
+# meter `--pid` mode — tracked separately.)
+[[runners]]
+id = "meter-profile"
+requires = ["lumen"]
+cmd = ["../../target/debug/meter", "profile", "--exec", "../../target/release/lumen-bench", "--duration", "25", "--", "run", "--tiers", "s", "--types", "bool_filter", "--queries", "200000"]
+timeout_s = 300

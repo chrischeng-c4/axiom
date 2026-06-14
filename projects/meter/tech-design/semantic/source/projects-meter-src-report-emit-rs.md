@@ -25,10 +25,8 @@ Public API manifest for `projects/meter/src/report/emit.rs` generated from AST d
 | `emit` | projects/meter/src/report/emit.rs | function | pub | 18 | emit(report: &MeterReport, compact: bool) -> String |
 | `render` | projects/meter/src/report/emit.rs | function | pub | 32 | render(report: &MeterReport, compact: bool) -> String |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/emit.rs -->
 ````rust
 //! [`emit`] — print exactly ONE serde_json document to stdout.
 //!
@@ -44,6 +42,7 @@ use super::envelope::MeterReport;
 ///
 /// `compact == false` => `to_string_pretty`; `compact == true` => `to_string`.
 /// Returns the serialized string for callers that also want it in-hand.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-emit-rs.md#source
 pub fn emit(report: &MeterReport, compact: bool) -> String {
     let json = render(report, compact);
     // Exactly one stdout write of the report; trailing newline for line-based
@@ -57,6 +56,7 @@ pub fn emit(report: &MeterReport, compact: bool) -> String {
 }
 
 /// Render `report` to a JSON string without printing.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-emit-rs.md#source
 pub fn render(report: &MeterReport, compact: bool) -> String {
     if compact {
         serde_json::to_string(report)
@@ -74,6 +74,7 @@ pub fn render(report: &MeterReport, compact: bool) -> String {
 }
 
 /// Print a diagnostic line to stderr (never stdout).
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-emit-rs.md#source
 pub fn diag(msg: impl AsRef<str>) {
     let _ = writeln!(std::io::stderr(), "{}", msg.as_ref());
 }
@@ -134,7 +135,7 @@ mod tests {
 changes:
   - path: projects/meter/src/report/emit.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/emit.rs` captured during meter full-codegen standardization.

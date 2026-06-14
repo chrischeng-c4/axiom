@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Write coordinator — the seam between the HTTP write handlers and the
 //! log-driven apply loop.
 //!
@@ -61,12 +63,14 @@ struct CompletionState {
 /// the loop after each batch), so an append never blocks on the disk.
 pub type SharedAof = Arc<Mutex<crate::aof::AofWriter>>;
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub struct WriteCoordinator {
     wal: SharedWal,
     applied: AtomicU64,
     completions: Mutex<CompletionState>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl WriteCoordinator {
     /// Spawn the apply loop and return the coordinator. The loop tails
     /// the log from the beginning and folds it into `engine`.
@@ -403,3 +407,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

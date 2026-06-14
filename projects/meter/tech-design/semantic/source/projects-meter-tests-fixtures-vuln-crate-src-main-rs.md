@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/tests/fixtures/vuln_crate/src/main.rs` g
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/tests/fixtures/vuln_crate/src/main.rs -->
 ````rust
 //! Intentionally vulnerable fixture crate for the meter audit trust-bug test.
 //! It pins `time = "=0.1.45"` (RUSTSEC-2020-0071) so `cargo audit` reports
@@ -39,7 +37,7 @@ fn main() {}
 changes:
   - path: projects/meter/tests/fixtures/vuln_crate/src/main.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/tests/fixtures/vuln_crate/src/main.rs` captured during meter full-codegen standardization.

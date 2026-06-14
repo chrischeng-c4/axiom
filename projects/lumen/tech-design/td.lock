@@ -1,0 +1,85 @@
+version = 1
+project = "lumen"
+td_path = "projects/lumen/tech-design"
+generated_at = "2026-06-13T02:45:55.136783+00:00"
+digest = "sha256:fa2c2ca2aa3b3ec6485d6d6d20bbe260e9bd7cfeb8e2f78b6a36e8da54bd2aaa"
+
+[[files]]
+path = "logic/external-contracts.md"
+digest = "sha256:8e1cf5fb384316a8c0e81bb52c87f46e4d2cc2e97d176ca555a89260461e2fa2"
+
+[[files]]
+path = "semantic/lumen-benches.md"
+digest = "sha256:22f832e0143f372030b6fe3ed2f595df33ece81145927791ce81cffcc8bba611"
+
+[[files]]
+path = "semantic/lumen-bin.md"
+digest = "sha256:354a47126dcce0cd2e189c183bf7042e403d62189f9964864303eeff68b4da31"
+
+[[files]]
+path = "semantic/lumen-build-script.md"
+digest = "sha256:6d47825d76401e5fb4db22117def4ff9712297c835bfdea0015b1d93bb32668f"
+
+[[files]]
+path = "semantic/lumen-examples.md"
+digest = "sha256:30c1164b9a30035c114e85068a62e83e3f36129f907de131082b5468ff701934"
+
+[[files]]
+path = "semantic/lumen-install-script.md"
+digest = "sha256:f9623e29a16333261a3e82fa9cb4b4bc772a0026707ccaf23af1fa230e6b0f07"
+
+[[files]]
+path = "semantic/lumen-k8s-base.md"
+digest = "sha256:2a5ede34594088ebbccfe7bb8e71d501d24b2c9d044a4aa7d5b8d031e003abc1"
+
+[[files]]
+path = "semantic/lumen-k8s-components-observability.md"
+digest = "sha256:14db832148e9e8b1b55e18f773986d4aea36dd605f12f96fa20dbc9c37d8eda3"
+
+[[files]]
+path = "semantic/lumen-k8s-operator.md"
+digest = "sha256:4cfb319ef1addfdd9db610ed6aa005d81d5df2a74a1b1bedb1708a836c4329a0"
+
+[[files]]
+path = "semantic/lumen-k8s-optional-consumer.md"
+digest = "sha256:e7b9d4978b72c8306cb708d810f22b8b6774e9118c16293a43b0afbd70f88fa1"
+
+[[files]]
+path = "semantic/lumen-k8s-overlays-dev.md"
+digest = "sha256:7eadbb1497bce0453546e98126b2a66830233a97c81b3bbc8506dc5233e38993"
+
+[[files]]
+path = "semantic/lumen-k8s-overlays-prod.md"
+digest = "sha256:ddb792c3b3b7f92c865ad50b99381f7e680f91eff371342ca8e3d16da69e6957"
+
+[[files]]
+path = "semantic/lumen-k8s-overlays-staging.md"
+digest = "sha256:8bbbea4f875b901e0f6923f5bf3ef99ff130a3ce9b10a9b1e2567d099fa17e57"
+
+[[files]]
+path = "semantic/lumen-k8s-overlays-template.md"
+digest = "sha256:631a47d21c98ae327572cc509ce319fffbc1574d4f7457bc707db05667955076"
+
+[[files]]
+path = "semantic/lumen-operator.md"
+digest = "sha256:1b1d765bb701d6c7445f535ad27d029279dbf0c5ade03bfc8e96e27a400114f2"
+
+[[files]]
+path = "semantic/lumen-projects-lumen.md"
+digest = "sha256:9754d126d1ad168271917b740d61cb6c9ee8df92ed4c6ad6c2e1bc39b8766268"
+
+[[files]]
+path = "semantic/lumen-runtime-image.md"
+digest = "sha256:b931b584fc135fd3d4829afe61ab19cde14f4a05c15e74dea604a97711f796e2"
+
+[[files]]
+path = "semantic/lumen-scripts.md"
+digest = "sha256:7a014458bef4fdbc78672e6b8c14b6c8991cfcb4c90f968383eec9b294db6d46"
+
+[[files]]
+path = "semantic/lumen-src.md"
+digest = "sha256:70a0d8ab332a801569da1956ecf083fc8596d87f9630c40d496c02c1400ae6ea"
+
+[[files]]
+path = "semantic/lumen-tests.md"
+digest = "sha256:f564fddadb5ebd5d69456c94571c56ebcb3b7db767d87a0f162146fc570d3351"

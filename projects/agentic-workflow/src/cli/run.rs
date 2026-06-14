@@ -32,8 +32,6 @@ const GOAL_INLINE_LIMIT_BYTES: usize = 4000;
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args, Clone)]
 pub struct RunArgs {
-    /// Positional project shorthand. `aw run cap` is equivalent to `aw run --project cap`.
-    pub project_arg: Option<String>,
     /// Root identity: `capability:<id>` or `wi:<id>`. Omit to run the current project root.
     #[arg(long)]
     pub root: Option<String>,
@@ -361,16 +359,6 @@ fn resolve_run_root(args: &RunArgs) -> Result<ResolvedRunRoot> {
     if args.root.is_some() && (args.capability.is_some() || args.wi.is_some()) {
         anyhow::bail!("use either --root or deprecated --capability/--wi, not both");
     }
-    if args.project_arg.is_some()
-        && (args.project.is_some()
-            || args.root.is_some()
-            || args.capability.is_some()
-            || args.wi.is_some())
-    {
-        anyhow::bail!(
-            "positional project shorthand cannot be combined with --project, --root, --capability, or --wi"
-        );
-    }
     if args.capability.is_some() && args.wi.is_some() {
         anyhow::bail!("choose only one workflow root");
     }
@@ -397,13 +385,6 @@ fn resolve_run_root(args: &RunArgs) -> Result<ResolvedRunRoot> {
         return Ok(ResolvedRunRoot::Project {
             project: project.clone(),
             command: format!("aw run --project {project}"),
-        });
-    }
-    if let Some(project) = args.project_arg.as_deref() {
-        let project = canonical_project_name_or_self(project);
-        return Ok(ResolvedRunRoot::Project {
-            project: project.clone(),
-            command: format!("aw run {project}"),
         });
     }
 
@@ -904,9 +885,9 @@ async fn project_envelope(project: &str, progress: &RunProgressSink) -> Workflow
         20,
         "capability",
         "evaluating capability claims and verification gates",
-        Some(format!("aw capability check {project} --verify").as_str()),
+        Some(format!("aw capability check --project {project} --verify").as_str()),
     );
-    let capability_command = format!("aw capability check {project} --verify");
+    let capability_command = format!("aw capability check --project {project} --verify");
     let report_result = await_with_progress(
         progress,
         20,
@@ -953,7 +934,7 @@ async fn project_envelope(project: &str, progress: &RunProgressSink) -> Workflow
                         75,
                         "persistence",
                         "checking repo persistence and production readiness",
-                        Some(format!("aw health {project}").as_str()),
+                        Some(format!("aw health --project {project}").as_str()),
                     );
                     project_done_or_dirty_envelope_with_capability_report(
                         project,
@@ -1067,7 +1048,7 @@ fn project_production_blocked_from_health_report(
     health: crate::cli::project::ProjectHealthReport,
     scopes: Vec<String>,
 ) -> WorkflowEnvelope {
-    let command = format!("aw health {project}");
+    let command = format!("aw health --project {project}");
     let reason = if health.production_blockers.is_empty() {
         "project production readiness is blocked".to_string()
     } else {
@@ -1125,9 +1106,9 @@ async fn capability_envelope(
         25,
         "capability",
         "evaluating scoped capability readiness",
-        Some(format!("aw capability check {project} --verify").as_str()),
+        Some(format!("aw capability check --project {project} --verify").as_str()),
     );
-    let capability_command = format!("aw capability check {project} --verify");
+    let capability_command = format!("aw capability check --project {project} --verify");
     let report_result = await_with_progress(
         progress,
         25,
@@ -1153,7 +1134,7 @@ async fn capability_envelope(
                 return blocked_envelope(
                     root.clone(),
                     root,
-                    format!("aw capability report {project}"),
+                    format!("aw capability report --project {project}"),
                     format!("capability `{capability_id}` was not found in project `{project}`"),
                     true,
                 );
@@ -1490,7 +1471,7 @@ fn capability_action_envelope_with_planning_base(
     let (kind, command) = match action.kind {
         CapabilityActionKind::FormatMigrationRequired => (
             "capability",
-            format!("aw capability run {project} --non-interactive"),
+            format!("aw capability run --project {project} --non-interactive"),
         ),
         CapabilityActionKind::CreateWi | CapabilityActionKind::LinkClaimVerification => {
             ("epicize", format!("aw wi epicize --project {project}"))
@@ -1939,7 +1920,7 @@ fn project_production_blocked_envelope(
     health: crate::cli::project::ProjectHealthReport,
     scopes: Vec<String>,
 ) -> WorkflowEnvelope {
-    let command = format!("aw health {project}");
+    let command = format!("aw health --project {project}");
     let reason = if health.production_blockers.is_empty() {
         "project production readiness is blocked".to_string()
     } else {
@@ -1994,7 +1975,7 @@ fn capability_production_blocked_envelope(
     capability_blockers.extend(global_blockers);
     capability_blockers.sort();
     capability_blockers.dedup();
-    let command = format!("aw capability check {project} --verify");
+    let command = format!("aw capability check --project {project} --verify");
     let reason = if capability_blockers.is_empty() {
         format!("capability `{capability_id}` is not production ready")
     } else {
@@ -2608,6 +2589,7 @@ mod tests {
             },
             test_gates: crate::cli::project::ProjectTestGateReport::passed_fixture("true"),
             ec: crate::cli::project::ProjectEcGateReport::not_evaluated(project),
+            claim_closure: crate::cli::project::ProjectClaimClosureReport::not_evaluated(project),
             preflight_gate_reports: Vec::new(),
             optional_quality_warnings: Vec::new(),
             managed_percent: 100.0,
@@ -2633,7 +2615,6 @@ mod tests {
                 artifact_replay_files: 0,
                 source_template_files: 0,
             },
-            td_ast_codegen_percent: 100.0,
             traceability_evaluated: true,
             traceability_note: None,
             traceability_percent: 100.0,
@@ -2741,8 +2722,8 @@ mod tests {
             "aw run --project jet"
         );
         assert_eq!(
-            agent_command("aw capability check jet --json --verify"),
-            "aw capability check jet --verify"
+            agent_command("aw capability check --project jet --json --verify"),
+            "aw capability check --project jet --verify"
         );
     }
 
@@ -2795,7 +2776,6 @@ mod tests {
     #[test]
     fn root_parser_accepts_capability_and_wi_roots() {
         let args = RunArgs {
-            project_arg: None,
             root: Some("capability:py312-compatible".to_string()),
             project: Some("mamba".to_string()),
             capability: None,
@@ -2817,7 +2797,6 @@ mod tests {
         );
 
         let args = RunArgs {
-            project_arg: None,
             root: Some("wi:1123".to_string()),
             project: None,
             capability: None,
@@ -2838,11 +2817,10 @@ mod tests {
     }
 
     #[test]
-    fn root_parser_accepts_positional_project_shorthand() {
+    fn root_parser_accepts_project_option() {
         let args = RunArgs {
-            project_arg: Some("cap".to_string()),
             root: None,
-            project: None,
+            project: Some("cap".to_string()),
             capability: None,
             wi: None,
             max_ticks: 1,
@@ -2856,7 +2834,7 @@ mod tests {
             resolve_run_root(&args).unwrap(),
             ResolvedRunRoot::Project {
                 project: "cap".to_string(),
-                command: "aw run cap".to_string(),
+                command: "aw run --project cap".to_string(),
             }
         );
     }
@@ -3021,7 +2999,7 @@ cap_path = "projects/jet/README.md"
             gap_id: None,
             claim_id: None,
             target: "README.md".to_string(),
-            command: "aw capability run jet --non-interactive --max-ticks 1".to_string(),
+            command: "aw capability run --project jet --non-interactive --max-ticks 1".to_string(),
             reason: "README capability map needs Markdown-table migration".to_string(),
             requires_hitl: false,
             hitl_question: None,
@@ -3039,7 +3017,7 @@ cap_path = "projects/jet/README.md"
         assert_eq!(envelope.next.kind, "capability");
         assert_eq!(
             envelope.next.command,
-            "aw capability run jet --non-interactive"
+            "aw capability run --project jet --non-interactive"
         );
         assert!(!envelope.requires_hitl);
         assert!(!envelope.completion.workflow_complete);
@@ -3315,7 +3293,7 @@ test_cmd = "false"
         });
         assert_eq!(envelope.action, "blocked");
         assert_eq!(envelope.next.kind, "production_verification");
-        assert_eq!(envelope.next.command, "aw health jet");
+        assert_eq!(envelope.next.command, "aw health --project jet");
         assert!(envelope.requires_hitl);
         assert!(!envelope.completion.workflow_complete);
         assert!(envelope
@@ -3562,7 +3540,8 @@ review_status: pending
             id: "capability:package-manager:confirm_candidate".to_string(),
             question: "Should this capability be confirmed?".to_string(),
             target: "Package Manager".to_string(),
-            resume_command: "aw capability run jet --non-interactive --max-ticks 1".to_string(),
+            resume_command: "aw capability run --project jet --non-interactive --max-ticks 1"
+                .to_string(),
             tool_hint: "ask_user_question".to_string(),
             choices: Vec::new(),
             default_choice: None,
@@ -3574,7 +3553,7 @@ review_status: pending
             gap_id: None,
             claim_id: None,
             target: "Package Manager".to_string(),
-            command: "aw capability report jet".to_string(),
+            command: "aw capability report --project jet".to_string(),
             reason: "capability is still candidate and requires human confirmation".to_string(),
             requires_hitl: true,
             hitl_question: Some(question.clone()),
@@ -3590,9 +3569,10 @@ review_status: pending
 
         assert_eq!(envelope.action, "blocked");
         assert!(envelope.requires_hitl);
-        assert_eq!(envelope.next.command, "aw capability report jet");
+        assert_eq!(envelope.next.command, "aw capability report --project jet");
         let mut expected_question = question;
-        expected_question.resume_command = "aw capability run jet --non-interactive".to_string();
+        expected_question.resume_command =
+            "aw capability run --project jet --non-interactive".to_string();
         assert_eq!(envelope.hitl_question, Some(expected_question));
     }
 

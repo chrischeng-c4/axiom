@@ -24,10 +24,8 @@ Public API manifest for `projects/meter/meter-cli/src/lib.rs` generated from AST
 | `MeterCli` | projects/meter/meter-cli/src/lib.rs | struct | pub | 34 |  |
 | `dispatch` | projects/meter/meter-cli/src/lib.rs | module | pub | 24 |  |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/meter-cli/src/lib.rs -->
 ````rust
 //! Agent-first CLI surface for `meter`, registered as a [`CliModule`].
 //!
@@ -52,15 +50,17 @@ Public API manifest for `projects/meter/meter-cli/src/lib.rs` generated from AST
 
 pub mod dispatch;
 
-pub use dispatch::{dispatch, print_report, Dispatched, OutputOpts, MeterCommand, Verb};
+pub use dispatch::{dispatch, print_report, Dispatched, MeterCommand, OutputOpts, Verb};
 
 use cclab_cli_registry::{CliModule, CLI_MODULES};
 use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use linkme::distributed_slice;
 
 /// The `meter` CLI module: name, clap command tree, and execute hook.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-lib-rs.md#source
 pub struct MeterCli;
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-lib-rs.md#source
 impl CliModule for MeterCli {
     fn name(&self) -> &'static str {
         "meter"
@@ -126,7 +126,7 @@ mod tests {
 changes:
   - path: projects/meter/meter-cli/src/lib.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/meter-cli/src/lib.rs` captured during meter full-codegen standardization.

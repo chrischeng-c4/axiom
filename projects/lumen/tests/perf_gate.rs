@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Coarse perf gate.
 //!
 //! Asserts the in-memory engine meets the v1 budget envelope on a
@@ -182,3 +184,4 @@ fn term_query_latency_floor() {
         "term took {elapsed:?} — perf regression?"
     );
 }
+// CODEGEN-END

@@ -62,10 +62,8 @@ Public API manifest for `projects/meter/src/runner.rs` generated from AST during
 | `with_timeout` | projects/meter/src/runner.rs | function | pub | 159 | with_timeout(mut self, timeout: f64) -> Self |
 | `with_type` | projects/meter/src/runner.rs | function | pub | 147 | with_type(mut self, test_type: TestType) -> Self |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/runner.rs -->
 ````rust
 //! Test runner - discovery, execution, and scheduling
 
@@ -77,24 +75,23 @@ use tokio::task::JoinHandle;
 
 /// Test type categorization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub enum TestType {
     /// Standard unit test
     #[default]
     Unit,
     /// Performance profiling test
     Profile,
-    /// Load/stress test
-    Stress,
     /// Security/fuzzing test
     Security,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl std::fmt::Display for TestType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TestType::Unit => write!(f, "unit"),
             TestType::Profile => write!(f, "profile"),
-            TestType::Stress => write!(f, "stress"),
             TestType::Security => write!(f, "security"),
         }
     }
@@ -102,6 +99,7 @@ impl std::fmt::Display for TestType {
 
 /// Test execution status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub enum TestStatus {
     /// Test passed
     Passed,
@@ -113,6 +111,7 @@ pub enum TestStatus {
     Error,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl std::fmt::Display for TestStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -126,6 +125,7 @@ impl std::fmt::Display for TestStatus {
 
 /// Programming language for multi-language test support
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub enum Language {
     /// Python (default)
     #[default]
@@ -136,6 +136,7 @@ pub enum Language {
     TypeScript,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl std::fmt::Display for Language {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -148,6 +149,7 @@ impl std::fmt::Display for Language {
 
 /// Metadata for a test function
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct TestMeta {
     /// Test function name
     pub name: String,
@@ -169,6 +171,7 @@ pub struct TestMeta {
     pub line_number: Option<u32>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl TestMeta {
     /// Create new test metadata
     pub fn new(name: impl Into<String>) -> Self {
@@ -245,6 +248,7 @@ impl TestMeta {
 
 /// Profile metrics for performance tests
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct ProfileMetrics {
     /// Number of iterations run
     pub iterations: u32,
@@ -256,29 +260,9 @@ pub struct ProfileMetrics {
     pub boundary_overhead_ms: f64,
 }
 
-/// Stress test metrics
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct StressMetrics {
-    /// Total requests made
-    pub total_requests: u64,
-    /// Successful requests
-    pub successful: u64,
-    /// Failed requests
-    pub failed: u64,
-    /// Requests per second
-    pub rps: f64,
-    /// P50 latency (ms)
-    pub latency_p50_ms: u64,
-    /// P95 latency (ms)
-    pub latency_p95_ms: u64,
-    /// P99 latency (ms)
-    pub latency_p99_ms: u64,
-    /// Error rate (0.0 - 1.0)
-    pub error_rate: f64,
-}
-
 /// Test result after execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct TestResult {
     /// Test metadata
     pub meta: TestMeta,
@@ -292,12 +276,11 @@ pub struct TestResult {
     pub stack_trace: Option<String>,
     /// Profile metrics (for profile tests)
     pub profile_metrics: Option<ProfileMetrics>,
-    /// Stress metrics (for stress tests)
-    pub stress_metrics: Option<StressMetrics>,
     /// Timestamp when test started
     pub started_at: String,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl TestResult {
     /// Create a passed test result
     pub fn passed(meta: TestMeta, duration_ms: u64) -> Self {
@@ -308,7 +291,6 @@ impl TestResult {
             error: None,
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -322,7 +304,6 @@ impl TestResult {
             error: Some(error.into()),
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -336,7 +317,6 @@ impl TestResult {
             error: Some(reason.into()),
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -350,7 +330,6 @@ impl TestResult {
             error: Some(error.into()),
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -367,12 +346,6 @@ impl TestResult {
         self
     }
 
-    /// Add stress metrics
-    pub fn with_stress_metrics(mut self, metrics: StressMetrics) -> Self {
-        self.stress_metrics = Some(metrics);
-        self
-    }
-
     /// Check if test passed
     pub fn is_passed(&self) -> bool {
         self.status == TestStatus::Passed
@@ -386,6 +359,7 @@ impl TestResult {
 
 /// Test runner configuration
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct RunnerConfig {
     /// Filter by test type
     pub test_type: Option<TestType>,
@@ -403,6 +377,7 @@ pub struct RunnerConfig {
     pub max_workers: usize,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl Default for RunnerConfig {
     fn default() -> Self {
         Self {
@@ -419,12 +394,14 @@ impl Default for RunnerConfig {
 
 /// Test runner - orchestrates test discovery and execution
 #[derive(Debug)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct TestRunner {
     config: RunnerConfig,
     results: Vec<TestResult>,
     start_time: Option<Instant>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl TestRunner {
     /// Create a new test runner
     pub fn new(config: RunnerConfig) -> Self {
@@ -516,6 +493,7 @@ impl TestRunner {
 
 /// Summary of test results
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub struct TestSummary {
     /// Total tests
     pub total: usize,
@@ -531,6 +509,7 @@ pub struct TestSummary {
     pub total_duration_ms: u64,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 impl TestSummary {
     /// Check if all tests passed
     pub fn all_passed(&self) -> bool {
@@ -559,6 +538,7 @@ impl TestSummary {
 ///
 /// This function spawns concurrent tasks to process test results with a semaphore
 /// limiting max concurrency.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
 pub async fn run_tests_parallel(results: Vec<TestResult>, config: RunnerConfig) -> Vec<TestResult> {
     if !config.parallel || results.is_empty() {
         // Sequential execution
@@ -740,7 +720,7 @@ mod tests {
 changes:
   - path: projects/meter/src/runner.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/runner.rs` captured during meter full-codegen standardization.

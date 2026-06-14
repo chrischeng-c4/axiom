@@ -61,6 +61,7 @@ const REQUIRED: &[(&str, &str)] = &[
     ("requirements", "mermaid"),
     ("unit-test", "mermaid"),
     ("e2e-test", "yaml"),
+    ("rust-source-unit", "rust"),
     ("test-plan", "mermaid"),
     ("tests", "yaml"),
     ("scenarios", "yaml"),

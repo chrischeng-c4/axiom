@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "agent-derive"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "agent",
  "async-trait",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "agentic-workflow"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "agent",
  "anyhow",
@@ -126,6 +126,7 @@ dependencies = [
  "libc",
  "open",
  "pulldown-cmark",
+ "ra_ap_syntax",
  "rayon",
  "regex",
  "reqwest 0.12.28",
@@ -166,7 +167,7 @@ version = "0.1.0"
 
 [[package]]
 name = "agentkit-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "agent",
  "cclab-mamba-registry",
@@ -392,6 +393,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "arena"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "postgres",
+ "rig",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "arena-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arena",
+ "clap",
+ "serde_json",
+]
+
+[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -416,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "arraykit"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "rayon",
  "serde",
@@ -426,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "arraykit-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "arraykit",
  "cclab-mamba-registry",
@@ -1355,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-cli-registry"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1364,7 +1388,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-compass"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1417,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-core"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bson",
@@ -1433,7 +1457,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-ctx-inf-db"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "cclab-wal",
@@ -1457,7 +1481,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-frame"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "arraykit",
  "rayon",
@@ -1469,7 +1493,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-grid"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
@@ -1498,7 +1522,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-grid-render-webgpu"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "fontdb",
@@ -1515,7 +1539,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-grid-wasm"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-grid",
  "cclab-grid-render-webgpu",
@@ -1533,7 +1557,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-kv"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "bincode",
@@ -1560,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-learn"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "arraykit",
  "rayon",
@@ -1571,7 +1595,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-log"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1587,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-log-mamba"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-log",
  "cclab-mamba-registry",
@@ -1598,7 +1622,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-mamba-registry"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "indexmap 2.14.0",
  "linkme",
@@ -1610,7 +1634,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-mcp-mamba"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -1621,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-pg"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "cclab-core",
@@ -1651,7 +1675,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-pg-cli"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "cclab-cli-registry",
@@ -1664,7 +1688,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-qc-mamba"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -1673,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-runtime-mamba"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "axum 0.8.9",
  "cclab-mamba-registry",
@@ -1685,7 +1709,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-schema"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "bson",
  "dotenvy",
@@ -1700,7 +1724,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-schema-mamba"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "cclab-schema",
@@ -1712,7 +1736,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-server"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "agentic-workflow",
  "anyhow",
@@ -1736,7 +1760,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-text"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "rayon",
  "serde",
@@ -1747,7 +1771,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-tqdm"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "indicatif",
@@ -1757,7 +1781,7 @@ dependencies = [
 
 [[package]]
 name = "cclab-util"
-version = "0.3.61"
+version = "0.4.0"
 
 [[package]]
 name = "cclab-wal"
@@ -2250,6 +2274,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "countme"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7704b5fdd17b18ae31c4c1da5a2e0305a2bf17b5249300a9ee9ed7b72114c636"
+
+[[package]]
 name = "cow-utils"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2615,7 +2645,7 @@ dependencies = [
 
 [[package]]
 name = "cryptokit"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2640,7 +2670,7 @@ dependencies = [
 
 [[package]]
 name = "cryptokit-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "cryptokit",
@@ -3091,6 +3121,12 @@ name = "dragonbox_ecma"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd8e701084c37e7ef62d3f9e453b618130cbc0ef3573847785952a3ac3f746bf"
+
+[[package]]
+name = "drop_bomb"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bda8e21c04aca2ae33ffc2fd8c23134f3cac46db123ba97bd9d3f3b8a4a85e1"
 
 [[package]]
 name = "dtoa"
@@ -4099,6 +4135,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be136d9dacc2a13cc70bb6c8f902b414fb2641f8db1314637c6b7933411a8f82"
 
 [[package]]
+name = "guard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cclab-compass",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "guard-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cclab-cli-registry",
+ "clap",
+ "guard",
+ "linkme",
+ "serde_json",
+]
+
+[[package]]
 name = "h2"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4460,7 +4519,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "httpkit-demo"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -4970,7 +5029,7 @@ dependencies = [
  "number_prefix",
  "portable-atomic",
  "unicode-width 0.2.0",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -5145,7 +5204,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jet"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -5201,7 +5260,7 @@ dependencies = [
 
 [[package]]
 name = "jet-conformance-cli"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "cclab-cli-registry",
@@ -5214,7 +5273,7 @@ dependencies = [
 
 [[package]]
 name = "jet-manifest-cli"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "cclab-cli-registry",
@@ -5226,7 +5285,7 @@ dependencies = [
 
 [[package]]
 name = "jet-parity-corpus"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "clap",
  "hex",
@@ -5241,7 +5300,7 @@ dependencies = [
 
 [[package]]
 name = "jet-parity-gate"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "clap",
@@ -5255,7 +5314,7 @@ dependencies = [
 
 [[package]]
 name = "jet-parity-oracle"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5277,7 +5336,7 @@ dependencies = [
 
 [[package]]
 name = "jet-wasm"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-grid-render-webgpu",
  "cclab-grid-wasm",
@@ -5413,6 +5472,12 @@ dependencies = [
  "getrandom 0.3.4",
  "libc",
 ]
+
+[[package]]
+name = "jod-thread"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a037eddb7d28de1d0fc42411f501b53b75838d313908078d6698d064f3029b24"
 
 [[package]]
 name = "js-sys"
@@ -6030,7 +6095,7 @@ dependencies = [
 
 [[package]]
 name = "lumen"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -6055,6 +6120,9 @@ dependencies = [
  "memmap2 0.9.10",
  "memory-stats",
  "moka",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "proptest",
  "rand 0.8.6",
  "rayon",
@@ -6073,6 +6141,7 @@ dependencies = [
  "tower 0.5.3",
  "tower-http 0.6.11",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "utoipa",
 ]
@@ -6181,7 +6250,7 @@ dependencies = [
 
 [[package]]
 name = "mamba"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "agentkit-binding",
  "anyhow",
@@ -6253,14 +6322,14 @@ dependencies = [
 
 [[package]]
 name = "mambalibs-di"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "mambalibs-di-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -6269,7 +6338,7 @@ dependencies = [
 
 [[package]]
 name = "mambalibs-http"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6293,7 +6362,7 @@ dependencies = [
 
 [[package]]
 name = "mambalibs-http-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "cclab-schema-mamba",
@@ -6390,7 +6459,7 @@ dependencies = [
 
 [[package]]
 name = "mediakit"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "image",
  "serde",
@@ -6400,7 +6469,7 @@ dependencies = [
 
 [[package]]
 name = "mediakit-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -6429,6 +6498,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
 ]
 
 [[package]]
@@ -6482,6 +6560,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.8.23",
  "tower 0.5.3",
  "tracing",
  "walkdir",
@@ -6563,6 +6642,15 @@ dependencies = [
  "libc",
  "log",
  "wasi 0.11.1+wasi-snapshot-preview1",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "miow"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
+dependencies = [
  "windows-sys 0.61.2",
 ]
 
@@ -6678,7 +6766,7 @@ dependencies = [
 
 [[package]]
 name = "mongokit"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6698,7 +6786,7 @@ dependencies = [
 
 [[package]]
 name = "mongokit-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -7321,6 +7409,7 @@ dependencies = [
  "futures-channel",
  "futures-executor",
  "futures-util",
+ "glob",
  "once_cell",
  "opentelemetry",
  "ordered-float 4.6.0",
@@ -7908,7 +7997,7 @@ dependencies = [
 
 [[package]]
 name = "pgkit-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "cclab-pg",
@@ -8114,7 +8203,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plotkit"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "serde",
  "tempfile",
@@ -8123,7 +8212,7 @@ dependencies = [
 
 [[package]]
 name = "plotkit-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -8225,6 +8314,20 @@ dependencies = [
  "embedded-io 0.4.0",
  "embedded-io 0.6.1",
  "serde",
+]
+
+[[package]]
+name = "postgres"
+version = "0.19.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacf632d0554ff75f58183694f41dc8999c8a3a43a386994d0ec2d034f1dfbe1"
+dependencies = [
+ "bytes",
+ "fallible-iterator 0.2.0",
+ "futures-util",
+ "log",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]
@@ -8582,7 +8685,7 @@ dependencies = [
 
 [[package]]
 name = "queuekit"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -8663,7 +8766,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -8684,7 +8787,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tinyvec",
  "tracing",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -8721,6 +8824,70 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "ra-ap-rustc_lexer"
+version = "0.122.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "415f0821f512608d825b3215489a6a6a2c18ed9f0045953d514e7ec23d4b90ab"
+dependencies = [
+ "memchr",
+ "unicode-properties",
+ "unicode-xid",
+]
+
+[[package]]
+name = "ra_ap_edition"
+version = "0.0.296"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc3fbde70afb324a176bcadfdaa6d4b1851f373f56bca06781c556ae49143530"
+
+[[package]]
+name = "ra_ap_parser"
+version = "0.0.296"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5b351daf0d4804ee7fd2cb9304b8b22e86a649702ec0e51cb72873bb786af61"
+dependencies = [
+ "drop_bomb",
+ "ra-ap-rustc_lexer",
+ "ra_ap_edition",
+ "rustc-literal-escaper",
+ "tracing",
+]
+
+[[package]]
+name = "ra_ap_stdx"
+version = "0.0.296"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72d3bbbce1b520262a474fe2876306206ebab83a922b286a82a2b93d95c467ea"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-utils",
+ "itertools 0.14.0",
+ "jod-thread",
+ "libc",
+ "miow",
+ "tracing",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "ra_ap_syntax"
+version = "0.0.296"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c515e1089728d68ede5e3b49c7858c2be834c80d67fe2efa8cd09b613a1810d"
+dependencies = [
+ "either",
+ "itertools 0.14.0",
+ "ra_ap_parser",
+ "ra_ap_stdx",
+ "rowan",
+ "rustc-hash 2.1.2",
+ "rustc-literal-escaper",
+ "smol_str",
+ "tracing",
+ "triomphe",
+]
 
 [[package]]
 name = "radium"
@@ -9233,6 +9400,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "rig"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "postgres",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.8.23",
+ "ureq",
+]
+
+[[package]]
+name = "rig-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rig",
+ "serde_json",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9321,6 +9511,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rowan"
+version = "0.15.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a58fa8a7ccff2aec4f39cc45bf5f985cec7125ab271cf681c279fd00192b49"
+dependencies = [
+ "countme",
+ "hashbrown 0.14.5",
+ "memoffset",
+ "rustc-hash 1.1.0",
+ "text-size",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9383,6 +9586,12 @@ name = "rustc-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
+
+[[package]]
+name = "rustc-literal-escaper"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab03008eb631b703dd16978282ae36c73282e7922fe101a4bd072a40ecea7b8b"
 
 [[package]]
 name = "rustc_version"
@@ -9485,7 +9694,7 @@ version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30a7197ae7eb376e574fe940d068c30fe0462554a3ddbe4eca7838e049c937a9"
 dependencies = [
- "web-time",
+ "web-time 1.1.0",
  "zeroize",
 ]
 
@@ -9658,7 +9867,7 @@ dependencies = [
 
 [[package]]
 name = "scikit"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "arraykit",
  "cclab-frame",
@@ -9670,7 +9879,7 @@ dependencies = [
 
 [[package]]
 name = "scikit-binding"
-version = "0.3.61"
+version = "0.4.0"
 dependencies = [
  "cclab-mamba-registry",
  "linkme",
@@ -10276,6 +10485,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7c388c1b5e93756d0c740965c41e8822f866621d41acbdf6336a6a168f8840c"
 
 [[package]]
+name = "smol_str"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
+dependencies = [
+ "borsh",
+ "serde_core",
+]
+
+[[package]]
 name = "socket2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10866,6 +11085,12 @@ checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "text-size"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f18aa187839b2bdb1ad2fa35ead8c4c2976b64e4363c386d45ac0f7ee85c9233"
 
 [[package]]
 name = "textwrap"
@@ -11568,6 +11793,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-opentelemetry"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c67ac25c5407e7b961fafc6f7e9aa5958fd297aada2d20fa2ae1737357e55596"
+dependencies = [
+ "js-sys",
+ "once_cell",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "smallvec",
+ "tracing",
+ "tracing-core",
+ "tracing-log",
+ "tracing-subscriber",
+ "web-time 0.2.4",
+]
+
+[[package]]
 name = "tracing-serde"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11747,6 +11990,12 @@ dependencies = [
  "cc",
  "tree-sitter-language",
 ]
+
+[[package]]
+name = "triomphe"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd69c5aa8f924c7519d6372789a74eac5b94fb0f8fcf0d4a97eb0bfc3e785f39"
 
 [[package]]
 name = "try-lock"
@@ -12003,6 +12252,24 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "ureq"
+version = "2.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
+dependencies = [
+ "base64 0.22.1",
+ "flate2",
+ "log",
+ "once_cell",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "url",
+ "webpki-roots 0.26.11",
+]
 
 [[package]]
 name = "url"
@@ -12389,6 +12656,16 @@ name = "web-sys"
 version = "0.3.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b572dff8bcf38bad0fa19729c89bb5748b2b9b1d8be70cf90df697e3a8f32aa"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "web-time"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa30049b1c872b72c89866d458eae9f20380ab280ffd1b1e18df2d3e2d98cfe0"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -12843,6 +13120,15 @@ dependencies = [
 
 [[package]]
 name = "windows-sys"
+version = "0.60.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
+dependencies = [
+ "windows-targets 0.53.5",
+]
+
+[[package]]
+name = "windows-sys"
 version = "0.61.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
@@ -12874,11 +13160,28 @@ dependencies = [
  "windows_aarch64_gnullvm 0.52.6",
  "windows_aarch64_msvc 0.52.6",
  "windows_i686_gnu 0.52.6",
- "windows_i686_gnullvm",
+ "windows_i686_gnullvm 0.52.6",
  "windows_i686_msvc 0.52.6",
  "windows_x86_64_gnu 0.52.6",
  "windows_x86_64_gnullvm 0.52.6",
  "windows_x86_64_msvc 0.52.6",
+]
+
+[[package]]
+name = "windows-targets"
+version = "0.53.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4945f9f551b88e0d65f3db0bc25c33b8acea4d9e41163edf90dcd0b19f9069f3"
+dependencies = [
+ "windows-link",
+ "windows_aarch64_gnullvm 0.53.1",
+ "windows_aarch64_msvc 0.53.1",
+ "windows_i686_gnu 0.53.1",
+ "windows_i686_gnullvm 0.53.1",
+ "windows_i686_msvc 0.53.1",
+ "windows_x86_64_gnu 0.53.1",
+ "windows_x86_64_gnullvm 0.53.1",
+ "windows_x86_64_msvc 0.53.1",
 ]
 
 [[package]]
@@ -12894,6 +13197,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a4622180e7a0ec044bb555404c800bc9fd9ec262ec147edd5989ccd0c02cd3"
 
 [[package]]
+name = "windows_aarch64_gnullvm"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9d8416fa8b42f5c947f8482c43e7d89e73a173cead56d044f6a56104a6d1b53"
+
+[[package]]
 name = "windows_aarch64_msvc"
 version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12904,6 +13213,12 @@ name = "windows_aarch64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09ec2a7bb152e2252b53fa7803150007879548bc709c039df7627cabbd05d469"
+
+[[package]]
+name = "windows_aarch64_msvc"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9d782e804c2f632e395708e99a94275910eb9100b2114651e04744e9b125006"
 
 [[package]]
 name = "windows_i686_gnu"
@@ -12918,10 +13233,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e9b5ad5ab802e97eb8e295ac6720e509ee4c243f69d781394014ebfe8bbfa0b"
 
 [[package]]
+name = "windows_i686_gnu"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "960e6da069d81e09becb0ca57a65220ddff016ff2d6af6a223cf372a506593a3"
+
+[[package]]
 name = "windows_i686_gnullvm"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0eee52d38c090b3caa76c563b86c3a4bd71ef1a819287c19d586d7334ae8ed66"
+
+[[package]]
+name = "windows_i686_gnullvm"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa7359d10048f68ab8b09fa71c3daccfb0e9b559aed648a8f95469c27057180c"
 
 [[package]]
 name = "windows_i686_msvc"
@@ -12936,6 +13263,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "240948bc05c5e7c6dabba28bf89d89ffce3e303022809e73deaefe4f6ec56c66"
 
 [[package]]
+name = "windows_i686_msvc"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e7ac75179f18232fe9c285163565a57ef8d3c89254a30685b57d83a38d326c2"
+
+[[package]]
 name = "windows_x86_64_gnu"
 version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12946,6 +13279,12 @@ name = "windows_x86_64_gnu"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "147a5c80aabfbf0c7d901cb5895d1de30ef2907eb21fbbab29ca94c5b08b1a78"
+
+[[package]]
+name = "windows_x86_64_gnu"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c3842cdd74a865a8066ab39c8a7a473c0778a3f29370b5fd6b4b9aa7df4a499"
 
 [[package]]
 name = "windows_x86_64_gnullvm"
@@ -12960,6 +13299,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24d5b23dc417412679681396f2b49f3de8c1473deb516bd34410872eff51ed0d"
 
 [[package]]
+name = "windows_x86_64_gnullvm"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ffa179e2d07eee8ad8f57493436566c7cc30ac536a3379fdf008f47f6bb7ae1"
+
+[[package]]
 name = "windows_x86_64_msvc"
 version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12970,6 +13315,12 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "windows_x86_64_msvc"
+version = "0.53.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "winnow"

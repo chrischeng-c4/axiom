@@ -32,7 +32,10 @@ pub fn write_last_report(report: &MeterReport) -> std::io::Result<PathBuf> {
 
 /// Write `report` to `<base>/.meter/last-report.json`.
 /// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-persist-rs.md#source
-pub fn write_last_report_in(base: impl AsRef<Path>, report: &MeterReport) -> std::io::Result<PathBuf> {
+pub fn write_last_report_in(
+    base: impl AsRef<Path>,
+    report: &MeterReport,
+) -> std::io::Result<PathBuf> {
     let path = last_report_path(&base);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
