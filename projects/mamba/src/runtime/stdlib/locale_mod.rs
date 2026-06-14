@@ -256,6 +256,26 @@ pub fn mb_locale_setlocale(cat: MbValue, locale_str: MbValue) -> MbValue {
         if !(0..=6).contains(&c) {
             return raise_named("Error", &format!("unsupported locale category {c}"));
         }
+    } else if !cat.is_none() {
+        // A non-int category (e.g. a string) is a TypeError per CPython.
+        return raise_named("TypeError", "an integer is required (got type str)");
+    }
+    // bytes (or a tuple containing bytes) can never name a locale.
+    let has_bytes = |v: MbValue| -> bool {
+        v.as_ptr().is_some_and(|p| unsafe {
+            match &(*p).data {
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => true,
+                ObjData::Tuple(items) => items.iter().any(|it| {
+                    it.as_ptr().is_some_and(|q| {
+                        matches!((*q).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+                    })
+                }),
+                _ => false,
+            }
+        })
+    };
+    if has_bytes(locale_str) {
+        return raise_named("TypeError", "locale must be a string or iterable of strings");
     }
     if let Some(s) = extract_str(locale_str) {
         // Unknown locale: CPython raises `locale.Error` when the requested locale
@@ -323,7 +343,7 @@ pub fn mb_locale_strxfrm(val: MbValue) -> MbValue {
 /// locale collation reduces to byte ordering, returning <0 / 0 / >0.
 pub fn mb_locale_strcoll(a: MbValue, b: MbValue) -> MbValue {
     let (Some(sa), Some(sb)) = (extract_str(a), extract_str(b)) else {
-        return MbValue::from_int(0);
+        return raise_named("TypeError", "strcoll arguments must be strings");
     };
     if sa.contains('\0') || sb.contains('\0') {
         return raise_named("ValueError", "embedded null character");

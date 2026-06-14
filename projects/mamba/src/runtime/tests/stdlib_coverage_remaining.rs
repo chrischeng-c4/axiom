@@ -104,7 +104,8 @@ fn test_platform_all_functions_return_strings() {
     use crate::runtime::stdlib::platform_mod::*;
 
     assert!(str_val(mb_platform_system()).map(|s| !s.is_empty()).unwrap_or(false));
-    assert!(str_val(mb_platform_release()).map(|s| s == "0.0.0").unwrap_or(false));
+    // release() now reports the real kernel release (uname -r).
+    assert!(str_val(mb_platform_release()).map(|s| !s.is_empty()).unwrap_or(false));
     assert!(str_val(mb_platform_machine()).map(|s| !s.is_empty()).unwrap_or(false));
     assert!(str_val(mb_platform_processor()).map(|s| !s.is_empty()).unwrap_or(false));
     assert!(str_val(mb_platform_python_version()).map(|s| s == "3.12.0").unwrap_or(false));
@@ -258,40 +259,29 @@ fn test_errno_errorcode_and_strerror_integration() {
 // ── traceback ────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_traceback_format_multiple_exception_types() {
+fn test_traceback_format_exception_non_exception_raises_type_error() {
     use crate::runtime::stdlib::traceback_mod::mb_traceback_format_exception;
+    use crate::runtime::exception;
 
-    // None
-    let r = mb_traceback_format_exception(MbValue::none());
-    assert_eq!(str_val(r).as_deref(), Some("NoneType: None"));
-
-    // Str
-    let r = mb_traceback_format_exception(s("connection error"));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: connection error"));
-
-    // Int
-    let r = mb_traceback_format_exception(MbValue::from_int(42));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: 42"));
-
-    // Bool true
-    let r = mb_traceback_format_exception(MbValue::from_bool(true));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: True"));
-
-    // Bool false
-    let r = mb_traceback_format_exception(MbValue::from_bool(false));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: False"));
+    // CPython: format_exception(42) raises TypeError.
+    exception::mb_clear_exception();
+    let r = mb_traceback_format_exception(&[MbValue::from_int(42)]);
+    assert!(r.is_none());
+    assert_eq!(exception::mb_has_exception().as_bool(), Some(true));
+    exception::mb_clear_exception();
 }
 
 #[test]
-fn test_traceback_format_exception_dict_no_type() {
+fn test_traceback_format_exception_two_args_raises_value_error() {
     use crate::runtime::stdlib::traceback_mod::mb_traceback_format_exception;
+    use crate::runtime::exception;
 
-    // Dict without _type key → default "Exception"
-    let dict = MbValue::from_ptr(MbObject::new_dict());
-    let r = mb_traceback_format_exception(dict);
-    // When no _type, falls back to "Exception" with empty msg → "Exception"
-    let result = str_val(r).unwrap_or_default();
-    assert!(result.contains("Exception"));
+    // CPython: passing value without tb raises ValueError.
+    exception::mb_clear_exception();
+    let r = mb_traceback_format_exception(&[s("Exception"), s("x")]);
+    assert!(r.is_none());
+    assert_eq!(exception::mb_has_exception().as_bool(), Some(true));
+    exception::mb_clear_exception();
 }
 
 // ── codecs ────────────────────────────────────────────────────────────────────
@@ -508,12 +498,24 @@ fn test_threading_event_lifecycle() {
 
 // ── sqlite3 ───────────────────────────────────────────────────────────────────
 
+// Class name of an `ObjData::Instance` value (sqlite3 returns real class
+// instances since the isinstance-dispatch rework, not dict-backed shims).
+fn instance_class(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })
+}
+
 #[test]
 fn test_sqlite3_full_workflow() {
     use crate::runtime::stdlib::sqlite3_mod::*;
 
     let conn = mb_sqlite3_connect(s(":memory:"));
-    assert_eq!(dict_str(conn, "__class__").as_deref(), Some("Connection"));
+    assert_eq!(instance_class(conn).as_deref(), Some("Connection"));
 
     // Create table
     mb_sqlite3_execute(conn, s("CREATE TABLE users (id INT, name TEXT)"));
@@ -542,12 +544,16 @@ fn test_sqlite3_create_table_if_not_exists_integration() {
 }
 
 #[test]
-fn test_sqlite3_cursor_returns_same_conn() {
+fn test_sqlite3_cursor_returns_distinct_cursor_instance() {
     use crate::runtime::stdlib::sqlite3_mod::{mb_sqlite3_connect, mb_sqlite3_cursor};
 
+    // CPython 3.12: conn.cursor() returns a Cursor object, not the
+    // connection itself; mamba mirrors that with a `Cursor` instance
+    // sharing the connection's in-memory state.
     let conn = mb_sqlite3_connect(s(":memory:"));
     let cursor = mb_sqlite3_cursor(conn);
-    assert_eq!(conn, cursor);
+    assert_ne!(conn, cursor);
+    assert_eq!(instance_class(cursor).as_deref(), Some("Cursor"));
 }
 
 // ── unittest ──────────────────────────────────────────────────────────────────

@@ -26,8 +26,8 @@
 //!     `is_reserved`, and the concrete fs ops `exists`, `is_file`, `is_dir`,
 //!     `iterdir`, `mkdir`, `rmdir`, `unlink`, `read_text`, `write_text`,
 //!     `touch`, `resolve`, `glob`, `stat`) and dunders (`__str__`,
-//!     `__repr__`, `__fspath__`, `__hash__`, `__eq__`, `__ne__`, `__lt__`,
-//!     `__le__`, `__gt__`, `__ge__`, `__truediv__`, `__rtruediv__`) are
+//!     `__repr__`, `__fspath__`, `__bytes__`, `__hash__`, `__eq__`, `__ne__`,
+//!     `__lt__`, `__le__`, `__gt__`, `__ge__`, `__truediv__`, `__rtruediv__`) are
 //!     registered via `mb_class_register`, so `/`, `==`, `str()`,
 //!     `sorted()`, `isinstance(p, Path)` etc. all dispatch through the
 //!     generic runtime machinery (no class.rs edit). Concrete fs methods
@@ -422,6 +422,7 @@ fn register_path_classes() {
         ("__str__", method_str as usize, false),
         ("__repr__", method_repr as usize, false),
         ("__fspath__", method_fspath as usize, false),
+        ("__bytes__", method_bytes as usize, false),
         ("__hash__", method_hash as usize, false),
         ("__eq__", dunder_eq as usize, false),
         ("__ne__", dunder_ne as usize, false),
@@ -893,17 +894,39 @@ fn is_windows_flavour(class_name: &str) -> bool {
     matches!(class_name, "WindowsPath" | "PureWindowsPath")
 }
 
-/// True when a value is a str argument; rejects bytes (CPython raises
-/// TypeError for bytes path components).
-fn require_str_seg(val: MbValue) -> Result<String, ()> {
+/// Shared os.fspath-style coercion of a value to a path string:
+///   1. exact `str` → its payload;
+///   2. a pathlib instance carrying the canonical `_path` field → that path
+///      (fast path, avoids a dunder call);
+///   3. any Instance whose class registers `__fspath__` → call it and
+///      require a `str` result.
+/// Returns `None` when the value is not path-like (the caller raises its
+/// boundary-appropriate TypeError) or when `__fspath__` itself raised — in
+/// the latter case the pending exception is preserved, so callers should
+/// check `mb_has_exception` before raising their own.
+pub fn coerce_fspath(val: MbValue) -> Option<String> {
     if let Some(s) = extract_str(val) {
-        return Ok(s);
+        return Some(s);
     }
-    // Accept Path-like instances carrying `_path`.
     if let Some(s) = inst_field_str(val, "_path") {
-        return Ok(s);
+        return Some(s);
     }
-    Err(())
+    if let Some(cls) = inst_class_name(val) {
+        if !super::super::class::lookup_method(&cls, "__fspath__").is_none() {
+            let method = MbValue::from_ptr(MbObject::new_str("__fspath__".to_string()));
+            let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+            let r = super::super::class::mb_call_method(val, method, args);
+            return extract_str(r);
+        }
+    }
+    None
+}
+
+/// True when a value coerces to a str path segment (str, pathlib instance,
+/// or `__fspath__` provider); rejects bytes (CPython raises TypeError for
+/// bytes path components — the constructor checks that before calling this).
+fn require_str_seg(val: MbValue) -> Result<String, ()> {
+    coerce_fspath(val).ok_or(())
 }
 
 /// Join all positional args into a single path string and wrap in an
@@ -925,10 +948,15 @@ pub fn mb_pathlib_path_class(class_name: &str, args: &[MbValue]) -> MbValue {
         let mut seg = match require_str_seg(*arg) {
             Ok(s) => s,
             Err(()) => {
+                // A failing user `__fspath__` already left its own exception
+                // pending — propagate that instead of masking it.
+                if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+                    return MbValue::none();
+                }
                 return raise_type_error(
                     "argument should be a str or an os.PathLike object where \
                      __fspath__ returns a str",
-                )
+                );
             }
         };
         // CPython carries a foreign-flavour PurePath's components across by
@@ -1047,6 +1075,13 @@ unsafe extern "C" fn method_repr(self_v: MbValue, _args: MbValue) -> MbValue {
 unsafe extern "C" fn method_fspath(self_v: MbValue, _args: MbValue) -> MbValue {
     let s = inst_field_str(self_v, "_path").unwrap_or_else(|| ".".to_string());
     MbValue::from_ptr(MbObject::new_str(s))
+}
+
+/// `bytes(p)` — CPython `PurePath.__bytes__` is `os.fsencode(str(self))`,
+/// which is the UTF-8 encoding of the path string on POSIX hosts.
+unsafe extern "C" fn method_bytes(self_v: MbValue, _args: MbValue) -> MbValue {
+    let s = inst_field_str(self_v, "_path").unwrap_or_else(|| ".".to_string());
+    MbValue::from_ptr(MbObject::new_bytes(s.into_bytes()))
 }
 
 unsafe extern "C" fn method_hash(self_v: MbValue, _args: MbValue) -> MbValue {

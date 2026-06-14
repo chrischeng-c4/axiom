@@ -81,7 +81,7 @@ struct ExceptionHandler {
 /// Create a new exception of the given type.
 pub fn mb_exception_new(exc_type: MbValue, message: MbValue) -> MbValue {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     let exc = MbException::new(&type_name, &msg);
     store_exception_as_value(exc)
 }
@@ -202,12 +202,22 @@ fn extract_str(val: MbValue) -> Option<String> {
     })
 }
 
+/// Display text for a raise-site message operand: CPython stringifies a
+/// non-str single arg (`str(ValueError(3)) == "3"`; `SystemExit(3)`
+/// carries its exit status here), so int/float operands must not vanish.
+fn message_display(message: MbValue) -> String {
+    extract_str(message)
+        .or_else(|| message.as_int().map(|i| i.to_string()))
+        .or_else(|| message.as_float().map(|f| f.to_string()))
+        .unwrap_or_default()
+}
+
 // ── Raise / Catch ──
 
 /// Raise an exception. Sets the thread-local exception state.
 pub fn mb_raise(exc_type: MbValue, message: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     // Also signal StopIteration via the iterator flag for user-defined __next__
     if type_name == "StopIteration" {
         super::iter::signal_stop_iteration();
@@ -221,17 +231,51 @@ pub fn mb_raise(exc_type: MbValue, message: MbValue) {
 /// Raise with chaining: `raise X from Y`.
 /// Always sets __suppress_context__ = True (per Python semantics).
 /// If cause is None, __cause__ remains None.
+/// Convert an exception MbValue (an Instance carrying message/__cause__/
+/// __context__ fields) into an owned MbException, preserving its full
+/// cause/context chain. `raise X from Y` must keep Y's *own* __cause__ so a
+/// deep chain (`KeyError`←`LookupError`←`ValueError`) walks all the way down;
+/// rebuilding the cause from just its type+message dropped the inner links.
+/// Bounded depth guards a cyclic chain.
+fn mbvalue_to_mbexception(exc: MbValue, depth: u32) -> Option<MbException> {
+    if depth > 64 || exc.is_none() {
+        return None;
+    }
+    let ty = get_exception_type(exc)?;
+    let msg = get_exception_message(exc).unwrap_or_default();
+    let mut out = MbException::new(&ty, &msg);
+    if let Some(ptr) = exc.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let (cause_v, ctx_v, suppress) = {
+                    let f = fields.read().unwrap();
+                    (
+                        f.get("__cause__").copied().unwrap_or_else(MbValue::none),
+                        f.get("__context__").copied().unwrap_or_else(MbValue::none),
+                        f.get("__suppress_context__")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
+                    )
+                };
+                out.suppress_context = suppress;
+                out.cause = mbvalue_to_mbexception(cause_v, depth + 1).map(Box::new);
+                out.context = mbvalue_to_mbexception(ctx_v, depth + 1).map(Box::new);
+            }
+        }
+    }
+    Some(out)
+}
+
 pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     let mut exc = MbException::new(&type_name, &msg);
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
     if !cause.is_none() {
-        let cause_type = get_exception_type(cause).unwrap_or_else(|| "Exception".to_string());
-        let cause_msg = get_exception_message(cause).unwrap_or_default();
-        let cause_exc = MbException::new(&cause_type, &cause_msg);
-        exc.cause = Some(Box::new(cause_exc));
+        // Preserve the cause's own chain (its __cause__/__context__) so deep
+        // `raise ... from ...` ladders walk correctly.
+        exc.cause = mbvalue_to_mbexception(cause, 0).map(Box::new);
     }
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
@@ -242,12 +286,10 @@ pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
 /// Called when a raise occurs inside an except handler body.
 pub fn mb_raise_with_context(exc_type: MbValue, message: MbValue, context: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     let mut exc = MbException::new(&type_name, &msg);
     if !context.is_none() {
-        let ctx_type = get_exception_type(context).unwrap_or_else(|| "Exception".to_string());
-        let ctx_msg = get_exception_message(context).unwrap_or_default();
-        exc.context = Some(Box::new(MbException::new(&ctx_type, &ctx_msg)));
+        exc.context = mbvalue_to_mbexception(context, 0).map(Box::new);
     }
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
@@ -258,19 +300,15 @@ pub fn mb_raise_with_context(exc_type: MbValue, message: MbValue, context: MbVal
 /// Always sets __suppress_context__ = True (per Python `raise from` semantics).
 pub fn mb_raise_from_with_context(exc_type: MbValue, message: MbValue, cause: MbValue, context: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     let mut exc = MbException::new(&type_name, &msg);
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
     if !cause.is_none() {
-        let cause_type = get_exception_type(cause).unwrap_or_else(|| "Exception".to_string());
-        let cause_msg = get_exception_message(cause).unwrap_or_default();
-        exc.cause = Some(Box::new(MbException::new(&cause_type, &cause_msg)));
+        exc.cause = mbvalue_to_mbexception(cause, 0).map(Box::new);
     }
     if !context.is_none() {
-        let ctx_type = get_exception_type(context).unwrap_or_else(|| "Exception".to_string());
-        let ctx_msg = get_exception_message(context).unwrap_or_default();
-        exc.context = Some(Box::new(MbException::new(&ctx_type, &ctx_msg)));
+        exc.context = mbvalue_to_mbexception(context, 0).map(Box::new);
     }
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
@@ -395,7 +433,20 @@ pub fn current_exception_type() -> Option<String> {
 /// Get the type name of an exception value.
 fn get_exception_type(exc: MbValue) -> Option<String> {
     exc.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            // `raise SomeType` where SomeType is a type OBJECT (Instance
+            // class_name "type" carrying __name__): the exception's type is
+            // the named class, not the literal string "type".
+            if class_name == "type" {
+                if let Some(n) = fields
+                    .read()
+                    .unwrap()
+                    .get("__name__")
+                    .and_then(|v| extract_str(*v))
+                {
+                    return Some(n);
+                }
+            }
             Some(class_name.clone())
         } else {
             None
@@ -413,7 +464,14 @@ fn get_exception_message(exc: MbValue) -> Option<String> {
     exc.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             let fields = fields.read().unwrap();
-            fields.get("message").and_then(|v| extract_str(*v))
+            fields.get("message").and_then(|v| {
+                // CPython str(ValueError(3)) == "3": a non-str single arg
+                // stringifies rather than vanishing (SystemExit(3) carries
+                // its exit status here).
+                extract_str(*v)
+                    .or_else(|| v.as_int().map(|i| i.to_string()))
+                    .or_else(|| v.as_float().map(|f| f.to_string()))
+            })
         } else {
             None
         }
@@ -430,7 +488,7 @@ pub fn get_exception_message_pub(exc: MbValue) -> Option<String> {
 /// unconditional yes for parent=Exception/BaseException, which previously
 /// caused class.rs to treat every no-`__init__` user class as an exception
 /// and inject a bogus `args` field. (#1551)
-fn is_builtin_exception_name(name: &str) -> bool {
+pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
     matches!(name,
         "BaseException" | "Exception"
         | "ArithmeticError" | "ZeroDivisionError" | "OverflowError" | "FloatingPointError"
@@ -478,6 +536,9 @@ fn is_builtin_exception_name(name: &str) -> bool {
         // calendar.IllegalMonthError / IllegalWeekdayError (calendar_mod.rs
         // raises these). Both derive from ValueError (CPython 3.12).
         | "IllegalMonthError" | "IllegalWeekdayError"
+        // dataclasses.FrozenInstanceError (class.rs mb_setattr raises this on
+        // frozen-dataclass assignment). Derives from AttributeError.
+        | "FrozenInstanceError"
     )
 }
 
@@ -539,6 +600,8 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
             "NotImplementedError" | "RecursionError"),
         "NameError" => matches!(child, "UnboundLocalError"),
         "ImportError" => matches!(child, "ModuleNotFoundError"),
+        // dataclasses.FrozenInstanceError subclasses AttributeError (PEP 557).
+        "AttributeError" => matches!(child, "FrozenInstanceError"),
         // PEP 654: ExceptionGroup derives from both BaseExceptionGroup and Exception.
         "BaseExceptionGroup" => matches!(child, "ExceptionGroup"),
         "SyntaxError" => matches!(child,
@@ -626,6 +689,19 @@ pub fn mb_type_error(msg: &str) -> MbValue {
     )
 }
 
+/// Raise `TypeError(msg)` for a statically-detected call-binding violation
+/// (too many positional args / duplicate argument / missing required
+/// keyword-only argument) and return None. Emitted directly at the call site
+/// by the ast_to_hir arg-binding validator, replacing the would-be call so the
+/// enclosing `try` sees a genuine runtime exception.
+pub fn mb_arg_bind_error(msg: MbValue) -> MbValue {
+    mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        msg,
+    );
+    MbValue::none()
+}
+
 pub fn mb_value_error(msg: &str) -> MbValue {
     mb_exception_new(
         MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
@@ -687,7 +763,7 @@ pub fn mb_import_error(msg: &str) -> MbValue {
 /// Create an ExceptionGroup: ExceptionGroup(message, [exc1, exc2, ...])
 /// The `exceptions` field is always stored as a tuple (matching CPython).
 pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue {
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     // Convert exceptions list to tuple (CPython stores as tuple)
     let exc_tuple = if let Some(ptr) = exceptions.as_ptr() {
         unsafe {

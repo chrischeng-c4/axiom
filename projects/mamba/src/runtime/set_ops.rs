@@ -15,6 +15,14 @@ fn eq_py(a: MbValue, b: MbValue) -> bool {
 /// → set. Wrap the resulting `Vec<MbValue>` accordingly.
 #[inline]
 fn build_set_like_left(left: MbValue, items: Vec<MbValue>) -> MbValue {
+    // Every caller (union / intersection / difference / symmetric_difference)
+    // passes elements BORROWED from the operand sets via extract_set_items.
+    // The result must own its elements: retain each one, otherwise releasing
+    // a temporary operand (e.g. `f(xs) | f(ys)` where both calls return fresh
+    // sets) leaves the result holding dangling pointers.
+    for item in &items {
+        unsafe { super::rc::retain_if_ptr(*item) };
+    }
     let is_frozen = left.as_ptr().map(|p| unsafe {
         matches!((*p).data, ObjData::FrozenSet(_))
     }).unwrap_or(false);
@@ -44,6 +52,18 @@ pub fn mb_set_from_list(list: MbValue) -> MbValue {
     } else {
         Vec::new()
     };
+    // A mutable container can't be a set member (CPython: unhashable type).
+    // Covers set literals `{[1]}` and `set([[1]])` / set comprehensions, which
+    // build the element list then funnel through here.
+    for &elem in &elems {
+        if let Some(tn) = unhashable_type_name(elem) {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+            );
+            return MbValue::none();
+        }
+    }
     let set = mb_set_new();
     if let Some(ptr) = set.as_ptr() {
         unsafe {
@@ -63,6 +83,14 @@ pub fn mb_set_from_list(list: MbValue) -> MbValue {
 /// set.add(elem) — add an element (no-op if already present). O(1) amortized
 /// via the hash index in `MbSet`.
 pub fn mb_set_add(set_val: MbValue, elem: MbValue) {
+    // A mutable container can't be a set member (CPython: unhashable type).
+    if let Some(tn) = unhashable_type_name(elem) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+        );
+        return;
+    }
     if let Some(ptr) = set_val.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
@@ -409,7 +437,7 @@ pub fn mb_set_isdisjoint(a: MbValue, b: MbValue) -> MbValue {
 /// `set`, `bytearray`). Returns `None` for hashable values. Used to surface the
 /// `TypeError: unhashable type: '…'` that membership tests (`x in s`,
 /// `s.__contains__(x)`) raise on a mutable argument.
-fn unhashable_type_name(v: MbValue) -> Option<&'static str> {
+pub(crate) fn unhashable_type_name(v: MbValue) -> Option<&'static str> {
     let ptr = v.as_ptr()?;
     unsafe {
         match &(*ptr).data {
@@ -431,6 +459,18 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                 }
             }
             MbValue::none()
+        }
+    };
+    // Number of positional args — union/intersection/difference are variadic
+    // (`s.union(a, b, c)` folds over every iterable).
+    let args_len = || -> usize {
+        unsafe {
+            args.as_ptr()
+                .and_then(|ptr| match &(*ptr).data {
+                    ObjData::List(lock) => Some(lock.read().unwrap().len()),
+                    _ => None,
+                })
+                .unwrap_or(0)
         }
     };
     // REQ: R7 — frozenset immutability: reject mutation methods
@@ -458,9 +498,28 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         "discard" => { mb_set_discard(receiver, arg(0)); MbValue::none() }
         "clear" => { mb_set_clear(receiver); MbValue::none() }
         "copy" => mb_set_copy(receiver),
-        "union" => mb_set_union(receiver, arg(0)),
-        "intersection" => mb_set_intersection(receiver, arg(0)),
-        "difference" => mb_set_difference(receiver, arg(0)),
+        // Variadic: `s.union(a, b, ...)` folds every iterable (n==0 → copy).
+        "union" => {
+            let n = args_len();
+            if n == 0 { return mb_set_copy(receiver); }
+            let mut acc = mb_set_union(receiver, arg(0));
+            for i in 1..n { acc = mb_set_union(acc, arg(i)); }
+            acc
+        }
+        "intersection" => {
+            let n = args_len();
+            if n == 0 { return mb_set_copy(receiver); }
+            let mut acc = mb_set_intersection(receiver, arg(0));
+            for i in 1..n { acc = mb_set_intersection(acc, arg(i)); }
+            acc
+        }
+        "difference" => {
+            let n = args_len();
+            if n == 0 { return mb_set_copy(receiver); }
+            let mut acc = mb_set_difference(receiver, arg(0));
+            for i in 1..n { acc = mb_set_difference(acc, arg(i)); }
+            acc
+        }
         "symmetric_difference" => mb_set_symmetric_difference(receiver, arg(0)),
         "pop" => mb_set_pop(receiver),
         "update" => mb_set_update(receiver, arg(0)),

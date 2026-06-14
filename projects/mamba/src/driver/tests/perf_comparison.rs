@@ -46,7 +46,7 @@ struct PerfResult {
 
 /// Run source through Mamba JIT, return (elapsed, captured_output).
 fn run_mamba(src: &str, iters: u32) -> (Duration, String) {
-    let _guard = JIT_LOCK.lock().unwrap();
+    let _guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     cleanup_all_runtime_state();
 
     let module = parser::parse(src, FileId(0)).expect("parse");

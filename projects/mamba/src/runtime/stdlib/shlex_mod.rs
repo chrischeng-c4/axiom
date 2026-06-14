@@ -77,6 +77,15 @@ fn raise_attribute_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+/// Raise `TypeError(msg)` and return `MbValue::none()`.
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 /// POSIX-mode `shlex.split` (the public default: `posix=True`,
 /// `whitespace_split=True`, `comments=False`). Faithful to CPython 3.12:
 ///
@@ -219,8 +228,20 @@ fn quote_str(text: &str) -> String {
 }
 
 pub fn mb_shlex_quote(s: MbValue) -> MbValue {
-    let text = extract_str(s).unwrap_or_default();
-    MbValue::from_ptr(MbObject::new_str(quote_str(&text)))
+    match extract_str(s) {
+        Some(text) => MbValue::from_ptr(MbObject::new_str(quote_str(&text))),
+        None => {
+            // CPython shlex.quote: `if not s: return "''"`, otherwise
+            // `_find_unsafe(s)` runs a str regex over the argument. A falsy
+            // non-str (0, None, [], "") short-circuits to "''"; a truthy
+            // non-str hits the regex → TypeError.
+            if super::super::builtins::mb_is_truthy(s) == 0 {
+                MbValue::from_ptr(MbObject::new_str("''".to_string()))
+            } else {
+                raise_type_error("expected string or bytes-like object")
+            }
+        }
+    }
 }
 
 pub fn mb_shlex_join(tokens: MbValue) -> MbValue {

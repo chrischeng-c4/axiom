@@ -211,10 +211,211 @@ unsafe extern "C" fn dispatch_weak_method(args_ptr: *const MbValue, nargs: usize
 
 unsafe extern "C" fn dispatch_finalize(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_weakref_finalize(
+    let fin = mb_weakref_finalize(
         a.get(0).copied().unwrap_or_else(MbValue::none),
         a.get(1).copied().unwrap_or_else(MbValue::none),
-    )
+    );
+    // Trailing call args (beyond obj+func) are stored for the eventual call.
+    if a.len() > 2 {
+        if let Some(ptr) = fin.as_ptr() {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.write().unwrap().insert(
+                    "_args".to_string(),
+                    MbValue::from_ptr(MbObject::new_list(a[2..].to_vec())),
+                );
+            }
+        }
+    }
+    fin
+}
+
+/// `finalize.__call__` — first call runs func(*args), flips alive to False,
+/// and returns the result; later calls return None.
+unsafe extern "C" fn finalize_call(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(ptr) = self_v.as_ptr() else { return MbValue::none() };
+    let (func, call_args, alive) = unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let f = fields.read().unwrap();
+            (
+                f.get("_func").copied().unwrap_or_else(MbValue::none),
+                f.get("_args").copied()
+                    .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_list(Vec::new()))),
+                f.get("alive").copied().and_then(|v| v.as_bool()).unwrap_or(false),
+            )
+        } else {
+            return MbValue::none();
+        }
+    };
+    if !alive {
+        return MbValue::none();
+    }
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.write().unwrap().insert("alive".to_string(), MbValue::from_bool(false));
+        }
+    }
+    super::super::builtins::mb_call_spread(func, call_args)
+}
+
+/// `finalize.detach()` / `finalize.peek()` — report (obj, func, args, kwargs)
+/// while alive; detach also flips alive.
+unsafe extern "C" fn finalize_detach(self_v: MbValue, _args: MbValue) -> MbValue {
+    let r = finalize_peek(self_v, _args);
+    if let Some(ptr) = self_v.as_ptr() {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.write().unwrap().insert("alive".to_string(), MbValue::from_bool(false));
+        }
+    }
+    r
+}
+
+unsafe extern "C" fn finalize_peek(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(ptr) = self_v.as_ptr() else { return MbValue::none() };
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let f = fields.read().unwrap();
+            if f.get("alive").copied().and_then(|v| v.as_bool()) != Some(true) {
+                return MbValue::none();
+            }
+            let obj = f.get("_obj").copied().unwrap_or_else(MbValue::none);
+            let func = f.get("_func").copied().unwrap_or_else(MbValue::none);
+            let args = f.get("_args").copied()
+                .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_list(Vec::new())));
+            return MbValue::from_ptr(MbObject::new_tuple(vec![
+                obj, func, args, MbValue::from_ptr(MbObject::new_dict()),
+            ]));
+        }
+    }
+    MbValue::none()
+}
+
+/// `ReferenceType.__init__` re-invocation: validate arity like CPython.
+unsafe extern "C" fn reference_init(_self_v: MbValue, args: MbValue) -> MbValue {
+    let n = args.as_ptr().map(|ptr| unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            lock.read().map(|g| g.len()).unwrap_or(0)
+        } else { 0 }
+    }).unwrap_or(0);
+    if n > 2 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "__init__ expected at most 2 arguments, got {n}"
+            ))),
+        );
+    }
+    MbValue::none()
+}
+
+// ── WeakSet / WeakValueDictionary instance methods ──
+
+fn wk_data(self_v: MbValue) -> MbValue {
+    self_v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().ok()?.get("data").copied()
+        } else { None }
+    }).unwrap_or_else(MbValue::none)
+}
+
+fn wk_args(args: MbValue) -> Vec<MbValue> {
+    args.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            lock.read().ok().map(|g| g.to_vec())
+        } else { None }
+    }).unwrap_or_default()
+}
+
+unsafe extern "C" fn ws_add(self_v: MbValue, args: MbValue) -> MbValue {
+    let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    if reject_non_weakreferenceable(item) {
+        return MbValue::none();
+    }
+    super::super::set_ops::mb_set_add(wk_data(self_v), item);
+    MbValue::none()
+}
+
+unsafe extern "C" fn ws_discard(self_v: MbValue, args: MbValue) -> MbValue {
+    let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    super::super::set_ops::mb_set_discard(wk_data(self_v), item);
+    MbValue::none()
+}
+
+unsafe extern "C" fn ws_remove(self_v: MbValue, args: MbValue) -> MbValue {
+    let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    super::super::set_ops::mb_set_remove(wk_data(self_v), item);
+    MbValue::none()
+}
+
+unsafe extern "C" fn ws_contains(self_v: MbValue, args: MbValue) -> MbValue {
+    let item = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    super::super::set_ops::mb_set_contains(wk_data(self_v), item)
+}
+
+unsafe extern "C" fn ws_len(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::set_ops::mb_set_len(wk_data(self_v))
+}
+
+unsafe extern "C" fn wvd_setitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = wk_args(args);
+    let key = a.first().copied().unwrap_or_else(MbValue::none);
+    let val = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if reject_non_weakreferenceable(val) {
+        return MbValue::none();
+    }
+    super::super::dict_ops::mb_dict_setitem(wk_data(self_v), key, val);
+    MbValue::none()
+}
+
+unsafe extern "C" fn wvd_getitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let found = super::super::dict_ops::mb_dict_get(wk_data(self_v), key, sentinel);
+    if found.to_bits() == u64::MAX {
+        let key_repr = super::super::builtins::mb_repr(key);
+        let ks = key_repr.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        }).unwrap_or_default();
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(ks)),
+        );
+        return MbValue::none();
+    }
+    found
+}
+
+unsafe extern "C" fn wvd_get(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = wk_args(args);
+    let key = a.first().copied().unwrap_or_else(MbValue::none);
+    let default = a.get(1).copied().unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_get(wk_data(self_v), key, default)
+}
+
+unsafe extern "C" fn wvd_contains(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_contains(wk_data(self_v), key)
+}
+
+unsafe extern "C" fn wvd_len(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_len(wk_data(self_v))
+}
+
+unsafe extern "C" fn wvd_delitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = wk_args(args).first().copied().unwrap_or_else(MbValue::none);
+    super::super::dict_ops::mb_dict_delitem(wk_data(self_v), key);
+    MbValue::none()
+}
+
+unsafe extern "C" fn wvd_keys(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_keys(wk_data(self_v))
+}
+
+unsafe extern "C" fn wvd_values(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_values(wk_data(self_v))
+}
+
+unsafe extern "C" fn wvd_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::dict_ops::mb_dict_items(wk_data(self_v))
 }
 
 // ---------------------------------------------------------------------------
@@ -224,7 +425,60 @@ unsafe extern "C" fn dispatch_finalize(args_ptr: *const MbValue, nargs: usize) -
 /// weakref.ref(obj, callback=None) -> Instance wrapping a strong ref.
 ///
 /// Carve-out: holds a strong pointer; never expires.
+/// CPython: plain builtins (int/float/bool/None/str/bytes/tuple/list/dict)
+/// are not weak-referenceable; raise TypeError with the type name.
+fn reject_non_weakreferenceable(obj: MbValue) -> bool {
+    let type_name: Option<&str> = if obj.is_none() {
+        Some("NoneType")
+    } else if obj.is_bool() {
+        Some("bool")
+    } else if obj.is_int() {
+        Some("int")
+    } else if obj.is_float() {
+        Some("float")
+    } else if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            match (*ptr).data {
+                ObjData::Str(ref s) => {
+                    // mamba models class objects as their name strings; a
+                    // registered class (or builtin exception type) IS
+                    // weak-referenceable in CPython.
+                    if super::super::class::class_is_registered(s)
+                        || super::super::exception::is_subclass_of(s, "BaseException")
+                        || s == "Exception" || s == "BaseException"
+                    {
+                        None
+                    } else {
+                        Some("str")
+                    }
+                }
+                ObjData::Bytes(_) => Some("bytes"),
+                ObjData::ByteArray(_) => Some("bytearray"),
+                ObjData::Tuple(_) => Some("tuple"),
+                ObjData::List(_) => Some("list"),
+                ObjData::Dict(_) => Some("dict"),
+                _ => None,
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(name) = type_name {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "cannot create weak reference to '{name}' object"
+            ))),
+        );
+        return true;
+    }
+    false
+}
+
 pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
+    if reject_non_weakreferenceable(obj) {
+        return MbValue::none();
+    }
     // CPython reuses no-callback refs: `weakref.ref(o) is weakref.ref(o)` and
     // `weakref.ref(o, None) is weakref.ref(o)`. Refs created with a real
     // callback are always distinct.
@@ -276,6 +530,9 @@ pub fn mb_weakref_deref(wref: MbValue) -> MbValue {
 
 /// weakref.proxy(obj, callback=None) -> obj (carve-out).
 pub fn mb_weakref_proxy(obj: MbValue, _callback: MbValue) -> MbValue {
+    if reject_non_weakreferenceable(obj) {
+        return MbValue::none();
+    }
     obj
 }
 
@@ -403,6 +660,16 @@ pub fn mb_weakref_weak_value_dict() -> MbValue {
 
 /// weakref.WeakMethod(method) -> Instance stub holding a strong ref.
 pub fn mb_weakref_weak_method(method: MbValue) -> MbValue {
+    // CPython WeakMethod requires a bound method; a plain function raises.
+    if method.as_func().is_some() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "argument should be a bound method, not <class 'function'>".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     let mut fields = FxHashMap::default();
     fields.insert("_method".to_string(), method);
     fields.insert("__class__".to_string(),
@@ -441,8 +708,53 @@ pub fn mb_weakref_finalize(obj: MbValue, func: MbValue) -> MbValue {
 // Module registration
 // ---------------------------------------------------------------------------
 
+fn register_weakref_classes() {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let mut fin: Map<String, MbValue> = Map::new();
+    fin.insert("__call__".into(), var(finalize_call as *const () as usize));
+    fin.insert("detach".into(), var(finalize_detach as *const () as usize));
+    fin.insert("peek".into(), var(finalize_peek as *const () as usize));
+    super::super::class::mb_class_register("finalize", vec![], fin);
+
+    let mut rt: Map<String, MbValue> = Map::new();
+    rt.insert("__init__".into(), var(reference_init as *const () as usize));
+    super::super::class::mb_class_register("ReferenceType", vec![], rt);
+
+    let mut ws: Map<String, MbValue> = Map::new();
+    ws.insert("add".into(), var(ws_add as *const () as usize));
+    ws.insert("discard".into(), var(ws_discard as *const () as usize));
+    ws.insert("remove".into(), var(ws_remove as *const () as usize));
+    ws.insert("__contains__".into(), var(ws_contains as *const () as usize));
+    ws.insert("__len__".into(), var(ws_len as *const () as usize));
+    super::super::class::mb_class_register("WeakSet", vec![], ws);
+
+    let wvd_methods: &[(&str, usize)] = &[
+        ("__setitem__", wvd_setitem as usize),
+        ("__getitem__", wvd_getitem as usize),
+        ("__delitem__", wvd_delitem as usize),
+        ("__contains__", wvd_contains as usize),
+        ("__len__", wvd_len as usize),
+        ("get", wvd_get as usize),
+        ("keys", wvd_keys as usize),
+        ("values", wvd_values as usize),
+        ("items", wvd_items as usize),
+    ];
+    for cls in ["WeakValueDictionary", "WeakKeyDictionary"] {
+        let mut m: Map<String, MbValue> = Map::new();
+        for (name, addr) in wvd_methods {
+            m.insert((*name).to_string(), var(*addr));
+        }
+        super::super::class::mb_class_register(cls, vec![], m);
+    }
+}
+
 /// Register the weakref module.
 pub fn register() {
+    register_weakref_classes();
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -533,11 +845,17 @@ mod tests {
         extract_str(val)
     }
 
+    /// Weak-referenceable test target: a plain Instance (ints/strs are
+    /// correctly rejected by reject_non_weakreferenceable now).
+    fn target() -> MbValue {
+        MbValue::from_ptr(MbObject::new_instance("WeakTarget".to_string()))
+    }
+
     // -- ref --
 
     #[test]
     fn test_ref_creates_instance_with_target() {
-        let obj = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
+        let obj = target();
         let wref = mb_weakref_ref(obj, MbValue::none());
         assert!(wref.as_ptr().is_some());
         assert_eq!(get_str(get_field(wref, "__class__")), Some("ReferenceType".to_string()));
@@ -548,7 +866,7 @@ mod tests {
 
     #[test]
     fn test_ref_stores_callback() {
-        let obj = MbValue::from_int(7);
+        let obj = target();
         let cb = MbValue::from_int(42);
         let wref = mb_weakref_ref(obj, cb);
         assert_eq!(get_field(wref, "_callback").as_int(), Some(42));
@@ -557,7 +875,7 @@ mod tests {
     #[test]
     fn test_deref_returns_target() {
         // Carve-out: deref returns the strong-ref target, not None.
-        let obj = MbValue::from_ptr(MbObject::new_str("x".to_string()));
+        let obj = target();
         let wref = mb_weakref_ref(obj, MbValue::none());
         let r = mb_weakref_deref(wref);
         assert_eq!(r.as_ptr(), obj.as_ptr());
@@ -567,15 +885,15 @@ mod tests {
 
     #[test]
     fn test_proxy_returns_object() {
-        let v = MbValue::from_int(42);
-        assert_eq!(mb_weakref_proxy(v, MbValue::none()).as_int(), Some(42));
+        let v = target();
+        assert_eq!(mb_weakref_proxy(v, MbValue::none()).as_ptr(), v.as_ptr());
     }
 
     #[test]
     fn test_proxy_with_callback_returns_object() {
-        let v = MbValue::from_int(99);
+        let v = target();
         let cb = MbValue::from_int(1);
-        assert_eq!(mb_weakref_proxy(v, cb).as_int(), Some(99));
+        assert_eq!(mb_weakref_proxy(v, cb).as_ptr(), v.as_ptr());
     }
 
     // -- getweakrefcount / getweakrefs --

@@ -48,8 +48,7 @@ fn manifest_path() -> PathBuf {
 fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
-        .join("conformance")
+        .join("cpython")
 }
 
 fn load_manifest() -> toml::Value {
@@ -125,10 +124,17 @@ fn ecosystem_fixture_manifest_is_well_formed_and_files_exist() {
             }
         };
 
-        // Consistency: relpath should begin with "<category>/<module>/" so
-        // the table key + relpath are sufficient to navigate the fixture
-        // without ever reading the `command` field.
-        let expected_prefix = format!("{category}/{module}/");
+        // Consistency: the relpath must place the fixture in the
+        // dimension-first tree slot its category + module imply, so the
+        // table key + relpath are sufficient to navigate the fixture
+        // without ever reading the `command` field. stdlib fixtures live
+        // in the facet tree (`real_world/std-libs/<module>/`); 3p
+        // fixtures live in the no-record regression tree
+        // (`_regression/3rd-libs/<module>/real_world/`).
+        let expected_prefix = match category {
+            "stdlib" => format!("real_world/std-libs/{module}/"),
+            _ => format!("_regression/3rd-libs/{module}/real_world/"),
+        };
         if !relpath.starts_with(&expected_prefix) {
             violations.push(format!(
                 "  - {id}: relpath = {relpath:?} must start with {expected_prefix:?}",

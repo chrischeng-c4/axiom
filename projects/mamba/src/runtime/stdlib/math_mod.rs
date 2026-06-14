@@ -367,15 +367,44 @@ pub fn mb_math_sqrt(val: MbValue) -> MbValue {
     }
 }
 
+/// Decimal/Fraction handles are NaN-boxed ints — `as_f64` would treat the
+/// handle id as a number, so floor/ceil/trunc must dispatch first (#2129).
+/// `Some(true)` = Fraction, `Some(false)` = Decimal, `None` = neither.
+fn numeric_handle_kind(val: MbValue) -> Option<bool> {
+    let id = val.as_int()? as u64;
+    if super::decimal_mod::is_decimal_handle(id) {
+        return Some(false);
+    }
+    if super::fractions_mod::is_fraction_handle(id) {
+        return Some(true);
+    }
+    None
+}
+
 pub fn mb_math_floor(val: MbValue) -> MbValue {
+    match numeric_handle_kind(val) {
+        Some(true) => return super::fractions_mod::mb_fraction_floor(val),
+        Some(false) => return super::decimal_mod::mb_decimal_floor(val),
+        None => {}
+    }
     as_f64(val).map(|f| MbValue::from_int(f.floor() as i64)).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_ceil(val: MbValue) -> MbValue {
+    match numeric_handle_kind(val) {
+        Some(true) => return super::fractions_mod::mb_fraction_ceil(val),
+        Some(false) => return super::decimal_mod::mb_decimal_ceil(val),
+        None => {}
+    }
     as_f64(val).map(|f| MbValue::from_int(f.ceil() as i64)).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_trunc(val: MbValue) -> MbValue {
+    match numeric_handle_kind(val) {
+        Some(true) => return super::fractions_mod::mb_fraction_trunc(val),
+        Some(false) => return super::decimal_mod::mb_decimal_int(val),
+        None => {}
+    }
     as_f64(val).map(|f| MbValue::from_int(f.trunc() as i64)).unwrap_or(MbValue::none())
 }
 

@@ -159,7 +159,27 @@ pub fn register() {
 }
 
 /// asyncio.run(coro) — drive the event loop until coro completes.
+/// CPython 3.12 raises ValueError when the argument is not a coroutine;
+/// coroutine handles are integer ids registered in the COROUTINES map.
 pub fn mb_asyncio_run(coro: MbValue) -> MbValue {
+    let is_coro = coro
+        .as_int()
+        .map(|id| {
+            super::super::async_rt::COROUTINES
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&(id as u64))
+        })
+        .unwrap_or(false);
+    if !is_coro {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "a coroutine was expected".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     mb_run_until_complete(coro)
 }
 

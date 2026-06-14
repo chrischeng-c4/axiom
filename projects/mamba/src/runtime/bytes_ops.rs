@@ -180,6 +180,32 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
                 }
                 // A BigInt count is too large for a size-sized integer.
                 ObjData::BigInt(_) => { raise_count_overflow(); return MbValue::none(); }
+                ObjData::Instance { ref class_name, .. } => {
+                    // User __bytes__ dunder; a class without one cannot
+                    // convert (CPython TypeError, not a silent b'').
+                    let cls = class_name.clone();
+                    let m = super::class::lookup_method(&cls, "__bytes__");
+                    if !m.is_none() {
+                        let method = MbValue::from_ptr(MbObject::new_str("__bytes__".to_string()));
+                        let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                        let r = super::class::mb_call_method(source, method, args);
+                        if let Some(rp) = r.as_ptr() {
+                            if matches!((*rp).data, ObjData::Bytes(_)) {
+                                return r;
+                            }
+                        }
+                        if super::exception::mb_has_exception().as_bool() == Some(true) {
+                            return MbValue::none();
+                        }
+                    }
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "cannot convert '{cls}' object to bytes"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
                 _ => {}
             }
         }
@@ -361,7 +387,21 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                     decode_utf32(&data, false)
                 }
             }
-            _ => decode_utf8(&data, err),
+            _ => {
+                // A known non-text codec (quopri, base64, ...) is a LookupError
+                // via bytes.decode; unrecognised names keep the lenient utf-8
+                // fallback.
+                if let Some(canon) = super::string_ops::nontext_codec_name(&enc) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{canon}' is not a text encoding; use codecs.decode() to handle arbitrary codecs"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
+                decode_utf8(&data, err)
+            }
         };
         MbValue::from_ptr(MbObject::new_str(s))
     }
@@ -739,6 +779,19 @@ pub fn mb_bytes_count(haystack: MbValue, needle: MbValue) -> MbValue {
 /// `len(slice) + 1` to match CPython.
 pub fn mb_bytes_count_range(haystack: MbValue, needle: MbValue, start: MbValue, end: MbValue) -> MbValue {
     unsafe {
+        // An int needle counts a single byte value (`b"mississippi".count(ord("i"))`).
+        let needle = if let Some(i) = needle.as_int() {
+            if !(0..=255).contains(&i) {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("byte must be in range(0, 256)".to_string())),
+                );
+                return MbValue::none();
+            }
+            MbValue::from_ptr(MbObject::new_bytes(vec![i as u8]))
+        } else {
+            needle
+        };
         if let (Some(h), Some(n)) = (as_bytes_cloned(haystack), as_bytes_cloned(needle)) {
             let (s, e) = clamp_range(h.len(), start, end);
             let slice = &h[s..e];

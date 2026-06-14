@@ -238,6 +238,22 @@ impl DictKey {
 pub fn to_dict_key(val: MbValue) -> DictKey {
     // Check tagged types first (int, bool, none)
     if let Some(i) = val.as_int() {
+        // Decimal/Fraction integer handles key by numeric value so
+        // `{Fraction(6, 3): "a", 2: "b"}` collapses like CPython (#2129).
+        // The range guard keeps plain-int keys to one compare.
+        if (i as u64) >= super::integer_handle_registry::HANDLE_MIN_ID
+            && (super::stdlib::decimal_mod::is_decimal_handle(i as u64)
+                || super::stdlib::fractions_mod::is_fraction_handle(i as u64))
+        {
+            if let Some(iv) =
+                super::stdlib::decimal_mod::mb_numeric_handle_integral_i64(val)
+            {
+                return DictKey::Int(iv);
+            }
+            if let Some(f) = super::stdlib::decimal_mod::mb_numeric_handle_exact_f64(val) {
+                return to_dict_key(MbValue::from_float(f));
+            }
+        }
         return DictKey::Int(i);
     }
     if val.is_bool() {
@@ -483,8 +499,38 @@ pub fn mb_dict_from_pairs(iterable: MbValue) -> MbValue {
 
 // ── Access ──
 
+/// True when `key` is the runtime's 3-tuple slice representation.
+fn is_slice_tuple(key: MbValue) -> bool {
+    if let Some(kp) = key.as_ptr() {
+        unsafe {
+            if let ObjData::Tuple(ref items) = (*kp).data {
+                return items.len() == 3;
+            }
+        }
+    }
+    false
+}
+
 /// dict[key] -> value  (raises KeyError if key not found)
 pub fn mb_dict_getitem(dict: MbValue, key: MbValue) -> MbValue {
+    // ET.Element stub: integer / slice subscripts read `_children`
+    // (`e[0]`, `e[1:3]` → list of children) instead of dict keys.
+    if key.as_int().is_some() || is_slice_tuple(key) {
+        if let Some(children) = super::stdlib::xml_mod::element_stub_children(dict) {
+            if let Some(kp) = key.as_ptr() {
+                unsafe {
+                    if let ObjData::Tuple(ref items) = (*kp).data {
+                        if items.len() == 3 {
+                            return super::list_ops::mb_list_slice_full(
+                                children, items[0], items[1], items[2],
+                            );
+                        }
+                    }
+                }
+            }
+            return super::list_ops::mb_list_getitem(children, key);
+        }
+    }
     let dk = to_dict_key(key);
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
@@ -535,6 +581,21 @@ pub fn mb_dict_get(dict: MbValue, key: MbValue, default: MbValue) -> MbValue {
 
 /// dict[key] = value
 pub fn mb_dict_setitem(dict: MbValue, key: MbValue, value: MbValue) {
+    // ET.Element stub: `e[i] = child` replaces the i-th child.
+    if key.as_int().is_some() {
+        if let Some(children) = super::stdlib::xml_mod::element_stub_children(dict) {
+            super::list_ops::mb_list_setitem(children, key, value);
+            return;
+        }
+    }
+    // A mutable container can't be a mapping key (CPython: unhashable type).
+    if let Some(tn) = super::set_ops::unhashable_type_name(key) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+        );
+        return;
+    }
     let dk = to_dict_key(key);
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
@@ -558,6 +619,48 @@ pub fn mb_dict_setitem(dict: MbValue, key: MbValue, value: MbValue) {
 
 /// del dict[key]
 pub fn mb_dict_delitem(dict: MbValue, key: MbValue) {
+    // ET.Element stub: `del e[i]` / `del e[a:b]` remove children.
+    if key.as_int().is_some() || is_slice_tuple(key) {
+        if let Some(children) = super::stdlib::xml_mod::element_stub_children(dict) {
+            if key.as_int().is_some() {
+                super::list_ops::mb_list_delitem(children, key);
+                return;
+            }
+            // Slice deletion: normalize (start, stop, step) over the child
+            // list and remove the selected indices in descending order.
+            if let (Some(kp), Some(cp)) = (key.as_ptr(), children.as_ptr()) {
+                unsafe {
+                    if let (ObjData::Tuple(ref items), ObjData::List(ref lock)) =
+                        (&(*kp).data, &(*cp).data)
+                    {
+                        let mut list = lock.write().unwrap();
+                        let len = list.len() as i64;
+                        let step = items[2].as_int().unwrap_or(1).max(1);
+                        let clamp = |v: i64| -> i64 {
+                            let v = if v < 0 { v + len } else { v };
+                            v.clamp(0, len)
+                        };
+                        let start = clamp(items[0].as_int().unwrap_or(0));
+                        let stop = clamp(items[1].as_int().unwrap_or(len));
+                        let mut idx: Vec<i64> = Vec::new();
+                        let mut p = start;
+                        while p < stop {
+                            idx.push(p);
+                            p += step;
+                        }
+                        for &j in idx.iter().rev() {
+                            if (j as usize) < list.len() {
+                                let removed = list.remove(j as usize);
+                                super::rc::release_if_ptr(removed);
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+    }
     let dk = to_dict_key(key);
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
@@ -599,6 +702,16 @@ pub fn mb_is_mapping(val: MbValue) -> MbValue {
 
 /// len(dict) -> int
 pub fn mb_dict_len(dict: MbValue) -> MbValue {
+    // ET.Element stub: len(e) is the child count.
+    if let Some(children) = super::stdlib::xml_mod::element_stub_children(dict) {
+        if let Some(ptr) = children.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    return MbValue::from_int(lock.read().unwrap().len() as i64);
+                }
+            }
+        }
+    }
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
@@ -1049,7 +1162,31 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
             0
         }
     };
-    if dict_stub_class(receiver).as_deref() == Some("ConfigParser") {
+    let stub_class = dict_stub_class(receiver);
+    // __class__-tagged xml stubs (Element / XMLParser / TreeBuilder) route
+    // their method surface to xml_mod; None falls through to plain-dict
+    // semantics (only for dunders the dict intrinsics already guard).
+    if let Some(ref cls) = stub_class {
+        if matches!(cls.as_str(), "Element" | "XMLParser" | "TreeBuilder") {
+            if let Some(result) =
+                super::stdlib::xml_mod::dispatch_xml_stub_method(cls, name, receiver, args)
+            {
+                return result;
+            }
+        }
+    }
+    // __class__-tagged tarfile stubs (TarFile / TarInfo) route their method
+    // surface to tarfile_mod; None falls through to plain-dict semantics.
+    if let Some(ref cls) = stub_class {
+        if matches!(cls.as_str(), "TarFile" | "TarInfo") {
+            if let Some(result) =
+                super::stdlib::tarfile_mod::dispatch_tar_stub_method(cls, name, receiver, args)
+            {
+                return result;
+            }
+        }
+    }
+    if stub_class.as_deref() == Some("ConfigParser") {
         match name {
             "read_string" => {
                 return super::stdlib::configparser_mod::mb_configparser_read_string(receiver, arg(0));
@@ -1161,7 +1298,7 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
 
 /// Read the `__class__` marker of a string dict-stub (e.g. ConfigParser),
 /// if present.
-fn dict_stub_class(receiver: MbValue) -> Option<String> {
+pub(crate) fn dict_stub_class(receiver: MbValue) -> Option<String> {
     unsafe {
         let ptr = receiver.as_ptr()?;
         if let ObjData::Dict(ref lock) = (*ptr).data {

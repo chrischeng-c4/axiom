@@ -587,9 +587,24 @@ fn mb_truthy(v: MbValue) -> bool {
 }
 
 fn glob_list(args: &[MbValue]) -> MbValue {
-    let pat_str = match args.first().copied().and_then(extract_str) {
+    let pat = args.first().copied().unwrap_or_else(MbValue::none);
+    let pat_str = match extract_str(pat) {
         Some(s) => s,
-        None => return MbValue::from_ptr(MbObject::new_list(vec![])),
+        None => {
+            // A bytes pattern is valid in CPython (mamba doesn't model byte
+            // paths yet → empty result, no raise). Any other non-str pattern
+            // (int / None / float) is a TypeError, not a silent empty match.
+            let is_bytes = pat.as_ptr().map_or(false, |p| {
+                matches!(unsafe { &(*p).data }, ObjData::Bytes(_) | ObjData::ByteArray(_))
+            });
+            if is_bytes {
+                return MbValue::from_ptr(MbObject::new_list(vec![]));
+            }
+            return raise_type_error(&format!(
+                "glob() argument must be str, bytes, or os.PathLike, not {}",
+                super::super::builtins::value_type_name(pat)
+            ));
+        }
     };
     let (recursive, root_dir) = kwargs_from_args(args);
     let root = root_dir.unwrap_or_default();

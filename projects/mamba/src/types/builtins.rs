@@ -73,6 +73,12 @@ impl TypeChecker {
         self.def_builtin("setattr", &[any, str_ty, any], none);
         self.def_builtin("delattr", &[any, str_ty], none);
 
+        // PEP 695 desugaring intrinsics (see lower::pep695): runtime TypeVar
+        // and TypeAliasType construction. Not part of the user-facing builtin
+        // surface; only injected by the desugarer.
+        self.def_builtin("__mb_pep695_typevar__", &[str_ty, int, any, any], any);
+        self.def_builtin("__mb_pep695_type_alias__", &[str_ty, any, any], any);
+
         // Identity / hashing
         self.def_builtin("id", &[any], int);
         self.def_builtin("hash", &[any], int);
@@ -133,6 +139,8 @@ impl TypeChecker {
 
         // Builtin constants — NotImplemented, Ellipsis, __debug__
         let sym = self.symbols.define("NotImplemented".to_string(), SymbolKind::Variable);
+        self.set_sym_type(sym.0, any);
+        let sym = self.symbols.define("Ellipsis".to_string(), SymbolKind::Variable);
         self.set_sym_type(sym.0, any);
 
         // Module-level dunder variables — always available in every module.

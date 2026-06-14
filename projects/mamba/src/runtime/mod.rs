@@ -15,6 +15,7 @@ pub mod class;
 pub mod iter;
 pub mod generator;
 pub mod closure;
+pub mod pep695;
 pub mod module;
 pub mod registry_bridge;
 pub mod async_rt;
@@ -53,6 +54,7 @@ pub fn cleanup_all_runtime_state() {
     generator::cleanup_generator_state_for_runtime_reset();
     closure::cleanup_all_closures();
     class::cleanup_all_classes();
+    stdlib::dataclasses_mod::cleanup_all_dataclasses();
     exception::cleanup_all_exceptions();
     file_io::cleanup_all_files();
     module::cleanup_all_modules();

@@ -69,6 +69,13 @@ pub(crate) fn apply_escape_sequences(s: &str) -> String {
         }
         match chars.peek().copied() {
             Some('\\') => { chars.next(); result.push('\\'); }
+            // Line continuation: backslash before a literal newline collapses
+            // to nothing (also swallowing a CR in CRLF sources).
+            Some('\n') => { chars.next(); }
+            Some('\r') => {
+                chars.next();
+                if chars.peek() == Some(&'\n') { chars.next(); }
+            }
             Some('\'') => { chars.next(); result.push('\''); }
             Some('"') => { chars.next(); result.push('"'); }
             Some('n') => { chars.next(); result.push('\n'); }
@@ -315,6 +322,80 @@ fn lex_fstr_squote(lex: &mut logos::Lexer<TokenKind>) -> Option<String> {
     lex_fstr_inner(lex, b'\'')
 }
 
+/// Lex a triple-double-quoted f-string: called after `f"""` is consumed.
+fn lex_fstr_triple_dquote(lex: &mut logos::Lexer<TokenKind>) -> Option<String> {
+    lex_fstr_inner_triple(lex, b'"')
+}
+
+/// Lex a triple-single-quoted f-string: called after `f'''` is consumed.
+fn lex_fstr_triple_squote(lex: &mut logos::Lexer<TokenKind>) -> Option<String> {
+    lex_fstr_inner_triple(lex, b'\'')
+}
+
+/// Triple-quoted f-string lexer: the body only closes on THREE consecutive
+/// quote chars at body level; single/double quotes inside replacement-field
+/// expressions nest freely (`f"""{"eric's"}"""`). Same stack discipline as
+/// `lex_fstr_inner`.
+fn lex_fstr_inner_triple(lex: &mut logos::Lexer<TokenKind>, close_quote: u8) -> Option<String> {
+    let remainder = lex.remainder();
+    let bytes = remainder.as_bytes();
+    let mut i = 0usize;
+    let mut stack: Vec<u8> = Vec::new();
+
+    while i < remainder.len() {
+        let b = bytes[i];
+        if stack.is_empty() {
+            if b == close_quote
+                && bytes.get(i + 1) == Some(&close_quote)
+                && bytes.get(i + 2) == Some(&close_quote)
+            {
+                let content = remainder[..i].to_string();
+                lex.bump(i + 3);
+                return Some(content);
+            } else if b == b'{' {
+                if bytes.get(i + 1) == Some(&b'{') {
+                    i += 2; // {{ escape
+                } else {
+                    stack.push(b'e');
+                    i += 1;
+                }
+            } else if b == b'}' {
+                i += if bytes.get(i + 1) == Some(&b'}') { 2 } else { 1 };
+            } else if b == b'\\' {
+                i += if i + 1 < remainder.len() { 2 } else { 1 };
+            } else {
+                i += 1;
+            }
+        } else {
+            let top = *stack.last().unwrap();
+            if top == b'e' {
+                if b == b'}' {
+                    stack.pop();
+                    i += 1;
+                } else if b == b'{' {
+                    stack.push(b'e');
+                    i += 1;
+                } else if b == b'"' || b == b'\'' {
+                    stack.push(b);
+                    i += 1;
+                } else if b == b'\\' {
+                    i += if i + 1 < remainder.len() { 2 } else { 1 };
+                } else {
+                    i += 1;
+                }
+            } else if b == top {
+                stack.pop();
+                i += 1;
+            } else if b == b'\\' {
+                i += if i + 1 < remainder.len() { 2 } else { 1 };
+            } else {
+                i += 1;
+            }
+        }
+    }
+    None // unterminated
+}
+
 /// Shared f-string lexer. `close_quote` is `b'"'` or `b'\''`.
 ///
 /// Stack entries: `b'e'` = inside `{expr}`, `b'"'` = double-quoted nested
@@ -462,22 +543,24 @@ pub enum TokenKind {
     // the sibling Float regexes so `3.5e-20j` / `.5e-2J` / `2E5j` all
     // tokenize as Complex (#1676). Without the exponent, the Float
     // regex consumed the numeric body and `j` fell through to Ident.
-    #[regex(r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?[jJ]", |lex| {
+    // Digit runs allow PEP 515 underscores (`2_0j`, `1_000.5`, `1_0e3`); the
+    // `_` separators are stripped before `parse::<f64>()`, which rejects them.
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| {
         let s = lex.slice();
-        s[..s.len()-1].parse::<f64>().ok()
+        s[..s.len()-1].replace('_', "").parse::<f64>().ok()
     }, priority = 4)]
-    #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?[jJ]", |lex| {
+    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| {
         let s = lex.slice();
-        s[..s.len()-1].parse::<f64>().ok()
+        s[..s.len()-1].replace('_', "").parse::<f64>().ok()
     }, priority = 4)]
-    #[regex(r"[0-9]+([eE][+-]?[0-9]+)?[jJ]", |lex| {
+    #[regex(r"[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| {
         let s = lex.slice();
-        s[..s.len()-1].parse::<f64>().ok()
+        s[..s.len()-1].replace('_', "").parse::<f64>().ok()
     }, priority = 3)]
     Complex(f64),
-    #[regex(r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
-    #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
-    #[regex(r"[0-9]+[eE][+-]?[0-9]+", |lex| lex.slice().parse::<f64>().ok())]
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
+    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
+    #[regex(r"[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
     Float(f64),
     #[regex(r"0[xX][0-9a-fA-F][0-9a-fA-F_]*", |lex| {
         i64::from_str_radix(&lex.slice()[2..].replace('_', ""), 16).ok()
@@ -508,6 +591,10 @@ pub enum TokenKind {
     // F-strings with PEP 701 support (#py312):
     //   callback-based lexers handle multiline expressions, quote reuse, and
     //   backslashes in expressions.  Priority 5 beats the Ident regex for `f`.
+    //   Triple-quoted openers carry priority 11 so the 4-byte `f"""` beats
+    //   both the 2-byte `f"` opener and the bare `"""` triple-string token.
+    #[token("f\"\"\"", lex_fstr_triple_dquote, priority = 11)]
+    #[token("f'''", lex_fstr_triple_squote, priority = 11)]
     #[token("f\"", lex_fstr_dquote, priority = 5)]
     #[token("f'", lex_fstr_squote, priority = 5)]
     FStr(String),

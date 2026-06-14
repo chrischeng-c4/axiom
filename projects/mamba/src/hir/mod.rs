@@ -19,6 +19,46 @@ pub struct HirModule {
     /// auto-create and populate the module `__annotations__` dict (CPython
     /// semantics). `type_repr` is the textual annotation (e.g. "int").
     pub module_annotations: Vec<(String, String)>,
+    /// SymbolId.0 → introspection signature metadata for each user-defined
+    /// `def` (parameter names/kinds/defaults/annotations + return annotation).
+    /// Primed into the runtime FUNC_PARAMS registry at module init so
+    /// `inspect.signature(f)` reflects the real declared signature.
+    pub func_sigs: HashMap<u32, HirFuncSig>,
+}
+
+/// Introspection signature metadata for one user-defined function.
+#[derive(Debug, Clone, Default)]
+pub struct HirFuncSig {
+    pub params: Vec<HirParamSig>,
+    /// Textual return annotation (`"int"`, `"42"`), None when undeclared.
+    pub return_annotation: Option<String>,
+}
+
+/// One parameter's introspection metadata.
+#[derive(Debug, Clone)]
+pub struct HirParamSig {
+    pub name: String,
+    /// CPython `inspect.Parameter` kind ordinal: 0 POSITIONAL_ONLY,
+    /// 1 POSITIONAL_OR_KEYWORD, 2 VAR_POSITIONAL, 3 KEYWORD_ONLY,
+    /// 4 VAR_KEYWORD.
+    pub kind: u8,
+    /// Literal default value when one is declared and representable.
+    pub default: Option<HirSigDefault>,
+    /// True when a default is declared but not a representable literal —
+    /// the runtime records "has a default" with a None placeholder.
+    pub default_opaque: bool,
+    /// Textual annotation (`"int"`), None when un-annotated.
+    pub annotation: Option<String>,
+}
+
+/// Literal default values representable without evaluating module code.
+#[derive(Debug, Clone)]
+pub enum HirSigDefault {
+    Int(i64),
+    Float(f64),
+    Str(String),
+    Bool(bool),
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +79,10 @@ pub struct HirFunction {
     /// Whether this function has a `*args` parameter.
     /// When true, the last-but-one param (before **kwargs if present) receives a packed list.
     pub has_star_args: bool,
+    /// Index into `params` of the `*args` parameter, when present. Recorded
+    /// explicitly because keyword-only params after `*args` make the position
+    /// non-derivable from `has_star_args`/`has_kwargs` alone.
+    pub star_param_pos: Option<usize>,
     /// Whether this function has a `**kwargs` parameter.
     /// When true, the last param receives a packed dict.
     pub has_kwargs: bool,
@@ -70,6 +114,18 @@ pub struct HirClass {
     /// Keyword arguments from class statement, excluding `metaclass=` (R10).
     /// e.g., `class Child(Base, registry="users")` → vec![("registry", expr)]
     pub class_kwargs: Vec<(String, HirExpr)>,
+    /// Ordered dataclass field facts collected from the class body when the
+    /// class carries a `@dataclass`-shaped decorator (PEP 557):
+    /// `(field_name, annotation_repr, default_expr)`. `default_expr` is None
+    /// for bare annotations (`x: int`); annotated assignments (`y: int = 0`,
+    /// `z: list = field(default_factory=list)`) carry the lowered value
+    /// expression. Emitted at the ClassDefPlaceholder position (before the
+    /// decorator call) so the runtime `@dataclass` synthesizer sees ordered
+    /// field facts with class-definition-time default values.
+    pub dataclass_fields: Vec<(String, String, Option<HirExpr>)>,
+    /// Class-body docstring (first bare string statement), for
+    /// `inspect.getdoc` / `Cls.__doc__`.
+    pub doc: Option<String>,
 }
 
 /// Import statement.
@@ -180,7 +236,7 @@ pub enum HirExpr {
     /// Lambda expression. `defaults` carries the default-arg expressions
     /// (one slot per parameter, `None` when the parameter has no default).
     /// Defaults are evaluated at closure creation time per Python semantics.
-    Lambda { params: Vec<(SymbolId, TypeId)>, defaults: Vec<Option<Box<HirExpr>>>, body: Box<HirExpr>, ty: TypeId },
+    Lambda { params: Vec<(SymbolId, TypeId)>, defaults: Vec<Option<Box<HirExpr>>>, body: Box<HirExpr>, ty: TypeId, span: Span },
     /// Yield expression (#290)
     Yield { value: Option<Box<HirExpr>>, ty: TypeId },
     /// Yield from expression (#290)
@@ -261,7 +317,10 @@ pub enum HirPattern {
 #[derive(Debug, Clone)]
 pub enum HirFStringPart {
     Literal(String),
-    Expr(HirExpr, Option<String>),
+    /// Field expression with an optional format spec; the spec is a part
+    /// list so nested replacement fields evaluate at runtime. A static spec
+    /// is a single Literal part.
+    Expr(HirExpr, Option<Vec<HirFStringPart>>),
 }
 
 impl HirExpr {
@@ -430,6 +489,7 @@ mod tests {
             sym_names: HashMap::new(),
             sym_types: HashMap::new(),
             module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
         };
         assert!(module.functions.is_empty());
         assert!(module.classes.is_empty());
@@ -519,6 +579,7 @@ mod tests {
             is_generator: false,
             decorators: vec![],
             has_star_args: false,
+            star_param_pos: None,
             has_kwargs: false,
         };
         assert_eq!(func.params.len(), 2);
@@ -544,6 +605,8 @@ mod tests {
             class_attr_assigns: vec![],
             slots: None,
             class_kwargs: vec![],
+            dataclass_fields: vec![],
+            doc: None,
         };
         assert_eq!(cls.base, Some(SymbolId(1)));
         assert_eq!(cls.fields.len(), 1);

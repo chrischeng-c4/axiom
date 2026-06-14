@@ -252,10 +252,12 @@ impl ModuleGraph {
         let fid = FileId(self.next_file_id);
         self.next_file_id += 1;
 
-        let ast = parser::parse(&source, fid).map_err(|e| GraphError::Parse {
+        let mut ast = parser::parse(&source, fid).map_err(|e| GraphError::Parse {
             path: path.to_path_buf(),
             reason: e.to_string(),
         })?;
+        crate::lower::pep695::desugar_module(&mut ast);
+        let ast = ast;
 
         let imports = collect_imports(&ast);
         let is_package = path.file_name().map(|n| n == "__init__.py").unwrap_or(false);
