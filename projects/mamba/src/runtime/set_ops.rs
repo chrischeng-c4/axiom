@@ -52,6 +52,18 @@ pub fn mb_set_from_list(list: MbValue) -> MbValue {
     } else {
         Vec::new()
     };
+    // A mutable container can't be a set member (CPython: unhashable type).
+    // Covers set literals `{[1]}` and `set([[1]])` / set comprehensions, which
+    // build the element list then funnel through here.
+    for &elem in &elems {
+        if let Some(tn) = unhashable_type_name(elem) {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+            );
+            return MbValue::none();
+        }
+    }
     let set = mb_set_new();
     if let Some(ptr) = set.as_ptr() {
         unsafe {
@@ -71,6 +83,14 @@ pub fn mb_set_from_list(list: MbValue) -> MbValue {
 /// set.add(elem) — add an element (no-op if already present). O(1) amortized
 /// via the hash index in `MbSet`.
 pub fn mb_set_add(set_val: MbValue, elem: MbValue) {
+    // A mutable container can't be a set member (CPython: unhashable type).
+    if let Some(tn) = unhashable_type_name(elem) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+        );
+        return;
+    }
     if let Some(ptr) = set_val.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
@@ -417,7 +437,7 @@ pub fn mb_set_isdisjoint(a: MbValue, b: MbValue) -> MbValue {
 /// `set`, `bytearray`). Returns `None` for hashable values. Used to surface the
 /// `TypeError: unhashable type: '…'` that membership tests (`x in s`,
 /// `s.__contains__(x)`) raise on a mutable argument.
-fn unhashable_type_name(v: MbValue) -> Option<&'static str> {
+pub(crate) fn unhashable_type_name(v: MbValue) -> Option<&'static str> {
     let ptr = v.as_ptr()?;
     unsafe {
         match &(*ptr).data {

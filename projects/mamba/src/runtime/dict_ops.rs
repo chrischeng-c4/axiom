@@ -588,6 +588,14 @@ pub fn mb_dict_setitem(dict: MbValue, key: MbValue, value: MbValue) {
             return;
         }
     }
+    // A mutable container can't be a mapping key (CPython: unhashable type).
+    if let Some(tn) = super::set_ops::unhashable_type_name(key) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+        );
+        return;
+    }
     let dk = to_dict_key(key);
     unsafe {
         if let Some(ptr) = dict.as_ptr() {
