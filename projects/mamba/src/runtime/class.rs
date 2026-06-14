@@ -7942,7 +7942,18 @@ pub fn mb_context_exit(obj: MbValue, _has_exc: MbValue) -> MbValue {
         let addr = extract_func_addr(method);
         let none = MbValue::none();
         let (exc_type, exc_val, exc_tb) = if has_pending {
-            (pending, pending, none)
+            // CPython passes (type(exc), exc, tb): exc_type is the exception's
+            // CLASS object (not the value, so `exc_type.__name__` / `exc_type is
+            // not None` work), and exc_tb is the exception's __traceback__ (so
+            // `tb is not None` is True under an active exception).
+            let type_obj = super::exception::get_exception_type_pub(pending)
+                .map(|tn| make_type_object(&tn))
+                .unwrap_or(pending);
+            let tb = mb_getattr(
+                pending,
+                MbValue::from_ptr(MbObject::new_str("__traceback__".to_string())),
+            );
+            (type_obj, pending, tb)
         } else {
             (none, none, none)
         };
