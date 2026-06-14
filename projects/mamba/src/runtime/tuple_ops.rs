@@ -148,6 +148,20 @@ pub fn mb_tuple_from_iterable(iterable: MbValue) -> MbValue {
                         .collect();
                     return MbValue::from_ptr(MbObject::new_tuple(items));
                 }
+                ObjData::Bytes(ref data) => {
+                    let items: Vec<MbValue> =
+                        data.iter().map(|&b| MbValue::from_int(b as i64)).collect();
+                    return MbValue::from_ptr(MbObject::new_tuple(items));
+                }
+                ObjData::ByteArray(ref lock) => {
+                    let items: Vec<MbValue> = lock
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .map(|&b| MbValue::from_int(b as i64))
+                        .collect();
+                    return MbValue::from_ptr(MbObject::new_tuple(items));
+                }
                 ObjData::Set(ref lock) => {
                     let items = lock.read().unwrap().to_vec();
                     return MbValue::from_ptr(MbObject::new_tuple_borrowed(items));

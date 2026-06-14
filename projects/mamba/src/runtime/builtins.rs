@@ -4592,6 +4592,14 @@ pub fn extract_items(val: MbValue) -> Vec<MbValue> {
                         .map(|k| super::dict_ops::dict_key_to_mbvalue(k))
                         .collect();
                 }
+                // bytes/bytearray iterate as their integer byte values.
+                ObjData::Bytes(ref data) => {
+                    return data.iter().map(|&b| MbValue::from_int(b as i64)).collect();
+                }
+                ObjData::ByteArray(ref lock) => {
+                    return lock.read().unwrap().iter()
+                        .map(|&b| MbValue::from_int(b as i64)).collect();
+                }
                 ObjData::Instance { .. } => {
                     // User iterable: go through iterator protocol.
                     // Fall through to the iterator handling below.
@@ -6342,6 +6350,31 @@ pub fn mb_format(val: MbValue, spec: MbValue) -> MbValue {
             MbValue::from_ptr(MbObject::new_str("format() argument 2 must be str".to_string())),
         );
         return MbValue::none();
+    }
+    // bytes/bytearray have no __format__ of their own: `format(b, "")` falls
+    // through to str(b), but any non-empty spec raises TypeError (CPython).
+    if let Some(ptr) = val.as_ptr() {
+        let tn = unsafe {
+            match &(*ptr).data {
+                ObjData::Bytes(_) => Some("bytes"),
+                ObjData::ByteArray(_) => Some("bytearray"),
+                _ => None,
+            }
+        };
+        if let Some(tn) = tn {
+            let spec_nonempty = unsafe {
+                spec.as_ptr().is_some_and(|p| matches!(&(*p).data, ObjData::Str(s) if !s.is_empty()))
+            };
+            if spec_nonempty {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "unsupported format string passed to {tn}.__format__"
+                    ))),
+                );
+                return MbValue::none();
+            }
+        }
     }
     super::string_ops::mb_format_value(val, spec)
 }

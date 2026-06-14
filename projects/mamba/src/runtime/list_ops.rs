@@ -250,6 +250,21 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                         .collect();
                     return MbValue::from_ptr(MbObject::new_list(items));
                 }
+                ObjData::Bytes(ref data) => {
+                    // Iterating bytes/bytearray yields each byte as an int.
+                    let items: Vec<MbValue> =
+                        data.iter().map(|&b| MbValue::from_int(b as i64)).collect();
+                    return MbValue::from_ptr(MbObject::new_list(items));
+                }
+                ObjData::ByteArray(ref lock) => {
+                    let items: Vec<MbValue> = lock
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .map(|&b| MbValue::from_int(b as i64))
+                        .collect();
+                    return MbValue::from_ptr(MbObject::new_list(items));
+                }
                 ObjData::Dict(ref lock) => {
                     // ET.Element dict-stubs iterate over their children, not
                     // their internal keys.

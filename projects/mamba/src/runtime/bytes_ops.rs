@@ -779,6 +779,19 @@ pub fn mb_bytes_count(haystack: MbValue, needle: MbValue) -> MbValue {
 /// `len(slice) + 1` to match CPython.
 pub fn mb_bytes_count_range(haystack: MbValue, needle: MbValue, start: MbValue, end: MbValue) -> MbValue {
     unsafe {
+        // An int needle counts a single byte value (`b"mississippi".count(ord("i"))`).
+        let needle = if let Some(i) = needle.as_int() {
+            if !(0..=255).contains(&i) {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("byte must be in range(0, 256)".to_string())),
+                );
+                return MbValue::none();
+            }
+            MbValue::from_ptr(MbObject::new_bytes(vec![i as u8]))
+        } else {
+            needle
+        };
         if let (Some(h), Some(n)) = (as_bytes_cloned(haystack), as_bytes_cloned(needle)) {
             let (s, e) = clamp_range(h.len(), start, end);
             let slice = &h[s..e];
