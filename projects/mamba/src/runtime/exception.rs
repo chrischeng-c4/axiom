@@ -488,7 +488,7 @@ pub fn get_exception_message_pub(exc: MbValue) -> Option<String> {
 /// unconditional yes for parent=Exception/BaseException, which previously
 /// caused class.rs to treat every no-`__init__` user class as an exception
 /// and inject a bogus `args` field. (#1551)
-fn is_builtin_exception_name(name: &str) -> bool {
+pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
     matches!(name,
         "BaseException" | "Exception"
         | "ArithmeticError" | "ZeroDivisionError" | "OverflowError" | "FloatingPointError"

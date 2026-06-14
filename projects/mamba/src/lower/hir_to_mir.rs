@@ -5371,6 +5371,9 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
+                    // Exception type names stay name-strings; their `is`
+                    // identity is handled name-wise in mb_values_identical
+                    // (CPython: builtin types are singletons).
                     return self.emit_str_const(&class_name);
                 }
                 // Builtin function symbols in non-call position (e.g. map(abs, [...])) →

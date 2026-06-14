@@ -3766,7 +3766,10 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
             if let (ObjData::Str(ref sa), ObjData::Str(ref sb)) = (&(*pa).data, &(*pb).data) {
-                if sa == sb && super::class::class_is_registered(sa) {
+                if sa == sb
+                    && (super::class::class_is_registered(sa)
+                        || super::exception::is_builtin_exception_name(sa))
+                {
                     return true;
                 }
             }
@@ -3800,13 +3803,15 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
                 }
             };
             if let Some(na) = type_obj_name(pa) {
-                if (super::class::class_is_registered(&na) || is_type_name(&na))
+                if (super::class::class_is_registered(&na) || is_type_name(&na)
+                        || super::exception::is_builtin_exception_name(&na))
                     && resolves_to_type_name(pb, &na)
                 {
                     return true;
                 }
             } else if let Some(nb) = type_obj_name(pb) {
-                if (super::class::class_is_registered(&nb) || is_type_name(&nb))
+                if (super::class::class_is_registered(&nb) || is_type_name(&nb)
+                        || super::exception::is_builtin_exception_name(&nb))
                     && resolves_to_type_name(pa, &nb)
                 {
                     return true;
