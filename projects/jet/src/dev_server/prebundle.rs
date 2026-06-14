@@ -14,7 +14,7 @@ use super::polyfills;
 /// table changes in a way that should invalidate every project's cache.
 /// The marker's textual contents must contain this tag for the cache to be
 /// considered valid (see `check_cache_valid`). See jet#1908 AC R7.
-pub(crate) const CACHE_MARKER_VERSION: &str = "v8-peer-singleton-cjs-deps";
+pub(crate) const CACHE_MARKER_VERSION: &str = "v14-emotion-react-companion-fallback";
 
 /// Pre-bundler for CJS→ESM conversion of npm dependencies.
 ///

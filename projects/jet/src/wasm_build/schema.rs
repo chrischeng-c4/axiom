@@ -1,9 +1,9 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
 // CODEGEN-BEGIN
-//! `jet config schema` — JSON Schema export for `jet.config.toml`.
+//! `jet config schema` — JSON Schema export for `jet.toml`.
 //!
 //! @spec `.aw/tech-design/projects/jet/config/jet-config-validation.md`
-//!     §"Slice 5 — `schemas/jet.config.schema.json` export".
+//!     §"Slice 5 — `schemas/jet.schema.json` export".
 //! @issue #1233 — Slice 5 (this commit). Derives the schema from
 //!     [`crate::wasm_build::config::WasmConfig`]'s `schemars::JsonSchema`
 //!     so the on-disk artifact stays in lockstep with the Rust source
@@ -13,7 +13,7 @@
 //! Subcommand modes:
 //!
 //! - default (no flag) — print the generated schema to stdout.
-//! - `--write` — write to `<workspace_root>/schemas/jet.config.schema.json`.
+//! - `--write` — write to `<workspace_root>/schemas/jet.schema.json`.
 //! - `--check` — read the on-disk artifact and exit non-zero if it
 //!   differs from a fresh generation. Exit codes: 0 = up-to-date,
 //!   1 = drift, 2 = on-disk file missing or malformed.
@@ -58,9 +58,9 @@ impl SchemaOutcome {
 }
 
 /// Top-of-file artifact path, relative to the workspace root.
-pub const SCHEMA_REL_PATH: &str = "schemas/jet.config.schema.json";
+pub const SCHEMA_REL_PATH: &str = "schemas/jet.schema.json";
 
-/// Build the JSON Schema for the full `jet.config.toml` file.
+/// Build the JSON Schema for the full `jet.toml` file.
 ///
 /// Wraps [`WasmConfig`]'s derived schema under a top-level `wasm`
 /// property so the artifact validates the on-disk file shape (with
@@ -69,11 +69,11 @@ pub const SCHEMA_REL_PATH: &str = "schemas/jet.config.schema.json";
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
 pub fn build_schema() -> RootSchema {
     let mut wasm_schema = schema_for!(WasmConfig);
-    // Title at the top level is more useful as "jet.config.toml" than
+    // Title at the top level is more useful as "jet.toml" than
     // the inner type name.
-    wasm_schema.schema.metadata().title = Some("jet.config.toml".into());
+    wasm_schema.schema.metadata().title = Some("jet.toml".into());
     wasm_schema.schema.metadata().description = Some(
-        "Schema for the `jet.config.toml` file. Generated from the Rust \
+        "Schema for the `jet.toml` file. Generated from the Rust \
          source of truth in `projects/jet/src/wasm_build/config.rs`. Run \
          `jet config schema --write` to regenerate."
             .into(),
@@ -104,9 +104,9 @@ pub fn build_schema() -> RootSchema {
     object.additional_properties = Some(Box::new(Schema::Bool(false)));
 
     let mut root = SchemaObject::default();
-    root.metadata().title = Some("jet.config.toml".into());
+    root.metadata().title = Some("jet.toml".into());
     root.metadata().description = Some(
-        "Schema for the `jet.config.toml` file. Generated from the Rust \
+        "Schema for the `jet.toml` file. Generated from the Rust \
          source of truth in `projects/jet/src/wasm_build/config.rs`. Run \
          `jet config schema --write` to regenerate."
             .into(),

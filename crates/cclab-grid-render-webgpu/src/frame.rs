@@ -254,18 +254,25 @@ impl<'r, 'window> FrameBuilder<'r, 'window> {
             .take()
             .expect("surface texture already consumed");
 
-        // Slice 4i (#1727): resolve + copy + kick off async map for
-        // the active timing slot, then advance to the next slot. No-op
-        // when the pool is disabled. Must run BEFORE
-        // `encoder.finish()` so the resolve commands ride on the same
-        // submission as the timestamped pass — one-submit-per-frame
-        // invariant (Slice 4j).
-        self.renderer.frame_timing.finish_frame(&mut encoder);
+        // Flush any prior timing callback before reusing a ring slot.
+        if self.renderer.frame_timing.is_enabled() {
+            self.renderer.device.poll(wgpu::Maintain::Poll);
+        }
+
+        // Slice 4i (#1727): resolve + copy the active timing slot, then
+        // advance to the next slot. No-op when the pool is disabled.
+        // Must encode BEFORE `encoder.finish()` so the resolve commands
+        // ride on the same submission as the timestamped pass, but the
+        // returned map work must start only AFTER `queue.submit()`.
+        let pending_timing_readback = self.renderer.frame_timing.finish_frame(&mut encoder);
 
         self.renderer
             .queue
             .submit(std::iter::once(encoder.finish()));
         self.submit_count += 1;
+        if let Some(pending) = pending_timing_readback {
+            pending.start_mapping();
+        }
 
         // Drive previously-submitted slots' `map_async` callbacks
         // non-blocking. Without this poll, the callback that updates

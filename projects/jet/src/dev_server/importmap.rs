@@ -160,15 +160,15 @@ pub fn mui_emotion_patches() -> &'static [(&'static str, &'static str)] {
         ("dom-helpers", "/node_modules/dom-helpers/esm/index.js"),
         (
             "dom-helpers/addClass",
-            "/node_modules/dom-helpers/esm/addClass.js",
+            "/node_modules/dom-helpers/cjs/addClass.js",
         ),
         (
             "dom-helpers/removeClass",
-            "/node_modules/dom-helpers/esm/removeClass.js",
+            "/node_modules/dom-helpers/cjs/removeClass.js",
         ),
         (
             "dom-helpers/hasClass",
-            "/node_modules/dom-helpers/esm/hasClass.js",
+            "/node_modules/dom-helpers/cjs/hasClass.js",
         ),
         // @mui/utils helper subpaths. Use the published ESM entry; routing
         // these re-export files through `.jet/` breaks their relative imports.
@@ -214,9 +214,10 @@ pub fn mui_emotion_patches() -> &'static [(&'static str, &'static str)] {
             "@emotion/utils",
             "/node_modules/@emotion/utils/dist/emotion-utils.browser.esm.js",
         ),
+        ("@emotion/hash", "/node_modules/@emotion/hash/src/index.ts"),
         (
-            "@emotion/hash",
-            "/node_modules/@emotion/hash/dist/emotion-hash.esm.js",
+            "@emotion/use-insertion-effect-with-fallbacks",
+            "/node_modules/@emotion/use-insertion-effect-with-fallbacks/dist/emotion-use-insertion-effect-with-fallbacks.esm.js",
         ),
         (
             "@emotion/unitless",
@@ -380,9 +381,9 @@ mod tests {
         // dom-helpers subpaths
         assert!(
             json.contains(
-                "\"dom-helpers/addClass\": \"/node_modules/dom-helpers/esm/addClass.js\""
+                "\"dom-helpers/addClass\": \"/node_modules/dom-helpers/cjs/addClass.js\""
             ),
-            "dom-helpers/addClass subpath must resolve to ESM file: {}",
+            "dom-helpers/addClass subpath must resolve to installed CJS file for Jet wrapping: {}",
             json
         );
         // @mui/utils helper subpaths
@@ -407,6 +408,16 @@ mod tests {
         assert!(
             json.contains("\"@emotion/sheet\": \"/node_modules/@emotion/sheet/dist/emotion-sheet.esm.js\""),
             "@emotion/sheet must resolve to the published ESM entry (fixes 'no default export' error): {}",
+            json
+        );
+        assert!(
+            json.contains("\"@emotion/hash\": \"/node_modules/@emotion/hash/src/index.ts\""),
+            "@emotion/hash must resolve to the installed source entry when the package has no dist files: {}",
+            json
+        );
+        assert!(
+            json.contains("\"@emotion/use-insertion-effect-with-fallbacks\": \"/node_modules/@emotion/use-insertion-effect-with-fallbacks/dist/emotion-use-insertion-effect-with-fallbacks.esm.js\""),
+            "@emotion/use-insertion-effect-with-fallbacks must resolve to Jet's virtual hook fallback when the store package is empty: {}",
             json
         );
     }

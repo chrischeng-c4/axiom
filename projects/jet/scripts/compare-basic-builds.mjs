@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { brotliCompressSync, gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,6 +12,7 @@ import { createServer } from "node:http";
 
 const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(__filename), "../../..");
+const defaultFixture = path.join(repoRoot, "examples/react-bench");
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -28,12 +29,9 @@ for (let i = 2; i < process.argv.length; i += 1) {
   }
 }
 
-const defaultFixture = "projects/jet/tests/fixtures/dom-production-build/react-bench";
-const sourceFixture = path.resolve(repoRoot, args.get("--fixture") ?? defaultFixture);
-const sourceDependencyRoot = path.resolve(repoRoot, args.get("--dependency-root") ?? sourceFixture);
-const sourceToolRoot = path.resolve(repoRoot, args.get("--tool-root") ?? sourceFixture);
-const fixtureName = args.get("--fixture-name") ?? path.basename(sourceFixture);
-const selectedTools = parseToolList(args.get("--tools") ?? "jet,vite,webpack");
+const selfTestMode = args.has("--self-test");
+const durationRatioMax = 1.25;
+const gzipRatioMax = 1.05;
 const defaultJetBin = await firstExecutablePath(["target/release/jet", "target/debug/jet"]);
 const jetBin = path.resolve(repoRoot, args.get("--jet-bin") ?? process.env.JET_BIN ?? defaultJetBin);
 const outputRoot =
@@ -48,45 +46,110 @@ const runtimeSmokeMode = normalizeRuntimeSmokeMode(args.get("--runtime-smoke") ?
 const commandTimeoutMs = Number(args.get("--command-timeout-ms") ?? 120_000);
 const runtimeToolTimeoutMs = Number(args.get("--runtime-timeout-ms") ?? 30_000);
 const buildSamples = parsePositiveInteger(args.get("--build-samples") ?? "1", "--build-samples");
+const fixtureSource = path.resolve(repoRoot, args.get("--fixture") ?? defaultFixture);
+const fixtureName = args.get("--fixture-name") ?? path.basename(fixtureSource);
+const dependencyRoot = path.resolve(repoRoot, args.get("--dependency-root") ?? fixtureSource);
+const toolRoot = path.resolve(repoRoot, args.get("--tool-root") ?? dependencyRoot);
+const toolNames = parseTools(args.get("--tools") ?? "jet,vite,webpack");
+const nodeBin = selfTestMode ? null : await findNodeBin(toolRoot, toolNames);
 const runtimeCase = args.get("--runtime-case") ?? "react-bench";
-const requireCssBundle = args.has("--require-css");
-const requiredPublicAssets = parseCsv(args.get("--require-public") ?? "");
-
-const semanticStrings = parseCsv(args.get("--semantic-strings") ?? "")
-  .filter(Boolean);
-if (semanticStrings.length === 0) {
-  semanticStrings.push("React Bench", "Counter", "Todos", "Add todo");
-}
-
-function parseCsv(value) {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function parseToolList(value) {
-  const tools = parseCsv(value);
-  const allowed = new Set(["jet", "vite", "webpack"]);
-  for (const tool of tools) {
-    if (!allowed.has(tool)) {
-      throw new Error(`--tools supports jet,vite,webpack; got ${tool}`);
-    }
-  }
-  if (!tools.includes("jet")) {
-    tools.unshift("jet");
-  }
-  if (tools.length === 0) {
-    throw new Error("--tools must select at least one tool");
-  }
-  return [...new Set(tools)];
-}
+const semanticStrings = parseCsv(
+  args.get("--semantic-strings") ?? "React Bench,Counter,Todos,Add todo",
+);
+const requireCss = args.has("--require-css");
+const requiredPublicFiles = parseCsv(args.get("--require-public") ?? "");
 
 function normalizeRuntimeSmokeMode(value) {
   if (["off", "optional", "required"].includes(value)) {
     return value;
   }
   throw new Error(`--runtime-smoke must be one of off, optional, or required; got ${value}`);
+}
+
+function parseCsv(raw) {
+  return raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function findNodeBin(start, requiredTools) {
+  const starts = [path.resolve(start)];
+  for (const startDir of starts) {
+    let current = startDir;
+    while (true) {
+      const candidate = path.join(current, "node_modules/.bin");
+      if (await hasRequiredNodeTools(candidate, requiredTools)) {
+        return candidate;
+      }
+
+      if (current === repoRoot || current === path.dirname(current)) {
+        break;
+      }
+      current = path.dirname(current);
+    }
+  }
+  throw new Error(`could not find node_modules/.bin with ${requiredTools.join(",")} from ${start}`);
+}
+
+async function hasRequiredNodeTools(candidate, requiredTools) {
+  const nodeTools = requiredTools.filter((tool) => tool !== "jet");
+  for (const tool of nodeTools) {
+    try {
+      await access(path.join(candidate, tool), fsConstants.X_OK);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function materializeFixtureRoot(source, dependencyRoot, outputRoot, fixtureName) {
+  const workRoot = path.join(outputRoot, ".fixture-work", fixtureName);
+  await rm(workRoot, { recursive: true, force: true });
+  await mkdir(path.dirname(workRoot), { recursive: true });
+  await cp(source, workRoot, {
+    recursive: true,
+    filter: (src) => !src.split(path.sep).includes("node_modules") && !src.split(path.sep).includes("dist"),
+  });
+
+  const dependencyNodeModules = path.join(dependencyRoot, "node_modules");
+  const fixtureNodeModules = path.join(workRoot, "node_modules");
+  if (await pathIsDirectory(dependencyNodeModules)) {
+    await symlink(dependencyNodeModules, fixtureNodeModules, "dir");
+  }
+  return workRoot;
+}
+
+async function pathIsDirectory(candidate) {
+  try {
+    return (await stat(candidate)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function parseTools(raw) {
+  const parsed = parseCsv(raw);
+  const supported = new Set(["jet", "vite", "webpack"]);
+  const seen = new Set();
+  const tools = [];
+  for (const tool of parsed) {
+    if (!supported.has(tool)) {
+      throw new Error(`--tools contains unsupported tool ${tool}`);
+    }
+    if (!seen.has(tool)) {
+      tools.push(tool);
+      seen.add(tool);
+    }
+  }
+  if (!seen.has("jet")) {
+    throw new Error("--tools must include jet");
+  }
+  if (tools.length < 2) {
+    throw new Error("--tools must include jet and at least one baseline tool");
+  }
+  return tools;
 }
 
 function parsePositiveInteger(raw, label) {
@@ -128,9 +191,13 @@ async function runCommand(run) {
   const stdout = [];
   const stderr = [];
   let timedOut = false;
+  const env = { ...process.env, CI: "1" };
+  if (nodeBin) {
+    env.PATH = `${nodeBin}${path.delimiter}${env.PATH ?? ""}`;
+  }
   const child = spawn(run.command[0], run.command.slice(1), {
     cwd: run.cwd,
-    env: { ...process.env, CI: "1" },
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const timer = setTimeout(() => {
@@ -163,72 +230,6 @@ async function fileExists(file) {
   } catch {
     return false;
   }
-}
-
-function shouldCopyPackageTreeEntry(source) {
-  return ![
-    "node_modules",
-    "dist",
-    "dist-jet",
-    "dist-vite",
-    "dist-webpack",
-    ".vite",
-    ".turbo",
-    ".next",
-    ".cache",
-  ].includes(path.basename(source));
-}
-
-async function copyPackageTree(source, target) {
-  await rm(target, { recursive: true, force: true });
-  await cp(source, target, {
-    recursive: true,
-    filter: shouldCopyPackageTreeEntry,
-  });
-}
-
-async function copyDependencyLockIfNeeded(target) {
-  const targetLock = path.join(target, "jet-lock.yaml");
-  if (await fileExists(targetLock)) {
-    return false;
-  }
-
-  const dependencyLock = path.join(sourceDependencyRoot, "jet-lock.yaml");
-  if (!(await fileExists(dependencyLock))) {
-    return false;
-  }
-
-  await cp(dependencyLock, targetLock);
-  return true;
-}
-
-async function hydrateWithJetInstall(name, cwd) {
-  progress(`pkg: jet install ${name}`);
-  return runCommand({
-    name: `${name}:jet-install`,
-    cwd,
-    command: [jetBin, "install", "--frozen-lockfile"],
-    timeout_ms: commandTimeoutMs,
-  });
-}
-
-async function writeSetupFailure(reason, setup) {
-  const evidence = {
-    contract_id: "basic.build.production",
-    result: "red",
-    fixture_name: fixtureName,
-    fixture: path.relative(repoRoot, sourceFixture),
-    dependency_root: path.relative(repoRoot, sourceDependencyRoot),
-    tool_root: path.relative(repoRoot, sourceToolRoot),
-    output_root: outputRoot,
-    phase: "jet_package_hydration",
-    reason,
-    setup,
-  };
-  await mkdir(path.dirname(evidencePath), { recursive: true });
-  await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
-  console.log(JSON.stringify(evidence, null, 2));
-  process.exit(1);
 }
 
 async function startStaticServer(root, artifacts) {
@@ -383,12 +384,6 @@ async function analyzeArtifacts(tool, dir) {
   const semantic = Object.fromEntries(
     semanticStrings.map((needle) => [needle, combinedText.includes(needle)]),
   );
-  const publicAssets = Object.fromEntries(
-    requiredPublicAssets.map((asset) => [
-      asset,
-      fileEntries.some((entry) => entry.path === asset || entry.path.endsWith(`/${asset}`)),
-    ]),
-  );
   const jsSyntax = [];
   for (const rel of jsFiles) {
     const file = path.join(dir, rel);
@@ -405,22 +400,29 @@ async function analyzeArtifacts(tool, dir) {
     });
   }
   const semanticOk = Object.values(semantic).every(Boolean);
-  const cssOk = !requireCssBundle || cssFiles.length > 0;
-  const publicAssetsOk = Object.values(publicAssets).every(Boolean);
   const hasJs = jsFiles.length > 0;
+  const hasCss = cssFiles.length > 0;
   const syntaxOk = jsSyntax.every((entry) => entry.ok);
   const hasRunnableHtml = htmlShell.present && htmlShell.root_mount && htmlShell.loads_script;
+  const requiredPublicPresence = Object.fromEntries(
+    requiredPublicFiles.map((required) => [
+      required,
+      fileEntries.some((entry) => entry.path === required),
+    ]),
+  );
+  const publicOk = Object.values(requiredPublicPresence).every(Boolean);
 
   let staticResult = "green";
   const missing = [];
   if (!hasJs) missing.push("js_bundle");
   if (!syntaxOk) missing.push("js_syntax");
   if (!semanticOk) missing.push("semantic_strings");
-  if (!cssOk) missing.push("css_bundle");
-  if (!publicAssetsOk) missing.push("public_assets");
   if (!hasRunnableHtml) missing.push("html_shell");
+  if (requireCss && !hasCss) missing.push("css_bundle");
+  if (requireCss && !htmlShell.linked_css) missing.push("css_link");
+  if (!publicOk) missing.push("public_assets");
   if (missing.length > 0) {
-    staticResult = hasJs && syntaxOk && semanticOk && cssOk && publicAssetsOk ? "yellow" : "red";
+    staticResult = hasJs && syntaxOk && semanticOk ? "yellow" : "red";
   }
   const result = staticResult === "red" ? "red" : "yellow";
 
@@ -445,10 +447,14 @@ async function analyzeArtifacts(tool, dir) {
         js_syntax: jsSyntax,
         html_shell: htmlShell,
         css_bundle: {
-          required: requireCssBundle,
-          present: cssFiles.length > 0,
+          required: requireCss,
+          present: hasCss,
+          linked: htmlShell.linked_css,
         },
-        public_assets: publicAssets,
+        public_assets: {
+          required: requiredPublicFiles,
+          present: requiredPublicPresence,
+        },
         semantic_strings: semantic,
         runtime_smoke: "not_run",
       },
@@ -600,14 +606,14 @@ function runtimeCommandFailure(phase, result, started, server, commands = [comma
 }
 
 function runtimeSmokeExpression() {
-  if (runtimeCase === "dom-production-assets") {
+if (runtimeCase === "dom-production-assets") {
     return domProductionAssetsRuntimeSmokeExpression();
   }
   if (runtimeCase === "visual-library") {
     return visualLibraryRuntimeSmokeExpression();
   }
   if (runtimeCase !== "react-bench") {
-    throw new Error(`unsupported --runtime-case: ${runtimeCase}`);
+    throw new Error(`unknown --runtime-case ${runtimeCase}`);
   }
   return `
     (async () => {
@@ -680,111 +686,127 @@ function runtimeSmokeExpression() {
 }
 
 function domProductionAssetsRuntimeSmokeExpression() {
-  const requiredTexts = JSON.stringify(semanticStrings);
   return `
     (async () => {
-      const requiredTexts = ${requiredTexts};
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim();
       const waitFor = async (predicate, label, timeoutMs = 5000) => {
         const started = Date.now();
         while (Date.now() - started < timeoutMs) {
-          if (predicate()) return;
+          if (await predicate()) return;
           await sleep(100);
         }
         throw new Error("timeout waiting for " + label);
       };
-      const snapshot = (label) => {
-        const body = normalize(document.body && document.body.innerText);
-        const img = document.querySelector("img[alt='public asset']");
-        return {
-          label,
-          body_text: requiredTexts.map((text) => text + "=" + body.includes(text)).join(";"),
-          h1: normalize(document.querySelector("h1") && document.querySelector("h1").textContent),
-          h2: "",
-          buttons: Array.from(document.querySelectorAll("button")).map((item) => normalize(item.textContent)),
-          inputs: [],
-          todos: [
-            {
-              text: normalize(document.querySelector(".counter") && document.querySelector(".counter").textContent),
-              done: Boolean(img && img.complete),
-              decoration: getComputedStyle(document.querySelector(".status.active")).borderStyle
-            }
-          ]
-        };
-      };
-
+      const textFor = (selector) => normalize(document.querySelector(selector)?.textContent);
       const trace = [];
-      await waitFor(() => requiredTexts.every((text) => document.body.innerText.includes(text)), "required semantic text");
-      trace.push(snapshot("initial"));
+      await waitFor(() => textFor("h1") === "DOM Production Assets", "app title");
+      await waitFor(() => textFor("[data-testid='mode']") === "Mode: production", "production mode");
+      await waitFor(() => textFor("[data-testid='node-env']") === "Build target: production", "node env");
+      const shell = document.querySelector(".shell");
+      const status = document.querySelector(".status.active");
+      const brand = document.querySelector("img.brand");
+      if (!shell) throw new Error("shell not found");
+      if (!status) throw new Error("status not found");
+      if (!brand) throw new Error("brand image not found");
+      const publicAssetResponse = await fetch("/brand.svg");
+      const publicAssetText = publicAssetResponse.ok ? await publicAssetResponse.text() : "";
+      if (!publicAssetResponse.ok) throw new Error("public brand.svg did not load");
+      const shellStyle = getComputedStyle(shell);
+      const statusStyle = getComputedStyle(status);
+      trace.push({
+        label: "initial",
+        h1: textFor("h1"),
+        mode: textFor("[data-testid='mode']"),
+        node_env: textFor("[data-testid='node-env']"),
+        status: normalize(status.textContent),
+        shell_color: shellStyle.color,
+        status_border_width: statusStyle.borderTopWidth,
+        public_asset_has_svg: publicAssetText.includes("<svg"),
+        counter: normalize(document.body.innerText).includes("Asset counter: 0") ? "0" : "missing"
+      });
       const button = Array.from(document.querySelectorAll("button"))
         .find((candidate) => normalize(candidate.textContent) === "Increment asset counter");
       if (!button) throw new Error("increment button not found");
       button.click();
-      await waitFor(() => document.body.innerText.includes("Asset counter: 1"), "asset counter increment");
-      trace.push(snapshot("asset_counter_increment"));
+      await waitFor(() => document.body.innerText.includes("Asset counter: 1"), "counter increment");
+      trace.push({
+        label: "counter_increment",
+        counter: normalize(document.body.innerText).includes("Asset counter: 1") ? "1" : "missing",
+        shell_color: getComputedStyle(shell).color,
+        status_border_width: getComputedStyle(status).borderTopWidth
+      });
       return { errors: [], trace };
     })()
   `;
 }
 
 function visualLibraryRuntimeSmokeExpression() {
-  const requiredTexts = JSON.stringify(semanticStrings);
   return `
     (async () => {
-      const requiredTexts = ${requiredTexts};
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim();
-      const waitFor = async (predicate, label, timeoutMs = 7000) => {
+      const waitFor = async (predicate, label, timeoutMs = 8000) => {
         const started = Date.now();
         while (Date.now() - started < timeoutMs) {
-          if (predicate()) return;
+          if (await predicate()) return;
           await sleep(100);
         }
         throw new Error("timeout waiting for " + label);
       };
-      const snapshot = (label) => {
-        const body = normalize(document.body && document.body.innerText);
-        const uiCases = document.querySelectorAll(".ui-case").length;
-        const tableCells = Array.from(document.querySelectorAll("td")).slice(0, 6)
-          .map((item) => normalize(item.textContent));
-        return {
-          label,
-          body_text: requiredTexts.map((text) => text + "=" + body.includes(text)).join(";"),
-          h1: normalize(document.querySelector("h1") && document.querySelector("h1").textContent),
-          h2: normalize(document.querySelector("h2") && document.querySelector("h2").textContent),
-          buttons: Array.from(document.querySelectorAll("button")).slice(0, 12).map((item) => normalize(item.textContent)),
-          inputs: Array.from(document.querySelectorAll("input")).slice(0, 8).map((input) => ({
-            type: input.type,
-            placeholder: input.placeholder || "",
-            value: input.value || "",
-            checked: Boolean(input.checked)
-          })),
-          todos: [
-            {
-              text: "uiCases=" + uiCases + ";cells=" + tableCells.join("|"),
-              done: body.includes("cell 0") && uiCases >= 4,
-              decoration: getComputedStyle(document.querySelector(".component-matrix")).display
-            }
-          ]
-        };
-      };
-
-      const trace = [];
-      await waitFor(
-        () => requiredTexts.every((text) => document.body.innerText.includes(text)) &&
-          document.querySelectorAll(".ui-case").length >= 4 &&
-          document.body.innerText.includes("cell 0"),
-        "visual fixture ready"
-      );
-      trace.push(snapshot("initial"));
-      const primary = Array.from(document.querySelectorAll("button"))
-        .find((candidate) => /Primary/.test(normalize(candidate.textContent)));
-      if (primary) {
-        primary.click();
-        await sleep(100);
-        trace.push(snapshot("primary_click"));
+      await waitFor(() => window.__jetVisualFixture, "visual fixture metadata");
+      const meta = window.__jetVisualFixture;
+      try {
+        await waitFor(
+          () => document.body.innerText.includes(meta.tableTitle)
+            && document.querySelectorAll(".ui-case").length >= meta.minComponentCases,
+          "visual fixture render",
+        );
+      } catch (err) {
+        const events = Array.from(window.__jetVisualEvents || []);
+        const root = document.getElementById("root");
+        throw new Error([
+          err.message,
+          "body=" + normalize(document.body.innerText).slice(0, 500),
+          "root=" + normalize(root?.innerHTML).slice(0, 500),
+          "events=" + JSON.stringify(events).slice(0, 1200),
+        ].join("; "));
       }
+      const firstCell = document.querySelector("#large-table td");
+      if (!firstCell) throw new Error("large table first cell not found");
+      const primaryButtonText = meta.primaryButtonText
+        || (meta.libraryId === "mui" ? "MUI Primary" : "AntD Primary");
+      const primaryButton = Array.from(document.querySelectorAll("button"))
+        .find((candidate) => normalize(candidate.textContent).includes(primaryButtonText));
+      if (!primaryButton) throw new Error("primary button not found");
+      const events = Array.from(window.__jetVisualEvents || []);
+      if (events.length > 0) {
+        throw new Error("visual fixture emitted browser errors: " + JSON.stringify(events));
+      }
+      const matrix = document.querySelector(".component-matrix");
+      const viewport = document.querySelector("#table-viewport");
+      const trace = [];
+      trace.push({
+        label: "initial",
+        library_id: meta.libraryId,
+        title: normalize(document.querySelector("h1")?.textContent),
+        component_cases: document.querySelectorAll(".ui-case").length,
+        first_cell: normalize(firstCell.textContent),
+        primary_button: normalize(primaryButton.textContent),
+        matrix_present: Boolean(matrix),
+        table_viewport_overflow: getComputedStyle(viewport).overflow,
+        browser_events: events.length,
+      });
+      primaryButton.click();
+      await sleep(100);
+      trace.push({
+        label: "primary_click",
+        library_id: meta.libraryId,
+        active_element_tag: document.activeElement ? document.activeElement.tagName.toLowerCase() : "",
+        title: normalize(document.querySelector("h1")?.textContent),
+        component_cases: document.querySelectorAll(".ui-case").length,
+        browser_events: Array.from(window.__jetVisualEvents || []).length,
+      });
       return { errors: [], trace };
     })()
   `;
@@ -836,15 +858,22 @@ function compareRuntimeTraces(entries) {
 }
 
 function normalizeRuntimeTrace(trace) {
-  return trace.map((step) => ({
-    label: step.label,
-    body_text: step.body_text,
-    h1: step.h1,
-    h2: step.h2,
-    buttons: step.buttons,
-    inputs: step.inputs,
-    todos: step.todos,
-  }));
+  return trace.map((step) => normalizeJsonValue(step));
+}
+
+function normalizeJsonValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeJsonValue(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, normalizeJsonValue(value[key])]),
+    );
+  }
+  return value;
 }
 
 function updateFunctionalResult(entry) {
@@ -876,65 +905,198 @@ function hashJson(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function performanceIsGreen(durationRatio, gzipRatio) {
+  return durationRatio <= durationRatioMax && gzipRatio <= gzipRatioMax;
+}
+
+function overallResultFor({
+  jetFunctionalGreen,
+  jetStaticFunctionalGreen,
+  performanceGreen,
+  jetFunctionalResult,
+  runtimeComparisonResult,
+}) {
+  if (runtimeSmokeMode === "required" && runtimeComparisonResult === "red") {
+    return "red";
+  }
+  if (jetFunctionalGreen && performanceGreen) {
+    return "green";
+  }
+  if (jetFunctionalResult === "red" || !jetStaticFunctionalGreen || !performanceGreen) {
+    return "red";
+  }
+  return "yellow";
+}
+
 function shortOutput(text) {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length <= 20) return lines;
   return [...lines.slice(0, 10), "...", ...lines.slice(-10)];
 }
 
-await mkdir(outputRoot, { recursive: true });
-await ensureExecutable("jet", jetBin);
-
-const workspaceRoot = path.join(outputRoot, ".workspace");
-const fixture = path.join(workspaceRoot, "fixture");
-await copyPackageTree(sourceFixture, fixture);
-const dependencyLockCopied = await copyDependencyLockIfNeeded(fixture);
-const fixtureInstall = await hydrateWithJetInstall("fixture", fixture);
-const setup = {
-  fixture: {
-    source: path.relative(repoRoot, sourceFixture),
-    working_dir: path.relative(repoRoot, fixture),
-    dependency_root: path.relative(repoRoot, sourceDependencyRoot),
-    dependency_lock_copied: dependencyLockCopied,
-    install: commandEvidence(fixtureInstall),
-  },
-  tool_root: null,
-};
-if (fixtureInstall.exit_code !== 0 || fixtureInstall.timed_out) {
-  await writeSetupFailure("fixture_jet_install_failed", setup);
-}
-
-const needsBaselineTools = selectedTools.some((tool) => tool === "vite" || tool === "webpack");
-let toolFixture = fixture;
-if (needsBaselineTools && path.resolve(sourceToolRoot) !== path.resolve(sourceFixture)) {
-  toolFixture = path.join(workspaceRoot, "tool-root");
-  await copyPackageTree(sourceToolRoot, toolFixture);
-  const toolInstall = await hydrateWithJetInstall("tool-root", toolFixture);
-  setup.tool_root = {
-    source: path.relative(repoRoot, sourceToolRoot),
-    working_dir: path.relative(repoRoot, toolFixture),
-    install: commandEvidence(toolInstall),
+async function runContractSelfTest() {
+  const failures = [];
+  const assert = (condition, message) => {
+    if (!condition) failures.push(message);
   };
-  if (toolInstall.exit_code !== 0 || toolInstall.timed_out) {
-    await writeSetupFailure("tool_root_jet_install_failed", setup);
+
+  assert(runtimeSmokeMode === "required", "--self-test must run with --runtime-smoke required");
+  assert(requireCss, "--self-test must run with --require-css");
+  assert(
+    requiredPublicFiles.includes("brand.svg"),
+    "--self-test must run with --require-public brand.svg",
+  );
+  assert(
+    semanticStrings.includes("DOM Production Assets"),
+    "--self-test must include the DOM Production Assets semantic string",
+  );
+
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "jet-basic-build-contract-"));
+  try {
+    const complete = path.join(tempRoot, "complete");
+    await mkdir(complete, { recursive: true });
+    await writeFile(
+      path.join(complete, "index.html"),
+      '<!doctype html><div id="root"></div><link rel="stylesheet" href="/style.css"><script type="module" src="/main.js"></script>',
+    );
+    await writeFile(
+      path.join(complete, "main.js"),
+      'const title = "DOM Production Assets"; console.log(title);',
+    );
+    await writeFile(path.join(complete, "style.css"), ".shell { color: rgb(1, 2, 3); }");
+    await writeFile(path.join(complete, "brand.svg"), "<svg></svg>");
+
+    const completeAnalysis = await analyzeArtifacts("jet", complete);
+    assert(
+      completeAnalysis.functional.static_result === "green",
+      `complete artifact set should be statically green: ${JSON.stringify(completeAnalysis.functional)}`,
+    );
+
+    const missingCss = path.join(tempRoot, "missing-css");
+    await cp(complete, missingCss, { recursive: true });
+    await rm(path.join(missingCss, "style.css"));
+    await writeFile(
+      path.join(missingCss, "index.html"),
+      '<!doctype html><div id="root"></div><script type="module" src="/main.js"></script>',
+    );
+    const missingCssAnalysis = await analyzeArtifacts("jet", missingCss);
+    assert(
+      missingCssAnalysis.functional.static_result !== "green"
+        && missingCssAnalysis.functional.missing.includes("css_bundle")
+        && missingCssAnalysis.functional.missing.includes("css_link"),
+      `missing CSS must not be green: ${JSON.stringify(missingCssAnalysis.functional)}`,
+    );
+
+    const missingPublic = path.join(tempRoot, "missing-public");
+    await cp(complete, missingPublic, { recursive: true });
+    await rm(path.join(missingPublic, "brand.svg"));
+    const missingPublicAnalysis = await analyzeArtifacts("jet", missingPublic);
+    assert(
+      missingPublicAnalysis.functional.static_result !== "green"
+        && missingPublicAnalysis.functional.missing.includes("public_assets"),
+      `missing public asset must not be green: ${JSON.stringify(missingPublicAnalysis.functional)}`,
+    );
+
+    const runtimeEntry = (name, trace) => ({
+      name,
+      functional: {
+        result: "yellow",
+        static_result: "green",
+        missing: [],
+        checks: {
+          runtime_smoke: {
+            result: "green",
+            trace,
+          },
+        },
+      },
+    });
+    const referenceTrace = [
+      {
+        label: "initial",
+        h1: "DOM Production Assets",
+        mode: "Mode: production",
+        shell_color: "rgb(10, 20, 30)",
+        public_asset_has_svg: true,
+      },
+    ];
+    const divergentTrace = [
+      {
+        label: "initial",
+        h1: "DOM Production Assets",
+        mode: "Mode: production",
+        shell_color: "rgb(200, 20, 30)",
+        public_asset_has_svg: true,
+      },
+    ];
+    const jetRuntime = runtimeEntry("jet", divergentTrace);
+    const runtimeComparison = compareRuntimeTraces([
+      runtimeEntry("vite", referenceTrace),
+      jetRuntime,
+      runtimeEntry("webpack", referenceTrace),
+    ]);
+    assert(
+      runtimeComparison.result === "red"
+        && runtimeComparison.mismatches.includes("jet")
+        && jetRuntime.functional.checks.runtime_smoke.result === "red",
+      `runtime trace divergence must be red: ${JSON.stringify(runtimeComparison)}`,
+    );
+    assert(
+      overallResultFor({
+        jetFunctionalGreen: true,
+        jetStaticFunctionalGreen: true,
+        performanceGreen: true,
+        jetFunctionalResult: "green",
+        runtimeComparisonResult: "red",
+      }) === "red",
+      "required runtime comparison red must force overall red",
+    );
+
+    assert(
+      !performanceIsGreen(durationRatioMax + 0.001, 1.0),
+      "duration regression above threshold must fail performance",
+    );
+    assert(
+      !performanceIsGreen(1.0, gzipRatioMax + 0.001),
+      "gzip regression above threshold must fail performance",
+    );
+    assert(
+      overallResultFor({
+        jetFunctionalGreen: true,
+        jetStaticFunctionalGreen: true,
+        performanceGreen: false,
+        jetFunctionalResult: "green",
+        runtimeComparisonResult: "green",
+      }) === "red",
+      "performance regression must force overall red",
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
   }
-} else if (needsBaselineTools) {
-  setup.tool_root = {
-    source: path.relative(repoRoot, sourceToolRoot),
-    working_dir: path.relative(repoRoot, toolFixture),
-    install: commandEvidence(fixtureInstall),
-  };
+
+  if (failures.length > 0) {
+    console.error(`basic build contract self-test failed:\n- ${failures.join("\n- ")}`);
+    process.exit(1);
+  }
+  console.log("basic build contract self-test: green");
 }
 
-const nodeBin = path.join(toolFixture, "node_modules/.bin");
-if (selectedTools.includes("vite")) {
+if (selfTestMode) {
+  await runContractSelfTest();
+  process.exit(0);
+}
+
+await ensureExecutable("jet", jetBin);
+if (toolNames.includes("vite")) {
   await ensureExecutable("vite", path.join(nodeBin, "vite"));
 }
-if (selectedTools.includes("webpack")) {
+if (toolNames.includes("webpack")) {
   await ensureExecutable("webpack", path.join(nodeBin, "webpack"));
 }
+await mkdir(outputRoot, { recursive: true });
+const fixture = await materializeFixtureRoot(fixtureSource, dependencyRoot, outputRoot, fixtureName);
 
-const runDefinitions = {
+const runByName = {
   jet: {
     name: "jet",
     cwd: fixture,
@@ -945,7 +1107,7 @@ const runDefinitions = {
       "--sourcemap",
       "none",
       "-o",
-      outputDir,
+        outputDir,
     ],
   },
   vite: {
@@ -973,8 +1135,7 @@ const runDefinitions = {
     ],
   },
 };
-
-const runs = selectedTools.map((tool) => runDefinitions[tool]);
+const runs = toolNames.map((name) => runByName[name]);
 
 const executed = [];
 for (const run of runs) {
@@ -1009,7 +1170,8 @@ for (const run of runs) {
       const evidence = {
         contract_id: "basic.build.production",
         result: "red",
-        fixture: path.relative(repoRoot, fixture),
+        fixture: path.relative(repoRoot, fixtureSource),
+        fixture_name: fixtureName,
         output_root: outputRoot,
         failed_tool: run.name,
         command: result.command,
@@ -1059,38 +1221,36 @@ for (const run of executed) {
 
 const runtimeComparison = await applyRuntimeSmokeChecks(analyzed);
 const byName = Object.fromEntries(analyzed.map((entry) => [entry.name, entry]));
-const baselines = [byName.vite, byName.webpack].filter(Boolean);
-const fastestBaseline = baselines.reduce(
-  (best, item) => !best || item.duration_ms < best.duration_ms ? item : best,
-  null,
+const baselines = toolNames.filter((name) => name !== "jet").map((name) => byName[name]);
+const fastestBaseline = baselines.reduce((best, item) =>
+  item.duration_ms < best.duration_ms ? item : best
 );
-const smallestBaselineGzip = baselines.reduce(
-  (best, item) => !best || item.artifacts.gzip_bytes < best.artifacts.gzip_bytes ? item : best,
-  null,
+const smallestBaselineGzip = baselines.reduce((best, item) =>
+  item.artifacts.gzip_bytes < best.artifacts.gzip_bytes ? item : best
 );
 const jet = byName.jet;
-const durationRatio = fastestBaseline ? jet.duration_ms / fastestBaseline.duration_ms : Number.POSITIVE_INFINITY;
-const gzipRatio = smallestBaselineGzip
-  ? jet.artifacts.gzip_bytes / smallestBaselineGzip.artifacts.gzip_bytes
-  : Number.POSITIVE_INFINITY;
+const durationRatio = jet.duration_ms / fastestBaseline.duration_ms;
+const gzipRatio = jet.artifacts.gzip_bytes / smallestBaselineGzip.artifacts.gzip_bytes;
 const jetStaticFunctionalGreen = jet.functional.static_result === "green";
 const jetFunctionalGreen = jet.functional.result === "green";
-const performanceGreen = baselines.length > 0 && durationRatio <= 1.25 && gzipRatio <= 1.05;
-const overallResult =
-  jetFunctionalGreen && performanceGreen
-    ? "green"
-    : (jet.functional.result === "red" || !jetStaticFunctionalGreen || !performanceGreen)
-      ? "red"
-      : "yellow";
+const performanceGreen = performanceIsGreen(durationRatio, gzipRatio);
+const overallResult = overallResultFor({
+  jetFunctionalGreen,
+  jetStaticFunctionalGreen,
+  performanceGreen,
+  jetFunctionalResult: jet.functional.result,
+  runtimeComparisonResult: runtimeComparison.result,
+});
 
 const evidence = {
   contract_id: "basic.build.production",
   result: overallResult,
+  fixture: path.relative(repoRoot, fixtureSource),
+  fixture_source: path.relative(repoRoot, fixtureSource),
+  dependency_root: path.relative(repoRoot, dependencyRoot),
+  tool_root: path.relative(repoRoot, toolRoot),
   fixture_name: fixtureName,
-  fixture: path.relative(repoRoot, sourceFixture),
-  working_fixture: path.relative(repoRoot, fixture),
-  dependency_root: path.relative(repoRoot, sourceDependencyRoot),
-  tool_root: path.relative(repoRoot, sourceToolRoot),
+  tools_selected: toolNames,
   generated_at: new Date().toISOString(),
   machine: {
     platform: process.platform,
@@ -1098,19 +1258,18 @@ const evidence = {
     node: process.version,
   },
   output_root: outputRoot,
-  setup,
   note: runtimeSmokeMode === "off"
     ? "Runtime browser smoke is disabled for this run; pass --runtime-smoke required to turn this into a green/red gate."
     : "Runtime browser smoke runs deterministic fixture assertions and compares Jet's trace against the Vite reference trace.",
   tools: analyzed,
   comparison: {
-    fastest_baseline: fastestBaseline?.name ?? null,
-    smallest_gzip_baseline: smallestBaselineGzip?.name ?? null,
+    fastest_baseline: fastestBaseline.name,
+    smallest_gzip_baseline: smallestBaselineGzip.name,
     jet_duration_ratio_to_fastest_baseline: Number(durationRatio.toFixed(3)),
     jet_gzip_ratio_to_smallest_baseline: Number(gzipRatio.toFixed(3)),
     thresholds: {
-      duration_ratio_max: 1.25,
-      gzip_ratio_max: 1.05,
+      duration_ratio_max: durationRatioMax,
+      gzip_ratio_max: gzipRatioMax,
     },
     build_samples: buildSamples,
     performance_result: performanceGreen ? "green" : "red",

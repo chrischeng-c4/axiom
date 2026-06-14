@@ -119,9 +119,9 @@ let rust_ty = match arg.kind() {
 ## Reference Context
 
 - `projects/jet/src/tsx_to_rust/emit.rs:432` — the inference site.
-- `projects/jet/tests/tsx_to_rust_toggle.rs` — pins the identifier
+- `projects/jet/tests/wasm/tsx_to_rust_toggle.rs` — pins the identifier
   path (`use_state::<bool>(props.initial)`).
-- `projects/jet/tests/tsx_to_rust_counter.rs` — pins the legacy `i64`
+- `projects/jet/tests/wasm/tsx_to_rust_counter.rs` — pins the legacy `i64`
   default for numeric prop fields.
 - `projects/cue/fe/src/CueWasmApp.tsx` (2026-05-08 dogfood) — the
   caller that surfaced this bug; their workaround can be reverted

@@ -302,6 +302,14 @@ fn supported_library_import_aliases(
                 (local, lower)
             })
             .collect::<Vec<_>>()
+    } else if module == "antd" || module.starts_with("antd/") {
+        imported_local_names(import_text)
+            .into_iter()
+            .map(|local| {
+                let lower = antd_component_lowering(&local).to_string();
+                (local, lower)
+            })
+            .collect::<Vec<_>>()
     } else {
         return None;
     };
