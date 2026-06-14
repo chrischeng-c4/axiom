@@ -3574,6 +3574,13 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     if let (Some(ta), Some(tb)) = (slice_as_tuple(a), slice_as_tuple(b)) {
         return mb_values_eq(ta, tb);
     }
+    // complex vs complex/int/float/bool: equal iff both components match, so a
+    // real-valued complex equals the matching real number (`(1+0j) == 1`).
+    if is_complex_obj(a) || is_complex_obj(b) {
+        if let (Some((ar, ai)), Some((br, bi))) = (as_complex_pair(a), as_complex_pair(b)) {
+            return ar == br && ai == bi;
+        }
+    }
     // functools.cmp_to_key key objects compare via the wrapped cmp (sign == 0).
     if super::stdlib::functools_mod::is_cmp_to_key_obj(a)
         || super::stdlib::functools_mod::is_cmp_to_key_obj(b)

@@ -1100,15 +1100,34 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
     // Range iterator handles look like ints. Match CPython's
     // range.__contains__ — O(1) math check, never iterates the range.
     if let Some((current, stop, step)) = super::iter::mb_iter_range_params(container) {
-        if let Some(v) = value.as_int() {
-            if step == 0 { return MbValue::from_bool(false); }
-            let in_bounds = if step > 0 {
-                v >= current && v < stop
-            } else {
-                v <= current && v > stop
-            };
-            if !in_bounds { return MbValue::from_bool(false); }
-            return MbValue::from_bool((v - current).rem_euclid(step.abs()) == 0);
+        if step == 0 { return MbValue::from_bool(false); }
+        let in_range = |v: i64| -> bool {
+            let in_bounds = if step > 0 { v >= current && v < stop }
+                            else { v <= current && v > stop };
+            in_bounds && (v - current).rem_euclid(step.abs()) == 0
+        };
+        // Exact int / bool: CPython's O(1) arithmetic membership test.
+        if value.is_int() || value.is_bool() {
+            if let Some(v) = value.as_int_pyint() {
+                return MbValue::from_bool(in_range(v));
+            }
+        }
+        // float: only an integral value can equal one of the range's ints.
+        if let Some(f) = value.as_float() {
+            if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+                return MbValue::from_bool(in_range(f as i64));
+            }
+            return MbValue::from_bool(false);
+        }
+        // complex / an object with a custom __eq__: CPython's O(n) fallback —
+        // iterate and compare with __eq__ (e.g. `Decimal(5) in range(10)`,
+        // `(1+0j) in range(3)`, an int subclass whose __eq__ always matches).
+        let mut cur = current;
+        while (step > 0 && cur < stop) || (step < 0 && cur > stop) {
+            if super::builtins::mb_eq(value, MbValue::from_int(cur)).as_bool() == Some(true) {
+                return MbValue::from_bool(true);
+            }
+            cur += step;
         }
         return MbValue::from_bool(false);
     }
