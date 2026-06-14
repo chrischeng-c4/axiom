@@ -7070,6 +7070,28 @@ fn element_children_list(obj: MbValue) -> Option<MbValue> {
 }
 
 pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
+    // A slice *object* key (`seq[sl]` where sl = slice(...)) is normalized to
+    // the (start, stop, step) tuple form the literal `seq[a:b:c]` lowering
+    // produces, so the downstream slice handling applies. (Literal slices reach
+    // here already as a 3-tuple; a slice variable arrives as the Instance.)
+    if let Some(kp) = key.as_ptr() {
+        let slice_fields = unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*kp).data {
+                if class_name == "slice" {
+                    let g = fields.read().unwrap();
+                    Some((
+                        g.get("start").copied().unwrap_or_else(MbValue::none),
+                        g.get("stop").copied().unwrap_or_else(MbValue::none),
+                        g.get("step").copied().unwrap_or_else(MbValue::none),
+                    ))
+                } else { None }
+            } else { None }
+        };
+        if let Some((start, stop, step)) = slice_fields {
+            let tuple_key = MbValue::from_ptr(MbObject::new_tuple(vec![start, stop, step]));
+            return mb_obj_getitem(obj, tuple_key);
+        }
+    }
     // ET.Element subscript indexes the children list (IndexError when out of
     // range; slices with step return child lists), not the stub dict's keys.
     if let Some(kids) = element_children_list(obj) {
