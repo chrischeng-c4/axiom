@@ -577,6 +577,14 @@ impl TypeChecker {
                 }
                 "tuple" => self.tcx.intern(Ty::Tuple(vec![])),
                 "set" | "frozenset" => self.tcx.any(),
+                // Other builtin types with no dedicated Ty variant. Without
+                // these arms the call falls through to the symbol-table lookup
+                // of the builtin callable, mistyping `b: bytes = ...` as
+                // `() -> Any` so that `len(b)` / `b[0]` / iteration are
+                // rejected at compile time. Resolve to Any (like set/frozenset)
+                // so the annotated variable supports the full dynamic surface.
+                "bytes" | "bytearray" | "memoryview"
+                | "complex" | "range" | "slice" => self.tcx.any(),
                 // `type` as a type expression (e.g. `type[BaseModel]` bare name):
                 // the class-object type is represented as Any for now.
                 "type" | "object" => self.tcx.any(),
