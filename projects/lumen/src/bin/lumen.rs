@@ -47,22 +47,28 @@ enum Command {
     /// Run a serving node (HTTP API + background apply loop).
     Serve(ServeArgs),
     /// Print lumen's machine-readable integration spec — offline, no server.
-    /// Default: the OpenAPI 3 document; `--format json-schema` for the data
-    /// types; `--shapes` for the query-shape cookbook; `--fields` for the
-    /// field-type / analyzer catalog.
+    /// Default: the OpenAPI 3 JSON document; `--format openapi-yaml` for
+    /// LLM-readable OpenAPI YAML; `--format json-schema` for the data types;
+    /// `--shapes` for the query-shape cookbook; `--fields` for the field-type /
+    /// analyzer catalog.
     Spec(SpecArgs),
-    /// Print the agent integration playbook — offline, no server. `guide` (how
-    /// to wire lumen in: mental model + declare→ingest→search→hydrate + flavor
-    /// guide + non-goals), `quickstart` (copy-paste end-to-end), or `recipes`
-    /// (task → ready-to-POST query bodies). Markdown by default; `--format json`
-    /// for a machine-readable form.
+    /// Print agent-facing LLM topics — offline, no server. `outline` maps the
+    /// available topics; `workflow` covers mental model +
+    /// declare→ingest→search→hydrate; `integration` covers Postgres/AlloyDB
+    /// adapter boundaries; `quickstart` is copy-paste end-to-end; `recipes`
+    /// are task → ready-to-POST query bodies. Markdown by default; `--format
+    /// json` for a machine-readable form.
     Llm(LlmArgs),
 }
 
 #[derive(Clone, Copy, ValueEnum)]
 enum LlmTopic {
-    /// The integration playbook (default).
-    Guide,
+    /// Topic map for agent context selection (default).
+    Outline,
+    /// Product model, declare → ingest → search → hydrate, and non-goals.
+    Workflow,
+    /// Recommended database/pubsub adapter boundary.
+    Integration,
     /// A copy-paste create → index → search walkthrough.
     Quickstart,
     /// Task → ready-to-POST query bodies (same source as `spec --shapes`).
@@ -79,8 +85,8 @@ enum LlmFormat {
 
 #[derive(Parser)]
 struct LlmArgs {
-    /// Which part of the playbook to print.
-    #[arg(value_enum, default_value_t = LlmTopic::Guide)]
+    /// Which agent-facing topic to print.
+    #[arg(value_enum, default_value_t = LlmTopic::Outline)]
     topic: LlmTopic,
     /// Output format.
     #[arg(long, value_enum, default_value_t = LlmFormat::Md)]
@@ -116,8 +122,11 @@ enum Persistence {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum SpecFormat {
-    /// Full OpenAPI 3 document (default).
+    /// Full OpenAPI 3 document as JSON (default).
     Openapi,
+    /// Full OpenAPI 3 document as YAML for LLM/agent reading.
+    #[value(alias = "yaml", alias = "openapi.yaml")]
+    OpenapiYaml,
     /// Just the component schemas (request/response data types).
     JsonSchema,
 }
@@ -207,6 +216,7 @@ async fn main() -> Result<()> {
             } else {
                 match args.format {
                     SpecFormat::Openapi => lumen::spec::openapi_json(),
+                    SpecFormat::OpenapiYaml => lumen::spec::openapi_yaml(),
                     SpecFormat::JsonSchema => lumen::spec::json_schema_json(),
                 }
             };
@@ -216,7 +226,9 @@ async fn main() -> Result<()> {
         Command::Llm(args) => {
             // Offline: no engine, no server, no I/O beyond stdout.
             let md = match args.topic {
-                LlmTopic::Guide => lumen::spec::llm_guide_md(),
+                LlmTopic::Outline => lumen::spec::llm_outline_md(),
+                LlmTopic::Workflow => lumen::spec::llm_workflow_md(),
+                LlmTopic::Integration => lumen::spec::llm_integration_md(),
                 LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
                 LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
             };
@@ -228,8 +240,14 @@ async fn main() -> Result<()> {
                     LlmTopic::Recipes => {
                         serde_json::to_string_pretty(&lumen::spec::query_shapes())?
                     }
-                    LlmTopic::Guide => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "guide", "markdown": md }),
+                    LlmTopic::Outline => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "outline", "markdown": md }),
+                    )?,
+                    LlmTopic::Workflow => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "workflow", "markdown": md }),
+                    )?,
+                    LlmTopic::Integration => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "integration", "markdown": md }),
                     )?,
                     LlmTopic::Quickstart => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "quickstart", "markdown": md }),

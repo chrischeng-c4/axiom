@@ -161,6 +161,9 @@ semantic_domain:
           - name: "openapi_is_valid_json_with_search_path"
             kind: "function"
             public: false
+          - name: "openapi_yaml_is_valid_with_search_path"
+            kind: "function"
+            public: false
           - name: "json_schema_emits_component_schemas"
             kind: "function"
             public: false
@@ -170,7 +173,13 @@ semantic_domain:
           - name: "field_catalog_matches_the_real_enums"
             kind: "function"
             public: false
-          - name: "llm_guide_covers_the_integration_model"
+          - name: "llm_outline_maps_agent_topics"
+            kind: "function"
+            public: false
+          - name: "llm_workflow_covers_the_integration_model"
+            kind: "function"
+            public: false
+          - name: "llm_integration_recommends_postgres_alloydb_adapter_boundary"
             kind: "function"
             public: false
           - name: "llm_quickstart_is_a_copy_paste_end_to_end"
@@ -1286,10 +1295,10 @@ coverage_kind: semantic
 changes:
   - path: "projects/lumen/tests/perf_gate_vs_db.rs"
     action: modify
-    section: schema
+    section: unit-test
     description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+      Full-file unit-test artifact is replayed from its SPEC-MANAGED CODEGEN block.
+    impl_mode: codegen
   - path: "projects/lumen/tests/spec_cli.rs"
     action: modify
     section: schema
@@ -1352,10 +1361,10 @@ changes:
     impl_mode: hand-written
   - path: "projects/lumen/tests/nats_cluster_e2e.rs"
     action: modify
-    section: schema
+    section: unit-test
     description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+      Full-file unit-test artifact is replayed from its SPEC-MANAGED CODEGEN block.
+    impl_mode: codegen
   - path: "projects/lumen/tests/auth_e2e.rs"
     action: modify
     section: schema
@@ -1406,10 +1415,10 @@ changes:
     impl_mode: hand-written
   - path: "projects/lumen/tests/wal_nats_e2e.rs"
     action: modify
-    section: schema
+    section: unit-test
     description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+      Full-file unit-test artifact is replayed from its SPEC-MANAGED CODEGEN block.
+    impl_mode: codegen
   - path: "projects/lumen/tests/hybrid_rrf.rs"
     action: modify
     section: schema
