@@ -89,3 +89,13 @@ cli:
         - name: gen-crd
           about: "Print the Lumen CustomResourceDefinition YAML."
 ```
+
+## Manifest
+<!-- type: manifest lang: yaml -->
+
+```yaml
+dependencies:
+  - { name: kube, spec: "0.98", features: [runtime, derive, client], optional: true }
+  - { name: k8s-openapi, spec: "0.24", features: [v1_32], optional: true }
+  - { name: schemars, spec: "0.8", optional: true }
+```
