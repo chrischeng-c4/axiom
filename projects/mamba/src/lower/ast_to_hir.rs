@@ -5534,6 +5534,21 @@ impl<'a> AstLowerer<'a> {
                             .map(Box::new)
                     })
                     .collect();
+                // CPython inspect.Parameter kind ordinals (mirrors the `def`
+                // signature lowering): 0 POSITIONAL_ONLY, 1 POSITIONAL_OR_KEYWORD,
+                // 2 VAR_POSITIONAL, 3 KEYWORD_ONLY, 4 VAR_KEYWORD. Threaded so a
+                // lambda's __code__.co_posonlyargcount / co_kwonlyargcount report
+                // the `/` and `*` markers.
+                let hir_param_kinds: Vec<u8> = params
+                    .iter()
+                    .map(|p| match p.kind {
+                        ast::ParamKind::Star => 2u8,
+                        ast::ParamKind::DoubleStar => 4u8,
+                        ast::ParamKind::Regular if p.kw_only => 3u8,
+                        ast::ParamKind::Regular if p.pos_only => 0u8,
+                        ast::ParamKind::Regular => 1u8,
+                    })
+                    .collect();
                 // Temporarily register lambda params in local_names so resolve_name()
                 // finds them when lowering the body.  Type-checker scopes are already
                 // popped at lowering time, so we inject the params manually and then
@@ -5579,6 +5594,7 @@ impl<'a> AstLowerer<'a> {
                 let ty = any_ty;
                 Some(HirExpr::Lambda {
                     params: hir_params,
+                    param_kinds: hir_param_kinds,
                     defaults: hir_defaults,
                     body: Box::new(body_expr),
                     ty,

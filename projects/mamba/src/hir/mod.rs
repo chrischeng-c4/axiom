@@ -358,6 +358,7 @@ pub enum HirExpr {
     /// Defaults are evaluated at closure creation time per Python semantics.
     Lambda {
         params: Vec<(SymbolId, TypeId)>,
+        param_kinds: Vec<u8>,
         defaults: Vec<Option<Box<HirExpr>>>,
         body: Box<HirExpr>,
         ty: TypeId,
