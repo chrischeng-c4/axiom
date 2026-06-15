@@ -33,6 +33,9 @@ pub struct CbArgs {
 pub enum CbCommand {
     // Generate implementation code from an approved TD spec.
     Gen(CbGenArgs),
+    // Forward-generate a target source file from a per-file rust-source-unit
+    // TD (routes through the @spec-injecting lossless item-tree generator).
+    GenSource(CbGenSourceArgs),
     // Audit code-space files for CODEGEN drift, MarkerGap, Uncovered,
     // and Handwrite items.
     Check(CbCheckArgs),
@@ -188,6 +191,7 @@ pub async fn run(args: CbArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     match &args.command {
         CbCommand::Check(_) => {}
+        CbCommand::GenSource(_) => {}
         CbCommand::Gen(a) => {
             if let Some(slug) = a.slug.as_deref() {
                 crate::cli::workflow_guard::guard_issue_mutation(&project_root, Some(("cb", slug)))
@@ -218,6 +222,7 @@ pub async fn run(args: CbArgs) -> Result<()> {
     }
     match args.command {
         CbCommand::Gen(a) => run_gen(a).await,
+        CbCommand::GenSource(a) => run_gen_source(a),
         CbCommand::Check(a) => run_check(a),
         CbCommand::Claim(a) => run_claim(a).await,
         CbCommand::Fill(a) => crate::cli::cb_fill::run(a).await,
@@ -225,6 +230,48 @@ pub async fn run(args: CbArgs) -> Result<()> {
         CbCommand::Revise(a) => crate::cli::cb_revise::run_revise(a).await,
         CbCommand::Arbitrate(a) => crate::cli::cb_arbitrate::run_arbitrate(a).await,
     }
+}
+
+// Args for `aw cb gen-source --spec <td> --target <rs>`.
+#[derive(Debug, Args)]
+pub struct CbGenSourceArgs {
+    // Repo-relative path to the per-file source TD (with a `## Source`
+    // rust-source-unit fence).
+    #[arg(long)]
+    pub spec: String,
+    // Repo-relative path to the target source file to write.
+    #[arg(long)]
+    pub target: String,
+    // Print the generated source to stdout without writing the target.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+// Forward-generate a target source file from a per-file rust-source-unit TD,
+// reusing the same generator path as codegen (@spec injection + lossless
+// item-tree regeneration). The forward inverse of `cb gen --force-regen`
+// (which syncs TD<-source); this writes source<-TD.
+fn run_gen_source(args: CbGenSourceArgs) -> Result<()> {
+    let root = crate::find_project_root()?;
+    let spec_abs = root.join(&args.spec);
+    let target_abs = root.join(&args.target);
+    let report = crate::generate::apply::run_apply_scoped_targets(
+        &spec_abs,
+        &root,
+        args.dry_run,
+        std::slice::from_ref(&target_abs),
+    )
+    .map_err(|e| anyhow::anyhow!("gen-source apply {} -> {}: {e}", args.spec, args.target))?;
+    eprintln!(
+        "gen-source {} -> {}: {} block(s) updated, {} file(s) created, wrote={} (dry_run={})",
+        args.spec,
+        args.target,
+        report.total_blocks_updated(),
+        report.files_created(),
+        report.wrote_files,
+        args.dry_run,
+    );
+    Ok(())
 }
 
 // Implementation of `aw cb gen`.
