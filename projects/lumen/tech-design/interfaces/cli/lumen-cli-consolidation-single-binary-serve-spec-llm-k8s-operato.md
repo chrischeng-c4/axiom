@@ -183,3 +183,13 @@ requirementDiagram
     operator_dispatch_test - verifies -> operator_feature_gate
     parity_test - verifies -> output_parity
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Codegen-ready Mermaid Plus flowchart: dispatch covers serve/spec/llm, k8s operator/gen-crd, help, and the feature-off error path. Contract complete.
+- [cli] Command tree is the authoritative single-binary surface (serve/spec/llm/k8s operator|gen-crd) with key args/env/choices. Contract complete.
+- [manifest] Operator-gated optional deps (kube/k8s-openapi/schemars) match the feature design. Contract complete.
+- [unit-test] requirementDiagram with frontmatter binds R1/R5/R5b/R4 to test elements covering surface, operator dispatch, feature gate, and output parity. Contract complete.
