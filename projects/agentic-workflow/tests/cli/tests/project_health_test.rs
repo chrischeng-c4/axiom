@@ -670,7 +670,7 @@ fn project_health_summary_points_to_full_verify_when_gates_are_missing() {
     assert_eq!(summary["next"]["kind"].as_str(), Some("run_command"));
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw health --project demo")
+        Some("aw health --project demo full")
     );
 }
 
@@ -698,7 +698,7 @@ fn project_health_summary_routes_managed_blockers_to_standardize() {
 }
 
 #[test]
-fn no_cold_rebuild_workspace_routes_back_to_health() {
+fn no_cold_rebuild_workspace_keeps_specific_repair_route() {
     let mut report = ProjectHealthReport::from_components(
         "demo",
         managed(50.0, vec!["projects/demo/src/lib.rs".to_string()]),
@@ -721,7 +721,7 @@ fn no_cold_rebuild_workspace_routes_back_to_health() {
 
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw health --project demo")
+        Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
     );
     let missing = summary["completion"]["missing"].as_array().unwrap();
     assert!(missing
