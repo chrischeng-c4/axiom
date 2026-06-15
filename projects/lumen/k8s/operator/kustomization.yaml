@@ -12,7 +12,7 @@ kind: Kustomization
 #   kubectl apply -f examples/lumen-cr.yaml
 #
 # crd.yaml is generated — regenerate with:
-#   cargo run -p lumen --features operator --bin lumen-operator -- gen-crd > k8s/operator/crd.yaml
+#   cargo run -p lumen --features operator --bin lumen -- k8s gen-crd > k8s/operator/crd.yaml
 
 resources:
   - crd.yaml
