@@ -1,0 +1,131 @@
+# File-descriptor / socket / thread leak guard. Sample lumen's open-FD count
+# before and after a sustained index+search load over a BOUNDED keyspace
+# (re-indexing the same docs — unbounded ingest is growth, not a leak), then
+# assert the FD count did not grow unbounded. A real socket/thread/handle leak
+# climbs monotonically with request volume; a healthy server settles onto a
+# bounded working set of descriptors (listener, accepted conns, log/segment
+# files, the runtime's eventfds).
+#
+# Portability: the count is read with `lsof -p <pid>` (works on macOS AND
+# Linux). On Linux a cheaper equivalent is `ls /proc/<pid>/fd | wc -l`; lsof is
+# used here so the one scenario runs unchanged on the macOS dev box and Linux
+# CI. The python wrapper makes the count robust to lsof's header line and to a
+# transient lsof failure (it prints a bare integer on stdout, which rig coerces
+# to a number for the assert).
+#
+# Requires: lumen serving on {{upstream}} (its pid is resolved at run time).
+[record]
+suite = "lumen"
+dimension = "endurance"
+case = "fd_leak"
+subject = "open file-descriptor count stays bounded across a sustained index+search load"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[env]
+upstream = "127.0.0.1:7373"
+collection = "users"
+keyspace = "5000"
+
+[vat]
+runner = "rig-endurance"
+services = ["lumen"]
+
+[limits]
+timeout_secs = 600
+
+[[steps]]
+type = "http"
+name = "collection_exists"
+method = "PUT"
+url = "http://{{upstream}}/collections/{{collection}}"
+body = '{"fields": {"bio": {"type": "text"}, "email": {"type": "keyword"}}}'
+expect = { statuses = [200, 201, 400, 409] }
+
+[[steps]]
+type = "exec"
+name = "resolve_lumen_pid"
+cmd = ["pgrep", "-n", "lumen"]
+timeout_secs = 5
+capture = { lumen_pid = "stdout" }
+
+# -- warmup: establish the descriptor working set so it doesn't read as a leak
+
+[[steps]]
+type = "exec"
+name = "warmup_index"
+cmd = ["python3", "-c", "import json,sys,random,time,urllib.request\nupstream,coll,keyspace=sys.argv[1],sys.argv[2],int(sys.argv[3])\nrng=random.Random(time.time_ns())\nitems=[]\nfor i in range(1000):\n    ext=f'fd-{rng.randrange(keyspace)}'\n    items.append({'external_id':ext,'field':'bio','value':f'engineer {ext}'})\n    items.append({'external_id':ext,'field':'email','value':f'{ext}@example.com'})\nbody=json.dumps({'items':items}).encode()\nreq=urllib.request.Request(f'http://{upstream}/collections/{coll}/index',data=body,method='POST',headers={'content-type':'application/json'})\nwith urllib.request.urlopen(req,timeout=30) as r:\n    sys.exit(0 if r.status<400 else 2)", "{{upstream}}", "{{collection}}", "{{keyspace}}"]
+timeout_secs = 60
+
+[[steps]]
+type = "sample"
+name = "warmup_searches"
+samples = 300
+capture = { warmup_fail = "fail_count" }
+[steps.request]
+method = "POST"
+url = "http://{{upstream}}/collections/{{collection}}/search"
+body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
+expect = { status = 200, timeout_ms = 10000 }
+
+# -- FD count BEFORE the sustained load --------------------------------------
+
+[[steps]]
+type = "exec"
+name = "fd_count_before"
+cmd = ["python3", "-c", "import subprocess,sys\npid=sys.argv[1]\ntry:\n    out=subprocess.run(['lsof','-p',pid],capture_output=True,text=True,timeout=30).stdout\nexcept Exception:\n    sys.exit(3)\nlines=[l for l in out.splitlines() if l.strip()]\n# subtract the lsof header row (COMMAND PID ...) if present\nn=len(lines)-1 if lines and lines[0].split()[:1]==['COMMAND'] else len(lines)\nprint(max(n,0))", "{{lumen_pid}}"]
+timeout_secs = 35
+capture = { fd_before = "stdout" }
+
+[[steps]]
+type = "assert"
+name = "fd_before_sane"
+exprs = ["fd_before > 0"]
+
+# -- sustained index+search load ---------------------------------------------
+
+[[steps]]
+type = "exec"
+name = "sustained_index"
+cmd = ["python3", "-c", "import json,sys,random,time,urllib.request\nupstream,coll,keyspace=sys.argv[1],sys.argv[2],int(sys.argv[3])\nrng=random.Random(time.time_ns())\nfor _round in range(5):\n    items=[]\n    for i in range(1000):\n        ext=f'fd-{rng.randrange(keyspace)}'\n        items.append({'external_id':ext,'field':'bio','value':f'engineer {ext}'})\n        items.append({'external_id':ext,'field':'email','value':f'{ext}@example.com'})\n    body=json.dumps({'items':items}).encode()\n    req=urllib.request.Request(f'http://{upstream}/collections/{coll}/index',data=body,method='POST',headers={'content-type':'application/json'})\n    with urllib.request.urlopen(req,timeout=30) as r:\n        if r.status>=400: sys.exit(2)", "{{upstream}}", "{{collection}}", "{{keyspace}}"]
+timeout_secs = 180
+
+[[steps]]
+type = "sample"
+name = "sustained_searches"
+samples = 1500
+capture = { sustained_fail = "fail_count" }
+[steps.request]
+method = "POST"
+url = "http://{{upstream}}/collections/{{collection}}/search"
+body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
+expect = { status = 200, timeout_ms = 10000 }
+
+# -- FD count AFTER the sustained load ---------------------------------------
+
+[[steps]]
+type = "exec"
+name = "fd_count_after"
+cmd = ["python3", "-c", "import subprocess,sys\npid=sys.argv[1]\ntry:\n    out=subprocess.run(['lsof','-p',pid],capture_output=True,text=True,timeout=30).stdout\nexcept Exception:\n    sys.exit(3)\nlines=[l for l in out.splitlines() if l.strip()]\nn=len(lines)-1 if lines and lines[0].split()[:1]==['COMMAND'] else len(lines)\nprint(max(n,0))", "{{lumen_pid}}"]
+timeout_secs = 35
+capture = { fd_after = "stdout" }
+
+# -- gates -------------------------------------------------------------------
+
+[[steps]]
+type = "assert"
+name = "no_search_errors"
+exprs = [
+  "warmup_fail == 0",
+  "sustained_fail == 0",
+]
+
+[[steps]]
+type = "assert"
+name = "fd_count_bounded"
+# Bounded growth, not zero growth: the warmed working set may still tick up a
+# few descriptors (a freshly rotated segment/AOF file, a pooled keep-alive
+# conn). 1.20x + 16 absolute is generous for that churn while a true leak
+# (hundreds of leaked sockets/threads over 1500+ requests) still trips it.
+exprs = ["fd_after <= 1.20 * fd_before + 16"]
