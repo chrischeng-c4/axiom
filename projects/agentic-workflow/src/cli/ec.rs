@@ -15,7 +15,7 @@ use walkdir::WalkDir;
 const EC_MANIFEST_VERSION: u8 = 1;
 const EC_MANIFEST_REL: &str = "tests/aw-ec.toml";
 const EC_DOC_REL: &str = "docs/aw-ec-manual.md";
-const EC_SOURCE_REL: &str = "ec";
+const EC_SOURCE_REL: &str = "external-contracts";
 const PROJECT_AW_REL: &str = "aw.toml";
 const EC_AW_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 const EC_AW_END_MARKER: &str = "AW-EC-END";
@@ -41,7 +41,7 @@ pub struct EcArgs {
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Subcommand)]
 pub enum EcCommand {
-    /// Create a project-local EC markdown draft under ec/.
+    /// Create a project-local EC markdown draft under external-contracts/.
     Draft(EcDraftArgs),
     /// Fill one section in an EC markdown draft.
     Fill(EcFillArgs),
@@ -2837,10 +2837,10 @@ edition = "2021"
     #[test]
     fn ec_markdown_takes_priority_and_generates_tool_manifest() {
         let (tmp, ctx) = write_demo_repo();
-        fs::create_dir_all(tmp.path().join("projects/demo/ec/behavior")).unwrap();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
         fs::write(
             tmp.path()
-                .join("projects/demo/ec/behavior/static.md"),
+                .join("projects/demo/external-contracts/behavior/static.md"),
             r#"
 ## Static HTTP
 <!-- type: e2e-test lang: yaml -->
@@ -2883,7 +2883,7 @@ tool_contracts:
         assert_eq!(manifest.cases[0].category, "behavior");
         assert!(manifest.cases[0]
             .td_ref
-            .ends_with("ec/behavior/static.md#static-http"));
+            .ends_with("external-contracts/behavior/static.md#static-http"));
         assert_eq!(manifest.tool_manifests.len(), 1);
         assert_eq!(manifest.tool_manifests[0].tool, "rig");
         assert_eq!(
@@ -2952,7 +2952,7 @@ tool_contracts:
 "#,
         )
         .unwrap();
-        let path = tmp.path().join("projects/demo/ec/efficiency/search-indexing.md");
+        let path = tmp.path().join("projects/demo/external-contracts/efficiency/search-indexing.md");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, filled).unwrap();
 
@@ -2967,7 +2967,7 @@ tool_contracts:
         assert_eq!(case.test_path, "projects/demo/tests/benchmark_indexing_speed.rs");
         assert!(case
             .td_ref
-            .ends_with("ec/efficiency/search-indexing.md#indexing-speed"));
+            .ends_with("external-contracts/efficiency/search-indexing.md#indexing-speed"));
         assert_eq!(manifest.tool_manifests.len(), 1);
         assert_eq!(manifest.tool_manifests[0].tool, "arena");
         assert_eq!(
@@ -2979,10 +2979,10 @@ tool_contracts:
     #[test]
     fn external_contracts_reject_unknown_category() {
         let (tmp, ctx) = write_demo_repo();
-        fs::create_dir_all(tmp.path().join("projects/demo/ec/behavior")).unwrap();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
         fs::write(
             tmp.path()
-                .join("projects/demo/ec/behavior/static.md"),
+                .join("projects/demo/external-contracts/behavior/static.md"),
             r#"
 ## Bad Contract
 <!-- type: e2e-test lang: yaml -->
@@ -3003,10 +3003,10 @@ e2e_tests:
     #[test]
     fn ec_verify_runs_manifest_commands() {
         let (tmp, ctx) = write_demo_repo();
-        fs::create_dir_all(tmp.path().join("projects/demo/ec/behavior")).unwrap();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
         fs::write(
             tmp.path()
-                .join("projects/demo/ec/behavior/smoke.md"),
+                .join("projects/demo/external-contracts/behavior/smoke.md"),
             r#"
 ## Smoke
 <!-- type: e2e-test lang: yaml -->
