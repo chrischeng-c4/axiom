@@ -44,8 +44,14 @@ use tokio::task::JoinSet;
 const SEED: u64 = 1234;
 const WARMUP: usize = 5;
 const REPS: usize = 50;
-const PG_DSN: &str = "host=/tmp dbname=lumenbench";
-const OS_URL: &str = "http://localhost:9200";
+// EC env override: vat exports LUMEN_BENCH_PG_DSN / LUMEN_BENCH_OS_URL when it
+// provisions pg + OpenSearch; fall back to the local-dev defaults otherwise.
+fn pg_dsn() -> String {
+    std::env::var("LUMEN_BENCH_PG_DSN").unwrap_or_else(|_| "host=/tmp dbname=lumenbench".to_string())
+}
+fn os_url() -> String {
+    std::env::var("LUMEN_BENCH_OS_URL").unwrap_or_else(|_| "http://localhost:9200".to_string())
+}
 
 const CELLS: &[&str] = &[
     "text_bm25",
@@ -742,7 +748,7 @@ fn lumen_native_frame(cell: &str) -> Vec<u8> {
 // postgres: tokio-postgres
 // ---------------------------------------------------------------------------
 async fn pg_setup(docs: &[Doc], table: &str) -> Option<tokio_postgres::Client> {
-    let (client, connection) = match tokio_postgres::connect(PG_DSN, tokio_postgres::NoTls).await {
+    let (client, connection) = match tokio_postgres::connect(&pg_dsn(), tokio_postgres::NoTls).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("  ! postgres unavailable ({e}); skipping pg");
@@ -873,7 +879,7 @@ async fn pg_disk_bytes(client: &tokio_postgres::Client, table: &str) -> Option<u
 // ---------------------------------------------------------------------------
 async fn os_setup(docs: &[Doc], index: &str) -> Option<(reqwest::Client, String)> {
     let client = reqwest::Client::new();
-    let base = OS_URL.to_string();
+    let base = os_url();
     if client.get(&base).send().await.is_err() {
         eprintln!("  ! OpenSearch unavailable on {base}; skipping os");
         return None;
@@ -1296,7 +1302,7 @@ async fn pg_pool(cell: &str, table: &str, n: usize) -> Option<Req> {
     let mut clients = Vec::with_capacity(n);
     let mut stmts = Vec::with_capacity(n);
     for _ in 0..n {
-        let (c, conn) = tokio_postgres::connect(PG_DSN, tokio_postgres::NoTls)
+        let (c, conn) = tokio_postgres::connect(&pg_dsn(), tokio_postgres::NoTls)
             .await
             .ok()?;
         tokio::spawn(async move {
