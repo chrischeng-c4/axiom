@@ -1,4 +1,4 @@
-# SPEC-MANAGED: projects/lumen/external-contracts/stability/resilience-survival.md#lumen-rig-resilience
+# SPEC-MANAGED: projects/lumen/external-contracts/resilience/stability/resilience-survival.md#lumen-rig-resilience
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
 project = "lumen"
