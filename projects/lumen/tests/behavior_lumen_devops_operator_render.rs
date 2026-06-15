@@ -10,9 +10,31 @@
 // @command cargo test -p lumen --features operator --test operator_render -- --nocapture
 // AW-EC-END
 
+// Contract: render(Lumen) emits the managed serving Deployment/Service/HPA/PDB plus the NATS JetStream ConfigMap/StatefulSet/Service when NATS is managed.
+// Contract: BYO-NATS (nats.externalUrl) omits the managed NATS objects and wires the external URL into the serving env.
 #[test]
-#[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
+#[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_devops_operator_render() {
-    panic!("AW EC placeholder for lumen-devops-operator-render");
+    let command = "cargo test -p lumen --features operator --test operator_render -- --nocapture";
+    let id = "lumen-devops-operator-render";
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !root.join(".aw").is_dir() {
+        assert!(
+            root.pop(),
+            "AW EC {id}: no .aw/ project root above {}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+    }
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&root)
+        .status()
+        .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    assert!(
+        status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}",
+        status.code()
+    );
 }
 // CODEGEN-END
