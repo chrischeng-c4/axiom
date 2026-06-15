@@ -6,7 +6,7 @@
 // @claim graceful-degradation-under-overload
 // @contract search-stability-backpressure
 // @category stability
-// @required_for_production false
+// @required_for_production true
 // @command target/debug/rig run --dir projects/lumen/tests/rig/scenarios/load --pins projects/lumen/tests/rig/config/pins
 // AW-EC-END
 

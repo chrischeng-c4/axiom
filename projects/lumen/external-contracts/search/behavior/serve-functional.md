@@ -21,7 +21,6 @@ e2e_tests:
     contract_id: serve-functional-api-and-search-correctness
     category: behavior
     command: "cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture"
-    required_for_production: true
     assertions:
       - "The HTTP API end-to-end (create -> index -> search -> hydrate ids) returns correct ranked external_ids and never documents."
       - "Vector kNN and filtered kNN return the nearest within the filter without recall collapse."

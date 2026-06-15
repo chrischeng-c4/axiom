@@ -21,7 +21,6 @@ e2e_tests:
     contract_id: ops-meta-api-surface
     category: behavior
     test_path: projects/lumen/tests/behavior_lumen_ops_meta_api.rs
-    required_for_production: true
     command: "cargo test -p lumen --test api_e2e -- --nocapture"
     assertions:
       - "GET /healthz (liveness) returns 200 always; GET /readyz returns 200 normally and 503 while draining; both bypass auth."

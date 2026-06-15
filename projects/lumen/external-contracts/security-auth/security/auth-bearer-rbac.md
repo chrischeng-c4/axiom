@@ -16,7 +16,6 @@ e2e_tests:
     claim_id: bearer-token-auth-lumen-auth
     contract_id: bearer-token-auth-lumen-auth
     category: security
-    required_for_production: false
     command: "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
     assertions:
       - "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens."

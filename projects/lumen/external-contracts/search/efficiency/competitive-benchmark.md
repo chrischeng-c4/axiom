@@ -23,7 +23,6 @@ e2e_tests:
     contract_id: search-efficiency-filtering-ranking-pagination
     category: efficiency
     test_path: projects/lumen/tests/benchmark_lumen_search_efficiency_competitive.rs
-    required_for_production: false
     command: "cargo test -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
     assertions:
       - "FILTERING: filtered_search (AND[BM25+term+range]) beats pg >= 3.73x and OpenSearch(disk) >= 2.4x; filtered_knn beats pg >= 2.4x (OS exempt, no kNN plugin)."

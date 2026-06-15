@@ -22,7 +22,6 @@ e2e_tests:
     contract_id: devops-operator-render-golden
     category: behavior
     command: "cargo test -p lumen --features operator --test operator_render -- --nocapture"
-    required_for_production: true
     assertions:
       - "render(Lumen) emits the managed serving Deployment/Service/HPA/PDB plus the NATS JetStream ConfigMap/StatefulSet/Service when NATS is managed."
       - "BYO-NATS (nats.externalUrl) omits the managed NATS objects and wires the external URL into the serving env."

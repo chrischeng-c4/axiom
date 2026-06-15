@@ -6,7 +6,7 @@
 // @claim broker-kill-pod-kill-survival
 // @contract broker-kill-pod-kill-survival
 // @category stability
-// @required_for_production false
+// @required_for_production true
 // @command cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture
 // AW-EC-END
 
