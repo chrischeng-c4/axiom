@@ -38,9 +38,17 @@ keep = "failed" # failed | always | never
 
 [[services]]
 id = "pg"
-preset = "postgres"
+preset = "postgres"        # native binary preferred; Docker image fallback
+# runtime = "auto"         # auto (default) | native | docker
 seed = ["schema.sql", "fixtures.sql"]
 export = { DATABASE_URL = "DATABASE_URL" }
+
+[[services]]
+id = "alloy"               # Docker-only dependency (no native binary)
+image = "google/alloydbomni:latest"
+container_port = 5432
+image_env = { POSTGRES_PASSWORD = "pw" }
+export = { ALLOY_URL = "postgres://postgres:pw@{host}:{port}/postgres" }
 
 [[runners]]
 id = "e2e"
@@ -48,6 +56,19 @@ requires = ["pg"]
 cmd = ["pnpm", "run", "test:e2e"]
 artifacts = ["test-results/**", "playwright-report/**"]
 ```
+
+## Services: native or Docker
+
+- A `preset` service prefers the native Homebrew binary and falls back to the
+  preset's official Docker image when the binary is missing. Force it with
+  `runtime = "native"` or `runtime = "docker"`.
+- An `image` service is always a Docker container — use it for dependencies with
+  no native binary (e.g. AlloyDB). It requires `container_port`; `image_env` is
+  passed into the container; in `export`, `{host}`/`{port}` resolve to the mapped
+  host endpoint, and `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
+- Docker-backed services need a reachable Docker daemon; vat emits a structured
+  `docker_unavailable` error (no panic) when it is missing. The runner itself is
+  never containerized.
 
 ## Command Patterns
 
@@ -69,9 +90,12 @@ emitting JSON, while failed runs keep workspace state and logs for inspection.
 
 ## Boundaries
 
-- vat is not Docker, OCI, Compose, a Linux runtime, a VM, a daemon, or a
-  long-lived process manager.
-- Services in `vat.toml` are run-scoped dependencies of one runner invocation.
+- vat is not a Docker/OCI/Compose replacement, a Linux runtime, a VM, a daemon,
+  or a long-lived process manager. It builds no images and ships none.
+- The runner is always a host process (never containerized) — the GPU story.
+  Docker is only an option for run-scoped dependency *services*.
+- Services in `vat.toml` are run-scoped dependencies of one runner invocation;
+  containers are ephemeral (`docker run --rm`) and removed at teardown.
 - vat does not schedule production work or manage restart policy.
 "#;
 

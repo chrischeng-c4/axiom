@@ -21,7 +21,8 @@ use chrono::Utc;
 use walkdir::WalkDir;
 
 use crate::config::{
-    self, PortSpec, RetentionPolicy, RunnerConfig, ServiceConfig, ServicePreset, VatConfig,
+    self, PortSpec, RetentionPolicy, RunnerConfig, ServiceConfig, ServicePreset, ServiceRuntime,
+    VatConfig,
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
@@ -684,6 +685,11 @@ struct ServicePlan {
     prepare_duration_ms: u64,
     env: BTreeMap<String, String>,
     exported_env: Vec<String>,
+    /// Set when the service runs as a Docker container; carries the
+    /// `--name` so teardown can force-remove the container with no orphans.
+    docker_name: Option<String>,
+    /// The Docker image, when this service runs as a container.
+    image: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -699,6 +705,8 @@ struct ServiceHandle {
     child: Child,
     timeout_s: u64,
     ready_probe: ReadyProbe,
+    /// `docker --name` when the service is a container; force-removed on stop.
+    docker_name: Option<String>,
 }
 
 fn prepare_service(
@@ -707,8 +715,17 @@ fn prepare_service(
     service: &ServiceConfig,
 ) -> Result<ServicePlan> {
     let started = Instant::now();
-    let plan = if let Some(preset) = service.preset {
-        prepare_preset_service(vat, cfg, service, preset)?
+    let plan = if let Some(image) = &service.image {
+        // Explicit image: a Docker-only service (e.g. AlloyDB) with no native
+        // equivalent. Always a container.
+        prepare_image_service(vat, service, image)?
+    } else if let Some(preset) = service.preset {
+        // Preset: prefer the native Homebrew binary, fall back to the preset's
+        // official Docker image when the binary is missing (or as forced).
+        match resolve_preset_runtime(service, preset)? {
+            ResolvedRuntime::Native => prepare_preset_service(vat, cfg, service, preset)?,
+            ResolvedRuntime::Docker => prepare_preset_docker_service(vat, service, preset)?,
+        }
     } else {
         let env = export_command_service_env(service);
         ServicePlan {
@@ -728,22 +745,30 @@ fn prepare_service(
             prepare_duration_ms: 0,
             exported_env: sorted_keys(&env),
             env,
+            docker_name: None,
+            image: None,
         }
     };
     let mut plan = plan;
     plan.prepare_duration_ms = started.elapsed().as_millis() as u64;
-    if plan.preset.is_some() {
+    if plan.prepare_mode != "direct_start" {
+        let is_docker = plan.docker_name.is_some();
+        let note = if is_docker {
+            "running service via `docker run` (ephemeral, --rm)"
+        } else if plan.prepare_mode == "cold_build" {
+            "first run slower; cached for future runs"
+        } else {
+            "using cached service image"
+        };
         emit_jsonl(serde_json::json!({
             "type": "prepare",
             "service": plan.id.as_str(),
             "preset": plan.preset.map(service_preset_name),
+            "runtime": if is_docker { "docker" } else { "native" },
+            "image": plan.image.as_deref(),
             "mode": plan.prepare_mode.as_str(),
             "cache_key": plan.cache_key.as_deref(),
-            "note": if plan.prepare_mode == "cold_build" {
-                "first run slower; cached for future runs"
-            } else {
-                "using cached service image"
-            },
+            "note": note,
         }))?;
     }
     Ok(plan)
@@ -786,6 +811,7 @@ fn start_service(
         child,
         timeout_s: plan.timeout_s,
         ready_probe: plan.ready_probe.clone(),
+        docker_name: plan.docker_name.clone(),
     })
 }
 
@@ -845,7 +871,289 @@ fn prepare_preset_service(
         prepare_duration_ms: 0,
         exported_env: sorted_keys(&env),
         env,
+        docker_name: None,
+        image: None,
     })
+}
+
+/// Which way a `preset` service is actually provided on this host.
+enum ResolvedRuntime {
+    Native,
+    Docker,
+}
+
+/// Resolve a preset service's `runtime` against the host. `auto` prefers the
+/// native binary and falls back to Docker; `native`/`docker` force one path.
+/// On `auto` with neither available, emit a structured error and bail.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn resolve_preset_runtime(service: &ServiceConfig, preset: ServicePreset) -> Result<ResolvedRuntime> {
+    match service.runtime {
+        ServiceRuntime::Native => Ok(ResolvedRuntime::Native),
+        ServiceRuntime::Docker => Ok(ResolvedRuntime::Docker),
+        ServiceRuntime::Auto => {
+            let missing: Vec<&str> = required_binaries(preset)
+                .iter()
+                .filter(|binary| which(binary).is_none())
+                .copied()
+                .collect();
+            if missing.is_empty() {
+                Ok(ResolvedRuntime::Native)
+            } else if docker_available() {
+                Ok(ResolvedRuntime::Docker)
+            } else {
+                emit_jsonl(serde_json::json!({
+                    "type": "error",
+                    "code": "service_runtime_unavailable",
+                    "service": service.id.as_str(),
+                    "preset": service_preset_name(preset),
+                    "missing_native": missing,
+                    "docker": false,
+                }))?;
+                bail!(
+                    "service `{}` preset `{}`: native binaries missing ({}) and Docker is unavailable; \
+                     install them via Homebrew, install/start Docker, or set runtime explicitly",
+                    service.id,
+                    service_preset_name(preset),
+                    missing.join(", ")
+                );
+            }
+        }
+    }
+}
+
+/// Run a preset service from its official Docker image instead of the native
+/// binary. The exported connection env is identical to the native path — only
+/// the process behind the mapped host port differs.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn prepare_preset_docker_service(
+    vat: &store::Vat,
+    service: &ServiceConfig,
+    preset: ServicePreset,
+) -> Result<ServicePlan> {
+    ensure_docker_available(service)?;
+    let host_port = resolve_service_port(&service.port)?;
+    let container_port = service
+        .container_port
+        .unwrap_or_else(|| preset_container_port(preset));
+    let image = preset_image(preset, service.version.as_deref());
+    let name = container_name(&vat.meta.id, &service.id);
+    let mut container_env = preset_container_env(preset);
+    for (key, value) in &service.image_env {
+        container_env.insert(key.clone(), value.clone());
+    }
+    let command = docker_run_command(&name, &image, host_port, container_port, &container_env);
+    let env = preset_exports(service, preset, host_port);
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command,
+        ready_http: service.ready_http.clone(),
+        ready_probe: docker_ready_probe(service, host_port),
+        timeout_s: service.timeout_s,
+        preset: Some(preset),
+        port: Some(host_port),
+        prepare_mode: "docker_run".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: Some(name),
+        image: Some(image),
+    })
+}
+
+/// Run a Docker-only custom service (e.g. AlloyDB) declared with `image`.
+/// `export` values are templates: `{host}`/`{port}` are substituted with the
+/// mapped host endpoint. `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn prepare_image_service(
+    vat: &store::Vat,
+    service: &ServiceConfig,
+    image: &str,
+) -> Result<ServicePlan> {
+    ensure_docker_available(service)?;
+    let host_port = resolve_service_port(&service.port)?;
+    let container_port = service
+        .container_port
+        .context("image service missing container_port (validated earlier)")?;
+    let name = container_name(&vat.meta.id, &service.id);
+    let command = docker_run_command(&name, image, host_port, container_port, &service.image_env);
+    let env = image_exports(service, host_port);
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command,
+        ready_http: service.ready_http.clone(),
+        ready_probe: docker_ready_probe(service, host_port),
+        timeout_s: service.timeout_s,
+        preset: None,
+        port: Some(host_port),
+        prepare_mode: "docker_run".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: Some(name),
+        image: Some(image.to_string()),
+    })
+}
+
+/// Build a foreground `docker run` argv. `--rm` makes the container ephemeral;
+/// `--name` is deterministic so teardown can force-remove it; the port is bound
+/// to loopback only. Container env is emitted in sorted order (deterministic).
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn docker_run_command(
+    name: &str,
+    image: &str,
+    host_port: u16,
+    container_port: u16,
+    container_env: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut cmd = vec![
+        "docker".to_string(),
+        "run".to_string(),
+        "--rm".to_string(),
+        "--name".to_string(),
+        name.to_string(),
+        "-p".to_string(),
+        format!("127.0.0.1:{host_port}:{container_port}"),
+    ];
+    for (key, value) in container_env {
+        cmd.push("-e".to_string());
+        cmd.push(format!("{key}={value}"));
+    }
+    cmd.push(image.to_string());
+    cmd
+}
+
+/// Readiness for a container: an explicit `ready_http` wins, otherwise a TCP
+/// connect to the mapped host port — which needs no native client binary.
+fn docker_ready_probe(service: &ServiceConfig, host_port: u16) -> ReadyProbe {
+    match &service.ready_http {
+        Some(url) => ReadyProbe::Http(url.clone()),
+        None => ReadyProbe::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: host_port,
+        },
+    }
+}
+
+/// Sanitize a Docker `--name`: keep `[A-Za-z0-9_.-]`, replace the rest with `-`.
+fn container_name(vat_id: &str, service_id: &str) -> String {
+    format!("{vat_id}-{service_id}")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Official Docker image for a preset, tagged with `version` when supplied.
+fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
+    let (repo, default_tag) = match preset {
+        ServicePreset::Postgres => ("postgres", "16"),
+        ServicePreset::Redis => ("redis", "7"),
+        ServicePreset::Nats => ("nats", "2"),
+        ServicePreset::Rabbitmq => ("rabbitmq", "3"),
+        ServicePreset::Mysql => ("mysql", "8"),
+        ServicePreset::Mongo => ("mongo", "7"),
+    };
+    format!("{repo}:{}", version.unwrap_or(default_tag))
+}
+
+/// Port the preset's official image listens on inside the container.
+fn preset_container_port(preset: ServicePreset) -> u16 {
+    match preset {
+        ServicePreset::Postgres => 5432,
+        ServicePreset::Redis => 6379,
+        ServicePreset::Nats => 4222,
+        ServicePreset::Rabbitmq => 5672,
+        ServicePreset::Mysql => 3306,
+        ServicePreset::Mongo => 27017,
+    }
+}
+
+/// Container env that makes the preset's official image accept the same
+/// password-less connection the native preset exports a URL for.
+fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    match preset {
+        ServicePreset::Postgres => {
+            env.insert("POSTGRES_HOST_AUTH_METHOD".to_string(), "trust".to_string());
+        }
+        ServicePreset::Mysql => {
+            env.insert("MYSQL_ALLOW_EMPTY_PASSWORD".to_string(), "1".to_string());
+        }
+        ServicePreset::Redis
+        | ServicePreset::Nats
+        | ServicePreset::Mongo
+        | ServicePreset::Rabbitmq => {}
+    }
+    env
+}
+
+/// Exports for a Docker-only `image` service. Each `export` value is a template
+/// with `{host}`/`{port}` placeholders; raw endpoint vars are always provided.
+fn image_exports(service: &ServiceConfig, host_port: u16) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    for (key, template) in &service.export {
+        let value = template
+            .replace("{host}", "127.0.0.1")
+            .replace("{port}", &host_port.to_string());
+        env.insert(key.clone(), value);
+    }
+    let upper = service.id.to_uppercase().replace(['-', '.'], "_");
+    env.insert(format!("VAT_SERVICE_{upper}_HOST"), "127.0.0.1".to_string());
+    env.insert(format!("VAT_SERVICE_{upper}_PORT"), host_port.to_string());
+    env
+}
+
+/// Whether Docker is usable: the binary is on PATH and the daemon answers.
+fn docker_available() -> bool {
+    which("docker").is_some() && docker_daemon_up()
+}
+
+fn docker_daemon_up() -> bool {
+    Command::new("docker")
+        .arg("info")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Gate a Docker-backed service on a reachable daemon, emitting the structured
+/// `docker_unavailable` error (never a panic) when it is not.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn ensure_docker_available(service: &ServiceConfig) -> Result<()> {
+    if which("docker").is_none() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "docker_unavailable",
+            "service": service.id.as_str(),
+            "reason": "docker binary not found on PATH",
+        }))?;
+        bail!(
+            "service `{}` needs Docker but the `docker` binary was not found on PATH",
+            service.id
+        );
+    }
+    if !docker_daemon_up() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "docker_unavailable",
+            "service": service.id.as_str(),
+            "reason": "docker daemon not reachable (`docker info` failed)",
+        }))?;
+        bail!(
+            "service `{}` needs Docker but the daemon is not reachable (`docker info` failed)",
+            service.id
+        );
+    }
+    Ok(())
 }
 
 fn cold_prepare_service_image(
@@ -1251,15 +1559,23 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
 
 fn stop_services(services: &mut [ServiceHandle]) {
     for service in services.iter_mut().rev() {
-        if service.child.try_wait().ok().flatten().is_some() {
-            continue;
+        if service.child.try_wait().ok().flatten().is_none() {
+            kill_child(&mut service.child);
+            let _ = service.child.wait();
+            if service.record.status == ProcessStatus::Running
+                || service.record.status == ProcessStatus::Ready
+            {
+                service.record.status = ProcessStatus::Exited;
+            }
         }
-        kill_child(&mut service.child);
-        let _ = service.child.wait();
-        if service.record.status == ProcessStatus::Running
-            || service.record.status == ProcessStatus::Ready
-        {
-            service.record.status = ProcessStatus::Exited;
+        // Force-remove the container regardless of how the `docker run` child
+        // fared — a detached or wedged container must never outlive the run.
+        if let Some(name) = &service.docker_name {
+            let _ = Command::new("docker")
+                .args(["rm", "-f", name])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
     }
 }
@@ -1335,6 +1651,10 @@ mod tests {
             requires: requires.iter().map(|value| value.to_string()).collect(),
             cmd: vec!["true".to_string()],
             preset: None,
+            image: None,
+            container_port: None,
+            image_env: BTreeMap::new(),
+            runtime: ServiceRuntime::default(),
             version: None,
             port: PortSpec::default(),
             seed: Vec::new(),
@@ -1342,6 +1662,100 @@ mod tests {
             ready_http: None,
             timeout_s: 60,
         }
+    }
+
+    fn image_service(id: &str, image: &str, container_port: u16) -> ServiceConfig {
+        ServiceConfig {
+            id: id.to_string(),
+            requires: Vec::new(),
+            cmd: Vec::new(),
+            preset: None,
+            image: Some(image.to_string()),
+            container_port: Some(container_port),
+            image_env: BTreeMap::new(),
+            runtime: ServiceRuntime::default(),
+            version: None,
+            port: PortSpec::default(),
+            seed: Vec::new(),
+            export: BTreeMap::new(),
+            ready_http: None,
+            timeout_s: 60,
+        }
+    }
+
+    #[test]
+    fn docker_run_command_is_well_formed_and_deterministic() {
+        let mut env = BTreeMap::new();
+        env.insert("POSTGRES_HOST_AUTH_METHOD".to_string(), "trust".to_string());
+        env.insert("POSTGRES_DB".to_string(), "app".to_string());
+        let cmd = docker_run_command("vat-abc-pg", "postgres:16", 54321, 5432, &env);
+        assert_eq!(
+            cmd,
+            vec![
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                "vat-abc-pg",
+                "-p",
+                "127.0.0.1:54321:5432",
+                // BTreeMap iteration is sorted -> deterministic argv.
+                "-e",
+                "POSTGRES_DB=app",
+                "-e",
+                "POSTGRES_HOST_AUTH_METHOD=trust",
+                "postgres:16",
+            ]
+        );
+    }
+
+    #[test]
+    fn preset_image_uses_version_tag_when_present() {
+        assert_eq!(preset_image(ServicePreset::Postgres, None), "postgres:16");
+        assert_eq!(
+            preset_image(ServicePreset::Postgres, Some("15")),
+            "postgres:15"
+        );
+        assert_eq!(preset_image(ServicePreset::Redis, None), "redis:7");
+    }
+
+    #[test]
+    fn forced_runtime_does_not_probe_host() {
+        let mut svc = test_service("pg", &[]);
+        svc.cmd = Vec::new();
+        svc.preset = Some(ServicePreset::Postgres);
+        svc.runtime = ServiceRuntime::Native;
+        assert!(matches!(
+            resolve_preset_runtime(&svc, ServicePreset::Postgres).unwrap(),
+            ResolvedRuntime::Native
+        ));
+        svc.runtime = ServiceRuntime::Docker;
+        assert!(matches!(
+            resolve_preset_runtime(&svc, ServicePreset::Postgres).unwrap(),
+            ResolvedRuntime::Docker
+        ));
+    }
+
+    #[test]
+    fn container_name_sanitizes_disallowed_chars() {
+        assert_eq!(container_name("vat-5oyh3vc", "pg"), "vat-5oyh3vc-pg");
+        assert_eq!(container_name("vat/x", "a b"), "vat-x-a-b");
+    }
+
+    #[test]
+    fn image_exports_substitute_host_and_port_and_add_raw_vars() {
+        let mut svc = image_service("alloy-db", "google/alloydbomni:latest", 5432);
+        svc.export.insert(
+            "DATABASE_URL".to_string(),
+            "postgres://postgres:pw@{host}:{port}/db".to_string(),
+        );
+        let env = image_exports(&svc, 6000);
+        assert_eq!(
+            env.get("DATABASE_URL").unwrap(),
+            "postgres://postgres:pw@127.0.0.1:6000/db"
+        );
+        assert_eq!(env.get("VAT_SERVICE_ALLOY_DB_HOST").unwrap(), "127.0.0.1");
+        assert_eq!(env.get("VAT_SERVICE_ALLOY_DB_PORT").unwrap(), "6000");
     }
 
     fn spawn_trapping_service(root: &Path, order_path: &Path, id: &str) -> ServiceHandle {
@@ -1381,6 +1795,7 @@ mod tests {
             child,
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
+            docker_name: None,
         }
     }
 }
