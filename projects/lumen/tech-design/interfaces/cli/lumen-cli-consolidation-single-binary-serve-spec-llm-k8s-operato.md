@@ -151,3 +151,13 @@ operator_dispatch_test - verifies -> operator_subcommand
 operator_dispatch_test - verifies -> operator_feature_gate
 parity_test - verifies -> output_parity
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Dispatch flowchart covers every subcommand (serve/spec/llm, k8s operator/gen-crd, help) plus the feature-off error path; applicable and codegen-ready.
+- [cli] Command tree captures the full single-binary surface (serve/spec/llm/k8s) and key args/choices; applicable.
+- [manifest] Operator-gated deps (kube/k8s-openapi/schemars, optional) declared; applicable.
+- [unit-test] Requirements cover single-CLI surface, operator dispatch, feature-gate behavior, and spec/llm output parity; applicable.
