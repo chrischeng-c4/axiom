@@ -29,19 +29,49 @@ impl<'a> Parser<'a> {
     /// Type annotations are optional — omitted params default to Any.
     pub(crate) fn parse_lambda(&mut self) -> crate::error::Result<Spanned<Expr>> {
         let (start, _) = self.advance(); // consume `lambda`
-        let mut params = Vec::new();
+        let mut params: Vec<Param> = Vec::new();
 
         // No-param lambda: `lambda: body`
+        // PEP 570/3102 markers are valid in lambda parameter lists too:
+        // a `/` retroactively marks prior params positional-only, and a bare
+        // `*` (or `*args`) makes the following params keyword-only.
+        let mut seen_star = false;
         if self.peek_kind() != Some(TokenKind::Colon) {
             loop {
                 let p_start = self.peek().map(|t| t.start).unwrap_or(0);
 
-                // Handle **kwargs
+                // `/` positional-only separator (`lambda a, /, b: ...`).
+                if self.peek_kind() == Some(TokenKind::Slash) {
+                    self.advance();
+                    for p in params.iter_mut() {
+                        if p.kind == ParamKind::Regular {
+                            p.pos_only = true;
+                        }
+                    }
+                    if self.peek_kind() == Some(TokenKind::Comma) {
+                        self.advance();
+                        continue;
+                    }
+                    break;
+                }
+
+                // Handle **kwargs / *args / bare `*`
                 let kind = if self.peek_kind() == Some(TokenKind::DoubleStar) {
                     self.advance();
                     ParamKind::DoubleStar
                 } else if self.peek_kind() == Some(TokenKind::Star) {
                     self.advance();
+                    // bare `*` (keyword-only separator, `lambda a, *, c: ...`)
+                    // vs `*args`: a name must follow for the latter.
+                    if !self.peek_kind().as_ref().map_or(false, Self::is_name_token) {
+                        seen_star = true;
+                        if self.peek_kind() == Some(TokenKind::Comma) {
+                            self.advance();
+                            continue;
+                        }
+                        break;
+                    }
+                    seen_star = true;
                     ParamKind::Star
                 } else {
                     ParamKind::Regular
@@ -95,7 +125,7 @@ impl<'a> Parser<'a> {
                     default,
                     kind,
                     pos_only: false,
-                    kw_only: false,
+                    kw_only: seen_star && kind == ParamKind::Regular,
                     span: self.span_from(p_start),
                 });
 
