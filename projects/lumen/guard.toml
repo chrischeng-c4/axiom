@@ -1,4 +1,4 @@
-# SPEC-MANAGED: projects/lumen/external-contracts/security/auth-bearer-rbac.md#lumen-guard-auth-surface
+# SPEC-MANAGED: projects/lumen/external-contracts/security-auth/security/auth-bearer-rbac.md#lumen-guard-auth-surface
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
 project = "lumen"

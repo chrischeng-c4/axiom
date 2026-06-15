@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/stability/resilience-survival.md#lumen-stability-resilience-survival
+// SPEC-MANAGED: projects/lumen/external-contracts/resilience/stability/resilience-survival.md#lumen-stability-resilience-survival
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-stability-resilience-survival
