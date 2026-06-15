@@ -1398,12 +1398,18 @@ fn native_manifest_path(ctx: &EcProjectContext, manifest_rel: &str) -> PathBuf {
 }
 
 fn external_contract_category_from_path(ctx: &EcProjectContext, path: &Path) -> String {
+    // Scan all path components for the dimension dir, so both the flat
+    // `external-contracts/<dimension>/` and the capability-first
+    // `external-contracts/<capability>/<dimension>/` layouts derive correctly.
     path.strip_prefix(&ctx.ec_root)
         .ok()
-        .and_then(|relative| relative.components().next())
-        .and_then(|component| component.as_os_str().to_str())
-        .map(slugify)
-        .filter(|value| EC_CATEGORIES.contains(&value.as_str()))
+        .and_then(|relative| {
+            relative
+                .components()
+                .filter_map(|component| component.as_os_str().to_str())
+                .map(slugify)
+                .find(|value| EC_CATEGORIES.contains(&value.as_str()))
+        })
         .unwrap_or_else(|| "behavior".to_string())
 }
 
