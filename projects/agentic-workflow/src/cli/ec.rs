@@ -2521,12 +2521,51 @@ fn write_generated_tool_manifests(ctx: &EcProjectContext, manifest: &EcManifest)
     Ok(())
 }
 
+// Real EC gate test: runs the contract `command` from the project root (the dir
+// containing `.aw/`, where EC commands are defined to run) and asserts success.
+// `#[ignore]` keeps it out of the default `cargo test` (EC commands are heavy and
+// may themselves invoke cargo test); run via `cargo test -- --ignored` or
+// `aw health --verify-ec`. `__FN__`/`__CMD__`/`__ID__` are substituted, not
+// `format!`-interpolated, so the template's own `{...}` stay literal.
+const EC_RUST_COMMAND_TEMPLATE: &str = r#"#[test]
+#[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
+fn __FN__() {
+    let command = __CMD__;
+    let id = __ID__;
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !root.join(".aw").is_dir() {
+        assert!(
+            root.pop(),
+            "AW EC {id}: no .aw/ project root above {}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+    }
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&root)
+        .status()
+        .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    assert!(
+        status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}",
+        status.code()
+    );
+}
+"#;
+
+const EC_RUST_NO_COMMAND_TEMPLATE: &str = r#"#[test]
+#[ignore = "AW EC placeholder: no command bound to this contract"]
+fn __FN__() {
+    panic!("AW EC {}: no command bound to this contract", __ID__);
+}
+"#;
+
 fn render_rust_ec_test(case: &EcManifestCase) -> String {
     let fn_name = rust_ident(&case.id);
-    let placeholder = rust_string_literal(&format!("AW EC placeholder for {}", case.id));
     let evaluator_markers = render_evaluator_marker_lines("//", case);
-    format!(
-        "// SPEC-MANAGED: {}\n// CODEGEN-BEGIN\n// {EC_BEGIN_MARKER}\n// @ec {}\n// @capability {}\n// @claim {}\n// @contract {}\n// @category {}\n// @required_for_production {}\n// @command {}\n{}// {EC_END_MARKER}\n\n#[test]\n#[ignore = \"AW EC placeholder: implement this external contract test or keep the manifest command authoritative\"]\nfn {fn_name}() {{\n    panic!({});\n}}\n// CODEGEN-END\n",
+    let header = format!(
+        "// SPEC-MANAGED: {}\n// CODEGEN-BEGIN\n// {EC_BEGIN_MARKER}\n// @ec {}\n// @capability {}\n// @claim {}\n// @contract {}\n// @category {}\n// @required_for_production {}\n// @command {}\n{}// {EC_END_MARKER}\n\n",
         case.td_ref,
         case.id,
         case.capability_id,
@@ -2536,8 +2575,25 @@ fn render_rust_ec_test(case: &EcManifestCase) -> String {
         case.required_for_production,
         case.command,
         evaluator_markers,
-        placeholder
-    )
+    );
+    // Preserve the contract's English assertions as leading doc comments.
+    let mut contract_doc = String::new();
+    for assertion in &case.assertions {
+        contract_doc.push_str("// Contract: ");
+        contract_doc.push_str(assertion);
+        contract_doc.push('\n');
+    }
+    let body = if case.command.trim().is_empty() {
+        EC_RUST_NO_COMMAND_TEMPLATE
+            .replace("__FN__", &fn_name)
+            .replace("__ID__", &rust_string_literal(&case.id))
+    } else {
+        EC_RUST_COMMAND_TEMPLATE
+            .replace("__FN__", &fn_name)
+            .replace("__CMD__", &rust_string_literal(&case.command))
+            .replace("__ID__", &rust_string_literal(&case.id))
+    };
+    format!("{header}{contract_doc}{body}// CODEGEN-END\n")
 }
 
 fn render_python_ec_test(case: &EcManifestCase) -> String {
