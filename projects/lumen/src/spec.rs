@@ -8,7 +8,7 @@
 //! server and no network. This module is the single source for that surface;
 //! the CLI and the (legacy) `lumen-openapi-dump` binary both call into it.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The full OpenAPI 3 document as pretty JSON (every route + schema).
 /// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
@@ -16,6 +16,12 @@ pub fn openapi_json() -> String {
     crate::api::openapi()
         .to_pretty_json()
         .expect("OpenApi serializes to JSON")
+}
+
+/// The full OpenAPI 3 document as YAML for LLM/agent reading.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+pub fn openapi_yaml() -> String {
+    serde_yaml::to_string(&crate::api::openapi()).expect("OpenApi serializes to YAML")
 }
 
 /// Just the component schemas (the request/response data types) as pretty JSON
@@ -115,13 +121,34 @@ pub fn field_catalog() -> Value {
     })
 }
 
-/// The agent integration playbook (`lumen llm guide`) as Markdown — the mental
-/// model, the declare→ingest→search→hydrate workflow, the search-flavor decision
-/// guide, connection, and the non-goals. Where the exact wire shape is needed it
-/// points at `lumen spec` / `lumen llm recipes` so there is one source of truth.
+/// The agent-facing LLM topic outline (`lumen llm outline`) as Markdown.
 /// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
-pub fn llm_guide_md() -> String {
-    r#"# lumen — agent integration guide
+pub fn llm_outline_md() -> String {
+    r#"# lumen LLM outline
+
+Use the smallest topic that answers the task:
+
+- `lumen llm workflow` — product model, declare→ingest→search→hydrate, query
+  flavor choices, connection, and non-goals.
+- `lumen llm integration` — recommended Postgres/AlloyDB adapter boundary:
+  outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
+  and no direct external writes to lumen's NATS WAL.
+- `lumen llm quickstart` — copy-paste local create → index → search flow.
+- `lumen llm recipes` — task → ready-to-POST query bodies.
+- `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
+- `lumen spec` — OpenAPI JSON, JSON-schema, query-shape, field, analyzer, and
+  vector metric catalogs.
+"#
+    .to_string()
+}
+
+/// The agent workflow model (`lumen llm workflow`) as Markdown — the mental
+/// model, declare→ingest→search→hydrate workflow, search-flavor decision map,
+/// connection, and non-goals. Where exact wire shape is needed it points at
+/// `lumen spec` / `lumen llm recipes` so there is one source of truth.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+pub fn llm_workflow_md() -> String {
+    r#"# lumen workflow
 
 ## What lumen is
 lumen is a **search index, not a database**. You (the caller) own the source of
@@ -170,7 +197,42 @@ Sharded deployments route on the client: `crc32(collection_id) % shard_count`.
 ## Exact wire shapes
 `lumen spec` (OpenAPI), `lumen spec --shapes` (query cookbook), `lumen spec
 --fields` (field/analyzer catalog), or `lumen llm recipes` (task → ready-to-POST
-body). `lumen llm quickstart` is a copy-paste end-to-end.
+body). `lumen llm integration` covers database/pubsub adapter boundaries.
+"#
+    .to_string()
+}
+
+/// The recommended database/pubsub integration boundary (`lumen llm
+/// integration`) as Markdown.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+pub fn llm_integration_md() -> String {
+    r#"# lumen integration
+
+## Recommended Postgres / AlloyDB integration
+Use this boundary when Postgres or AlloyDB is the source of truth:
+1. Commit application data in the database first. If you need crash-safe
+   delivery, write an outbox row in the same transaction or consume CDC from
+   the committed log; do not make lumen a transaction participant.
+2. Run an adapter/sidecar that consumes CDC, Pub/Sub, Kafka, or the outbox and
+   translates each source change into lumen HTTP writes (`POST
+   /collections/{id}/index` and the delete endpoint). The adapter owns cloud
+   envelopes, ACK/retry/DLQ policy, upstream auth, and stale-event filtering.
+3. POST to the collection's shard and ACK upstream only after lumen returns
+   success. Replaying an upsert of `(external_id, field)` is safe because it
+   replaces that field; retry deletes until they succeed.
+4. If upstream delivery can arrive out of order, carry a monotonic
+   `source_version` / commit LSN in the adapter and suppress stale writes before
+   POSTing.
+5. Do not publish directly to lumen's NATS stream. NATS JetStream is lumen's
+   internal WAL and fan-out substrate; external producers use the HTTP API so
+   every write goes through validation, routing, and the same log/apply path.
+
+## Ownership boundary
+- lumen core owns schema validation, sharded HTTP writes, the internal WAL,
+  ordered apply, search, and ranked `external_id` responses.
+- The adapter owns source-specific envelopes, Pub/Sub subscription settings,
+  ACK/retry/DLQ, upstream credentials, source offsets, stale-event suppression,
+  and hydration against the source database.
 "#
     .to_string()
 }

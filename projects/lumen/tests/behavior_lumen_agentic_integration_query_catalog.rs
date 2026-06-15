@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/logic/external-contracts.md#lumen-agentic-integration-query-catalog
+// SPEC-MANAGED: projects/lumen/ec/behavior/agentic-integration.md#lumen-agentic-integration-query-catalog
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-agentic-integration-query-catalog

@@ -304,7 +304,11 @@ fn unit_vec(seed: u64) -> Vec<f32> {
     let mut v: Vec<f32> = (0..VEC_DIM)
         .map(|_| ((rng.next() >> 33) as f64 / (1u64 << 31) as f64 * 2.0 - 1.0) as f32)
         .collect();
-    let norm = v.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt() as f32;
+    let norm = v
+        .iter()
+        .map(|x| (*x as f64) * (*x as f64))
+        .sum::<f64>()
+        .sqrt() as f32;
     if norm > 0.0 {
         for x in &mut v {
             *x /= norm;
@@ -377,7 +381,9 @@ fn lumen_query(cell: &str) -> Value {
         "duplicated" => {
             json!({"query":{"duplicated":{"field":"city","min_group_size":2}},"limit":10})
         }
-        "knn" => json!({"query":{"knn":{"field":"embedding","vector":query_vec(),"k":KNN_K}},"limit":KNN_K}),
+        "knn" => {
+            json!({"query":{"knn":{"field":"embedding","vector":query_vec(),"k":KNN_K}},"limit":KNN_K})
+        }
         // filter-correct kNN: nearest within the city=taipei subset (the pgvector
         // post-filter recall-collapse case). lumen evaluates the filter then the
         // kNN over the survivors — no recall loss.
@@ -2066,13 +2072,14 @@ async fn competitive_perf_gate_disk() {
     let pg = pg_setup(&docs, pg_table).await;
     println!("loading opensearch ...");
     let os = os_setup(&docs, os_index).await;
+    let cells = parse_gate_cells();
 
     // measure every engine on every cell
     let mut disk_s = std::collections::BTreeMap::new();
     let mut mem_s = std::collections::BTreeMap::new();
     let mut pg_s = std::collections::BTreeMap::new();
     let mut os_s = std::collections::BTreeMap::new();
-    for &cell in CELLS {
+    for &cell in &cells {
         disk_s.insert(cell, measure_lumen(&lc_disk, &lbase_disk, cell).await);
         mem_s.insert(cell, measure_lumen(&lc_mem, &lbase_mem, cell).await);
         if let Some(c) = &pg {
@@ -2106,7 +2113,7 @@ async fn competitive_perf_gate_disk() {
     let mut regressions: Vec<String> = Vec::new();
     let mut reds: Vec<String> = Vec::new();
 
-    for &cell in CELLS {
+    for &cell in &cells {
         let d = &disk_s[cell];
         let m = &mem_s[cell];
         let ovh = if m.e2e_min > 0.0 {
@@ -2165,7 +2172,7 @@ async fn competitive_perf_gate_disk() {
         "{:<16} {:>10} {:>10} {:>8}",
         "cell", "disk_eng", "mem_eng", "ovh"
     );
-    for &cell in CELLS {
+    for &cell in &cells {
         let de = disk_s[cell].engine_min.unwrap_or(f64::NAN);
         let me = mem_s[cell].engine_min.unwrap_or(f64::NAN);
         let ovh = if me > 0.0 { de / me } else { f64::NAN };

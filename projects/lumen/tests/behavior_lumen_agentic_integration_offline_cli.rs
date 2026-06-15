@@ -1,9 +1,9 @@
-// SPEC-MANAGED: projects/lumen/tech-design/logic/external-contracts.md#lumen-agentic-integration-offline-cli
+// SPEC-MANAGED: projects/lumen/ec/behavior/agentic-integration.md#lumen-agentic-integration-offline-cli
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-agentic-integration-offline-cli
 // @capability agentic-integration
-// @claim lumen-spec-schema-openapi-json-schema-offline
+// @claim lumen-spec-schema-openapi-json-yaml-json-schema-offline
 // @contract offline-cli-agent-onboarding
 // @category behavior
 // @required_for_production true

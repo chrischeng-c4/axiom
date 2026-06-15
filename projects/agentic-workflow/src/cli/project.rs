@@ -3820,7 +3820,7 @@ mod tests {
                 ProjectEcGateStatus::Failed
             },
             note: None,
-            manifest_path: "projects/demo/aw.toml".to_string(),
+            manifest_path: "projects/demo/tests/aw-ec.toml".to_string(),
             expected_case_count: 1,
             case_count: 1,
             expected_tool_manifest_count: 0,

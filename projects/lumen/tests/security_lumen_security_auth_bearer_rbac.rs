@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/logic/external-contracts.md#lumen-security-auth-bearer-rbac
+// SPEC-MANAGED: projects/lumen/ec/security/auth-bearer-rbac.md#lumen-security-auth-bearer-rbac
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-security-auth-bearer-rbac
