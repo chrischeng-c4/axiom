@@ -659,6 +659,22 @@ pub fn lower_hir_to_mir_with_symbols_src(
         lowerer.user_func_argcounts.insert(func.name.0, argcount);
         lowerer.user_func_varnames.insert(func.name.0, varnames);
     }
+    // Methods need the same __code__ introspection priming so
+    // `Cls.m.__code__.co_argcount` / `.co_varnames` resolve and
+    // mb_func_is_registered(Cls.m) is true. Keyed by FuncRef(method_sym) — the
+    // value the class table stores for an undecorated method — so it matches the
+    // value `getattr(Cls, "m")` returns. Introspection maps only; call lowering
+    // is unaffected.
+    for cls in &hir.classes {
+        for func in &cls.methods {
+            if let Some(name) = sym_name_lookup(func.name) {
+                lowerer.user_func_names.insert(func.name.0, name);
+            }
+            let (argcount, varnames) = func_code_metadata(func, &sym_name_lookup);
+            lowerer.user_func_argcounts.insert(func.name.0, argcount);
+            lowerer.user_func_varnames.insert(func.name.0, varnames);
+        }
+    }
     lowerer.user_func_sigs = hir.func_sigs.clone();
 
     // Process user-defined classes: register class names and compile methods
