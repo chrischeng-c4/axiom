@@ -97,7 +97,6 @@ dependencies:
   - { name: k8s-openapi, spec: "0.24", features: [v1_32], optional: true }
   - { name: schemars, spec: "0.8", optional: true }
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
