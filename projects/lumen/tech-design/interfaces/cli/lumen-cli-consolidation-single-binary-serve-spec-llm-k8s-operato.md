@@ -145,59 +145,41 @@ relations:
   - { from: parity_test, verifies: output_parity }
 ---
 requirementDiagram
-
-requirement single_cli_surface {
-  id: R1
-  text: "lumen --help lists serve/spec/llm/k8s only; openapi-dump/bench/consumer binaries removed"
-  risk: medium
-  verifymethod: test
-}
-
-requirement operator_subcommand {
-  id: R5
-  text: "lumen k8s operator run and gen-crd work; default image built with feature operator"
-  risk: high
-  verifymethod: test
-}
-
-requirement operator_feature_gate {
-  id: R5b
-  text: "build without feature operator is kube-free; subcommand still in --help, errors clearly"
-  risk: high
-  verifymethod: test
-}
-
-requirement output_parity {
-  id: R4
-  text: "lumen spec and lumen llm output unchanged; cargo test -p lumen green; perf gate unaffected"
-  risk: low
-  verifymethod: test
-}
-
-element cli_help_test {
-  type: test
-}
-
-element operator_dispatch_test {
-  type: test
-}
-
-element parity_test {
-  type: test
-}
-
-cli_help_test - verifies -> single_cli_surface
-operator_dispatch_test - verifies -> operator_subcommand
-operator_dispatch_test - verifies -> operator_feature_gate
-parity_test - verifies -> output_parity
+    requirement single_cli_surface {
+      id: R1
+      text: "single CLI surface; redundant binaries removed"
+      risk: medium
+      verifymethod: test
+    }
+    requirement operator_subcommand {
+      id: R5
+      text: "k8s operator run and gen-crd work; image has feature operator"
+      risk: high
+      verifymethod: test
+    }
+    requirement operator_feature_gate {
+      id: R5b
+      text: "non-operator build kube-free; subcommand errors clearly"
+      risk: high
+      verifymethod: test
+    }
+    requirement output_parity {
+      id: R4
+      text: "spec and llm output unchanged; tests green; perf gate unaffected"
+      risk: low
+      verifymethod: test
+    }
+    element cli_help_test {
+      type: "rs/#[test]"
+    }
+    element operator_dispatch_test {
+      type: "rs/#[test]"
+    }
+    element parity_test {
+      type: "rs/#[test]"
+    }
+    cli_help_test - verifies -> single_cli_surface
+    operator_dispatch_test - verifies -> operator_subcommand
+    operator_dispatch_test - verifies -> operator_feature_gate
+    parity_test - verifies -> output_parity
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Dispatch flowchart covers every subcommand (serve/spec/llm, k8s operator/gen-crd, help) plus the feature-off error path; applicable and codegen-ready.
-- [cli] Command tree captures the full single-binary surface (serve/spec/llm/k8s) and key args/choices; applicable.
-- [manifest] Operator-gated deps (kube/k8s-openapi/schemars, optional) declared; applicable.
-- [unit-test] Requirements cover single-CLI surface, operator dispatch, feature-gate behavior, and spec/llm output parity; applicable.
