@@ -99,3 +99,55 @@ dependencies:
   - { name: k8s-openapi, spec: "0.24", features: [v1_32], optional: true }
   - { name: schemars, spec: "0.8", optional: true }
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+requirementDiagram
+
+requirement single_cli_surface {
+  id: R1
+  text: "lumen --help lists serve/spec/llm/k8s only; openapi-dump/bench/consumer binaries removed"
+  risk: medium
+  verifymethod: test
+}
+
+requirement operator_subcommand {
+  id: R5
+  text: "lumen k8s operator run and gen-crd work; default image built with feature operator"
+  risk: high
+  verifymethod: test
+}
+
+requirement operator_feature_gate {
+  id: R5b
+  text: "build without feature operator is kube-free; subcommand still in --help, errors clearly"
+  risk: high
+  verifymethod: test
+}
+
+requirement output_parity {
+  id: R4
+  text: "lumen spec and lumen llm output unchanged; cargo test -p lumen green; perf gate unaffected"
+  risk: low
+  verifymethod: test
+}
+
+element cli_help_test {
+  type: test
+}
+
+element operator_dispatch_test {
+  type: test
+}
+
+element parity_test {
+  type: test
+}
+
+cli_help_test - verifies -> single_cli_surface
+operator_dispatch_test - verifies -> operator_subcommand
+operator_dispatch_test - verifies -> operator_feature_gate
+parity_test - verifies -> output_parity
+```
