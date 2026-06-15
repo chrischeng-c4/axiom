@@ -14,25 +14,6 @@ path = "src/lib.rs"
 name = "lumen"
 path = "src/bin/lumen.rs"
 
-[[bin]]
-name = "lumen-consumer"
-path = "src/bin/lumen-consumer.rs"
-
-[[bin]]
-name = "lumen-openapi-dump"
-path = "src/bin/lumen-openapi-dump.rs"
-
-[[bin]]
-name = "lumen-bench"
-path = "src/bin/lumen-bench.rs"
-
-# K8s Operator: a Lumen CRD reconcile loop. Feature-gated so the serving
-# image's build stays free of the kube-rs / k8s-openapi tree.
-[[bin]]
-name = "lumen-operator"
-path = "src/bin/lumen-operator.rs"
-required-features = ["operator"]
-
 [dependencies]
 anyhow.workspace = true
 async-nats = { workspace = true }
