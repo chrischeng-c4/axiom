@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod expr;
+mod mangle;
 pub mod expr_compound;
 pub mod pattern;
 pub mod stmt;
@@ -223,7 +224,11 @@ impl<'a> Parser<'a> {
 pub fn parse(source: &str, file_id: FileId) -> crate::error::Result<Module> {
     let tokens = crate::lexer::lex(source, file_id);
     let mut parser = Parser::new(tokens, source, file_id);
-    parser.parse_module()
+    let mut module = parser.parse_module()?;
+    // PEP-classic private name mangling — rewrite `__name` inside class bodies
+    // before the type checker and lowering observe the AST.
+    mangle::mangle_module(&mut module);
+    Ok(module)
 }
 
 #[cfg(test)]
