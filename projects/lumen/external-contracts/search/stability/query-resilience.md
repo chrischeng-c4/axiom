@@ -8,8 +8,9 @@ fill_sections: [e2e-test, tool-contract]
 
 Search must stay responsive under network fault and sustained load. rig drives
 the fault scenarios (toxiproxy) and asserts the p99 SLAs; meter supplies the
-peak-RSS ceiling (no leak). Three cells are tracked gaps (scenarios being added)
-— defined here, kept `required_for_production: false` until they land + pass.
+peak-RSS ceiling (no leak). Three cells are tracked gaps (scenarios being added).
+Because search is a Service capability, stability is production-required, so these
+gaps block production until they pass.
 
 ## External Contract
 <!-- type: e2e-test lang: yaml -->
@@ -22,7 +23,6 @@ e2e_tests:
     contract_id: search-stability-fault-resilience
     category: stability
     test_path: projects/lumen/tests/stability_lumen_search_stability_resilience.rs
-    required_for_production: false
     command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/resilience"
     assertions:
       - "FILTERING/RANKING: under 5% packet loss (toxiproxy timeout toxic) search p99 stays <= 2x baseline_p99 + 20ms."
@@ -34,7 +34,6 @@ e2e_tests:
     contract_id: search-stability-backpressure
     category: stability
     test_path: projects/lumen/tests/stability_lumen_search_stability_backpressure.rs
-    required_for_production: false
     command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/load --pins projects/lumen/tests/rig/config/pins"
     assertions:
       - "(d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen)."
@@ -44,7 +43,6 @@ e2e_tests:
     contract_id: search-stability-resource-leak
     category: stability
     test_path: projects/lumen/tests/stability_lumen_search_stability_resource_leak.rs
-    required_for_production: false
     command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/endurance"
     assertions:
       - "(e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen)."
@@ -54,7 +52,6 @@ e2e_tests:
     contract_id: search-stability-latency-drift
     category: stability
     test_path: projects/lumen/tests/stability_lumen_search_stability_latency_drift.rs
-    required_for_production: false
     command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/endurance"
     assertions:
       - "(f) search p99 per window over the soak drifts <= 1.10x + 6ms (rig endurance/soak_p99_drift.toml). Env-dependent (vat-provisioned lumen)."

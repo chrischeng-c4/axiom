@@ -16,7 +16,6 @@ e2e_tests:
     claim_id: broker-kill-pod-kill-survival
     contract_id: broker-kill-pod-kill-survival
     category: stability
-    required_for_production: false
     command: "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture"
     assertions:
       - "Search p99 stays within 2x baseline under 5% packet loss (toxiproxy timeout toxic; rig resilience scenario)."
