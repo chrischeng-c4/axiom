@@ -5389,6 +5389,32 @@ impl<'a> AstLowerer<'a> {
                 } else {
                     self.checker.tcx.any()
                 };
+                // Method call carrying keyword args: route to mb_call_method_kwargs
+                // so the runtime binds the keywords to the method's parameters by
+                // name (mb_call_method only takes positional args). `hir_args` is
+                // [pos..., kwargs_dict]; split it into a positional list + the dict.
+                if is_method_call && pack_trailing_kwargs {
+                    if let HirExpr::Attr { object, attr, .. } = f {
+                        let mut parts = hir_args;
+                        let kwargs_dict = parts.pop().unwrap_or(HirExpr::Dict {
+                            entries: vec![],
+                            ty: any_ty,
+                        });
+                        let pos_list = HirExpr::List {
+                            elements: parts,
+                            ty: any_ty,
+                        };
+                        let name_str = HirExpr::StrLit(attr, self.checker.tcx.str());
+                        return Some(HirExpr::Call {
+                            func: Box::new(HirExpr::StrLit(
+                                "mb_call_method_kwargs".to_string(),
+                                any_ty,
+                            )),
+                            args: vec![*object, name_str, pos_list, kwargs_dict],
+                            ty: any_ty,
+                        });
+                    }
+                }
                 Some(HirExpr::Call {
                     func: Box::new(f),
                     args: hir_args,
