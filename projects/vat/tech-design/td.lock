@@ -1,8 +1,8 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-13T02:45:55.165289+00:00"
-digest = "sha256:8196f0a7003146d128ed3f4d26f278f0cbdd72493f52998fc58fc9d20e82c937"
+generated_at = "2026-06-15T08:37:01.417287+00:00"
+digest = "sha256:e31c53f7807fd0514b3b03d6717a88803e6e3afd0b116ab06e1d3f5666b1d277"
 
 [[files]]
 path = "logic/external-contracts.md"
@@ -14,7 +14,7 @@ digest = "sha256:64e3e06d6a885c3dd967d3c784594c1fc4fed7e1be91fb5b1377308a0473d0e
 
 [[files]]
 path = "logic/local-agent-test-runner-protocol.md"
-digest = "sha256:fc9d96d2f0ca6a7ac51fc318ac39975f0b6c4581e44e387cdc4875373d9eb715"
+digest = "sha256:eb90badc6cb9712eba5c2565979d73982fba09a206618b9fe26623a667b85278"
 
 [[files]]
 path = "semantic/source/projects-vat-src-cli-rs.md"
