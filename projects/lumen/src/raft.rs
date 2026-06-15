@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Per-shard Raft skeleton.
 //!
@@ -20,9 +20,9 @@ use utoipa::ToSchema;
 
 use crate::config::ClusterConfig;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub enum RaftRole {
     Leader,
     Follower,
@@ -32,9 +32,9 @@ pub enum RaftRole {
 
 /// Read-consistency requirement set by a client request via the
 /// `X-Read-Consistency` header.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub enum ReadConsistency {
     /// Default — only the shard leader may answer.
     Leader,
@@ -45,7 +45,7 @@ pub enum ReadConsistency {
     Any,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 impl ReadConsistency {
     pub fn from_header(raw: Option<&str>) -> Self {
         let Some(v) = raw else {
@@ -72,15 +72,15 @@ impl ReadConsistency {
 /// Peer list for one shard. The address scheme is the same for every
 /// deployment: `lumen-{ordinal}.{headless_service}:{port}` where the
 /// pod ordinal is `replica * shard_count + shard`.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct RaftGroup {
     pub shard_index: u32,
     pub peers: Vec<PeerAddr>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct PeerAddr {
     pub pod_name: String,
     pub host: String,
@@ -89,7 +89,7 @@ pub struct PeerAddr {
     pub role: RaftRole,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 impl RaftGroup {
     pub fn from_config(
         cfg: &ClusterConfig,
@@ -159,8 +159,8 @@ impl RaftGroup {
 
 /// Live cluster snapshot for `/debug/cluster`. Cheap to clone; updated
 /// in place from background tasks once the openraft wiring lands.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct ClusterState {
     pub pod_name: String,
     pub shard_index: u32,
@@ -172,7 +172,7 @@ pub struct ClusterState {
     pub replication_lag_ms: AtomicU64,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 impl ClusterState {
     pub fn new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> {
         let role = if cfg.is_voter()? {
@@ -210,8 +210,8 @@ impl ClusterState {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct ClusterStateView {
     pub pod_name: String,
     pub shard_index: u32,
