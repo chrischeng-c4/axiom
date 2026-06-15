@@ -64,6 +64,22 @@ yet formally `--verify`-proven"; `candidate` means "promised, partially shipped"
 
 ## Capability Index
 
+The capability roots group into **three pillars**, each aligned across its CLI
+surface, this capability map, and its EC contract:
+
+- **agent-first** — the offline integration surface (`lumen spec` / `lumen llm`).
+- **serve / search** — the running engine (`lumen serve`): the product core plus its runtime properties.
+- **devops-operation** — the shipped deployment defaults (`lumen k8s` + the Dockerfile / kustomize / operator artifacts; lumen ships them, it does not deploy).
+
+**Pillar — agent-first** (CLI: `lumen spec` / `lumen llm`; EC: behavior + content)
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| agentic-integration | 4143 | implemented | passing | conformance | ready | offline spec and llm CLI contract is covered by local spec_cli tests |
+| rest-integration | - | implemented | auditing | conformance | not_ready | runtime API proof remains outside the selected production scope |
+
+**Pillar — serve / search** (CLI: `lumen serve`; EC: functional + efficiency + security + stability)
+
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | search | - | implemented | auditing | conformance | not_ready | broad search evidence still mixes local gates with external perf/service gates |
@@ -75,13 +91,16 @@ yet formally `--verify`-proven"; `candidate` means "promised, partially shipped"
 | search-nested | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
 | elastic-scale | - | implemented | auditing | conformance | not_ready | scale proof includes heavier/release evidence outside the default gate |
 | resilience | - | implemented | auditing | dogfood | not_ready | live NATS/kind dogfood gates are external-service dependent |
-| k8s-deployment | - | implemented | auditing | conformance | not_ready | live operator e2e recency remains release-run dependent |
-| rest-integration | - | implemented | auditing | conformance | not_ready | runtime API proof remains outside the selected production scope |
-| agentic-integration | 4143 | implemented | passing | conformance | ready | offline spec and llm CLI contract is covered by local spec_cli tests |
 | security-auth | - | partial | auditing | conformance | not_ready | TLS binding is partial and not e2e-gated |
 | backup-restore | - | implemented | auditing | conformance | not_ready | periodic snapshotter proof remains source-level |
-| observability | - | implemented | auditing | conformance | not_ready | OTLP service proof depends on the compose collector stack |
 | schema-ops | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+
+**Pillar — devops-operation** (CLI: `lumen k8s` + shipped Dockerfile/kustomize; EC: render + manifest validity + deploy survival)
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| k8s-deployment | - | implemented | auditing | conformance | not_ready | live operator e2e recency remains release-run dependent |
+| observability | - | implemented | auditing | conformance | not_ready | OTLP service proof depends on the compose collector stack |
 | ops-operability | - | implemented | auditing | conformance | not_ready | operational proof remains tied to kind/perf/service evidence |
 
 **Honest scope (do not over-claim):**
