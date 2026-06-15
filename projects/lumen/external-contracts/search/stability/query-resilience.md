@@ -1,0 +1,88 @@
+---
+id: lumen-search-stability-ec
+summary: Search stability — query p99 survives packet loss / partition; no RSS leak; (tracked gaps) overload backpressure, FD/thread leak, soak latency drift.
+fill_sections: [e2e-test, tool-contract]
+---
+
+# EC: Search Stability (filtering · ranking · pagination)
+
+Search must stay responsive under network fault and sustained load. rig drives
+the fault scenarios (toxiproxy) and asserts the p99 SLAs; meter supplies the
+peak-RSS ceiling (no leak). Three cells are tracked gaps (scenarios being added)
+— defined here, kept `required_for_production: false` until they land + pass.
+
+## External Contract
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: lumen-search-stability-resilience
+    capability_id: search
+    claim_id: search-p99-survives-fault-and-recovers
+    contract_id: search-stability-fault-resilience
+    category: stability
+    test_path: projects/lumen/tests/stability_lumen_search_stability_resilience.rs
+    required_for_production: false
+    command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/resilience"
+    assertions:
+      - "FILTERING/RANKING: under 5% packet loss (toxiproxy timeout toxic) search p99 stays <= 2x baseline_p99 + 20ms."
+      - "ALL: after a full network partition, search recovers within 10s and post-recovery p99 stays <= 2x baseline_p99 + 1ms."
+      - "RSS plateau: over the bounded-keyspace soak, window-2 RSS <= 1.10x window-1 RSS (no leak)."
+  - id: lumen-search-stability-overload-backpressure
+    capability_id: search
+    claim_id: graceful-degradation-under-overload
+    contract_id: search-stability-backpressure
+    category: stability
+    test_path: projects/lumen/tests/stability_lumen_search_stability_backpressure.rs
+    required_for_production: false
+    command: ""
+    assertions:
+      - "GAP (d): under concurrent load beyond steady-state capacity the server sheds/bounds (error rate + p99 bounded), never OOMs or crashes. Scenario being added."
+  - id: lumen-search-stability-resource-leak
+    capability_id: search
+    claim_id: no-fd-socket-thread-leak
+    contract_id: search-stability-resource-leak
+    category: stability
+    test_path: projects/lumen/tests/stability_lumen_search_stability_resource_leak.rs
+    required_for_production: false
+    command: ""
+    assertions:
+      - "GAP (e): open file-descriptor / socket / thread count is stable across sustained index+search load (delta within tolerance). Probe being added."
+  - id: lumen-search-stability-latency-drift
+    capability_id: search
+    claim_id: no-latency-drift-over-soak
+    contract_id: search-stability-latency-drift
+    category: stability
+    test_path: projects/lumen/tests/stability_lumen_search_stability_latency_drift.rs
+    required_for_production: false
+    command: ""
+    assertions:
+      - "GAP (f): search p99 per window over a long soak drifts <= ~10% (analogous to the RSS plateau gate). Scenario being added."
+```
+
+## Tool Contract
+<!-- type: tool-contract lang: yaml -->
+
+```yaml
+tool_contracts:
+  - id: lumen-rig-search-stability
+    tool: rig
+    manifest: rig-search.toml
+    category: stability
+    command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/resilience"
+    native:
+      version: 1
+      project: lumen
+      source_contract: lumen-search-stability-resilience
+      scenarios_dir: projects/lumen/tests/rig/scenarios/resilience
+  - id: lumen-meter-search-stability
+    tool: meter
+    manifest: meter-search-stability.toml
+    category: stability
+    command: "meter test -- cargo test -p lumen --test disk_scale_proof -- --ignored"
+    native:
+      version: 1
+      project: lumen
+      source_contract: lumen-search-stability-resilience
+      delegate_command: "meter test -- cargo test -p lumen --test disk_scale_proof -- --ignored"
+```

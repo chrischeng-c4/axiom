@@ -1,22 +1,24 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/ops-operability/efficiency/competitive-search-benchmark-vs-db.md#lumen-ops-speed-benchmark-vs-db
+// SPEC-MANAGED: projects/lumen/external-contracts/search/efficiency/competitive-benchmark.md#lumen-search-efficiency-competitive
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
-// @ec lumen-ops-speed-benchmark-vs-db
-// @capability ops-operability
+// @ec lumen-search-efficiency-competitive
+// @capability search
 // @claim competitive-regression-gate-beat-pg-os-per-cell-ratcheting
-// @contract competitive-regression-gate-beat-pg-os-per-cell-ratcheting
+// @contract search-efficiency-filtering-ranking-pagination
 // @category efficiency
 // @required_for_production false
 // @command cargo test -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1
 // AW-EC-END
 
-// Contract: lumen wins the contracted search-latency cells against Postgres (text_bm25 WIN; ratcheted floor holds).
-// Contract: floor-dominated cells (pg btree point-lookup) stay EXEMPT, not gated.
+// Contract: FILTERING: filtered_search (AND[BM25+term+range]) beats pg >= 3.73x and OpenSearch(disk) >= 2.4x; filtered_knn beats pg >= 2.4x (OS exempt, no kNN plugin).
+// Contract: RANKING: text_bm25 single-term beats pg >= 14.56x; text_and multi-term beats pg >= 1.47x (OS >= 2.4x each).
+// Contract: PAGINATION/SORT: pure_sort (scan + sort) beats pg >= 18.32x (OS >= 2.4x); cursor pagination stays within the search_qps pin.
+// Contract: Floors are ratcheted (perf-baseline.json, 0.8); btree point-lookup cells stay EXEMPT, not gated. lumen vs pg/OS only.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
-fn lumen_ops_speed_benchmark_vs_db() {
+fn lumen_search_efficiency_competitive() {
     let command = "cargo test -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1";
-    let id = "lumen-ops-speed-benchmark-vs-db";
+    let id = "lumen-search-efficiency-competitive";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
         assert!(
