@@ -24,6 +24,21 @@ pub struct Diagnostic {
 }
 
 /// Check if a class name belongs to the built-in exception hierarchy.
+/// True if `e` is a call to a PEP 484 type-variable factory — `TypeVar`,
+/// `ParamSpec`, or `TypeVarTuple` — whether referenced bare (`TypeVar("T")`)
+/// or dotted (`typing.TypeVar("T")`). Used to recognise classic
+/// `T = TypeVar("T")` assignments so the bound name resolves as a TypeVar in
+/// later annotations.
+fn is_type_var_factory_call(e: &Expr) -> bool {
+    let Expr::Call { func, .. } = e else { return false };
+    let fname = match &func.node {
+        Expr::Ident(n) => n.as_str(),
+        Expr::Attr { attr, .. } => attr.as_str(),
+        _ => return false,
+    };
+    matches!(fname, "TypeVar" | "ParamSpec" | "TypeVarTuple")
+}
+
 fn is_exception_class_name(name: &str) -> bool {
     matches!(
         name,
@@ -454,6 +469,25 @@ impl TypeChecker {
                         // only key the directly-bound root module.
                         self.import_origins
                             .insert(root.clone(), (root.clone(), String::new()));
+                    }
+                }
+                // Classic PEP 484 type-variable definitions:
+                // `T = TypeVar("T")`, `P = ParamSpec("P")`,
+                // `Ts = TypeVarTuple("Ts")`. The PEP 695 `[T]` syntax is
+                // handled by register_type_params, but the assignment form is
+                // not — so a later annotation `-> T` would fall through to the
+                // `unknown type: T` error. Register the bound name as a TypeVar
+                // alias (compatible with any type, see is_assignable) so such
+                // annotations type-check the way they do under CPython.
+                Stmt::Assign { target, value } => {
+                    if let Expr::Ident(name) = &target.node {
+                        if is_type_var_factory_call(&value.node) {
+                            let var_id = TypeVarId(self.next_type_var_id);
+                            self.next_type_var_id += 1;
+                            self.tcx.new_type_var(name.clone(), None, Vec::new());
+                            let tv_ty = self.tcx.intern(Ty::TypeVar(var_id));
+                            self.tcx.register_alias(name.clone(), tv_ty);
+                        }
                     }
                 }
                 _ => {}
