@@ -873,16 +873,84 @@ fn infer_return_type_from_ast(
                     }
                 };
             }
+            // Recurse into every compound statement that can hold a `return`,
+            // returning the first inferred type. Without this, a function whose
+            // only returns live inside `try`/`while`/`for`/`with`/`match`
+            // bodies had no inferred return type and defaulted to the raw-int
+            // (`int_ty`) convention, so `return True`/`return 1.5` from inside
+            // a `try` block surfaced as `0`/`1` or raw f64 bits at the call
+            // site. Mirrors the existing `if` handling.
             ast::Stmt::If {
                 body: if_body,
+                elif_clauses,
                 else_body,
                 ..
             } => {
                 if let Some(ty) = infer_return_type_from_ast(if_body, tc, env, func_ret_float) {
                     return Some(ty);
                 }
+                for (_, elif_body) in elif_clauses {
+                    if let Some(ty) =
+                        infer_return_type_from_ast(elif_body, tc, env, func_ret_float)
+                    {
+                        return Some(ty);
+                    }
+                }
                 if let Some(els) = else_body {
                     if let Some(ty) = infer_return_type_from_ast(els, tc, env, func_ret_float) {
+                        return Some(ty);
+                    }
+                }
+            }
+            ast::Stmt::While { body, else_body, .. }
+            | ast::Stmt::For { body, else_body, .. }
+            | ast::Stmt::AsyncFor { body, else_body, .. } => {
+                if let Some(ty) = infer_return_type_from_ast(body, tc, env, func_ret_float) {
+                    return Some(ty);
+                }
+                if let Some(els) = else_body {
+                    if let Some(ty) = infer_return_type_from_ast(els, tc, env, func_ret_float) {
+                        return Some(ty);
+                    }
+                }
+            }
+            ast::Stmt::With { body, .. } | ast::Stmt::AsyncWith { body, .. } => {
+                if let Some(ty) = infer_return_type_from_ast(body, tc, env, func_ret_float) {
+                    return Some(ty);
+                }
+            }
+            ast::Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
+                if let Some(ty) = infer_return_type_from_ast(body, tc, env, func_ret_float) {
+                    return Some(ty);
+                }
+                for handler in handlers {
+                    if let Some(ty) =
+                        infer_return_type_from_ast(&handler.body, tc, env, func_ret_float)
+                    {
+                        return Some(ty);
+                    }
+                }
+                if let Some(els) = else_body {
+                    if let Some(ty) = infer_return_type_from_ast(els, tc, env, func_ret_float) {
+                        return Some(ty);
+                    }
+                }
+                if let Some(fin) = finally_body {
+                    if let Some(ty) = infer_return_type_from_ast(fin, tc, env, func_ret_float) {
+                        return Some(ty);
+                    }
+                }
+            }
+            ast::Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    if let Some(ty) =
+                        infer_return_type_from_ast(&arm.body, tc, env, func_ret_float)
+                    {
                         return Some(ty);
                     }
                 }
