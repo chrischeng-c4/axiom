@@ -2481,6 +2481,9 @@ fn build_traceability_coverage_with_command_inventory(
         let Ok(content) = fs::read_to_string(&file.abs) else {
             continue;
         };
+        if content.contains(AW_EC_BEGIN_MARKER) {
+            continue;
+        }
         for block in crate::generate::marker::parse_codegen_blocks(&content) {
             let source = format!("{}:{}", file.rel, block.begin_line + 1);
             let Some(td_path) = normalize_spec_ref_path(&block.spec_ref, project_root) else {
@@ -12842,6 +12845,24 @@ e2e_tests:
         assert!(!coverage.blockers.iter().any(|blocker| {
             blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge
                 && blocker.source.as_deref() == Some("section:e2e-test")
+        }));
+    }
+
+    #[test]
+    fn traceability_excludes_aw_ec_generated_wrapper_cb_edges() {
+        let tmp = TempDir::new().unwrap();
+        write_traceability_config(tmp.path(), "tests/**");
+        write_traceability_readme(tmp.path());
+        write(
+            tmp.path(),
+            "tests/behavior_demo_contract.rs",
+            "// SPEC-MANAGED: external-contracts/behavior/demo.toml#demo-contract\n// CODEGEN-BEGIN\n// AW-EC-BEGIN\n// @ec demo-contract\n#[test]\n#[ignore = \"generated EC wrapper\"]\nfn demo_contract() {}\n// AW-EC-END\n// CODEGEN-END\n",
+        );
+
+        let coverage = traceability_coverage_for(tmp.path());
+
+        assert!(coverage.blockers.iter().all(|blocker| {
+            blocker.source.as_deref() != Some("tests/behavior_demo_contract.rs")
         }));
     }
 

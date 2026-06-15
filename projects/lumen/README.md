@@ -27,6 +27,11 @@ concept, only the caller's `external_id` is.
   need nothing special; see [HTTP](#http--clients)).
 - **Sharded**: `crc32(collection_id) % shard_count` routes on the client.
   Shard count is install-time, not online-changeable.
+- **Agent-first offline integration surface**: `lumen spec` emits the exact
+  machine schema, including `lumen spec --format openapi-yaml` for LLM-readable
+  OpenAPI, while `lumen llm outline|workflow|integration|quickstart|recipes`
+  lets an agent pick the smallest context needed to wire lumen into an app
+  without a docs site or running server.
 
 ## Capabilities
 
@@ -351,15 +356,16 @@ install.
 | REST API + HTTP/2 cleartext | epic | - | implemented | passing | conformance | projects/lumen/src (axum routes) |
 | OpenAPI 3 + Swagger UI | epic | - | implemented | passing | smoke | /openapi.json, /docs |
 
-### LLM / Agentic Integration (offline CLI — `spec` schema + `llm` playbook)
+### LLM / Agentic Integration (offline CLI — `spec` schema + `llm` topics)
 
 A **subset of the `lumen` CLI** lets an agent discover the full request/response
 format and schema **offline** — no running server, no network, no docs site. The
 only requirement is that the `lumen` binary is installed; the binary is
 self-describing via `lumen spec`:
 
-- `lumen spec` / `lumen spec --format json-schema` — the OpenAPI 3 document, or
-  just the request/response component schemas.
+- `lumen spec` / `lumen spec --format openapi-yaml` / `lumen spec --format
+  json-schema` — the OpenAPI 3 document as JSON, the same OpenAPI as
+  LLM-readable YAML, or just the request/response component schemas.
 - `lumen spec --shapes` — a query-shape cookbook (ready-to-POST examples for
   every `QueryNode` variant plus sort / collapse).
 - `lumen spec --fields` — the field-type / analyzer / vector-metric catalog.
@@ -370,32 +376,37 @@ back-compat alias for `lumen spec`.)
 
 `lumen spec` answers *"what is the exact wire shape"*. **Agent-first DX** also
 needs *"how do I string lumen into my system"* — so a sibling subset, `lumen
-llm *`, emits the **integration playbook** an agent reads to go zero-to-integrated
+llm *`, emits focused **agent topics** an agent reads to go zero-to-integrated
 offline:
 
-- `lumen llm` / `lumen llm guide` — the integration playbook: the mental model
-  (caller owns the source of truth; lumen is a derived index of `external_id`s,
-  not a document store), the **declare schema → ingest via your own pub/sub into
-  `POST /index` → search → hydrate from your store** workflow, a search-flavor
-  decision guide, connection (`:7373` + bearer), and the non-goals.
+- `lumen llm` / `lumen llm outline` — the topic map; use it to choose the
+  smallest next topic instead of reading every page.
+- `lumen llm workflow` — the product model (caller owns the source of truth;
+  lumen is a derived index of `external_id`s, not a document store), the
+  **declare schema → ingest via your own pub/sub into `POST /index` → search →
+  hydrate from your store** workflow, a search-flavor decision map, connection
+  (`:7373` + bearer), and the non-goals.
+- `lumen llm integration` — the recommended Postgres/AlloyDB boundary:
+  database commit + outbox/CDC first, external adapter-owned Pub/Sub retry/DLQ,
+  HTTP writes into lumen, and no direct external publishing to lumen's NATS WAL.
 - `lumen llm quickstart` — a minimal copy-paste end-to-end (create → index →
   search) as HTTP/curl.
 - `lumen llm recipes` — task→query mappings (filtered kNN, dedupe, hybrid,
   nested `has_child`) as ready-to-POST bodies, consistent with `lumen spec
   --shapes`.
 
-`lumen spec` is the schema; `lumen llm` is the playbook. Together the binary
+`lumen spec` is the schema; `lumen llm *` is the topic set. Together the binary
 self-onboards an agent with no docs site and no running server.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| agentic-integration | - | verified | An installed `lumen` binary self-onboards an agent **offline** (no server, no network): `lumen spec` emits the machine schema (OpenAPI / JSON-schema, query-shape cookbook, field/analyzer catalog), and `lumen llm *` emits the agent integration playbook (mental model, ingest→search→hydrate workflow, flavor-decision guide, recipes, non-goals). | smoke, conformance | projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs |
+| agentic-integration | - | verified | An installed `lumen` binary self-onboards an agent **offline** (no server, no network): `lumen spec` emits the machine schema (OpenAPI JSON/YAML, JSON-schema, query-shape cookbook, field/analyzer catalog), and `lumen llm *` emits focused topics (outline, ingest→search→hydrate workflow, Postgres/AlloyDB integration boundary, quickstart, recipes, non-goals). | smoke, conformance | projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| `lumen spec` schema (OpenAPI + JSON-schema, offline) | epic | - | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+| `lumen spec` schema (OpenAPI JSON/YAML + JSON-schema, offline) | epic | - | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | Query-shape cookbook + field/analyzer catalog | epic | - | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
-| `lumen llm *` agent integration playbook (guide / quickstart / recipes) | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+| `lumen llm *` agent topics (outline / workflow / integration / quickstart / recipes) | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 
 ### Security & Auth
 

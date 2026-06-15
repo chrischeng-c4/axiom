@@ -1,0 +1,9 @@
+# SPEC-MANAGED: projects/lumen/ec/security/auth-bearer-rbac.md#lumen-guard-auth-surface
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+project = "lumen"
+source_contract = "lumen-security-auth-bearer-rbac"
+target = "projects/lumen"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END
