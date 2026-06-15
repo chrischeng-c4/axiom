@@ -1,0 +1,9 @@
+# SPEC-MANAGED: projects/lumen/ec/efficiency/competitive-search-benchmark-vs-db.md#lumen-arena-competitive-search
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "target/debug/arena run --spec projects/arena/examples/lumen-vs-pg-and-opensearch.toml"
+project = "lumen"
+source_contract = "lumen-ops-speed-benchmark-vs-db"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END

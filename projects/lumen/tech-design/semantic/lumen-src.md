@@ -4,9 +4,28 @@ summary: Semantic coverage for "projects/lumen/src"
 capability_refs:
   - id: "search"
     role: primary
+    gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/src`."
+  - id: "agentic-integration"
+    role: primary
+    gap: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+    claim: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+    coverage: full
+    rationale: "The source spec module emits OpenAPI JSON, OpenAPI YAML, JSON-schema, and agent-facing schema surfaces."
+  - id: "agentic-integration"
+    role: primary
+    gap: "query-shape-cookbook-field-analyzer-catalog"
+    claim: "query-shape-cookbook-field-analyzer-catalog"
+    coverage: full
+    rationale: "The source spec module emits the query-shape cookbook and field/analyzer/vector metric catalogs."
+  - id: "agentic-integration"
+    role: primary
+    gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+    coverage: full
+    rationale: "The source spec module emits the LLM topic set for offline agent onboarding."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -30,6 +49,9 @@ semantic_domain:
           - name: "openapi_json"
             kind: "function"
             public: true
+          - name: "openapi_yaml"
+            kind: "function"
+            public: true
           - name: "json_schema_json"
             kind: "function"
             public: true
@@ -39,7 +61,13 @@ semantic_domain:
           - name: "field_catalog"
             kind: "function"
             public: true
-          - name: "llm_guide_md"
+          - name: "llm_outline_md"
+            kind: "function"
+            public: true
+          - name: "llm_workflow_md"
+            kind: "function"
+            public: true
+          - name: "llm_integration_md"
             kind: "function"
             public: true
           - name: "llm_quickstart_md"

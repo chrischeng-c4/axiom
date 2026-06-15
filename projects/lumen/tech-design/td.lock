@@ -1,12 +1,8 @@
 version = 1
 project = "lumen"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-06-14T08:13:44.635447+00:00"
-digest = "sha256:2966f6c55f092cb991dd781601276ebd89b73f8a70a63b9032f0c486a26996d2"
-
-[[files]]
-path = "logic/external-contracts.md"
-digest = "sha256:55fa31a1e294e50c38d462a6dd6845d4e820f09966b1ca23cfd228bf88284286"
+generated_at = "2026-06-14T16:37:17.141351+00:00"
+digest = "sha256:d6636d17cf139f46d405c91175dc87004f8ff7229b6e60dda334c9eddaf8c400"
 
 [[files]]
 path = "semantic/lumen-benches.md"
@@ -38,7 +34,7 @@ digest = "sha256:14db832148e9e8b1b55e18f773986d4aea36dd605f12f96fa20dbc9c37d8eda
 
 [[files]]
 path = "semantic/lumen-k8s-operator.md"
-digest = "sha256:4cfb319ef1addfdd9db610ed6aa005d81d5df2a74a1b1bedb1708a836c4329a0"
+digest = "sha256:d08b1d3a03f88e73a5c195aba4b3f48711bc0e4f8016726e32507b2921f7edad"
 
 [[files]]
 path = "semantic/lumen-k8s-optional-consumer.md"
@@ -78,8 +74,8 @@ digest = "sha256:7a014458bef4fdbc78672e6b8c14b6c8991cfcb4c90f968383eec9b294db6d4
 
 [[files]]
 path = "semantic/lumen-src.md"
-digest = "sha256:70a0d8ab332a801569da1956ecf083fc8596d87f9630c40d496c02c1400ae6ea"
+digest = "sha256:2c98711f7123883df29ff824d0ac5e457b8f4f5707d734313d4dc9ffdf9491fe"
 
 [[files]]
 path = "semantic/lumen-tests.md"
-digest = "sha256:f564fddadb5ebd5d69456c94571c56ebcb3b7db767d87a0f162146fc570d3351"
+digest = "sha256:3037512b945c439f47ea59f887f6ad1f26312219fc5a4f11ed5f164efed1036d"
