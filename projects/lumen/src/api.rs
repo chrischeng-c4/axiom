@@ -273,6 +273,7 @@ impl AppState {
     paths(
         healthz,
         readyz,
+        version,
         metrics,
         debug_cluster,
         list_collections,
@@ -369,6 +370,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/version", get(version))
         .route("/metrics", get(metrics))
         .route("/debug/cluster", get(debug_cluster))
         .route("/openapi.json", get(openapi_spec))
@@ -445,6 +447,22 @@ fn read_consistency_from(headers: &HeaderMap) -> ReadConsistency {
 )]
 async fn healthz() -> &'static str {
     "ok"
+}
+
+#[utoipa::path(
+    get,
+    path = "/version",
+    tag = "Admin",
+    responses((status = 200, description = "Build provenance: version, git sha, build time", body = serde_json::Value))
+)]
+/// Build provenance. `version` is the crate version; `git_sha` and `built_at`
+/// are stamped by `build.rs` and degrade to "unknown" outside a git checkout.
+async fn version() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "git_sha": option_env!("LUMEN_GIT_SHA").unwrap_or("unknown"),
+        "built_at": option_env!("LUMEN_BUILT_AT").unwrap_or("unknown"),
+    }))
 }
 
 #[utoipa::path(

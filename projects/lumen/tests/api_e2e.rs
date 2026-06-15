@@ -32,6 +32,23 @@ async fn health_and_ready() {
 }
 
 #[tokio::test]
+async fn version_reports_build_provenance() {
+    let s = server();
+    let resp = s.get("/version").await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    // version is the crate version, stamped via env!("CARGO_PKG_VERSION").
+    assert_eq!(
+        body["version"].as_str(),
+        Some(env!("CARGO_PKG_VERSION")),
+        "GET /version must report the crate version; body = {body}"
+    );
+    // git_sha + built_at are always present (degrading to "unknown" off-git).
+    assert!(body["git_sha"].is_string(), "git_sha missing in {body}");
+    assert!(body["built_at"].is_string(), "built_at missing in {body}");
+}
+
+#[tokio::test]
 async fn create_collection_and_index_keyword_then_search() {
     let s = server();
 
