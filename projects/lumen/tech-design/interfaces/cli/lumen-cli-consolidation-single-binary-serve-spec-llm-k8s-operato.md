@@ -54,7 +54,6 @@ flowchart TD
     gencrd --> done
     help --> done
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
@@ -104,6 +103,49 @@ dependencies:
 <!-- type: unit-test lang: mermaid -->
 
 ```mermaid
+---
+id: lumen-cli-consolidation-verification
+requirements:
+  single_cli_surface:
+    id: R1
+    text: "lumen --help lists serve/spec/llm/k8s only; openapi-dump/bench/consumer binaries removed"
+    kind: functional
+    risk: medium
+    verify: test
+  operator_subcommand:
+    id: R5
+    text: "lumen k8s operator run and gen-crd work; default image built with feature operator"
+    kind: functional
+    risk: high
+    verify: test
+  operator_feature_gate:
+    id: R5b
+    text: "build without feature operator is kube-free; subcommand stays in --help and errors clearly"
+    kind: functional
+    risk: high
+    verify: test
+  output_parity:
+    id: R4
+    text: "lumen spec and lumen llm output unchanged; cargo test -p lumen green; perf gate unaffected"
+    kind: functional
+    risk: low
+    verify: test
+elements:
+  cli_help_test:
+    kind: test
+    type: "rs/#[test]"
+  operator_dispatch_test:
+    kind: test
+    type: "rs/#[test]"
+  parity_test:
+    kind: test
+    type: "rs/#[test]"
+relations:
+  - { from: cli_help_test, verifies: single_cli_surface }
+  - { from: operator_dispatch_test, verifies: operator_subcommand }
+  - { from: operator_dispatch_test, verifies: operator_feature_gate }
+  - { from: parity_test, verifies: output_parity }
+---
 requirementDiagram
 
 requirement single_cli_surface {
