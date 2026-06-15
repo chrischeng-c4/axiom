@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/external-contracts/behavior/devops-render.md#lumen-devops-operator-render
+// SPEC-MANAGED: projects/lumen/external-contracts/k8s-deployment/behavior/devops-render.md#lumen-devops-operator-render
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-devops-operator-render
