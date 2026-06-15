@@ -7877,9 +7877,18 @@ impl<'a> HirToMir<'a> {
                     })
                     .unwrap_or_else(|| self.emit_none());
                 let dest = self.fresh_vreg();
-                self.current_stmts.push(MirInst::MakeTuple {
-                    dest,
-                    elements: vec![s, e, st],
+                // Emit a real `slice` object rather than a (start, stop, step)
+                // tuple: a tuple is indistinguishable from `obj[1, 2, 3]` (a
+                // genuine tuple key), so a user `__getitem__` could not tell a
+                // slice subscript apart from a tuple subscript. mb_obj_getitem
+                // normalizes the slice object back to the tuple form for
+                // built-in containers and native-stub sequences (struct-seq,
+                // etc.), so their fast slice handling is unchanged; only user
+                // (non-native) dunders now receive a real slice.
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: Some(dest),
+                    name: "mb_slice".to_string(),
+                    args: vec![s, e, st],
                     ty: *ty,
                 });
                 dest
