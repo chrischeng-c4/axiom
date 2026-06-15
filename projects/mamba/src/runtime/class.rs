@@ -10042,6 +10042,127 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
 
 // ── Generic Method Dispatch (#380) ──
 
+/// `receiver.method(pos..., kw=v...)` — the keyword-argument method-call form.
+/// mb_call_method only takes a positional arg list, so the lowering routes
+/// method calls that carry keywords here. We resolve the method's declared
+/// parameter names (from the introspection registry, which now covers methods)
+/// and bind the keywords into their positional slots, then dispatch through the
+/// normal mb_call_method path (so Instance / descriptor / MRO semantics are
+/// unchanged). Falls back to the legacy trailing-kwargs-dict convention when
+/// the parameters can't be bound (native methods, *args, defaulted gaps).
+pub fn mb_call_method_kwargs(
+    receiver: MbValue,
+    method_name: MbValue,
+    pos_list: MbValue,
+    kwargs_dict: MbValue,
+) -> MbValue {
+    let name = extract_str(method_name).unwrap_or_default();
+    let pos = super::builtins::extract_items(pos_list);
+
+    let bound: Option<Vec<MbValue>> = (|| {
+        // Receiver class → resolve the (possibly inherited) method value.
+        let class_name = receiver.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*p).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })?;
+        let method_val = lookup_method(&class_name, &name);
+        if method_val.is_none() {
+            return None;
+        }
+        let argcount = super::closure::mb_func_get_argcount(method_val).as_int()?;
+        if argcount <= 1 {
+            return None; // only `self` (or unknown) — nothing to bind
+        }
+        let varnames_tuple = super::closure::mb_func_get_varnames(method_val);
+        let vp = varnames_tuple.as_ptr()?;
+        let names: Vec<String> = unsafe {
+            if let ObjData::Tuple(items) = &(*vp).data {
+                items.iter().filter_map(|v| extract_str(*v)).collect()
+            } else {
+                return None;
+            }
+        };
+        if names.len() < argcount as usize {
+            return None;
+        }
+        // User-visible params are co_varnames[1..argcount] (drop the leading self).
+        let user_params: Vec<&str> = names[1..argcount as usize]
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let mut slots: Vec<Option<MbValue>> = vec![None; user_params.len()];
+        if pos.len() > slots.len() {
+            return None; // too many positional → let the normal path handle it
+        }
+        for (i, v) in pos.iter().enumerate() {
+            slots[i] = Some(*v);
+        }
+        let kp = kwargs_dict.as_ptr()?;
+        let pairs: Vec<(String, MbValue)> = unsafe {
+            if let ObjData::Dict(ref lock) = (*kp).data {
+                lock.read().unwrap().iter().filter_map(|(k, v)| {
+                    if let super::dict_ops::DictKey::Str(s) = k {
+                        Some((s.clone(), *v))
+                    } else {
+                        None
+                    }
+                }).collect()
+            } else {
+                return None;
+            }
+        };
+        for (k, v) in &pairs {
+            match user_params.iter().position(|p| *p == k.as_str()) {
+                Some(idx) => {
+                    if slots[idx].is_some() {
+                        return None; // duplicate value for a param → normal path
+                    }
+                    slots[idx] = Some(*v);
+                }
+                None => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "{}() got an unexpected keyword argument '{}'",
+                            name, k
+                        ))),
+                    );
+                    return Some(Vec::new()); // sentinel: raised (caught below)
+                }
+            }
+        }
+        // Every param must be filled — a defaulted gap would need the default,
+        // which co_varnames doesn't carry, so fall back to the legacy path.
+        let mut out = Vec::with_capacity(slots.len());
+        for s in slots {
+            out.push(s?);
+        }
+        Some(out)
+    })();
+
+    // An unexpected-keyword raise short-circuits here.
+    if super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+    match bound {
+        Some(args) => {
+            let args_list = MbValue::from_ptr(MbObject::new_list_borrowed(args));
+            mb_call_method(receiver, method_name, args_list)
+        }
+        None => {
+            // Legacy fallback: append the kwargs dict as a trailing positional
+            // arg (the previous convention) and let mb_call_method handle it.
+            let mut all = pos;
+            all.push(kwargs_dict);
+            let args_list = MbValue::from_ptr(MbObject::new_list_borrowed(all));
+            mb_call_method(receiver, method_name, args_list)
+        }
+    }
+}
+
 /// Type-tagged method dispatch: receiver.method_name(args).
 /// Checks NaN-box tag for primitives, then ObjData variant for heap objects.
 /// Falls back to MRO-based lookup for user class instances.
