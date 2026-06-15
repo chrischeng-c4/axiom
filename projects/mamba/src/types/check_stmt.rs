@@ -365,13 +365,16 @@ impl TypeChecker {
                     let prev_subject_ty = self.current_match_subject_ty.replace(subject_ty);
                     self.check_pattern(&arm.pattern);
                     self.current_match_subject_ty = prev_subject_ty;
-                    // Type-check guard expression (#827)
-                    // Guard must be boolean (same semantics as if/while conditions)
+                    // Type-check guard expression (#827) for its side effects
+                    // (walrus bindings, name resolution, sub-expression
+                    // inference). A guard may be ANY expression — it is
+                    // truthy-tested at runtime, exactly like the `if`/`while`
+                    // conditions above, neither of which enforces `bool`.
+                    // Enforcing bool here spuriously rejected valid guards such
+                    // as `case n if (doubled := n * 2):` (the walrus value is
+                    // `int`, not `bool`).
                     if let Some(guard) = &arm.guard {
-                        let guard_ty = self.check_expr(guard);
-                        if !self.types_compatible(self.tcx.bool(), guard_ty) {
-                            self.error(guard.span, "match guard condition must be bool");
-                        }
+                        let _guard_ty = self.check_expr(guard);
                     }
                     for s in &arm.body {
                         self.check_stmt(s);
