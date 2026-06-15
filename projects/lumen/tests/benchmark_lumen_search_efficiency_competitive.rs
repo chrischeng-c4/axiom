@@ -6,7 +6,7 @@
 // @claim competitive-regression-gate-beat-pg-os-per-cell-ratcheting
 // @contract search-efficiency-filtering-ranking-pagination
 // @category efficiency
-// @required_for_production false
+// @required_for_production true
 // @command cargo test -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1
 // AW-EC-END
 
