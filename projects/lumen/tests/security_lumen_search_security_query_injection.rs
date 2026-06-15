@@ -6,7 +6,7 @@
 // @claim adversarial-query-safety
 // @contract search-security-injection
 // @category security
-// @required_for_production false
+// @required_for_production true
 // @command cargo test -p lumen --test security_lumen_search_security_query_injection -- --ignored
 // AW-EC-END
 

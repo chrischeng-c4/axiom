@@ -6,7 +6,7 @@
 // @claim no-latency-drift-over-soak
 // @contract search-stability-latency-drift
 // @category stability
-// @required_for_production false
+// @required_for_production true
 // @command target/debug/rig run --dir projects/lumen/tests/rig/scenarios/endurance
 // AW-EC-END
 
