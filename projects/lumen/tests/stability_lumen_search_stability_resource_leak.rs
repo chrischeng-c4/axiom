@@ -7,14 +7,14 @@
 // @contract search-stability-resource-leak
 // @category stability
 // @required_for_production false
-// @command cargo test -p lumen --test stability_lumen_search_stability_resource_leak -- --ignored
+// @command target/debug/rig run --dir projects/lumen/tests/rig/scenarios/endurance
 // AW-EC-END
 
-// Contract: GAP (e): open file-descriptor / socket / thread count is stable across sustained index+search load (delta within tolerance). Probe being added.
+// Contract: (e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen).
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_search_stability_resource_leak() {
-    let command = "cargo test -p lumen --test stability_lumen_search_stability_resource_leak -- --ignored";
+    let command = "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/endurance";
     let id = "lumen-search-stability-resource-leak";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
