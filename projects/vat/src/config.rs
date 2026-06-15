@@ -133,6 +133,11 @@ pub struct ServiceConfig {
     pub export: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_http: Option<String>,
+    /// Corpus-aware readiness command. "Ready" means this command exits 0
+    /// (e.g. a SQL row-count `>= N` check), not merely that the server
+    /// process accepts connections. Overrides a preset's default probe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ready_cmd: Vec<String>,
     #[serde(default = "default_service_timeout")]
     pub timeout_s: u64,
 }
@@ -148,6 +153,7 @@ pub enum ServicePreset {
     Rabbitmq,
     Mysql,
     Mongo,
+    Opensearch,
 }
 
 /// How a `preset` service is provided. The default prefers the native binary
@@ -479,6 +485,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_preset_service_with_seed_and_ready_cmd() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        std::fs::write(
+            &path,
+            r#"
+version = 1
+
+[[services]]
+id = "pg"
+preset = "postgres"
+seed = ["schema.sql", "data.sql"]
+ready_cmd = ["sh", "-c", "psql -tAc 'select count(*) from docs' | grep -qE '^[0-9]+$'"]
+
+[[services]]
+id = "search"
+preset = "opensearch"
+
+[[runners]]
+id = "ec"
+requires = ["pg", "search"]
+cmd = ["true"]
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_file(&path).unwrap();
+        let pg = cfg.service("pg").unwrap();
+        assert_eq!(pg.preset, Some(ServicePreset::Postgres));
+        assert_eq!(
+            pg.seed,
+            vec![PathBuf::from("schema.sql"), PathBuf::from("data.sql")]
+        );
+        assert_eq!(pg.ready_cmd.len(), 3);
+        assert_eq!(
+            cfg.service("search").unwrap().preset,
+            Some(ServicePreset::Opensearch)
+        );
+    }
+
+    #[test]
     fn parses_valid_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
@@ -574,6 +621,7 @@ artifacts = ["out.txt"]
                 seed: Vec::new(),
                 export: BTreeMap::new(),
                 ready_http: None,
+                ready_cmd: Vec::new(),
                 timeout_s: default_service_timeout(),
             }],
             runners: vec![RunnerConfig {
@@ -614,6 +662,7 @@ artifacts = ["out.txt"]
                     seed: Vec::new(),
                     export: BTreeMap::new(),
                     ready_http: None,
+                    ready_cmd: Vec::new(),
                     timeout_s: default_service_timeout(),
                 },
                 ServiceConfig {
@@ -630,6 +679,7 @@ artifacts = ["out.txt"]
                     seed: Vec::new(),
                     export: BTreeMap::new(),
                     ready_http: None,
+                    ready_cmd: Vec::new(),
                     timeout_s: default_service_timeout(),
                 },
             ],
