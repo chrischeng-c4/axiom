@@ -1486,7 +1486,8 @@ fn capability_action_envelope_with_planning_base(
         CapabilityActionKind::HumanConfirmRequired
         | CapabilityActionKind::UpdateCapabilityStatus
         | CapabilityActionKind::EnvBlocked
-        | CapabilityActionKind::DefineVerificationContract => {
+        | CapabilityActionKind::DefineVerificationContract
+        | CapabilityActionKind::AssignCapabilityType => {
             ("hitl", agent_command(&action.command))
         }
         CapabilityActionKind::None => ("inspect_parent", String::new()),
