@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! In-memory storage and query execution.
 //!
@@ -53,8 +53,8 @@ type FastHashMap<K, V> = FxHashMap<K, V>;
 /// Maximum items in a single `POST /index` request (README §1 v1 limit).
 pub const MAX_INDEX_ITEMS: usize = 10_000;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum DropOutcome {
     /// The collection did not exist.
     NotFound,
@@ -66,8 +66,8 @@ pub enum DropOutcome {
     Physical,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Error)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum StorageError {
     #[error("collection not found: {0}")]
     CollectionNotFound(String),
@@ -97,13 +97,13 @@ pub enum StorageError {
 
 /// Total-ordered, bit-monotone wrapper around `f64`. NaN is rejected at
 /// construction (the API layer must validate before reaching here).
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct SortableF64(u64);
 
 const MISSING_SORTABLE_F64_BITS: u64 = 0xfff8_0000_0000_0000;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl SortableF64 {
     pub fn new(x: f64) -> Result<Self> {
         if x.is_nan() {
@@ -238,7 +238,7 @@ enum InternerBucket {
     Many(Vec<u32>),
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Interner {
     fn intern(&mut self, eid: &str) -> u32 {
         self.intern_with_status(eid).0
@@ -306,14 +306,14 @@ fn hash_external_id(eid: &str) -> u64 {
 /// The BM25 scan reads `docids`/`tfs` sequentially (cache-friendly), and `df` is
 /// exactly `docids.len()`. Replaces the old `BTreeMap<u32,u32>` whose per-doc
 /// access chased heap-scattered tree nodes.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Default, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub(crate) struct Postings {
     docids: Vec<u32>,
     tfs: Vec<u32>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Postings {
     /// Build a posting list from ascending `(docid, tf)` pairs. Crate-internal,
     /// used by the Text segment writer round-trip test to fabricate postings
@@ -515,7 +515,7 @@ struct TextIndex {
     tombstones: RoaringBitmap,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl TextIndex {
     fn clear_match_rank_cache(&self) {
         if let Ok(mut cache) = self.match_rank_cache.write() {
@@ -878,7 +878,7 @@ struct KeywordIndex {
     tombstones: RoaringBitmap,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl KeywordIndex {
     /// The doc's keyword for a per-doc PREDICATE point lookup. When a sealed
     /// segment is attached it serves ids in its covered range `[0..n_docs)`
@@ -1080,7 +1080,7 @@ struct NumberRangeStats {
 /// unchanged tree is O(log distinct).
 const RANGE_STATS_BUILD_THRESHOLD: u64 = 1024;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl NumberRangeStats {
     fn build(values: &BTreeMap<SortableF64, RoaringBitmap>) -> Self {
         let mut keys = Vec::with_capacity(values.len());
@@ -1181,7 +1181,7 @@ struct NumberIndex {
     tombstones: RoaringBitmap,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl NumberIndex {
     /// The doc's value for a per-doc PREDICATE point lookup. When a sealed
     /// segment is attached it serves ids in its covered range `[0..n_docs)`
@@ -2029,7 +2029,7 @@ struct SetIndex {
     tombstones: RoaringBitmap,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl SetIndex {
     /// Does doc `id`'s set contain `el`, for a per-doc PREDICATE point lookup?
     /// When a sealed segment is attached it serves ids in its covered range
@@ -2240,7 +2240,7 @@ struct HashIndex {
     segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl HashIndex {
     /// The doc's 64-bit hash for the per-doc Hamming read. When a sealed segment
     /// is attached it serves ids in its covered range `[0..n_docs)` (the live
@@ -2265,7 +2265,7 @@ impl HashIndex {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl std::fmt::Debug for FieldIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -2298,7 +2298,7 @@ fn parse_hash(s: &str) -> Result<u64> {
         .map_err(|e| anyhow!("hash field expects a 64-bit hex string (got `{s}`): {e}"))
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldIndex {
     fn from_spec(spec: &FieldSpec) -> Result<Self> {
         Ok(match spec.field_type {
@@ -2673,7 +2673,7 @@ struct FieldCoverage {
     names: Vec<String>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldCoverage {
     fn insert(&mut self, field: String) -> bool {
         if self.contains(&field) {
@@ -2724,7 +2724,7 @@ struct TokenSet {
     tokens: SmallVec<[String; 8]>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl TokenSet {
     fn insert_str(&mut self, token: &str) -> bool {
         if self.tokens.iter().any(|seen| seen == token) {
@@ -2798,7 +2798,7 @@ struct Collection {
     search_cache: RwLock<FastHashMap<String, SearchResponse>>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Collection {
     fn new(schema: BTreeMap<String, FieldSpec>) -> Result<Self> {
         let mut fields = FastHashMap::default();
@@ -2898,15 +2898,15 @@ impl Collection {
 // Engine
 // ---------------------------------------------------------------------------
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Default)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct Engine {
     state: RwLock<EngineState>,
     metrics: Metrics,
     draining: AtomicBool,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Engine")
@@ -2920,7 +2920,7 @@ struct EngineState {
     collections: BTreeMap<String, Collection>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Engine {
     pub fn new() -> Self {
         Self::default()
@@ -4069,8 +4069,8 @@ impl Engine {
 /// Result of applying one mutation — routed from the apply loop back to
 /// the waiting write handler (by sequence) so the HTTP response keeps
 /// its rich shape even though apply happens in the subscribe layer.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum ApplyOutcome {
     Created(CreateCollectionResponse),
     Indexed(IndexResponse),
@@ -4291,7 +4291,7 @@ const MAX_KNN_K: u32 = 10_000;
 /// Reject pathological queries with a clear error. Traversal is **iterative**
 /// (explicit stack) so validating a deeply-nested tree cannot itself overflow
 /// the stack. Bounds: nesting depth, total node count, `terms` fan-out, `knn` k.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub fn validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> {
     let mut stack: Vec<(&QueryNode, usize)> = vec![(root, 1)];
     let mut nodes = 0usize;
@@ -5084,7 +5084,7 @@ struct TopRankedHit {
     external_id: String,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl PartialEq for TopRankedHit {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -5093,10 +5093,10 @@ impl PartialEq for TopRankedHit {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Eq for TopRankedHit {}
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Ord for TopRankedHit {
     fn cmp(&self, other: &Self) -> CmpOrdering {
         match self.score.total_cmp(&other.score) {
@@ -5107,7 +5107,7 @@ impl Ord for TopRankedHit {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl PartialOrd for TopRankedHit {
     fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
         Some(self.cmp(other))
@@ -5936,7 +5936,7 @@ struct SortableBitsBounds {
     high: Option<(u64, bool)>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl SortableBitsBounds {
     #[inline]
     fn new(lo: &std::ops::Bound<SortableF64>, hi: &std::ops::Bound<SortableF64>) -> Self {
@@ -7594,8 +7594,8 @@ fn search_cache_key(req: &SearchRequest) -> Result<String> {
 const SNAPSHOT_VERSION: u32 = 1;
 
 /// Top-level snapshot document. JSON-serialisable.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct SnapshotV1 {
     /// Format version. Bump when the wire layout changes
     /// incompatibly so old snapshots can be detected at restore.
@@ -7603,8 +7603,8 @@ pub struct SnapshotV1 {
     pub collections: BTreeMap<String, CollectionSnapshot>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct CollectionSnapshot {
     pub schema: BTreeMap<String, FieldSpec>,
     pub version: u32,
@@ -7612,9 +7612,9 @@ pub struct CollectionSnapshot {
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum FieldIndexSnapshot {
     Text {
         analyzer: Analyzer,
@@ -7661,7 +7661,7 @@ pub enum FieldIndexSnapshot {
     },
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Collection {
     fn to_snapshot(&self) -> Result<CollectionSnapshot> {
         let mut fields: BTreeMap<String, FieldIndexSnapshot> = BTreeMap::new();
@@ -7684,7 +7684,7 @@ impl Collection {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldIndex {
     fn to_snapshot(&self, interner: &Interner) -> Result<FieldIndexSnapshot> {
         let eid = |id: u32| interner.resolve(id).to_string();
@@ -7805,7 +7805,7 @@ impl FieldIndex {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Collection {
     fn from_snapshot(snap: CollectionSnapshot) -> Result<Self> {
         // Re-intern every external_id (eid_fields covers all indexed docs) so
@@ -7834,7 +7834,7 @@ impl Collection {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldIndex {
     fn from_snapshot(snap: FieldIndexSnapshot, interner: &mut Interner) -> Result<Self> {
         Ok(match snap {
@@ -8030,8 +8030,8 @@ impl FieldIndex {
 #[cfg_attr(not(test), allow(dead_code))]
 const EID_META_FILE: &str = "_collection.lmeta.lseg";
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[cfg_attr(not(test), allow(dead_code))]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldIndex {
     /// Seal this field's forward payload into `<field>.lseg` under `dir`, attach
     /// the reader, and DROP the in-RAM forward payload. Keeps the inverted
@@ -8397,8 +8397,8 @@ impl FieldIndex {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[cfg_attr(not(test), allow(dead_code))]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Collection {
     /// PRODUCTION seal (Phase 2f-1): seal EVERY field into a columnar mmap
     /// segment under `dir`, write the collection EID column, attach each reader,
@@ -8621,7 +8621,7 @@ struct CheckpointSchema {
 
 const CHECKPOINT_SCHEMA_FILE: &str = "_schema.json";
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Engine {
     /// PRODUCTION checkpoint (Phase 2f-2): seal EVERY live collection into a
     /// segment checkpoint under `dir` — one subdir `dir/<collection>/` per
@@ -8774,8 +8774,8 @@ fn collection_name_from_dir(dir: &std::path::Path) -> Option<String> {
 // Test seam: seal a Number field to a disk segment (disk tier)
 // ---------------------------------------------------------------------------
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[cfg(test)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Engine {
     /// TEST SEAM (Stage 2 Phase 2c): seal the current in-RAM state of a Number
     /// field into a columnar mmap segment under `dir`, then attach it so per-doc
