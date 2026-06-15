@@ -715,11 +715,7 @@ fn prepare_service(
             id: service.id.clone(),
             command: service.cmd.clone(),
             ready_http: service.ready_http.clone(),
-            ready_probe: service
-                .ready_http
-                .clone()
-                .map(ReadyProbe::Http)
-                .unwrap_or(ReadyProbe::None),
+            ready_probe: resolve_ready_probe(service, None),
             timeout_s: service.timeout_s,
             preset: None,
             port: None,
@@ -815,7 +811,7 @@ fn prepare_preset_service(
         } else {
             std::fs::create_dir_all(&cache_dir)
                 .with_context(|| format!("create {}", cache_dir.display()))?;
-            cold_prepare_service_image(service, preset, &cache_dir)?;
+            cold_prepare_service_image(cfg, service, preset, &cache_dir)?;
             if data_dir.exists() {
                 std::fs::remove_dir_all(&data_dir)
                     .with_context(|| format!("remove {}", data_dir.display()))?;
@@ -832,11 +828,16 @@ fn prepare_preset_service(
     let mut env = preset_exports(service, preset, port);
     add_service_runtime_env(&mut env, preset, &service.id, port, &data_dir);
     let command = preset_command(preset, port, &data_dir);
+    // A corpus-aware `ready_cmd` (e.g. a SQL row-count check) wins over the
+    // preset's default "server accepts connections" probe so readiness means
+    // "corpus loaded". `ready_http` is the next override; otherwise the preset
+    // default applies.
+    let ready_probe = resolve_ready_probe(service, Some(preset_ready_probe(preset, port)));
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
         ready_http: service.ready_http.clone(),
-        ready_probe: preset_ready_probe(preset, port),
+        ready_probe,
         timeout_s: service.timeout_s,
         preset: Some(preset),
         port: Some(port),
@@ -849,6 +850,7 @@ fn prepare_preset_service(
 }
 
 fn cold_prepare_service_image(
+    cfg: &VatConfig,
     service: &ServiceConfig,
     preset: ServicePreset,
     cache_dir: &Path,
@@ -866,6 +868,13 @@ fn cold_prepare_service_image(
             if !status.success() {
                 bail!("postgres initdb failed for service `{}`", service.id);
             }
+            // Apply `.sql` corpus seeds into the data dir ONCE, here in the
+            // cold-prepare path. The populated dir is then cached and cloned
+            // warm (clonefile COW) on every run, so the corpus is not rebuilt.
+            cold_seed_postgres(cfg, service, cache_dir)?;
+        }
+        ServicePreset::Opensearch => {
+            cold_prepare_opensearch_image(service, cache_dir)?;
         }
         ServicePreset::Mysql
         | ServicePreset::Mongo
@@ -874,6 +883,153 @@ fn cold_prepare_service_image(
         | ServicePreset::Nats => {}
     }
     Ok(())
+}
+
+/// Apply each `.sql` seed to a freshly-initdb'd cluster by briefly starting a
+/// local postgres on a private socket dir (no TCP), running `psql -f`, then
+/// stopping cleanly. Runs during cold prepare so the result is cached.
+fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path) -> Result<()> {
+    if service.seed.is_empty() {
+        return Ok(());
+    }
+    // Unix-socket-only on a per-prepare socket dir keeps the temp server off
+    // the network and avoids port races during a cold build.
+    let sock_dir = data_dir.join("seed-sock");
+    std::fs::create_dir_all(&sock_dir)
+        .with_context(|| format!("create {}", sock_dir.display()))?;
+    let sock_arg = format!(
+        "-h '' -k {} -p 5432",
+        shell_single_quote(&sock_dir.to_string_lossy())
+    );
+    let start = Command::new("pg_ctl")
+        .arg("-D")
+        .arg(data_dir)
+        .args(["-w", "-t", "60", "-o"])
+        .arg(&sock_arg)
+        .arg("start")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("start temporary postgres for corpus seeding")?;
+    if !start.success() {
+        bail!(
+            "could not start temporary postgres to seed service `{}`",
+            service.id
+        );
+    }
+
+    // Apply every seed, stopping the server even if one fails.
+    let mut seed_result = Ok(());
+    for seed in &service.seed {
+        let path = config::resolve_relative(&cfg.root, seed);
+        let status = Command::new("psql")
+            .args(["-v", "ON_ERROR_STOP=1", "-h"])
+            .arg(&sock_dir)
+            .args(["-p", "5432", "-U", "postgres", "-d", "postgres", "-f"])
+            .arg(&path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                seed_result = Err(anyhow::anyhow!(
+                    "seed `{}` failed (exit {:?}) for service `{}`",
+                    path.display(),
+                    s.code(),
+                    service.id
+                ));
+                break;
+            }
+            Err(err) => {
+                seed_result = Err(anyhow::Error::from(err).context(format!(
+                    "run psql -f {} for service `{}`",
+                    path.display(),
+                    service.id
+                )));
+                break;
+            }
+        }
+    }
+
+    let stop = Command::new("pg_ctl")
+        .arg("-D")
+        .arg(data_dir)
+        .args(["-w", "-t", "60", "-m", "fast", "stop"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("stop temporary postgres after corpus seeding")?;
+    seed_result?;
+    if !stop.success() {
+        bail!(
+            "temporary postgres did not stop cleanly after seeding service `{}`",
+            service.id
+        );
+    }
+    // Drop the throwaway socket dir so it is not baked into the cached image.
+    let _ = std::fs::remove_dir_all(&sock_dir);
+    Ok(())
+}
+
+/// Build a single-node dev OpenSearch image: a config dir (security plugin
+/// disabled, `discovery.type=single-node`) plus empty data/logs dirs. The
+/// `opensearch` binary reads this dir via OPENSEARCH_PATH_CONF at run time.
+fn cold_prepare_opensearch_image(service: &ServiceConfig, cache_dir: &Path) -> Result<()> {
+    let config_dir = cache_dir.join("config");
+    std::fs::create_dir_all(&config_dir)
+        .with_context(|| format!("create {}", config_dir.display()))?;
+    std::fs::create_dir_all(cache_dir.join("data"))?;
+    std::fs::create_dir_all(cache_dir.join("logs"))?;
+
+    // Seed the run-time config from the Homebrew install when present (it
+    // carries jvm.options / log4j2.properties); otherwise write the minimum.
+    if let Some(brew_conf) = opensearch_brew_config_dir() {
+        for name in ["jvm.options", "log4j2.properties", "fips_java.security"] {
+            let src = brew_conf.join(name);
+            if src.is_file() {
+                std::fs::copy(&src, config_dir.join(name))
+                    .with_context(|| format!("copy {} into opensearch image", src.display()))?;
+            }
+        }
+        let opts_d = config_dir.join("jvm.options.d");
+        std::fs::create_dir_all(&opts_d)?;
+    }
+
+    // A dev single-node node. We do NOT set `plugins.security.disabled`: the
+    // Homebrew no-jdk distribution ships WITHOUT the security plugin, so that
+    // setting is unknown and OpenSearch refuses to boot if it is present. With
+    // no security plugin the node is already open (HTTP, no auth/TLS) — exactly
+    // what a dev EC peer wants. Network/discovery/paths are forced on the CLI
+    // per run, so they are intentionally omitted here.
+    let yml = "\
+cluster.name: vat-opensearch
+node.name: vat-node
+bootstrap.memory_lock: false
+";
+    std::fs::write(config_dir.join("opensearch.yml"), yml)
+        .with_context(|| format!("write opensearch.yml for service `{}`", service.id))?;
+    Ok(())
+}
+
+/// Locate the Homebrew OpenSearch config dir (for jvm.options etc.). Best
+/// effort: returns None if the layout is not the expected Homebrew one.
+fn opensearch_brew_config_dir() -> Option<PathBuf> {
+    for candidate in [
+        "/opt/homebrew/etc/opensearch",
+        "/usr/local/etc/opensearch",
+    ] {
+        let path = PathBuf::from(candidate);
+        if path.join("jvm.options").is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Single-quote a string for safe inclusion in a `-o` shell-parsed option.
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn ensure_preset_binaries(service: &ServiceConfig, preset: ServicePreset) -> Result<()> {
@@ -902,12 +1058,18 @@ fn ensure_preset_binaries(service: &ServiceConfig, preset: ServicePreset) -> Res
 
 fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
     match preset {
-        ServicePreset::Postgres => &["postgres", "initdb", "pg_isready"],
+        // pg_ctl + psql are used during cold prepare to apply `.sql` corpus
+        // seeds; they ship with the same postgres formula as `postgres`.
+        ServicePreset::Postgres => &["postgres", "initdb", "pg_isready", "pg_ctl", "psql"],
         ServicePreset::Redis => &["redis-server"],
         ServicePreset::Nats => &["nats-server"],
         ServicePreset::Rabbitmq => &["rabbitmq-server"],
         ServicePreset::Mysql => &["mysqld", "mysqladmin"],
         ServicePreset::Mongo => &["mongod"],
+        // Assume the Homebrew `opensearch` binary is on PATH, matching how the
+        // other presets assume their server binary. Readiness uses the built-in
+        // HTTP probe, so no extra client binary is required.
+        ServicePreset::Opensearch => &["opensearch"],
     }
 }
 
@@ -918,6 +1080,7 @@ fn preset_uses_service_image(preset: ServicePreset) -> bool {
             | ServicePreset::Mysql
             | ServicePreset::Mongo
             | ServicePreset::Rabbitmq
+            | ServicePreset::Opensearch
     )
 }
 
@@ -1011,6 +1174,20 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
             "--quiet".to_string(),
         ],
         ServicePreset::Rabbitmq => vec!["rabbitmq-server".to_string()],
+        // Single-node dev OpenSearch bound to loopback. Paths are forced via
+        // -E overrides into the cloned per-run image so concurrent runs never
+        // share data/logs; the prepared config dir (no security plugin →
+        // open HTTP) is exported via OPENSEARCH_PATH_CONF in
+        // add_service_runtime_env.
+        ServicePreset::Opensearch => vec![
+            "opensearch".to_string(),
+            format!("-Ehttp.port={port}"),
+            "-Ehttp.host=127.0.0.1".to_string(),
+            "-Enetwork.host=127.0.0.1".to_string(),
+            "-Ediscovery.type=single-node".to_string(),
+            format!("-Epath.data={}", data_dir.join("data").display()),
+            format!("-Epath.logs={}", data_dir.join("logs").display()),
+        ],
     }
 }
 
@@ -1032,6 +1209,7 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
             port.to_string(),
             "--protocol=tcp".to_string(),
         ]),
+        ServicePreset::Opensearch => ReadyProbe::Http(format!("http://127.0.0.1:{port}/")),
         ServicePreset::Redis
         | ServicePreset::Nats
         | ServicePreset::Mongo
@@ -1040,6 +1218,21 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
             port,
         },
     }
+}
+
+/// Pick the readiness probe for a service, honoring explicit overrides.
+///
+/// Precedence: an explicit `ready_cmd` (corpus-aware, e.g. a SQL row-count
+/// `>= N`) wins so "ready" means "corpus loaded"; then `ready_http`; then the
+/// preset default (`None` for a command-only service).
+fn resolve_ready_probe(service: &ServiceConfig, preset_default: Option<ReadyProbe>) -> ReadyProbe {
+    if !service.ready_cmd.is_empty() {
+        return ReadyProbe::Cmd(service.ready_cmd.clone());
+    }
+    if let Some(url) = &service.ready_http {
+        return ReadyProbe::Http(url.clone());
+    }
+    preset_default.unwrap_or(ReadyProbe::None)
 }
 
 fn preset_exports(
@@ -1060,6 +1253,7 @@ fn preset_exports(
             format!("mysql://root@127.0.0.1:{port}/mysql"),
         ),
         ServicePreset::Mongo => ("MONGODB_URI", format!("mongodb://127.0.0.1:{port}/test")),
+        ServicePreset::Opensearch => ("OPENSEARCH_URL", format!("http://127.0.0.1:{port}")),
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -1100,6 +1294,17 @@ fn add_service_runtime_env(
             data_dir.to_string_lossy().into_owned(),
         );
     }
+    if preset == ServicePreset::Opensearch {
+        // Point OpenSearch at the per-run cloned config dir (security disabled,
+        // single-node) prepared during cold build. Cap the dev heap so several
+        // single-node nodes can coexist on a laptop.
+        env.insert(
+            "OPENSEARCH_PATH_CONF".to_string(),
+            data_dir.join("config").to_string_lossy().into_owned(),
+        );
+        env.entry("OPENSEARCH_JAVA_OPTS".to_string())
+            .or_insert_with(|| "-Xms512m -Xmx512m".to_string());
+    }
 }
 
 fn sorted_keys(env: &BTreeMap<String, String>) -> Vec<String> {
@@ -1114,6 +1319,7 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::Rabbitmq => "rabbitmq",
         ServicePreset::Mysql => "mysql",
         ServicePreset::Mongo => "mongo",
+        ServicePreset::Opensearch => "opensearch",
     }
 }
 
@@ -1329,6 +1535,208 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ready_cmd_overrides_http_and_preset_default() {
+        let mut service = test_service("pg", &[]);
+        service.preset = Some(ServicePreset::Postgres);
+        service.ready_http = Some("http://127.0.0.1:7373/".to_string());
+        service.ready_cmd = vec!["sh".to_string(), "-c".to_string(), "exit 0".to_string()];
+        let preset_default = preset_ready_probe(ServicePreset::Postgres, 5432);
+        match resolve_ready_probe(&service, Some(preset_default)) {
+            ReadyProbe::Cmd(cmd) => assert_eq!(cmd, service.ready_cmd),
+            other => panic!("expected ready_cmd to win, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ready_http_overrides_preset_default_when_no_ready_cmd() {
+        let mut service = test_service("pg", &[]);
+        service.preset = Some(ServicePreset::Postgres);
+        service.ready_http = Some("http://127.0.0.1:9200/".to_string());
+        let preset_default = preset_ready_probe(ServicePreset::Postgres, 5432);
+        match resolve_ready_probe(&service, Some(preset_default)) {
+            ReadyProbe::Http(url) => assert_eq!(url, "http://127.0.0.1:9200/"),
+            other => panic!("expected ready_http, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn preset_default_applies_when_no_override() {
+        let service = test_service("pg", &[]);
+        match resolve_ready_probe(&service, Some(preset_ready_probe(ServicePreset::Postgres, 5432)))
+        {
+            ReadyProbe::Cmd(cmd) => assert_eq!(cmd[0], "pg_isready"),
+            other => panic!("expected pg_isready probe, got {other:?}"),
+        }
+        // No preset default and no override => no probe.
+        assert!(matches!(
+            resolve_ready_probe(&service, None),
+            ReadyProbe::None
+        ));
+    }
+
+    #[test]
+    fn opensearch_preset_command_and_exports() {
+        let data_dir = PathBuf::from("/tmp/vat-os/data");
+        let command = preset_command(ServicePreset::Opensearch, 9250, &data_dir);
+        assert_eq!(command[0], "opensearch");
+        assert!(command.iter().any(|a| a == "-Ehttp.port=9250"));
+        assert!(command
+            .iter()
+            .any(|a| a == "-Ediscovery.type=single-node"));
+        assert!(command
+            .iter()
+            .any(|a| a.starts_with("-Epath.data=") && a.contains("data")));
+
+        match preset_ready_probe(ServicePreset::Opensearch, 9250) {
+            ReadyProbe::Http(url) => assert_eq!(url, "http://127.0.0.1:9250/"),
+            other => panic!("expected http ready probe, got {other:?}"),
+        }
+
+        let service = {
+            let mut s = test_service("search", &[]);
+            s.preset = Some(ServicePreset::Opensearch);
+            s
+        };
+        let exports = preset_exports(&service, ServicePreset::Opensearch, 9250);
+        assert_eq!(
+            exports.get("OPENSEARCH_URL").map(String::as_str),
+            Some("http://127.0.0.1:9250")
+        );
+
+        let mut env = exports;
+        add_service_runtime_env(
+            &mut env,
+            ServicePreset::Opensearch,
+            "search",
+            9250,
+            &data_dir,
+        );
+        assert!(env
+            .get("OPENSEARCH_PATH_CONF")
+            .map(|p| p.ends_with("config"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn opensearch_uses_service_image_cache() {
+        assert!(preset_uses_service_image(ServicePreset::Opensearch));
+    }
+
+    #[test]
+    fn opensearch_cold_prepare_writes_dev_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cache = temp.path().join("image");
+        std::fs::create_dir_all(&cache).unwrap();
+        let service = {
+            let mut s = test_service("search", &[]);
+            s.preset = Some(ServicePreset::Opensearch);
+            s
+        };
+        cold_prepare_opensearch_image(&service, &cache).expect("prepare opensearch image");
+        let yml = std::fs::read_to_string(cache.join("config").join("opensearch.yml"))
+            .expect("opensearch.yml written");
+        assert!(yml.contains("cluster.name: vat-opensearch"));
+        // The Homebrew no-jdk build has no security plugin, so this setting is
+        // UNKNOWN and would make OpenSearch refuse to boot — it must be absent.
+        assert!(!yml.contains("plugins.security.disabled"));
+        assert!(cache.join("data").is_dir());
+        assert!(cache.join("logs").is_dir());
+    }
+
+    /// End-to-end pg corpus seeding. Skips gracefully when the postgres
+    /// toolchain is not installed (vat's standard skip pattern).
+    #[test]
+    fn postgres_cold_seed_applies_sql_corpus() {
+        for binary in ["initdb", "postgres", "pg_ctl", "psql"] {
+            if which(binary).is_none() {
+                eprintln!("skipping postgres_cold_seed_applies_sql_corpus: `{binary}` not on PATH");
+                return;
+            }
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let seed = temp.path().join("schema.sql");
+        std::fs::write(
+            &seed,
+            "CREATE TABLE docs (id int primary key);\nINSERT INTO docs VALUES (1),(2),(3);\n",
+        )
+        .unwrap();
+
+        let mut service = test_service("pg", &[]);
+        service.preset = Some(ServicePreset::Postgres);
+        service.seed = vec![PathBuf::from("schema.sql")];
+        let cfg = VatConfig {
+            version: 1,
+            name: None,
+            default_runner: None,
+            workspace: crate::config::WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: vec![service.clone()],
+            runners: vec![RunnerConfig {
+                id: "ec".to_string(),
+                requires: vec!["pg".to_string()],
+                cmd: vec!["true".to_string()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            path: temp.path().join("vat.toml"),
+            root: temp.path().to_path_buf(),
+            digest: String::new(),
+        };
+
+        let cache = temp.path().join("image");
+        std::fs::create_dir_all(&cache).unwrap();
+        // Full cold-prepare path: initdb + seed apply + clean shutdown.
+        cold_prepare_service_image(&cfg, &service, ServicePreset::Postgres, &cache)
+            .expect("cold prepare + seed postgres");
+
+        // The throwaway seed socket dir must not be baked into the cached image.
+        assert!(!cache.join("seed-sock").exists());
+        // A real cluster directory was produced.
+        assert!(cache.join("PG_VERSION").is_file());
+
+        // Re-open the cached cluster and verify the corpus survived caching.
+        let sock = temp.path().join("verify-sock");
+        std::fs::create_dir_all(&sock).unwrap();
+        let opt = format!("-h '' -k {} -p 5432", sock.display());
+        let start = Command::new("pg_ctl")
+            .arg("-D")
+            .arg(&cache)
+            .args(["-w", "-t", "60", "-o"])
+            .arg(&opt)
+            .arg("start")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("start cached postgres");
+        assert!(start.success(), "cached postgres should start");
+        let out = Command::new("psql")
+            .args(["-tAq", "-h"])
+            .arg(&sock)
+            .args([
+                "-p",
+                "5432",
+                "-U",
+                "postgres",
+                "-d",
+                "postgres",
+                "-c",
+                "select count(*) from docs",
+            ])
+            .output()
+            .expect("query cached corpus");
+        let _ = Command::new("pg_ctl")
+            .arg("-D")
+            .arg(&cache)
+            .args(["-w", "-t", "60", "-m", "fast", "stop"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let count = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(count.trim(), "3", "seeded corpus rows must persist in cache");
+    }
+
     fn test_service(id: &str, requires: &[&str]) -> ServiceConfig {
         ServiceConfig {
             id: id.to_string(),
@@ -1340,6 +1748,7 @@ mod tests {
             seed: Vec::new(),
             export: BTreeMap::new(),
             ready_http: None,
+            ready_cmd: Vec::new(),
             timeout_s: 60,
         }
     }
