@@ -1737,6 +1737,14 @@ pub fn mb_abs(val: MbValue) -> MbValue {
 /// Used by complex-aware arithmetic helpers to coerce mixed operands.
 /// (#1256 — complex arithmetic gap)
 fn as_complex_pair(val: MbValue) -> Option<(f64, f64)> {
+    // Decimal / Fraction are tagged-int handles: as_int() below would read the
+    // handle id as a bogus real component (`Decimal("3.0") == 3+0j` compared the
+    // handle id against 3.0 → False). They are not directly complex-coercible
+    // here; (Decimal/Fraction vs complex) equality flows through the
+    // numeric-handle path in mb_values_eq instead.
+    if is_decimal_handle_value(val) || is_fraction_handle_value(val) {
+        return None;
+    }
     if let Some(i) = val.as_int() {
         return Some((i as f64, 0.0));
     }
