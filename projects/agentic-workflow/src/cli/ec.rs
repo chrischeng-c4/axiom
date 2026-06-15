@@ -27,6 +27,13 @@ const EC_DOC_BEGIN_MARKER: &str = "AW-EC-DOC-BEGIN";
 const EC_DOC_END_MARKER: &str = "AW-EC-DOC-END";
 const EC_CATEGORIES: [&str; 4] = ["behavior", "efficiency", "security", "stability"];
 
+/// The canonical EC dimension/category names. The single source of truth shared
+/// with capability-type required-dimension derivation.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub fn ec_categories() -> &'static [&'static str] {
+    &EC_CATEGORIES
+}
+
 #[derive(Debug, Args)]
 /// External-contract lifecycle: draft/fill EC markdown, then generate/check/verify artifacts.
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -1123,6 +1130,7 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
         cases = extract_td_e2e_cases(ctx)?;
         tool_manifests = extract_td_tool_manifests(ctx)?;
     }
+    derive_required_for_production(ctx, &mut cases)?;
     cases.sort_by(|left, right| left.id.cmp(&right.id));
     tool_manifests.sort_by(|left, right| left.id.cmp(&right.id));
     let digest = digest_manifest_inputs(&cases, &tool_manifests);
@@ -1133,6 +1141,42 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
         cases,
         tool_manifests,
     })
+}
+
+/// Derive each case's `required_for_production` from its capability's *type*.
+///
+/// TYPE -> which EC dimensions are production-required (structural). When a case's
+/// capability has a type assigned in `.aw/capability-types.toml`, the derived
+/// value (`case.category` is in the type's required dimensions) wins. Otherwise
+/// the value already parsed from the YAML flag (`required_for_production`,
+/// defaulting to `true`) is left untouched so existing projects don't break.
+///
+/// The type binding is loaded ONCE per generation, not per case. Maturity/env
+/// (vat) deliberately plays no part here: it gates whether a contract is
+/// verified/runnable, never whether it is required for production.
+fn derive_required_for_production(
+    ctx: &EcProjectContext,
+    cases: &mut [EcManifestCase],
+) -> Result<()> {
+    // The README Capability Index pillar grouping is the primary source of a
+    // capability's type; `.aw/capability-types.toml`, if present, overrides it.
+    let readme_path = ctx.source_root.join("README.md");
+    let mut types = crate::cli::capability_type::load_capability_types_from_readme(&readme_path)?;
+    for (id, ty) in crate::cli::capability_type::load_capability_types(&ctx.project_root)? {
+        types.insert(id, ty);
+    }
+    if types.is_empty() {
+        return Ok(());
+    }
+    for case in cases.iter_mut() {
+        if let Some(capability_type) = types.get(&case.capability_id) {
+            case.required_for_production = crate::cli::capability_type::category_is_required_for_type(
+                capability_type,
+                &case.category,
+            );
+        }
+    }
+    Ok(())
 }
 
 fn extract_ec_markdown_contracts(
@@ -2812,6 +2856,101 @@ e2e_tests:
         .unwrap();
         let ctx = resolve_ec_project_context(tmp.path(), "d").unwrap();
         (tmp, ctx)
+    }
+
+    fn ctx_with_root(project_root: &Path) -> EcProjectContext {
+        EcProjectContext {
+            project_root: project_root.to_path_buf(),
+            project: "demo".to_string(),
+            source_root: project_root.join("projects/demo"),
+            ec_root: project_root.join("projects/demo/external-contracts"),
+            td_root: project_root.join(".aw/tech-design/projects/demo"),
+            tests_root: project_root.join("projects/demo/tests"),
+            manifest_path: project_root.join("projects/demo/tests/aw-ec.toml"),
+            legacy_manifest_path: project_root.join("projects/demo/tests/aw-ec.toml"),
+            project_aw_path: project_root.join("projects/demo/aw.toml"),
+            doc_path: project_root.join("projects/demo/docs/aw-ec-manual.md"),
+            target: "rust".to_string(),
+            package_name: "demo-crate".to_string(),
+        }
+    }
+
+    fn case(id: &str, capability_id: &str, category: &str) -> EcManifestCase {
+        EcManifestCase {
+            id: id.to_string(),
+            capability_id: capability_id.to_string(),
+            claim_id: id.to_string(),
+            contract_id: id.to_string(),
+            category: category.to_string(),
+            td_ref: format!("td#{id}"),
+            test_path: format!("tests/{id}.rs"),
+            command: "cargo test".to_string(),
+            // Start from the YAML default (true) so we can observe derivation flip it.
+            required_for_production: true,
+            assertions: Vec::new(),
+            evidence: Vec::new(),
+            evaluators: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn derive_required_for_production_uses_capability_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".aw")).unwrap();
+        fs::write(
+            tmp.path().join(".aw/capability-types.toml"),
+            "[capability_types]\nsvc-cap = \"Service\"\nagent-cap = \"AgentFirst\"\n",
+        )
+        .unwrap();
+        let ctx = ctx_with_root(tmp.path());
+
+        let mut cases = vec![
+            // Service capability: security + stability are production-required.
+            case("svc-sec", "svc-cap", "security"),
+            case("svc-stab", "svc-cap", "stability"),
+            // AgentFirst capability: only behavior is required; efficiency is not.
+            case("agent-eff", "agent-cap", "efficiency"),
+            case("agent-beh", "agent-cap", "behavior"),
+            // Untyped capability: falls back to the YAML flag (default true).
+            case("other", "no-type-cap", "security"),
+        ];
+        derive_required_for_production(&ctx, &mut cases).unwrap();
+
+        let by_id = |id: &str| {
+            cases
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .required_for_production
+        };
+        assert!(by_id("svc-sec"), "Service/security is production-required");
+        assert!(by_id("svc-stab"), "Service/stability is production-required");
+        assert!(
+            !by_id("agent-eff"),
+            "AgentFirst/efficiency is NOT production-required"
+        );
+        assert!(by_id("agent-beh"), "AgentFirst/behavior is production-required");
+        assert!(
+            by_id("other"),
+            "untyped capability keeps the YAML fallback (true)"
+        );
+    }
+
+    #[test]
+    fn derive_required_for_production_no_binding_keeps_yaml_flag() {
+        // No .aw/capability-types.toml at all -> values untouched.
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_root(tmp.path());
+        let mut cases = vec![{
+            let mut c = case("c1", "cap", "security");
+            c.required_for_production = false; // simulate a YAML-set false
+            c
+        }];
+        derive_required_for_production(&ctx, &mut cases).unwrap();
+        assert!(
+            !cases[0].required_for_production,
+            "with no binding the YAML flag (false) is preserved"
+        );
     }
 
     #[test]
