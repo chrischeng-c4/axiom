@@ -4677,6 +4677,13 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
                     let key = MbValue::from_ptr(MbObject::new_str("fdel".to_string()));
                     let deleter = mb_getattr(desc, key);
                     if deleter.is_none() {
+                        // A property with no fdel cannot be deleted: `del obj.x`
+                        // raises AttributeError (CPython). Returning silently let
+                        // the delete succeed as a no-op.
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str("can't delete attribute".to_string())),
+                        );
                         return;
                     }
                     if let Some(addr) = deleter.as_func() {
@@ -7694,6 +7701,12 @@ pub fn mb_property_get(prop: MbValue, instance: MbValue) -> MbValue {
     let key = MbValue::from_ptr(MbObject::new_str("fget".to_string()));
     let getter = mb_getattr(prop, key);
     if getter.is_none() {
+        // A property with no fget is write-only: reading raises AttributeError
+        // (CPython). Returning None silently let write-only reads succeed.
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("unreadable attribute".to_string())),
+        );
         return MbValue::none();
     }
     // Call the stored getter with instance. Try mb_call_method1 first
@@ -7738,26 +7751,34 @@ pub fn mb_property_get(prop: MbValue, instance: MbValue) -> MbValue {
 pub fn mb_property_set(prop: MbValue, instance: MbValue, value: MbValue) {
     let key = MbValue::from_ptr(MbObject::new_str("fset".to_string()));
     let setter = mb_getattr(prop, key);
-    if !setter.is_none() {
-        // Direct function pointer invocation (TAG_FUNC).
-        // REQ: JIT-compiled functions use SystemV/C calling convention.
-        if let Some(addr) = setter.as_func() {
-            if addr > 4096 {
-                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                    unsafe { std::mem::transmute(addr) };
-                f(instance, value);
-                return;
-            }
+    if setter.is_none() {
+        // A property with no fset is read-only: assignment raises
+        // AttributeError (CPython). Doing nothing silently let the write
+        // succeed as a no-op.
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("can't set attribute".to_string())),
+        );
+        return;
+    }
+    // Direct function pointer invocation (TAG_FUNC).
+    // REQ: JIT-compiled functions use SystemV/C calling convention.
+    if let Some(addr) = setter.as_func() {
+        if addr > 4096 {
+            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+                unsafe { std::mem::transmute(addr) };
+            f(instance, value);
+            return;
         }
-        // Fallback: try CALLABLE_REGISTRY for heap-pointer methods
-        let addr = extract_func_addr(setter);
-        if addr != 0 {
-            let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
-            if is_reg {
-                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                    unsafe { std::mem::transmute(addr as usize) };
-                f(instance, value);
-            }
+    }
+    // Fallback: try CALLABLE_REGISTRY for heap-pointer methods
+    let addr = extract_func_addr(setter);
+    if addr != 0 {
+        let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
+        if is_reg {
+            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+                unsafe { std::mem::transmute(addr as usize) };
+            f(instance, value);
         }
     }
 }
