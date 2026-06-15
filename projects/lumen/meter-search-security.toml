@@ -1,0 +1,9 @@
+# SPEC-MANAGED: projects/lumen/external-contracts/search/security/access-control.md#lumen-meter-search-security
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "meter test -- cargo test -p lumen --test api_e2e -- --ignored"
+project = "lumen"
+source_contract = "lumen-search-security-access-control"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END
