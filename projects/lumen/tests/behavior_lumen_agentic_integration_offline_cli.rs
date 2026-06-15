@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/ec/behavior/agentic-integration.md#lumen-agentic-integration-offline-cli
+// SPEC-MANAGED: projects/lumen/external-contracts/behavior/agentic-integration.md#lumen-agentic-integration-offline-cli
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-agentic-integration-offline-cli

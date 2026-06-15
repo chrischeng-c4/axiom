@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/ec/behavior/serve-functional.md#lumen-serve-functional-api-and-search
+// SPEC-MANAGED: projects/lumen/external-contracts/behavior/serve-functional.md#lumen-serve-functional-api-and-search
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-serve-functional-api-and-search

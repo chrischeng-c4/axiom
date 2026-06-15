@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/ec/efficiency/competitive-search-benchmark-vs-db.md#lumen-ops-speed-benchmark-vs-db
+// SPEC-MANAGED: projects/lumen/external-contracts/efficiency/competitive-search-benchmark-vs-db.md#lumen-ops-speed-benchmark-vs-db
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-ops-speed-benchmark-vs-db
