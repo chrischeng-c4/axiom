@@ -88,7 +88,6 @@ cli:
         - name: gen-crd
           about: "Print the Lumen CustomResourceDefinition YAML."
 ```
-
 ## Manifest
 <!-- type: manifest lang: yaml -->
 
