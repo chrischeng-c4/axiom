@@ -3091,6 +3091,44 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         return make_code_object(obj);
     }
 
+    // __defaults__ / __kwdefaults__ on functions: CPython exposes positional
+    // (positional-only + positional-or-keyword) defaults as a tuple — None when
+    // there are none — and keyword-only defaults as a {name: value} dict, or
+    // None when there are none. Pull the values from the declared-signature
+    // registry (FUNC_PARAMS), which carries each param's kind / has_default /
+    // default value.
+    if (attr_name == "__defaults__" || attr_name == "__kwdefaults__")
+        && super::closure::mb_func_is_registered(obj)
+    {
+        let Some(params) = super::closure::func_params(obj) else {
+            return MbValue::none();
+        };
+        if attr_name == "__defaults__" {
+            let vals: Vec<MbValue> = params.iter()
+                .filter(|p| p.kind <= 1 && p.has_default)
+                .map(|p| p.default)
+                .collect();
+            return if vals.is_empty() {
+                MbValue::none()
+            } else {
+                MbValue::from_ptr(super::rc::MbObject::new_tuple_borrowed(vals))
+            };
+        }
+        // __kwdefaults__
+        let kwdefaults: Vec<&super::closure::MbParamInfo> = params.iter()
+            .filter(|p| p.kind == 3 && p.has_default)
+            .collect();
+        if kwdefaults.is_empty() {
+            return MbValue::none();
+        }
+        let dict = super::dict_ops::mb_dict_new();
+        for p in kwdefaults {
+            let key = MbValue::from_ptr(super::rc::MbObject::new_str(p.name.clone()));
+            super::dict_ops::mb_dict_setitem(dict, key, p.default);
+        }
+        return dict;
+    }
+
     // Function / closure attributes (PEP 695): user-set attributes (incl. a
     // writable __type_params__) live in the FUNC_ATTRS side registry; a
     // registered function without an explicit entry reports the CPython

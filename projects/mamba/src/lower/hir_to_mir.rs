@@ -7928,6 +7928,7 @@ impl<'a> HirToMir<'a> {
             }
             HirExpr::Lambda {
                 params,
+                param_kinds,
                 defaults,
                 body,
                 ty,
@@ -8173,9 +8174,13 @@ impl<'a> HirToMir<'a> {
                     for (i, pname) in param_names.iter().enumerate() {
                         let pn_vreg = self.emit_str_const(pname);
                         let kind_raw = self.fresh_vreg();
+                        // Per-param CPython kind ordinal threaded from the AST
+                        // (`/` → posonly, `*`/`**` → var, `*`-after → kwonly);
+                        // fall back to POSITIONAL_OR_KEYWORD if unavailable.
+                        let kind_ord = param_kinds.get(i).copied().unwrap_or(1) as i64;
                         self.current_stmts.push(MirInst::LoadConst {
                             dest: kind_raw,
-                            value: MirConst::Int(1),
+                            value: MirConst::Int(kind_ord),
                             ty: self.tcx.int(),
                         });
                         let kind_vreg = self.box_operand(kind_raw, self.tcx.int());
