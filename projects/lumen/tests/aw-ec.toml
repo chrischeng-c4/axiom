@@ -2,7 +2,7 @@
 # CODEGEN-BEGIN
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:316f1a477d8cd3cd93450ddb53be05ff91feafd6ebbdabe16229f40941599f95"
+generated_from_td_digest = "sha256:af1fe6b09eec0fc68875fad51c8abff99b3c7fed6a8a9d79207a9cf73c5b7c12"
 
 [[cases]]
 id = "lumen-agentic-integration-llm-playbook"
@@ -53,6 +53,21 @@ assertions = [
 ]
 
 [[cases]]
+id = "lumen-devops-operator-render"
+capability_id = "k8s-deployment"
+claim_id = "operator-renders-managed-child-set-incl-nats"
+contract_id = "devops-operator-render-golden"
+category = "behavior"
+td_ref = "projects/lumen/ec/behavior/devops-render.md#lumen-devops-operator-render"
+test_path = "projects/lumen/tests/behavior_lumen_devops_operator_render.rs"
+command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
+required_for_production = true
+assertions = [
+    "render(Lumen) emits the managed serving Deployment/Service/HPA/PDB plus the NATS JetStream ConfigMap/StatefulSet/Service when NATS is managed.",
+    "BYO-NATS (nats.externalUrl) omits the managed NATS objects and wires the external URL into the serving env.",
+]
+
+[[cases]]
 id = "lumen-ops-speed-benchmark-vs-db"
 capability_id = "ops-operability"
 claim_id = "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
@@ -80,6 +95,22 @@ required_for_production = false
 assertions = [
     "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens.",
     "Per-route RBAC authz matrix enforces each token's role permissions on every API route (read vs write vs admin).",
+]
+
+[[cases]]
+id = "lumen-serve-functional-api-and-search"
+capability_id = "search"
+claim_id = "query-planner-boolean-eval-roaring-postings"
+contract_id = "serve-functional-api-and-search-correctness"
+category = "behavior"
+td_ref = "projects/lumen/ec/behavior/serve-functional.md#lumen-serve-functional-api-and-search"
+test_path = "projects/lumen/tests/behavior_lumen_serve_functional_api_and_search.rs"
+command = "cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture"
+required_for_production = true
+assertions = [
+    "The HTTP API end-to-end (create -> index -> search -> hydrate ids) returns correct ranked external_ids and never documents.",
+    "Vector kNN and filtered kNN return the nearest within the filter without recall collapse.",
+    "The query planner produces byte-identical plans (planner_diff) across the search-flavor sub-capabilities.",
 ]
 
 [[cases]]

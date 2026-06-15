@@ -3,7 +3,7 @@ name = "lumen"
 cap_path = "README.md"
 label = "project:lumen"
 
-[ec.benchmark]
+[ec.efficiency]
 tool = "arena"
 spec = "projects/arena/examples/lumen-vs-pg-and-opensearch.toml"
 command = "target/debug/arena run --spec projects/arena/examples/lumen-vs-pg-and-opensearch.toml"
