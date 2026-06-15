@@ -2353,6 +2353,18 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64, I64],
             I64
         ),
+        rt_sym!(
+            "mb_call_method_kwargs",
+            class::mb_call_method_kwargs
+                as fn(
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                    super::MbValue,
+                ) -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64
+        ),
         // ── GC ──
         rt_sym!(
             "mb_gc_collect",
