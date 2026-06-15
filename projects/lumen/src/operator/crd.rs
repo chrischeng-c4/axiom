@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-operator.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The `Lumen` custom resource (`lumen.dev/v1alpha1`).
 //!
@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
     printcolumn = r#"{"name":"Shards","type":"integer","jsonPath":".status.shardCount"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[serde(rename_all = "camelCase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct LumenSpec {
     /// Serving + (managed) NATS-sidecar-free container image, e.g.
     /// `lumen:latest`. Required.
@@ -82,9 +82,9 @@ pub struct LumenSpec {
 }
 
 /// Log output format.
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub enum LogFormat {
     /// Structured one-line-per-event JSON (prod/staging).
     Json,
@@ -93,7 +93,7 @@ pub enum LogFormat {
     Pretty,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 impl LogFormat {
     /// The `LUMEN_LOG_FORMAT` value the serving binary expects.
     pub fn as_env(self) -> &'static str {
@@ -105,9 +105,9 @@ impl LogFormat {
 }
 
 /// Whether the client API requires a bearer token.
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub enum AuthMode {
     /// Open API (dev / trusted network). Serialized as `disabled` — NOT `off`,
     /// which YAML 1.1 (kubectl / go-yaml) would parse as the boolean `false`
@@ -119,7 +119,7 @@ pub enum AuthMode {
     Required,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 impl AuthMode {
     /// The `LUMEN_AUTH` value the serving binary expects.
     pub fn as_env(self) -> &'static str {
@@ -131,9 +131,9 @@ impl AuthMode {
 }
 
 /// Stateless serving-fleet shape: autoscaling bounds + per-pod resources.
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct ServingSpec {
     /// HPA bounds + CPU target.
     #[serde(default)]
@@ -150,7 +150,7 @@ pub struct ServingSpec {
     pub grace_secs: u64,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 impl Default for ServingSpec {
     fn default() -> Self {
         Self {
@@ -163,9 +163,9 @@ impl Default for ServingSpec {
 }
 
 /// HPA bounds for the serving fleet.
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct Autoscaling {
     /// Floor (also the Deployment's apply-time replica count).
     pub min_replicas: i32,
@@ -175,7 +175,7 @@ pub struct Autoscaling {
     pub target_cpu_utilization: i32,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 impl Default for Autoscaling {
     fn default() -> Self {
         Self {
@@ -187,9 +187,9 @@ impl Default for Autoscaling {
 }
 
 /// NATS write-log broker: either managed (StatefulSet) or external (BYO).
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct NatsSpec {
     /// Point serving pods at an existing broker. When set, the operator
     /// renders NO NATS objects (StatefulSet/Services/ConfigMap) and wires
@@ -215,7 +215,7 @@ pub struct NatsSpec {
     pub memory: String,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 impl NatsSpec {
     /// True when the broker is operator-managed (no `externalUrl`).
     pub fn is_managed(&self) -> bool {
@@ -223,7 +223,7 @@ impl NatsSpec {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 impl Default for NatsSpec {
     fn default() -> Self {
         Self {
@@ -238,9 +238,9 @@ impl Default for NatsSpec {
 }
 
 /// Status subresource, written back by the reconcile loop.
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-crd-rs.md#source
 pub struct LumenStatus {
     /// `Pending | Reconciling | Ready | Degraded`.
     #[serde(default)]
