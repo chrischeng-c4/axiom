@@ -530,9 +530,32 @@ impl TypeChecker {
                         Ty::List(inner) => *inner,
                         _ => self.tcx.any(),
                     };
-                    for name in &gen.targets {
+                    // Tuple-destructuring targets (`for a, b in pairs`) bind
+                    // each target to the corresponding tuple ELEMENT type, not
+                    // the whole element type — otherwise `a * b` became a bogus
+                    // tuple*tuple "arithmetic requires numeric types" hard error.
+                    // Mirrors the statement-`for` handling in check_stmt; shape
+                    // mismatch / non-tuple element → Any, deferring to runtime
+                    // unpacking.
+                    let target_elem_tys: Option<Vec<TypeId>> = if gen.targets.len() > 1 {
+                        match self.tcx.get(elem_ty) {
+                            Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    for (i, name) in gen.targets.iter().enumerate() {
+                        let t = if gen.targets.len() > 1 {
+                            target_elem_tys
+                                .as_ref()
+                                .map(|ts| ts[i])
+                                .unwrap_or_else(|| self.tcx.any())
+                        } else {
+                            elem_ty
+                        };
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
-                        self.set_sym_type(sym.0, elem_ty);
+                        self.set_sym_type(sym.0, t);
                     }
                     for cond in &gen.conditions {
                         self.check_expr(cond);
@@ -556,9 +579,32 @@ impl TypeChecker {
                         Ty::List(inner) => *inner,
                         _ => self.tcx.any(),
                     };
-                    for name in &gen.targets {
+                    // Tuple-destructuring targets (`for a, b in pairs`) bind
+                    // each target to the corresponding tuple ELEMENT type, not
+                    // the whole element type — otherwise `a * b` became a bogus
+                    // tuple*tuple "arithmetic requires numeric types" hard error.
+                    // Mirrors the statement-`for` handling in check_stmt; shape
+                    // mismatch / non-tuple element → Any, deferring to runtime
+                    // unpacking.
+                    let target_elem_tys: Option<Vec<TypeId>> = if gen.targets.len() > 1 {
+                        match self.tcx.get(elem_ty) {
+                            Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    for (i, name) in gen.targets.iter().enumerate() {
+                        let t = if gen.targets.len() > 1 {
+                            target_elem_tys
+                                .as_ref()
+                                .map(|ts| ts[i])
+                                .unwrap_or_else(|| self.tcx.any())
+                        } else {
+                            elem_ty
+                        };
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
-                        self.set_sym_type(sym.0, elem_ty);
+                        self.set_sym_type(sym.0, t);
                     }
                     for cond in &gen.conditions {
                         self.check_expr(cond);
