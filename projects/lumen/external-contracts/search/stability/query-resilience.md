@@ -35,9 +35,9 @@ e2e_tests:
     category: stability
     test_path: projects/lumen/tests/stability_lumen_search_stability_backpressure.rs
     required_for_production: false
-    command: ""
+    command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/load --pins projects/lumen/tests/rig/config/pins"
     assertions:
-      - "GAP (d): under concurrent load beyond steady-state capacity the server sheds/bounds (error rate + p99 bounded), never OOMs or crashes. Scenario being added."
+      - "(d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen)."
   - id: lumen-search-stability-resource-leak
     capability_id: search
     claim_id: no-fd-socket-thread-leak
@@ -45,9 +45,9 @@ e2e_tests:
     category: stability
     test_path: projects/lumen/tests/stability_lumen_search_stability_resource_leak.rs
     required_for_production: false
-    command: ""
+    command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/endurance"
     assertions:
-      - "GAP (e): open file-descriptor / socket / thread count is stable across sustained index+search load (delta within tolerance). Probe being added."
+      - "(e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen)."
   - id: lumen-search-stability-latency-drift
     capability_id: search
     claim_id: no-latency-drift-over-soak
@@ -55,9 +55,9 @@ e2e_tests:
     category: stability
     test_path: projects/lumen/tests/stability_lumen_search_stability_latency_drift.rs
     required_for_production: false
-    command: ""
+    command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/endurance"
     assertions:
-      - "GAP (f): search p99 per window over a long soak drifts <= ~10% (analogous to the RSS plateau gate). Scenario being added."
+      - "(f) search p99 per window over the soak drifts <= 1.10x + 6ms (rig endurance/soak_p99_drift.toml). Env-dependent (vat-provisioned lumen)."
 ```
 
 ## Tool Contract
