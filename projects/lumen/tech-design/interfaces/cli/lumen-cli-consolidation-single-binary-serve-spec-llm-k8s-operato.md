@@ -38,4 +38,54 @@ edges:
   - {from: llm, to: done}
   - {from: gencrd, to: done}
   - {from: help, to: done}
+---
+flowchart TD
+    parse{{parse lumen subcommand}} -->|serve| serve[serve: serving node data-plane]
+    parse -->|spec| spec[spec: offline OpenAPI / JSON-schema / shapes / fields]
+    parse -->|llm| llm[llm topic: offline agent narrative]
+    parse -->|k8s| k8s{k8s subcommand}
+    parse -->|-h / --help| help[help: long_about points to lumen llm outline]
+    k8s -->|operator| operator[operator: reconcile controller cfg feature operator]
+    k8s -->|gen-crd| gencrd[gen-crd: print Lumen CRD YAML]
+    operator -. feature off .-> nofeat([clear error: built without operator support])
+    serve --> done([command complete])
+    spec --> done
+    llm --> done
+    gencrd --> done
+    help --> done
+```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+cli:
+  name: lumen
+  about: "Single agent-first CLI for the lumen search engine. Agents start here: lumen llm outline."
+  commands:
+    - name: serve
+      about: "Run a serving node (HTTP API + background apply loop)."
+      args:
+        - {name: "--host", env: "LUMEN_HOST", default: "127.0.0.1"}
+        - {name: "--port", env: "LUMEN_PORT", default: "7373"}
+        - {name: "--wal", env: "LUMEN_WAL", default: "embedded", choices: ["embedded", "nats"]}
+        - {name: "--persistence", env: "LUMEN_PERSISTENCE", default: "cbor", choices: ["cbor", "segment"]}
+    - name: spec
+      about: "Print the machine-readable integration contract (offline, no server)."
+      args:
+        - {name: "--format", default: "openapi", choices: ["openapi", "openapi-yaml", "json-schema"]}
+        - {name: "--shapes", kind: "flag"}
+        - {name: "--fields", kind: "flag"}
+    - name: llm
+      about: "Print agent-facing topics (offline). outline is the entry point."
+      args:
+        - {name: "topic", kind: "positional", default: "outline", choices: ["outline", "workflow", "integration", "quickstart", "recipes"]}
+        - {name: "--format", default: "md", choices: ["md", "json"]}
+    - name: k8s
+      about: "Kubernetes operator and CRD generation (manifest/render only; lumen does not deploy)."
+      commands:
+        - name: operator
+          about: "Run the Lumen CRD reconcile controller (container CMD; requires build feature operator)."
+        - name: gen-crd
+          about: "Print the Lumen CustomResourceDefinition YAML."
 ```
