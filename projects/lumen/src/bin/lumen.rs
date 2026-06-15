@@ -1,7 +1,8 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-bin.md#schema
 // CODEGEN-BEGIN
-//! `lumen` — the unified CLI. Today it has one subcommand, `serve`,
-//! which runs a serving node.
+//! `lumen` — the single agent-first CLI: `serve` (serving node), `spec` /
+//! `llm` (offline integration contract + agent topics), and `k8s` (operator
+//! + CRD generation). Agents start here: `lumen llm outline`.
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
@@ -59,6 +60,24 @@ enum Command {
     /// are task → ready-to-POST query bodies. Markdown by default; `--format
     /// json` for a machine-readable form.
     Llm(LlmArgs),
+    /// Kubernetes operator + CRD generation. `operator` runs the Lumen reconcile
+    /// controller (requires a build with `--features operator`); `gen-crd` prints
+    /// the Lumen CustomResourceDefinition YAML for `kubectl apply`.
+    K8s(K8sArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sArgs {
+    #[command(subcommand)]
+    cmd: K8sCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sCmd {
+    /// Run the Lumen CRD reconcile controller (container CMD; needs `--features operator`).
+    Operator,
+    /// Print the Lumen CustomResourceDefinition as YAML and exit.
+    GenCrd,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -257,7 +276,38 @@ async fn main() -> Result<()> {
             println!("{out}");
             Ok(())
         }
+        Command::K8s(args) => k8s(args).await,
     }
+}
+
+/// `lumen k8s` — operator control plane. Same binary/image as `serve`; the
+/// kube-rs dependency tree is gated behind the `operator` feature so a default
+/// build stays kube-free. The subcommand is always present in `--help`; without
+/// the feature it errors clearly instead of silently missing.
+#[cfg(feature = "operator")]
+async fn k8s(args: K8sArgs) -> Result<()> {
+    match args.cmd {
+        K8sCmd::GenCrd => {
+            print!("{}", lumen::operator::crd_yaml());
+            Ok(())
+        }
+        K8sCmd::Operator => {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+                )
+                .init();
+            lumen::operator::run().await
+        }
+    }
+}
+
+#[cfg(not(feature = "operator"))]
+async fn k8s(_args: K8sArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without operator support; rebuild with \
+         `--features operator` (the published image includes it)"
+    )
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {

@@ -53,7 +53,7 @@ deployment:
         #   kubectl apply -f examples/lumen-cr.yaml
         #
         # crd.yaml is generated — regenerate with:
-        #   cargo run -p lumen --features operator --bin lumen-operator -- gen-crd > k8s/operator/crd.yaml
+        #   cargo run -p lumen --features operator --bin lumen -- k8s gen-crd > k8s/operator/crd.yaml
         
         resources:
           - crd.yaml
@@ -63,7 +63,7 @@ deployment:
       kind: "kubernetes-deployment"
       content: |
         # The operator: a controller that watches Lumen objects cluster-wide. Ships in
-        # the same `lumen` image (the `lumen-operator` binary, built with
+        # the same `lumen` image (run as `lumen k8s operator`, built with
         # --features operator). HA-safe: a coordination.k8s.io Lease elects one active
         # reconciler, so this can be scaled to replicas > 1 (the others stand by).
         apiVersion: apps/v1
@@ -99,7 +99,7 @@ deployment:
                 - name: operator
                   image: lumen:latest
                   imagePullPolicy: IfNotPresent
-                  command: ["/usr/local/bin/lumen-operator"]
+                  command: ["/usr/local/bin/lumen", "k8s", "operator"]
                   env:
                     - name: RUST_LOG
                       value: "info"
