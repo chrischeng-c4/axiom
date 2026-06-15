@@ -8164,34 +8164,54 @@ fn element_children_list(obj: MbValue) -> Option<MbValue> {
     None
 }
 
-pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
-    // A slice *object* key (`seq[sl]` where sl = slice(...)) is normalized to
-    // the (start, stop, step) tuple form the literal `seq[a:b:c]` lowering
-    // produces, so the downstream slice handling applies. (Literal slices reach
-    // here already as a 3-tuple; a slice variable arrives as the Instance.)
-    if let Some(kp) = key.as_ptr() {
-        let slice_fields = unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*kp).data
-            {
-                if class_name == "slice" {
-                    let g = fields.read().unwrap();
-                    Some((
-                        g.get("start").copied().unwrap_or_else(MbValue::none),
-                        g.get("stop").copied().unwrap_or_else(MbValue::none),
-                        g.get("step").copied().unwrap_or_else(MbValue::none),
-                    ))
-                } else {
-                    None
-                }
-            } else {
-                None
+/// If `key` is a slice *object* (Instance, class_name "slice"), repackage its
+/// (start, stop, step) as the 3-tuple that built-in container and native-stub
+/// slice handling consume. Returns None when `key` is not a slice object.
+fn slice_obj_as_tuple(key: MbValue) -> Option<MbValue> {
+    let kp = key.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*kp).data {
+            if class_name == "slice" {
+                let g = fields.read().unwrap();
+                return Some(MbValue::from_ptr(MbObject::new_tuple(vec![
+                    g.get("start").copied().unwrap_or_else(MbValue::none),
+                    g.get("stop").copied().unwrap_or_else(MbValue::none),
+                    g.get("step").copied().unwrap_or_else(MbValue::none),
+                ])));
             }
-        };
-        if let Some((start, stop, step)) = slice_fields {
-            let tuple_key = MbValue::from_ptr(MbObject::new_tuple(vec![start, stop, step]));
+        }
+    }
+    None
+}
+
+/// True when `obj` defines a USER (compiled, non-native) dunder `name`. A user
+/// dunder must receive a real slice object as a subscript key (CPython
+/// semantics); a native-stub dunder (extern "C", e.g. struct-seq
+/// `__getitem__`) expects the (start, stop, step) tuple normalization. The
+/// native-stub methods are registered in NATIVE_FUNC_ADDRS or
+/// VARIADIC_FUNC_ADDRS (struct-seq `__getitem__` uses the variadic
+/// convention), so an address in neither marks a genuine user method. When the
+/// address can't be resolved we conservatively report `false` (normalize — the
+/// prior behavior).
+fn obj_has_user_dunder(obj: MbValue, name: &str) -> bool {
+    match try_get_dunder(obj, name) {
+        Some(method) => {
+            let addr = extract_func_addr(method);
+            addr != 0
+                && !super::module::is_native_func(addr)
+                && !super::module::is_variadic_func(addr)
+        }
+        None => false,
+    }
+}
+
+pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
+    // A slice subscript now lowers to a real slice object. Normalize it to the
+    // (start, stop, step) tuple form that built-in containers and native-stub
+    // sequences consume - UNLESS `obj` defines a user `__getitem__`, which must
+    // receive the real slice object (CPython semantics).
+    if !obj_has_user_dunder(obj, "__getitem__") {
+        if let Some(tuple_key) = slice_obj_as_tuple(key) {
             return mb_obj_getitem(obj, tuple_key);
         }
     }
@@ -8863,6 +8883,15 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
 
 /// Runtime-dispatched __setitem__: list or dict.
 pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
+    // Normalize a slice *object* key to the (start, stop, step) tuple the
+    // built-in slice-assignment handling consumes, unless `obj` has a user
+    // `__setitem__` (which must receive the real slice). Slice subscripts now
+    // lower to slice objects, so `xs[a:b] = v` arrives here as an Instance.
+    if !obj_has_user_dunder(obj, "__setitem__") {
+        if let Some(tuple_key) = slice_obj_as_tuple(key) {
+            return mb_obj_setitem(obj, tuple_key, value);
+        }
+    }
     // memoryview[i] = v / memoryview[a:b] = v → forward to the backing buffer
     // (a bytearray), which handles both index and slice assignment. A read-only
     // view (bytes source or toreadonly()) rejects the store.
@@ -9048,6 +9077,14 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
 
 /// del obj[key] — dispatch to list_delitem or dict_delitem at runtime.
 pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
+    // Normalize a slice *object* key to the (start, stop, step) tuple form,
+    // unless `obj` has a user `__delitem__` (which must receive the real
+    // slice). `del xs[a:b]` now lowers to a slice object.
+    if !obj_has_user_dunder(obj, "__delitem__") {
+        if let Some(tuple_key) = slice_obj_as_tuple(key) {
+            return mb_obj_delitem(obj, tuple_key);
+        }
+    }
     // ET.Element subscript deletion: del e[i] / del e[a:b].
     if let Some(kids) = element_children_list(obj) {
         let slice_parts: Option<(Option<i64>, Option<i64>)> = key.as_ptr().and_then(|p| unsafe {
