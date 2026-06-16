@@ -100,9 +100,10 @@ pub struct TestArgs {
     /// Gate load metrics against pins discovered under this directory.
     #[arg(long)]
     pub pins: Option<String>,
-    /// Provision the environment via vat before running (follow-up: lifecycle vat orchestration).
-    #[arg(long)]
-    pub vat: bool,
+    // NOTE: `rig test` does NOT drive vat. The integration direction is vat ->
+    // rig: a vat.toml runner's cmd is `rig test ...` (or a case's
+    // `[prepare].runner`), so vat provisions the environment and runs rig as a
+    // task. rig never knows about vat.
     /// Offered load (qps) for `n>1` cases.
     #[arg(long, default_value = "100")]
     pub qps: u32,
@@ -397,12 +398,6 @@ fn run_test(args: TestArgs) -> RigReport {
     let mut b = ReportBuilder::new("test", &args.dir);
     b.add_criterion("every required case verdict passes");
     b.add_criterion("every load pin holds");
-    if args.vat {
-        b.add_missing(
-            "lifecycle vat orchestration is a follow-up; running locally against the current env"
-                .to_string(),
-        );
-    }
 
     let root = std::path::Path::new(&args.dir);
     let mut files: Vec<std::path::PathBuf> = Vec::new();
