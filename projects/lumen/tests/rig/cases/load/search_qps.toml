@@ -1,0 +1,42 @@
+# Lifecycle case (migrated from scenarios/load/search_qps.toml). Heavy corpus
+# seed is delegated to the vat runner (rig-load); the case-local prepare only
+# ensures the collection exists.
+[case]
+id = "search_qps"
+suite = "lumen"
+dimension = "load"
+subject = "search p99/error_rate at a fixed offered 200 qps"
+expected = "pass"
+required = true
+source_contract = "lumen-search-stability-resilience"
+
+[env]
+upstream = "127.0.0.1:7373"
+collection = "users"
+
+[prepare]
+needs = ["lumen"]
+runner = "rig-load"
+[[prepare.step]]
+type = "http"
+name = "collection_exists"
+method = "PUT"
+url = "http://{{upstream}}/collections/{{collection}}"
+body = '{"fields": {"bio": {"type": "text"}, "email": {"type": "keyword"}}}'
+expect = { statuses = [200, 201, 400, 409] }
+
+[exercise]
+n = 200
+[exercise.request]
+method = "POST"
+url = "http://{{upstream}}/collections/{{collection}}/search"
+body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
+[exercise.request.expect]
+status = 200
+timeout_ms = 2000
+
+[load]
+metric = "p99_ms"
+
+[clean]
+delegate = "vat-cow"
