@@ -553,6 +553,33 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
                 | "__hash__"
                 | "__repr__"
         ),
+        // object: the universal base dunders every type inherits. Probed via
+        // `hasattr(object, "__init__")` etc.
+        "object" => matches!(
+            dunder,
+            "__init__"
+                | "__new__"
+                | "__repr__"
+                | "__str__"
+                | "__hash__"
+                | "__eq__"
+                | "__ne__"
+                | "__lt__"
+                | "__le__"
+                | "__gt__"
+                | "__ge__"
+                | "__class__"
+                | "__doc__"
+                | "__dir__"
+                | "__getattribute__"
+                | "__setattr__"
+                | "__delattr__"
+                | "__sizeof__"
+                | "__reduce__"
+                | "__reduce_ex__"
+                | "__init_subclass__"
+                | "__subclasshook__"
+        ),
         _ => false,
     }
 }
@@ -3572,6 +3599,21 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             if attr_name == "__new__" {
                                 return make_unbound_method(&type_name_str, "__new__");
                             }
+                            // object's base dunders accessed on the type
+                            // (`object.__init__`, `object.__repr__`, …) are
+                            // callable unbound methods.
+                            if type_name_str == "object"
+                                && matches!(attr_name.as_str(),
+                                    "__init__" | "__repr__" | "__str__" | "__hash__"
+                                    | "__eq__" | "__ne__" | "__lt__" | "__le__"
+                                    | "__gt__" | "__ge__" | "__delattr__"
+                                    | "__setattr__" | "__getattribute__"
+                                    | "__sizeof__" | "__reduce__" | "__reduce_ex__"
+                                    | "__dir__" | "__init_subclass__"
+                                    | "__subclasshook__" | "__format__")
+                            {
+                                return make_unbound_method("object", &attr_name);
+                            }
                             // complex comparison dunders accessed unbound
                             // (`complex.__eq__`, `complex.__lt__`, …). The call
                             // dispatch computes bool / NotImplemented; here we
@@ -5506,6 +5548,19 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
         unsafe {
             match &(*ptr).data {
                 ObjData::Instance { class_name, fields } => {
+                    // Bare object() instance: dir() lists object's base dunders.
+                    if class_name == "object" {
+                        for d in [
+                            "__class__", "__delattr__", "__dir__", "__doc__",
+                            "__eq__", "__format__", "__ge__", "__getattribute__",
+                            "__gt__", "__hash__", "__init__", "__init_subclass__",
+                            "__le__", "__lt__", "__ne__", "__new__", "__reduce__",
+                            "__reduce_ex__", "__repr__", "__setattr__", "__sizeof__",
+                            "__str__", "__subclasshook__",
+                        ] {
+                            push(d.to_string(), &mut names, &mut seen);
+                        }
+                    }
                     // TYPE OBJECT (`dir(str)`, `dir(MyClass)`): list the named
                     // type's methods, not the type-object wrapper's fields.
                     if class_name == "type" {
@@ -5664,6 +5719,20 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                 ..
             } = (*ptr).data
             {
+                // A bare object() has no __dict__, so attribute assignment
+                // raises AttributeError (CPython). Scoped to class_name ==
+                // "object" exactly — user subclasses carry their own name and
+                // do have a __dict__.
+                if class_name == "object" {
+                    let attr_name = extract_str(attr).unwrap_or_default();
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'object' object has no attribute '{attr_name}'"
+                        ))),
+                    );
+                    return;
+                }
                 // zipfile: the archive comment must be bytes.
                 if class_name == "ZipFile" {
                     if let Some(kp) = attr.as_ptr() {
@@ -10431,6 +10500,30 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 "__ne__" if other.is_none() => MbValue::from_bool(false),
                 _ => MbValue::not_implemented(),
             };
+        }
+    }
+
+    // Bare object() instance: object's base dunders. A bare object() has no
+    // registered methods, so __init__ (a no-op), __repr__/__str__ (default
+    // repr), identity __eq__/__ne__, and __hash__ would otherwise fail to
+    // dispatch. Scoped to class_name == "object" exactly, so user subclasses
+    // (which carry their own class name) are unaffected.
+    if let Some(ptr) = receiver.as_ptr() {
+        let is_bare_object = unsafe {
+            matches!(&(*ptr).data, ObjData::Instance { class_name, .. } if class_name == "object")
+        };
+        if is_bare_object {
+            let name = extract_str(method_name).unwrap_or_default();
+            let items = super::builtins::extract_items(args);
+            let other_bits = items.first().map_or(0, |v| v.to_bits());
+            match name.as_str() {
+                "__init__" => return MbValue::none(),
+                "__repr__" | "__str__" => return super::builtins::mb_repr(receiver),
+                "__eq__" => return MbValue::from_bool(receiver.to_bits() == other_bits),
+                "__ne__" => return MbValue::from_bool(receiver.to_bits() != other_bits),
+                "__hash__" => return super::builtins::mb_hash(receiver),
+                _ => {}
+            }
         }
     }
 

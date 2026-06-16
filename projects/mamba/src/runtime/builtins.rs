@@ -5322,6 +5322,16 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     if class_name == "UnionType" {
                         return MbValue::from_ptr(MbObject::new_str(union_type_repr(val)));
                     }
+                    // A bare object() instance reprs as `<object object at 0xADDR>`
+                    // (CPython's object.__repr__). User subclasses that don't
+                    // override __repr__ get the same shape with their class name,
+                    // handled by the generic fallback below.
+                    if class_name == "object" {
+                        return MbValue::from_ptr(MbObject::new_str(format!(
+                            "<object object at 0x{:x}>",
+                            ptr as usize
+                        )));
+                    }
                     // Class-body enum member without a user __repr__:
                     // repr(Color.RED) → "<Color.RED: 1>".
                     if let Some(s) = super::stdlib::enum_class::member_repr(val) {
