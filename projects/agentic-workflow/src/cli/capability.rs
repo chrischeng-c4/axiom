@@ -2625,7 +2625,7 @@ fn parse_markdown_capability_block(
     block_end: usize,
     title: String,
 ) -> Result<Option<CapabilitySection>> {
-    let mut contract = None;
+    let mut contract = parse_markdown_field_capability_contract(lines, heading_idx, block_end);
     let mut work_roots = Vec::new();
     let mut cursor = heading_idx + 1;
     while cursor < block_end {
@@ -2774,6 +2774,105 @@ struct MarkdownCapabilityContract {
     required_verification: String,
     gate_inventory: String,
     dependencies: String,
+}
+
+fn parse_markdown_field_capability_contract(
+    lines: &[&str],
+    heading_idx: usize,
+    block_end: usize,
+) -> Option<MarkdownCapabilityContract> {
+    let mut values = BTreeMap::<String, String>::new();
+    let mut current_key: Option<String> = None;
+    let mut cursor = heading_idx + 1;
+
+    while cursor < block_end {
+        if parse_markdown_table_at(lines, cursor).is_some() {
+            break;
+        }
+        let trimmed = lines[cursor].trim();
+        if trimmed.is_empty() {
+            cursor += 1;
+            continue;
+        }
+
+        if let Some((key, value)) = parse_markdown_contract_field_line(trimmed) {
+            current_key = Some(key.clone());
+            append_markdown_contract_field_value(&mut values, &key, &value);
+        } else if let Some(key) = current_key.as_deref() {
+            let value = clean_markdown_contract_continuation(trimmed);
+            append_markdown_contract_field_value(&mut values, key, &value);
+        }
+        cursor += 1;
+    }
+
+    let id = values.remove("id")?;
+    Some(MarkdownCapabilityContract {
+        id,
+        root_wi: values.remove("rootwi").unwrap_or_else(|| "-".to_string()),
+        status: values
+            .remove("status")
+            .unwrap_or_else(|| "candidate".to_string()),
+        promise: values.remove("promise").unwrap_or_default(),
+        required_verification: values
+            .remove("requiredverification")
+            .unwrap_or_else(|| "-".to_string()),
+        gate_inventory: values
+            .remove("gateinventory")
+            .unwrap_or_else(|| "-".to_string()),
+        dependencies: values
+            .remove("dependencies")
+            .unwrap_or_else(|| "-".to_string()),
+    })
+}
+
+fn parse_markdown_contract_field_line(line: &str) -> Option<(String, String)> {
+    let line = line.strip_prefix("- ").unwrap_or(line).trim();
+    let (raw_key, raw_value) = line.split_once(':')?;
+    let key = normalize_table_token(raw_key.trim().trim_matches('*'));
+    let canonical_key = match key.as_str() {
+        "id" | "capabilityid" => "id",
+        "rootwi" | "wi" => "rootwi",
+        "status" => "status",
+        "promise" => "promise",
+        "requiredverification" | "maturity" => "requiredverification",
+        "gateinventory" | "gateevidence" | "inventory" => "gateinventory",
+        "dependencies" | "dependency" | "depends" | "dependson" => "dependencies",
+        _ => return None,
+    };
+    Some((
+        canonical_key.to_string(),
+        clean_markdown_contract_continuation(raw_value),
+    ))
+}
+
+fn clean_markdown_contract_continuation(value: &str) -> String {
+    value
+        .trim()
+        .strip_prefix("- ")
+        .unwrap_or(value.trim())
+        .trim()
+        .to_string()
+}
+
+fn append_markdown_contract_field_value(
+    values: &mut BTreeMap<String, String>,
+    key: &str,
+    value: &str,
+) {
+    if value.is_empty() {
+        values.entry(key.to_string()).or_default();
+        return;
+    }
+    let entry = values.entry(key.to_string()).or_default();
+    if entry.is_empty() {
+        entry.push_str(value);
+    } else if key == "promise" {
+        entry.push(' ');
+        entry.push_str(value);
+    } else {
+        entry.push_str("<br>");
+        entry.push_str(value);
+    }
 }
 
 fn parse_markdown_capability_contract(
@@ -4343,6 +4442,26 @@ out_of_scope:
 	"#
     }
 
+    fn one_field_markdown_capability() -> &'static str {
+        r#"# demo
+
+## Package Manager
+
+ID: package-manager
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+	"#
+    }
+
     #[test]
     fn markdown_capability_index_marks_release_scope_and_dependencies() {
         let body = r#"# demo
@@ -4447,6 +4566,21 @@ out_of_scope:
         assert_eq!(
             contract.claims[0].fixtures[0],
             "projects/jet/validation/pkg-manager.toml"
+        );
+    }
+
+    #[test]
+    fn parse_markdown_field_capability_contract() {
+        let doc = cap_doc(one_field_markdown_capability());
+        assert_eq!(doc.format, CapabilityDocumentFormat::MarkdownTables);
+        assert_eq!(doc.capabilities.len(), 1);
+        let capability = &doc.capabilities[0];
+        assert_eq!(capability.id, "package-manager");
+        assert_eq!(capability.status, CapabilityStatus::Auditing);
+        assert_eq!(capability.promise, "Replace package manager flows.");
+        assert_eq!(
+            capability.current_state,
+            "Root WI: #3779; Gate inventory: projects/jet/validation/pkg-manager.toml"
         );
     }
 

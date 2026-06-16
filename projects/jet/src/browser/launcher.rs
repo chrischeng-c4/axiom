@@ -128,6 +128,13 @@ impl BrowserLauncher {
         Self::find_chrome_system()
     }
 
+    /// Find a system-installed Chrome/Chromium binary without consulting
+    /// Jet's pinned Chromium cache. Human visual review uses this when the
+    /// operator asks for the locally installed Chrome experience.
+    pub fn find_system_chrome() -> Result<PathBuf> {
+        Self::find_chrome_system()
+    }
+
     /// Scan `<cache_root>/chromium-{digits}/` for a valid cached binary.
     /// Returns the binary from the highest (newest) revision number.
     ///

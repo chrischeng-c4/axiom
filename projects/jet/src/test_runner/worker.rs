@@ -15,7 +15,7 @@ use crate::cdp_driver::{dispatch_page_request, parse_page_request, write_page_re
 use crate::test_runner::config::{LiveE2eConfig, RunnerConfig};
 use crate::test_runner::discovery::SpecFile;
 use crate::test_runner::reporter::{
-    BrowserSessionReport, MultiReporter, Outcome, Summary, TestReport,
+    BrowserSessionReport, MultiReporter, Outcome, Summary, TestReport, TestStepReport,
 };
 use crate::test_runner::wire::{
     self, MatcherDiff, TestOutcome, WireRequest, WireResponse, WireTraceMode, WorkerEvent,
@@ -32,7 +32,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{ChildStdin, Command};
 use tokio::sync::Mutex;
 
 /// Worker runtime source — embedded into the binary.
@@ -51,7 +51,8 @@ const MATCHERS_SHIM: &str = include_str!("../../data/runtime/test/matchers.js");
 /// - If any test in the spec destructures `page`, the fixture registry sends a
 ///   `new_page` PageRequest before the test body runs. The Rust host lazily
 ///   launches Chromium on the first `new_page` request and keeps it alive for
-///   the remainder of the spec.
+///   the remainder of the spec. Visual open mode can instead connect to the
+///   already-open review Chrome window and create the case page as a tab.
 /// - Browser is closed after the worker loop exits (worker teardown).
 ///
 // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R5
@@ -134,7 +135,8 @@ export default __jet;
         .take()
         .context("Worker stderr was not captured")?;
     // Stdin writer for sending WireResponse and PageResponse messages back.
-    let mut stdin_writer = child.stdin.take();
+    let stdin_writer: Option<Arc<Mutex<ChildStdin>>> =
+        child.stdin.take().map(|stdin| Arc::new(Mutex::new(stdin)));
 
     // Snapshot directory slug: filename stem with non-alphanumerics collapsed.
     let spec_slug = spec_slug_for(&spec.path);
@@ -158,6 +160,7 @@ export default __jet;
     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R5
     let browser: Arc<Mutex<Option<Browser>>> = Arc::new(Mutex::new(None));
     let browser_session: Arc<Mutex<Option<BrowserSessionReport>>> = Arc::new(Mutex::new(None));
+    let mut network_event_pump_started = false;
 
     // 4. Drive the worker: read NDJSON from stdout, tail stderr into console
     //    events.
@@ -191,6 +194,7 @@ export default __jet;
     // because the worker emits start/end strictly paired.
     // @spec enhancement-native-trace-viewer-trace-capture-standalone-html-spec#R1
     let mut current_trace: Option<(String, TraceBuffer)> = None;
+    let mut step_reports_by_test: HashMap<String, Vec<TestStepReport>> = HashMap::new();
     while let Some(line) = stdout_lines.next_line().await? {
         // a) Try WorkerEvent first.
         if let Some(event) = wire::parse_line(&line) {
@@ -213,6 +217,27 @@ export default __jet;
                 WorkerEvent::TestEnd { .. } => {
                     current_live_case_id = None;
                     current_live_case_title = None;
+                }
+                WorkerEvent::StepEnd {
+                    test_id,
+                    step_id,
+                    title,
+                    outcome,
+                    duration_ms,
+                    error,
+                    parent_step_id,
+                } => {
+                    step_reports_by_test
+                        .entry(test_id.clone())
+                        .or_default()
+                        .push(TestStepReport {
+                            id: step_id.clone(),
+                            title: title.clone(),
+                            outcome: outcome_from_wire(*outcome),
+                            duration_ms: *duration_ms,
+                            parent_step_id: parent_step_id.clone(),
+                            error: error.clone().map(test_error_from_wire),
+                        });
                 }
                 _ => {}
             }
@@ -260,26 +285,11 @@ export default __jet;
                     file: spec.path.clone(),
                     suite,
                     name,
-                    outcome: match outcome {
-                        TestOutcome::Passed => Outcome::Passed,
-                        TestOutcome::Failed => Outcome::Failed,
-                        TestOutcome::Skipped => Outcome::Skipped,
-                        TestOutcome::TimedOut => Outcome::TimedOut,
-                    },
+                    outcome: outcome_from_wire(outcome),
                     duration_ms,
                     // @spec enhancement-html-reporter-for-native-test-runner-spec#R3
                     // @spec #2610 — attach source location parsed from stack
-                    error: error.map(|e| {
-                        let source_location = e.stack.as_deref().and_then(
-                            crate::test_runner::reporter::SourceLocation::parse_from_stack,
-                        );
-                        crate::test_runner::reporter::TestError {
-                            message: e.message,
-                            stack: e.stack,
-                            diff: e.diff,
-                            source_location,
-                        }
-                    }),
+                    error: error.map(test_error_from_wire),
                     trace_path,
                     shard_index: None,
                     shard_total: None,
@@ -288,6 +298,7 @@ export default __jet;
                         .into_iter()
                         .map(std::path::PathBuf::from)
                         .collect(),
+                    steps: step_reports_by_test.remove(&id).unwrap_or_default(),
                 });
             }
             continue;
@@ -304,20 +315,42 @@ export default __jet;
                     // Lazily launch the browser on the first new_page request.
                     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R5
                     let req_id = *req_id;
-                    match ensure_browser(&browser, &browser_session, &spec.path, headless).await {
+                    match ensure_browser(
+                        &browser,
+                        &browser_session,
+                        &spec.path,
+                        headless,
+                        config.browser_executable.clone(),
+                        config.browser_ws_url.clone(),
+                    )
+                    .await
+                    {
                         Err(e) => PageResponse::Error {
                             req_id,
                             message: format!("browser launch failed: {e}"),
                         },
                         Ok(()) => {
+                            start_network_event_pump_if_needed(
+                                &browser,
+                                &pages,
+                                stdin_writer.clone(),
+                                &mut network_event_pump_started,
+                            )
+                            .await;
                             let browser_guard = browser.lock().await;
                             let browser_ref = browser_guard.as_ref().unwrap();
                             match browser_ref.new_page().await {
-                                Ok(page) => {
-                                    let page_id = page.target_id().to_string();
-                                    pages.lock().await.insert(page_id.clone(), Arc::new(page));
-                                    PageResponse::NewPageResult { req_id, page_id }
-                                }
+                                Ok(page) => match page.enable_network_events().await {
+                                    Ok(()) => {
+                                        let page_id = page.target_id().to_string();
+                                        pages.lock().await.insert(page_id.clone(), Arc::new(page));
+                                        PageResponse::NewPageResult { req_id, page_id }
+                                    }
+                                    Err(e) => PageResponse::Error {
+                                        req_id,
+                                        message: format!("Network.enable failed: {e}"),
+                                    },
+                                },
                                 Err(e) => PageResponse::Error {
                                     req_id,
                                     message: format!("browser new_page failed: {e}"),
@@ -330,12 +363,28 @@ export default __jet;
                 // @spec .aw/issues/open/enhancement-browsercontext-refactor-multi-context-isolation-fo.md#R6
                 PageRequest::NewContext { req_id } => {
                     let req_id = *req_id;
-                    match ensure_browser(&browser, &browser_session, &spec.path, headless).await {
+                    match ensure_browser(
+                        &browser,
+                        &browser_session,
+                        &spec.path,
+                        headless,
+                        config.browser_executable.clone(),
+                        config.browser_ws_url.clone(),
+                    )
+                    .await
+                    {
                         Err(e) => PageResponse::Error {
                             req_id,
                             message: format!("browser launch failed: {e}"),
                         },
                         Ok(()) => {
+                            start_network_event_pump_if_needed(
+                                &browser,
+                                &pages,
+                                stdin_writer.clone(),
+                                &mut network_event_pump_started,
+                            )
+                            .await;
                             let browser_guard = browser.lock().await;
                             let browser_ref = browser_guard.as_ref().unwrap();
                             match browser_ref.new_context().await {
@@ -356,6 +405,13 @@ export default __jet;
                 // @spec .aw/issues/open/enhancement-browsercontext-refactor-multi-context-isolation-fo.md#R6
                 PageRequest::ContextNewPage { req_id, context_id } => {
                     let req_id = *req_id;
+                    start_network_event_pump_if_needed(
+                        &browser,
+                        &pages,
+                        stdin_writer.clone(),
+                        &mut network_event_pump_started,
+                    )
+                    .await;
                     let contexts_guard = contexts.lock().await;
                     match contexts_guard.get(context_id) {
                         None => PageResponse::Error {
@@ -363,12 +419,18 @@ export default __jet;
                             message: format!("unknown browserContextId: {context_id}"),
                         },
                         Some(ctx) => match ctx.new_page().await {
-                            Ok(page) => {
-                                let page_id = page.target_id().to_string();
-                                drop(contexts_guard);
-                                pages.lock().await.insert(page_id.clone(), Arc::new(page));
-                                PageResponse::NewPageResult { req_id, page_id }
-                            }
+                            Ok(page) => match page.enable_network_events().await {
+                                Ok(()) => {
+                                    let page_id = page.target_id().to_string();
+                                    drop(contexts_guard);
+                                    pages.lock().await.insert(page_id.clone(), Arc::new(page));
+                                    PageResponse::NewPageResult { req_id, page_id }
+                                }
+                                Err(e) => PageResponse::Error {
+                                    req_id,
+                                    message: format!("Network.enable failed: {e}"),
+                                },
+                            },
                             Err(e) => PageResponse::Error {
                                 req_id,
                                 message: format!("context.new_page failed: {e}"),
@@ -541,7 +603,21 @@ export default __jet;
                     ) {
                         let _ = highlight_selector_for_live_e2e(page.as_ref(), selector).await;
                     }
-                    let resp = dispatch_page_request(page_req, page_opt.map(|p| p.as_ref())).await;
+                    let req_id = page_req_id(&page_req);
+                    let timeout_ms = page_req_timeout_ms(&page_req, config.timeout_ms);
+                    let rpc_timeout = std::time::Duration::from_millis(timeout_ms.max(1));
+                    let resp = match tokio::time::timeout(
+                        rpc_timeout,
+                        dispatch_page_request(page_req, page_opt.map(|p| p.as_ref())),
+                    )
+                    .await
+                    {
+                        Ok(resp) => resp,
+                        Err(_) => PageResponse::Error {
+                            req_id,
+                            message: format_page_rpc_timeout_error(&live_step.action, timeout_ms),
+                        },
+                    };
                     let status = if matches!(resp, PageResponse::Error { .. }) {
                         "failed"
                     } else {
@@ -558,11 +634,9 @@ export default __jet;
                         current_live_step_index.saturating_sub(1),
                     );
                     if let Some(live) = config.live_e2e.as_ref() {
-                        if live.step_delay_ms > 0 {
-                            tokio::time::sleep(std::time::Duration::from_millis(
-                                live.step_delay_ms,
-                            ))
-                            .await;
+                        let delay_ms = live_step_delay_ms(live);
+                        if delay_ms > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                         }
                     }
                     drop(pages_guard);
@@ -573,8 +647,9 @@ export default __jet;
                     resp
                 }
             };
-            if let Some(ref mut writer) = stdin_writer {
-                if let Err(err) = write_page_response(writer, response).await {
+            if let Some(writer) = stdin_writer.as_ref() {
+                let mut writer = writer.lock().await;
+                if let Err(err) = write_page_response(&mut *writer, response).await {
                     tracing::warn!(
                         target: "jet::test_runner::worker",
                         rpc_kind = "PageResponse",
@@ -602,9 +677,11 @@ export default __jet;
                     &title,
                 )
                 .await;
-                if let Some(ref mut writer) = stdin_writer {
+                if let Some(writer) = stdin_writer.as_ref() {
+                    let mut writer = writer.lock().await;
                     if let Err(err) =
-                        write_response(writer, WireResponse::LiveCheckpointResult { req_id }).await
+                        write_response(&mut *writer, WireResponse::LiveCheckpointResult { req_id })
+                            .await
                     {
                         tracing::warn!(
                             target: "jet::test_runner::worker",
@@ -633,8 +710,9 @@ export default __jet;
             )
             .await;
             drop(pages_guard);
-            if let Some(ref mut writer) = stdin_writer {
-                if let Err(err) = write_response(writer, response).await {
+            if let Some(writer) = stdin_writer.as_ref() {
+                let mut writer = writer.lock().await;
+                if let Err(err) = write_response(&mut *writer, response).await {
                     tracing::warn!(
                         target: "jet::test_runner::worker",
                         rpc_kind = "WireResponse",
@@ -698,6 +776,7 @@ export default __jet;
             shard_index: None,
             shard_total: None,
             artifacts: Vec::new(),
+            steps: Vec::new(),
         });
     }
 
@@ -725,6 +804,13 @@ impl LivePageStep {
         match (&self.selector, &self.url) {
             (Some(selector), _) => format!("{} {}", self.action, selector),
             (_, Some(url)) => format!("{} {}", self.action, url),
+            (_, _) if self.value.is_some() && self.action == "evaluate" => {
+                format!(
+                    "{} {}",
+                    self.action,
+                    self.value.as_deref().unwrap_or_default()
+                )
+            }
             _ => self.action.clone(),
         }
     }
@@ -750,6 +836,41 @@ fn append_worker_live_event(live: Option<&LiveE2eConfig>, spec: &SpecFile, event
             "suite": suite,
             "name": name,
             "title": test_title_for_live(suite, name),
+        }),
+        WorkerEvent::StepStart {
+            test_id,
+            step_id,
+            title,
+            parent_step_id,
+        } => json!({
+            "kind": "step_started",
+            "ts_ms": now_ms(),
+            "spec": spec.path,
+            "case_id": test_id,
+            "step_id": step_id,
+            "title": title,
+            "parent_step_id": parent_step_id,
+        }),
+        WorkerEvent::StepEnd {
+            test_id,
+            step_id,
+            title,
+            outcome,
+            duration_ms,
+            error,
+            parent_step_id,
+        } => json!({
+            "kind": "step_finished",
+            "ts_ms": now_ms(),
+            "spec": spec.path,
+            "case_id": test_id,
+            "step_id": step_id,
+            "title": title,
+            "outcome": format!("{:?}", outcome).to_lowercase(),
+            "status": format!("{:?}", outcome).to_lowercase(),
+            "duration_ms": duration_ms,
+            "error": error,
+            "parent_step_id": parent_step_id,
         }),
         WorkerEvent::TestEnd {
             id,
@@ -874,6 +995,18 @@ fn live_step_from_page_request(req: &crate::cdp_driver::PageRequest) -> LivePage
             html: Some(html.clone()),
             value: None,
         },
+        PageRequest::Evaluate {
+            page_id,
+            expression,
+            ..
+        } => LivePageStep {
+            action: "evaluate".to_string(),
+            page_id: Some(page_id.clone()),
+            selector: None,
+            url: None,
+            html: None,
+            value: Some(compact_live_value(expression, 120)),
+        },
         PageRequest::BoundingBox {
             page_id, selector, ..
         }
@@ -899,6 +1032,18 @@ fn live_step_from_page_request(req: &crate::cdp_driver::PageRequest) -> LivePage
             value: None,
         },
     }
+}
+
+fn compact_live_value(value: &str, max_chars: usize) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out = String::new();
+    for ch in compact.chars().take(max_chars) {
+        out.push(ch);
+    }
+    if compact.chars().count() > max_chars {
+        out.push_str("...");
+    }
+    out
 }
 
 fn page_request_kind(req: &crate::cdp_driver::PageRequest) -> String {
@@ -984,7 +1129,25 @@ struct LiveControlFile {
     #[serde(default)]
     paused: bool,
     #[serde(default)]
+    speed_multiplier: u64,
+    #[serde(default)]
     next_token: u64,
+}
+
+fn normalize_live_speed_multiplier(speed_multiplier: u64) -> u64 {
+    match speed_multiplier {
+        2 | 4 => speed_multiplier,
+        _ => 1,
+    }
+}
+
+fn live_step_delay_ms(live: &LiveE2eConfig) -> u64 {
+    if live.step_delay_ms == 0 {
+        return 0;
+    }
+    let speed_multiplier =
+        normalize_live_speed_multiplier(read_live_control(&live.control_path).speed_multiplier);
+    (live.step_delay_ms / speed_multiplier).max(1)
 }
 
 fn read_live_control(path: &Path) -> LiveControlFile {
@@ -1175,6 +1338,277 @@ fn page_req_id_str(req: &crate::cdp_driver::PageRequest) -> Option<&str> {
     }
 }
 
+fn page_req_id(req: &crate::cdp_driver::PageRequest) -> u64 {
+    use crate::cdp_driver::PageRequest;
+    match req {
+        PageRequest::NewPage { req_id }
+        | PageRequest::Goto { req_id, .. }
+        | PageRequest::Click { req_id, .. }
+        | PageRequest::Fill { req_id, .. }
+        | PageRequest::WaitForSelector { req_id, .. }
+        | PageRequest::WaitForLoadState { req_id, .. }
+        | PageRequest::Evaluate { req_id, .. }
+        | PageRequest::Url { req_id, .. }
+        | PageRequest::Close { req_id, .. }
+        | PageRequest::GetText { req_id, .. }
+        | PageRequest::GetAttribute { req_id, .. }
+        | PageRequest::Title { req_id, .. }
+        | PageRequest::SetViewportSize { req_id, .. }
+        | PageRequest::Screenshot { req_id, .. }
+        | PageRequest::GoBack { req_id, .. }
+        | PageRequest::GoForward { req_id, .. }
+        | PageRequest::Reload { req_id, .. }
+        | PageRequest::KeyboardPress { req_id, .. }
+        | PageRequest::KeyboardType { req_id, .. }
+        | PageRequest::MouseEvent { req_id, .. }
+        | PageRequest::SetContent { req_id, .. }
+        | PageRequest::Content { req_id, .. }
+        | PageRequest::BoundingBox { req_id, .. }
+        | PageRequest::Hover { req_id, .. }
+        | PageRequest::LocatorPress { req_id, .. }
+        | PageRequest::SubscribeEvent { req_id, .. }
+        | PageRequest::RemoveEventListener { req_id, .. }
+        | PageRequest::NewContext { req_id }
+        | PageRequest::CloseContext { req_id, .. }
+        | PageRequest::ContextNewPage { req_id, .. }
+        | PageRequest::ContextCookies { req_id, .. }
+        | PageRequest::ContextAddCookies { req_id, .. }
+        | PageRequest::ContextClearCookies { req_id, .. }
+        | PageRequest::ContextStorageState { req_id, .. }
+        | PageRequest::ContextSetStorageState { req_id, .. } => *req_id,
+    }
+}
+
+fn page_req_timeout_ms(req: &crate::cdp_driver::PageRequest, default_timeout_ms: u64) -> u64 {
+    use crate::cdp_driver::PageRequest;
+    match req {
+        PageRequest::Evaluate {
+            timeout_ms: Some(timeout_ms),
+            ..
+        }
+        | PageRequest::Close {
+            timeout_ms: Some(timeout_ms),
+            ..
+        }
+        | PageRequest::Screenshot {
+            timeout_ms: Some(timeout_ms),
+            ..
+        } => *timeout_ms,
+        _ => default_timeout_ms,
+    }
+}
+
+fn format_page_rpc_timeout_error(action: &str, timeout_ms: u64) -> String {
+    format!(
+        "page action `{action}` timed out after {timeout_ms}ms while waiting for the browser RPC to finish"
+    )
+}
+
+#[derive(Debug, Clone)]
+struct PendingNetworkRequest {
+    url: String,
+    method: String,
+}
+
+#[derive(Debug, Clone)]
+struct PendingNetworkResponse {
+    session_id: Option<String>,
+    url: String,
+    method: String,
+    status: u16,
+    resource_type: String,
+}
+
+async fn start_network_event_pump_if_needed(
+    browser: &Arc<Mutex<Option<Browser>>>,
+    pages: &Arc<Mutex<HashMap<String, Arc<Page>>>>,
+    stdin_writer: Option<Arc<Mutex<ChildStdin>>>,
+    started: &mut bool,
+) {
+    if *started {
+        return;
+    }
+    let Some(stdin_writer) = stdin_writer else {
+        return;
+    };
+    let mut browser_guard = browser.lock().await;
+    let Some(browser_ref) = browser_guard.as_mut() else {
+        return;
+    };
+    let Some(mut events_rx) = browser_ref.take_event_receiver() else {
+        return;
+    };
+    let root_session = browser_ref.root_session();
+    drop(browser_guard);
+
+    let pages = pages.clone();
+    tokio::spawn(async move {
+        let mut requests: HashMap<String, PendingNetworkRequest> = HashMap::new();
+        let mut responses: HashMap<String, PendingNetworkResponse> = HashMap::new();
+        while let Some(event) = events_rx.recv().await {
+            match event.method.as_str() {
+                "Network.requestWillBeSent" => {
+                    let Some(request_id) = event.params["requestId"].as_str() else {
+                        continue;
+                    };
+                    let key = network_event_key(event.session_id.as_deref(), request_id);
+                    let request = &event.params["request"];
+                    let url = request["url"].as_str().unwrap_or_default().to_string();
+                    let method = request["method"].as_str().unwrap_or("GET").to_string();
+                    requests.insert(key, PendingNetworkRequest { url, method });
+                }
+                "Network.responseReceived" => {
+                    let Some(request_id) = event.params["requestId"].as_str() else {
+                        continue;
+                    };
+                    let key = network_event_key(event.session_id.as_deref(), request_id);
+                    let response = &event.params["response"];
+                    let request = requests
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or(PendingNetworkRequest {
+                            url: response["url"].as_str().unwrap_or_default().to_string(),
+                            method: "GET".to_string(),
+                        });
+                    let status = response["status"]
+                        .as_u64()
+                        .and_then(|n| u16::try_from(n).ok())
+                        .unwrap_or(0);
+                    responses.insert(
+                        key,
+                        PendingNetworkResponse {
+                            session_id: event.session_id.clone(),
+                            url: response["url"]
+                                .as_str()
+                                .unwrap_or(request.url.as_str())
+                                .to_string(),
+                            method: request.method,
+                            status,
+                            resource_type: event.params["type"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_string(),
+                        },
+                    );
+                }
+                "Network.loadingFinished" => {
+                    let Some(request_id) = event.params["requestId"].as_str() else {
+                        continue;
+                    };
+                    let key = network_event_key(event.session_id.as_deref(), request_id);
+                    let Some(response) = responses.remove(&key) else {
+                        requests.remove(&key);
+                        continue;
+                    };
+                    if !should_forward_network_response(&response) {
+                        requests.remove(&key);
+                        continue;
+                    }
+                    let pages_for_body = pages.clone();
+                    let writer_for_body = stdin_writer.clone();
+                    let root_session_for_body = root_session.clone();
+                    let request_id_for_body = request_id.to_string();
+                    tokio::spawn(async move {
+                        let page_id = page_id_for_cdp_session(
+                            &pages_for_body,
+                            response.session_id.as_deref(),
+                        )
+                        .await;
+                        let Some(page_id) = page_id else {
+                            return;
+                        };
+                        let body = network_response_body(
+                            &root_session_for_body,
+                            response.session_id.as_deref(),
+                            &request_id_for_body,
+                        )
+                        .await
+                        .unwrap_or_default();
+                        let payload = json!({
+                            "url": response.url,
+                            "status": response.status,
+                            "body": body,
+                            "request": {
+                                "url": response.url,
+                                "method": response.method,
+                            },
+                        });
+                        let event_response = crate::cdp_driver::PageResponse::Event {
+                            page_id,
+                            event: "response".to_string(),
+                            payload,
+                        };
+                        let mut writer = writer_for_body.lock().await;
+                        if let Err(err) = write_page_response(&mut *writer, event_response).await {
+                            tracing::warn!(
+                                target: "jet::test_runner::worker",
+                                rpc_kind = "PageResponse::Event",
+                                error = %err,
+                                "{}",
+                                format_worker_stdin_write_warn("PageResponse::Event", &err)
+                            );
+                        }
+                    });
+                    requests.remove(&key);
+                }
+                "Network.loadingFailed" => {
+                    if let Some(request_id) = event.params["requestId"].as_str() {
+                        let key = network_event_key(event.session_id.as_deref(), request_id);
+                        requests.remove(&key);
+                        responses.remove(&key);
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+    *started = true;
+}
+
+fn should_forward_network_response(response: &PendingNetworkResponse) -> bool {
+    matches!(response.resource_type.as_str(), "Fetch" | "XHR") || response.url.contains("/api/")
+}
+
+fn network_event_key(session_id: Option<&str>, request_id: &str) -> String {
+    format!("{}:{request_id}", session_id.unwrap_or(""))
+}
+
+async fn page_id_for_cdp_session(
+    pages: &Arc<Mutex<HashMap<String, Arc<Page>>>>,
+    session_id: Option<&str>,
+) -> Option<String> {
+    let session_id = session_id?;
+    let pages = pages.lock().await;
+    pages.iter().find_map(|(page_id, page)| {
+        (page.session().session_id() == Some(session_id)).then(|| page_id.clone())
+    })
+}
+
+async fn network_response_body(
+    root_session: &crate::browser::cdp::CdpSession,
+    session_id: Option<&str>,
+    request_id: &str,
+) -> Result<String> {
+    let session = match session_id {
+        Some(session_id) => root_session.child_session(session_id.to_string()),
+        None => root_session.clone(),
+    };
+    let value = session
+        .send(
+            "Network.getResponseBody",
+            json!({ "requestId": request_id }),
+        )
+        .await?;
+    let body = value["body"].as_str().unwrap_or_default();
+    if value["base64Encoded"].as_bool().unwrap_or(false) {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .context("decode Network.getResponseBody base64")?;
+        return Ok(String::from_utf8_lossy(&bytes).into_owned());
+    }
+    Ok(body.to_string())
+}
+
 /// Lazily launch the browser on first use. Returns `Ok(())` on success (the
 /// browser is now populated inside the `Arc<Mutex<Option<Browser>>>`), or the
 /// launcher error otherwise so the calling handler can surface it to JS.
@@ -1184,25 +1618,58 @@ async fn ensure_browser(
     browser_session: &Arc<Mutex<Option<BrowserSessionReport>>>,
     spec_path: &Path,
     headless: bool,
+    executable: Option<PathBuf>,
+    browser_ws_url: Option<String>,
 ) -> Result<()> {
     let mut guard = browser.lock().await;
     if guard.is_some() {
         return Ok(());
     }
-    let mut session = BrowserSessionReport::launching(spec_path.to_path_buf(), headless, now_ms());
-    let launched = match Browser::launch(LaunchOptions {
-        headless,
-        ..Default::default()
-    })
-    .await
-    {
-        Ok(launched) => launched,
-        Err(err) => {
-            let message = format!("{err:#}");
-            session.fail(message, now_ms());
-            *browser_session.lock().await = Some(session);
-            return Err(err);
-        }
+    let (mut session, launched) = if let Some(ws_url) = browser_ws_url {
+        let mut session = BrowserSessionReport::connecting_with_driver(
+            spec_path.to_path_buf(),
+            headless,
+            now_ms(),
+            "cdp-shared-window",
+        );
+        let connected = match Browser::connect_to_default_context(&ws_url).await {
+            Ok(connected) => connected,
+            Err(err) => {
+                let message = format!("{err:#}");
+                session.fail(message, now_ms());
+                *browser_session.lock().await = Some(session);
+                return Err(err);
+            }
+        };
+        (session, connected)
+    } else {
+        let browser_driver = if executable.is_some() {
+            "chrome"
+        } else {
+            "chromium"
+        };
+        let mut session = BrowserSessionReport::launching_with_driver(
+            spec_path.to_path_buf(),
+            headless,
+            now_ms(),
+            browser_driver,
+        );
+        let launched = match Browser::launch(LaunchOptions {
+            executable,
+            headless,
+            ..Default::default()
+        })
+        .await
+        {
+            Ok(launched) => launched,
+            Err(err) => {
+                let message = format!("{err:#}");
+                session.fail(message, now_ms());
+                *browser_session.lock().await = Some(session);
+                return Err(err);
+            }
+        };
+        (session, launched)
     };
     session.ready(
         launched.process_id(),
@@ -1599,6 +2066,28 @@ fn test_id_slug(id: &str) -> String {
     }
 }
 
+fn outcome_from_wire(outcome: TestOutcome) -> Outcome {
+    match outcome {
+        TestOutcome::Passed => Outcome::Passed,
+        TestOutcome::Failed => Outcome::Failed,
+        TestOutcome::Skipped => Outcome::Skipped,
+        TestOutcome::TimedOut => Outcome::TimedOut,
+    }
+}
+
+fn test_error_from_wire(e: wire::TestError) -> crate::test_runner::reporter::TestError {
+    let source_location = e
+        .stack
+        .as_deref()
+        .and_then(crate::test_runner::reporter::SourceLocation::parse_from_stack);
+    crate::test_runner::reporter::TestError {
+        message: e.message,
+        stack: e.stack,
+        diff: e.diff,
+        source_location,
+    }
+}
+
 /// Encode a `WireResponse` as an NDJSON line and write it to `writer`.
 /// Used in `run_spec` to send responses back to the worker via stdin.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-test-runner.md#schema
@@ -1761,6 +2250,392 @@ mod tests {
     }
 
     #[test]
+    fn worker_runtime_exposes_playwright_compatible_test_step() {
+        assert!(
+            WORKER_RUNTIME.contains("test.step"),
+            "runtime must expose test.step for Playwright-style E2E specs"
+        );
+        assert!(
+            WORKER_RUNTIME.contains("boundTest.step"),
+            "extended test functions must inherit test.step"
+        );
+    }
+
+    #[test]
+    fn worker_runtime_test_step_emits_structured_step_events() {
+        assert!(
+            WORKER_RUNTIME.contains("kind: \"step_start\""),
+            "test.step should emit a structured start event"
+        );
+        assert!(
+            WORKER_RUNTIME.contains("kind: \"step_end\""),
+            "test.step should emit a structured finish event"
+        );
+        assert!(
+            WORKER_RUNTIME.contains("currentStepSeq"),
+            "step ids should be stable and monotonic within each test"
+        );
+    }
+
+    #[test]
+    fn page_shim_uses_playwright_like_action_timeout() {
+        assert!(
+            PAGE_SHIM.contains("DEFAULT_ACTION_TIMEOUT_MS = 30000"),
+            "locator actionability should allow real web-app startup latency"
+        );
+    }
+
+    #[test]
+    fn page_shim_evaluate_supports_playwright_serializable_arg() {
+        assert!(
+            PAGE_SHIM.contains("async evaluate(expression, arg)"),
+            "page.evaluate should accept the Playwright-style serializable arg"
+        );
+        assert!(
+            PAGE_SHIM.contains("_jetSerializeEvaluateArg(arg)"),
+            "page.evaluate should pass the serialized arg into function calls"
+        );
+    }
+
+    #[test]
+    fn page_shim_get_by_role_supports_regex_name() {
+        assert!(
+            PAGE_SHIM.contains("name instanceof RegExp"),
+            "getByRole should preserve Playwright-style regex names"
+        );
+        assert!(
+            PAGE_SHIM.contains("nameRegex = new RegExp"),
+            "role selector resolution should evaluate regex names in the page"
+        );
+        assert!(
+            PAGE_SHIM.contains("role === 'heading'"),
+            "role selector resolution should support implicit heading roles"
+        );
+        assert!(
+            PAGE_SHIM.contains("h1, h2, h3, h4, h5, h6"),
+            "heading role resolution should inspect native heading elements"
+        );
+        assert!(
+            PAGE_SHIM.contains("arr = arr.filter(__visible)"),
+            "getByRole should default to visible role candidates like Playwright"
+        );
+        assert!(
+            PAGE_SHIM.contains("options && options.includeHidden"),
+            "getByRole should retain an includeHidden escape hatch"
+        );
+    }
+
+    #[test]
+    fn page_shim_get_by_text_supports_regex_and_exact() {
+        assert!(
+            PAGE_SHIM.contains("function _jetTextSelector(text, options)"),
+            "getByText should route through a selector builder"
+        );
+        assert!(
+            PAGE_SHIM.contains("text instanceof RegExp"),
+            "getByText should preserve Playwright-style regex text matchers"
+        );
+        assert!(
+            PAGE_SHIM.contains("textExact="),
+            "getByText should support exact text matching"
+        );
+        assert!(
+            PAGE_SHIM.contains("options && options.exact"),
+            "getByText should honor Playwright-style exact options"
+        );
+    }
+
+    #[test]
+    fn page_shim_supports_test_id_locators() {
+        assert!(
+            PAGE_SHIM.contains("getByTestId(testId)"),
+            "page and locator should expose Playwright-style getByTestId"
+        );
+        assert!(
+            PAGE_SHIM.contains("sel.indexOf('testid=') === 0"),
+            "selector resolution should support data-testid lookups"
+        );
+    }
+
+    #[test]
+    fn page_shim_supports_label_locators() {
+        assert!(
+            PAGE_SHIM.contains("getByLabel(label)"),
+            "page and locator should expose Playwright-style getByLabel"
+        );
+        assert!(
+            PAGE_SHIM.contains("labelRegex="),
+            "label selector resolution should support regex labels"
+        );
+        assert!(
+            PAGE_SHIM.contains("aria-labelledby"),
+            "label selector resolution should inspect accessible labels"
+        );
+    }
+
+    #[test]
+    fn page_shim_supports_response_waiters_and_request_get() {
+        assert!(
+            PAGE_SHIM.contains("async waitForResponse(predicate, opts)"),
+            "page should expose Playwright-style waitForResponse"
+        );
+        assert!(
+            PAGE_SHIM.contains("_notifyResponseWaiters(payload)"),
+            "response events should resolve page.waitForResponse waiters"
+        );
+        assert!(
+            PAGE_SHIM.contains("class JetApiRequestContext"),
+            "page.request should expose a request context for API reads"
+        );
+        assert!(
+            PAGE_SHIM.contains("frame()"),
+            "response.request().frame().page() should be available for Playwright-compatible follow-up API calls"
+        );
+        assert!(
+            PAGE_SHIM.contains("new JetResponse(payload, this)"),
+            "response events should keep a reference to their originating page"
+        );
+    }
+
+    #[test]
+    fn worker_runtime_supports_locator_to_contain_text_matcher() {
+        assert!(
+            MATCHERS_SHIM.contains("export async function toContainTextLocator"),
+            "matchers shim should expose locator-backed toContainText"
+        );
+        assert!(
+            MATCHERS_SHIM.contains("containsPattern(text, expected)"),
+            "toContainText should use substring/regex containment semantics"
+        );
+        assert!(
+            WORKER_RUNTIME.contains("toContainTextLocator"),
+            "worker runtime should import and attach toContainText"
+        );
+        assert!(
+            WORKER_RUNTIME.contains("async toContainText(expected, opts)"),
+            "expect(locator).toContainText should be available to specs"
+        );
+    }
+
+    #[test]
+    fn worker_runtime_locator_visibility_errors_name_locator() {
+        assert!(
+            PAGE_SHIM.contains("toString()"),
+            "locator should expose a useful debug label"
+        );
+        assert!(
+            MATCHERS_SHIM.contains("function describeLocator(locator)"),
+            "matchers should format locator labels"
+        );
+        assert!(
+            MATCHERS_SHIM.contains("Expected ${describeLocator(locator)} to be visible"),
+            "toBeVisible timeout should identify the target locator"
+        );
+    }
+
+    #[test]
+    fn page_shim_locator_click_uses_dom_resolved_click() {
+        assert!(
+            PAGE_SHIM.contains("async _clickResolvedElement()"),
+            "locator click should resolve an element before clicking"
+        );
+        assert!(
+            PAGE_SHIM.contains("el.click();return true;"),
+            "locator click should dispatch a DOM click on the resolved element"
+        );
+        assert!(
+            PAGE_SHIM.contains("await this._clickResolvedElement()"),
+            "locator click should use the resolved-element click helper"
+        );
+    }
+
+    #[test]
+    fn page_shim_locator_supports_scroll_into_view_if_needed() {
+        assert!(
+            PAGE_SHIM.contains("async scrollIntoViewIfNeeded(opts)"),
+            "locator should expose Playwright-style scrollIntoViewIfNeeded"
+        );
+        assert!(
+            PAGE_SHIM.contains("fullyVisible"),
+            "scrollIntoViewIfNeeded should avoid unnecessary scrolling"
+        );
+        assert!(
+            PAGE_SHIM.contains("el.scrollIntoView({block:'center',inline:'center'})"),
+            "scrollIntoViewIfNeeded should center the resolved element when needed"
+        );
+    }
+
+    #[test]
+    fn worker_runtime_routes_page_events_by_page_id() {
+        assert!(
+            WORKER_RUNTIME.contains("pagesById: new Map()"),
+            "worker runtime should keep page ids for async event dispatch"
+        );
+        assert!(
+            WORKER_RUNTIME.contains("msg.kind === \"event\""),
+            "worker runtime should dispatch PageResponse::Event messages"
+        );
+    }
+
+    #[test]
+    fn page_response_event_serializes_without_req_id() {
+        let response = crate::cdp_driver::PageResponse::Event {
+            page_id: "page-1".to_string(),
+            event: "response".to_string(),
+            payload: json!({ "status": 201 }),
+        };
+        let encoded = serde_json::to_string(&response).unwrap();
+        assert!(
+            encoded.contains(r#""kind":"event""#),
+            "async page event should use event kind: {encoded}"
+        );
+        assert!(
+            encoded.contains(r#""page_id":"page-1""#),
+            "async page event should carry target page id: {encoded}"
+        );
+        assert!(
+            !encoded.contains("req_id"),
+            "async page events are not request/response RPCs: {encoded}"
+        );
+    }
+
+    #[test]
+    fn network_event_key_includes_cdp_session_id() {
+        assert_eq!(
+            network_event_key(Some("session-a"), "request-1"),
+            "session-a:request-1"
+        );
+        assert_eq!(network_event_key(None, "request-1"), ":request-1");
+    }
+
+    #[test]
+    fn network_event_pump_skips_static_response_bodies() {
+        let script = PendingNetworkResponse {
+            session_id: Some("session-a".to_string()),
+            url: "http://127.0.0.1:5173/src/main.tsx".to_string(),
+            method: "GET".to_string(),
+            status: 200,
+            resource_type: "Script".to_string(),
+        };
+        assert!(
+            !should_forward_network_response(&script),
+            "static scripts should not trigger Network.getResponseBody flooding"
+        );
+        let api = PendingNetworkResponse {
+            resource_type: "Fetch".to_string(),
+            url: "http://127.0.0.1:5173/api/projects".to_string(),
+            ..script
+        };
+        assert!(should_forward_network_response(&api));
+    }
+
+    #[test]
+    fn page_shim_locator_evaluate_uses_short_rpc_timeout() {
+        assert!(
+            PAGE_SHIM.contains("DEFAULT_LOCATOR_EVALUATE_RPC_TIMEOUT_MS = 60000"),
+            "locator-internal evaluate RPCs should stay bounded while allowing slow hydration"
+        );
+        assert!(
+            PAGE_SHIM.contains("timeout_ms: DEFAULT_LOCATOR_EVALUATE_RPC_TIMEOUT_MS"),
+            "locator-internal evaluate requests should carry their per-RPC timeout"
+        );
+    }
+
+    #[test]
+    fn page_shim_close_uses_short_rpc_timeout() {
+        assert!(
+            PAGE_SHIM.contains("DEFAULT_PAGE_CLOSE_RPC_TIMEOUT_MS = 5000"),
+            "page.close cleanup should not inherit long app-level timeouts"
+        );
+    }
+
+    #[test]
+    fn page_shim_failure_artifacts_use_short_screenshot_timeout() {
+        assert!(
+            WORKER_RUNTIME.contains("DEFAULT_FAILURE_SCREENSHOT_TIMEOUT_MS = 5000"),
+            "failure screenshots should not inherit long app-level timeouts in visual mode"
+        );
+        assert!(
+            PAGE_SHIM.contains("timeout_ms: opts && opts.timeout != null ? opts.timeout : null"),
+            "page.screenshot timeout option should reach the Rust page request"
+        );
+    }
+
+    #[test]
+    fn screenshot_page_request_can_override_worker_timeout() {
+        let req = crate::cdp_driver::PageRequest::Screenshot {
+            req_id: 1,
+            page_id: "page-1".to_string(),
+            path: None,
+            timeout_ms: Some(5_000),
+        };
+        assert_eq!(page_req_timeout_ms(&req, 300_000), 5_000);
+    }
+
+    #[test]
+    fn evaluate_page_request_can_override_worker_timeout() {
+        let req = crate::cdp_driver::PageRequest::Evaluate {
+            req_id: 1,
+            page_id: "page-1".to_string(),
+            expression: "document.title".to_string(),
+            timeout_ms: Some(5_000),
+        };
+        assert_eq!(page_req_timeout_ms(&req, 300_000), 5_000);
+    }
+
+    #[test]
+    fn close_page_request_can_override_worker_timeout() {
+        let req = crate::cdp_driver::PageRequest::Close {
+            req_id: 1,
+            page_id: "page-1".to_string(),
+            timeout_ms: Some(5_000),
+        };
+        assert_eq!(page_req_timeout_ms(&req, 300_000), 5_000);
+    }
+
+    #[test]
+    fn page_shim_stable_rect_allows_subpixel_layout_jitter() {
+        assert!(
+            PAGE_SHIM.contains("STABLE_RECT_EPSILON_PX = 1"),
+            "locator Stable actionability should tolerate small browser layout jitter"
+        );
+        assert!(
+            PAGE_SHIM.contains("function _rectsNear"),
+            "locator Stable actionability should use a dedicated tolerant rect comparator"
+        );
+        assert!(
+            !PAGE_SHIM.contains("prev[0] === cur[0]"),
+            "locator Stable actionability must not require exact rect equality"
+        );
+    }
+
+    #[test]
+    fn page_shim_visibility_does_not_depend_on_offset_parent() {
+        assert!(
+            !PAGE_SHIM.contains("offsetParent === null"),
+            "visibility should use style and client rects instead of offsetParent"
+        );
+        assert!(
+            PAGE_SHIM.contains("el.getClientRects().length > 0"),
+            "visibility should verify that the element has rendered client rects"
+        );
+    }
+
+    #[test]
+    fn page_rpc_timeout_error_names_action_and_budget() {
+        let msg = format_page_rpc_timeout_error("evaluate", 120_000);
+        assert!(msg.contains("evaluate"), "{msg}");
+        assert!(msg.contains("120000ms"), "{msg}");
+        assert!(msg.contains("browser RPC"), "{msg}");
+    }
+
+    #[test]
+    fn compact_live_value_collapses_and_truncates_evaluate_expression() {
+        let value = compact_live_value("  function() {\n  return document.body;\n}", 18);
+        assert_eq!(value, "function() { retur...");
+    }
+
+    #[test]
     fn path_to_file_url_escapes_spaces() {
         let path = Path::new("/tmp/a b/c.js");
         let url = path_to_file_url(path);
@@ -1853,12 +2728,27 @@ mod tests {
         let path = tmp.path().join("control.json");
         std::fs::write(
             &path,
-            r#"{"paused": true, "next_token": 7, "replay_token": 2}"#,
+            r#"{"paused": true, "speed_multiplier": 4, "next_token": 7, "replay_token": 2}"#,
         )
         .unwrap();
         let ctrl = read_live_control(&path);
         assert!(ctrl.paused);
+        assert_eq!(ctrl.speed_multiplier, 4);
         assert_eq!(ctrl.next_token, 7);
+    }
+
+    #[test]
+    fn live_step_delay_scales_with_control_speed_multiplier() {
+        let tmp = TempDir::new().unwrap();
+        let control_path = tmp.path().join("control.json");
+        std::fs::write(&control_path, r#"{"speed_multiplier": 4}"#).unwrap();
+        let live = LiveE2eConfig {
+            event_log: tmp.path().join("events.jsonl"),
+            control_path,
+            step_delay_ms: 1000,
+        };
+
+        assert_eq!(live_step_delay_ms(&live), 250);
     }
 
     #[test]
