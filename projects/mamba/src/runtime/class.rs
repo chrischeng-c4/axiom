@@ -39,6 +39,15 @@ pub struct MbClass {
 thread_local! {
     static CLASS_REGISTRY: std::cell::RefCell<HashMap<String, MbClass>> =
         std::cell::RefCell::new(HashMap::new());
+    /// Names of classes defined in the user's program (lowered via
+    /// `mb_class_define_multi`/`mb_class_define`), as opposed to native stdlib
+    /// stub classes registered through `mb_class_register` directly. Used by
+    /// mb_getattr to decide whether a missing attribute should raise
+    /// AttributeError: only when the instance's ENTIRE MRO is user-defined, so
+    /// native parents (whose __init__ populates attributes outside mamba's
+    /// instance fields) keep the lenient None return.
+    static USER_CLASSES: std::cell::RefCell<HashSet<String>> =
+        std::cell::RefCell::new(HashSet::new());
     /// Registry of valid callable function pointer addresses.
     /// Only addresses registered here can be invoked via mb_call_method1.
     static CALLABLE_REGISTRY: std::cell::RefCell<HashSet<u64>> =
@@ -1113,6 +1122,9 @@ pub fn mb_class_define_multi(
         }
     }
 
+    USER_CLASSES.with(|u| {
+        u.borrow_mut().insert(class_name.clone());
+    });
     mb_class_register(&class_name, bases, methods);
 }
 
@@ -3849,6 +3861,15 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         super::rc::retain_if_ptr(class_attr);
                         return class_attr;
                     }
+                    // 3b. A class attribute whose value is literally None (e.g.
+                    //     `_crasher = None`) is invisible to lookup_method's
+                    //     MbValue::none() "not found" sentinel. Resolve it
+                    //     explicitly via the existence-aware MRO lookup so it
+                    //     reads back as None instead of falling through to
+                    //     __getattr__ / AttributeError.
+                    if class_attr_lookup(class_name, &attr_name).is_some() {
+                        return MbValue::none();
+                    }
                     // 4. Fallback: __getattr__(self, name) dunder — call if it is a
                     //    TAG_FUNC function pointer; return value directly for other
                     //    stored values (legacy/non-JIT path).
@@ -3866,6 +3887,44 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         // Non-callable stored value (e.g. test stubs): return directly.
                         super::rc::retain_if_ptr(getattr_dunder);
                         return getattr_dunder;
+                    }
+                    // 5. Nothing matched (no instance field, class attr, descriptor,
+                    //    or __getattr__): a genuine user-class instance raises
+                    //    AttributeError, matching CPython. `hasattr` and the 3-arg
+                    //    `getattr(…, default)` recover from this via
+                    //    current_exception_type (see mb_hasattr / mb_getattr_default).
+                    //    Scoped to NON-dunder names on classes whose ENTIRE MRO is
+                    //    user-defined (every base registered in CLASS_REGISTRY, or
+                    //    `object`). A native/stdlib ancestor anywhere in the MRO
+                    //    (e.g. `class Sub(HTMLCalendar)`) keeps the lenient None
+                    //    return, because the native parent's __init__ populates
+                    //    attributes outside mamba's instance fields and they would
+                    //    look spuriously missing. Native-stub Instances (not
+                    //    registered) and internal dunder/protocol probing are also
+                    //    unaffected.
+                    if !(attr_name.starts_with("__") && attr_name.ends_with("__")) {
+                        let mro = CLASS_REGISTRY.with(|reg| {
+                            reg.borrow().get(class_name.as_str()).map(|cls| cls.mro.clone())
+                        });
+                        let pure_user_hierarchy = match mro {
+                            Some(mro) => USER_CLASSES.with(|u| {
+                                let u = u.borrow();
+                                mro.iter().all(|n| n == "object" || u.contains(n.as_str()))
+                            }),
+                            None => false,
+                        };
+                        if pure_user_hierarchy {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(super::rc::MbObject::new_str(
+                                    "AttributeError".to_string(),
+                                )),
+                                MbValue::from_ptr(super::rc::MbObject::new_str(format!(
+                                    "'{}' object has no attribute '{}'",
+                                    class_name, attr_name
+                                ))),
+                            );
+                            return MbValue::none();
+                        }
                     }
                 }
                 ObjData::Complex(re, im) => match attr_name.as_str() {
