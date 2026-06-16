@@ -5531,6 +5531,26 @@ fn frozenset_hash(items: &[MbValue]) -> i64 {
 
 /// hash(value) — return hash of a value.
 pub fn mb_hash(val: MbValue) -> MbValue {
+    // Python 3.12: slice is hashable, with `hash(slice(a,b,c)) ==
+    // hash((a,b,c))`. Delegating to the tuple hash also reproduces CPython's
+    // error for an unhashable component — `hash(slice(1,2,[]))` raises
+    // `TypeError: unhashable type: 'list'` (not 'slice').
+    if let Some(ptr) = val.as_ptr() {
+        if let ObjData::Instance { ref class_name, ref fields } = unsafe { &(*ptr).data } {
+            if class_name == "slice" {
+                let (start, stop, step) = {
+                    let f = fields.read().unwrap();
+                    (
+                        f.get("start").copied().unwrap_or(MbValue::none()),
+                        f.get("stop").copied().unwrap_or(MbValue::none()),
+                        f.get("step").copied().unwrap_or(MbValue::none()),
+                    )
+                };
+                let tup = MbValue::from_ptr(MbObject::new_tuple(vec![start, stop, step]));
+                return super::tuple_ops::mb_tuple_hash(tup);
+            }
+        }
+    }
     if is_decimal_handle_value(val) || is_fraction_handle_value(val) {
         // Hash must agree with `==` across numeric types: integral values
         // hash like the int, float-exact values hash like the float.
