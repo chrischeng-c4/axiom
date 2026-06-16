@@ -4835,12 +4835,14 @@ fn dispatch_richcmp_dunder(a: MbValue, b: MbValue, class_name: &str, dunder: &st
 
 /// Lexicographic less-than for MbValue sequences.
 pub fn seq_lt(a: &[MbValue], b: &[MbValue]) -> bool {
+    // CPython compares sequences element-wise: find the first position where
+    // the elements are unequal, then decide with `<` there. Probing equality
+    // first (rather than `x < y` / `y < x`) means an equal but unorderable
+    // head — e.g. `(None, 2) < (None, 1)` — never triggers `None < None`; only
+    // a genuinely differing, unorderable pair raises TypeError (as it should).
     for (x, y) in a.iter().zip(b.iter()) {
-        if mb_values_lt(*x, *y) {
-            return true;
-        }
-        if mb_values_lt(*y, *x) {
-            return false;
+        if !mb_values_eq(*x, *y) {
+            return mb_values_lt(*x, *y);
         }
     }
     a.len() < b.len()
@@ -5106,8 +5108,14 @@ fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
             }
         }
     }
-    // CPython: sorting mixed unorderable types raises TypeError — route
-    // through mb_values_lt, which raises the exact unorderable message.
+    // Equal values — including equal-but-unorderable ones like None — compare
+    // Equal without ever invoking `<`, so an element-wise tuple/list sort whose
+    // heads are equal (`sorted([(None, 2), (None, 1)])`) doesn't choke on
+    // `None < None`. Only a genuinely differing, unorderable pair falls through
+    // to mb_values_lt, which raises CPython's exact unorderable-types message.
+    if mb_values_eq(a, b) {
+        return std::cmp::Ordering::Equal;
+    }
     if mb_values_lt(a, b) {
         return std::cmp::Ordering::Less;
     }
