@@ -7826,7 +7826,11 @@ impl<'a> HirToMir<'a> {
                 dest
             }
             HirExpr::Attr { object, attr, ty } => {
-                let obj = self.lower_expr(object);
+                let obj_raw = self.lower_expr(object);
+                // Box a primitive receiver (int/float/bool) so the runtime
+                // getattr sees a proper NaN-boxed MbValue. Without this, a raw
+                // i64 receiver (e.g. `(5).__class__`) is misread as a float.
+                let obj = self.box_operand(obj_raw, object.ty());
                 let dest = self.fresh_vreg();
                 let attr_vreg = self.emit_str_const(attr);
                 self.current_stmts.push(MirInst::GetAttr {
