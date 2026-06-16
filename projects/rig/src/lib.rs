@@ -13,6 +13,7 @@
 
 pub mod discovery;
 pub mod engine;
+pub mod openapi;
 pub mod pins;
 pub mod report;
 pub mod scenario;
