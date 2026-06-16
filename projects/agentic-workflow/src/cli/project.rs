@@ -3053,7 +3053,7 @@ impl EcBinding {
                     .dir
                     .as_deref()
                     .context("ec binding `rig` requires `dir`")?;
-                Ok(format!("rig run --dir {dir}"))
+                Ok(format!("rig test --dir {dir}"))
             }
             "meter" => {
                 let target = self
@@ -4015,7 +4015,7 @@ mod tests {
             dir: Some("tests/rig/scenarios".into()),
             meter: None,
         };
-        assert_eq!(rig.command().unwrap(), "rig run --dir tests/rig/scenarios");
+        assert_eq!(rig.command().unwrap(), "rig test --dir tests/rig/scenarios");
 
         let meter = EcBinding {
             tool: "meter".into(),
