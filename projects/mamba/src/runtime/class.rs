@@ -3541,6 +3541,18 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             {
                                 return make_unbound_method(&type_name_str, &attr_name);
                             }
+                            // <type>.__new__ — every type inherits
+                            // object.__new__(cls), which allocates a BARE
+                            // instance without running __init__ (used by the
+                            // type-wall idiom `obj = object.__new__(C)`). A
+                            // user-defined __new__ was already returned by the
+                            // mro_lookup / registered-method checks above, so
+                            // this is the inherited-object.__new__ fallback;
+                            // the call is serviced by mb_call_method's __new__
+                            // arm (it reads the target class from the first arg).
+                            if attr_name == "__new__" {
+                                return make_unbound_method(&type_name_str, "__new__");
+                            }
                             // PEP 695: every type object carries
                             // __type_params__, defaulting to () (the
                             // mro_lookup above already returned a generic
