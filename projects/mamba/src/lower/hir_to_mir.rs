@@ -7087,6 +7087,21 @@ impl<'a> HirToMir<'a> {
                     // The runtime always takes (real, imag); fill in defaults
                     // so any arity from the call site lowers cleanly.
                     if extern_name == "mb_complex" {
+                        // >2 args: CPython raises
+                        // `TypeError: complex() takes at most 2 arguments (N given)`.
+                        if boxed_args.len() > 2 {
+                            let msg = self.emit_str_const(&format!(
+                                "complex() takes at most 2 arguments ({} given)",
+                                boxed_args.len()
+                            ));
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_arg_bind_error".to_string(),
+                                args: vec![msg],
+                                ty: *ty,
+                            });
+                            return dest;
+                        }
                         let none_vreg = self.emit_none();
                         let args = match boxed_args.len() {
                             0 => {
