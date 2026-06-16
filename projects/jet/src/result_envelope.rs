@@ -56,6 +56,8 @@ pub enum ResultMode {
     E2eRun,
     /// `jet e2e open` — local dev review mode.
     E2eOpen,
+    /// `jet e2e manual` — human-readable manual documentation mode.
+    E2eManual,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-src.md#schema
@@ -367,6 +369,7 @@ impl ResultEnvelope {
         let mode = match bundle.mode {
             E2eMode::Run => ResultMode::E2eRun,
             E2eMode::Open => ResultMode::E2eOpen,
+            E2eMode::Manual => ResultMode::E2eManual,
         };
         let cases = bundle
             .cases
@@ -450,6 +453,7 @@ pub fn e2e_case_rerun_hint(case: &crate::e2e::E2eCaseEvidence, mode: &E2eMode) -
     let sub = match mode {
         E2eMode::Run => "run",
         E2eMode::Open => "open",
+        E2eMode::Manual => "manual",
     };
     format!(
         "jet e2e {} {} --grep '{}'",
@@ -711,6 +715,7 @@ mod tests {
                     shard_index: None,
                     shard_total: None,
                     artifacts: vec![],
+                    steps: Vec::new(),
                 },
                 TestReport {
                     file: PathBuf::from("/tmp/proj/specs/a.spec.ts"),
@@ -728,6 +733,7 @@ mod tests {
                     shard_index: None,
                     shard_total: None,
                     artifacts: vec![],
+                    steps: Vec::new(),
                 },
             ],
             ..Summary::default()
@@ -862,6 +868,8 @@ mod tests {
         assert_eq!(v.as_str(), Some("e2e_run"));
         let v = serde_json::to_value(&ResultMode::E2eOpen).unwrap();
         assert_eq!(v.as_str(), Some("e2e_open"));
+        let v = serde_json::to_value(&ResultMode::E2eManual).unwrap();
+        assert_eq!(v.as_str(), Some("e2e_manual"));
         let v = serde_json::to_value(&ResultMode::Test).unwrap();
         assert_eq!(v.as_str(), Some("test"));
     }

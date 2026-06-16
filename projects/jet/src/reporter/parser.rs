@@ -87,6 +87,7 @@ pub fn parse_ndjson(bytes: &[u8]) -> Result<Vec<TestReport>> {
                     shard_index,
                     shard_total,
                     artifacts: artifacts.into_iter().map(PathBuf::from).collect(),
+                    steps: Vec::new(),
                 });
             }
             Some(_) => {

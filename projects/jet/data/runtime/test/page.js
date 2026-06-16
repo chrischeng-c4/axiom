@@ -41,6 +41,8 @@ export class Page {
     // Lazy-initialized keyboard and mouse accessor objects.
     this._keyboard = null;
     this._mouse = null;
+    this._responseWaiters = [];
+    this.request = new JetApiRequestContext(baseURL || "");
   }
 
   _assertOpen() {
@@ -119,12 +121,16 @@ export class Page {
   }
 
   // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R6
-  async evaluate(expression) {
+  async evaluate(expression, arg) {
     this._assertOpen();
+    const source =
+      typeof expression === "function"
+        ? `(${expression.toString()})(${_jetSerializeEvaluateArg(arg)})`
+        : expression;
     const res = await this._send({
       kind: "evaluate",
       page_id: this.__jet_page_id,
-      expression: typeof expression === "function" ? `(${expression.toString()})()` : expression,
+      expression: source,
     });
     if (res.kind === "error") throw new Error(res.message);
     return res.value;
@@ -167,6 +173,7 @@ export class Page {
       kind: "screenshot",
       page_id: this.__jet_page_id,
       path: (opts && opts.path) || null,
+      timeout_ms: opts && opts.timeout != null ? opts.timeout : null,
     });
     if (res.kind === "error") throw new Error(res.message);
     // res.data is base64-encoded PNG. Convert to Buffer.
@@ -321,6 +328,10 @@ export class Page {
 
   // Internal: dispatch an event to registered listeners.
   _dispatchEvent(event, payload) {
+    if (event === "response") {
+      payload = new JetResponse(payload, this);
+      this._notifyResponseWaiters(payload);
+    }
     const handlers = this._eventListeners[event] || [];
     for (const h of handlers) {
       try {
@@ -329,6 +340,46 @@ export class Page {
         // Suppress handler errors — don't let them crash the test runner.
       }
     }
+  }
+
+  // @spec .aw/changes/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti/specs/enhancement-page-api-parity-with-playwright-fill-gaps-in-runti-spec.md#R5
+  async waitForResponse(predicate, opts) {
+    this._assertOpen();
+    const timeout = opts && opts.timeout != null ? opts.timeout : DEFAULT_ACTION_TIMEOUT_MS;
+    return await new Promise((resolve, reject) => {
+      const waiter = {
+        predicate,
+        resolve,
+        reject,
+        timer: null,
+      };
+      waiter.timer = setTimeout(() => {
+        this._responseWaiters = this._responseWaiters.filter((w) => w !== waiter);
+        reject(new Error(`page.waitForResponse: timeout ${timeout}ms`));
+      }, timeout);
+      this._responseWaiters.push(waiter);
+    });
+  }
+
+  _notifyResponseWaiters(response) {
+    const remaining = [];
+    for (const waiter of this._responseWaiters) {
+      let matched = false;
+      try {
+        matched = _jetResponsePredicateMatches(waiter.predicate, response);
+      } catch (err) {
+        clearTimeout(waiter.timer);
+        waiter.reject(err);
+        continue;
+      }
+      if (matched) {
+        clearTimeout(waiter.timer);
+        waiter.resolve(response);
+      } else {
+        remaining.push(waiter);
+      }
+    }
+    this._responseWaiters = remaining;
   }
 
   // ── Keyboard ─────────────────────────────────────────────────────────────────
@@ -495,19 +546,27 @@ export class Page {
   }
 
   // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R6
-  getByText(text) {
+  getByText(text, options) {
     this._assertOpen();
-    return new Locator("text=" + text, this._send, this.__jet_page_id);
+    return new Locator(_jetTextSelector(text, options), this._send, this.__jet_page_id);
+  }
+
+  // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R6
+  getByTestId(testId) {
+    this._assertOpen();
+    return new Locator(_jetTestIdSelector(testId), this._send, this.__jet_page_id);
+  }
+
+  // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R6
+  getByLabel(label) {
+    this._assertOpen();
+    return new Locator(_jetLabelSelector(label), this._send, this.__jet_page_id);
   }
 
   // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R6
   getByRole(role, options) {
     this._assertOpen();
-    let selector = "role=" + role;
-    if (options && options.name) {
-      selector += '[name="' + options.name + '"]';
-    }
-    return new Locator(selector, this._send, this.__jet_page_id);
+    return new Locator(_jetRoleSelector(role, options), this._send, this.__jet_page_id);
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────────
@@ -533,12 +592,196 @@ export class Page {
     }
     this._eventListeners = {};
     try {
-      await this._send({ kind: "close", page_id: this.__jet_page_id });
+      await this._send({
+        kind: "close",
+        page_id: this.__jet_page_id,
+        timeout_ms: DEFAULT_PAGE_CLOSE_RPC_TIMEOUT_MS,
+      });
     } catch {
       // Suppress close errors — page may already be gone.
     }
   }
 }
+
+function _jetSerializeEvaluateArg(value) {
+  if (value === undefined) {
+    return "undefined";
+  }
+  return JSON.stringify(value);
+}
+
+function _jetRoleSelector(role, options) {
+  let selector = "role=" + role;
+  if (options && Object.prototype.hasOwnProperty.call(options, "name")) {
+    selector += _jetNameSelectorPart(options.name);
+  }
+  if (options && options.includeHidden) {
+    selector += '[includeHidden="1"]';
+  }
+  return selector;
+}
+
+function _jetNameSelectorPart(name) {
+  if (name instanceof RegExp) {
+    return (
+      '[nameRegex="' +
+      encodeURIComponent(name.source) +
+      '"][nameFlags="' +
+      name.flags +
+      '"]'
+    );
+  }
+  return '[nameValue="' + encodeURIComponent(String(name)) + '"]';
+}
+
+function _jetTextSelector(text, options) {
+  if (text instanceof RegExp) {
+    return (
+      "textRegex=" +
+      encodeURIComponent(text.source) +
+      '[textFlags="' +
+      text.flags +
+      '"]'
+    );
+  }
+  if (options && options.exact) {
+    return "textExact=" + encodeURIComponent(String(text));
+  }
+  return "text=" + encodeURIComponent(String(text));
+}
+
+function _jetTestIdSelector(testId) {
+  return "testid=" + encodeURIComponent(String(testId));
+}
+
+function _jetLabelSelector(label) {
+  if (label instanceof RegExp) {
+    return (
+      "labelRegex=" +
+      encodeURIComponent(label.source) +
+      '[labelFlags="' +
+      label.flags +
+      '"]'
+    );
+  }
+  return "label=" + encodeURIComponent(String(label));
+}
+
+class JetRequest {
+  constructor(payload, page) {
+    this._payload = payload || {};
+    this._page = page || null;
+  }
+
+  method() {
+    return String(this._payload.method || "GET");
+  }
+
+  url() {
+    return String(this._payload.url || "");
+  }
+
+  frame() {
+    const page = this._page;
+    return {
+      page() {
+        return page;
+      },
+    };
+  }
+}
+
+class JetResponse {
+  constructor(payload, page) {
+    this._payload = payload || {};
+    this._request = new JetRequest(this._payload.request || {}, page || null);
+  }
+
+  url() {
+    return String(this._payload.url || "");
+  }
+
+  status() {
+    return Number(this._payload.status || 0);
+  }
+
+  ok() {
+    const status = this.status();
+    return status >= 200 && status <= 299;
+  }
+
+  request() {
+    return this._request;
+  }
+
+  async text() {
+    return this._payload.body == null ? "" : String(this._payload.body);
+  }
+
+  async json() {
+    return JSON.parse(await this.text());
+  }
+}
+
+class JetApiRequestContext {
+  constructor(baseURL) {
+    this._baseURL = baseURL || "";
+  }
+
+  async get(url, opts) {
+    return await this._fetch("GET", url, opts);
+  }
+
+  async _fetch(method, url, opts) {
+    const resolved = _jetResolveRequestUrl(this._baseURL, url);
+    const controller = new AbortController();
+    const timeout = opts && opts.timeout != null ? opts.timeout : DEFAULT_ACTION_TIMEOUT_MS;
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const res = await fetch(resolved, {
+        method,
+        headers: (opts && opts.headers) || undefined,
+        signal: controller.signal,
+      });
+      const body = await res.text();
+      return new JetResponse({
+        url: res.url || resolved,
+        status: res.status,
+        body,
+        request: { url: resolved, method },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function _jetResolveRequestUrl(baseURL, url) {
+  const raw = String(url || "");
+  if (/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(raw)) {
+    return raw;
+  }
+  if (!baseURL) {
+    return raw;
+  }
+  return baseURL.replace(/\/$/, "") + (raw.startsWith("/") ? raw : "/" + raw);
+}
+
+function _jetResponsePredicateMatches(predicate, response) {
+  if (typeof predicate === "function") {
+    return Boolean(predicate(response));
+  }
+  if (predicate instanceof RegExp) {
+    predicate.lastIndex = 0;
+    return predicate.test(response.url());
+  }
+  return response.url().indexOf(String(predicate)) !== -1;
+}
+
+const DEFAULT_ACTION_TIMEOUT_MS = 30000;
+const DEFAULT_LOCATOR_EVALUATE_RPC_TIMEOUT_MS = 60000;
+const DEFAULT_PAGE_CLOSE_RPC_TIMEOUT_MS = 5000;
+const STABLE_RECT_EPSILON_PX = 1;
 
 // ── Locator proxy ─────────────────────────────────────────────────────────────
 //
@@ -550,7 +793,7 @@ export class Page {
 //     (when a pseudo-selector — role= / text= — appears anywhere in the chain).
 //   - filter({ hasText, hasNotText }) with string / RegExp predicates.
 //   - Auto-wait FSM (Attached → Visible → Stable) before click/fill/hover/
-//     press/selectOption/check/uncheck. Default 5000ms, override via
+//     press/selectOption/check/uncheck. Default 30000ms, override via
 //     `opts.timeout`.
 //   - NthLocator actions route through _taggedSelectorScope so
 //     click/fill/hover/press target the indexed element via real CDP input
@@ -563,11 +806,31 @@ export class Locator {
     this._send = sendRequest;
     this._pageId = pageId;
     // Default per L4 / L10 — override via options.timeout or per-call opts.timeout.
-    this._timeout = options && options.timeout != null ? options.timeout : 5000;
+    this._timeout =
+      options && options.timeout != null ? options.timeout : DEFAULT_ACTION_TIMEOUT_MS;
     // Each filter is one of:
     //   { kind: "scope",  child: string }
     //   { kind: "text",   hasText?: string|RegExp, hasNotText?: string|RegExp }
     this._filters = options && options.filters ? options.filters.slice() : [];
+  }
+
+  toString() {
+    let label = `locator(${JSON.stringify(this._selector)})`;
+    if (this._filters.length > 0) {
+      for (const filter of this._filters) {
+        if (filter.kind === "scope") {
+          label += `.locator(${JSON.stringify(filter.child)})`;
+        } else if (filter.kind === "text") {
+          label += `.filter(${JSON.stringify({
+            hasText: filter.hasText == null ? null : String(filter.hasText),
+            hasNotText: filter.hasNotText == null ? null : String(filter.hasNotText),
+          })})`;
+        } else {
+          label += `.filtered`;
+        }
+      }
+    }
+    return label;
   }
 
   // ── Composition ───────────────────────────────────────────────────────────
@@ -604,13 +867,19 @@ export class Locator {
 
   // @spec locator-js-api#L8
   getByRole(role, options) {
-    let child = "role=" + role;
-    if (options && options.name) child += '[name="' + options.name + '"]';
-    return this.locator(child);
+    return this.locator(_jetRoleSelector(role, options));
   }
 
-  getByText(text) {
-    return this.locator("text=" + text);
+  getByText(text, options) {
+    return this.locator(_jetTextSelector(text, options));
+  }
+
+  getByTestId(testId) {
+    return this.locator(_jetTestIdSelector(testId));
+  }
+
+  getByLabel(label) {
+    return this.locator(_jetLabelSelector(label));
   }
 
   // @spec locator-js-api#L6 L9
@@ -644,6 +913,15 @@ export class Locator {
     return `(${_collectMatchesSrc(this._selector, this._filters)})().length`;
   }
 
+  async _evaluate(expression) {
+    return await this._send({
+      kind: "evaluate",
+      page_id: this._pageId,
+      expression,
+      timeout_ms: DEFAULT_LOCATOR_EVALUATE_RPC_TIMEOUT_MS,
+    });
+  }
+
   // ── Actionability / auto-wait ─────────────────────────────────────────────
 
   // Polls until the target is actionable. Poll interval 50ms, shared budget.
@@ -653,11 +931,7 @@ export class Locator {
     const deadline = Date.now() + timeout;
     // Attached
     while (Date.now() < deadline) {
-      const r = await this._send({
-        kind: "evaluate",
-        page_id: this._pageId,
-        expression: `(function(){var el=${this._resolveFirstExpr()};return !!el;})()`,
-      });
+      const r = await this._evaluate(`(function(){var el=${this._resolveFirstExpr()};return !!el;})()`);
       if (r.kind !== "error" && r.value) break;
       await _sleep(50);
     }
@@ -667,30 +941,23 @@ export class Locator {
     // Visible
     while (Date.now() < deadline) {
       const expr = `(function(){var el=${this._resolveFirstExpr()};${_visibilityCheckSrc}})()`;
-      const r = await this._send({
-        kind: "evaluate",
-        page_id: this._pageId,
-        expression: expr,
-      });
+      const r = await this._evaluate(expr);
       if (r.kind !== "error" && r.value) break;
       await _sleep(50);
     }
     if (Date.now() >= deadline) {
       throw new Error(`locator ${this._selector}: timeout ${timeout}ms waiting for Visible`);
     }
-    // Stable — two consecutive equal rects, ≥50ms apart.
+    // Stable — two consecutive near-equal rects, ≥50ms apart. Browser layout
+    // engines may keep fractional-pixel rects moving by tiny amounts while
+    // fonts, transitions, or responsive layout settle; exact equality is too
+    // strict for real app UI such as AntD buttons.
     let prev = null;
     while (Date.now() < deadline) {
       const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return null;var r=el.getBoundingClientRect();return [r.x,r.y,r.width,r.height];})()`;
-      const r = await this._send({
-        kind: "evaluate",
-        page_id: this._pageId,
-        expression: expr,
-      });
+      const r = await this._evaluate(expr);
       const cur = r.kind !== "error" ? r.value : null;
-      if (prev && cur && prev.length === 4 &&
-          prev[0] === cur[0] && prev[1] === cur[1] &&
-          prev[2] === cur[2] && prev[3] === cur[3]) {
+      if (_rectsNear(prev, cur)) {
         return;
       }
       prev = cur;
@@ -705,11 +972,7 @@ export class Locator {
   async _taggedSelectorScope(fn) {
     const token = _uuid();
     const tagExpr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return false;el.setAttribute('data-__jet_nth__', ${JSON.stringify(token)});return true;})()`;
-    const tagRes = await this._send({
-      kind: "evaluate",
-      page_id: this._pageId,
-      expression: tagExpr,
-    });
+    const tagRes = await this._evaluate(tagExpr);
     if (tagRes.kind === "error" || !tagRes.value) {
       throw new Error(`locator ${this._selector}: could not resolve element to tag`);
     }
@@ -717,31 +980,48 @@ export class Locator {
     try {
       return await fn(unique);
     } finally {
-      await this._send({
-        kind: "evaluate",
-        page_id: this._pageId,
-        expression: `(function(){var el=document.querySelector(${JSON.stringify(unique)});if(el)el.removeAttribute('data-__jet_nth__');})()`,
-      }).catch(() => {});
+      await this._evaluate(
+        `(function(){var el=document.querySelector(${JSON.stringify(unique)});if(el)el.removeAttribute('data-__jet_nth__');})()`,
+      ).catch(() => {});
     }
+  }
+
+  async _clickResolvedElement() {
+    const clickRes = await this._evaluate(
+      `(function(){var el=${this._resolveFirstExpr()};if(!el)return false;el.scrollIntoView({block:'center',inline:'center'});el.click();return true;})()`,
+    );
+    if (clickRes.kind === "error") throw new Error(clickRes.message);
+    if (!clickRes.value) {
+      throw new Error(`${this}: could not resolve element to click`);
+    }
+  }
+
+  async scrollIntoViewIfNeeded(opts) {
+    const timeout = opts && opts.timeout != null ? opts.timeout : this._timeout;
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const expr = `(function(){
+        var el=${this._resolveFirstExpr()};
+        if(!el)return false;
+        var r=el.getBoundingClientRect();
+        var vw=window.innerWidth||document.documentElement.clientWidth||0;
+        var vh=window.innerHeight||document.documentElement.clientHeight||0;
+        var fullyVisible=r.width>0&&r.height>0&&r.top>=0&&r.left>=0&&r.bottom<=vh&&r.right<=vw;
+        if(!fullyVisible)el.scrollIntoView({block:'center',inline:'center'});
+        return true;
+      })()`;
+      const res = await this._evaluate(expr);
+      if (res.kind !== "error" && res.value) return;
+      await _sleep(50);
+    }
+    throw new Error(`locator ${this._selector}: timeout ${timeout}ms waiting for Attached`);
   }
 
   // ── Actions (auto-waited) ─────────────────────────────────────────────────
 
   async click(opts) {
     await this._waitForActionable(opts);
-    if (this._needsClientResolve()) {
-      await this._taggedSelectorScope(async (sel) => {
-        const res = await this._send({ kind: "click", page_id: this._pageId, selector: sel });
-        if (res.kind === "error") throw new Error(res.message);
-      });
-      return;
-    }
-    const res = await this._send({
-      kind: "click",
-      page_id: this._pageId,
-      selector: this._selector,
-    });
-    if (res.kind === "error") throw new Error(res.message);
+    await this._clickResolvedElement();
   }
 
   async fill(value, opts) {
@@ -807,25 +1087,21 @@ export class Locator {
       el.dispatchEvent(new Event('change', { bubbles: true }));
       return el.value;
     })()`;
-    const res = await this._send({
-      kind: "evaluate",
-      page_id: this._pageId,
-      expression: expr,
-    });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
   }
 
   async check(opts) {
     await this._waitForActionable(opts);
     const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)throw new Error('check: element not found');if(!el.checked){el.checked=true;el.dispatchEvent(new Event('change',{bubbles:true}));}return el.checked;})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
   }
 
   async uncheck(opts) {
     await this._waitForActionable(opts);
     const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)throw new Error('uncheck: element not found');if(el.checked){el.checked=false;el.dispatchEvent(new Event('change',{bubbles:true}));}return el.checked;})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
   }
 
@@ -837,11 +1113,7 @@ export class Locator {
       const timeout = opts && opts.timeout != null ? opts.timeout : this._timeout;
       const deadline = Date.now() + timeout;
       while (Date.now() < deadline) {
-        const r = await this._send({
-          kind: "evaluate",
-          page_id: this._pageId,
-          expression: `(function(){return !!${this._resolveFirstExpr()};})()`,
-        });
+        const r = await this._evaluate(`(function(){return !!${this._resolveFirstExpr()};})()`);
         if (r.kind !== "error" && r.value) return;
         await _sleep(50);
       }
@@ -859,7 +1131,7 @@ export class Locator {
   async textContent() {
     if (this._needsClientResolve()) {
       const expr = `(function(){var el=${this._resolveFirstExpr()};return el?el.textContent:null;})()`;
-      const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+      const res = await this._evaluate(expr);
       if (res.kind === "error") throw new Error(res.message);
       return res.value != null ? String(res.value) : null;
     }
@@ -876,7 +1148,7 @@ export class Locator {
     if (this._needsClientResolve()) {
       const n = JSON.stringify(name);
       const expr = `(function(){var el=${this._resolveFirstExpr()};return el?el.getAttribute(${n}):null;})()`;
-      const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+      const res = await this._evaluate(expr);
       if (res.kind === "error") throw new Error(res.message);
       return res.value != null ? String(res.value) : null;
     }
@@ -893,7 +1165,7 @@ export class Locator {
   async boundingBox() {
     if (this._needsClientResolve()) {
       const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return null;var r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})()`;
-      const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+      const res = await this._evaluate(expr);
       if (res.kind === "error") throw new Error(res.message);
       return res.value || null;
     }
@@ -909,7 +1181,7 @@ export class Locator {
 
   async isVisible() {
     const expr = `(function(){var el=${this._resolveFirstExpr()};${_visibilityCheckSrc}})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") return false;
     return Boolean(res.value);
   }
@@ -920,7 +1192,7 @@ export class Locator {
 
   async isEnabled() {
     const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return false;return !el.disabled;})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") return false;
     return Boolean(res.value);
   }
@@ -931,14 +1203,14 @@ export class Locator {
 
   async isChecked() {
     const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return false;return !!el.checked;})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") return false;
     return Boolean(res.value);
   }
 
   async isFocused() {
     const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return false;return el===document.activeElement;})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") return false;
     return Boolean(res.value);
   }
@@ -948,7 +1220,7 @@ export class Locator {
   async computedStyle(name) {
     const n = JSON.stringify(name);
     const expr = `(function(){var el=${this._resolveFirstExpr()};if(!el)return null;return window.getComputedStyle(el)[${n}];})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
     return res.value != null ? String(res.value) : null;
   }
@@ -978,7 +1250,7 @@ export class Locator {
       if (t) return t;
       return el.title || '';
     })()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
     return res.value != null ? String(res.value) : null;
   }
@@ -1014,7 +1286,7 @@ export class Locator {
       if (tag === 'IMG') return el.getAttribute('alt') ? 'img' : 'presentation';
       return '';
     })()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
     return res.value != null ? String(res.value) : null;
   }
@@ -1023,28 +1295,28 @@ export class Locator {
     const expr = this._needsClientResolve()
       ? this._resolveCountExpr()
       : `document.querySelectorAll(${JSON.stringify(this._selector)}).length`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
     return typeof res.value === "number" ? res.value : 0;
   }
 
   async innerHTML() {
     const expr = `(function(){var el=${this._resolveFirstExpr()};return el?el.innerHTML:null;})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
     return res.value != null ? String(res.value) : null;
   }
 
   async innerText() {
     const expr = `(function(){var el=${this._resolveFirstExpr()};return el?el.innerText:null;})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
     return res.value != null ? String(res.value) : null;
   }
 
   async inputValue() {
     const expr = `(function(){var el=${this._resolveFirstExpr()};return el?el.value:null;})()`;
-    const res = await this._send({ kind: "evaluate", page_id: this._pageId, expression: expr });
+    const res = await this._evaluate(expr);
     if (res.kind === "error") throw new Error(res.message);
     return res.value != null ? String(res.value) : null;
   }
@@ -1086,48 +1358,152 @@ class NthLocator extends Locator {
 // ── Private helpers ───────────────────────────────────────────────────────────
 
 function _isPseudoSelector(sel) {
-  return typeof sel === "string" && (sel.startsWith("role=") || sel.startsWith("text="));
+  return (
+    typeof sel === "string" &&
+    (sel.startsWith("role=") ||
+      sel.startsWith("text=") ||
+      sel.startsWith("textExact=") ||
+      sel.startsWith("textRegex=") ||
+      sel.startsWith("testid=") ||
+      sel.startsWith("label=") ||
+      sel.startsWith("labelRegex="))
+  );
+}
+
+function _rectsNear(prev, cur) {
+  if (!prev || !cur || prev.length !== 4 || cur.length !== 4) return false;
+  for (let i = 0; i < 4; i++) {
+    if (typeof prev[i] !== "number" || typeof cur[i] !== "number") return false;
+    if (!Number.isFinite(prev[i]) || !Number.isFinite(cur[i])) return false;
+    if (Math.abs(prev[i] - cur[i]) > STABLE_RECT_EPSILON_PX) return false;
+  }
+  return true;
 }
 
 // Visibility check source, reused by isVisible + auto-wait.
 // Expects an `el` variable to be in scope (set by the enclosing factory).
 const _visibilityCheckSrc = `
 if (!el) return false;
-var s = window.getComputedStyle(el);
-if (s.visibility === 'hidden' || s.display === 'none') return false;
-if (el.offsetParent === null && el.tagName !== 'BODY' && el.tagName !== 'HTML') return false;
+var cur = el;
+while (cur && cur.nodeType === 1) {
+  if (cur.getAttribute && cur.getAttribute('aria-hidden') === 'true') return false;
+  var s = window.getComputedStyle(cur);
+  if (s.visibility === 'hidden' || s.visibility === 'collapse' || s.display === 'none') return false;
+  cur = cur.parentElement;
+}
 var r = el.getBoundingClientRect();
-return r.width > 0 && r.height > 0;
+return r.width > 0 && r.height > 0 && el.getClientRects().length > 0;
 `;
 
 // Emit a JS source string for a zero-arg function that returns an Array of
 // Elements matching `selector` after applying all `filters`.
 //
 // Selector syntax supported inside filter scopes and at the top level:
-//   role=<role>[name="<n>"]   (maps to [role=<role>][aria-label^="<n>"] as a
-//                              best-effort CSS fallback — same rule as the
-//                              existing Page.getByRole)
-//   text=<substring>          (maps to innerText includes filter)
+//   role=<role>[nameValue="<encoded>"][includeHidden="1"]
+//   role=<role>[nameRegex="<encoded>"][nameFlags="<flags>"][includeHidden="1"]
+//                              (best-effort accessible-name matching)
+//   text=<encoded>            (maps to innerText includes filter)
+//   textExact=<encoded>       (maps to normalized innerText equality)
+//   textRegex=<encoded>[textFlags="<flags>"]
+//                              (maps to innerText regex filter)
+//   testid=<encoded>          (maps to exact data-testid)
+//   label=<encoded> / labelRegex=<encoded>[labelFlags="<flags>"]
+//                              (best-effort accessible-label matching)
 //   <css>                     (querySelectorAll)
 function _collectMatchesSrc(selector, filters) {
   const lines = [];
   lines.push("function() {");
   lines.push("  var __jet_match = function(root, sel) {");
   lines.push("    if (typeof sel !== 'string') return [];");
+  lines.push("    var __norm = function(v){ return (v || '').replace(/\\s+/g, ' ').trim(); };");
+  lines.push("    var __decode = function(v){ try { return decodeURIComponent(v); } catch (_) { return v; } };");
+  lines.push("    var __arr = function(nodes){ return Array.prototype.slice.call(nodes); };");
+  lines.push("    var __visible = function(el){");
+  lines.push("      if (!el) return false;");
+  lines.push("      var cur = el;");
+  lines.push("      while (cur && cur.nodeType === 1) {");
+  lines.push("        if (cur.getAttribute && cur.getAttribute('aria-hidden') === 'true') return false;");
+  lines.push("        var style = window.getComputedStyle(cur);");
+  lines.push("        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;");
+  lines.push("        cur = cur.parentElement;");
+  lines.push("      }");
+  lines.push("      var r = el.getBoundingClientRect();");
+  lines.push("      return r.width > 0 && r.height > 0;");
+  lines.push("    };");
+  lines.push("    var __roleName = function(e){ return __norm(e.getAttribute('aria-label') || e.innerText || e.textContent || ''); };");
+  lines.push("    var __labelTexts = function(el){");
+  lines.push("      var out = [];");
+  lines.push("      var aria = el.getAttribute('aria-label');");
+  lines.push("      if (aria) out.push(__norm(aria));");
+  lines.push("      var labelledBy = el.getAttribute('aria-labelledby');");
+  lines.push("      if (labelledBy) labelledBy.split(/\\s+/).forEach(function(id){ var ref = document.getElementById(id); if (ref) out.push(__norm(ref.innerText || ref.textContent || '')); });");
+  lines.push("      if (el.id) __arr(document.querySelectorAll('label[for]')).forEach(function(label){ if (label.getAttribute('for') === el.id) out.push(__norm(label.innerText || label.textContent || '')); });");
+  lines.push("      var wrapped = el.closest ? el.closest('label') : null;");
+  lines.push("      if (wrapped) out.push(__norm(wrapped.innerText || wrapped.textContent || ''));");
+  lines.push("      var placeholder = el.getAttribute('placeholder');");
+  lines.push("      if (placeholder) out.push(__norm(placeholder));");
+  lines.push("      return out.filter(Boolean);");
+  lines.push("    };");
   lines.push("    if (sel.indexOf('role=') === 0) {");
   lines.push("      var body = sel.substring(5);");
-  lines.push("      var role = body; var name = null;");
-  lines.push("      var m = body.match(/^([A-Za-z]+)\\[name=\"(.*)\"\\]$/);");
+  lines.push("      var role = body; var name = null; var nameRegex = null; var includeHidden = false;");
+  lines.push("      if (body.indexOf('[includeHidden=\"1\"]') !== -1) { includeHidden = true; body = body.replace('[includeHidden=\"1\"]', ''); role = body; }");
+  lines.push("      var m = body.match(/^([^\\[]+)\\[name=\"(.*)\"\\]$/);");
   lines.push("      if (m) { role = m[1]; name = m[2]; }");
-  lines.push("      var arr = Array.prototype.slice.call(root.querySelectorAll('[role=\"' + role + '\"], ' + role));");
-  lines.push("      if (name) arr = arr.filter(function(e){ var n = e.getAttribute('aria-label') || e.innerText || ''; return n.indexOf(name) !== -1; });");
+  lines.push("      var vm = body.match(/^([^\\[]+)\\[nameValue=\"(.*)\"\\]$/);");
+  lines.push("      if (vm) { role = vm[1]; name = decodeURIComponent(vm[2]); }");
+  lines.push("      var rm = body.match(/^([^\\[]+)\\[nameRegex=\"(.*)\"\\]\\[nameFlags=\"(.*)\"\\]$/);");
+  lines.push("      if (rm) { role = rm[1]; nameRegex = new RegExp(decodeURIComponent(rm[2]), rm[3]); }");
+  lines.push("      var roleSelector = '[role=\"' + role + '\"]';");
+  lines.push("      if (role === 'button') roleSelector += ', button, input[type=\"button\"], input[type=\"submit\"], input[type=\"reset\"]';");
+  lines.push("      if (role === 'heading') roleSelector += ', h1, h2, h3, h4, h5, h6';");
+  lines.push("      if (role === 'link') roleSelector += ', a[href]';");
+  lines.push("      if (role === 'textbox') roleSelector += ', textarea, input:not([type]), input[type=\"text\"], input[type=\"search\"], input[type=\"email\"], input[type=\"url\"], input[type=\"tel\"], input[type=\"password\"], [contenteditable=\"\"], [contenteditable=\"true\"]';");
+  lines.push("      if (role === 'checkbox') roleSelector += ', input[type=\"checkbox\"]';");
+  lines.push("      if (role === 'radio') roleSelector += ', input[type=\"radio\"]';");
+  lines.push("      if (role === 'combobox') roleSelector += ', select';");
+  lines.push("      var arr = __arr(root.querySelectorAll(roleSelector));");
+  lines.push("      if (!includeHidden) arr = arr.filter(__visible);");
+  lines.push("      if (name !== null) arr = arr.filter(function(e){ return __roleName(e).indexOf(name) !== -1; });");
+  lines.push("      if (nameRegex) arr = arr.filter(function(e){ nameRegex.lastIndex = 0; return nameRegex.test(__roleName(e)); });");
   lines.push("      return arr;");
   lines.push("    }");
-  lines.push("    if (sel.indexOf('text=') === 0) {");
-  lines.push("      var t = sel.substring(5);");
-  lines.push("      return Array.prototype.slice.call(root.querySelectorAll('*')).filter(function(e){ return (e.innerText || '').indexOf(t) !== -1; });");
+  lines.push("    if (sel.indexOf('testid=') === 0) {");
+  lines.push("      var testId = decodeURIComponent(sel.substring(7));");
+  lines.push("      return __arr(root.querySelectorAll('[data-testid]')).filter(function(e){ return e.getAttribute('data-testid') === testId; });");
   lines.push("    }");
-  lines.push("    return Array.prototype.slice.call(root.querySelectorAll(sel));");
+  lines.push("    if (sel.indexOf('label=') === 0 || sel.indexOf('labelRegex=') === 0) {");
+  lines.push("      var isRegex = sel.indexOf('labelRegex=') === 0;");
+  lines.push("      var raw = isRegex ? sel.substring(11) : sel.substring(6);");
+  lines.push("      var flags = '';");
+  lines.push("      if (isRegex) { var lm = raw.match(/^(.*)\\[labelFlags=\"(.*)\"\\]$/); if (lm) { raw = lm[1]; flags = lm[2]; } }");
+  lines.push("      var expected = decodeURIComponent(raw);");
+  lines.push("      var re = isRegex ? new RegExp(expected, flags) : null;");
+  lines.push("      var candidates = __arr(root.querySelectorAll('input, textarea, select, button, [role=\"textbox\"], [contenteditable=\"\"], [contenteditable=\"true\"], [aria-label], [aria-labelledby]'));");
+  lines.push("      return candidates.filter(function(el){");
+  lines.push("        return __labelTexts(el).some(function(text){");
+  lines.push("          if (re) { re.lastIndex = 0; return re.test(text); }");
+  lines.push("          return text.indexOf(expected) !== -1;");
+  lines.push("        });");
+  lines.push("      });");
+  lines.push("    }");
+  lines.push("    if (sel.indexOf('textExact=') === 0) {");
+  lines.push("      var exactText = __decode(sel.substring(10));");
+  lines.push("      return __arr(root.querySelectorAll('*')).filter(function(e){ return __norm(e.innerText || e.textContent || '') === exactText; });");
+  lines.push("    }");
+  lines.push("    if (sel.indexOf('textRegex=') === 0) {");
+  lines.push("      var rawText = sel.substring(10);");
+  lines.push("      var textFlags = '';");
+  lines.push("      var tm = rawText.match(/^(.*)\\[textFlags=\"(.*)\"\\]$/);");
+  lines.push("      if (tm) { rawText = tm[1]; textFlags = tm[2]; }");
+  lines.push("      var textRegex = new RegExp(__decode(rawText), textFlags);");
+  lines.push("      return __arr(root.querySelectorAll('*')).filter(function(e){ textRegex.lastIndex = 0; return textRegex.test(e.innerText || e.textContent || ''); });");
+  lines.push("    }");
+  lines.push("    if (sel.indexOf('text=') === 0) {");
+  lines.push("      var t = __decode(sel.substring(5));");
+  lines.push("      return __arr(root.querySelectorAll('*')).filter(function(e){ return (e.innerText || e.textContent || '').indexOf(t) !== -1; });");
+  lines.push("    }");
+  lines.push("    return __arr(root.querySelectorAll(sel));");
   lines.push("  };");
   lines.push(`  var current = __jet_match(document, ${JSON.stringify(selector)});`);
   for (const f of filters) {

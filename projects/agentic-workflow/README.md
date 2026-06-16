@@ -116,6 +116,7 @@ belong in README capability text or ordinary docs, not in TD/EC typed sections.
 | Work Item Planning | - | implemented | verified | smoke | ready | verified; epic/change split and bounded planning artifacts |
 | TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; WI to TD to CB to merge workflow |
 | Project-Local TD and EC Gates | - | implemented | verified | smoke | ready | verified; TD roots default to `<project.path>/tech-design`, EC contracts default to `<project.path>/external-contracts`, and generated tests/tool configs stay project-local |
+| Manual Evidence Artifacts | #57 | planned | planned | smoke | planned | confirmed; generated product manuals are tracked as EC evidence artifacts with runner commands and optional media |
 | Existing Project Standardization | - | implemented | verified | smoke | ready | verified; takeover readiness, managed/semantic/traceability gates, and generator gap requests |
 
 ## AW Core Client Model
@@ -218,7 +219,23 @@ belong in README capability text or ordinary docs, not in TD/EC typed sections.
 | CB generation and standardize scan defaults | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | Project dirty-scope protection | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | EC evidence documentation | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow ec_doc` |
-| EC external-contract source | change | #13 | implemented | verified | smoke | `aw ec gen` reads `external-contracts/{behavior,efficiency,security,stability}` and generates tests plus rig/meter/arena/guard/vat tool configs |
+| EC external-contract source | change | #13 | implemented | verified | smoke | `aw ec gen` reads external-contracts/{behavior,efficiency,security,stability} and generates tests plus rig/meter/arena/guard/vat tool configs |
+
+## Manual Evidence Artifacts
+
+| Field | Value |
+|---|---|
+| ID | manual-evidence-artifacts |
+| Root WI | #57 |
+| Status | confirmed |
+| Promise | AW treats generated product manuals as first-class EC evidence artifacts. A manual artifact records its project-local output path, the runner command that produces it, and optional screenshots, highlights, or step metadata without requiring every manual to use a visual overlay recorder. |
+| Required Verification | smoke |
+| Gate Inventory | projects/agentic-workflow/src/tools/common_change_spec.rs; projects/agentic-workflow/tech-design/core/tools/common_change_spec/preamble.md; /Users/chris.cheng/projects/ai-studio/docs/user-manual |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Generated manual EC evidence schema | change | #57 | planned | planned | smoke | projects/agentic-workflow/src/tools/common_change_spec.rs; projects/agentic-workflow/tech-design/core/tools/common_change_spec/preamble.md |
+| Manual runner output convention | change | #57 | planned | planned | smoke | /Users/chris.cheng/projects/ai-studio/vat.toml; /Users/chris.cheng/projects/ai-studio/docs/user-manual |
 
 ## Existing Project Standardization
 
