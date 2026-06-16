@@ -7027,6 +7027,23 @@ impl<'a> HirToMir<'a> {
                             });
                             return dest;
                         }
+                        // >3 args: CPython raises
+                        // `TypeError: slice expected at most 3 arguments, got N`.
+                        // Without this the extra args were silently dropped at
+                        // the 3-arg `mb_slice` boundary (no_raise).
+                        if boxed_args.len() > 3 {
+                            let msg = self.emit_str_const(&format!(
+                                "slice expected at most 3 arguments, got {}",
+                                boxed_args.len()
+                            ));
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: Some(dest),
+                                name: "mb_arg_bind_error".to_string(),
+                                args: vec![msg],
+                                ty: *ty,
+                            });
+                            return dest;
+                        }
                         let args = match boxed_args.len() {
                             1 => vec![none_vreg, boxed_args[0], none_vreg],
                             2 => vec![boxed_args[0], boxed_args[1], none_vreg],

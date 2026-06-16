@@ -5601,6 +5601,16 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                     );
                     return;
                 }
+                // slice objects are immutable: start/stop/step are read-only
+                // (CPython raises AttributeError on assignment). Construction
+                // writes the fields directly (mb_slice), not through setattr.
+                if class_name == "slice" {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str("readonly attribute".to_string())),
+                    );
+                    return;
+                }
                 // threading: daemonizing a running thread is a RuntimeError.
                 if class_name == "Thread" {
                     if let Some(kp) = attr.as_ptr() {
@@ -10633,11 +10643,25 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "slice" && name == "indices" {
                     let arg_items = super::builtins::extract_items(args);
                     // length accepts any SupportsIndex (int / bool / object with
-                    // __index__), matching CPython's PySlice_GetIndices.
-                    let length = arg_items
-                        .first()
-                        .and_then(|v| super::builtins::resolve_index_value(*v))
-                        .unwrap_or(0);
+                    // __index__), matching CPython's PySlice_GetIndices. A
+                    // non-integer arg (e.g. `slice(0,5).indices("x")`) raises
+                    // TypeError, not a silent length-0 fallback.
+                    let length = match arg_items.first() {
+                        Some(v) => match super::builtins::resolve_index_value(*v) {
+                            Some(n) => n,
+                            None => {
+                                super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                    MbValue::from_ptr(MbObject::new_str(format!(
+                                        "'{}' object cannot be interpreted as an integer",
+                                        super::builtins::value_type_name(*v)
+                                    ))),
+                                );
+                                return MbValue::none();
+                            }
+                        },
+                        None => 0,
+                    };
                     let (start_v, stop_v, step_v) = {
                         let f = fields.read().unwrap();
                         (
