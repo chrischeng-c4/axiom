@@ -9,6 +9,7 @@
 //! between steps — so the worst overshoot is one step's own budget.
 
 pub mod assert;
+pub mod case;
 pub mod exec;
 pub mod http;
 pub mod loadgen;
@@ -36,24 +37,33 @@ pub struct ScenarioRun {
     pub steps_run: usize,
 }
 
-/// Execute an e2e scenario's steps. (Load scenarios are driven by the
-/// loadgen engine — Phase 5.)
+/// The raw result of running one phase's steps against a shared var store.
 /// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-mod-rs.md#source
-pub fn run_scenario(scenario: &Scenario) -> ScenarioRun {
-    let id = scenario_id(&scenario.record);
-    let mut vars = VarStore::seed(&scenario.env);
+pub struct PhaseRun {
+    /// True when every step held its expectations.
+    pub raw_passed: bool,
+    pub findings: Vec<Finding>,
+    pub steps_run: usize,
+}
+
+/// Run a slice of steps against an EXTERNAL var store under a whole-phase
+/// `timeout_secs` budget (checked between steps). `subject` keys finding ids
+/// and the rerun hint. Lifted out of [`run_scenario`] so the lifecycle case
+/// model's prepare/exercise/clean phases can share one captured-var thread.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-mod-rs.md#source
+pub fn run_phase(steps: &[Step], timeout_secs: u64, subject: &str, vars: &mut VarStore) -> PhaseRun {
     let mut findings: Vec<Finding> = Vec::new();
     let started = Instant::now();
-    let rerun = format!("rig run --scenario <path-of {id}>");
+    let rerun = format!("rig run --scenario <path-of {subject}>");
     let mut steps_run = 0usize;
 
-    for step in &scenario.steps {
-        if started.elapsed().as_secs() >= scenario.limits.timeout_secs {
+    for step in steps {
+        if started.elapsed().as_secs() >= timeout_secs {
             findings.push(Finding {
-                id: finding_id(Kind::Timeout, &id),
+                id: finding_id(Kind::Timeout, subject),
                 severity: Severity::High,
                 kind: Kind::Timeout,
-                title: format!("scenario `{id}` exceeded its {}s budget", scenario.limits.timeout_secs),
+                title: format!("scenario `{subject}` exceeded its {timeout_secs}s budget"),
                 detail: format!(
                     "stopped before step `{}` after {} step(s); raise [limits] timeout_secs or trim the scenario",
                     step.name(),
@@ -61,11 +71,11 @@ pub fn run_scenario(scenario: &Scenario) -> ScenarioRun {
                 ),
                 remediation: "Raise [limits].timeout_secs or split the scenario.".into(),
                 invoke: Invoke::command(rerun.clone()),
-                evidence: json!({ "steps_run": steps_run, "budget_secs": scenario.limits.timeout_secs }),
+                evidence: json!({ "steps_run": steps_run, "budget_secs": timeout_secs }),
             });
             break;
         }
-        match run_step(step, &id, &mut vars, &rerun) {
+        match run_step(step, subject, vars, &rerun) {
             StepResult::Ok => {}
             StepResult::Failed(finding) => {
                 findings.push(finding);
@@ -76,12 +86,26 @@ pub fn run_scenario(scenario: &Scenario) -> ScenarioRun {
         steps_run += 1;
     }
 
-    ScenarioRun {
+    PhaseRun {
         raw_passed: findings.is_empty(),
-        scenario_id: id,
         findings,
-        vars,
         steps_run,
+    }
+}
+
+/// Execute an e2e scenario's steps. Thin wrapper over [`run_phase`] that seeds
+/// the var store from `[env]` and keys findings on the scenario id.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-mod-rs.md#source
+pub fn run_scenario(scenario: &Scenario) -> ScenarioRun {
+    let id = scenario_id(&scenario.record);
+    let mut vars = VarStore::seed(&scenario.env);
+    let phase = run_phase(&scenario.steps, scenario.limits.timeout_secs, &id, &mut vars);
+    ScenarioRun {
+        raw_passed: phase.raw_passed,
+        scenario_id: id,
+        findings: phase.findings,
+        vars,
+        steps_run: phase.steps_run,
     }
 }
 
