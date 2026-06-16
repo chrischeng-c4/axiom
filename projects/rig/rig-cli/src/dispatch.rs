@@ -132,6 +132,12 @@ fn run_run(args: RunArgs) -> RigReport {
     use rig::scenario::{ExpectedOutcome, ScenarioKind};
     use rig::verdict::{bucket, Verdict};
 
+    // DEPRECATED: the flat `[record]/[[steps]]/[load]` scenario path. Prefer
+    // `rig test` with `[case]/[prepare]/[exercise]/[clean]` lifecycle cases.
+    eprintln!(
+        "warning: `rig run --dir` (flat scenarios) is deprecated; migrate to `rig test` with lifecycle cases."
+    );
+
     let target = args
         .scenario
         .clone()
