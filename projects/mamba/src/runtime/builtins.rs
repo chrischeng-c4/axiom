@@ -3549,7 +3549,11 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
             .map_or(false, |p| matches!(&(*p).data, ObjData::Str(_)))
     };
     if is_complex_obj(a) || (is_complex_obj(b) && !a_is_str) {
-        raise_type_error("can't mod complex numbers.".to_string());
+        raise_type_error(format!(
+            "unsupported operand type(s) for %: '{}' and '{}'",
+            value_type_name(a),
+            value_type_name(b)
+        ));
         return MbValue::none();
     }
     // timedelta % timedelta -> timedelta remainder (floor semantics).
@@ -6882,11 +6886,6 @@ pub fn mb_divmod(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("divmod", a, b) {
         return r;
     }
-    // divmod() is undefined for complex (CPython 3.12 message).
-    if is_complex_obj(a) || is_complex_obj(b) {
-        raise_type_error("can't take floor or mod of complex number.".to_string());
-        return MbValue::none();
-    }
     // Arbitrary-precision (BigInt) operands — `as_int()` is None for these, so
     // the inline integer arm below would miss them. (#sys.maxsize)
     if is_bigint_value(a) || is_bigint_value(b) {
@@ -8262,9 +8261,13 @@ pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = bigint_numeric_binop("//", a, b) {
         return r;
     }
-    // complex doesn't support floor division (CPython 3.12 message).
+    // complex doesn't support floor division (CPython TypeError).
     if is_complex_obj(a) || is_complex_obj(b) {
-        raise_type_error("can't take floor of complex number.".to_string());
+        raise_type_error(format!(
+            "unsupported operand type(s) for //: '{}' and '{}'",
+            value_type_name(a),
+            value_type_name(b)
+        ));
         return MbValue::none();
     }
     // timedelta // timedelta -> int; timedelta // int -> timedelta.
