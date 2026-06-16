@@ -544,17 +544,32 @@ pub fn mb_bytes_hex_with_sep(bytes: MbValue, sep: MbValue, bytes_per_sep: MbValu
         };
         // Resolve separator: accept str (first char) or bytes (first byte).
         // None / unrecognised types fall through to the unseparated form.
+        // CPython requires the separator to be exactly one character; an empty
+        // or multi-character separator raises ValueError("sep must be length 1.").
+        let invalid_sep = || {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("sep must be length 1.".to_string())),
+            );
+            MbValue::from_ptr(MbObject::new_str(String::new()))
+        };
         let sep_char: Option<char> = if sep.is_none() {
             None
         } else if let Some(s) = sep.as_ptr().and_then(|p| match &(*p).data {
             ObjData::Str(s) => Some(s.clone()),
             _ => None,
         }) {
+            if s.chars().count() != 1 {
+                return invalid_sep();
+            }
             s.chars().next()
         } else if let Some(b) = sep.as_ptr().and_then(|p| match &(*p).data {
             ObjData::Bytes(b) => Some(b.clone()),
             _ => None,
         }) {
+            if b.len() != 1 {
+                return invalid_sep();
+            }
             b.first().map(|byte| *byte as char)
         } else {
             None
