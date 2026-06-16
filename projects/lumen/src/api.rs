@@ -1136,6 +1136,11 @@ impl From<anyhow::Error> for ApiErr {
                     kind: "query_too_complex",
                     message: e.to_string(),
                 },
+                StorageError::UnsupportedSort(_) => Self {
+                    status: StatusCode::BAD_REQUEST,
+                    kind: "unsupported_sort",
+                    message: e.to_string(),
+                },
                 StorageError::Gone(_) => Self {
                     status: StatusCode::GONE,
                     kind: "gone",

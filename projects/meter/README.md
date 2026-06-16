@@ -10,10 +10,10 @@ run and emits agent-readable findings.
 
 Current public scope:
 
-- CPU hot spots from capture-mode sampling.
-- Per-run process vitals (cpu_time / wall_time / peak RSS) with declarative
-  meter.toml gates (`level` knob + `[gate]` ceilings).
-- Phase and boundary cost from embedded measurement data.
+- External executable measurement: cpu_time / wall_time / peak RSS, plus optional
+  sampled CPU hot spots.
+- Source/runtime profiling policy via `meter.toml` `level`, with shipped
+  embedded phase/boundary-cost folding.
 - Benchmark regression folding from saved baselines.
 - Delegated test failure packaging, without replacing the test runner.
 - Deterministic JSON reports and offline LLM/self-description docs.
@@ -37,7 +37,7 @@ vat run
   runs the workload
         |
         v
-meter run / profile / bench / test
+meter run / measure / profile / bench / test
   delegates tests when needed
   samples or folds resource evidence
   prints one MeterReport JSON document
@@ -50,20 +50,21 @@ agent
 
 `meter` has two complementary modes:
 
-- **Capture mode** observes from outside the workload. It can run test/bench
-  commands or sample a binary with zero product-code edits.
-- **Embed mode** consumes measurement data emitted by code that already uses
-  `meter` APIs, such as `Profiler`, `BoundaryTracer`, and `Benchmarker`.
+- **Measure mode** observes from outside the workload. It can run an executable
+  or cargo target and record simple process vitals, with optional stack sampling.
+- **Profile mode** consumes source/runtime-aware data. The shipped path folds
+  measurement data emitted by code that already uses `meter` APIs, such as
+  `Profiler`, `BoundaryTracer`, and `Benchmarker`.
 
 The ideal future shape is mixed: AST finds reasonable instrumentation points,
-generated probes collect data, and capture-mode commands fold everything into
+generated probes collect data, and `measure` / `profile` fold everything into
 one report.
 
 ## Capability Index
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| runtime-resource-attribution | - | implemented | verified | smoke | ready | CPU/profile, phase boundary cost, benchmark regression |
+| runtime-resource-attribution | - | implemented | verified | smoke | ready | measure/profile, phase boundary cost, benchmark regression |
 | agent-use-first-cli | - | implemented | verified | smoke | ready | JSON-default CLI and offline LLM/spec contract |
 | legacy-carried-internals | - | retired | verified | smoke | retired | Old qc-era modules retained for compatibility, not public meter capability |
 
@@ -90,7 +91,7 @@ one report.
 | Status | verified |
 | Promise | meter emits ranked runtime/resource findings so an agent can identify where time goes and catch benchmark regressions outside ordinary unit tests. |
 | Required Verification | smoke |
-| Gate Inventory | `cargo run -p meter-cli --bin meter -- profile --phases projects/meter/tests/fixtures/profile_phase_breakdown.json`; `cargo test -p meter performance::profiler`; `cargo test -p meter benchmark::` |
+| Gate Inventory | `cargo run -p meter-cli --bin meter -- measure --exec /bin/ls --compact`; `cargo run -p meter-cli --bin meter -- profile --phases projects/meter/tests/fixtures/profile_phase_breakdown.json`; `cargo test -p meter performance::profiler`; `cargo test -p meter benchmark::` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -101,18 +102,19 @@ one report.
 
 Shipped behavior:
 
-- `meter profile --bin|--example|--bench|--exec <target>` measures under the
-  single-knob contract: level `vitals` (default) emits `Finding{kind:vital}`
+- `meter measure <target>|--bin|--example|--bench|--exec <target>` measures an
+  external executable or cargo target: level `vitals` (default) emits
+  `Finding{kind:vital}`
   (cpu_time_ms / wall_time_ms / peak_rss_bytes via wait4+rusage, no sampler);
   level `sample` adds ranked `Finding{kind:hotspot}` evidence plus a
   `.meter/<target>.collapsed` artifact. The window lasts until the child exits
   (`--duration-cap` bounds it; `--drive <cmd>` runs an opaque driver whose exit
-  ends the window — meter never generates load). meter.toml `[gate]` ceilings
-  (max_peak_rss_mb / max_cpu_time_ms) breach as High findings (exit 1) with an
-  escalation prompt to `--level sample`. Levels `hooks`/`deep` parse but defer
-  to the L3/L4 instrumentation epic (WI #4).
+  ends the window — meter never generates load). `measure` does not read
+  project gates; threshold policy belongs to the project EC/arena/rig/vat layer.
 - `meter profile --phases <file>` reads a serialized `PhaseBreakdown` and emits
   `Finding{kind:boundary_cost}` without sampler privileges.
+- `meter profile <source-target>` is reserved for source/runtime-aware
+  auto-instrumentation; direct RS/TS/PY probe injection is not wired yet.
 - `meter bench --target <crate> --baseline <file>` folds benchmark regressions
   into `Finding{kind:regression}` and exits 2 for medium-or-worse regressions.
 - Embedded APIs provide phase timing, boundary tracing, benchmark stats, and
@@ -120,9 +122,9 @@ Shipped behavior:
 
 Known limits:
 
-- IO, disk, GPU, network, and leak detection are not public gates yet
-  (cpu_time / wall / peak RSS are, via meter.toml `[gate]`).
-- Whole-crate auto-discovery is not wired; profile needs an explicit target.
+- IO, disk, GPU, network, and leak detection are not public signals yet.
+- Source auto-discovery/probe injection is not wired; `profile` currently needs
+  embedded phase data.
 
 ### Agent Use First CLI
 
@@ -184,8 +186,8 @@ All public verbs ship through the `meter-cli` crate.
 ```bash
 cargo run -p meter-cli --bin meter -- llm guide
 cargo run -p meter-cli --bin meter -- run --target .
+cargo run -p meter-cli --bin meter -- measure --example profile_target --duration 3
 cargo run -p meter-cli --bin meter -- profile --phases projects/meter/tests/fixtures/profile_phase_breakdown.json
-cargo run -p meter-cli --bin meter -- profile --example profile_target --duration 3
 cargo run -p meter-cli --bin meter -- bench --target . --baseline baseline.json
 cargo run -p meter-cli --bin meter -- test -- -p meter --lib
 cargo run -p meter-cli --bin meter -- report
@@ -196,7 +198,9 @@ Public verbs:
 
 - `test` delegates and forwards the child runner exit.
 - `bench` delegates `cargo bench` and folds a serialized regression baseline.
-- `profile` samples CPU stacks or folds serialized phase data.
+- `measure` records external executable vitals and optional CPU stack samples.
+- `profile` folds serialized phase data today; source auto-instrumentation is
+  the reserved direction.
 - `run` composes test plus opt-in bench/profile into one report.
 - `report` and `state` re-project `.meter/last-report.json`.
 - `spec` emits schema/catalog data.
@@ -209,8 +213,8 @@ Every populator report is a `MeterReport`:
 - `status`, `clean`, `exit_code`, and `terminal` are machine-readable.
 - `findings[]` carries `id`, `severity`, `kind`, `remediation`, `invoke`, and
   structured `evidence`.
-- Public finding kinds are `hotspot`, `boundary_cost`, `regression`, and
-  `test_failure`.
+- Public finding kinds are `vital`, `hotspot`, `boundary_cost`, `regression`,
+  and `test_failure`.
 - `completion.missing` lists skipped or un-driven sub-verbs so an agent can see
   coverage gaps.
 - `.meter/last-report.json` is best-effort persisted for `meter report`.
@@ -243,8 +247,7 @@ let result = profiler.finish();
 
 ## Known Gaps
 
-- RSS/memory, IO, disk, network, GPU, and leak detection are not wired into the
-  public CLI yet.
+- IO, disk, network, GPU, and leak detection are not wired into the public CLI yet.
 - AST-assisted instrumentation is planned but not implemented.
 - The `meter-cli` crate registers a `CliModule`, but no aggregating `cclab` host
   binary exposes `cclab meter <verb>` in-tree.
