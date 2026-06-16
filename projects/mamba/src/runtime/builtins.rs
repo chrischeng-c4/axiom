@@ -5606,6 +5606,25 @@ fn frozenset_hash(items: &[MbValue]) -> i64 {
 }
 
 /// hash(value) — return hash of a value.
+/// Hash a float into mamba's 48-bit signed int hash domain. Integral floats
+/// hash like the equivalent int (so `hash(7.0) == hash(7)`); ±inf / nan use
+/// CPython's fixed sentinels; fractional values fold their bits. Shared by the
+/// float and complex arms of mb_hash so `hash(complex(x, 0)) == hash(x)`.
+fn float_hash_i64(f: f64) -> i64 {
+    if f.is_finite() && f == f.floor() && f.abs() < (1i64 << 53) as f64 {
+        let i = f as i64;
+        if i == -1 { -2 } else { i }
+    } else if f.is_nan() {
+        0
+    } else if f.is_infinite() {
+        if f > 0.0 { 314159 } else { -314159 }
+    } else {
+        let folded = (f.to_bits() ^ (f.to_bits() >> 32)) & 0x0000_FFFF_FFFF_FFFF;
+        let hash = ((folded as i64) << 16) >> 16;
+        if hash == -1 { -2 } else { hash }
+    }
+}
+
 pub fn mb_hash(val: MbValue) -> MbValue {
     // Python 3.12: slice is hashable, with `hash(slice(a,b,c)) ==
     // hash((a,b,c))`. Delegating to the tuple hash also reproduces CPython's
@@ -5645,21 +5664,9 @@ pub fn mb_hash(val: MbValue) -> MbValue {
         // as an error sentinel in the C API.
         MbValue::from_int(if i == -1 { -2 } else { i })
     } else if let Some(f) = val.as_float() {
-        // CPython: hash(float) == hash(int) when float is integral.
-        // For integral floats, return hash of the integer value.
-        if f.is_finite() && f == f.floor() && f.abs() < (1i64 << 53) as f64 {
-            let i = f as i64;
-            MbValue::from_int(if i == -1 { -2 } else { i })
-        } else if f.is_nan() {
-            MbValue::from_int(0)
-        } else if f.is_infinite() {
-            MbValue::from_int(if f > 0.0 { 314159 } else { -314159 })
-        } else {
-            // Non-integral float: fold bits into Mamba's 48-bit int payload.
-            let folded = (f.to_bits() ^ (f.to_bits() >> 32)) & 0x0000_FFFF_FFFF_FFFF;
-            let hash = ((folded as i64) << 16) >> 16;
-            MbValue::from_int(if hash == -1 { -2 } else { hash })
-        }
+        // CPython: hash(float) == hash(int) when float is integral. Folds
+        // fractional values; see float_hash_i64.
+        MbValue::from_int(float_hash_i64(f))
     } else if let Some(b) = val.as_bool() {
         MbValue::from_int(b as i64)
     } else if val.is_none() {
@@ -5670,6 +5677,14 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                 ObjData::Str(_) => super::string_ops::mb_str_hash(val),
                 ObjData::Tuple(_) => super::tuple_ops::mb_tuple_hash(val),
                 ObjData::FrozenSet(items) => MbValue::from_int(frozenset_hash(items)),
+                // CPython: hash(z) = float_hash(re) + HASH_IMAG * float_hash(im)
+                // (HASH_IMAG = 1000003). A real-valued complex (im == 0) hashes
+                // exactly like float_hash(re), so hash(complex(x, 0)) == hash(x).
+                ObjData::Complex(re, im) => {
+                    let h = float_hash_i64(*re)
+                        .wrapping_add(1000003i64.wrapping_mul(float_hash_i64(*im)));
+                    MbValue::from_int(if h == -1 { -2 } else { h })
+                }
                 ObjData::Instance { class_name, .. } => {
                     // namedtuple instances hash like the equivalent plain
                     // tuple: hash(Point(11, 22)) == hash((11, 22)).
