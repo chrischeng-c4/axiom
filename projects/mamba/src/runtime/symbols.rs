@@ -2114,6 +2114,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_property_from_args",
+            class::mb_property_from_args as fn(super::MbValue) -> super::MbValue,
+            [I64],
+            I64
+        ),
+        rt_sym!(
             "mb_property_setter",
             class::mb_property_setter as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],

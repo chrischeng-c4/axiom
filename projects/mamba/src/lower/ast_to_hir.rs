@@ -5339,6 +5339,8 @@ impl<'a> AstLowerer<'a> {
                             | "patch" | "mock_open" | "call"
                             // urllib.parse functions with behavioral kwargs
                             | "parse_qs" | "parse_qsl" | "urlencode"
+                            // property(fget=, fset=, fdel=, doc=) keyword form
+                            | "property"
                     ) || self.dataclasses_kwarg_idents.contains(name.as_str())
                 );
                 let pack_trailing_kwargs = (is_method_call && has_any_kwargs)
