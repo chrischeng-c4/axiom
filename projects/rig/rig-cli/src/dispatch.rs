@@ -44,10 +44,6 @@ pub enum Verb {
     Lint(LintArgs),
     /// Re-project the persisted `.rig/last-report.json` (read-only).
     Report,
-    /// Offline self-describer (report schema + step-type catalog). v1.
-    Spec,
-    /// Offline agent playbook. v1.
-    Llm,
 }
 
 #[derive(Args, Debug, Default)]
@@ -123,8 +119,6 @@ pub fn execute(cmd: RigCommand) -> RigReport {
         Verb::Test(args) => run_test(args),
         Verb::Lint(args) => run_lint(args),
         Verb::Report => run_report(),
-        Verb::Spec => stub_report("spec", "rig spec is not implemented yet (v1)"),
-        Verb::Llm => stub_report("llm", "rig llm is not implemented yet (v1)"),
     }
 }
 
@@ -874,12 +868,6 @@ fn run_report() -> RigReport {
             b.finalize()
         }
     }
-}
-
-fn stub_report(verb: &str, msg: &str) -> RigReport {
-    let mut b = ReportBuilder::new(verb, ".");
-    b.tool_error(3, msg);
-    b.finalize()
 }
 
 /// Print the report as the single stdout document and return its exit code.
