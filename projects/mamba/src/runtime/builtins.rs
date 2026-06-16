@@ -7658,6 +7658,28 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     {
                         let arg0 = items.first().copied().unwrap_or_else(MbValue::none);
                         let result = match name.as_str() {
+                            // Singleton types: `type(None)()` / `type(...)()` /
+                            // `type(NotImplemented)()` with no args return the
+                            // singleton itself; any argument is a TypeError.
+                            "NoneType" | "ellipsis" | "NotImplementedType" => {
+                                if !items.is_empty() {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "TypeError".to_string(),
+                                        )),
+                                        MbValue::from_ptr(MbObject::new_str(format!(
+                                            "{name} takes no arguments"
+                                        ))),
+                                    );
+                                    Some(MbValue::none())
+                                } else {
+                                    Some(match name.as_str() {
+                                        "NoneType" => MbValue::none(),
+                                        "ellipsis" => MbValue::ellipsis(),
+                                        _ => MbValue::not_implemented(),
+                                    })
+                                }
+                            }
                             "int" => Some(mb_int(arg0)),
                             "float" => Some(mb_float(arg0)),
                             "str" => Some(mb_str(arg0)),
