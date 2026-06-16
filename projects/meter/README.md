@@ -60,6 +60,33 @@ The ideal future shape is mixed: AST finds reasonable instrumentation points,
 generated probes collect data, and `measure` / `profile` fold everything into
 one report.
 
+## Command Split
+
+| Command | Target | Uses | Output |
+|---|---|---|---|
+| `meter measure <target>` | Binary, executable path, or command on `PATH` | External observation when the target can only be run as a process. | `vital` findings for cpu/wall/RSS; `hotspot` findings and `.meter/*.collapsed` at `--level sample`. |
+| `meter measure --bin/--example/--bench/--exec <target>` | Cargo target or explicit executable path | Same external observation, with cargo build/target resolution when needed. | Same `vital` / `hotspot` findings. |
+| `meter profile --phases <file>` | Serialized `PhaseBreakdown` emitted by meter APIs | Embedded profiling data from code that can instrument itself. | `boundary_cost` findings. |
+| `meter profile <source-target>` | Future RS/TS/PY source/runtime target | Reserved for AST/runtime-assisted auto-instrumentation. | Clear unsupported message until probe injection is wired. |
+
+`meter.toml` is intentionally narrow. It may carry profile policy such as
+`level = "vitals"` or `level = "sample"`, but it does not carry project resource
+gates. Thresholds such as max RSS, p99, qps, or data-size policy belong in the
+project's EC/arena/rig/vat configuration.
+
+## Data Location
+
+`meter` writes local measurement artifacts under `.meter/` in the current
+workspace:
+
+- `.meter/last-report.json` is the best-effort persisted `MeterReport` for
+  `meter report`.
+- `.meter/<target>.collapsed` is written by `meter measure --level sample` when
+  folded stack samples are available.
+
+These files are local evidence/cache artifacts, not source of truth. The
+machine-readable stdout report is the primary agent contract for each run.
+
 ## Capability Index
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
