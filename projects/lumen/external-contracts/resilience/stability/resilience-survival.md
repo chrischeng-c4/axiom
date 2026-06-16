@@ -31,10 +31,10 @@ tool_contracts:
     tool: rig
     manifest: rig.toml
     category: stability
-    command: "target/debug/rig run --dir projects/lumen/tests/rig/scenarios/resilience"
+    command: "target/debug/rig test --dir projects/lumen/tests/rig/cases/resilience"
     native:
       version: 1
       project: lumen
       source_contract: lumen-stability-resilience-survival
-      scenarios_dir: projects/lumen/tests/rig/scenarios/resilience
+      scenarios_dir: projects/lumen/tests/rig/cases/resilience
 ```
