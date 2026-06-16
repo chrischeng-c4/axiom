@@ -2723,6 +2723,38 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                         {
                             return MbValue::from_ptr(MbObject::new_complex(ar + br, ai + bi));
                         }
+                        // The non-complex operand didn't coerce. A BigInt too
+                        // large for a C double raises OverflowError (CPython:
+                        // `1j + 10**1000`); a representable BigInt folds in;
+                        // anything else (None, str, …) is a TypeError instead of
+                        // a silent None. Reached only as the primitive fallback
+                        // after dunder dispatch (`__add__`/`__radd__`) misses.
+                        let (cplx, other) = if is_complex_obj(a) { (a, b) } else { (b, a) };
+                        if is_bigint_value(other) {
+                            match unsafe { super::bigint_ops::int_as_f64(other) } {
+                                Some(x) if x.is_finite() => {
+                                    let (ar, ai) = as_complex_pair(cplx).unwrap_or((0.0, 0.0));
+                                    return MbValue::from_ptr(
+                                        MbObject::new_complex(ar + x, ai),
+                                    );
+                                }
+                                _ => {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "int too large to convert to float".to_string(),
+                                        )),
+                                    );
+                                    return MbValue::none();
+                                }
+                            }
+                        }
+                        raise_type_error(format!(
+                            "unsupported operand type(s) for +: '{}' and '{}'",
+                            value_type_name(a),
+                            value_type_name(b)
+                        ));
+                        return MbValue::none();
                     }
                     // statistics.NormalDist translation / combination.
                     if let Some(r) = super::stdlib::statistics_mod::normaldist_binop("+", a, b) {
@@ -3360,6 +3392,15 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
                         ar * bi + ai * br,
                     ));
                 }
+                // complex * non-numeric (e.g. `1j * None`) → TypeError, not a
+                // silent None. Reached only as the primitive fallback after
+                // dunder dispatch (`__mul__`/`__rmul__`) misses.
+                raise_type_error(format!(
+                    "unsupported operand type(s) for *: '{}' and '{}'",
+                    value_type_name(a),
+                    value_type_name(b)
+                ));
+                return MbValue::none();
             }
             let af = a.as_int().map(|i| i as f64).or(a.as_float());
             let bf = b.as_int().map(|i| i as f64).or(b.as_float());
