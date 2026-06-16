@@ -40,10 +40,10 @@ rig run --dir tests/rig/scenarios [--vat] [--pins tests/rig/config/pins]
 
 | verb | status | behavior |
 |---|---|---|
-| `rig run [--scenario <f> \| --dir <d>] [--pins <d>] [--update-baselines] [--vat]` | v0 | discover → lint → execute → gate → one JSON report |
+| `rig test [--dir <d>] [--dimension <d>] [--case <id>] [--collect] [--pins <d>] [--update-baselines]` | v1 | lifecycle-case launcher: discover `[case]` TOMLs → prepare/exercise(N)/clean → fold one report |
+| `rig run [--scenario <f> \| --dir <d>] [--pins <d>] [--update-baselines] [--vat]` | v0 (deprecated) | flat scenarios: discover → lint → execute → gate → one JSON report |
 | `rig lint [--dir <d>]` | v0 | record-contract check only, no execution |
 | `rig report` | v0 | re-project `.rig/last-report.json` (read-only) |
-| `rig spec` / `rig llm` | v1 | offline self-description / agent playbook (stubs: exit 3) |
 
 ## Capability Index
 
