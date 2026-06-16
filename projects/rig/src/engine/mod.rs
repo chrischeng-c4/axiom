@@ -51,7 +51,12 @@ pub struct PhaseRun {
 /// and the rerun hint. Lifted out of [`run_scenario`] so the lifecycle case
 /// model's prepare/exercise/clean phases can share one captured-var thread.
 /// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-mod-rs.md#source
-pub fn run_phase(steps: &[Step], timeout_secs: u64, subject: &str, vars: &mut VarStore) -> PhaseRun {
+pub fn run_phase(
+    steps: &[Step],
+    timeout_secs: u64,
+    subject: &str,
+    vars: &mut VarStore,
+) -> PhaseRun {
     let mut findings: Vec<Finding> = Vec::new();
     let started = Instant::now();
     let rerun = format!("rig run --scenario <path-of {subject}>");
@@ -99,7 +104,12 @@ pub fn run_phase(steps: &[Step], timeout_secs: u64, subject: &str, vars: &mut Va
 pub fn run_scenario(scenario: &Scenario) -> ScenarioRun {
     let id = scenario_id(&scenario.record);
     let mut vars = VarStore::seed(&scenario.env);
-    let phase = run_phase(&scenario.steps, scenario.limits.timeout_secs, &id, &mut vars);
+    let phase = run_phase(
+        &scenario.steps,
+        scenario.limits.timeout_secs,
+        &id,
+        &mut vars,
+    );
     ScenarioRun {
         raw_passed: phase.raw_passed,
         scenario_id: id,
