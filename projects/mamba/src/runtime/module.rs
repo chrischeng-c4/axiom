@@ -25,6 +25,12 @@ pub struct MbModule {
 thread_local! {
     pub(crate) static MODULES: std::cell::RefCell<HashMap<String, MbModule>> =
         std::cell::RefCell::new(HashMap::new());
+    /// Heap pointers of dict objects that represent imported modules. A module
+    /// is modeled as a dict of its attributes, so without this marker
+    /// `isinstance(mod, types.ModuleType)` and `type(mod)` cannot tell a module
+    /// dict from an ordinary dict. Populated in module_to_value.
+    pub(crate) static MODULE_VALUE_PTRS: std::cell::RefCell<HashSet<u64>> =
+        std::cell::RefCell::new(HashSet::new());
     pub(crate) static SEARCH_PATHS: std::cell::RefCell<Vec<PathBuf>> =
         std::cell::RefCell::new(vec![PathBuf::from(".")]);
     /// Set of function pointer addresses registered as native extern functions.
@@ -1433,7 +1439,21 @@ pub(crate) fn module_to_value(module: &MbModule) -> MbValue {
             }
         }
     }
+    // Mark this dict as a module value so isinstance(_, types.ModuleType) and
+    // type(_) can distinguish it from an ordinary dict.
+    MODULE_VALUE_PTRS.with(|s| {
+        s.borrow_mut().insert(dict as u64);
+    });
     MbValue::from_ptr(dict)
+}
+
+/// True iff `v` is a dict that represents an imported module (see
+/// MODULE_VALUE_PTRS) — backs isinstance(v, types.ModuleType) and type(v).
+pub fn is_module_value(v: MbValue) -> bool {
+    match v.as_ptr() {
+        Some(p) => MODULE_VALUE_PTRS.with(|s| s.borrow().contains(&(p as u64))),
+        None => false,
+    }
 }
 
 /// Like `module_to_value` but writes the result back into `module.cached_value`.
