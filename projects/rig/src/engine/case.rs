@@ -65,28 +65,33 @@ pub fn run_case(case: &TestCase, mode: Mode) -> CaseResult {
     match mode {
         // ===== n = 1: assertions -> verdict =====
         Mode::Behavior => {
-            let step = exercise_http_step(case);
-            let ex = run_phase(std::slice::from_ref(&step), timeout, &id, &mut vars);
+            let (raw_passed, findings) = match exercise_http_step(case) {
+                // http engine: reuse the full step dispatcher (status + jsonpath).
+                Some(step) => {
+                    let ex = run_phase(std::slice::from_ref(&step), timeout, &id, &mut vars);
+                    (ex.raw_passed, ex.findings)
+                }
+                // sql engine: a single query exec (feature `postgres`).
+                None => run_query_once(case, &id),
+            };
             run_clean(case, &id, &mut vars);
-            let raw_passed = ex.raw_passed;
             CaseResult::Verdict {
                 verdict: bucket(case.record.expected, raw_passed),
                 raw_passed,
-                findings: ex.findings,
+                findings,
                 case_id: id,
                 vars,
             }
         }
         // ===== n >> 1: stats (pin gating happens at the launcher) =====
         Mode::Load(schedule) => {
-            // Same request, status-only success: strip jsonpath for the load path.
-            let mut req = case.exercise.request.clone();
-            req.expect.jsonpath.clear();
-            let transport: Arc<dyn Transport> = Arc::new(HttpTransport {
-                request: req,
-                vars: vars.clone(),
-            });
-            let stats = run_transport(&schedule, &transport);
+            let stats = match build_load_transport(case, &vars) {
+                Ok(transport) => run_transport(&schedule, &transport),
+                Err(e) => LoadStats {
+                    abort: Some(e),
+                    ..Default::default()
+                },
+            };
             run_clean(case, &id, &mut vars);
             CaseResult::Stats {
                 metric: case.load.metric.clone(),
@@ -99,14 +104,90 @@ pub fn run_case(case: &TestCase, mode: Mode) -> CaseResult {
     }
 }
 
-/// Lower the exercise request into a single `http` step so it reuses the same
-/// `run_step` dispatcher (status + jsonpath assertions + capture) as `n=1`.
-fn exercise_http_step(case: &TestCase) -> Step {
-    Step::Http(HttpStep {
-        name: "exercise".to_string(),
-        request: case.exercise.request.clone(),
-        capture: BTreeMap::new(),
+/// Lower the exercise's http request into a single `http` step so it reuses the
+/// same `run_step` dispatcher (status + jsonpath + capture) as `n=1`. `None` for
+/// a sql (`query`) exercise.
+fn exercise_http_step(case: &TestCase) -> Option<Step> {
+    case.exercise.request.as_ref().map(|req| {
+        Step::Http(HttpStep {
+            name: "exercise".to_string(),
+            request: req.clone(),
+            capture: BTreeMap::new(),
+        })
     })
+}
+
+/// Build the load transport from the exercise engine: http -> `HttpTransport`
+/// (status-only, jsonpath stripped); sql -> `PostgresTransport` (feature
+/// `postgres`). Both ride the SAME scheduler — the lumen-vs-pg comparability.
+fn build_load_transport(case: &TestCase, vars: &VarStore) -> Result<Arc<dyn Transport>, String> {
+    if let Some(req) = &case.exercise.request {
+        let mut req = req.clone();
+        req.expect.jsonpath.clear();
+        return Ok(Arc::new(HttpTransport {
+            request: req,
+            vars: vars.clone(),
+        }));
+    }
+    if let Some(q) = &case.exercise.query {
+        #[cfg(feature = "postgres")]
+        {
+            return Ok(Arc::new(crate::engine::transport::PostgresTransport {
+                dsn: q.dsn.clone(),
+                sql: q.sql.clone(),
+            }));
+        }
+        #[cfg(not(feature = "postgres"))]
+        {
+            let _ = q;
+            return Err("query engine needs the `postgres` feature".to_string());
+        }
+    }
+    Err("exercise has neither request nor query".to_string())
+}
+
+/// Single sql exec for an `n=1` query behavior case (feature `postgres`).
+#[cfg(feature = "postgres")]
+fn run_query_once(case: &TestCase, id: &str) -> (bool, Vec<Finding>) {
+    use crate::engine::transport::{PostgresTransport, Transport};
+    let Some(q) = &case.exercise.query else {
+        return (false, vec![query_finding(id, "exercise has no query")]);
+    };
+    let t = PostgresTransport {
+        dsn: q.dsn.clone(),
+        sql: q.sql.clone(),
+    };
+    match t.connect().and_then(|mut w| w.execute()) {
+        Ok(()) => (true, Vec::new()),
+        Err(e) => (false, vec![query_finding(id, &e)]),
+    }
+}
+
+#[cfg(not(feature = "postgres"))]
+fn run_query_once(case: &TestCase, id: &str) -> (bool, Vec<Finding>) {
+    let _ = case;
+    (
+        false,
+        vec![query_finding(
+            id,
+            "query engine needs the `postgres` feature",
+        )],
+    )
+}
+
+/// A `ScenarioError` finding for a failed/unavailable sql exercise.
+fn query_finding(id: &str, detail: &str) -> Finding {
+    use crate::report::{finding_id, Invoke, Kind, Severity};
+    Finding {
+        id: finding_id(Kind::ScenarioError, &format!("query/{id}")),
+        severity: Severity::High,
+        kind: Kind::ScenarioError,
+        title: format!("sql exercise failed in `{id}`"),
+        detail: detail.to_string(),
+        remediation: "Check the dsn/sql and that the `postgres` feature is enabled.".to_string(),
+        invoke: Invoke::command("rig test".to_string()),
+        evidence: serde_json::json!({ "engine": "sql" }),
+    }
 }
 
 /// Run-once teardown. Findings are discarded — clean is hygiene, never a gate
