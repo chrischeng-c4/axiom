@@ -1710,34 +1710,46 @@ pub fn mb_next(iter_handle: MbValue) -> MbValue {
 pub fn mb_next_default(iter_handle: MbValue, default: MbValue) -> MbValue {
     super::gc::gc_safepoint();
     if let Some(id) = iter_handle.as_int() {
-        ITERATORS.with(|iters| {
+        let handled = ITERATORS.with(|iters| {
             let mut iters = iters.borrow_mut();
             if let Some(iter) = iters.get_mut(&(id as u64)) {
                 if iter.exhausted {
                     // Retain: JIT releases both default arg VReg and result VReg.
                     unsafe { super::rc::retain_if_ptr(default) };
-                    return default;
+                    return Some(default);
                 }
                 if let Some(peeked) = iter.peeked.take() {
-                    return peeked;
+                    return Some(peeked);
                 }
                 let val = advance_iter(iter);
                 // If iterator just became exhausted, return default
                 if iter.exhausted {
                     unsafe { super::rc::retain_if_ptr(default) };
-                    default
+                    Some(default)
                 } else {
-                    val
+                    Some(val)
                 }
             } else {
-                unsafe { super::rc::retain_if_ptr(default) };
-                default
+                // Int that is not a known handle iterator (e.g. a bare generator
+                // handle) — fall through to the generic __next__ path below.
+                None
             }
-        })
-    } else {
-        unsafe { super::rc::retain_if_ptr(default) };
-        default
+        });
+        if let Some(v) = handled {
+            return v;
+        }
     }
+    // Generic path: a raw user-defined iterator instance, generator handle, or
+    // callable iterator passed directly to `next(it, default)`. Delegate to
+    // mb_next_raise (which dispatches to __next__ / generator-next) and swallow
+    // StopIteration → default, matching CPython's two-arg next().
+    let val = mb_next_raise(iter_handle);
+    if super::exception::current_exception_type().as_deref() == Some("StopIteration") {
+        super::exception::mb_clear_exception();
+        unsafe { super::rc::retain_if_ptr(default) };
+        return default;
+    }
+    val
 }
 
 /// Single-call iterator advance: returns the next value, or
