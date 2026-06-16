@@ -556,8 +556,11 @@ unsafe extern "C" fn dispatch_super(args_ptr: *const MbValue, nargs: usize) -> M
 }
 
 unsafe extern "C" fn dispatch_property(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    // property(fget=None, fset=None, fdel=None, doc=None) — positional and/or a
+    // trailing kwargs dict (property is in the native-kwargs allowlist). Shared
+    // with the class-construction path via mb_property_construct.
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::class::mb_property_new(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::class::mb_property_construct(args)
 }
 
 unsafe extern "C" fn dispatch_classmethod(args_ptr: *const MbValue, nargs: usize) -> MbValue {
