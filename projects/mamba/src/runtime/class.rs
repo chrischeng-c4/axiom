@@ -9972,6 +9972,15 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                         .ok()
                         .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
                     {
+                        // Singleton types: `type(None)()` / `type(...)()` /
+                        // `type(NotImplemented)()` return the singleton itself,
+                        // not a fresh instance (`type(None)() is None`).
+                        match type_name.as_str() {
+                            "NoneType" => return MbValue::none(),
+                            "ellipsis" => return MbValue::ellipsis(),
+                            "NotImplementedType" => return MbValue::not_implemented(),
+                            _ => {}
+                        }
                         let name_val = MbValue::from_ptr(MbObject::new_str(type_name));
                         let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
                         return mb_instance_new_with_init(name_val, args_list);
@@ -10384,6 +10393,26 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             ))),
         );
         return MbValue::none();
+    }
+
+    // Comparison dunders on the None singleton: None.__eq__/__ne__ compare by
+    // identity — True/False only against None, NotImplemented for any other
+    // type (so `==`/`!=` fall back to identity). Ordering dunders are always
+    // NotImplemented. None carries no MbObject, so without this it would fall
+    // through to "'NoneType' object has no attribute '__ne__'".
+    if receiver.is_none() {
+        let name = extract_str(method_name).unwrap_or_default();
+        if matches!(name.as_str(),
+            "__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__")
+        {
+            let items = super::builtins::extract_items(args);
+            let other = items.first().copied().unwrap_or_else(MbValue::none);
+            return match name.as_str() {
+                "__eq__" if other.is_none() => MbValue::from_bool(true),
+                "__ne__" if other.is_none() => MbValue::from_bool(false),
+                _ => MbValue::not_implemented(),
+            };
+        }
     }
 
     // Issue #2097 fast path — module / plain-dict method dispatch is the
