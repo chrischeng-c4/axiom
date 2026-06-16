@@ -1491,8 +1491,8 @@ fn default_tool_command(ctx: &EcProjectContext, tool: &str, path: &Path, id: &st
         "arena" => format!("arena run --spec {rel}"),
         "rig" => path
             .parent()
-            .map(|parent| format!("rig run --dir {}", relative_to(&ctx.project_root, parent)))
-            .unwrap_or_else(|| format!("rig run --dir {rel}")),
+            .map(|parent| format!("rig test --dir {}", relative_to(&ctx.project_root, parent)))
+            .unwrap_or_else(|| format!("rig test --dir {rel}")),
         "meter" => format!("meter run --target {rel}"),
         "guard" => format!(
             "guard scan {} --compact --no-persist",
