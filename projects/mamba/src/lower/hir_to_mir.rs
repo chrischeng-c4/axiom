@@ -7298,8 +7298,12 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
-                    // Special case: zip with 3+ args → pack into list, call mb_zip_n.
-                    if extern_name == "mb_zip" && boxed_args.len() >= 3 {
+                    // Special case: zip with any arg count other than 2 → pack
+                    // into a list and call mb_zip_n. mb_zip takes exactly two
+                    // iterables, so zip() (empty → []) and zip(x) (single →
+                    // 1-tuples) would otherwise read garbage operands and raise
+                    // a spurious "'float' object is not iterable".
+                    if extern_name == "mb_zip" && boxed_args.len() != 2 {
                         let list_vreg = self.fresh_vreg();
                         self.current_stmts.push(MirInst::MakeList {
                             dest: list_vreg,
