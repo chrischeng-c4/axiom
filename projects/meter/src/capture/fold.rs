@@ -13,7 +13,8 @@
 //!
 //! The result is a `Vec<Finding{kind:Hotspot}>` PRE-SORTED by `self_ns` DESC,
 //! with `evidence = {symbol, self_ns, total_ns, pct, samples, rank}` — the
-//! DEFAULT stdout of `meter profile`. The SVG is a separate `--human`-only artifact
+//! DEFAULT stdout of `meter measure --level sample`. The SVG is a separate
+//! `--human`-only artifact
 //! ([`to_flamegraph`]); it never appears in the JSON report.
 
 use std::collections::HashMap;
@@ -122,7 +123,7 @@ pub fn aggregate(stacks: &[FoldedStack], effective_hz: f64) -> Vec<Hotspot> {
 /// the threshold as `High` severity (the rest are `Info`); without it every hot
 /// spot is informational.
 ///
-/// This is the DEFAULT stdout of `meter profile`. The findings carry
+/// This is the DEFAULT stdout of `meter measure --level sample`. The findings carry
 /// `evidence = {symbol, self_ns, total_ns, pct, samples, rank}` — the C1
 /// contract. `module_for` (optional) supplies a source symbol/location hint.
 /// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
@@ -217,11 +218,11 @@ fn hotspot_finding(h: &Hotspot, fail_hot: Option<f64>) -> Finding {
         ),
         remediation: format!(
             "Investigate `{}`: it dominates self time. Reduce its work, cache its result, \
-             or move it off the hot path, then re-run `meter profile` to confirm.",
+             or move it off the hot path, then re-run `meter measure --level sample` to confirm.",
             h.symbol
         ),
         invoke: Invoke::command(format!(
-            "meter profile --fail-hot {:.0}",
+            "meter measure --level sample --fail-hot {:.0}",
             pct_display.max(1.0)
         )),
         evidence: serde_json::json!({

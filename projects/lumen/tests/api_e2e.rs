@@ -11,12 +11,12 @@ use std::sync::Arc;
 
 use axum_test::TestServer;
 use lumen::coordinator::WriteCoordinator;
-use lumen::routing::{document_shard_index, EngineShardSearch, EngineShardWrite};
+use lumen::routing::{EngineShardSearch, EngineShardWrite, document_shard_index};
 use lumen::types::{
     CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
 };
 use lumen::wal::MemWal;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn server() -> TestServer {
     let engine = Arc::new(lumen::storage::Engine::new());
@@ -404,6 +404,38 @@ async fn type_mismatch_422() {
         ]}))
         .await;
     resp.assert_status(axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn unsupported_sort_shape_returns_400() {
+    let s = server();
+    s.put("/collections/posts")
+        .json(&json!({ "fields": { "body": { "type": "text" } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/posts/index")
+        .json(&json!({ "items": [
+            { "external_id": "p1", "field": "body", "value": "rust search" }
+        ]}))
+        .await
+        .assert_status_ok();
+    let resp = s
+        .post("/collections/posts/search")
+        .json(&json!({
+            "query": { "match": { "field": "body", "text": "rust" } },
+            "sort": [{ "field": "body", "order": "asc" }],
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "unsupported_sort");
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("not sortable")),
+        "body = {body}"
+    );
 }
 
 #[tokio::test]
