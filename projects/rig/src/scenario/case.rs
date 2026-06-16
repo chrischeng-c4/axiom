@@ -65,16 +65,32 @@ pub struct Prepare {
     pub steps: Vec<Step>,
 }
 
-/// `[exercise]` — the measured op. Exactly one request; `n` is the knob.
+/// `[exercise]` — the measured op. Exactly one engine: `request` (http) XOR
+/// `query` (sql); `n` is the knob.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-case-rs.md#source
 pub struct Exercise {
     /// Iteration count. `1` (default) => behavior; `>>1` => load.
     #[serde(default = "default_n")]
     pub n: u32,
-    /// The single measured request (the load subject). Its `expect` carries
-    /// the n=1 assertions; in load mode only the status contract is checked.
-    pub request: HttpRequest,
+    /// The http request engine (XOR `query`). Its `expect` carries the n=1
+    /// assertions; in load mode only the status contract is checked.
+    #[serde(default)]
+    pub request: Option<HttpRequest>,
+    /// The sql query engine (XOR `request`) — the lumen-vs-pg comparability
+    /// half, driven on the SAME scheduler via PostgresTransport (feature `postgres`).
+    #[serde(default)]
+    pub query: Option<QuerySpec>,
+}
+
+/// `[exercise.query]` — a sql query op (executed via the `postgres` feature).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-case-rs.md#source
+pub struct QuerySpec {
+    /// libpq-style DSN, e.g. `postgresql://user@127.0.0.1/db`.
+    pub dsn: String,
+    /// The SQL executed each tick (literals inline; no bind params in v1).
+    pub sql: String,
 }
 
 /// `[load]` — consulted only when `exercise.n > 1`. The qps/workers/duration
@@ -253,9 +269,25 @@ pub fn lint_case(path: &Path, case: &TestCase) -> Vec<LintViolation> {
         }
     }
 
+    // Rule 2: exactly one exercise engine — request (http) XOR query (sql).
+    match (&case.exercise.request, &case.exercise.query) {
+        (Some(_), Some(_)) => v.push(LintViolation {
+            message: "[exercise] has both request and query — exactly one engine (http XOR sql)"
+                .to_string(),
+        }),
+        (None, None) => v.push(LintViolation {
+            message: "[exercise] has neither request nor query — exactly one engine (http XOR sql)"
+                .to_string(),
+        }),
+        _ => {}
+    }
+
     // Rule 4: every jsonpath expectation is a compare-only predicate — the DSL
     // never grows control flow (multi-condition = multiple entries, implicit AND).
-    let mut requests = vec![&case.exercise.request];
+    let mut requests = Vec::new();
+    if let Some(req) = &case.exercise.request {
+        requests.push(req);
+    }
     for step in case.prepare.steps.iter().chain(case.clean.steps.iter()) {
         if let Step::Http(h) = step {
             requests.push(&h.request);
@@ -403,6 +435,60 @@ delegate = "vat-cow"
         );
         let p = PathBuf::from("cases/api/search_basic.toml");
         assert!(parse_case(&p, &text).is_ok());
+    }
+
+    const SQL: &str = r#"
+[case]
+id = "search_qps_pg"
+suite = "lumen"
+dimension = "load"
+subject = "pg baseline under offered load"
+expected = "pass"
+
+[exercise]
+n = 200
+[exercise.query]
+dsn = "postgresql://localhost/lumenbench"
+sql = "SELECT id FROM docs WHERE bio @@ to_tsquery('engineer') LIMIT 1"
+
+[load]
+metric = "p99_ms"
+"#;
+
+    // Rule 2: a sql `query` exercise parses and selects the sql engine.
+    #[test]
+    fn query_case_parses_and_is_load() {
+        let p = PathBuf::from("cases/load/search_qps_pg.toml");
+        let c = parse_case(&p, SQL).unwrap();
+        assert!(c.is_load());
+        assert!(c.exercise.request.is_none());
+        let q = c.exercise.query.as_ref().expect("query engine");
+        assert!(q.sql.contains("to_tsquery"));
+    }
+
+    // Rule 2: having BOTH request and query is rejected (exactly one engine).
+    #[test]
+    fn both_engines_is_rejected() {
+        let text = SQL.replace(
+            "[load]",
+            "[exercise.request]\nmethod = \"GET\"\nurl = \"http://x/y\"\n\n[load]",
+        );
+        let p = PathBuf::from("cases/load/search_qps_pg.toml");
+        let v = parse_case(&p, &text).unwrap_err();
+        assert!(v
+            .iter()
+            .any(|x| x.message.contains("both request and query")));
+    }
+
+    // Rule 2: an exercise with neither engine is rejected.
+    #[test]
+    fn no_engine_is_rejected() {
+        let text = "[case]\nid = \"x\"\nsuite = \"lumen\"\ndimension = \"api\"\nsubject = \"s\"\nexpected = \"pass\"\n[exercise]\n";
+        let p = PathBuf::from("cases/api/x.toml");
+        let v = parse_case(&p, text).unwrap_err();
+        assert!(v
+            .iter()
+            .any(|x| x.message.contains("neither request nor query")));
     }
 }
 // CODEGEN-END
