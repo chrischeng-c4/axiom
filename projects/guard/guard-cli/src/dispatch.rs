@@ -1,9 +1,11 @@
 // SPEC-MANAGED: projects/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use guard::{EvidenceCommand, GuardReport, PolicyProfile, ScanOptions};
+use guard::{
+    scan_paths_with_options, Baseline, GuardConfig, GuardReport, PolicyProfile, ScanOptions,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -34,52 +36,25 @@ pub struct OutputOpts {
 #[derive(Subcommand, Debug)]
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
 pub enum Verb {
-    /// Run the baseline static security profile over a file or directory.
+    /// Scan for static security findings, gating only on findings absent from
+    /// the accepted baseline. Zero-args reads `guard.toml`.
     Scan(ScanArgs),
+    /// Snapshot the current findings into `.guard/baseline.json` so they stop
+    /// gating; only later, newly introduced findings will gate.
+    Accept(ScanArgs),
     /// Re-project `.guard/last-report.json` without scanning.
     Report,
-    /// Offline self-description of the report/policy surface.
-    Spec,
-    /// Offline agent playbook.
-    Llm,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Default)]
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
 pub struct ScanArgs {
-    /// File or directory to scan.
-    #[arg(default_value = ".")]
-    pub path: PathBuf,
-    /// Policy profile: baseline static security, security-impacting lint, or strict.
-    #[arg(long, value_enum, default_value_t = ProfileArg::BaselineStatic)]
-    pub profile: ProfileArg,
-    /// Run a named vat runner as isolated security evidence.
-    #[arg(long = "vat-runner")]
-    pub vat_runners: Vec<String>,
-    /// Run an exact vat evidence command through `sh -c`.
-    #[arg(long = "vat-command")]
-    pub vat_commands: Vec<String>,
-    /// Run rig scenarios under a directory as dynamic exploit/e2e evidence.
-    #[arg(long = "rig-dir")]
-    pub rig_dirs: Vec<PathBuf>,
-    /// Run one rig scenario file as dynamic exploit/e2e evidence.
-    #[arg(long = "rig-scenario")]
-    pub rig_scenarios: Vec<PathBuf>,
-    /// Run an exact rig evidence command through `sh -c`.
-    #[arg(long = "rig-command")]
-    pub rig_commands: Vec<String>,
-    /// Run meter against a crate/project target as resource evidence.
-    #[arg(long = "meter-target")]
-    pub meter_targets: Vec<PathBuf>,
-    /// Run an exact meter evidence command through `sh -c`.
-    #[arg(long = "meter-command")]
-    pub meter_commands: Vec<String>,
-    /// Run an arena comparison spec as security budget evidence.
-    #[arg(long = "arena-spec")]
-    pub arena_specs: Vec<PathBuf>,
-    /// Run an exact arena evidence command through `sh -c`.
-    #[arg(long = "arena-command")]
-    pub arena_commands: Vec<String>,
+    /// File or directory to scan. Overrides `guard.toml` `paths`; defaults to
+    /// the configured paths (or `.`) when omitted.
+    pub path: Option<PathBuf>,
+    /// Policy profile override (else `guard.toml` `profile`, else baseline static).
+    #[arg(long, value_enum)]
+    pub profile: Option<ProfileArg>,
     /// Do not persist `.guard/last-report.json`.
     #[arg(long)]
     pub no_persist: bool,
@@ -106,19 +81,11 @@ impl From<ProfileArg> for PolicyProfile {
 
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
 pub fn dispatch(cmd: GuardCommand) -> GuardReport {
+    let cwd = PathBuf::from(".");
     match cmd.verb {
-        Verb::Scan(args) => {
-            let no_persist = args.no_persist;
-            let mut options = ScanOptions::default();
-            options.profile = args.profile.into();
-            options.evidence_commands = evidence_commands_from_scan_args(&args);
-            let report = guard::scan::scan_path_with_options(&args.path, options);
-            if !no_persist {
-                report.persist(std::path::Path::new("."));
-            }
-            report
-        }
-        Verb::Report => GuardReport::read_last(std::path::Path::new(".")).unwrap_or_else(|e| {
+        Verb::Scan(args) => run_scan(&cwd, args, false),
+        Verb::Accept(args) => run_scan(&cwd, args, true),
+        Verb::Report => GuardReport::read_last(&cwd).unwrap_or_else(|e| {
             GuardReport::tool_error(
                 "report",
                 ".",
@@ -126,152 +93,43 @@ pub fn dispatch(cmd: GuardCommand) -> GuardReport {
                 format!("no readable .guard/last-report.json: {e}"),
             )
         }),
-        Verb::Spec => GuardReport::stub(
-            "spec",
-            "guard.report/1: compass-backed static/security-lint findings plus optional vat/rig/meter/arena evidence adapters.",
-        ),
-        Verb::Llm => GuardReport::stub(
-            "llm",
-            "Use `guard scan <path> --profile security-lint` for security posture. Add vat/rig/meter/arena evidence flags when dynamic evidence is required. Treat non-zero findings as actionable unless a documented guard policy exception exists.",
-        ),
     }
 }
 
-fn evidence_commands_from_scan_args(args: &ScanArgs) -> Vec<EvidenceCommand> {
-    let mut commands = Vec::new();
-    let vat_cwd = vat_cwd_for_scan_path(&args.path);
-    for runner in &args.vat_runners {
-        let vat = sibling_tool("vat");
-        let command = EvidenceCommand::argv(
-            "vat",
-            runner.clone(),
-            vec![vat, "run".to_string(), "--json".to_string(), runner.clone()],
-        );
-        commands.push(match &vat_cwd {
-            Some(cwd) => command.with_cwd(cwd),
-            None => command,
-        });
-    }
-    for command in &args.vat_commands {
-        commands.push(EvidenceCommand::shell("vat", command, command));
-    }
-    for dir in &args.rig_dirs {
-        let rig = sibling_tool("rig");
-        let dir = dir.display().to_string();
-        let label = dir.clone();
-        commands.push(EvidenceCommand::argv(
-            "rig",
-            label,
-            vec![
-                rig,
-                "run".to_string(),
-                "--dir".to_string(),
-                dir,
-                "--compact".to_string(),
-            ],
-        ));
-    }
-    for scenario in &args.rig_scenarios {
-        let rig = sibling_tool("rig");
-        let scenario = scenario.display().to_string();
-        let label = scenario.clone();
-        commands.push(EvidenceCommand::argv(
-            "rig",
-            label,
-            vec![
-                rig,
-                "run".to_string(),
-                "--scenario".to_string(),
-                scenario,
-                "--compact".to_string(),
-            ],
-        ));
-    }
-    for command in &args.rig_commands {
-        commands.push(EvidenceCommand::shell("rig", command, command));
-    }
-    for target in &args.meter_targets {
-        let meter = sibling_tool("meter");
-        let target = target.display().to_string();
-        let label = target.clone();
-        commands.push(
-            EvidenceCommand::argv(
-                "meter",
-                label,
-                vec![
-                    meter,
-                    "run".to_string(),
-                    "--target".to_string(),
-                    target,
-                    "--skip-bench".to_string(),
-                    "--skip-profile".to_string(),
-                    "--compact".to_string(),
-                ],
-            )
-            .with_env("CC", "/usr/bin/cc")
-            .with_env("PATH", stable_rust_path()),
-        );
-    }
-    for command in &args.meter_commands {
-        commands.push(EvidenceCommand::shell("meter", command, command));
-    }
-    for spec in &args.arena_specs {
-        let arena = sibling_tool("arena");
-        let spec = spec.display().to_string();
-        let label = spec.clone();
-        commands.push(EvidenceCommand::argv(
-            "arena",
-            label,
-            vec![
-                arena,
-                "run".to_string(),
-                "--spec".to_string(),
-                spec,
-                "--compact".to_string(),
-            ],
-        ));
-    }
-    for command in &args.arena_commands {
-        commands.push(EvidenceCommand::shell("arena", command, command));
-    }
-    commands
-}
+/// Resolve config + CLI overrides, scan, then gate against the baseline. When
+/// `accept` is set, the current findings are first snapshotted into the
+/// baseline so the resulting report is clean.
+fn run_scan(cwd: &Path, args: ScanArgs, accept: bool) -> GuardReport {
+    let config = GuardConfig::load_from(cwd);
+    let profile = args
+        .profile
+        .map(PolicyProfile::from)
+        .or_else(|| config.profile())
+        .unwrap_or(PolicyProfile::BaselineStatic);
+    let no_persist = args.no_persist || config.no_persist.unwrap_or(false);
+    let targets = match args.path {
+        Some(path) => vec![path],
+        None => config.scan_paths("."),
+    };
 
-fn vat_cwd_for_scan_path(path: &std::path::Path) -> Option<PathBuf> {
-    let dir = if path.is_dir() {
-        path.to_path_buf()
+    let mut options = ScanOptions::default();
+    options.profile = profile;
+    let mut report = scan_paths_with_options(&targets, options);
+
+    if accept {
+        let baseline = Baseline::from_report(&report);
+        let _ = baseline.save(cwd);
+        report.verb = "accept".to_string();
+        report.apply_baseline(&baseline);
     } else {
-        path.parent()?.to_path_buf()
-    };
-    if dir.join("vat.toml").exists() {
-        Some(dir)
-    } else {
-        None
+        let baseline = Baseline::load(cwd);
+        report.apply_baseline(&baseline);
     }
-}
 
-fn sibling_tool(name: &str) -> String {
-    let Ok(current_exe) = std::env::current_exe() else {
-        return name.to_string();
-    };
-    let Some(parent) = current_exe.parent() else {
-        return name.to_string();
-    };
-    let candidate = parent.join(name);
-    if candidate.exists() {
-        candidate.display().to_string()
-    } else {
-        name.to_string()
+    if !no_persist {
+        report.persist(cwd);
     }
-}
-
-fn stable_rust_path() -> String {
-    let Ok(home) = std::env::var("HOME") else {
-        return std::env::var("PATH").unwrap_or_default();
-    };
-    format!(
-        "{home}/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{home}/.cargo/bin"
-    )
+    report
 }
 
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-guard-cli-src-dispatch-rs.md#source
@@ -285,9 +143,92 @@ pub fn print_report(report: &GuardReport, out: &OutputOpts) {
     println!("{json}");
     if out.human {
         eprintln!(
-            "guard {} -> exit {} (security_findings={})",
-            report.verb, report.exit_code, report.summary.security_findings
+            "guard {} -> exit {} (security_findings={}, new_findings={})",
+            report.verb,
+            report.exit_code,
+            report.summary.security_findings,
+            report.summary.new_findings
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scan_args(path: &Path) -> ScanArgs {
+        ScanArgs {
+            path: Some(path.to_path_buf()),
+            profile: None,
+            no_persist: true,
+        }
+    }
+
+    #[test]
+    fn accept_snapshots_findings_then_scan_is_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("unsafe.js"), "eval('x');\n").unwrap();
+
+        // First scan gates on the finding.
+        let scanned = run_scan(tmp.path(), scan_args(&proj), false);
+        assert_eq!(scanned.exit_code, 1);
+        assert_eq!(scanned.summary.new_findings, 1);
+
+        // Accept snapshots the finding into the baseline (clean result).
+        let accepted = run_scan(tmp.path(), scan_args(&proj), true);
+        assert_eq!(accepted.verb, "accept");
+        assert_eq!(accepted.exit_code, 0);
+
+        // Re-scan: the known finding is suppressed from the gate.
+        let rescanned = run_scan(tmp.path(), scan_args(&proj), false);
+        assert_eq!(rescanned.exit_code, 0);
+        assert_eq!(rescanned.summary.security_findings, 1);
+        assert_eq!(rescanned.summary.new_findings, 0);
+    }
+
+    #[test]
+    fn newly_introduced_finding_gates_against_baseline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("unsafe.js"), "eval('x');\n").unwrap();
+
+        run_scan(tmp.path(), scan_args(&proj), true); // accept the first finding
+
+        // A second, unaccepted finding must gate.
+        std::fs::write(proj.join("unsafe2.js"), "eval('y');\n").unwrap();
+        let regated = run_scan(tmp.path(), scan_args(&proj), false);
+        assert_eq!(regated.exit_code, 1);
+        assert_eq!(regated.summary.security_findings, 2);
+        assert_eq!(regated.summary.new_findings, 1);
+    }
+
+    #[test]
+    fn config_drives_zero_arg_scan() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("src");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("safe.js"), "const x = 1;\n").unwrap();
+        std::fs::write(
+            tmp.path().join("guard.toml"),
+            format!("paths = [\"{}\"]\n", proj.display()),
+        )
+        .unwrap();
+
+        // No positional path => paths come from guard.toml.
+        let report = run_scan(
+            tmp.path(),
+            ScanArgs {
+                path: None,
+                profile: None,
+                no_persist: true,
+            },
+            false,
+        );
+        assert_eq!(report.exit_code, 0);
+        assert_eq!(report.target, proj.display().to_string());
     }
 }
 // CODEGEN-END

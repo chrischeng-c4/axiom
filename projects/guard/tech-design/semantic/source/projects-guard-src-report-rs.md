@@ -22,27 +22,26 @@ Public API manifest for `projects/guard/src/report.rs` generated from AST during
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `Completion` | projects/guard/src/report.rs | struct | pub | 135 |  |
+| `Completion` | projects/guard/src/report.rs | struct | pub | 134 |  |
 | `Finding` | projects/guard/src/report.rs | struct | pub | 74 |  |
-| `GuardReport` | projects/guard/src/report.rs | struct | pub | 166 |  |
-| `IntegrationMap` | projects/guard/src/report.rs | struct | pub | 143 |  |
+| `GuardReport` | projects/guard/src/report.rs | struct | pub | 157 |  |
+| `IntegrationMap` | projects/guard/src/report.rs | struct | pub | 142 |  |
 | `Location` | projects/guard/src/report.rs | struct | pub | 64 |  |
 | `OverallStatus` | projects/guard/src/report.rs | enum | pub | 41 |  |
 | `SCHEMA_VERSION` | projects/guard/src/report.rs | constant | pub | 8 |  |
 | `Severity` | projects/guard/src/report.rs | enum | pub | 13 |  |
 | `Summary` | projects/guard/src/report.rs | struct | pub | 87 |  |
+| `apply_baseline` | projects/guard/src/report.rs | function | pub | 230 | apply_baseline(&mut self, baseline: &Baseline) |
 | `exit_code` | projects/guard/src/report.rs | function | pub | 49 | exit_code(self) -> i32 |
-| `finding_id` | projects/guard/src/report.rs | function | pub | 350 | finding_id(rule: &str, path: &str, line: u32) -> String |
-| `from_findings` | projects/guard/src/report.rs | function | pub | 104 | from_findings(         files_scanned: usize,         diagnostics_scanned: usize,         findings: &[Finding],         evidence: &[ExternalEvidence],     ) -> Self |
-| `from_scan` | projects/guard/src/report.rs | function | pub | 185 | from_scan(         target: impl Into<String>,         files_scanned: usize,         diagnostics_scanned: usize,         findings: Vec<Finding>,     ) -> Self |
-| `from_scan_with_evidence` | projects/guard/src/report.rs | function | pub | 201 | from_scan_with_evidence(         target: impl Into<String>,         policy_profile: impl Into<String>,         files_scanned: usize,         diagnostics_scanned: usize,         mut findings: Vec<Finding>,         evidence: Vec<ExternalEvidence>,     ) -> Self |
+| `finding_id` | projects/guard/src/report.rs | function | pub | 307 | finding_id(rule: &str, path: &str, line: u32) -> String |
+| `from_findings` | projects/guard/src/report.rs | function | pub | 105 | from_findings(         files_scanned: usize,         diagnostics_scanned: usize,         findings: &[Finding],     ) -> Self |
+| `from_scan` | projects/guard/src/report.rs | function | pub | 174 | from_scan(         target: impl Into<String>,         policy_profile: impl Into<String>,         files_scanned: usize,         diagnostics_scanned: usize,         mut findings: Vec<Finding>,     ) -> Self |
 | `is_actionable` | projects/guard/src/report.rs | function | pub | 33 | is_actionable(self) -> bool |
 | `is_clean` | projects/guard/src/report.rs | function | pub | 57 | is_clean(self) -> bool |
-| `persist` | projects/guard/src/report.rs | function | pub | 314 | persist(&self, dir: &Path) |
+| `persist` | projects/guard/src/report.rs | function | pub | 289 | persist(&self, dir: &Path) |
 | `rank` | projects/guard/src/report.rs | function | pub | 23 | rank(self) -> u8 |
-| `read_last` | projects/guard/src/report.rs | function | pub | 324 | read_last(dir: &Path) -> anyhow::Result<Self> |
-| `stub` | projects/guard/src/report.rs | function | pub | 262 | stub(verb: &str, prompt: impl Into<String>) -> Self |
-| `tool_error` | projects/guard/src/report.rs | function | pub | 285 | tool_error(         verb: &str,         target: impl Into<String>,         code: u8,         message: impl Into<String>,     ) -> Self |
+| `read_last` | projects/guard/src/report.rs | function | pub | 299 | read_last(dir: &Path) -> anyhow::Result<Self> |
+| `tool_error` | projects/guard/src/report.rs | function | pub | 261 | tool_error(         verb: &str,         target: impl Into<String>,         code: u8,         message: impl Into<String>,     ) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
@@ -50,7 +49,7 @@ Public API manifest for `projects/guard/src/report.rs` generated from AST during
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::evidence::ExternalEvidence;
+use crate::baseline::Baseline;
 
 pub const SCHEMA_VERSION: &str = "guard.report/1";
 
@@ -135,8 +134,9 @@ pub struct Summary {
     pub files_scanned: u32,
     pub diagnostics_scanned: u32,
     pub security_findings: u32,
-    pub evidence_count: u32,
-    pub evidence_failed: u32,
+    /// Findings absent from the accepted baseline (the gate count). Equals
+    /// `security_findings` until a baseline is applied.
+    pub new_findings: u32,
     pub critical: u32,
     pub high: u32,
     pub medium: u32,
@@ -152,14 +152,12 @@ impl Summary {
         files_scanned: usize,
         diagnostics_scanned: usize,
         findings: &[Finding],
-        evidence: &[ExternalEvidence],
     ) -> Self {
         let mut summary = Self {
             files_scanned: files_scanned as u32,
             diagnostics_scanned: diagnostics_scanned as u32,
             security_findings: findings.len() as u32,
-            evidence_count: evidence.len() as u32,
-            evidence_failed: evidence.iter().filter(|item| !item.clean).count() as u32,
+            new_findings: findings.len() as u32,
             truncated: false,
             ..Self::default()
         };
@@ -189,10 +187,6 @@ pub struct Completion {
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-src-report-rs.md#source
 pub struct IntegrationMap {
     pub static_engine: String,
-    pub isolated_runner: String,
-    pub dynamic_journeys: String,
-    pub resource_evidence: String,
-    pub benchmark_budget: String,
 }
 
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-src-report-rs.md#source
@@ -200,10 +194,6 @@ impl Default for IntegrationMap {
     fn default() -> Self {
         Self {
             static_engine: "compass".to_string(),
-            isolated_runner: "vat".to_string(),
-            dynamic_journeys: "rig".to_string(),
-            resource_evidence: "meter".to_string(),
-            benchmark_budget: "arena".to_string(),
         }
     }
 }
@@ -220,8 +210,6 @@ pub struct GuardReport {
     pub exit_code: i32,
     pub summary: Summary,
     pub findings: Vec<Finding>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub evidence: Vec<ExternalEvidence>,
     pub completion: Completion,
     pub integrations: IntegrationMap,
     pub agent_prompt: String,
@@ -231,27 +219,10 @@ pub struct GuardReport {
 impl GuardReport {
     pub fn from_scan(
         target: impl Into<String>,
-        files_scanned: usize,
-        diagnostics_scanned: usize,
-        findings: Vec<Finding>,
-    ) -> Self {
-        Self::from_scan_with_evidence(
-            target,
-            "guard-baseline-static/1",
-            files_scanned,
-            diagnostics_scanned,
-            findings,
-            Vec::new(),
-        )
-    }
-
-    pub fn from_scan_with_evidence(
-        target: impl Into<String>,
         policy_profile: impl Into<String>,
         files_scanned: usize,
         diagnostics_scanned: usize,
         mut findings: Vec<Finding>,
-        evidence: Vec<ExternalEvidence>,
     ) -> Self {
         findings.sort_by(|a, b| {
             a.severity
@@ -265,27 +236,20 @@ impl GuardReport {
         } else {
             OverallStatus::Clean
         };
-        let summary =
-            Summary::from_findings(files_scanned, diagnostics_scanned, &findings, &evidence);
-        let missing = missing_integrations(&evidence);
+        let summary = Summary::from_findings(files_scanned, diagnostics_scanned, &findings);
         let completion = Completion {
             clean: status.is_clean(),
             criteria: vec![
                 "compass security diagnostics were scanned".to_string(),
                 "findings were normalized into guard.report/1".to_string(),
-                "vat/rig/meter/arena evidence adapters are available".to_string(),
             ],
-            missing,
+            missing: Vec::new(),
         };
         let agent_prompt = if status.is_clean() {
-            if completion.missing.is_empty() {
-                "guard scan is clean for static and dynamic security evidence".to_string()
-            } else {
-                "guard scan is clean for the configured security evidence".to_string()
-            }
+            "guard scan is clean for static security findings".to_string()
         } else {
             format!(
-                "guard found {} security finding(s); inspect summary.sample, findings, and evidence",
+                "guard found {} security finding(s); inspect summary.sample and findings",
                 summary.security_findings
             )
         };
@@ -299,34 +263,45 @@ impl GuardReport {
             status,
             summary,
             findings,
-            evidence,
             completion,
             integrations: IntegrationMap::default(),
             agent_prompt,
         }
     }
 
-    pub fn stub(verb: &str, prompt: impl Into<String>) -> Self {
-        let status = OverallStatus::Clean;
-        Self {
-            schema_version: SCHEMA_VERSION.to_string(),
-            tool_version: env!("CARGO_PKG_VERSION").to_string(),
-            verb: verb.to_string(),
-            target: "-".to_string(),
-            policy_profile: "guard-baseline-static/1".to_string(),
-            status,
-            exit_code: status.exit_code(),
-            summary: Summary::default(),
-            findings: Vec::new(),
-            evidence: Vec::new(),
-            completion: Completion {
-                clean: true,
-                criteria: vec!["offline self-description emitted".to_string()],
-                missing: Vec::new(),
-            },
-            integrations: IntegrationMap::default(),
-            agent_prompt: prompt.into(),
+    /// Re-gate against an accepted baseline: only findings ABSENT from the
+    /// baseline count toward the exit code. Known/accepted findings stay in the
+    /// report for visibility but no longer turn the gate red. No-op on tool
+    /// errors.
+    pub fn apply_baseline(&mut self, baseline: &Baseline) {
+        if matches!(self.status, OverallStatus::ToolError { .. }) {
+            return;
         }
+        let new_actionable = self
+            .findings
+            .iter()
+            .filter(|f| f.severity.is_actionable() && !baseline.contains(&f.id))
+            .count() as u32;
+        self.summary.new_findings = new_actionable;
+        self.status = if new_actionable > 0 {
+            OverallStatus::Findings
+        } else {
+            OverallStatus::Clean
+        };
+        self.exit_code = self.status.exit_code();
+        self.completion.clean = self.status.is_clean();
+        self.agent_prompt = if new_actionable > 0 {
+            format!(
+                "guard found {new_actionable} new security finding(s) absent from the accepted baseline; inspect summary.sample and findings"
+            )
+        } else if self.summary.security_findings > 0 {
+            format!(
+                "guard scan: {} finding(s), all present in the accepted baseline",
+                self.summary.security_findings
+            )
+        } else {
+            "guard scan is clean for static security findings".to_string()
+        };
     }
 
     pub fn tool_error(
@@ -347,7 +322,6 @@ impl GuardReport {
             exit_code: status.exit_code(),
             summary: Summary::default(),
             findings: Vec::new(),
-            evidence: Vec::new(),
             completion: Completion {
                 clean: false,
                 criteria: Vec::new(),
@@ -373,24 +347,6 @@ impl GuardReport {
         let text = std::fs::read_to_string(&path)?;
         Ok(serde_json::from_str(&text)?)
     }
-}
-
-fn missing_integrations(evidence: &[ExternalEvidence]) -> Vec<String> {
-    let has_tool = |tool: &str| evidence.iter().any(|item| item.tool == tool);
-    let mut missing = Vec::new();
-    if !has_tool("vat") {
-        missing.push("vat isolated security runner evidence is not configured".to_string());
-    }
-    if !has_tool("rig") {
-        missing.push("rig exploit/e2e journey evidence is not configured".to_string());
-    }
-    if !has_tool("meter") {
-        missing.push("meter DoS/resource evidence is not configured".to_string());
-    }
-    if !has_tool("arena") {
-        missing.push("arena security budget evidence is not configured".to_string());
-    }
-    missing
 }
 
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-src-report-rs.md#source

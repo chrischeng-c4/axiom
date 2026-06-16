@@ -3,10 +3,8 @@
 // AW-EC-BEGIN
 // @ec guard-compass-backed-diagnostic-scan
 // @capability static-security-scan
-// @claim compass-backed-diagnostic-scan
 // @contract compass-backed-diagnostic-scan
 // @category security
-// @required_for_production true
 // @command CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard scan::tests::detects_javascript_eval_as_security_finding
 // AW-EC-END
 

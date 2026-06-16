@@ -3,10 +3,8 @@
 // AW-EC-BEGIN
 // @ec guard-aw-health-security-metric
 // @capability security-ec-profile
-// @claim aw-health-security-metric
 // @contract aw-health-security-metric
 // @category security
-// @required_for_production true
 // @command ./target/debug/aw ec check --project guard
 // AW-EC-END
 

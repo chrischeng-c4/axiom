@@ -3,11 +3,9 @@
 // AW-EC-BEGIN
 // @ec guard-ec-security-evidence-command
 // @capability security-ec-profile
-// @claim ec-security-evidence-command
 // @contract ec-security-evidence-command
 // @category security
-// @required_for_production true
-// @command target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command "target/debug/arena spec --compact"
+// @command target/debug/guard scan projects/guard --profile security-lint --compact --no-persist
 // AW-EC-END
 
 #[test]

@@ -1,13 +1,12 @@
 // SPEC-MANAGED: projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cclab_compass::checker::{check_paths, LintConfig};
 use cclab_compass::diagnostic::{DiagnosticCategory, DiagnosticSeverity};
 use cclab_compass::lint::detect_sql_injection;
 use cclab_compass::syntax::Language;
 
-use crate::evidence::{run_evidence_commands, EvidenceCommand};
 use crate::report::{finding_id, Finding, GuardReport, Location, Severity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +26,16 @@ impl PolicyProfile {
             PolicyProfile::Strict => "guard-strict/1",
         }
     }
+
+    /// Parse a `guard.toml` `profile` string (hyphen or underscore spelling).
+    pub fn from_config_str(value: &str) -> Option<Self> {
+        match value {
+            "baseline-static" | "baseline_static" => Some(PolicyProfile::BaselineStatic),
+            "security-lint" | "security_lint" => Some(PolicyProfile::SecurityLint),
+            "strict" => Some(PolicyProfile::Strict),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -35,7 +44,6 @@ pub struct ScanOptions {
     pub profile: PolicyProfile,
     pub languages: Vec<Language>,
     pub exclude_patterns: Vec<String>,
-    pub evidence_commands: Vec<EvidenceCommand>,
 }
 
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#source
@@ -52,7 +60,6 @@ impl Default for ScanOptions {
                 ".venv".to_string(),
                 ".guard".to_string(),
             ],
-            evidence_commands: Vec::new(),
         }
     }
 }
@@ -83,10 +90,37 @@ pub fn scan_path(path: impl AsRef<Path>) -> GuardReport {
 
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#source
 pub fn scan_path_with_options(path: impl AsRef<Path>, options: ScanOptions) -> GuardReport {
-    let target = path.as_ref();
-    let target_display = target.display().to_string();
-    if !target.exists() {
-        return GuardReport::tool_error("scan", target_display, 5, "scan target does not exist");
+    scan_paths_with_options(&[path.as_ref().to_path_buf()], options)
+}
+
+/// @spec projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#source
+pub fn scan_paths(paths: &[PathBuf]) -> GuardReport {
+    scan_paths_with_options(paths, ScanOptions::default())
+}
+
+/// @spec projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#source
+pub fn scan_paths_with_options(targets: &[PathBuf], options: ScanOptions) -> GuardReport {
+    let target_display = if targets.len() == 1 {
+        targets[0].display().to_string()
+    } else {
+        targets
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if targets.is_empty() {
+        return GuardReport::tool_error("scan", ".", 5, "no scan target configured");
+    }
+    for target in targets {
+        if !target.exists() {
+            return GuardReport::tool_error(
+                "scan",
+                target_display,
+                5,
+                format!("scan target does not exist: {}", target.display()),
+            );
+        }
     }
 
     let config = LintConfig {
@@ -94,8 +128,8 @@ pub fn scan_path_with_options(path: impl AsRef<Path>, options: ScanOptions) -> G
         exclude_patterns: options.exclude_patterns,
         min_severity: DiagnosticSeverity::Hint,
     };
-    let paths = [target];
-    let results = check_paths(&paths, &config);
+    let path_refs: Vec<&Path> = targets.iter().map(|p| p.as_path()).collect();
+    let results = check_paths(&path_refs, &config);
     let diagnostics_scanned = results.iter().map(|r| r.diagnostics.len()).sum();
     let mut findings = Vec::new();
 
@@ -145,20 +179,12 @@ pub fn scan_path_with_options(path: impl AsRef<Path>, options: ScanOptions) -> G
         }
     }
 
-    let evidence = run_evidence_commands(&options.evidence_commands);
-    for item in &evidence {
-        if let Some(finding) = item.to_guard_finding(&target_display) {
-            findings.push(finding);
-        }
-    }
-
-    GuardReport::from_scan_with_evidence(
+    GuardReport::from_scan(
         target_display,
         options.profile.as_str(),
         results.len(),
         diagnostics_scanned,
         findings,
-        evidence,
     )
 }
 
@@ -286,25 +312,19 @@ mod tests {
     }
 
     #[test]
-    fn external_evidence_failure_becomes_guard_finding() {
+    fn multi_path_scan_merges_findings() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let file = dir.path().join("safe.js");
-        std::fs::write(&file, "const answer = 42;\n").expect("write fixture");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::fs::create_dir_all(&a).expect("mkdir a");
+        std::fs::create_dir_all(&b).expect("mkdir b");
+        std::fs::write(a.join("unsafe.js"), "eval('x');\n").expect("write a");
+        std::fs::write(b.join("safe.js"), "const x = 1;\n").expect("write b");
 
-        let mut options = ScanOptions::default();
-        options.evidence_commands.push(EvidenceCommand::shell(
-            "rig",
-            "exploit-smoke",
-            "printf '%s' '{\"schema_version\":\"rig.report/1\",\"clean\":false,\"summary\":{\"total\":1},\"findings\":[{\"id\":\"exploit\"}]}'",
-        ));
-        let report = scan_path_with_options(dir.path(), options);
+        let report = scan_paths(&[a, b]);
 
-        assert_eq!(report.summary.evidence_count, 1);
-        assert_eq!(report.summary.evidence_failed, 1);
-        assert!(report
-            .findings
-            .iter()
-            .any(|finding| finding.rule == "RIG-EVIDENCE"));
+        assert_eq!(report.summary.security_findings, 1);
+        assert_eq!(report.exit_code, 1);
     }
 }
 // CODEGEN-END

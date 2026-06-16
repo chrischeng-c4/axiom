@@ -3,10 +3,8 @@
 // AW-EC-BEGIN
 // @ec guard-security-lint-policy
 // @capability security-policy-profile
-// @claim security-lint-policy
 // @contract security-lint-policy
 // @category security
-// @required_for_production true
 // @command target/debug/guard scan projects/guard --profile security-lint --compact --no-persist
 // AW-EC-END
 

@@ -4143,6 +4143,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -4155,6 +4156,7 @@ dependencies = [
  "guard",
  "linkme",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

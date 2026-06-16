@@ -44,30 +44,6 @@ capability_refs:
     claim: ec-security-evidence-command
     coverage: full
     rationale: "The EC case defines the executable guard security evidence command used by AW health."
-  - id: dynamic-security-evidence
-    role: primary
-    gap: vat-isolated-security-runner
-    claim: vat-isolated-security-runner
-    coverage: full
-    rationale: "The EC case proves guard can fold a vat-isolated security runner into its report."
-  - id: dynamic-security-evidence
-    role: primary
-    gap: rig-exploit-journey-bridge
-    claim: rig-exploit-journey-bridge
-    coverage: full
-    rationale: "The EC case proves guard can fold rig scenario evidence into its report."
-  - id: dynamic-security-evidence
-    role: primary
-    gap: meter-dos-resource-evidence-bridge
-    claim: meter-dos-resource-evidence-bridge
-    coverage: full
-    rationale: "The EC case proves guard can fold meter resource evidence into its report."
-  - id: dynamic-security-evidence
-    role: primary
-    gap: arena-security-budget-bridge
-    claim: arena-security-budget-bridge
-    coverage: full
-    rationale: "The EC case proves guard can fold arena budget evidence into its report."
 fill_sections: [e2e-test]
 ---
 
@@ -163,54 +139,8 @@ e2e_tests:
     claim_id: ec-security-evidence-command
     contract_id: ec-security-evidence-command
     category: security
-    command: "target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command \"target/debug/arena spec --compact\""
+    command: "target/debug/guard scan projects/guard --profile security-lint --compact --no-persist"
     assertions:
-      - "guard scan runs the full configured EC evidence command"
-      - "vat, rig, meter, and arena evidence adapters fold into guard.report/1"
-```
-
-## Dynamic Security Evidence EC
-<!-- type: e2e-test lang: yaml -->
-
-```yaml
-e2e_tests:
-  - id: guard-vat-isolated-security-runner
-    capability_id: dynamic-security-evidence
-    claim_id: vat-isolated-security-runner
-    contract_id: vat-isolated-security-runner
-    category: security
-    command: "target/debug/guard scan projects/guard --compact --no-persist --vat-runner guard-security-smoke"
-    assertions:
-      - "guard can fold a vat-isolated runner into its report"
-      - "isolated evidence is visible without persisting guard state"
-
-  - id: guard-rig-exploit-journey-bridge
-    capability_id: dynamic-security-evidence
-    claim_id: rig-exploit-journey-bridge
-    contract_id: rig-exploit-journey-bridge
-    category: security
-    command: "target/debug/guard scan projects/guard --compact --no-persist --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml"
-    assertions:
-      - "guard can fold rig scenario evidence into its report"
-      - "exploit journey evidence remains executable through the guard bridge"
-
-  - id: guard-meter-dos-resource-evidence-bridge
-    capability_id: dynamic-security-evidence
-    claim_id: meter-dos-resource-evidence-bridge
-    contract_id: meter-dos-resource-evidence-bridge
-    category: security
-    command: "target/debug/guard scan projects/guard --compact --no-persist --meter-target projects/guard"
-    assertions:
-      - "guard can fold meter resource evidence into its report"
-      - "resource-abuse evidence remains visible in guard.report/1"
-
-  - id: guard-arena-security-budget-bridge
-    capability_id: dynamic-security-evidence
-    claim_id: arena-security-budget-bridge
-    contract_id: arena-security-budget-bridge
-    category: security
-    command: "target/debug/guard scan projects/guard --compact --no-persist --arena-command \"target/debug/arena spec --compact\""
-    assertions:
-      - "guard can fold arena budget evidence into its report"
-      - "security-performance budget evidence remains visible in guard.report/1"
+      - "guard scan emits the first-line static security evidence command consumed by AW health"
+      - "the report is a clean guard.report/1 envelope with no upward evidence adapters"
 ```
