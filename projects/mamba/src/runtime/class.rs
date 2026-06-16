@@ -3553,6 +3553,16 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             if attr_name == "__new__" {
                                 return make_unbound_method(&type_name_str, "__new__");
                             }
+                            // complex comparison dunders accessed unbound
+                            // (`complex.__eq__`, `complex.__lt__`, …). The call
+                            // dispatch computes bool / NotImplemented; here we
+                            // just expose the callable wrapper.
+                            if type_name_str == "complex"
+                                && matches!(attr_name.as_str(),
+                                    "__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__")
+                            {
+                                return make_unbound_method("complex", &attr_name);
+                            }
                             // PEP 695: every type object carries
                             // __type_params__, defaulting to () (the
                             // mro_lookup above already returned a generic
@@ -11329,6 +11339,17 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         };
 
         if let Some(ref s) = type_name_opt {
+            // complex.__eq__/__ne__/__lt__/… called directly on the type object
+            // (`complex.__eq__(a, b)`). Lowered as a method call, so it bypasses
+            // the getattr unbound-method wrapper; compute via the shared helper.
+            if s == "complex" {
+                let items = super::builtins::extract_items(args);
+                let a = items.first().copied().unwrap_or_else(MbValue::none);
+                let b = items.get(1).copied().unwrap_or_else(MbValue::none);
+                if let Some(result) = super::builtins::complex_cmp_dunder(name.as_str(), a, b) {
+                    return result;
+                }
+            }
             // <type>.__new__(cls) — allocate a BARE instance of `cls` without
             // running __init__ (CPython's object.__new__). The type wall builds a
             // receiver for instance-method checks via `obj = object.__new__(C)`.
