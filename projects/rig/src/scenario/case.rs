@@ -164,8 +164,37 @@ pub fn parse_case(path: &Path, text: &str) -> Result<TestCase, Vec<LintViolation
     }
 }
 
-/// Path==record floor: `[case].id` == filename stem, `dimension` == parent dir,
-/// subject present.
+/// Known EC dimensions a lifecycle case may live under (rule 6).
+const VALID_DIMENSIONS: &[&str] = &[
+    "behavior",
+    "efficiency",
+    "security",
+    "stability",
+    "resilience",
+    "load",
+    "endurance",
+    "api",
+];
+
+/// True when `pred` is a compare-only predicate (`<op> <literal>`) or `exists`
+/// — the bound (rule 4) that keeps the expect grammar from growing control flow.
+fn is_compare_predicate(pred: &str) -> bool {
+    let p = pred.trim();
+    if p == "exists" {
+        return true;
+    }
+    for op in ["==", "!=", "<=", ">=", "<", ">"] {
+        if let Some(rest) = p.strip_prefix(op) {
+            return !rest.trim().is_empty();
+        }
+    }
+    false
+}
+
+/// The full lifecycle lint (the 6 rules): path==record floor plus the structural
+/// bounds that keep the DSL a pure-data EC description — request present, http/sql
+/// only steps (no exec/script), compare-only expects (no control flow), and a
+/// known dimension.
 /// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-case-rs.md#source
 pub fn lint_case(path: &Path, case: &TestCase) -> Vec<LintViolation> {
     let mut v = Vec::new();
@@ -199,6 +228,51 @@ pub fn lint_case(path: &Path, case: &TestCase) -> Vec<LintViolation> {
             message: "[case].subject must name the behavior under test".to_string(),
         });
     }
+
+    // Rule 6: dimension must be a known EC dimension.
+    if !VALID_DIMENSIONS.contains(&case.record.dimension.as_str()) {
+        v.push(LintViolation {
+            message: format!(
+                "[case].dimension `{}` is not a known EC dimension ({})",
+                case.record.dimension,
+                VALID_DIMENSIONS.join(", ")
+            ),
+        });
+    }
+
+    // Rule 5: prepare/clean steps are http only — no exec/script in the case DSL
+    // (heavy/imperative work belongs to the vat runner).
+    for step in case.prepare.steps.iter().chain(case.clean.steps.iter()) {
+        if !matches!(step, Step::Http(_)) {
+            v.push(LintViolation {
+                message: format!(
+                    "step `{}` in [prepare]/[clean] must be an http step — no exec/script in the case DSL (push logic to the vat runner)",
+                    step.name()
+                ),
+            });
+        }
+    }
+
+    // Rule 4: every jsonpath expectation is a compare-only predicate — the DSL
+    // never grows control flow (multi-condition = multiple entries, implicit AND).
+    let mut requests = vec![&case.exercise.request];
+    for step in case.prepare.steps.iter().chain(case.clean.steps.iter()) {
+        if let Step::Http(h) = step {
+            requests.push(&h.request);
+        }
+    }
+    for req in requests {
+        for (jp, pred) in &req.expect.jsonpath {
+            if !is_compare_predicate(pred) {
+                v.push(LintViolation {
+                    message: format!(
+                        "expect `{jp}` = `{pred}` must be a compare predicate (== != < <= > >= or `exists`); no and/or/if/fns"
+                    ),
+                });
+            }
+        }
+    }
+
     v
 }
 
@@ -285,6 +359,50 @@ delegate = "vat-cow"
         let v = parse_case(&p, "not toml [").unwrap_err();
         assert_eq!(v.len(), 1);
         assert!(v[0].message.contains("TOML parse error"));
+    }
+
+    // Rule 5: an exec/script step in prepare is rejected (no imperative DSL).
+    #[test]
+    fn exec_step_in_prepare_is_rejected() {
+        let text = BEHAVIOR.replace(
+            "[exercise]",
+            "[[prepare.step]]\ntype = \"exec\"\nname = \"seed\"\ncmd = [\"python3\", \"-c\", \"pass\"]\n\n[exercise]",
+        );
+        let p = PathBuf::from("cases/api/search_basic.toml");
+        let v = parse_case(&p, &text).unwrap_err();
+        assert!(v.iter().any(|x| x.message.contains("must be an http step")));
+    }
+
+    // Rule 4: a control-flow / non-compare expect predicate is rejected.
+    #[test]
+    fn control_flow_expect_is_rejected() {
+        let text = BEHAVIOR.replace(
+            "status = 200",
+            "status = 200\njsonpath = { \"$.total\" = \"len(x) and y\" }",
+        );
+        let p = PathBuf::from("cases/api/search_basic.toml");
+        let v = parse_case(&p, &text).unwrap_err();
+        assert!(v.iter().any(|x| x.message.contains("compare predicate")));
+    }
+
+    // Rule 6: an unknown dimension is rejected.
+    #[test]
+    fn unknown_dimension_is_rejected() {
+        let text = BEHAVIOR.replace("dimension = \"api\"", "dimension = \"frobnicate\"");
+        let p = PathBuf::from("cases/frobnicate/search_basic.toml");
+        let v = parse_case(&p, &text).unwrap_err();
+        assert!(v.iter().any(|x| x.message.contains("known EC dimension")));
+    }
+
+    // A valid compare predicate (>= 1) passes rule 4.
+    #[test]
+    fn compare_predicate_expect_passes() {
+        let text = BEHAVIOR.replace(
+            "status = 200",
+            "status = 200\njsonpath = { \"$.total\" = \">= 1\" }",
+        );
+        let p = PathBuf::from("cases/api/search_basic.toml");
+        assert!(parse_case(&p, &text).is_ok());
     }
 }
 // CODEGEN-END
