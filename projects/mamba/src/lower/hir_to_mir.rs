@@ -7371,6 +7371,25 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
+                    // Special case: next(it) — explicit 1-arg next() raises
+                    // StopIteration on exhaustion. mb_next_raise SETS the
+                    // StopIteration exception but also returns a dummy None; without
+                    // an immediate propagate, `v = next(it)` inside a loop body lets
+                    // that None leak into the following statements before the pending
+                    // exception is observed at the next checkpoint (e.g. a manual
+                    // `while True: out.append(next(it))` would append a trailing
+                    // None). Emit the call then propagate so the dummy value is
+                    // never consumed when exhausted, matching CPython.
+                    if extern_name == "mb_next_raise" && boxed_args.len() == 1 {
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_next_raise".to_string(),
+                            args: boxed_args,
+                            ty: *ty,
+                        });
+                        self.emit_exception_propagate();
+                        return dest;
+                    }
                     // Special case: iter(callable, sentinel) → mb_iter_sentinel.
                     // When the callable is a user function with a primitive return type
                     // (int/bool/float), the JIT compiles it to return a raw i64/f64, not a
