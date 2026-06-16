@@ -40,8 +40,6 @@ pub enum Verb {
     Run(RunArgs),
     /// Lifecycle-case launcher: discover `[case]` TOMLs, run prepare/exercise(N)/clean, fold ONE report.
     Test(TestArgs),
-    /// Generate lifecycle case skeletons from an OpenAPI 3.x spec (JSON or YAML).
-    Openapi(OpenapiArgs),
     /// Validate scenario record contracts only (path==record, key presence) — no execution.
     Lint(LintArgs),
     /// Re-project the persisted `.rig/last-report.json` (read-only).
@@ -117,34 +115,12 @@ pub struct TestArgs {
     pub duration_secs: u64,
 }
 
-/// `rig openapi` flags — generate case skeletons from an OpenAPI spec.
-#[derive(Args, Debug, Default)]
-/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
-pub struct OpenapiArgs {
-    /// Path to the OpenAPI 3.x spec (`.json` or `.yaml`).
-    #[arg(long)]
-    pub spec: String,
-    /// Output directory; one `<dir>/<dimension>/<case>.toml` is written per operation.
-    #[arg(long, default_value = ".")]
-    pub dir: String,
-    /// `[case].suite` for the generated cases.
-    #[arg(long, default_value = "lumen")]
-    pub suite: String,
-    /// `[case].dimension` (also the output subdirectory; must be a known EC dimension).
-    #[arg(long, default_value = "api")]
-    pub dimension: String,
-    /// Overwrite existing case files (default: skip existing).
-    #[arg(long)]
-    pub force: bool,
-}
-
 /// Execute a parsed command and return the report to print.
 /// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub fn execute(cmd: RigCommand) -> RigReport {
     match cmd.verb {
         Verb::Run(args) => run_run(args),
         Verb::Test(args) => run_test(args),
-        Verb::Openapi(args) => run_openapi(args),
         Verb::Lint(args) => run_lint(args),
         Verb::Report => run_report(),
         Verb::Spec => stub_report("spec", "rig spec is not implemented yet (v1)"),
@@ -660,60 +636,6 @@ fn collect_case_files(
     Ok(())
 }
 
-/// `rig openapi` — generate one lifecycle case skeleton per OpenAPI operation
-/// (path x method) under `<dir>/<dimension>/<case>.toml`. Existing files are
-/// skipped unless `--force`; each skeleton parses + lints clean as a case.
-/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
-fn run_openapi(args: OpenapiArgs) -> RigReport {
-    let mut b = ReportBuilder::new("openapi", &args.spec);
-
-    let text = match std::fs::read_to_string(&args.spec) {
-        Ok(t) => t,
-        Err(e) => {
-            b.tool_error(5, format!("could not read `{}`: {e}", args.spec));
-            return b.finalize();
-        }
-    };
-    let ops = match rig::openapi::parse_spec(&text) {
-        Ok(o) => o,
-        Err(e) => {
-            b.tool_error(3, format!("OpenAPI parse: {e}"));
-            return b.finalize();
-        }
-    };
-    if ops.is_empty() {
-        b.tool_error(3, "OpenAPI spec declares no operations".to_string());
-        return b.finalize();
-    }
-
-    let out_dir = std::path::Path::new(&args.dir).join(&args.dimension);
-    let mut written = 0usize;
-    let mut skipped = 0usize;
-    for op in &ops {
-        let stem = rig::openapi::case_stem(op);
-        let path = out_dir.join(format!("{stem}.toml"));
-        if path.exists() && !args.force {
-            skipped += 1;
-            continue;
-        }
-        let toml = rig::openapi::render_case_skeleton(op, &args.suite, &args.dimension);
-        if let Err(e) = std::fs::create_dir_all(&out_dir).and_then(|_| std::fs::write(&path, toml))
-        {
-            b.tool_error(5, format!("could not write `{}`: {e}", path.display()));
-            return b.finalize();
-        }
-        written += 1;
-        b.add_criterion(format!("{} {} -> {}", op.method, op.path, path.display()));
-    }
-    b.add_criterion(format!(
-        "generated {written} skeleton(s), skipped {skipped} existing, from {} operation(s)",
-        ops.len()
-    ));
-    let report = b.finalize();
-    rig::report::persist(&report, std::path::Path::new("."));
-    report
-}
-
 /// `--vat`: resolve the [vat].runner set of the discovered scenarios, run
 /// each runner once through `vat run` (vat owns services/workspace; the
 /// runner's cmd re-invokes rig inside the COW clone), and fold every inner
@@ -1090,53 +1012,6 @@ mod tests {
         });
         assert_eq!(r.exit_code, 3);
         assert_eq!(r.schema_version, rig::report::SCHEMA_VERSION);
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn parses_openapi_verb() {
-        let cmd = RigCommand::parse_from([
-            "rig",
-            "openapi",
-            "--spec",
-            "oa.yaml",
-            "--dir",
-            "cases",
-            "--dimension",
-            "api",
-        ]);
-        match cmd.verb {
-            Verb::Openapi(a) => {
-                assert_eq!(a.spec, "oa.yaml");
-                assert_eq!(a.dimension, "api");
-            }
-            _ => panic!("expected openapi"),
-        }
-    }
-
-    #[test]
-    fn openapi_generates_a_lint_clean_case() {
-        let tmp = std::env::temp_dir().join(format!("rig-oa-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let spec = tmp.join("oa.json");
-        std::fs::write(
-            &spec,
-            r#"{"openapi":"3.1.0","paths":{"/search":{"post":{"operationId":"doSearch","requestBody":{},"responses":{"200":{}}}}}}"#,
-        )
-        .unwrap();
-        let out = tmp.join("cases");
-        let r = run_openapi(OpenapiArgs {
-            spec: spec.display().to_string(),
-            dir: out.display().to_string(),
-            suite: "lumen".into(),
-            dimension: "api".into(),
-            force: false,
-        });
-        assert_eq!(r.exit_code, 0, "prompt: {}", r.agent_prompt);
-        let case = out.join("api").join("do_search.toml");
-        assert!(case.exists());
-        let text = std::fs::read_to_string(&case).unwrap();
-        assert!(rig::scenario::parse_case(&case, &text).is_ok());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
