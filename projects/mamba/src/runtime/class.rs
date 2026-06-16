@@ -7007,6 +7007,14 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
     } else {
         extract_str(class_name).unwrap_or_default()
     };
+    // types.ModuleType (a `type` object whose __name__ is "module"): a module
+    // is modeled as a dict, so match by the module-value pointer registry rather
+    // than the dict type. Only short-circuit to True for real modules; fall
+    // through otherwise (a user class literally named "module" still resolves
+    // nominally).
+    if target == "module" && super::module::is_module_value(obj) {
+        return MbValue::from_bool(true);
+    }
     // A `typing.Protocol` that is NOT `@runtime_checkable` can't be used with
     // isinstance (CPython: TypeError "Instance and class checks can only be used
     // with @runtime_checkable protocols").
