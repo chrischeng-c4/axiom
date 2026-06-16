@@ -69,22 +69,18 @@ pub struct RunArgs {
 #[derive(Args, Debug, Default)]
 /// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub struct LintArgs {
-    /// Directory to lint (defaults to the current directory).
-    #[arg(long, default_value = ".")]
-    pub dir: String,
+    /// Override the case directory (default: rig.toml `testpaths`).
+    #[arg(long)]
+    pub dir: Option<String>,
 }
 
 /// `rig test` flags — the lifecycle-case launcher.
 #[derive(Args, Debug, Default)]
 /// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub struct TestArgs {
-    /// Directory of lifecycle case `.toml` files (defaults to the current directory).
-    #[arg(long, default_value = ".")]
-    pub dir: String,
-    /// Only run cases whose `[case].dimension` matches.
-    #[arg(long)]
+    /// Dimension to run (positional); omit to run every case from rig.toml `testpaths`.
     pub dimension: Option<String>,
-    /// Only run the case(s) with this `[case].id` (repeatable).
+    /// Run only the case(s) with this `[case].id` (repeatable).
     #[arg(long)]
     pub case: Vec<String>,
     /// List the selected cases without executing them.
@@ -93,22 +89,12 @@ pub struct TestArgs {
     /// Record measured load metrics as new baselines instead of gating.
     #[arg(long)]
     pub update_baselines: bool,
-    /// Gate load metrics against pins discovered under this directory.
+    /// Override the case directory (default: rig.toml `testpaths`).
     #[arg(long)]
-    pub pins: Option<String>,
-    // NOTE: `rig test` does NOT drive vat. The integration direction is vat ->
-    // rig: a vat.toml runner's cmd is `rig test ...` (or a case's
-    // `[prepare].runner`), so vat provisions the environment and runs rig as a
-    // task. rig never knows about vat.
-    /// Offered load (qps) for `n>1` cases.
-    #[arg(long, default_value = "100")]
-    pub qps: u32,
-    /// Concurrent workers for `n>1` cases.
-    #[arg(long, default_value = "8")]
-    pub workers: u32,
-    /// Load window seconds for `n>1` cases.
-    #[arg(long, default_value = "10")]
-    pub duration_secs: u64,
+    pub dir: Option<String>,
+    // Schedule (qps/workers/duration), pins, and testpaths live in rig.toml —
+    // rig is agent-first, the common path is a bare `rig test`. rig also never
+    // drives vat (vat -> rig: a vat runner's cmd is `rig test ...`).
 }
 
 /// Execute a parsed command and return the report to print.
@@ -389,15 +375,24 @@ fn run_test(args: TestArgs) -> RigReport {
     use rig::scenario::{parse_case, ExpectedOutcome};
     use rig::verdict::Verdict;
 
-    let mut b = ReportBuilder::new("test", &args.dir);
+    // Agent-first: testpaths / pins / schedule come from rig.toml; `--dir`
+    // is an optional override of the case directory.
+    let config = rig::config::Config::load_from(std::path::Path::new("."));
+    let dirs = match &args.dir {
+        Some(d) => vec![d.clone()],
+        None => config.case_dirs("."),
+    };
+    let target = dirs.join(", ");
+    let mut b = ReportBuilder::new("test", &target);
     b.add_criterion("every required case verdict passes");
     b.add_criterion("every load pin holds");
 
-    let root = std::path::Path::new(&args.dir);
     let mut files: Vec<std::path::PathBuf> = Vec::new();
-    if let Err(e) = collect_case_files(root, &mut files) {
-        b.tool_error(5, format!("could not walk `{}`: {e}", args.dir));
-        return b.finalize();
+    for dir in &dirs {
+        if let Err(e) = collect_case_files(std::path::Path::new(dir), &mut files) {
+            b.tool_error(5, format!("could not walk `{dir}`: {e}"));
+            return b.finalize();
+        }
     }
     files.sort();
 
@@ -450,14 +445,11 @@ fn run_test(args: TestArgs) -> RigReport {
         return b.finalize();
     }
     if selected.is_empty() {
-        b.tool_error(
-            3,
-            format!("no lifecycle cases selected under `{}`", args.dir),
-        );
+        b.tool_error(3, format!("no lifecycle cases selected under `{target}`"));
         return b.finalize();
     }
 
-    let pins = match &args.pins {
+    let pins = match &config.pins {
         Some(dir) => rig::pins::load_pins(std::path::Path::new(dir)).unwrap_or_default(),
         None => Vec::new(),
     };
@@ -471,9 +463,9 @@ fn run_test(args: TestArgs) -> RigReport {
         }
         let mode = if case.is_load() {
             Mode::Load(Schedule {
-                target_qps: args.qps,
-                workers: args.workers,
-                duration_secs: args.duration_secs,
+                target_qps: config.load.qps,
+                workers: config.load.workers,
+                duration_secs: config.load.duration_secs,
                 warmup_secs: 2,
             })
         } else {
@@ -804,28 +796,39 @@ fn run_load_scenario(scenario: &rig::scenario::Scenario, rel: &str) -> rig::engi
 fn run_lint(args: LintArgs) -> RigReport {
     use rig::report::{finding_id, Finding, Invoke, Kind, Severity};
 
-    let mut b = ReportBuilder::new("lint", &args.dir);
-    b.add_criterion("every scenario record matches its path and schema");
+    // Agent-first: lint the lifecycle cases under rig.toml `testpaths`; `--dir`
+    // overrides.
+    let config = rig::config::Config::load_from(std::path::Path::new("."));
+    let dirs = match &args.dir {
+        Some(d) => vec![d.clone()],
+        None => config.case_dirs("."),
+    };
+    let target = dirs.join(", ");
+    let mut b = ReportBuilder::new("lint", &target);
+    b.add_criterion("every case record matches its path and schema");
 
-    let root = std::path::Path::new(&args.dir);
-    let discovered = match rig::discovery::discover(root) {
-        Ok(d) => d,
-        Err(e) => {
-            b.tool_error(5, format!("could not walk `{}`: {e}", args.dir));
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for dir in &dirs {
+        if let Err(e) = collect_case_files(std::path::Path::new(dir), &mut files) {
+            b.tool_error(5, format!("could not walk `{dir}`: {e}"));
             return b.finalize();
         }
-    };
-    if discovered.is_empty() {
-        b.tool_error(3, format!("no scenario .toml files under `{}`", args.dir));
+    }
+    files.sort();
+    if files.is_empty() {
+        b.tool_error(3, format!("no case .toml files under `{target}`"));
         return b.finalize();
     }
-    let total = discovered.len();
+    let total = files.len();
     let mut clean = 0usize;
-    for d in discovered {
-        match d.result {
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let rel = path.display().to_string();
+        match rig::scenario::parse_case(&path, &text) {
             Ok(_) => clean += 1,
             Err(violations) => {
-                let rel = d.path.display().to_string();
                 for v in violations {
                     b.add_finding(Finding {
                         id: finding_id(Kind::LintError, &rel),
@@ -833,8 +836,8 @@ fn run_lint(args: LintArgs) -> RigReport {
                         kind: Kind::LintError,
                         title: format!("lint: {rel}"),
                         detail: v.message.clone(),
-                        remediation: "Fix the scenario record so path == record (dimension = parent dir, case = file stem) and the schema validates, then re-lint.".into(),
-                        invoke: Invoke::command(format!("rig lint --dir {}", args.dir)),
+                        remediation: "Fix the case so path == record (dimension = parent dir, id = file stem) and the schema validates, then re-lint.".into(),
+                        invoke: Invoke::command("rig lint".to_string()),
                         evidence: serde_json::json!({ "path": rel, "violation": v.message }),
                     });
                 }
@@ -842,8 +845,7 @@ fn run_lint(args: LintArgs) -> RigReport {
         }
     }
     b.agent_prompt(format!(
-        "rig lint checked {total} scenario file(s) under `{}`: {clean} clean.",
-        args.dir
+        "rig lint checked {total} case file(s) under `{target}`: {clean} clean."
     ));
     b.finalize()
 }
@@ -949,17 +951,16 @@ mod tests {
         let cmd = RigCommand::parse_from([
             "rig",
             "test",
+            "load",
             "--dir",
             "cases",
-            "--dimension",
-            "load",
             "--case",
             "search_qps",
         ]);
         match cmd.verb {
             Verb::Test(a) => {
-                assert_eq!(a.dir, "cases");
                 assert_eq!(a.dimension.as_deref(), Some("load"));
+                assert_eq!(a.dir.as_deref(), Some("cases"));
                 assert_eq!(a.case, vec!["search_qps".to_string()]);
             }
             _ => panic!("expected test"),
@@ -977,7 +978,7 @@ mod tests {
         )
         .unwrap();
         let r = run_test(TestArgs {
-            dir: tmp.display().to_string(),
+            dir: Some(tmp.display().to_string()),
             collect: true,
             ..Default::default()
         });
@@ -995,7 +996,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("rig-test-empty-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let r = run_test(TestArgs {
-            dir: tmp.display().to_string(),
+            dir: Some(tmp.display().to_string()),
             ..Default::default()
         });
         assert_eq!(r.exit_code, 3);
