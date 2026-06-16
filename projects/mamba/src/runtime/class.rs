@@ -2860,6 +2860,25 @@ fn is_array_unbound_method(name: &str) -> bool {
 /// Get an attribute from an instance (checks instance fields, then class methods via MRO).
 /// Falls back to `__getattr__` dunder if normal lookup fails.
 pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
+    // obj.__class__ is type(obj): report the class uniformly for user/builtin
+    // instances and bare values. An object that explicitly stores a __class__
+    // field (e.g. ET.Element stubs, or an assigned __class__) keeps it — the
+    // normal field lookup below wins, so only fall back to type(obj) when no
+    // such field exists. Module values (modeled as dicts) report ModuleType.
+    if let Some(attr_name) = extract_str(attr) {
+        if attr_name == "__class__" {
+            let has_stored = obj.as_ptr().map_or(false, |p| unsafe {
+                matches!(&(*p).data,
+                    ObjData::Instance { fields, .. } if fields.read().unwrap().contains_key("__class__"))
+            });
+            if !has_stored {
+                if super::module::is_module_value(obj) {
+                    return make_type_object("module");
+                }
+                return super::builtins::mb_type(obj);
+            }
+        }
+    }
     // Unbound-method wrappers (Cls.method): function attributes set by
     // decorators (@typing.override → __override__) live in the FUNC_ATTRS
     // registry keyed by the underlying method value — resolve through it.
