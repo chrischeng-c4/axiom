@@ -1776,6 +1776,41 @@ fn is_complex_obj(val: MbValue) -> bool {
     false
 }
 
+/// True iff `val` is a number complex comparison can be defined against
+/// (int / float / bool / complex / arbitrary-precision int). Anything else
+/// makes `complex.__eq__`/`__ne__` return NotImplemented, per CPython.
+fn is_complex_cmp_operand(val: MbValue) -> bool {
+    if val.is_int() || val.is_float() || val.as_bool().is_some() {
+        return true;
+    }
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            return matches!((*ptr).data, ObjData::Complex(_, _) | ObjData::BigInt(_));
+        }
+    }
+    false
+}
+
+/// Compute an unbound complex comparison dunder `complex.<method>(a, b)`.
+/// Returns `Some(result)` for the six rich-comparison dunders, `None` for any
+/// other method name. __eq__/__ne__ yield a bool when `b` is numeric and
+/// NotImplemented otherwise; the ordering dunders are always NotImplemented
+/// (complex has no ordering). Shared by the unbound-method-wrapper call path
+/// and the direct `complex.__eq__(a, b)` method-call path (mb_call_method).
+pub(crate) fn complex_cmp_dunder(method: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
+    match method {
+        "__eq__" | "__ne__" => Some(if !is_complex_cmp_operand(b) {
+            MbValue::not_implemented()
+        } else if method == "__eq__" {
+            mb_eq(a, b)
+        } else {
+            mb_ne(a, b)
+        }),
+        "__lt__" | "__le__" | "__gt__" | "__ge__" => Some(MbValue::not_implemented()),
+        _ => None,
+    }
+}
+
 /// Parse a CPython-style complex literal from a string body.
 /// Accepts forms like `1+2j`, `3-4j`, `5j`, `1.5e-3+2.5e+2j`, `+j`, `j`, `1`.
 /// Surrounding whitespace and a single layer of outer `(...)` are tolerated.
@@ -7449,6 +7484,22 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         })
                         .unwrap_or_default();
                     drop(guard);
+                    // complex comparison dunders accessed unbound
+                    // (`complex.__eq__(a, b)` etc.). __eq__/__ne__ return a bool
+                    // when the other operand is numeric and NotImplemented
+                    // otherwise; ordering dunders are always NotImplemented
+                    // (complex has no ordering). The arg slab is [a, b].
+                    if type_name == "complex" {
+                        let method_str = method_name.as_ptr().and_then(|p| match &(*p).data {
+                            ObjData::Str(s) => Some(s.clone()),
+                            _ => None,
+                        }).unwrap_or_default();
+                        let a = items.first().copied().unwrap_or_else(MbValue::none);
+                        let b = items.get(1).copied().unwrap_or_else(MbValue::none);
+                        if let Some(result) = complex_cmp_dunder(&method_str, a, b) {
+                            return result;
+                        }
+                    }
                     // Native classmethods (`datetime.date.today`,
                     // `datetime.datetime.fromordinal`): the registered method
                     // value is itself a raw `(args_ptr, nargs)` dispatcher, so
