@@ -6817,6 +6817,62 @@ impl<'a> HirToMir<'a> {
                         return dest;
                     }
                 }
+                // Descriptor type constructors called as values:
+                // property(...) / staticmethod(f) / classmethod(f). These names
+                // live in class_syms (so `isinstance(x, property)` works) but are
+                // not user classes and have no builtin extern, so without this
+                // branch they would fall into the exception-class fallback below
+                // and build a bogus exception object. Route the CALL form to the
+                // real descriptor constructors. (The @decorator form is handled
+                // separately at class-registration time.)
+                if !self.user_class_syms.contains(&func_sym.0)
+                    && !self.builtin_syms.contains_key(&func_sym.0)
+                {
+                    if let Some(class_name) = self.class_syms.get(&func_sym.0).cloned() {
+                        match class_name.as_str() {
+                            "property" => {
+                                let boxed_args: Vec<VReg> = args
+                                    .iter()
+                                    .zip(arg_vregs.iter())
+                                    .map(|(a, &v)| self.box_operand(v, a.ty()))
+                                    .collect();
+                                let args_list = self.fresh_vreg();
+                                self.current_stmts.push(MirInst::MakeList {
+                                    dest: args_list,
+                                    elements: boxed_args,
+                                    ty: self.tcx.any(),
+                                });
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(dest),
+                                    name: "mb_property_from_args".to_string(),
+                                    args: vec![args_list],
+                                    ty: *ty,
+                                });
+                                return dest;
+                            }
+                            "staticmethod" | "classmethod" => {
+                                let arg0 = if args.is_empty() {
+                                    self.emit_none()
+                                } else {
+                                    self.box_operand(arg_vregs[0], args[0].ty())
+                                };
+                                let extern_name = if class_name == "staticmethod" {
+                                    "mb_staticmethod_new"
+                                } else {
+                                    "mb_classmethod_new"
+                                };
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(dest),
+                                    name: extern_name.to_string(),
+                                    args: vec![arg0],
+                                    ty: *ty,
+                                });
+                                return dest;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 // Built-in exception class call: ExcType(msg) → mb_exception_new.
                 // Skip if the symbol also has a builtin extern (type constructors like int, str).
                 if !self.user_class_syms.contains(&func_sym.0)

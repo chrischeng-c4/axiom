@@ -7719,7 +7719,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                 MbValue::from_ptr(MbObject::new_str("object".to_string())),
                                 MbValue::none(),
                             )),
-                            "property" => Some(super::class::mb_property_new(arg0)),
+                            "property" => Some(super::class::mb_property_construct(&items)),
                             "classmethod" => Some(super::class::mb_classmethod_new(arg0)),
                             "staticmethod" => Some(super::class::mb_staticmethod_new(arg0)),
                             "bytes" => Some(if let Some(enc) = items.get(1).copied() {

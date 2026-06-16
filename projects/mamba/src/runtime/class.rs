@@ -7706,6 +7706,75 @@ pub fn mb_property_deleter(prop: MbValue, deleter: MbValue) -> MbValue {
     prop
 }
 
+/// Construct a property from call args: positional (`fget`, `fset`, `fdel`,
+/// `doc`) and/or an optional trailing kwargs dict (`{fget, fset, fdel, doc}`).
+/// `property` is in the native-kwargs allowlist, so a keyword call
+/// (`property(fset=f)`) appends the dict. Property args are callables / None,
+/// never dicts, so a trailing `ObjData::Dict` is the kwargs bag. This lets the
+/// write-only / keyword forms build the correct (fget=None, fset=f) shape
+/// instead of mis-binding the first arg as `fget`.
+pub fn mb_property_construct(items: &[MbValue]) -> MbValue {
+    let (pos, kwargs): (&[MbValue], Option<MbValue>) = match items.last() {
+        Some(last)
+            if last
+                .as_ptr()
+                .map_or(false, |p| unsafe { matches!(&(*p).data, ObjData::Dict(_)) }) =>
+        {
+            (&items[..items.len() - 1], Some(*last))
+        }
+        _ => (items, None),
+    };
+    let mut fget = pos.first().copied();
+    let mut fset = pos.get(1).copied();
+    let mut fdel = pos.get(2).copied();
+    if let Some(kw) = kwargs {
+        if let Some(kp) = kw.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*kp).data {
+                    for (k, v) in lock.read().unwrap().iter() {
+                        if let super::dict_ops::DictKey::Str(s) = k {
+                            match s.as_str() {
+                                "fget" => fget = Some(*v),
+                                "fset" => fset = Some(*v),
+                                "fdel" => fdel = Some(*v),
+                                _ => {} // doc / unknown ignored
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let prop = mb_property_new(fget.unwrap_or_else(MbValue::none));
+    if let Some(fs) = fset {
+        if !fs.is_none() {
+            mb_property_setter(prop, fs);
+        }
+    }
+    if let Some(fd) = fdel {
+        if !fd.is_none() {
+            mb_property_deleter(prop, fd);
+        }
+    }
+    prop
+}
+
+/// extern wrapper for the static `property(*args)` call form. The lowering boxes
+/// the call args into a list; we unpack it and delegate to mb_property_construct
+/// (positional fget/fset/fdel/doc plus an optional trailing kwargs dict).
+pub fn mb_property_from_args(args_list: MbValue) -> MbValue {
+    let items: Vec<MbValue> = match args_list.as_ptr() {
+        Some(p) => unsafe {
+            match &(*p).data {
+                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
+                _ => vec![args_list],
+            }
+        },
+        None => Vec::new(),
+    };
+    mb_property_construct(&items)
+}
+
 /// Get property value: calls fget(instance).
 pub fn mb_property_get(prop: MbValue, instance: MbValue) -> MbValue {
     let key = MbValue::from_ptr(MbObject::new_str("fget".to_string()));
