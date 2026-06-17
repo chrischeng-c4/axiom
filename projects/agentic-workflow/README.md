@@ -256,8 +256,8 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Generated manual EC evidence schema | change | #57 | planned | planned | smoke | projects/agentic-workflow/src/tools/common_change_spec.rs; projects/agentic-workflow/tech-design/core/tools/common_change_spec/preamble.md |
-| Manual runner output convention | change | #57 | planned | planned | smoke | /Users/chris.cheng/projects/ai-studio/vat.toml; /Users/chris.cheng/projects/ai-studio/docs/user-manual |
+| Generated manual EC evidence schema | change | #57 | implemented | verified | smoke | `cargo test -p agentic-workflow ec_generated_manual_artifact` |
+| Manual runner output convention | change | #57 | implemented | verified | smoke | `cargo test -p agentic-workflow ec_doc_gen_writes_manual_from_manifest`; projects/agentic-workflow/src/tools/common_change_spec.rs |
 
 ### Existing Project Standardization
 

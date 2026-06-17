@@ -3858,6 +3858,12 @@ tool_contracts:
         assert!(written.contains("### Demo Happy Path"));
         assert!(written.contains("e2e-results/demo/happy-path.png"));
         assert!(written.contains("Agent eval report"));
+        assert!(written.contains("docs/user-manual/index.md"));
+        assert!(written.contains("format: `markdown`"));
+        assert!(written.contains("command: `jet e2e manual --output docs/user-manual`"));
+        assert!(written.contains("screenshots: `docs/user-manual/screenshots/home.png`"));
+        assert!(written.contains("highlights: main navigation"));
+        assert!(written.contains("steps: open dashboard; verify summary"));
         assert!(written.contains("Agent evaluators"));
         assert!(written.contains("demo-agent-judge"));
         assert!(written.contains("score >= 4"));
