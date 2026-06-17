@@ -3748,6 +3748,13 @@ pub fn mb_neg(a: MbValue) -> MbValue {
                 }
                 return super::bigint_ops::bigint_from_big(neg);
             }
+            // -Counter — flip every count, then drop the now-non-positive ones
+            // (CPython multiset semantics). `+c` routes through the generic
+            // unary dispatcher's Counter arm; `-c` is lowered straight to
+            // mb_neg, so it needs the same handling here.
+            if super::stdlib::collections_mod::is_counter_instance(a) {
+                return super::stdlib::collections_mod::mb_counter_unary(a, true);
+            }
             // -timedelta — negate the exact microsecond total.
             if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(a) {
                 return super::stdlib::datetime_mod::timedelta_from_us(-us);
