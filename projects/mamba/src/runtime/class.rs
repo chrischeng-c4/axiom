@@ -5764,7 +5764,21 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                         if USER_CLASSES.with(|u| u.borrow().contains(class_name.as_str())) {
                             0
                         } else {
+                            // native-stub instance OR a `type` object (a class) —
+                            // fall through (`SomeClass.__class__ = Meta` is a
+                            // metaclass swap, not our concern).
                             1
+                        }
+                    }
+                    // A class-name string IS a class object (metaclass swap via
+                    // `Class.__class__ = NewMeta`): fall through, do not treat it
+                    // as a builtin-value rejection. Only a genuine builtin
+                    // immutable value (str "a", bytes, tuple) is a TypeError.
+                    ObjData::Str(ref s) => {
+                        if CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(s.as_str())) {
+                            1
+                        } else {
+                            2
                         }
                     }
                     _ => 2,
