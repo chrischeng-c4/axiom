@@ -9,6 +9,12 @@ capability_refs:
     claim: generated-manual-ec-evidence-schema
     coverage: partial
     rationale: "This TD defines the generated-manual evidence artifact contract for AW EC docs evidence."
+  - id: manual-evidence-artifacts
+    role: primary
+    gap: manual-runner-output-convention
+    claim: manual-runner-output-convention
+    coverage: full
+    rationale: "This TD records generated manual runner commands and renders the output convention in the EC manual surface."
 ---
 
 # Promote generated manuals to first-class AW evidence artifacts
