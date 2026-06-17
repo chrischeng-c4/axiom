@@ -3084,6 +3084,36 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     // FUNC_NAMES registry. Top-level functions always have
     // qualname == name (CPython only nests for class methods / closures).
     if attr_name == "__name__" || attr_name == "__qualname__" {
+        // Builtin method wrappers: __name__ is the bare method name,
+        // __qualname__ is "type.method" (e.g. dict.fromkeys → "dict.fromkeys",
+        // [1].append → "list.append").
+        if let Some(ptr) = obj.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                    if class_name == "__unbound_method__"
+                        || class_name == "__bound_native_method__"
+                    {
+                        let g = fields.read().unwrap();
+                        if let Some(method) = g.get("__method__").and_then(|v| extract_str(*v)) {
+                            if attr_name == "__name__" {
+                                return MbValue::from_ptr(MbObject::new_str(method));
+                            }
+                            let type_name = if class_name == "__unbound_method__" {
+                                g.get("__type__").and_then(|v| extract_str(*v))
+                            } else {
+                                g.get("__self__")
+                                    .map(|s| super::builtins::value_type_name(*s).to_string())
+                            };
+                            let qn = match type_name {
+                                Some(tn) => format!("{tn}.{method}"),
+                                None => method,
+                            };
+                            return MbValue::from_ptr(MbObject::new_str(qn));
+                        }
+                    }
+                }
+            }
+        }
         // TAG_FUNC direct pointer
         if obj.as_func().is_some() {
             let name = super::closure::mb_func_get_name(obj);
