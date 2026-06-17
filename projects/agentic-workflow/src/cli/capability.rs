@@ -1216,6 +1216,17 @@ struct CapabilityProjectRow {
     cap_path: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityReviewDecision {
+    candidate: String,
+    decision: String,
+    capability_type: String,
+    surfaces: String,
+    ec_dimensions: String,
+    root_wi: String,
+    gate_inventory: String,
+}
+
 fn write_stdout_line(text: &str) -> Result<()> {
     write_line_to(io::stdout().lock(), text)
 }
@@ -1487,13 +1498,360 @@ fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Resu
 
 fn extract_reviewed_draft_registry(draft_body: &str) -> Result<String> {
     validate_review_decisions_are_resolved(draft_body)?;
-    let registry = extract_draft_registry(draft_body)?;
+    let decisions = parse_review_decisions(draft_body)?;
+    let mut registry = extract_draft_registry(draft_body)?;
+    if !decisions.is_empty() {
+        registry = materialize_review_decisions_in_registry(&registry, &decisions)?;
+    }
     if registry.contains("(confirm") {
         anyhow::bail!(
             "draft still contains `(confirm ...)` placeholders; review it before applying"
         );
     }
     Ok(registry)
+}
+
+fn parse_review_decisions(draft_body: &str) -> Result<Vec<CapabilityReviewDecision>> {
+    let Some(section) = extract_review_decisions_section(draft_body) else {
+        return Ok(Vec::new());
+    };
+    let lines = section.lines().collect::<Vec<_>>();
+    let mut cursor = 0;
+    while cursor < lines.len() {
+        let Some((headers, rows, _next_cursor)) = parse_markdown_table_at(&lines, cursor) else {
+            cursor += 1;
+            continue;
+        };
+        let Some(candidate_idx) = find_table_column(&headers, &["candidate", "capability"]) else {
+            cursor += 1;
+            continue;
+        };
+        let Some(decision_idx) = find_table_column(&headers, &["decision", "action"]) else {
+            anyhow::bail!("Review Decisions table is missing a Decision column");
+        };
+        let Some(type_idx) = find_table_column(&headers, &["type", "capabilitytype"]) else {
+            anyhow::bail!("Review Decisions table is missing a Type column");
+        };
+        let Some(surfaces_idx) = find_table_column(&headers, &["surfaces", "surface"]) else {
+            anyhow::bail!("Review Decisions table is missing a Surfaces column");
+        };
+        let Some(ec_dimensions_idx) =
+            find_table_column(&headers, &["ecdimensions", "dimensions", "ec"])
+        else {
+            anyhow::bail!("Review Decisions table is missing an EC Dimensions column");
+        };
+        let Some(root_wi_idx) = find_table_column(&headers, &["rootwi", "wi"]) else {
+            anyhow::bail!("Review Decisions table is missing a Root WI column");
+        };
+        let Some(gate_inventory_idx) =
+            find_table_column(&headers, &["gateinventory", "gateevidence", "inventory"])
+        else {
+            anyhow::bail!("Review Decisions table is missing a Gate Inventory column");
+        };
+        return rows
+            .iter()
+            .map(|row| {
+                Ok(CapabilityReviewDecision {
+                    candidate: table_cell(row, candidate_idx),
+                    decision: table_cell(row, decision_idx),
+                    capability_type: table_cell(row, type_idx),
+                    surfaces: table_cell(row, surfaces_idx),
+                    ec_dimensions: table_cell(row, ec_dimensions_idx),
+                    root_wi: table_cell(row, root_wi_idx),
+                    gate_inventory: table_cell(row, gate_inventory_idx),
+                })
+            })
+            .collect();
+    }
+    anyhow::bail!("Review Decisions section is missing a Markdown decision table")
+}
+
+fn materialize_review_decisions_in_registry(
+    registry: &str,
+    decisions: &[CapabilityReviewDecision],
+) -> Result<String> {
+    let mut updated = registry.to_string();
+    for decision in decisions {
+        if !review_decision_should_apply(decision)? {
+            continue;
+        }
+        validate_review_decision_required_value(decision, "Type", &decision.capability_type)?;
+        validate_review_decision_required_value(decision, "Surfaces", &decision.surfaces)?;
+        validate_review_decision_required_value(
+            decision,
+            "EC Dimensions",
+            &decision.ec_dimensions,
+        )?;
+        validate_review_decision_required_value(
+            decision,
+            "Gate Inventory",
+            &decision.gate_inventory,
+        )?;
+        let capability_id = capability_id_for_review_candidate(&updated, &decision.candidate)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Review Decisions candidate `{}` does not match a canonical draft capability",
+                    decision.candidate
+                )
+            })?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "Type",
+            "type",
+            &decision.capability_type,
+            &["id"],
+        )?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "Surfaces",
+            "surfaces",
+            &decision.surfaces,
+            &["type", "id"],
+        )?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "EC Dimensions",
+            "ecdimensions",
+            &decision.ec_dimensions,
+            &["surfaces", "type", "id"],
+        )?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "Root WI",
+            "rootwi",
+            &decision.root_wi,
+            &["ecdimensions", "surfaces", "type", "id"],
+        )?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "Gate Inventory",
+            "gateinventory",
+            &decision.gate_inventory,
+            &["promise", "requiredverification"],
+        )?;
+        updated = update_capability_index_root_wi_for_title(
+            &updated,
+            &decision.candidate,
+            &decision.root_wi,
+        );
+        updated = update_capability_work_root_evidence(
+            &updated,
+            &capability_id,
+            &decision.root_wi,
+            &decision.gate_inventory,
+        );
+    }
+    Ok(updated)
+}
+
+fn review_decision_should_apply(decision: &CapabilityReviewDecision) -> Result<bool> {
+    let normalized = normalize_table_token(&decision.decision);
+    if normalized.starts_with("confirm") || normalized.starts_with("define") {
+        return Ok(true);
+    }
+    if normalized.starts_with("defer") {
+        return Ok(false);
+    }
+    anyhow::bail!(
+        "Review Decisions candidate `{}` uses non-apply decision `{}`; revise the canonical draft before applying",
+        decision.candidate,
+        decision.decision
+    )
+}
+
+fn validate_review_decision_required_value(
+    decision: &CapabilityReviewDecision,
+    field: &str,
+    value: &str,
+) -> Result<()> {
+    if is_empty_table_value(value) {
+        anyhow::bail!(
+            "Review Decisions candidate `{}` is missing {}",
+            decision.candidate,
+            field
+        );
+    }
+    Ok(())
+}
+
+fn capability_id_for_review_candidate(registry: &str, candidate_title: &str) -> Option<String> {
+    let lines = registry.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let target = normalize_table_token(candidate_title);
+    let mut cursor = 0;
+    while cursor < lines.len() {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[cursor]) else {
+            cursor += 1;
+            continue;
+        };
+        if level < 3 || normalize_table_token(&title) != target {
+            cursor += 1;
+            continue;
+        }
+        let end = next_heading(&lines, cursor + 1).unwrap_or(lines.len());
+        let values = parse_markdown_field_values(&lines, cursor + 1, end);
+        return values.get("id").cloned();
+    }
+    None
+}
+
+fn update_capability_index_root_wi_for_title(
+    content: &str,
+    capability_title: &str,
+    root_wi: &str,
+) -> String {
+    if is_empty_table_value(root_wi) {
+        return content.to_string();
+    }
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let borrowed = lines.iter().map(String::as_str).collect::<Vec<_>>();
+    let target = normalize_table_token(capability_title);
+    let mut cursor = 0;
+    let mut replacement = None;
+    while cursor < borrowed.len() {
+        let Some((headers, rows, next_cursor)) = parse_markdown_table_at(&borrowed, cursor) else {
+            cursor += 1;
+            continue;
+        };
+        let Some(capability_idx) = find_table_column(&headers, &["capability"]) else {
+            cursor = next_cursor;
+            continue;
+        };
+        let Some(root_wi_idx) = find_table_column(&headers, &["rootwi", "wi"]) else {
+            cursor = next_cursor;
+            continue;
+        };
+        for (row_offset, row) in rows.iter().enumerate() {
+            if normalize_table_token(&table_cell(row, capability_idx)) == target {
+                let mut updated_row = row.clone();
+                while updated_row.len() < headers.len() {
+                    updated_row.push(String::new());
+                }
+                updated_row[root_wi_idx] = root_wi.to_string();
+                replacement = Some((
+                    cursor + 2 + row_offset,
+                    render_markdown_table_row(&updated_row),
+                ));
+                break;
+            }
+        }
+        if replacement.is_some() {
+            break;
+        }
+        cursor = next_cursor;
+    }
+    drop(borrowed);
+    if let Some((line_idx, row)) = replacement {
+        lines[line_idx] = row;
+        let mut out = lines.join("\n");
+        if content.ends_with('\n') {
+            out.push('\n');
+        }
+        return out;
+    }
+    content.to_string()
+}
+
+fn update_capability_work_root_evidence(
+    content: &str,
+    capability_id: &str,
+    root_wi: &str,
+    gate_inventory: &str,
+) -> String {
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let borrowed = lines.iter().map(String::as_str).collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&borrowed);
+    let mut cursor = 0;
+    let mut replacement = None;
+    while cursor < borrowed.len() {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((level, _title)) = parse_heading(borrowed[cursor]) else {
+            cursor += 1;
+            continue;
+        };
+        if level < 3 {
+            cursor += 1;
+            continue;
+        }
+        let block_end = next_heading(&borrowed, cursor + 1).unwrap_or(lines.len());
+        if !markdown_block_has_capability_id(
+            &borrowed,
+            &fenced,
+            cursor + 1,
+            block_end,
+            capability_id,
+        ) {
+            cursor = block_end;
+            continue;
+        }
+        let mut table_cursor = cursor + 1;
+        while table_cursor < block_end {
+            let Some((headers, rows, next_cursor)) =
+                parse_markdown_table_at(&borrowed, table_cursor)
+            else {
+                table_cursor += 1;
+                continue;
+            };
+            if let (Some(wi_idx), Some(gate_idx)) = (
+                find_table_column(&headers, &["wi", "workitem"]),
+                find_table_column(&headers, &["gateevidence", "gate", "evidence"]),
+            ) {
+                if let Some(first_row) = rows.first() {
+                    let mut updated_row = first_row.clone();
+                    while updated_row.len() < headers.len() {
+                        updated_row.push(String::new());
+                    }
+                    if !is_empty_table_value(root_wi) {
+                        updated_row[wi_idx] = root_wi.to_string();
+                    }
+                    updated_row[gate_idx] = gate_inventory.to_string();
+                    replacement = Some((table_cursor + 2, render_markdown_table_row(&updated_row)));
+                    break;
+                }
+            }
+            if replacement.is_some() {
+                break;
+            }
+            table_cursor = next_cursor;
+        }
+        if replacement.is_some() {
+            break;
+        }
+        cursor = block_end;
+    }
+    drop(borrowed);
+    if let Some((line_idx, row)) = replacement {
+        lines[line_idx] = row;
+        let mut out = lines.join("\n");
+        if content.ends_with('\n') {
+            out.push('\n');
+        }
+        return out;
+    }
+    content.to_string()
+}
+
+fn render_markdown_table_row(cells: &[String]) -> String {
+    format!(
+        "| {} |",
+        cells
+            .iter()
+            .map(|cell| markdown_cell(cell))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    )
 }
 
 fn validate_review_decisions_are_resolved(draft_body: &str) -> Result<()> {
@@ -3080,6 +3438,11 @@ fn upsert_capability_field_in_markdown_block(
         if let Some((key, _value)) = parse_markdown_contract_field_line(lines[cursor].trim()) {
             if key == canonical_key {
                 lines[cursor] = field_line;
+                let continuation_end =
+                    markdown_contract_field_continuation_end(lines, fenced, cursor + 1, end);
+                if continuation_end > cursor + 1 {
+                    lines.drain(cursor + 1..continuation_end);
+                }
                 return Ok(());
             }
             if preferred_after.contains(&key.as_str()) {
@@ -3112,6 +3475,30 @@ fn upsert_capability_field_in_markdown_block(
     let insert_at = insert_after.map(|line| line + 1).unwrap_or(start);
     lines.insert(insert_at, field_line);
     Ok(())
+}
+
+fn markdown_contract_field_continuation_end(
+    lines: &[String],
+    fenced: &[bool],
+    start: usize,
+    end: usize,
+) -> usize {
+    let mut cursor = start;
+    while cursor < end {
+        if fenced.get(cursor).copied().unwrap_or(false) {
+            break;
+        }
+        let trimmed = lines[cursor].trim();
+        if trimmed.is_empty()
+            || parse_heading(trimmed).is_some()
+            || parse_markdown_table_row(trimmed).is_some()
+            || parse_markdown_contract_field_line(trimmed).is_some()
+        {
+            break;
+        }
+        cursor += 1;
+    }
+    cursor
 }
 
 fn upsert_capability_field_in_contract_table(
@@ -9939,6 +10326,72 @@ Gate Inventory:
         let err = extract_reviewed_draft_registry(draft).unwrap_err();
 
         assert!(err.to_string().contains("Review Decisions"));
+    }
+
+    #[test]
+    fn apply_draft_materializes_review_decisions_into_canonical_registry() {
+        let draft = r#"# Cue Capability Map Draft
+
+## Review Decisions
+
+| Candidate | Decision | Type | Surfaces | EC Dimensions | Root WI | Gate Inventory |
+|---|---|---|---|---|---:|---|
+| Workflow Control Plane | confirm | DeveloperTool | CLI: `cue run` - app generation command | behavior: `jet e2e` - browser/API workflow | #3893 | projects/cue/tests/workflow-control-plane.md |
+
+## Draft Canonical README Section
+
+```md
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Workflow Control Plane | - | planned | planned | smoke | not_ready | human confirmed |
+
+### Workflow Control Plane
+
+ID: workflow-control-plane
+Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)
+Surfaces:
+- (confirm public surface, e.g. CLI: `command` - short summary)
+EC Dimensions:
+- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)
+Root WI: -
+Status: candidate
+Required Verification: smoke
+Promise:
+Cue provides a team workflow control plane over AW Core concepts.
+Gate Inventory:
+- (confirm gate inventory)
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Workflow control plane readiness | epic | - | planned | planned | smoke | (confirm gate/evidence) |
+```
+"#;
+
+        let registry = extract_reviewed_draft_registry(draft).unwrap();
+        let doc = cap_doc(&registry);
+
+        assert!(!registry.contains("(confirm"));
+        assert!(registry.contains("| Workflow Control Plane | #3893 | planned | planned | smoke | not_ready | human confirmed |"));
+        assert!(registry.contains("Type: DeveloperTool"));
+        assert!(registry.contains("Surfaces: CLI: `cue run` - app generation command"));
+        assert!(registry.contains("EC Dimensions: behavior: `jet e2e` - browser/API workflow"));
+        assert!(registry.contains("Gate Inventory: projects/cue/tests/workflow-control-plane.md"));
+        assert!(registry.contains("| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |"));
+        assert_eq!(doc.capabilities.len(), 1);
+        assert_eq!(doc.capabilities[0].id, "workflow-control-plane");
+        assert_eq!(
+            doc.capabilities[0].capability_type,
+            Some(CapabilityType::DeveloperTool)
+        );
+        assert_eq!(doc.capabilities[0].surfaces[0].kind, "CLI");
+        assert_eq!(
+            doc.capabilities[0].ec_dimensions[0].dimension,
+            CapabilityEcDimensionKind::Behavior
+        );
     }
 
     #[test]
