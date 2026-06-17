@@ -66,7 +66,6 @@ fn legacy_top_level_commands_are_removed() {
         "issues",
         "handoff",
         "takeoff",
-        "sync",
         "platform",
         "hook",
         "scaffold-spec",
@@ -90,6 +89,7 @@ fn workflow_protocol_commands_remain_registered() {
         "cb",
         "standardize",
         "generator",
+        "sync",
         "chat",
     ] {
         assert!(
@@ -117,7 +117,6 @@ fn deleted_top_level_commands_fail_as_unknown_commands() {
         "issues",
         "handoff",
         "takeoff",
-        "sync",
         "platform",
         "hook",
         "scaffold-spec",
@@ -163,7 +162,6 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw chat agents",
         "aw handoff",
         "aw takeoff",
-        "aw sync",
         "aw platform",
         "aw hook",
         "aw scaffold-spec",

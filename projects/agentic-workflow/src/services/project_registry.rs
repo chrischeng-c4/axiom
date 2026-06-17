@@ -293,7 +293,11 @@ fn upsert_projects(projects: &mut Vec<Project>, incoming: Vec<Project>) {
 
 fn merge_project(mut existing: Project, incoming: Project) -> Project {
     existing.name = incoming.name;
-    if existing.path.as_os_str().is_empty() {
+    let incoming_has_identity_override =
+        incoming.tech_design_dir.is_some() || !incoming.ec.is_empty();
+    if existing.path.as_os_str().is_empty()
+        || (!incoming.path.as_os_str().is_empty() && incoming_has_identity_override)
+    {
         existing.path = incoming.path;
     }
     if incoming.tech_design_dir.is_some() {
@@ -329,15 +333,17 @@ fn merge_project_config_row(
     incoming: ProjectConfigRow,
 ) -> ProjectConfigRow {
     existing.name = incoming.name;
+    let incoming_has_identity_override = !incoming.aliases.is_empty()
+        || incoming.td_path.is_some()
+        || incoming.cap_path.is_some()
+        || incoming.label.is_some();
     for alias in incoming.aliases {
         if !existing.aliases.contains(&alias) {
             existing.aliases.push(alias);
         }
     }
-    if !incoming.path.is_empty() {
-        if existing.path.is_empty() {
-            existing.path = incoming.path;
-        }
+    if existing.path.is_empty() || (!incoming.path.is_empty() && incoming_has_identity_override) {
+        existing.path = incoming.path;
     }
     if incoming.td_path.is_some() {
         existing.td_path = incoming.td_path;

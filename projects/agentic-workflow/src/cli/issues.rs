@@ -6306,10 +6306,7 @@ path = "crates/no-label"
         )
         .unwrap();
         let labels = read_known_project_labels(tmp.path());
-        assert_eq!(
-            labels,
-            vec!["project:agentic-workflow", "project:agentic-workflow"]
-        );
+        assert_eq!(labels, vec!["project:agentic-workflow", "project:no-label"]);
     }
 
     // -- score-wi-cli-redesign: typed-flag tests ----------------------------
