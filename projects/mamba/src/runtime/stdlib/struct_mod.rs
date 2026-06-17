@@ -137,13 +137,41 @@ unsafe extern "C" fn dispatch_pack_into(args_ptr: *const MbValue, nargs: usize) 
     mb_struct_pack_into(fmt, buffer, offset, &rest)
 }
 
+fn struct_kwarg_get(dict: MbValue, name: &str) -> Option<MbValue> {
+    dict.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let guard = lock.read().ok()?;
+            let key = super::super::dict_ops::DictKey::Str(name.to_string());
+            guard.get(&key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn is_dict_value(v: MbValue) -> bool {
+    v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+}
+
 unsafe extern "C" fn dispatch_unpack_from(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_struct_unpack_from(
-        a.get(0).copied().unwrap_or_else(MbValue::none),
-        a.get(1).copied().unwrap_or_else(MbValue::none),
-        a.get(2).copied().unwrap_or_else(MbValue::none),
-    )
+    // a[0] is the (partial-bound) format. unpack_from(buffer, offset=0) accepts
+    // both positionally and by keyword; the call-lowering appends keyword args
+    // as a trailing dict. The buffer is always bytes-like (never a dict), so a
+    // trailing dict is unambiguously the kwargs.
+    let fmt = a.first().copied().unwrap_or_else(MbValue::none);
+    let rest = if a.len() > 1 { &a[1..] } else { &[][..] };
+    let (positional, kwargs) = match rest.last() {
+        Some(&last) if is_dict_value(last) => (&rest[..rest.len() - 1], Some(last)),
+        _ => (rest, None),
+    };
+    let mut buffer = positional.first().copied().unwrap_or_else(MbValue::none);
+    let mut offset = positional.get(1).copied().unwrap_or_else(MbValue::none);
+    if let Some(kw) = kwargs {
+        if let Some(b) = struct_kwarg_get(kw, "buffer") { buffer = b; }
+        if let Some(o) = struct_kwarg_get(kw, "offset") { offset = o; }
+    }
+    mb_struct_unpack_from(fmt, buffer, offset)
 }
 
 /// `Struct.__init__(self, format)` — (re)compile `self` to `format`. Bound on
