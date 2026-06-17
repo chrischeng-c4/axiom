@@ -3322,9 +3322,29 @@ pub fn mb_bitxor(a: MbValue, b: MbValue) -> MbValue {
 /// registered, so `binop_to_runtime` returned None and codegen emitted a raw
 /// shift over NaN-boxed bits).
 pub fn mb_lshift(a: MbValue, b: MbValue) -> MbValue {
-    match (a.as_int(), b.as_int()) {
-        (Some(ai), Some(bi)) if bi >= 0 => MbValue::from_int(ai.wrapping_shl(bi as u32)),
-        _ => MbValue::none(),
+    let bi = match b.as_int() {
+        Some(x) if x >= 0 => x,
+        _ => return MbValue::none(),
+    };
+    // Fast path: inline base whose shift result is recoverable in i64
+    // (no bits shifted out). `int_from_i64` still promotes to BigInt when the
+    // value exceeds the inline range, so `1 << 48` is exact.
+    if let Some(ai) = a.as_int() {
+        if bi < 63 {
+            let shifted = ai.wrapping_shl(bi as u32);
+            if (shifted >> bi) == ai {
+                return super::bigint_ops::int_from_i64(shifted);
+            }
+        }
+        if ai == 0 {
+            return MbValue::from_int(0);
+        }
+    }
+    // General path: arbitrary-precision shift (handles i64 overflow — e.g.
+    // `1 << 64` must yield 2**64, not wrap to 1 — and BigInt bases).
+    match unsafe { super::bigint_ops::to_bigint(a) } {
+        Some(big) => super::bigint_ops::normalize_bigint(big << (bi as u64)),
+        None => MbValue::none(),
     }
 }
 
