@@ -154,6 +154,37 @@ pub fn is_user_abc(class_name: &str) -> bool {
 /// class in the MRO concretely overrides. Mirrors CPython's `ABCMeta.__new__`
 /// `__abstractmethods__` calculation. Returns names in sorted order for
 /// deterministic output.
+/// Enumerate (name, value) members of a class — class attributes and methods
+/// across the MRO, a more-derived definition winning. Used by
+/// inspect.getmembers on a class value.
+pub(crate) fn class_members(class_name: &str) -> Vec<(String, MbValue)> {
+    CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let mro: Vec<String> = match reg.get(class_name) {
+            Some(c) if !c.mro.is_empty() => c.mro.clone(),
+            Some(_) => vec![class_name.to_string()],
+            None => return Vec::new(),
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<(String, MbValue)> = Vec::new();
+        for cls in &mro {
+            if let Some(c) = reg.get(cls) {
+                for (k, v) in c.class_attrs.iter() {
+                    if seen.insert(k.clone()) {
+                        out.push((k.clone(), *v));
+                    }
+                }
+                for (k, v) in c.methods.iter() {
+                    if seen.insert(k.clone()) {
+                        out.push((k.clone(), *v));
+                    }
+                }
+            }
+        }
+        out
+    })
+}
+
 pub(crate) fn compute_user_abstractmethods(class_name: &str) -> Vec<String> {
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
