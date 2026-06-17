@@ -1150,13 +1150,16 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
     })
 }
 
-/// Derive each case's `required_for_production` from its capability's *type*.
+/// Derive each declared case's `required_for_production` from its capability
+/// type ceiling.
 ///
-/// TYPE -> which EC dimensions are production-required (structural). When a case's
-/// capability has a type assigned in `.aw/capability-types.toml`, the derived
-/// value (`case.category` is in the type's required dimensions) wins. Otherwise
-/// the value already parsed from the YAML flag (`required_for_production`,
-/// defaulting to `true`) is left untouched so existing projects don't break.
+/// A manifest case is already dimension content; the capability type decides
+/// whether that declared category is production-required. When a case's
+/// capability has a type assigned in README or `.aw/capability-types.toml`, the
+/// derived value (`case.category` is in the type's required dimensions) wins.
+/// Otherwise the value already parsed from the YAML flag
+/// (`required_for_production`, defaulting to `true`) is left untouched so
+/// existing projects don't break.
 ///
 /// The type binding is loaded ONCE per generation, not per case. Maturity/env
 /// (vat) deliberately plays no part here: it gates whether a contract is
@@ -3117,7 +3120,7 @@ e2e_tests:
     }
 
     #[test]
-    fn derive_required_for_production_uses_capability_type() {
+    fn derive_required_for_production_uses_type_ceiling_for_declared_ec_cases() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join(".aw")).unwrap();
         fs::write(
@@ -3128,7 +3131,7 @@ e2e_tests:
         let ctx = ctx_with_root(tmp.path());
 
         let mut cases = vec![
-            // Service capability: security + stability are production-required.
+            // Service capability: declared security + stability cases are production-required.
             case("svc-sec", "svc-cap", "security"),
             case("svc-stab", "svc-cap", "stability"),
             // AgentFirst capability: only behavior is required; efficiency is not.
