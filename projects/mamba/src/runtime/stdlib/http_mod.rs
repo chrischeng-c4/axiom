@@ -662,6 +662,41 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(client_addr as u64);
     });
+    // Exception classes: register the real hierarchy (rooted at HTTPException ⊂
+    // Exception) so issubclass / `except` work. Registered parent-first so each
+    // child's MRO can expand its base. Overrides the callable-shell attrs above.
+    let http_exc_tree: &[(&str, &[&str])] = &[
+        ("HTTPException", &["Exception"]),
+        ("NotConnected", &["HTTPException"]),
+        ("InvalidURL", &["HTTPException"]),
+        ("UnknownProtocol", &["HTTPException"]),
+        ("UnknownTransferEncoding", &["HTTPException"]),
+        ("UnimplementedFileMode", &["HTTPException"]),
+        ("IncompleteRead", &["HTTPException"]),
+        ("ImproperConnectionState", &["HTTPException"]),
+        ("CannotSendRequest", &["ImproperConnectionState"]),
+        ("CannotSendHeader", &["ImproperConnectionState"]),
+        ("ResponseNotReady", &["ImproperConnectionState"]),
+        ("BadStatusLine", &["HTTPException"]),
+        ("LineTooLong", &["BadStatusLine"]),
+        ("RemoteDisconnected", &["ConnectionResetError", "BadStatusLine"]),
+    ];
+    for (name, bases) in http_exc_tree {
+        super::super::class::mb_class_register(
+            name,
+            bases.iter().map(|b| b.to_string()).collect(),
+            HashMap::new(),
+        );
+        client_attrs.insert(
+            name.to_string(),
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        );
+    }
+    // `error` is CPython's module-level alias for the HTTPException class.
+    client_attrs.insert(
+        "error".to_string(),
+        MbValue::from_ptr(MbObject::new_str("HTTPException".to_string())),
+    );
     for &(code, name, _phrase) in cclab_mamba_registry::http::canonical_codes() {
         client_attrs.insert(name.to_string(), MbValue::from_int(code as i64));
     }
