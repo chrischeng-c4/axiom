@@ -374,10 +374,30 @@ pub fn mb_unicodedata_combining(c: MbValue) -> MbValue {
     MbValue::from_int(unicode_normalization::char::canonical_combining_class(ch) as i64)
 }
 
-/// decomposition(chr) -> str: decomposition mapping ("" when none).
+/// decomposition(chr) -> str: the character's canonical decomposition as a
+/// space-separated string of uppercase hex code points (CPython format), or
+/// "" when the character has no canonical decomposition. Compatibility-only
+/// decompositions (which carry a `<tag>` prefix derived from UCD field 5 that
+/// is not vendored here) are reported as "" rather than guessed.
 pub fn mb_unicodedata_decomposition(c: MbValue) -> MbValue {
-    let _ = extract_str(c);
-    MbValue::from_ptr(MbObject::new_str(String::new()))
+    use unicode_normalization::char::decompose_canonical;
+    let empty = || MbValue::from_ptr(MbObject::new_str(String::new()));
+    let Some(ch) = extract_str(c).and_then(|s| s.chars().next()) else {
+        return empty();
+    };
+    let mut parts: Vec<char> = Vec::new();
+    decompose_canonical(ch, |d| parts.push(d));
+    // decompose_canonical emits the character itself when it has no canonical
+    // decomposition — that is the "no decomposition" case.
+    if parts.is_empty() || (parts.len() == 1 && parts[0] == ch) {
+        return empty();
+    }
+    let hex = parts
+        .iter()
+        .map(|d| format!("{:04X}", *d as u32))
+        .collect::<Vec<_>>()
+        .join(" ");
+    MbValue::from_ptr(MbObject::new_str(hex))
 }
 
 /// digit(chr[, default]) -> int: digit value of a Unicode character.
