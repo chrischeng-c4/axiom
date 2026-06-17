@@ -195,3 +195,11 @@ requirementDiagram
   ec_generated_manual_artifact_round_trips_optional_media - verifies -> CT4
   ec_doc_gen_renders_generated_manual_artifact_details - verifies -> CT5
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] contract-complete: The contract identifies the concrete EC parsing/rendering path and preserves legacy docs behavior while adding generated-manual validation for command, safe path, supported format, optional media, and report visibility.
+- [unit-test] contract-complete: The tests map schema preservation, valid manual contracts, invalid diagnostics, optional media round-trip, and EC manual rendering to named Rust test targets.
