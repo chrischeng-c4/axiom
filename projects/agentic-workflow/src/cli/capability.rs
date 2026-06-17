@@ -3522,7 +3522,7 @@ fn choose_next_action(
                     _ => (
                         CapabilityActionKind::CreateWi,
                         format!("aw wi plan --project {}", report.project),
-                        "open capability gap has no active WI".to_string(),
+                        wi_plan_reason(report, "open capability gap has no active WI in README"),
                     ),
                 };
                 return CapabilityAction {
@@ -3561,8 +3561,10 @@ fn choose_next_action(
                     claim_id: Some(claim.id.clone()),
                     target: item.title.clone(),
                     command: format!("aw wi plan --project {}", report.project),
-                    reason: "required capability claim has no primary TD verification linkage"
-                        .to_string(),
+                    reason: wi_plan_reason(
+                        report,
+                        "required capability claim has no primary TD verification linkage",
+                    ),
                     requires_hitl: false,
                     hitl_question: None,
                 };
@@ -3705,6 +3707,23 @@ fn choose_next_action(
         requires_hitl: false,
         hitl_question: None,
     }
+}
+
+fn wi_plan_reason(report: &CapabilityReport, base_reason: &str) -> String {
+    if issue_inventory_unavailable(report) {
+        format!(
+            "{base_reason}; issue inventory unavailable, so `aw wi plan` must stay local/review-only before publishing tracker changes"
+        )
+    } else {
+        base_reason.to_string()
+    }
+}
+
+fn issue_inventory_unavailable(report: &CapabilityReport) -> bool {
+    report
+        .warnings
+        .iter()
+        .any(|warning| warning.starts_with("issue inventory unavailable:"))
 }
 
 fn runtime_verification_not_evaluated(item: &CapabilityReportItem) -> bool {
@@ -7971,6 +7990,40 @@ mod tests {
         }
     }
 
+    fn sample_report_item_with_gap(active_wi: Option<&str>) -> CapabilityReportItem {
+        CapabilityReportItem {
+            id: "package-manager".to_string(),
+            title: "Package Manager".to_string(),
+            status: CapabilityStatus::Auditing,
+            capability_type: None,
+            surfaces: Vec::new(),
+            ec_dimensions: Vec::new(),
+            promise: "Replace package manager flows.".to_string(),
+            current_state: "Install surface exists.".to_string(),
+            gaps: vec![CapabilityGap {
+                id: "package-manager-readiness".to_string(),
+                status: CapabilityGapStatus::Open,
+                active_wi: active_wi.map(str::to_string),
+                summary: "Readiness audit pending.".to_string(),
+            }],
+            td_refs: Vec::new(),
+            wi_refs: active_wi.into_iter().map(str::to_string).collect(),
+            wi_evidence: Vec::new(),
+            claims: Vec::new(),
+            claim_count: 0,
+            verified_claim_count: 0,
+            claim_percent: 0.0,
+            verification: Vec::new(),
+            verified: false,
+            release_scope: false,
+            full_regenerability_required: false,
+            dependencies: Vec::new(),
+            dependency_closure: Vec::new(),
+            production_ready: false,
+            production_blockers: Vec::new(),
+        }
+    }
+
     #[test]
     fn empty_capability_map_is_actionable_document_state() {
         let doc = cap_doc("# Mamba\n\n## Capabilities\n\n");
@@ -8137,6 +8190,26 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert_eq!(action.kind, CapabilityActionKind::FormatMigrationRequired);
         assert!(!action.requires_hitl);
         assert_eq!(action.command, "aw capability migrate --project jet");
+    }
+
+    #[test]
+    fn create_wi_next_action_keeps_unavailable_inventory_review_only() {
+        let document = canonical_doc(one_field_markdown_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.format_version = document.format_version();
+        report.capabilities = vec![sample_report_item_with_gap(None)];
+        report
+            .warnings
+            .push("issue inventory unavailable: gh auth missing".to_string());
+
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types);
+
+        assert_eq!(action.kind, CapabilityActionKind::CreateWi);
+        assert_eq!(action.command, "aw wi plan --project jet");
+        assert!(action.reason.contains("issue inventory unavailable"));
+        assert!(action.reason.contains("local/review-only"));
+        assert!(!action.requires_hitl);
     }
 
     #[test]
