@@ -86,6 +86,10 @@ struct EnumClassInfo {
     /// Flag composite cache: composite int value → cached member Instance,
     /// so `Color.RED | Color.BLUE` returns the same singleton each time.
     composites: FxHashMap<i64, MbValue>,
+    /// `enum.global_enum` module name (e.g. "calendar" for calendar.Day): when
+    /// set, members repr as `module.NAME` (calendar.THURSDAY) instead of
+    /// `<Class.NAME: value>`.
+    global_module: Option<String>,
 }
 
 thread_local! {
@@ -373,6 +377,7 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
                 canonical: Vec::new(),
                 by_name: Vec::new(),
                 composites: FxHashMap::default(),
+                global_module: None,
             }
         });
 
@@ -882,8 +887,55 @@ pub fn member_repr(v: MbValue) -> Option<String> {
     if !super::super::class::lookup_method(&cls, "__repr__").is_none() {
         return None;
     }
+    // global_enum members (e.g. calendar.Day) repr as `module.NAME`.
+    if let Some(module) = ENUM_CLASSES.with(|m| {
+        m.borrow().get(&cls).and_then(|i| i.global_module.clone())
+    }) {
+        return Some(format!("{module}.{name}"));
+    }
     let vr = repr_string(member_value(v));
     Some(format!("<{cls}.{name}: {vr}>"))
+}
+
+/// Register a `global_enum` data-type enum class (e.g. calendar.Day) with its
+/// members and return them in definition order. The class is an IntMixin (its
+/// members are int-valued Instances with repr/name/value and int behavior);
+/// members repr as `module.NAME`. Used by stdlib modules that expose
+/// `enum.global_enum`-decorated IntEnums whose members are also module globals.
+pub fn register_global_enum(
+    class_name: &str,
+    module: &str,
+    members: &[(&str, i64)],
+) -> Vec<MbValue> {
+    HAVE_ENUM_CLASSES.with(|c| c.set(true));
+    let mut out = Vec::new();
+    ENUM_CLASSES.with(|m| {
+        let mut map = m.borrow_mut();
+        let info = map.entry(class_name.to_string()).or_insert_with(|| EnumClassInfo {
+            kind: EnumKind::IntMixin,
+            next_auto: 1,
+            canonical: Vec::new(),
+            by_name: Vec::new(),
+            composites: FxHashMap::default(),
+            global_module: Some(module.to_string()),
+        });
+        info.global_module = Some(module.to_string());
+        for (name, value) in members {
+            let member = new_member(class_name, name, MbValue::from_int(*value));
+            unsafe {
+                super::super::rc::retain_if_ptr(member);
+                super::super::rc::retain_if_ptr(member);
+            }
+            info.canonical.push(member);
+            info.by_name.push((name.to_string(), member));
+            out.push(member);
+        }
+    });
+    // Make enum_kind_for agree (these classes are not in CLASS_REGISTRY).
+    ENUM_KIND_MEMO.with(|m| {
+        m.borrow_mut().insert(class_name.to_string(), Some(EnumKind::IntMixin));
+    });
+    out
 }
 
 /// First alias found: (alias_name, canonical_name) — `@enum.unique` support.
