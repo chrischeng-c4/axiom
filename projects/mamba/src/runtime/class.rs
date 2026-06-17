@@ -235,6 +235,29 @@ pub fn mb_user_abc_reject_abstract_instantiation(class_name: &str) -> Option<MbV
     Some(MbValue::none())
 }
 
+/// typing.Protocol: a class with `Protocol` as a *direct* base is a protocol
+/// definition and cannot be instantiated (CPython: "Protocols cannot be
+/// instantiated"). A concrete class that merely subclasses a protocol (without
+/// listing Protocol directly) is instantiable, so this checks direct bases only.
+pub fn mb_reject_protocol_instantiation(class_name: &str) -> Option<MbValue> {
+    let is_protocol = CLASS_REGISTRY.with(|reg| {
+        reg.borrow()
+            .get(class_name)
+            .map(|c| c.bases.iter().any(|b| b == "Protocol" || b == "typing.Protocol"))
+            .unwrap_or(false)
+    });
+    if is_protocol {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "Protocols cannot be instantiated".to_string(),
+            )),
+        );
+        return Some(MbValue::none());
+    }
+    None
+}
+
 /// abc: build a frozenset MbValue of `class_name`'s abstract method names.
 fn user_abstractmethods_frozenset(class_name: &str) -> MbValue {
     let names = compute_user_abstractmethods(class_name);
@@ -1572,6 +1595,9 @@ pub fn mb_instance_new(class_name: MbValue, _args: MbValue) -> MbValue {
     if let Some(result) = mb_user_abc_reject_abstract_instantiation(&name) {
         return result;
     }
+    if let Some(result) = mb_reject_protocol_instantiation(&name) {
+        return result;
+    }
     let instance = MbValue::from_ptr(MbObject::new_instance(name.clone()));
 
     // __init__ is called by the compiled code after instance creation.
@@ -1700,6 +1726,9 @@ fn instance_new_with_init_impl(
         return result;
     }
     if let Some(result) = mb_user_abc_reject_abstract_instantiation(&name) {
+        return result;
+    }
+    if let Some(result) = mb_reject_protocol_instantiation(&name) {
         return result;
     }
     // Class-body enums: `Color(2)` is a value→member lookup (with the
