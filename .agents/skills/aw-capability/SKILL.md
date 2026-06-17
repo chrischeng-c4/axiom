@@ -14,7 +14,7 @@ promises from inference alone.
 ## Contract
 
 - Human API: `/aw:capability <prompt>`.
-- Agent API: use `aw run`, `aw capability report|next|draft|init|migrate|run|check`,
+- Agent API: use `aw run`, `aw capability report|next|draft|apply-draft|init|migrate|run|check`,
   `aw standardize <project>`, `aw wi list/show`, `aw td ...`, and `aw cb ...`
   as needed to gather evidence.
 - Artifact: `cap_path`, defaulting to the project README when configured or
@@ -59,7 +59,13 @@ promises from inference alone.
    artifacts for all draftable projects in one AW-owned pass. These drafts
    remain local `/tmp` review artifacts and do not edit README. Use the
    emitted draft index path as the review queue handoff.
-10. Only after explicit confirmation, propose edits that create or materially
+10. After a human has reviewed a draft artifact and replaced all placeholders,
+   use `aw capability apply-draft --project <project> --draft <path>
+   --reviewed` to apply the canonical `## Capabilities` section to README.
+   The command refuses unreviewed placeholder drafts and only proves structure;
+   run `aw capability check --project <project>` afterward, and use
+   `--verify` only when production proof matters.
+11. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
 ## README Schema

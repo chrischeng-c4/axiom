@@ -39,6 +39,8 @@ pub enum CapabilityCommand {
     Next(CapabilityNextArgs),
     /// Render inferred README capability roots as a pending-review local draft.
     Draft(CapabilityDraftArgs),
+    /// Apply a human-reviewed capability draft to the project README.
+    ApplyDraft(CapabilityApplyDraftArgs),
     /// Execute one bounded capability tick.
     Run(CapabilityRunArgs),
     /// Rewrite legacy/YAML capability maps to the canonical Markdown format.
@@ -122,6 +124,29 @@ pub struct CapabilityDraftArgs {
     #[arg(long, hide = true)]
     pub json: bool,
     /// Emit the generated draft path only.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON result.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilityApplyDraftArgs {
+    /// Pending-review draft artifact path from `aw capability draft` or sweep.
+    #[arg(long)]
+    pub draft: PathBuf,
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+    /// Required assertion that a human has reviewed and accepted this draft.
+    #[arg(long)]
+    pub reviewed: bool,
+    /// DEPRECATED compatibility no-op. Capability apply-draft emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit a compact human-readable report.
     #[arg(long)]
     pub human: bool,
     /// Pretty-print the JSON result.
@@ -947,6 +972,20 @@ pub struct CapabilityDraftReport {
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityApplyDraftReport {
+    pub schema_version: &'static str,
+    pub action: &'static str,
+    pub project: String,
+    pub cap_path: PathBuf,
+    pub draft_path: PathBuf,
+    pub status: String,
+    pub changed: bool,
+    pub capability_count: usize,
+    pub check_command: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CapabilityWiEvidence {
     pub reference: String,
     pub gap_id: String,
@@ -1145,6 +1184,10 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             let project = required_capability_project(selected_project.as_deref())?;
             draft_capability_map(&project, args)
         }
+        CapabilityCommand::ApplyDraft(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            apply_capability_draft(&project, args)
+        }
         CapabilityCommand::Run(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
             run_capability_tick(&project, args).await
@@ -1271,6 +1314,130 @@ fn render_empty_capability_readme(title: &str, brief: &str) -> String {
     format!(
         "# {title}\n\n## Brief\n\n{brief}\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n"
     )
+}
+
+fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Result<()> {
+    if !args.reviewed {
+        anyhow::bail!("refusing to apply draft without --reviewed; human confirmation is required before README mutation");
+    }
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    let draft_body = std::fs::read_to_string(&args.draft)
+        .with_context(|| format!("failed to read capability draft {}", args.draft.display()))?;
+    let registry = extract_reviewed_draft_registry(&draft_body)?;
+    let body = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
+    let next_body = apply_capability_registry_to_readme(&body, &registry, project)?;
+    let document = parse_capability_document(&next_body, &cap_path)
+        .with_context(|| "applied draft does not parse as a capability map")?;
+    if document.capabilities.is_empty() {
+        anyhow::bail!("applied draft produced no capability contracts");
+    }
+    let changed = next_body != body;
+    if changed {
+        std::fs::write(&cap_path, next_body)
+            .with_context(|| format!("failed to write capability map {}", cap_path.display()))?;
+    }
+    let report = CapabilityApplyDraftReport {
+        schema_version: "aw.cli.v1",
+        action: "capability_apply_draft",
+        project: project.to_string(),
+        cap_path,
+        draft_path: args.draft,
+        status: if changed { "applied" } else { "unchanged" }.to_string(),
+        changed,
+        capability_count: document.capabilities.len(),
+        check_command: format!("aw capability check --project {project}"),
+    };
+
+    if args.human {
+        println!(
+            "capability apply-draft: {} ({}) changed={} capabilities={}",
+            report.project, report.status, report.changed, report.capability_count
+        );
+        println!("check: {}", report.check_command);
+    } else if args.pretty || args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("{}", serde_json::to_string(&report)?);
+    }
+    Ok(())
+}
+
+fn extract_reviewed_draft_registry(draft_body: &str) -> Result<String> {
+    let registry = extract_draft_registry(draft_body)?;
+    if registry.contains("(confirm") {
+        anyhow::bail!(
+            "draft still contains `(confirm ...)` placeholders; review it before applying"
+        );
+    }
+    Ok(registry)
+}
+
+fn extract_draft_registry(draft_body: &str) -> Result<String> {
+    let marker = "## Draft Canonical README Section";
+    let Some(after_marker) = draft_body.split_once(marker).map(|(_, tail)| tail) else {
+        anyhow::bail!("draft is missing `## Draft Canonical README Section`");
+    };
+    let Some((_, after_open)) = after_marker.split_once("```md") else {
+        anyhow::bail!("draft canonical section must be fenced as ```md");
+    };
+    let Some((registry, _)) = after_open.split_once("```") else {
+        anyhow::bail!("draft canonical section fence is not closed");
+    };
+    let registry = registry.trim();
+    if !registry.starts_with("## Capabilities") {
+        anyhow::bail!("draft canonical section must start with `## Capabilities`");
+    }
+    Ok(format!("{registry}\n"))
+}
+
+fn apply_capability_registry_to_readme(
+    original_body: &str,
+    registry: &str,
+    project: &str,
+) -> Result<String> {
+    let mut body = ensure_canonical_readme_scaffold(original_body.to_string(), project);
+    body = replace_capabilities_section(&body, registry)?;
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    Ok(body)
+}
+
+fn replace_capabilities_section(body: &str, registry: &str) -> Result<String> {
+    let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let Some(start) = lines.iter().enumerate().find_map(|(idx, line)| {
+        if fenced[idx] {
+            return None;
+        }
+        parse_heading(line)
+            .filter(|(level, title)| *level == 2 && title.eq_ignore_ascii_case("Capabilities"))
+            .map(|_| idx)
+    }) else {
+        anyhow::bail!("README scaffold is missing `## Capabilities`");
+    };
+    let end = (start + 1..lines.len())
+        .find(|idx| {
+            !fenced[*idx]
+                && parse_heading(lines[*idx])
+                    .map(|(level, _)| level <= 2)
+                    .unwrap_or(false)
+        })
+        .unwrap_or(lines.len());
+
+    let mut out = String::new();
+    if start > 0 {
+        out.push_str(&lines[..start].join("\n"));
+        out.push_str("\n\n");
+    }
+    out.push_str(registry.trim_end());
+    if end < lines.len() {
+        out.push_str("\n\n");
+        out.push_str(&lines[end..].join("\n"));
+    }
+    Ok(collapse_markdown_blank_runs_outside_fences(&out))
 }
 
 fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> {
@@ -8331,6 +8498,75 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert!(artifact.contains("ID: cue-capability"));
         assert!(artifact.contains("Promise:\n(confirm product promise)"));
         assert!(artifact.contains("This artifact is inference only"));
+    }
+
+    #[test]
+    fn apply_draft_rejects_unreviewed_placeholders() {
+        let artifact = render_capability_map_draft("cue", Path::new("projects/cue/README.md"), &[]);
+
+        let err = extract_reviewed_draft_registry(&artifact).unwrap_err();
+
+        assert!(err.to_string().contains("placeholders"));
+    }
+
+    #[test]
+    fn apply_reviewed_draft_replaces_capabilities_section() {
+        let draft = r#"# Cue Capability Map Draft
+
+## Draft Canonical README Section
+
+```md
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Workflow Control Plane | #3893 | planned | planned | smoke | not_ready | human confirmed |
+
+### Workflow Control Plane
+
+ID: workflow-control-plane
+Type: DeveloperTool
+Root WI: #3893
+Status: confirmed
+Required Verification: smoke
+Promise:
+Cue provides a team workflow control plane over AW Core concepts.
+Gate Inventory:
+- projects/cue/tests/workflow-control-plane.md
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |
+```
+"#;
+        let registry = extract_reviewed_draft_registry(draft).unwrap();
+        let original = r#"# Cue
+
+Team workflow product.
+
+## Capabilities
+
+old placeholder
+
+## Notes
+
+Keep this section.
+"#;
+
+        let applied = apply_capability_registry_to_readme(original, &registry, "cue").unwrap();
+        let doc = cap_doc(&applied);
+
+        assert!(applied.contains("## Brief\n\nTeam workflow product."));
+        assert!(applied.contains("## Notes\n\nKeep this section."));
+        assert!(!applied.contains("old placeholder"));
+        assert_eq!(doc.capabilities.len(), 1);
+        assert_eq!(doc.capabilities[0].id, "workflow-control-plane");
+        assert_eq!(
+            doc.capabilities[0].capability_type,
+            Some(CapabilityType::DeveloperTool)
+        );
     }
 
     #[test]
