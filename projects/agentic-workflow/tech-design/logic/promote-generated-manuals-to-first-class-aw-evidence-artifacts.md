@@ -88,118 +88,110 @@ flowchart TD
 
 ```mermaid
 ---
-id: generated-manual-evidence-artifact-tests
+id: generated-manual-evidence-contract-tests
 requirements:
-  generated_manual_schema:
-    id: UT1
-    text: "EC evidence docs entries accept kind generated-manual with a project-local path, label, markdown/html format, and non-empty runner command."
+  schema_fields:
+    id: CT1
+    text: "EcEvidenceArtifact preserves generated-manual metadata fields from e2e evidence docs YAML: path, label, format, command, screenshots, highlights, and steps."
     kind: functional
     risk: high
     verify: test
-  runner_required:
-    id: UT2
-    text: "generated-manual evidence without a runner command fails validation with an actionable diagnostic."
+  validation_success:
+    id: CT2
+    text: "A markdown generated-manual under docs/ with a non-empty runner command validates cleanly."
     kind: functional
     risk: high
     verify: test
-  path_safety:
-    id: UT3
-    text: "generated-manual output paths must remain under docs/ or a configured project-local evidence root."
+  validation_failures:
+    id: CT3
+    text: "Missing command, unsupported format, and path escape each produce deterministic EC validation findings."
     kind: safety
     risk: high
     verify: test
   optional_media:
-    id: UT4
-    text: "screenshots, highlights, and step metadata are parsed when present but are not required for a valid manual artifact."
+    id: CT4
+    text: "Manual screenshots, highlights, and steps are optional and round-trip when present."
     kind: functional
     risk: medium
     verify: test
-  evidence_surface:
-    id: UT5
-    text: "capability, health, and EC documentation output expose generated manuals as typed evidence artifacts."
+  documentation_surface:
+    id: CT5
+    text: "render_ec_doc() includes generated manual path, command, format, and optional media in the generated EC manual."
     kind: integration
     risk: medium
     verify: test
 elements:
-  ec_generated_manual_docs_entry_accepts_runner_contract:
+  ec_generated_manual_artifact_preserves_metadata:
     kind: test
     type: "rs/#[test]"
-  ec_generated_manual_docs_entry_rejects_missing_runner:
+  ec_generated_manual_artifact_validates_markdown_docs_runner:
     kind: test
     type: "rs/#[test]"
-  ec_generated_manual_docs_entry_rejects_path_escape:
+  ec_generated_manual_artifact_reports_invalid_contracts:
     kind: test
     type: "rs/#[test]"
-  ec_generated_manual_docs_entry_accepts_optional_media_absent:
+  ec_generated_manual_artifact_round_trips_optional_media:
     kind: test
     type: "rs/#[test]"
-  ec_generated_manual_docs_entry_surfaces_in_reports:
+  ec_doc_gen_renders_generated_manual_artifact_details:
     kind: test
     type: "rs/#[test]"
 relations:
-  - { from: ec_generated_manual_docs_entry_accepts_runner_contract, verifies: generated_manual_schema }
-  - { from: ec_generated_manual_docs_entry_rejects_missing_runner, verifies: runner_required }
-  - { from: ec_generated_manual_docs_entry_rejects_path_escape, verifies: path_safety }
-  - { from: ec_generated_manual_docs_entry_accepts_optional_media_absent, verifies: optional_media }
-  - { from: ec_generated_manual_docs_entry_surfaces_in_reports, verifies: evidence_surface }
+  - { from: ec_generated_manual_artifact_preserves_metadata, verifies: schema_fields }
+  - { from: ec_generated_manual_artifact_validates_markdown_docs_runner, verifies: validation_success }
+  - { from: ec_generated_manual_artifact_reports_invalid_contracts, verifies: validation_failures }
+  - { from: ec_generated_manual_artifact_round_trips_optional_media, verifies: optional_media }
+  - { from: ec_doc_gen_renders_generated_manual_artifact_details, verifies: documentation_surface }
 ---
 requirementDiagram
-  requirement UT1 {
-    id: UT1
-    text: "generated-manual docs evidence schema"
+  requirement CT1 {
+    id: CT1
+    text: "manual metadata schema"
     risk: high
     verifymethod: test
   }
-  requirement UT2 {
-    id: UT2
-    text: "runner command required"
+  requirement CT2 {
+    id: CT2
+    text: "valid docs runner contract"
     risk: high
     verifymethod: test
   }
-  requirement UT3 {
-    id: UT3
-    text: "project-local output path"
+  requirement CT3 {
+    id: CT3
+    text: "invalid contract diagnostics"
     risk: high
     verifymethod: test
   }
-  requirement UT4 {
-    id: UT4
-    text: "optional media metadata"
+  requirement CT4 {
+    id: CT4
+    text: "optional media round trip"
     risk: medium
     verifymethod: test
   }
-  requirement UT5 {
-    id: UT5
-    text: "manual artifact report surface"
+  requirement CT5 {
+    id: CT5
+    text: "EC manual rendering"
     risk: medium
     verifymethod: test
   }
-  element ec_generated_manual_docs_entry_accepts_runner_contract {
+  element ec_generated_manual_artifact_preserves_metadata {
     type: "rs/#[test]"
   }
-  element ec_generated_manual_docs_entry_rejects_missing_runner {
+  element ec_generated_manual_artifact_validates_markdown_docs_runner {
     type: "rs/#[test]"
   }
-  element ec_generated_manual_docs_entry_rejects_path_escape {
+  element ec_generated_manual_artifact_reports_invalid_contracts {
     type: "rs/#[test]"
   }
-  element ec_generated_manual_docs_entry_accepts_optional_media_absent {
+  element ec_generated_manual_artifact_round_trips_optional_media {
     type: "rs/#[test]"
   }
-  element ec_generated_manual_docs_entry_surfaces_in_reports {
+  element ec_doc_gen_renders_generated_manual_artifact_details {
     type: "rs/#[test]"
   }
-  ec_generated_manual_docs_entry_accepts_runner_contract - verifies -> UT1
-  ec_generated_manual_docs_entry_rejects_missing_runner - verifies -> UT2
-  ec_generated_manual_docs_entry_rejects_path_escape - verifies -> UT3
-  ec_generated_manual_docs_entry_accepts_optional_media_absent - verifies -> UT4
-  ec_generated_manual_docs_entry_surfaces_in_reports - verifies -> UT5
+  ec_generated_manual_artifact_preserves_metadata - verifies -> CT1
+  ec_generated_manual_artifact_validates_markdown_docs_runner - verifies -> CT2
+  ec_generated_manual_artifact_reports_invalid_contracts - verifies -> CT3
+  ec_generated_manual_artifact_round_trips_optional_media - verifies -> CT4
+  ec_doc_gen_renders_generated_manual_artifact_details - verifies -> CT5
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] contract-complete: The flow covers generated-manual docs evidence detection, required runner command, project-local output path validation, markdown/html format validation, optional screenshots/highlights/step metadata, and typed exposure to capability/report/health/docs surfaces.
-- [unit-test] contract-complete: The test plan names Rust test elements for the accepted runner contract, missing-runner rejection, path-escape rejection, optional-media tolerance, and reporting surface.
