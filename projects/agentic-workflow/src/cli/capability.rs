@@ -1048,6 +1048,8 @@ pub struct CapabilitySweepReport {
     pub projects: Vec<CapabilitySweepProject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub drafts: Vec<CapabilityDraftReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_index_path: Option<PathBuf>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -1545,6 +1547,7 @@ async fn run_capability_sweep(
     if args.write_drafts {
         sweep.write_drafts = true;
         sweep.drafts = write_capability_sweep_drafts(&sweep.projects)?;
+        sweep.draft_index_path = write_capability_sweep_draft_index(&sweep.drafts)?;
     }
     if args.human {
         print_capability_sweep(&sweep);
@@ -1611,6 +1614,7 @@ fn capability_sweep_report(
         groups: capability_sweep_groups(&projects),
         projects,
         drafts: Vec::new(),
+        draft_index_path: None,
     }
 }
 
@@ -1621,6 +1625,51 @@ fn write_capability_sweep_drafts(
         .into_iter()
         .map(|project| build_capability_draft_report(&project.project, &project.cap_path, None))
         .collect()
+}
+
+fn write_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> Result<Option<PathBuf>> {
+    if drafts.is_empty() {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp")
+        .join("aw")
+        .join("capability-map-drafts");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-map-draft-index.md"));
+    std::fs::write(&path, render_capability_sweep_draft_index(drafts))
+        .with_context(|| format!("failed to write capability draft index {}", path.display()))?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_map_draft_index\n");
+    out.push_str("status: pending_review\n");
+    out.push_str(&format!("draft_count: {}\n", drafts.len()));
+    out.push_str("---\n\n");
+    out.push_str("# Capability Map Draft Review Index\n\n");
+    out.push_str("These artifacts are inference only. Review, revise, or defer each root before copying any canonical contract into README.\n\n");
+    out.push_str("| Project | Source | Candidates | Draft | Check |\n");
+    out.push_str("|---|---|---:|---|---|\n");
+    for draft in drafts {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | `{}` |\n",
+            markdown_cell(&draft.project),
+            draft.source,
+            draft.candidate_count,
+            markdown_cell(&draft.path.display().to_string()),
+            markdown_cell(&draft.check_command),
+        ));
+    }
+    out.push_str("\n## Review Guardrails\n\n");
+    out.push_str("- Do not edit README until the capability promise is confirmed.\n");
+    out.push_str(
+        "- Replace `(confirm ...)` placeholders before publishing a capability contract.\n",
+    );
+    out.push_str("- Run each listed check command after README edits.\n");
+    out
 }
 
 fn capability_sweep_draft_projects(
@@ -1755,6 +1804,9 @@ fn print_capability_sweep(sweep: &CapabilitySweepReport) {
     }
     if sweep.write_drafts {
         println!("drafts written [{}]", sweep.drafts.len());
+        if let Some(path) = &sweep.draft_index_path {
+            println!("draft index {}", path.display());
+        }
         for draft in &sweep.drafts {
             println!(
                 "draft:{} {} {}",
@@ -8571,6 +8623,30 @@ Gate Inventory:
             .map(|project| project.project.as_str())
             .collect::<Vec<_>>();
         assert_eq!(draft_projects, vec!["mamba"]);
+    }
+
+    #[test]
+    fn capability_sweep_draft_index_lists_review_queue() {
+        let index = render_capability_sweep_draft_index(&[CapabilityDraftReport {
+            schema_version: "aw.cli.v1",
+            action: "capability_draft",
+            project: "pg".to_string(),
+            cap_path: PathBuf::from("projects/pg/README.md"),
+            path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
+            status: "pending_review".to_string(),
+            source: "empty_capability_map",
+            candidate_count: 0,
+            agent_review_required: true,
+            review_status: "pending",
+            check_command: "aw capability check --project pg".to_string(),
+        }]);
+
+        assert!(index.contains("kind: capability_map_draft_index"));
+        assert!(index.contains("draft_count: 1"));
+        assert!(index.contains("| pg | empty_capability_map | 0 |"));
+        assert!(index.contains("/tmp/aw/pg/capability-map-drafts/draft.md"));
+        assert!(index.contains("`aw capability check --project pg`"));
+        assert!(index.contains("Do not edit README until the capability promise is confirmed."));
     }
 
     #[test]

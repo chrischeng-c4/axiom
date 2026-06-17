@@ -57,7 +57,8 @@ promises from inference alone.
    the sweep shows `define_capability_map:draft`, use
    `aw capability sweep --write-drafts --human` to write pending-review draft
    artifacts for all draftable projects in one AW-owned pass. These drafts
-   remain local `/tmp` review artifacts and do not edit README.
+   remain local `/tmp` review artifacts and do not edit README. Use the
+   emitted draft index path as the review queue handoff.
 10. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
