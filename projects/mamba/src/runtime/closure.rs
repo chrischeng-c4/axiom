@@ -425,6 +425,36 @@ pub fn func_ret_anno(func: MbValue) -> Option<String> {
     FUNC_RET_ANNOS.with(|m| m.borrow().get(&key).cloned())
 }
 
+/// Build a function's `__annotations__` dict from its registered parameter and
+/// return annotations (PEP 3107 / 526). Values are the textual annotations,
+/// matching mamba's module- and class-level `__annotations__`. Returns
+/// None-MbValue when the function is unregistered, an (possibly empty) dict
+/// otherwise — CPython exposes `__annotations__` on every function.
+pub fn mb_func_get_annotations(func: MbValue) -> MbValue {
+    let key = func.to_bits();
+    let known = FUNC_PARAMS.with(|m| m.borrow().contains_key(&key))
+        || FUNC_RET_ANNOS.with(|m| m.borrow().contains_key(&key));
+    if !known {
+        return MbValue::none();
+    }
+    let dict = MbValue::from_ptr(MbObject::new_dict());
+    if let Some(params) = func_params(func) {
+        for p in params {
+            if let Some(anno) = p.annotation {
+                let k = MbValue::from_ptr(MbObject::new_str(p.name.clone()));
+                let v = MbValue::from_ptr(MbObject::new_str(anno));
+                super::dict_ops::mb_dict_setitem(dict, k, v);
+            }
+        }
+    }
+    if let Some(ret) = func_ret_anno(func) {
+        let k = MbValue::from_ptr(MbObject::new_str("return".to_string()));
+        let v = MbValue::from_ptr(MbObject::new_str(ret));
+        super::dict_ops::mb_dict_setitem(dict, k, v);
+    }
+    dict
+}
+
 /// Register a function's name (called at definition time so `f.__name__` works).
 pub fn mb_func_set_name(func: MbValue, name: MbValue) {
     let fname = extract_str(name).unwrap_or_default();
