@@ -71,7 +71,16 @@ macro_rules! dispatch_unary {
     };
 }
 
-dispatch_unary!(dispatch_new_class, mb_types_new_class);
+// types.new_class(name, bases=(), kwds=None, exec_body=None) — variadic so the
+// bases/exec_body are honored, routing to the real type(name, bases, ns) class
+// creator after running exec_body to populate the namespace.
+unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let name = a.first().copied().unwrap_or_else(MbValue::none);
+    let bases = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let exec_body = a.get(3).copied().unwrap_or_else(MbValue::none);
+    mb_types_new_class_impl(name, bases, exec_body)
+}
 dispatch_unary!(dispatch_prepare_class, mb_types_prepare_class);
 dispatch_unary!(dispatch_resolve_bases, mb_types_resolve_bases);
 dispatch_unary!(dispatch_coroutine, mb_types_coroutine);
@@ -361,19 +370,38 @@ pub fn mb_types_SimpleNamespace() -> MbValue {
 
 // -- Callable helpers --
 
+/// types.new_class(name, bases=(), kwds=None, exec_body=None) -> type.
+/// Builds a namespace dict, runs exec_body(ns) to populate it, then creates the
+/// class via the real `type(name, bases, ns)` machinery (registers it so
+/// __bases__/isinstance/attributes work).
+pub fn mb_types_new_class_impl(name: MbValue, bases: MbValue, exec_body: MbValue) -> MbValue {
+    let ns = MbValue::from_ptr(MbObject::new_dict());
+    if !exec_body.is_none() {
+        // exec_body(ns) mutates ns in place to add methods/attributes.
+        let _ = super::super::class::mb_call1_val(exec_body, ns);
+    }
+    // A None / missing bases means the empty tuple (→ object base in mb_type3).
+    let bases = if bases.is_none() {
+        MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
+    } else {
+        bases
+    };
+    // mb_type3 registers the class (and returns a `type` object). Normal user
+    // classes are represented as the class-name string — the form whose
+    // __name__/__bases__/isinstance resolve through the registry — so return
+    // that for consistency.
+    let _ = super::super::builtins::mb_type3(name, bases, ns);
+    if let Some(s) = name.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+    }) {
+        return MbValue::from_ptr(MbObject::new_str(s));
+    }
+    name
+}
+
 /// types.new_class(name, bases=(), kwds=None, exec_body=None) -> type
 pub fn mb_types_new_class(name: MbValue) -> MbValue {
-    let class_name = name
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "NewClass".to_string());
-    make_type_obj(&class_name)
+    mb_types_new_class_impl(name, MbValue::none(), MbValue::none())
 }
 
 /// types.prepare_class(name, bases, kwds) -> (meta, ns, kwds)
