@@ -272,6 +272,14 @@ fn class_kind(class_name: &str) -> Option<EnumKind> {
     ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.kind))
 }
 
+/// True when `class_name` is an enum that already has at least one member.
+/// A populated enum is final; subclassing it to add members raises TypeError.
+fn is_populated_enum(class_name: &str) -> bool {
+    ENUM_CLASSES.with(|m| {
+        m.borrow().get(class_name).map_or(false, |i| !i.by_name.is_empty())
+    })
+}
+
 /// `EnumClass._member_type_`: the data type the enum mixes in — "int" for
 /// IntEnum/IntFlag, "str" for StrEnum / (str, Enum), "object" for a plain
 /// Enum/Flag. None for a non-enum class.
@@ -319,6 +327,24 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
     let kind = enum_kind_for(class_name)?;
     if is_reserved_name(attr) || is_method_like(value) {
         return None;
+    }
+
+    // A populated enum is final: defining a member on a class that subclasses
+    // an enum which already has members is a TypeError (CPython). Class
+    // registrations run before member assignments, so by the time this member
+    // is set the base enum's members are present — check the MRO bases. A
+    // memberless enum base (used as a mixin) stays subclassable.
+    let mro = super::super::class::class_mro_list(class_name);
+    for ancestor in mro.iter().skip(1) {
+        if is_populated_enum(ancestor) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "{ancestor}: cannot extend enumeration '{ancestor}'"
+                ))),
+            );
+            return None;
+        }
     }
 
     // StrEnum requires str member values — a non-str (non-auto) value is a
