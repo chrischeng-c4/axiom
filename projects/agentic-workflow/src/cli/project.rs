@@ -3816,6 +3816,7 @@ mod tests {
         crate::cli::capability::TdCapabilityEvidence {
             spec_path: "projects/demo/tech-design/logic/claim.md".to_string(),
             spec_id: Some("demo-claim".to_string()),
+            review_status: None,
             capability_id: "cap".to_string(),
             role: crate::cli::capability::CapabilityRefRole::Primary,
             gap: None,

@@ -844,6 +844,8 @@ struct TdFrontmatter {
 pub struct TdCapabilityEvidence {
     pub spec_path: String,
     pub spec_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_status: Option<String>,
     pub capability_id: String,
     pub role: CapabilityRefRole,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4089,7 +4091,9 @@ fn choose_next_action(
                     .find(|evidence| evidence.gap_id == gap.id);
                 let active_issue_is_epic =
                     active_issue.is_some_and(|issue| issue.issue_type == IssueType::Epic.as_str());
-                let td_spec_path = td_spec_path_for_gap(item, &gap.id);
+                let td_ref = td_ref_for_gap(item, &gap.id);
+                let td_spec_path = td_ref.map(|td_ref| td_ref.spec_path.as_str());
+                let td_review_status = td_ref.and_then(|td_ref| td_ref.review_status.as_deref());
                 let (kind, command, reason) = match gap.active_wi.as_deref() {
                     Some(_active) if active_issue_is_epic => {
                         if let Some(action) = first_child_wi_action(report) {
@@ -4115,6 +4119,7 @@ fn choose_next_action(
                         active.trim().trim_start_matches('#'),
                         active_issue,
                         td_spec_path,
+                        td_review_status,
                         "active WI exists; continue WI -> TD -> CB lifecycle",
                     ),
                     _ => (
@@ -4722,6 +4727,7 @@ fn lifecycle_action_for_work_item(
     work_item: &str,
     evidence: Option<&CapabilityWiEvidence>,
     td_spec_path: Option<&str>,
+    td_review_status: Option<&str>,
     default_reason: &str,
 ) -> (CapabilityActionKind, String, String) {
     if let Some(command) = evidence
@@ -4762,6 +4768,11 @@ fn lifecycle_action_for_work_item(
             format!("aw capability report --project {} --verify", report.project),
             "active WI has merged TD/CB lifecycle; verify capability readiness".to_string(),
         ),
+        _ if td_review_status == Some("approved") && td_spec_path.is_some() => (
+            CapabilityActionKind::RunCb,
+            cb_gen_command(work_item, td_spec_path),
+            "active WI has approved TD evidence; continue CB generation".to_string(),
+        ),
         _ => (
             CapabilityActionKind::RunTd,
             format!("aw td create {work_item}"),
@@ -4792,7 +4803,10 @@ fn cb_gen_command(work_item: &str, td_spec_path: Option<&str>) -> String {
     }
 }
 
-fn td_spec_path_for_gap<'a>(item: &'a CapabilityReportItem, gap_id: &str) -> Option<&'a str> {
+fn td_ref_for_gap<'a>(
+    item: &'a CapabilityReportItem,
+    gap_id: &str,
+) -> Option<&'a TdCapabilityEvidence> {
     item.td_refs
         .iter()
         .find(|td_ref| {
@@ -4803,7 +4817,19 @@ fn td_spec_path_for_gap<'a>(item: &'a CapabilityReportItem, gap_id: &str) -> Opt
                 .iter()
                 .find(|td_ref| td_ref.gap.as_deref() == Some(gap_id))
         })
-        .map(|td_ref| td_ref.spec_path.as_str())
+}
+
+fn td_review_status_from_content(content: &str) -> Option<String> {
+    let reviews = content.split_once("# Reviews")?.1;
+    if reviews.contains("**Verdict:** approved") || reviews.contains("Verdict: approved") {
+        Some("approved".to_string())
+    } else if reviews.contains("**Verdict:** needs-revision")
+        || reviews.contains("Verdict: needs-revision")
+    {
+        Some("needs_revision".to_string())
+    } else {
+        None
+    }
 }
 
 fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> {
@@ -4828,11 +4854,13 @@ fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> 
             if work_item.is_empty() {
                 continue;
             }
+            let td_ref = td_ref_for_gap(item, &gap.id);
             let (kind, command, reason) = lifecycle_action_for_work_item(
                 report,
                 work_item,
                 Some(evidence),
-                td_spec_path_for_gap(item, &gap.id),
+                td_ref.map(|td_ref| td_ref.spec_path.as_str()),
+                td_ref.and_then(|td_ref| td_ref.review_status.as_deref()),
                 "bounded child WI exists; continue WI -> TD -> CB lifecycle",
             );
             return Some(CapabilityAction {
@@ -7800,6 +7828,7 @@ pub fn collect_td_capability_refs(
                             .display()
                             .to_string(),
                         spec_id: spec_id.clone(),
+                        review_status: td_review_status_from_content(&content),
                         capability_id: td_ref.id,
                         role: td_ref.role,
                         gap: td_ref.gap,
@@ -11018,6 +11047,7 @@ capability_refs:
                 td_refs: vec![TdCapabilityEvidence {
                     spec_path: ".aw/tech-design/projects/jet/specs/3779.md".to_string(),
                     spec_id: Some("jet-package-manager-readiness-audit".to_string()),
+                    review_status: None,
                     capability_id: "package-manager".to_string(),
                     role: CapabilityRefRole::Primary,
                     gap: Some("package-manager-readiness".to_string()),
@@ -11125,6 +11155,7 @@ capability_refs:
                 td_refs: vec![TdCapabilityEvidence {
                     spec_path: ".aw/tech-design/projects/jet/specs/3779.md".to_string(),
                     spec_id: Some("jet-package-manager-readiness-audit".to_string()),
+                    review_status: None,
                     capability_id: "package-manager".to_string(),
                     role: CapabilityRefRole::Primary,
                     gap: Some("package-manager-readiness".to_string()),
@@ -11763,6 +11794,7 @@ capability_refs:
             "57",
             Some(&evidence),
             Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+            None,
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
@@ -11792,6 +11824,7 @@ capability_refs:
             "57",
             Some(&evidence),
             Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+            Some("approved"),
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
@@ -11800,6 +11833,30 @@ capability_refs:
         assert_eq!(
             reason,
             "active WI has a workflow expected_command; follow lifecycle lock"
+        );
+    }
+
+    #[test]
+    fn lifecycle_action_uses_approved_td_ref_when_issue_inventory_is_unavailable() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "57",
+            None,
+            Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+            Some("approved"),
+            "active WI exists; continue WI -> TD -> CB lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::RunCb);
+        assert_eq!(
+            command,
+            "aw cb gen 57 --spec-path 'projects/agentic-workflow/tech-design/logic/manual.md'"
+        );
+        assert_eq!(
+            reason,
+            "active WI has approved TD evidence; continue CB generation"
         );
     }
 }
