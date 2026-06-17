@@ -410,6 +410,16 @@ fn field_name_split(field_name: &str) -> (String, Vec<(bool, String)>) {
 // Formatter.format(self, format_string, /, *args, **kwargs)
 //   variadic+kwargs → (self, args_list, kwargs_dict)
 extern "C" fn m_formatter_format(this: MbValue, args_list: MbValue, kwargs: MbValue) -> MbValue {
+    // string.Formatter and logging.Formatter both register a class named
+    // "Formatter" in CLASS_REGISTRY, so a logging.Formatter's `.format(record)`
+    // resolves to this string-engine method. A logging formatter carries a
+    // `_style` field — route it to the logging engine instead of treating the
+    // record as a template string.
+    if super::logging_mod::value_is_logging_formatter(this) {
+        let items = super::super::builtins::extract_items(args_list);
+        let record = items.first().copied().unwrap_or_else(MbValue::none);
+        return super::logging_mod::logging_formatter_format(this, record);
+    }
     let items = super::super::builtins::extract_items(args_list);
     let format_string = items.first().copied().unwrap_or_else(MbValue::none);
     if format_string.is_none() && items.is_empty() {
