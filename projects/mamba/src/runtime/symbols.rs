@@ -2632,6 +2632,14 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_open_ex",
+            file_io::mb_open_ex
+                as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue)
+                    -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_file_read",
             file_io::mb_file_read as fn(super::MbValue) -> super::MbValue,
             [I64],
