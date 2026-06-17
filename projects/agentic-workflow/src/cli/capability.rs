@@ -9,7 +9,13 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use super::capability_type::CapabilityType;
 use super::production::{
@@ -20,6 +26,8 @@ use super::project::{project_test_gate_report, ProjectTestGateReport, ProjectTes
 use super::workflow_guard;
 
 const CAPABILITY_MIGRATION_INSERT_MARKER: &str = "<!-- aw:capability-migration-insert -->";
+const CAPABILITY_GATE_TIMEOUT_ENV: &str = "AW_CAPABILITY_GATE_TIMEOUT_SECS";
+const DEFAULT_CAPABILITY_GATE_TIMEOUT_SECS: u64 = 30 * 60;
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args)]
@@ -8091,47 +8099,177 @@ fn extract_hash_numbers(text: &str) -> Vec<u64> {
 }
 
 fn run_verification_command(project_root: &Path, command: &str) -> VerificationRuntimeResult {
+    run_verification_command_with_timeout(project_root, command, capability_gate_timeout())
+}
+
+fn capability_gate_timeout() -> Duration {
+    std::env::var(CAPABILITY_GATE_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_CAPABILITY_GATE_TIMEOUT_SECS))
+}
+
+fn run_verification_command_with_timeout(
+    project_root: &Path,
+    command: &str,
+    timeout: Duration,
+) -> VerificationRuntimeResult {
+    let started = Instant::now();
+    let stdout_file = match tempfile::NamedTempFile::new() {
+        Ok(file) => file,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stderr_file = match tempfile::NamedTempFile::new() {
+        Ok(file) => file,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stdout = match stdout_file.reopen() {
+        Ok(file) => file,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stderr = match stderr_file.reopen() {
+        Ok(file) => file,
+        Err(err) => return verification_command_error(command, err),
+    };
+
     let mut command_process = std::process::Command::new("sh");
     crate::cli::shell_env::apply_default_shell_env(&mut command_process);
-    let output = command_process
+    configure_capability_verification_process_group(&mut command_process);
+    let mut child = match command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)
-        .output();
-    match output {
-        Ok(output) => {
-            let stdout = output_excerpt(&output.stdout);
-            let stderr = output_excerpt(&output.stderr);
-            let status = if output_mentions_env_skip(stdout.as_deref())
-                .or_else(|| output_mentions_env_skip(stderr.as_deref()))
-                .is_some()
-            {
-                "env_blocked"
-            } else if output.status.success() {
-                "pass"
-            } else {
-                "fail"
-            };
-            VerificationRuntimeResult {
-                id: String::new(),
-                command: command.to_string(),
-                status: status.to_string(),
-                proves: None,
-                exit_code: output.status.code(),
-                stdout,
-                stderr,
-            }
+        .stdout(stdout)
+        .stderr(stderr)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => return verification_command_error(command, err),
+    };
+
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(err) => return verification_command_error(command, err),
         }
-        Err(err) => VerificationRuntimeResult {
-            id: String::new(),
-            command: command.to_string(),
-            status: "error".to_string(),
-            proves: None,
-            exit_code: None,
-            stdout: None,
-            stderr: Some(err.to_string()),
-        },
+        if started.elapsed() >= timeout {
+            timed_out = true;
+            terminate_capability_verification_child(&mut child);
+            break None;
+        }
+        thread::sleep(Duration::from_millis(250));
+    };
+
+    let stdout_bytes = match fs::read(stdout_file.path()) {
+        Ok(bytes) => bytes,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stderr_bytes = match fs::read(stderr_file.path()) {
+        Ok(bytes) => bytes,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stdout = output_excerpt(&stdout_bytes);
+    let mut stderr = output_excerpt(&stderr_bytes);
+    if timed_out {
+        let timeout_note = format!(
+            "aw capability gate timed out after {}s; set {CAPABILITY_GATE_TIMEOUT_ENV} to override",
+            timeout.as_secs()
+        );
+        stderr = Some(match stderr {
+            Some(existing) if !existing.trim().is_empty() => format!("{existing}\n{timeout_note}"),
+            _ => timeout_note,
+        });
     }
+    let result_status = if timed_out {
+        "timeout"
+    } else if output_mentions_env_skip(stdout.as_deref())
+        .or_else(|| output_mentions_env_skip(stderr.as_deref()))
+        .is_some()
+    {
+        "env_blocked"
+    } else if status
+        .as_ref()
+        .map(|status| status.success())
+        .unwrap_or(false)
+    {
+        "pass"
+    } else {
+        "fail"
+    };
+    VerificationRuntimeResult {
+        id: String::new(),
+        command: command.to_string(),
+        status: result_status.to_string(),
+        proves: None,
+        exit_code: status.as_ref().and_then(|status| status.code()),
+        stdout,
+        stderr,
+    }
+}
+
+fn verification_command_error(
+    command: &str,
+    err: impl std::fmt::Display,
+) -> VerificationRuntimeResult {
+    VerificationRuntimeResult {
+        id: String::new(),
+        command: command.to_string(),
+        status: "error".to_string(),
+        proves: None,
+        exit_code: None,
+        stdout: None,
+        stderr: Some(err.to_string()),
+    }
+}
+
+#[cfg(unix)]
+fn configure_capability_verification_process_group(command: &mut std::process::Command) {
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_capability_verification_process_group(_command: &mut std::process::Command) {}
+
+fn terminate_capability_verification_child(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    unsafe {
+        let pgid = child.id() as i32;
+        if pgid > 0 {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+
+    let terminate_started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => return,
+        }
+        if terminate_started.elapsed() >= Duration::from_secs(2) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    #[cfg(unix)]
+    unsafe {
+        let pgid = child.id() as i32;
+        if pgid > 0 {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn output_mentions_env_skip(output: Option<&str>) -> Option<()> {
@@ -10713,6 +10851,24 @@ evidence:
         let result =
             run_verification_command(Path::new("."), "printf 'skipping: chromium unavailable\\n'");
         assert_eq!(result.status, "env_blocked");
+    }
+
+    #[test]
+    fn verification_command_timeout_reports_timeout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run_verification_command_with_timeout(
+            tmp.path(),
+            "sleep 2",
+            Duration::from_millis(200),
+        );
+
+        assert_eq!(result.status, "timeout");
+        assert_eq!(result.exit_code, None);
+        assert!(result
+            .stderr
+            .as_deref()
+            .unwrap_or("")
+            .contains("aw capability gate timed out"));
     }
 
     #[test]

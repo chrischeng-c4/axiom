@@ -9,6 +9,9 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 use crate::cli::cb::{CbCodegenOriginSummary, CbColdVerifySummary, CbVerifySummary};
 use crate::cli::production::{
     evaluate_release_scope, evaluate_release_scope_with_regenerability, inputs_from_sections,
@@ -316,6 +319,7 @@ pub struct ProjectTestCommandReport {
 pub enum ProjectTestCommandStatus {
     Passed,
     Failed,
+    TimedOut,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -1525,6 +1529,34 @@ fn run_project_test_command(
     project_root: &std::path::Path,
     progress: &HealthProgressSink<'_>,
 ) -> Result<ProjectTestCommandReport> {
+    run_project_test_command_with_timeout(
+        workspace,
+        command,
+        project_root,
+        progress,
+        project_test_gate_timeout(),
+    )
+}
+
+const PROJECT_TEST_GATE_TIMEOUT_ENV: &str = "AW_TEST_GATE_TIMEOUT_SECS";
+const DEFAULT_PROJECT_TEST_GATE_TIMEOUT_SECS: u64 = 30 * 60;
+
+fn project_test_gate_timeout() -> Duration {
+    std::env::var(PROJECT_TEST_GATE_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_PROJECT_TEST_GATE_TIMEOUT_SECS))
+}
+
+fn run_project_test_command_with_timeout(
+    workspace: &str,
+    command: &str,
+    project_root: &std::path::Path,
+    progress: &HealthProgressSink<'_>,
+    timeout: Duration,
+) -> Result<ProjectTestCommandReport> {
     let started = Instant::now();
     progress.emit(
         15,
@@ -1546,6 +1578,7 @@ fn run_project_test_command(
 
     let mut command_process = Command::new("sh");
     crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    configure_test_gate_process_group(&mut command_process);
     let mut child = command_process
         .arg("-c")
         .arg(command)
@@ -1556,14 +1589,29 @@ fn run_project_test_command(
         .with_context(|| format!("failed to execute test command `{command}`"))?;
 
     let mut next_progress = Duration::from_secs(10);
+    let mut timed_out = false;
     let status = loop {
         if let Some(status) = child
             .try_wait()
             .with_context(|| format!("poll test command `{command}`"))?
         {
-            break status;
+            break Some(status);
         }
         let elapsed = started.elapsed();
+        if elapsed >= timeout {
+            timed_out = true;
+            progress.emit(
+                80,
+                "tests",
+                &format!(
+                    "test gate timed out for workspace `{workspace}` after {}s",
+                    elapsed.as_secs()
+                ),
+                Some(command),
+            );
+            terminate_test_gate_child(&mut child);
+            break None;
+        }
         if elapsed >= next_progress {
             progress.emit(
                 80,
@@ -1584,7 +1632,14 @@ fn run_project_test_command(
         .with_context(|| format!("read stdout capture for test command `{command}`"))?;
     let stderr = fs::read(stderr_file.path())
         .with_context(|| format!("read stderr capture for test command `{command}`"))?;
-    let command_status = if status.success() {
+    let exit_code = status.as_ref().and_then(|status| status.code());
+    let command_status = if timed_out {
+        ProjectTestCommandStatus::TimedOut
+    } else if status
+        .as_ref()
+        .map(|status| status.success())
+        .unwrap_or(false)
+    {
         ProjectTestCommandStatus::Passed
     } else {
         ProjectTestCommandStatus::Failed
@@ -1595,16 +1650,72 @@ fn run_project_test_command(
         &format!("test gate finished for workspace `{workspace}` with status {command_status:?}"),
         Some(command),
     );
+    let mut stderr_tail = tail_lossy(&stderr, 4000);
+    if timed_out {
+        if !stderr_tail.trim().is_empty() {
+            stderr_tail.push('\n');
+        }
+        stderr_tail.push_str(&format!(
+            "aw test gate timed out after {}s; set {PROJECT_TEST_GATE_TIMEOUT_ENV} to override",
+            timeout.as_secs()
+        ));
+    }
 
     Ok(ProjectTestCommandReport {
         workspace: workspace.to_string(),
         command: command.to_string(),
         status: command_status,
-        exit_code: status.code(),
+        exit_code,
         duration_ms,
         stdout_tail: tail_lossy(&stdout, 4000),
-        stderr_tail: tail_lossy(&stderr, 4000),
+        stderr_tail,
     })
+}
+
+#[cfg(unix)]
+fn configure_test_gate_process_group(command: &mut Command) {
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_test_gate_process_group(_command: &mut Command) {}
+
+fn terminate_test_gate_child(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    unsafe {
+        let pgid = child.id() as i32;
+        if pgid > 0 {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+
+    let terminate_started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => return,
+        }
+        if terminate_started.elapsed() >= Duration::from_secs(2) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    #[cfg(unix)]
+    unsafe {
+        let pgid = child.id() as i32;
+        if pgid > 0 {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -3745,6 +3856,24 @@ mod tests {
                 ec: false,
             }
         );
+    }
+
+    #[test]
+    fn project_test_gate_times_out_and_reports_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let progress = HealthProgressSink::disabled("demo");
+        let report = run_project_test_command_with_timeout(
+            "demo",
+            "sleep 2",
+            tmp.path(),
+            &progress,
+            Duration::from_millis(200),
+        )
+        .unwrap();
+
+        assert_eq!(report.status, ProjectTestCommandStatus::TimedOut);
+        assert_eq!(report.exit_code, None);
+        assert!(report.stderr_tail.contains("aw test gate timed out"));
     }
 
     #[test]
