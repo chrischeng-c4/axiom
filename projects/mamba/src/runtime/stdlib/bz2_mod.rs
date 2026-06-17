@@ -326,38 +326,65 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
     let Some(data) = items.iter().copied().find(|v| !is_kwargs_dict(*v)) else {
         return raise_type_error("decompress() missing required argument 'data' (pos 1)");
     };
-    let out = with_bytes(data, |b| {
-        let mut dec = BzDecoder::new(b);
-        let mut buf = Vec::with_capacity(b.len().saturating_mul(4));
-        dec.read_to_end(&mut buf).map(|_| {
-            // Bytes after the decoded bz2 stream are `unused_data` (CPython).
-            let consumed = (dec.total_in() as usize).min(b.len());
-            (buf, b[consumed..].to_vec())
+    // max_length: `max_length=` keyword (default -1 = unbounded). The whole
+    // stream is decoded once into `_outbuf`; each call serves up to max_length
+    // bytes and keeps the remainder, so bounded reads reassemble (CPython).
+    let max_length = items.iter().copied()
+        .find(|v| is_kwargs_dict(*v))
+        .and_then(|d| {
+            let r = super::super::dict_ops::mb_dict_get(
+                d,
+                MbValue::from_ptr(MbObject::new_str("max_length".to_string())),
+                MbValue::from_bits(u64::MAX),
+            );
+            if r.to_bits() == u64::MAX { None } else { r.as_int() }
         })
-    });
-    match out {
-        Ok((buf, unused)) => {
-            // A complete stream was decoded → end-of-stream reached.
-            set_field(self_obj, "eof", MbValue::from_bool(true));
-            set_field(self_obj, "needs_input", MbValue::from_bool(false));
-            if !unused.is_empty() {
-                set_field(self_obj, "unused_data",
-                    MbValue::from_ptr(MbObject::new_bytes(unused)));
+        .unwrap_or(-1);
+
+    let stream_done = field_bool(self_obj, "_stream_done");
+    let mut outbuf = field_bytes(self_obj, "_outbuf");
+    if outbuf.is_empty() && !stream_done {
+        let out = with_bytes(data, |b| {
+            let mut dec = BzDecoder::new(b);
+            let mut buf = Vec::with_capacity(b.len().saturating_mul(4));
+            dec.read_to_end(&mut buf).map(|_| {
+                // Bytes after the decoded bz2 stream are `unused_data`.
+                let consumed = (dec.total_in() as usize).min(b.len());
+                (buf, b[consumed..].to_vec())
+            })
+        });
+        match out {
+            Ok((buf, unused)) => {
+                outbuf = buf;
+                set_field(self_obj, "_stream_done", MbValue::from_bool(true));
+                if !unused.is_empty() {
+                    set_field(self_obj, "unused_data",
+                        MbValue::from_ptr(MbObject::new_bytes(unused)));
+                }
             }
-            MbValue::from_ptr(MbObject::new_bytes(buf))
-        }
-        // A decode failure here is ambiguous between truly-invalid data and a
-        // not-yet-complete incremental feed. CPython's incremental
-        // decompressor does NOT raise on a partial-but-valid chunk, so we must
-        // not raise a *wrong* exception on valid input: return empty bytes
-        // ("needs more input") and leave `eof` False. The single-shot EOFError
-        // contract (re-decompress after a completed stream) is enforced above
-        // via the `eof` guard, which is the only error case this stub models.
-        Err(_) => {
-            set_field(self_obj, "needs_input", MbValue::from_bool(true));
-            MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+            // A decode failure here is ambiguous between truly-invalid data and
+            // a not-yet-complete incremental feed; CPython does not raise on a
+            // partial-but-valid chunk, so return b"" ("needs more input").
+            Err(_) => {
+                set_field(self_obj, "needs_input", MbValue::from_bool(true));
+                return MbValue::from_ptr(MbObject::new_bytes(Vec::new()));
+            }
         }
     }
+    // Serve up to max_length bytes from the decoded buffer; keep the rest.
+    let n = if max_length < 0 {
+        outbuf.len()
+    } else {
+        (max_length as usize).min(outbuf.len())
+    };
+    let ret = outbuf[..n].to_vec();
+    let rest = outbuf[n..].to_vec();
+    let drained = rest.is_empty();
+    let done = field_bool(self_obj, "_stream_done");
+    set_field(self_obj, "_outbuf", MbValue::from_ptr(MbObject::new_bytes(rest)));
+    set_field(self_obj, "eof", MbValue::from_bool(done && drained));
+    set_field(self_obj, "needs_input", MbValue::from_bool(drained && !done));
+    MbValue::from_ptr(MbObject::new_bytes(ret))
 }
 
 /// Read an Instance's bytes field into a Vec (empty when missing/not bytes).
