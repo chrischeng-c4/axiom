@@ -8826,8 +8826,10 @@ fn apply_capability_format_migration_tick(
 }
 
 fn strip_previous_canonical_capability_tail(body: &str) -> Option<String> {
-    let marker = "\n### Capability Index\n";
-    let idx = body.rfind(marker)?;
+    let idx = ["\n### Capability Index\n", "\n## Capability Index\n"]
+        .iter()
+        .filter_map(|marker| body.rfind(marker))
+        .max()?;
     let mut repaired = body[..idx].trim_end().to_string();
     repaired.push('\n');
     Some(repaired)
@@ -11323,6 +11325,24 @@ Gate Inventory:
         assert!(migrated.contains("| Agentic Integration | 4143 | implemented | passing | conformance | ready | offline CLI contract |"));
         assert!(!migrated.contains("**Pillar — agent-first**"));
         assert!(!migrated.contains("**Pillar — serve / search**"));
+    }
+
+    #[test]
+    fn previous_canonical_tail_repair_accepts_h2_or_h3_capability_index() {
+        let legacy_prefix = "# Jet\n\n## Package Manager\n\nLegacy package-manager table.\n";
+        let h2_tail = format!(
+            "{legacy_prefix}\n## Capability Index\n\n| Capability | Root WI |\n|---|---:|\n| Package Manager | #3779 |\n\n### Package Manager\n\nID: package-manager\n"
+        );
+        let h3_tail = h2_tail.replace("\n## Capability Index\n", "\n### Capability Index\n");
+
+        assert_eq!(
+            strip_previous_canonical_capability_tail(&h2_tail).as_deref(),
+            Some(legacy_prefix)
+        );
+        assert_eq!(
+            strip_previous_canonical_capability_tail(&h3_tail).as_deref(),
+            Some(legacy_prefix)
+        );
     }
 
     #[test]
