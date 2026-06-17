@@ -44,6 +44,8 @@ Markdown capability headings and tables below are machine-readable input for `aw
 
 ID: agent-hook-installation
 Type: AgentFirst
+Surfaces: CLI: `cap init` + `cap hook` + `cap run '<command string>'` - Agent hook installation and hook-adapter routing that rewrites agent Bash commands through cap run.; AgentHook: `Claude Code PreToolUse` + `Codex CLI PreToolUse` - Fail-open agent hook snippets that preserve unrelated user config and route Bash commands through cap.
+EC Dimensions: behavior: `cap` - Claude/Codex hook installation, command-string rewrite adapters, recursion prevention, and fail-open routing behavior
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -61,6 +63,8 @@ Gate Inventory:
 
 ID: command-lease-throttling
 Type: RuntimeTool
+Surfaces: CLI: `cap run '<command string>'` + `cap run -- <argv...>` + `cap <passthrough...>` + `cap wait` - Command wrapping, explicit argv mode, passthrough wrapping, and headroom wait entrypoints for agent-launched local commands.
+EC Dimensions: behavior: `cap` - command wrapping, shell-string fallback, lease admission, pause/resume/kill outcomes, and structured run envelopes; efficiency: `cap` - same-name command replacement decisions and resource gates over CPU time and peak RSS; stability: `cap` - memory and CPU pressure backpressure that prevents agent-launched local commands from exhausting the host
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -78,6 +82,8 @@ Gate Inventory:
 
 ID: daemon-lifecycle-and-status
 Type: RuntimeTool
+Surfaces: CLI: `cap daemon` + `cap status` + `cap ps` + `cap ping` + `cap wait` - Daemon lifecycle, lease/pressure status, liveness probe, and wait-for-headroom entrypoints.
+EC Dimensions: behavior: `cap` - daemon lifecycle, lease status, liveness, process group isolation, and wait command behavior; stability: `cap` - fail-open command path, bounded wait behavior, process-group lease isolation, and daemon liveness recovery
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -95,6 +101,8 @@ Gate Inventory:
 
 ID: config-logging-and-reap-policy
 Type: RuntimeTool
+Surfaces: CLI: `cap config` + `cap status` - Local configuration and status surfaces for inspecting runtime pressure, leases, and cap policy state.; Config: `~/.cap/config.toml` + `JSONL run log` - Durable local configuration, run-log persistence, and bounded reap allowlist policy artifacts.
+EC Dimensions: behavior: `cap` - configuration defaults/compatibility, JSONL run-log persistence, and reap allowlist policy behavior; stability: `cap` - bounded auto-reap policy and persistent logs/config that keep restart and pressure decisions auditable
 Root WI: -
 Status: verified
 Required Verification: smoke
