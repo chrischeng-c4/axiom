@@ -47,20 +47,20 @@ blocker, or error.
 
 ## Lifecycle Surface
 
-AW uses short agent-facing command names for the main lifecycle:
+AW uses canonical agent-facing command names for the main lifecycle:
 
 | CLI | Long name | Role |
 |---|---|---|
-| `aw caps` | `aw capability` | Define the project capability tree, claims, maturity, release scope, and required external contracts. |
+| `aw capability` | Product capabilities | Define the project capability tree, claims, maturity, release scope, and required external contracts. |
 | `aw ec` | External Contracts | Define behavior, efficiency, security, and stability contracts; generate tests and tool configs. |
 | `aw td` | Tech Design | Describe implementation design, source mapping, APIs, data, and control flow. |
 | `aw cb` | Code artifact lifecycle | Generate, check, and fill source artifacts from TD. |
-| `aw hc` | `aw health` | Aggregate caps, EC, TD, CB, tests, claim closure, locks, and blocker status. |
+| `aw health` | Project health | Aggregate capabilities, EC, TD, CB, tests, claim closure, locks, and blocker status. |
 
 The canonical flow for greenfield projects is:
 
 ```text
-aw caps -> aw ec draft/fill -> aw ec gen -> aw td -> aw cb -> aw hc
+aw capability report/next/run -> aw ec draft/fill -> aw ec gen -> aw td -> aw cb -> aw health
 ```
 
 Greenfield starts by defining capabilities and required external contracts. EC
@@ -70,7 +70,7 @@ tool manifests first, then TD/CB/code work drives those contracts green.
 The canonical flow for brownfield projects is:
 
 ```text
-aw caps check -> aw ec check/gen -> aw td claim -> aw cb claim/gen/fill -> aw hc
+aw capability check -> aw ec check/gen -> aw td claim -> aw cb claim/gen/fill -> aw health
 ```
 
 Brownfield starts by adding capabilities around existing behavior, then
@@ -78,11 +78,11 @@ externalizes the missing behavior/efficiency/security/stability contracts before
 TD and CB claim the source. Missing EC is a normal adoption gap until production
 readiness is requested.
 
-Capability claim closure is the deterministic production link between caps, EC,
-TD, and generated artifacts. Agents make the semantic judgment, but they must
+Capability claim closure is the deterministic production link between capabilities,
+EC, TD, and generated artifacts. Agents make the semantic judgment, but they must
 write it down as explicit metadata: capability claims name `claim_id`, EC cases
 name the same `capability_id` and `claim_id`, and TD frontmatter names the same
-claim in a primary `capability_refs` entry. `aw hc claims --project <name>`
+claim in a primary `capability_refs` entry. `aw health --project <name> claims`
 checks those typed edges, EC command results, and existing artifact health; it
 does not infer semantic coverage from prose. Production-required EC cases may
 not remain `unmapped`.
@@ -124,7 +124,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 |---|---:|---|---|---|---|---|
 | AW Core Client Model | #3894 | implemented | verified | smoke | ready | verified; shared AW Core nouns, WorkItem-first artifact admission, and client boundaries |
 | Workflow Root Runner | - | implemented | verified | smoke | ready | verified; CLI workflow chain and root-to-child rollup contract |
-| Capability Control Plane | - | implemented | verified | smoke | ready | verified; README capability map, `aw caps`, and verification summaries |
+| Capability Control Plane | - | implemented | verified | smoke | ready | verified; README capability map, `aw capability`, and verification summaries |
 | Work Item Planning | - | implemented | verified | smoke | ready | verified; epic/change split and bounded planning artifacts |
 | TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; WI to TD to CB to merge workflow |
 | Project-Local TD and EC Gates | #13 | implemented | verified | smoke | ready | verified; TD roots default to `<project.path>/tech-design`, EC contracts default to `<project.path>/external-contracts`, and generated tests/tool configs stay project-local |
