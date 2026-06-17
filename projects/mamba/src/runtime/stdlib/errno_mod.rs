@@ -18,7 +18,7 @@ macro_rules! dispatch_unary {
 dispatch_unary!(dispatch_strerror, mb_errno_strerror);
 
 pub fn register() {
-    let mut attrs = HashMap::new();
+    let mut attrs: HashMap<String, MbValue> = HashMap::new();
 
     // POSIX errno constants (numeric values)
     attrs.insert("EPERM".into(), MbValue::from_int(1));
@@ -106,11 +106,6 @@ pub fn register() {
     attrs.insert("EOWNERDEAD".into(), MbValue::from_int(130));
     attrs.insert("ENOTRECOVERABLE".into(), MbValue::from_int(131));
 
-    // errorcode dict: int -> name string. CPython exposes this as a
-    // pre-populated dict attribute, not a callable, so we eagerly
-    // build it at register time.
-    attrs.insert("errorcode".into(), mb_errno_errorcode());
-
     // strerror(errnum) -> str — callable.
     let addr = dispatch_strerror as usize;
     attrs.insert("strerror".into(), MbValue::from_func(addr));
@@ -142,6 +137,33 @@ pub fn register() {
     attrs.insert("ERPCMISMATCH".into(), MbValue::from_int(73));
     attrs.insert("ESHLIBVERS".into(), MbValue::from_int(87));
     attrs.insert("ETXTBSY".into(), MbValue::from_int(26));
+
+    // errorcode dict: code -> name. CPython exposes it pre-populated with an
+    // entry for EVERY errno constant, so build it from the registered
+    // constants (uppercase int attrs) rather than a partial hardcoded list —
+    // otherwise a constant like EMSGSIZE is absent from errorcode.
+    {
+        use super::super::rc::ObjData;
+        use super::super::dict_ops::DictKey;
+        let dict = MbObject::new_dict();
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*dict).data {
+                let mut map = lock.write().unwrap();
+                for (name, val) in &attrs {
+                    let is_upper = name.chars().any(|c| c.is_ascii_uppercase())
+                        && !name.chars().any(|c| c.is_ascii_lowercase());
+                    if is_upper {
+                        if let Some(code) = val.as_int() {
+                            map.entry(DictKey::Int(code)).or_insert_with(|| {
+                                MbValue::from_ptr(MbObject::new_str(name.clone()))
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        attrs.insert("errorcode".into(), MbValue::from_ptr(dict));
+    }
     super::register_module("errno", attrs);
 }
 
