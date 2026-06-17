@@ -79,6 +79,12 @@ pub struct CapabilityReportArgs {
     /// Run verification commands declared in README capability sections.
     #[arg(long)]
     pub verify: bool,
+    /// Include issue inventory when computing WI evidence and next actions.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// Skip issue inventory for a README/TD-only report.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
     /// DEPRECATED compatibility no-op. Capability reports emit JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -109,6 +115,12 @@ pub struct CapabilityNextArgs {
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
+    /// Include issue inventory when computing next action routing.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// Skip issue inventory for README/TD-only next-action routing.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
     /// DEPRECATED compatibility no-op. Capability next emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -179,6 +191,12 @@ pub struct CapabilityRunArgs {
     /// Maximum bounded ticks to run.
     #[arg(long, default_value_t = 1)]
     pub max_ticks: usize,
+    /// Include issue inventory when computing next action routing.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// Skip issue inventory for README/TD-only bounded ticks.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
     /// DEPRECATED compatibility no-op. Capability run emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -216,6 +234,12 @@ pub struct CapabilityCheckArgs {
     /// Run capability verification commands and configured project test gates.
     #[arg(long)]
     pub verify: bool,
+    /// Include issue inventory when computing WI evidence and next actions.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// Skip issue inventory for a README/TD-only check.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
     /// DEPRECATED compatibility no-op. Capability check emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -1200,16 +1224,35 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
         }
         CapabilityCommand::Report(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
-            let report =
-                build_capability_report(&project, args.cap_path.as_deref(), args.verify, true)
-                    .await?;
+            let include_issue_inventory = issue_inventory_enabled(
+                args.include_issue_inventory,
+                args.skip_issue_inventory,
+                true,
+            );
+            let report = build_capability_report(
+                &project,
+                args.cap_path.as_deref(),
+                args.verify,
+                include_issue_inventory,
+            )
+            .await?;
             print_report(&report, args.human, args.pretty || args.json)?;
             Ok(())
         }
         CapabilityCommand::Next(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
-            let report =
-                build_capability_report(&project, args.cap_path.as_deref(), false, true).await?;
+            let include_issue_inventory = issue_inventory_enabled(
+                args.include_issue_inventory,
+                args.skip_issue_inventory,
+                true,
+            );
+            let report = build_capability_report(
+                &project,
+                args.cap_path.as_deref(),
+                false,
+                include_issue_inventory,
+            )
+            .await?;
             if args.human {
                 print_next_action(&report.next_action);
             } else if args.pretty || args.json {
@@ -1243,9 +1286,18 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
         }
         CapabilityCommand::Check(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
-            let mut report =
-                build_capability_report(&project, args.cap_path.as_deref(), args.verify, false)
-                    .await?;
+            let include_issue_inventory = issue_inventory_enabled(
+                args.include_issue_inventory,
+                args.skip_issue_inventory,
+                false,
+            );
+            let mut report = build_capability_report(
+                &project,
+                args.cap_path.as_deref(),
+                args.verify,
+                include_issue_inventory,
+            )
+            .await?;
             let check_failed = normalize_capability_check_report(&mut report);
             print_report(&report, args.human, args.pretty || args.json)?;
             if check_failed {
@@ -1280,6 +1332,10 @@ fn required_capability_project(project: Option<&str>) -> Result<String> {
     project
         .map(str::to_string)
         .ok_or_else(|| anyhow::anyhow!("capability requires --project <project>"))
+}
+
+fn issue_inventory_enabled(include: bool, skip: bool, default: bool) -> bool {
+    include || (default && !skip)
 }
 
 fn normalize_capability_check_report(report: &mut CapabilityReport) -> bool {
@@ -2958,8 +3014,18 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
     }
 
     let project_root = crate::find_project_root()?;
-    let mut last_report =
-        build_capability_report(project, args.cap_path.as_deref(), false, true).await?;
+    let include_issue_inventory = issue_inventory_enabled(
+        args.include_issue_inventory,
+        args.skip_issue_inventory,
+        true,
+    );
+    let mut last_report = build_capability_report(
+        project,
+        args.cap_path.as_deref(),
+        false,
+        include_issue_inventory,
+    )
+    .await?;
     let mut run_results = Vec::new();
     for tick in 1..=args.max_ticks {
         let action = last_report.next_action.clone();
@@ -2980,8 +3046,13 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
                     stderr: result.stderr.clone(),
                     hitl_question: None,
                 });
-                last_report =
-                    build_capability_report(project, args.cap_path.as_deref(), true, true).await?;
+                last_report = build_capability_report(
+                    project,
+                    args.cap_path.as_deref(),
+                    true,
+                    include_issue_inventory,
+                )
+                .await?;
                 if result.status != "pass" {
                     break;
                 }
@@ -3002,8 +3073,13 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
                 }
                 let status = result.status.clone();
                 run_results.push(result);
-                last_report =
-                    build_capability_report(project, args.cap_path.as_deref(), false, true).await?;
+                last_report = build_capability_report(
+                    project,
+                    args.cap_path.as_deref(),
+                    false,
+                    include_issue_inventory,
+                )
+                .await?;
                 if status != "pass" {
                     break;
                 }
@@ -3035,8 +3111,13 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
                 let prior_kind = action.kind;
                 let status = result.status.clone();
                 run_results.push(result);
-                last_report =
-                    build_capability_report(project, args.cap_path.as_deref(), false, true).await?;
+                last_report = build_capability_report(
+                    project,
+                    args.cap_path.as_deref(),
+                    false,
+                    include_issue_inventory,
+                )
+                .await?;
                 if status != "pass"
                     || last_report.next_action.kind == prior_kind
                         && last_report.next_action.command == prior_command
@@ -3381,7 +3462,12 @@ async fn build_capability_report_inner(
         run_results: Vec::new(),
     };
     apply_production_readiness_to_items(&mut report.capabilities, &production_readiness);
-    report.next_action = choose_next_action(&report, &document, &capability_types);
+    report.next_action = choose_next_action(
+        &report,
+        &document,
+        &capability_types,
+        include_issue_inventory,
+    );
     if !report.blockers.is_empty()
         || report.next_action.kind != CapabilityActionKind::None
         || verified_count < capability_count
@@ -3972,6 +4058,7 @@ fn choose_next_action(
     report: &CapabilityReport,
     document: &CapabilityDocument,
     capability_types: &BTreeMap<String, crate::cli::capability_type::CapabilityType>,
+    include_issue_inventory: bool,
 ) -> CapabilityAction {
     if document.capabilities.is_empty() && document.legacy_rows.is_empty() {
         let reason = if document.prose_candidates.is_empty() {
@@ -4022,7 +4109,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: report.cap_path.display().to_string(),
-                command: format!("aw capability report --project {}", report.project),
+                command: capability_report_command(&report.project, false, include_issue_inventory),
                 reason: reason.clone(),
                 requires_hitl: true,
                 hitl_question: Some(candidate_capability_hitl_question(report, item, &reason)),
@@ -4110,7 +4197,7 @@ fn choose_next_action(
                         if has_non_epic_wi_evidence(report) {
                             (
                                 CapabilityActionKind::HumanConfirmRequired,
-                                format!("aw capability report --project {} --verify", report.project),
+                                capability_report_command(&report.project, true, include_issue_inventory),
                                 "active WI is an epic and all known bounded child WIs are closed; aggregate readiness requires verification review before closing the top-level gap".to_string(),
                             )
                         } else {
@@ -4222,7 +4309,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: item.title.clone(),
-                command: format!("aw capability report --project {} --verify", report.project),
+                command: capability_report_command(&report.project, true, include_issue_inventory),
                 reason: "capability status is a catalog claim; runtime verification must be rerun for the current code".to_string(),
                 requires_hitl: false,
                 hitl_question: None,
@@ -4242,7 +4329,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: item.title.clone(),
-                command: format!("aw capability report --project {} --verify", report.project),
+                command: capability_report_command(&report.project, true, include_issue_inventory),
                 reason: "capability has fixture/inventory claim evidence that must be verified for the current code".to_string(),
                 requires_hitl: false,
                 hitl_question: None,
@@ -4267,7 +4354,11 @@ fn choose_next_action(
                     gap_id: Some(gate.id.clone()),
                     claim_id: None,
                     target: item.title.clone(),
-                    command: format!("aw capability report --project {}", report.project),
+                    command: capability_report_command(
+                        &report.project,
+                        false,
+                        include_issue_inventory,
+                    ),
                     reason: "capability still has open gaps".to_string(),
                     requires_hitl: false,
                     hitl_question: None,
@@ -4297,7 +4388,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: report.cap_path.display().to_string(),
-                command: format!("aw capability report --project {} --verify", report.project),
+                command: capability_report_command(&report.project, true, include_issue_inventory),
                 reason: reason.clone(),
                 requires_hitl: true,
                 hitl_question: Some(update_capability_status_hitl_question(
@@ -4318,6 +4409,17 @@ fn choose_next_action(
         requires_hitl: false,
         hitl_question: None,
     }
+}
+
+fn capability_report_command(project: &str, verify: bool, include_issue_inventory: bool) -> String {
+    let mut command = format!("aw capability report --project {project}");
+    if verify {
+        command.push_str(" --verify");
+    }
+    if !include_issue_inventory {
+        command.push_str(" --skip-issue-inventory");
+    }
+    command
 }
 
 fn wi_plan_reason(report: &CapabilityReport, base_reason: &str) -> String {
@@ -9050,7 +9152,7 @@ Mamba should improve both runtime CPU and memory profile on selected workloads.
         report.format_version = document.format_version();
         report.blockers = document.findings.clone();
 
-        let action = choose_next_action(&report, &document, &BTreeMap::new());
+        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
 
         assert_eq!(action.kind, CapabilityActionKind::DefineCapabilityMap);
         assert_eq!(action.command, "aw capability draft --project jet");
@@ -9084,7 +9186,7 @@ Mamba can execute the Python 3.12 language and standard library surface.
         report.format_version = document.format_version();
         report.blockers = document.findings.clone();
 
-        let action = choose_next_action(&report, &document, &BTreeMap::new());
+        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
         let prompt = action
             .hitl_question
             .as_ref()
@@ -9282,7 +9384,7 @@ Keep this section.
         report.capability_count = document.legacy_rows.len();
         report.blockers = document.findings.clone();
 
-        let action = choose_next_action(&report, &document, &BTreeMap::new());
+        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
 
         assert_eq!(action.kind, CapabilityActionKind::FormatMigrationRequired);
         assert!(!action.requires_hitl);
@@ -9300,7 +9402,7 @@ Keep this section.
             .push("issue inventory unavailable: gh auth missing".to_string());
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::CreateWi);
         assert_eq!(action.command, "aw wi plan --project jet");
@@ -9316,7 +9418,7 @@ Keep this section.
         report.format_version = document.format_version();
         report.capability_count = document.capabilities.len();
 
-        let action = choose_next_action(&report, &document, &BTreeMap::new());
+        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
 
         assert_eq!(document.format, CapabilityDocumentFormat::MarkdownTables);
         assert!(document.requires_format_migration());
@@ -11389,7 +11491,7 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(
             action.kind,
@@ -11495,7 +11597,7 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::RunVerify);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -11504,6 +11606,16 @@ capability_refs:
             "aw capability report --project jet --verify"
         );
         assert!(action.reason.contains("runtime verification"));
+
+        let action_without_issue_inventory = choose_next_action(&report, &document, &types, false);
+        assert_eq!(
+            action_without_issue_inventory.kind,
+            CapabilityActionKind::RunVerify
+        );
+        assert_eq!(
+            action_without_issue_inventory.command,
+            "aw capability report --project jet --verify --skip-issue-inventory"
+        );
     }
 
     #[test]
@@ -11595,7 +11707,7 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::RunVerify);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -11685,7 +11797,7 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::RunVerify);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -11766,7 +11878,7 @@ capability_refs:
 
         // No type assigned -> assign-capability-type HITL.
         let empty = BTreeMap::new();
-        let action = choose_next_action(&report, &document, &empty);
+        let action = choose_next_action(&report, &document, &empty, true);
         assert_eq!(action.kind, CapabilityActionKind::AssignCapabilityType);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
         assert!(action.requires_hitl);
@@ -11788,7 +11900,7 @@ capability_refs:
 
         // Type assigned -> the verified, gapless capability yields no action.
         let typed = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &typed);
+        let action = choose_next_action(&report, &document, &typed, true);
         assert_ne!(action.kind, CapabilityActionKind::AssignCapabilityType);
         assert_eq!(action.kind, CapabilityActionKind::None);
     }
@@ -11896,7 +12008,7 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::None);
     }
@@ -12019,7 +12131,7 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::RunTd);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -12145,7 +12257,7 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::HumanConfirmRequired);
         assert_eq!(

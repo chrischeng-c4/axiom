@@ -346,10 +346,20 @@ commands:
     behavior: "run the project standardization parent workflow to the first incomplete layer, then continue until production health is ready or a blocker/HITL stops the chain; blocked capability maps produce next.kind=blocked without a follow-up command"
     mutates_tracker: false
   - path: [capability, report]
+    args:
+      - name: include-issue-inventory
+        meaning: "force WI evidence loading when backend state is needed"
+      - name: skip-issue-inventory
+        meaning: "produce a README/TD-only report when issue backend access is unavailable or intentionally out of scope"
     behavior: "read canonical README field-style capability contracts, migration-input legacy tables, WI inventory, TD refs, CB/evidence, EC dimension metadata, and optional verification gates or inventory refs"
     output: "JSON/text envelope with capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
     mutates_tracker: false
   - path: [capability, next]
+    args:
+      - name: include-issue-inventory
+        meaning: "force WI evidence loading when backend state is needed"
+      - name: skip-issue-inventory
+        meaning: "route from README/TD evidence only when issue backend access is unavailable"
     behavior: "emit exactly one deterministic next_action without lifecycle execution"
     mutates_tracker: false
   - path: [capability, run]
@@ -358,6 +368,10 @@ commands:
         meaning: "required for bounded execution"
       - name: max-ticks
         meaning: "defaults to one bounded tick"
+      - name: include-issue-inventory
+        meaning: "force WI evidence loading when backend state is needed"
+      - name: skip-issue-inventory
+        meaning: "run bounded README/TD-only ticks when issue backend access is unavailable"
     behavior: "execute the next bounded capability tick"
   - path: [capability, draft]
     behavior: "write pending-review inferred field-style capability contract drafts under /tmp without editing cap_path; Candidate Roots table summaries may be truncated, while Draft Canonical README Promise fields preserve full source prose"
@@ -369,6 +383,11 @@ commands:
     behavior: "rewrite YAML, Field/Value, or one-row capability maps to canonical field-style Markdown contracts"
     mutates_tracker: false
   - path: [capability, check]
+    args:
+      - name: include-issue-inventory
+        meaning: "include WI evidence while checking README format and TD refs"
+      - name: skip-issue-inventory
+        meaning: "keep the check README/TD-only; this is the default"
     behavior: "validate canonical README field-style capability format, capability type/surface/EC dimension data, generated efficiency backfill slots, and TD capability refs"
     mutates_tracker: false
   - path: [capability, set-type]
@@ -503,6 +522,11 @@ requirements:
     id: AW-CAP-WI-12
     text: "aw capability draft preserves full source prose in Draft Canonical README Promise fields even when candidate summaries are truncated"
     risk: high
+    verifymethod: test
+  issue_inventory_optional:
+    id: AW-CAP-WI-13
+    text: "aw capability report/next/run/check expose include/skip issue-inventory flags so README and TD parsing remain usable when the issue backend is unavailable"
+    risk: medium
     verifymethod: test
 elements:
   issues_unit_tests:
