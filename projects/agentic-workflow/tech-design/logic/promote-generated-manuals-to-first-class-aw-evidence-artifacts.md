@@ -217,3 +217,11 @@ requirementDiagram
   ec_generated_manual_docs_entry_accepts_optional_media_absent - verifies -> UT4
   ec_generated_manual_docs_entry_surfaces_in_reports - verifies -> UT5
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] contract-complete: The flow covers generated-manual docs evidence detection, required runner command, project-local output path validation, markdown/html format validation, optional screenshots/highlights/step metadata, and typed exposure to capability/report/health/docs surfaces.
+- [unit-test] contract-complete: The test plan names Rust test elements for the accepted runner contract, missing-runner rejection, path-escape rejection, optional-media tolerance, and reporting surface.
