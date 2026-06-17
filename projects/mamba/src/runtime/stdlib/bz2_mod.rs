@@ -352,6 +352,57 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
     }
 }
 
+/// Read an Instance's bytes field into a Vec (empty when missing/not bytes).
+fn field_bytes(instance: MbValue, name: &str) -> Vec<u8> {
+    instance.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let v = fields.read().unwrap().get(name).copied()?;
+            Some(with_bytes(v, |b| b.to_vec()))
+        } else {
+            None
+        }
+    }).unwrap_or_default()
+}
+
+/// bz2.BZ2Compressor(compresslevel=9) -> a stateful incremental compressor.
+/// mamba buffers all input across compress() calls and emits the whole bz2
+/// stream from flush(); the concatenation of compress()+flush() outputs is a
+/// valid stream that round-trips through BZ2Decompressor (compresslevel is
+/// accepted and ignored — the backend always uses best).
+unsafe extern "C" fn dispatch_bz2compressor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    let obj = MbObject::new_instance("bz2.BZ2Compressor".to_string());
+    let val = MbValue::from_ptr(obj);
+    set_field(val, "_buf", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+    set_field(val, "_flushed", MbValue::from_bool(false));
+    val
+}
+
+/// BZ2Compressor.compress(data) — buffer `data`, return b"" (the full stream
+/// is emitted by flush()).
+extern "C" fn mb_bz2compressor_compress(self_obj: MbValue, args: MbValue) -> MbValue {
+    if field_bool(self_obj, "_flushed") {
+        return raise_value_error("Compressor has been flushed");
+    }
+    let items = method_args(args);
+    let Some(data) = items.iter().copied().find(|v| !is_kwargs_dict(*v)) else {
+        return raise_type_error("compress() missing required argument 'data' (pos 1)");
+    };
+    let mut buf = field_bytes(self_obj, "_buf");
+    with_bytes(data, |b| buf.extend_from_slice(b));
+    set_field(self_obj, "_buf", MbValue::from_ptr(MbObject::new_bytes(buf)));
+    MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+}
+
+/// BZ2Compressor.flush() — compress all buffered input into one bz2 stream.
+extern "C" fn mb_bz2compressor_flush(self_obj: MbValue, _args: MbValue) -> MbValue {
+    if field_bool(self_obj, "_flushed") {
+        return raise_value_error("Repeated call to flush()");
+    }
+    set_field(self_obj, "_flushed", MbValue::from_bool(true));
+    let buf = field_bytes(self_obj, "_buf");
+    mb_bz2_compress(MbValue::from_ptr(MbObject::new_bytes(buf)))
+}
+
 /// Build a class-shell `Instance` carrying the named attributes so that
 /// `hasattr(bz2.BZ2Compressor, "compress")`-style surface probes resolve.
 ///
@@ -400,12 +451,29 @@ pub fn register() {
         });
     }
 
-    // BZ2Compressor stays an attribute-presence shell (no constructor
-    // fixture exercises it for the errors dimension).
+    // BZ2Compressor — a real incremental compressor (buffer-all + flush).
+    let bz2comp_addr = dispatch_bz2compressor as usize;
     attrs.insert(
         "BZ2Compressor".to_string(),
-        class_shell("BZ2Compressor", &["compress", "flush"]),
+        MbValue::from_func(bz2comp_addr),
     );
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(bz2comp_addr as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(bz2comp_addr as u64, "BZ2Compressor".to_string());
+    });
+    {
+        let c_addr = mb_bz2compressor_compress as usize;
+        let f_addr = mb_bz2compressor_flush as usize;
+        super::super::module::register_variadic_func(c_addr as u64);
+        super::super::module::register_variadic_func(f_addr as u64);
+        let mut methods: HashMap<String, MbValue> = HashMap::new();
+        methods.insert("compress".to_string(), MbValue::from_func(c_addr));
+        methods.insert("flush".to_string(), MbValue::from_func(f_addr));
+        super::super::class::mb_class_register("bz2.BZ2Compressor", vec![], methods.clone());
+        super::super::class::mb_class_register("BZ2Compressor", vec![], methods);
+    }
 
     // BZ2File / BZ2Decompressor are real callable constructors that validate
     // their arguments eagerly (mode / compresslevel / EOF) and raise the
