@@ -12,6 +12,7 @@ use crate::cli::issues;
 use crate::cli::project;
 use crate::cli::run as run_root;
 use crate::cli::standardize;
+use crate::cli::sync;
 
 /// Agentic Workflow CLI commands
 #[derive(Subcommand)]
@@ -50,6 +51,9 @@ pub enum Commands {
 
     /// Root-driven workflow runner for project, capability, epic, or change scopes.
     Run(run_root::RunArgs),
+
+    /// Auto-discover projects and refresh the `.aw/config.toml` registry block.
+    Sync(sync::SyncArgs),
 
     /// Manage work-items — list/show/create/CRRR across local + GitHub backends.
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
@@ -99,6 +103,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Run(args) => {
             run_root::run(args).await?;
+        }
+        Commands::Sync(args) => {
+            sync::run(args)?;
         }
         Commands::Issues(args) => {
             issues::run(args).await?;

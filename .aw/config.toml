@@ -393,15 +393,6 @@ strengths = [
 # BEGIN AW SYNC — auto-generated, do not edit by hand
 
 [[projects]]
-name = "cclab-array"
-path = "crates/cclab-array"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-array/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-array"
-
-[[projects]]
 name = "cclab-aurora"
 path = "crates/cclab-aurora"
 
@@ -409,15 +400,6 @@ path = "crates/cclab-aurora"
 paths = ["crates/cclab-aurora/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-aurora"
-
-[[projects]]
-name = "cclab-cli"
-path = "crates/cclab-cli"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-cli/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-cli"
 
 [[projects]]
 name = "cclab-cli-registry"
@@ -429,25 +411,6 @@ target = "rust"
 test_cmd = "cargo test -p cclab-cli-registry"
 
 [[projects]]
-name = "cclab-cmd"
-path = "crates/cclab-cmd"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-cmd/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-cmd"
-
-[[projects]]
-name = "compass"
-aliases = ["cclab-compass"]
-path = "libs/compass"
-
-[[projects.workspaces]]
-paths = ["libs/compass/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-compass"
-
-[[projects]]
 name = "cclab-core"
 path = "crates/cclab-core"
 
@@ -455,15 +418,6 @@ path = "crates/cclab-core"
 paths = ["crates/cclab-core/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-core"
-
-[[projects]]
-name = "cclab-crypto"
-path = "crates/cclab-crypto"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-crypto/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-crypto"
 
 [[projects]]
 name = "cclab-ctx-inf-db"
@@ -509,15 +463,6 @@ path = "crates/cclab-grid-wasm"
 paths = ["crates/cclab-grid-wasm/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-grid-wasm"
-
-[[projects]]
-name = "cclab-hive"
-path = "crates/cclab-hive"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-hive/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-hive"
 
 [[projects]]
 name = "cclab-kv"
@@ -574,48 +519,6 @@ target = "rust"
 test_cmd = "cargo test -p cclab-mcp-mamba"
 
 [[projects]]
-name = "cclab-media"
-path = "crates/cclab-media"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-media/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-media"
-
-[[projects]]
-name = "cclab-mongo"
-path = "crates/cclab-mongo"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-mongo/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-mongo"
-
-[[projects]]
-name = "cclab-plot"
-path = "crates/cclab-plot"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-plot/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-plot"
-
-[[projects]]
-name = "meter"
-path = "projects/meter"
-td_path = "projects/meter/tech-design"
-cap_path = "projects/meter/README.md"
-label = "project:meter"
-
-[[projects.workspaces]]
-name = "meter"
-paths = ["projects/meter/**"]
-target = "rust"
-test_cmd = "cargo test -p meter"
-verify_cold = true
-codegen.profile = "rust/score-crate"
-
-[[projects]]
 name = "cclab-qc-mamba"
 path = "crates/cclab-qc-mamba"
 
@@ -623,15 +526,6 @@ path = "crates/cclab-qc-mamba"
 paths = ["crates/cclab-qc-mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-qc-mamba"
-
-[[projects]]
-name = "cclab-razer"
-path = "crates/cclab-razer"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-razer/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-razer"
 
 [[projects]]
 name = "cclab-runtime-mamba"
@@ -661,15 +555,6 @@ target = "rust"
 test_cmd = "cargo test -p cclab-schema-mamba"
 
 [[projects]]
-name = "cclab-sci"
-path = "crates/cclab-sci"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-sci/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-sci"
-
-[[projects]]
 name = "cclab-server"
 path = "crates/cclab-server"
 
@@ -695,15 +580,6 @@ path = "crates/cclab-tqdm"
 paths = ["crates/cclab-tqdm/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-tqdm"
-
-[[projects]]
-name = "cclab-typer"
-path = "crates/cclab-typer"
-
-[[projects.workspaces]]
-paths = ["crates/cclab-typer/**"]
-target = "rust"
-test_cmd = "cargo test -p cclab-typer"
 
 [[projects]]
 name = "cclab-util"
@@ -733,23 +609,13 @@ target = "rust"
 test_cmd = "cargo test -p agentic-workflow"
 
 [[projects]]
-name = "agentkit"
-path = "projects/agentkit"
+name = "arena"
+path = "projects/arena"
 
 [[projects.workspaces]]
-name = "agentkit"
-paths = ["projects/agentkit/**"]
-target = "schemas"
-test_cmd = "true"
-
-[[projects]]
-name = "apikit-demo"
-path = "projects/apikit-demo"
-
-[[projects.workspaces]]
-paths = ["projects/apikit-demo/**"]
+paths = ["projects/arena/**"]
 target = "rust"
-test_cmd = "cargo test -p apikit-demo"
+test_cmd = "cargo test -p arena"
 
 [[projects]]
 name = "cap"
@@ -761,20 +627,13 @@ target = "rust"
 test_cmd = "cargo test -p cap"
 
 [[projects]]
-name = "conductor"
-path = "projects/conductor"
+name = "cgdb"
+path = "projects/cgdb"
 
 [[projects.workspaces]]
-name = "be"
-paths = ["projects/conductor/be/**"]
-target = "python"
-test_cmd = "cd projects/conductor/be && uv run pytest"
-
-[[projects.workspaces]]
-name = "fe"
-paths = ["projects/conductor/fe/**"]
-target = "typescript"
-test_cmd = "cd projects/conductor/fe && npx vitest run"
+paths = ["projects/cgdb/**"]
+target = "rust"
+test_cmd = "cargo test -p cgdb-smoke"
 
 [[projects]]
 name = "cue"
@@ -792,12 +651,22 @@ paths = ["projects/cue/fe/**"]
 target = "typescript"
 
 [[projects]]
-name = "das-v2"
-path = "projects/das-v2"
+name = "guard"
+path = "projects/guard"
 
 [[projects.workspaces]]
-paths = ["projects/das-v2/**"]
-target = "python"
+paths = ["projects/guard/**"]
+target = "rust"
+test_cmd = "cargo test -p guard"
+
+[[projects]]
+name = "httpkit-demo"
+path = "projects/httpkit-demo"
+
+[[projects.workspaces]]
+paths = ["projects/httpkit-demo/**"]
+target = "rust"
+test_cmd = "cargo test -p httpkit-demo"
 
 [[projects]]
 name = "jet"
@@ -809,6 +678,15 @@ target = "rust"
 test_cmd = "cargo test -p jet"
 
 [[projects]]
+name = "lumen"
+path = "projects/lumen"
+
+[[projects.workspaces]]
+paths = ["projects/lumen/**"]
+target = "rust"
+test_cmd = "cargo test -p lumen"
+
+[[projects]]
 name = "mamba"
 path = "projects/mamba"
 
@@ -818,13 +696,59 @@ target = "rust"
 test_cmd = "cargo test -p mamba"
 
 [[projects]]
-name = "pgkit"
-path = "projects/pgkit"
+name = "meter"
+path = "projects/meter"
 
 [[projects.workspaces]]
-name = "pgkit"
-paths = ["projects/pgkit/**"]
+paths = ["projects/meter/**"]
+target = "rust"
+test_cmd = "cargo test -p meter"
+
+[[projects]]
+name = "qc"
+path = "projects/qc"
+
+[[projects.workspaces]]
+name = "qc"
+paths = ["projects/qc/**"]
 target = "schemas"
 test_cmd = "true"
+
+[[projects]]
+name = "queue"
+path = "projects/queue"
+
+[[projects.workspaces]]
+name = "queue"
+paths = ["projects/queue/**"]
+target = "schemas"
+test_cmd = "true"
+
+[[projects]]
+name = "rig"
+path = "projects/rig"
+
+[[projects.workspaces]]
+paths = ["projects/rig/**"]
+target = "rust"
+test_cmd = "cargo test -p rig"
+
+[[projects]]
+name = "vat"
+path = "projects/vat"
+
+[[projects.workspaces]]
+paths = ["projects/vat/**"]
+target = "rust"
+test_cmd = "cargo test -p vat"
+
+[[projects]]
+name = "compass"
+path = "libs/compass"
+
+[[projects.workspaces]]
+paths = ["libs/compass/**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-compass"
 
 # END AW SYNC
