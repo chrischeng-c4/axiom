@@ -1027,8 +1027,10 @@ fn format_rust_files(paths: &[std::path::PathBuf]) -> Result<()> {
     if rust_files.is_empty() {
         return Ok(());
     }
+    let rustfmt = crate::git::find_rustfmt_bin()
+        .context("rustfmt binary not found on PATH or rustup defaults")?;
     for chunk in rust_files.chunks(100) {
-        let output = std::process::Command::new("rustfmt")
+        let output = std::process::Command::new(&rustfmt)
             .arg("--edition")
             .arg("2021")
             .arg("--config")

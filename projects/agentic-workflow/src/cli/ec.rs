@@ -1291,7 +1291,7 @@ fn extract_e2e_cases_from_markdown(
     let mut idx = 0usize;
     while idx < lines.len() {
         let line = lines[idx];
-        if line.contains("type: e2e-test") {
+        if is_section_annotation(line, "e2e-test") {
             let Some((yaml, next_idx)) = fenced_yaml_after(&lines, idx + 1) else {
                 idx += 1;
                 continue;
@@ -1404,7 +1404,7 @@ fn extract_tool_manifests_from_markdown(
     let mut idx = 0usize;
     while idx < lines.len() {
         let line = lines[idx];
-        if line.contains("type: tool-contract") {
+        if is_section_annotation(line, "tool-contract") {
             let Some((yaml, next_idx)) = fenced_yaml_after(&lines, idx + 1) else {
                 idx += 1;
                 continue;
@@ -1465,6 +1465,13 @@ fn extract_tool_manifests_from_markdown(
         idx += 1;
     }
     Ok(out)
+}
+
+fn is_section_annotation(line: &str, section_type: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("<!--")
+        && trimmed.ends_with("-->")
+        && trimmed.contains(&format!("type: {section_type}"))
 }
 
 fn native_manifest_path(ctx: &EcProjectContext, manifest_rel: &str) -> PathBuf {
@@ -3645,6 +3652,33 @@ e2e_tests:
 
         let err = build_expected_manifest(&ctx).unwrap_err().to_string();
         assert!(err.contains("expected behavior|efficiency|security|stability"));
+    }
+
+    #[test]
+    fn ec_extractors_ignore_type_mentions_inside_source_snapshots() {
+        let (tmp, ctx) = write_demo_repo();
+        fs::write(
+            tmp.path()
+                .join(".aw/tech-design/projects/demo/specs/source-snapshot.md"),
+            r#"
+## Source
+<!-- type: source lang: rust -->
+
+```rust
+let message = "section 'Example' (type: e2e-test) requires a YAML fence";
+```
+
+```yaml
+bad: value: nope
+```
+"#,
+        )
+        .unwrap();
+
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        assert_eq!(manifest.cases.len(), 1);
+        assert_eq!(manifest.cases[0].id, "demo-happy-path");
     }
 
     #[test]
