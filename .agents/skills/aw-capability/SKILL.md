@@ -25,16 +25,18 @@ promises from inference alone.
 ## Flow
 
 1. Resolve the project from the prompt, current branch, or `.aw/config.toml`.
-2. Run `aw capability report <project>` to inspect README capability
+2. Run `aw capability report --project <project>` to inspect README capability
    sections, WI inventory, TD refs, and evidence.
-3. Run `aw capability next <project>` when deciding the next bounded
+3. Run `aw capability next --project <project>` when deciding the next bounded
    action. Follow the single `next_action` unless it requires HITL.
 4. For root-driven execution, run `aw run --project <project> --max-ticks 1`
    and follow `invoke.command` plus `agent_prompt` until
    `completion.workflow_complete=true` or `requires_hitl=true`. Do not stop on
    `action=done` alone; a child root can be done while the parent still needs
    rollup.
-5. Use `aw capability check <project> --verify` after README or TD linkage edits when production proof matters; omit `--verify` only for a fast structural check.
+5. Use `aw capability check --project <project> --verify` after README or TD
+   linkage edits when production proof matters; omit `--verify` only for a
+   fast structural check.
 6. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
@@ -112,8 +114,9 @@ Status-gated contract rules:
   because the capability type could require them.
 - Required claims default `required_for_verified: true` and must include a
   maturity plus either a gate command or fixture/inventory reference.
-- Gate pass/fail is runtime-only from `aw capability report --verify`; do not
-  store pass timestamps in README.
+- Gate pass/fail is runtime-only from
+  `aw capability report --project <project> --verify`; do not store pass
+  timestamps in README.
 
 YAML `## Capability:` sections, Field/Value contract tables, and one-row
 capability contract tables are migration input only. They must produce
@@ -151,7 +154,8 @@ and claim IDs.
   updating the anchor.
 - 100% means every non-retired capability is `verified`, all non-deferred gaps
   are closed, every required claim is linked to TD/WI evidence, required gates
-  pass under `aw capability report --verify`, and TD/WI refs resolve.
+  pass under `aw capability report --project <project> --verify`, and TD/WI
+  refs resolve.
 - Stdout envelope completion is authoritative for automation. If
   `completion.workflow_complete=false`, run the envelope `invoke.command` or
   resolve the listed `completion.missing` items before reporting completion.

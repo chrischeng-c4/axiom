@@ -22,8 +22,8 @@ Readiness rules for agents:
 
 - Treat Basic and Advanced as separate readiness tracks.
 - Do not use Advanced WASM progress to qualify Basic production readiness.
-- Do not treat `aw capability check jet` as runtime proof; it validates README
-  capability structure and TD refs.
+- Do not treat `aw capability check --project jet` as runtime proof; it
+  validates README capability structure and TD refs.
 - Basic gates compare function first and performance second. A faster run is
   still red when output, install tree, server behavior, browser action, or trace
   evidence differs from the oracle.
@@ -60,8 +60,8 @@ Primary verification:
 projects/jet/scripts/verify-basic-dom-gates.sh
 JET_BASIC_DOM_BUILD_SAMPLES=3 JET_BASIC_DOM_RUNTIME_SMOKE=required projects/jet/scripts/verify-basic-dom-gates.sh --all
 projects/jet/scripts/verify-advanced-wasm-gates.sh
-aw capability check jet --json
-aw health jet
+aw capability check --project jet --pretty
+aw health --project jet
 ```
 
 Source map:
@@ -85,11 +85,12 @@ Source map:
 From this point down is the AW-managed capability registry for Jet. Keep the
 contract and work-root table schemas stable, keep enum values inside the
 accepted AW vocabulary, and validate structural edits with
-`aw capability check jet --json`.
+`aw capability check --project jet --pretty`.
 
 Capability claims become meaningful only when their listed gate/evidence is
-runnable in the current environment. Use `aw capability report jet` or
-`aw health jet` for readiness questions.
+runnable in the current environment. Use
+`aw capability report --project jet --verify` or `aw health --project jet` for
+readiness questions.
 
 ### Capability Index
 
