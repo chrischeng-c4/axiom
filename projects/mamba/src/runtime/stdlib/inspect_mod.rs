@@ -324,7 +324,7 @@ pub fn register() {
         ("stack", d_empty_list as *const () as usize),
         ("trace", d_empty_list as *const () as usize),
         ("getmro", d_getmro as *const () as usize),
-        ("getclasstree", d_empty_list as *const () as usize),
+        ("getclasstree", d_getclasstree as *const () as usize),
         ("getargvalues", d_argvalues as *const () as usize),
         ("getouterframes", d_empty_list as *const () as usize),
         ("getinnerframes", d_empty_list as *const () as usize),
@@ -1152,6 +1152,97 @@ pub fn mb_inspect_isroutine(obj: MbValue) -> MbValue {
         }
     }
     MbValue::from_bool(false)
+}
+
+/// inspect.getclasstree(classes) -> nested [(cls, bases), [children...]] tree
+/// (CPython's algorithm; `unique` is ignored — the default behavior).
+fn gct_cls_name(c: MbValue) -> String {
+    super::super::class::resolve_class_name(c).unwrap_or_default()
+}
+
+fn gct_bases_tuple(c: MbValue) -> MbValue {
+    let attr = MbValue::from_ptr(MbObject::new_str("__bases__".to_string()));
+    let r = super::super::class::mb_getattr(c, attr);
+    // `object` (and bare stub classes) report no __bases__; CPython's object
+    // has empty bases. Treat a missing/None result as the empty tuple.
+    super::super::exception::mb_clear_exception();
+    if r.is_none() || !matches!(r.as_ptr().map(|p| unsafe { &(*p).data }), Some(ObjData::Tuple(_))) {
+        return MbValue::from_ptr(MbObject::new_tuple(Vec::new()));
+    }
+    r
+}
+
+fn gct_bases_vec(c: MbValue) -> Vec<MbValue> {
+    gct_bases_tuple(c)
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Tuple(ref items) = (*p).data {
+                items.to_vec()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn gct_walktree(
+    classes: &[MbValue],
+    children: &std::collections::HashMap<String, Vec<MbValue>>,
+) -> MbValue {
+    let mut results: Vec<MbValue> = Vec::new();
+    for &c in classes {
+        let bases = gct_bases_tuple(c);
+        results.push(MbValue::from_ptr(MbObject::new_tuple_borrowed(vec![c, bases])));
+        if let Some(kids) = children.get(&gct_cls_name(c)) {
+            if !kids.is_empty() {
+                results.push(gct_walktree(kids, children));
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list_borrowed(results))
+}
+
+pub fn mb_inspect_getclasstree(classes: &[MbValue]) -> MbValue {
+    use std::collections::HashMap;
+    let class_names: Vec<String> = classes.iter().map(|&c| gct_cls_name(c)).collect();
+    let mut children: HashMap<String, Vec<MbValue>> = HashMap::new();
+    let mut parent_order: Vec<(String, MbValue)> = Vec::new();
+    let mut roots: Vec<MbValue> = Vec::new();
+    for &c in classes {
+        let bases = gct_bases_vec(c);
+        if !bases.is_empty() {
+            let cname = gct_cls_name(c);
+            for parent in bases {
+                let pname = gct_cls_name(parent);
+                if !children.contains_key(&pname) {
+                    children.insert(pname.clone(), Vec::new());
+                    parent_order.push((pname.clone(), parent));
+                }
+                let kids = children.get_mut(&pname).unwrap();
+                if !kids.iter().any(|&x| gct_cls_name(x) == cname) {
+                    kids.push(c);
+                }
+            }
+        } else if !roots.iter().any(|&r| gct_cls_name(r) == gct_cls_name(c)) {
+            roots.push(c);
+        }
+    }
+    for (pname, pval) in &parent_order {
+        if !class_names.contains(pname) {
+            roots.push(*pval);
+        }
+    }
+    gct_walktree(&roots, &children)
+}
+
+unsafe extern "C" fn d_getclasstree(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let classes = a
+        .first()
+        .copied()
+        .map(super::super::builtins::extract_items)
+        .unwrap_or_default();
+    mb_inspect_getclasstree(&classes)
 }
 
 /// inspect.unwrap(func, *, stop=None) -> the innermost function, following the
