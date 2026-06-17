@@ -37,6 +37,8 @@ pub enum CapabilityCommand {
     Report(CapabilityReportArgs),
     /// Print the next deterministic capability action.
     Next(CapabilityNextArgs),
+    /// Render inferred README capability roots as a pending-review local draft.
+    Draft(CapabilityDraftArgs),
     /// Execute one bounded capability tick.
     Run(CapabilityRunArgs),
     /// Rewrite legacy/YAML capability maps to the canonical Markdown format.
@@ -103,6 +105,26 @@ pub struct CapabilityNextArgs {
     #[arg(long)]
     pub human: bool,
     /// Pretty-print the JSON next action.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilityDraftArgs {
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+    /// Write draft to this path instead of /tmp/aw/{project}/capability-map-drafts/.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+    /// DEPRECATED compatibility no-op. Capability draft emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit the generated draft path only.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON result.
     #[arg(long)]
     pub pretty: bool,
 }
@@ -906,6 +928,22 @@ pub struct CapabilityMigrateReport {
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityDraftReport {
+    pub schema_version: &'static str,
+    pub action: &'static str,
+    pub project: String,
+    pub cap_path: PathBuf,
+    pub path: PathBuf,
+    pub status: String,
+    pub source: &'static str,
+    pub candidate_count: usize,
+    pub agent_review_required: bool,
+    pub review_status: &'static str,
+    pub check_command: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CapabilityWiEvidence {
     pub reference: String,
     pub gap_id: String,
@@ -1089,6 +1127,10 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             }
             Ok(())
         }
+        CapabilityCommand::Draft(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            draft_capability_map(&project, args)
+        }
         CapabilityCommand::Run(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
             run_capability_tick(&project, args).await
@@ -1215,6 +1257,178 @@ fn render_empty_capability_readme(title: &str, brief: &str) -> String {
     format!(
         "# {title}\n\n## Brief\n\n{brief}\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n"
     )
+}
+
+fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    let cap_body = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
+    let document = parse_capability_document(&cap_body, &cap_path)
+        .with_context(|| format!("failed to parse capability map {}", cap_path.display()))?;
+    if document.prose_candidates.is_empty() {
+        anyhow::bail!(
+            "no prose capability candidates found in {}; use `aw capability init` for an empty map or `aw capability migrate` for legacy maps",
+            cap_path.display()
+        );
+    }
+
+    let body = render_capability_map_draft(project, &cap_path, &document.prose_candidates);
+    let path = write_capability_draft_artifact(project, args.output.as_deref(), &body)?;
+    let report = CapabilityDraftReport {
+        schema_version: "aw.cli.v1",
+        action: "capability_draft",
+        project: project.to_string(),
+        cap_path,
+        path,
+        status: "pending_review".to_string(),
+        source: "prose_candidates",
+        candidate_count: document.prose_candidates.len(),
+        agent_review_required: true,
+        review_status: "pending",
+        check_command: format!("aw capability check --project {project}"),
+    };
+    if args.human {
+        println!("{}", report.path.display());
+    } else if args.pretty || args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("{}", serde_json::to_string(&report)?);
+    }
+    Ok(())
+}
+
+fn write_capability_draft_artifact(
+    project: &str,
+    output: Option<&Path>,
+    body: &str,
+) -> Result<PathBuf> {
+    let path = if let Some(path) = output {
+        path.to_path_buf()
+    } else {
+        let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let dir = PathBuf::from("/tmp")
+            .join("aw")
+            .join(project)
+            .join("capability-map-drafts");
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create {}", dir.display()))?;
+        dir.join(format!(
+            "{stamp}-{}-capability-map-draft.md",
+            slugify(project)
+        ))
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(&path, body)
+        .with_context(|| format!("failed to write capability draft {}", path.display()))?;
+    Ok(path)
+}
+
+fn render_capability_map_draft(
+    project: &str,
+    cap_path: &Path,
+    candidates: &[CapabilityProseCandidate],
+) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_map_draft\n");
+    out.push_str(&format!("project: {}\n", markdown_yaml_string(project)));
+    out.push_str(&format!(
+        "cap_path: {}\n",
+        markdown_yaml_string(&cap_path.display().to_string())
+    ));
+    out.push_str("status: pending_review\n");
+    out.push_str("source: prose_candidates\n");
+    out.push_str(&format!("candidate_count: {}\n", candidates.len()));
+    out.push_str("---\n\n");
+    out.push_str(&format!(
+        "# {} Capability Map Draft\n\n",
+        project_display_name(project)
+    ));
+    out.push_str(
+        "This artifact is inference only. Review, revise, or defer these roots before copying any canonical contract into README.\n\n",
+    );
+    out.push_str("## Candidate Roots\n\n");
+    out.push_str("| Candidate | Proposed ID | Root WI | Source Line | Summary |\n");
+    out.push_str("|---|---|---:|---:|---|\n");
+    for candidate in candidates {
+        out.push_str(&format!(
+            "| {} | `{}` | {} | {} | {} |\n",
+            markdown_cell(&candidate.title),
+            markdown_cell(&candidate.id),
+            markdown_cell(candidate.root_wi.as_deref().unwrap_or("-")),
+            candidate.line,
+            markdown_cell(candidate.summary.as_deref().unwrap_or("-")),
+        ));
+    }
+    out.push_str("\n## Human Review Checklist\n\n");
+    out.push_str("- Confirm, rename, split, merge, or defer each candidate root.\n");
+    out.push_str("- Fill capability Type, public Surfaces, and EC Dimensions only after the product promise is confirmed.\n");
+    out.push_str("- Replace `(confirm ...)` placeholders before writing to README.\n");
+    out.push_str("- Run `aw capability check --project ");
+    out.push_str(project);
+    out.push_str("` after updating README.\n\n");
+    out.push_str("## Draft Canonical README Section\n\n");
+    out.push_str("```md\n");
+    out.push_str(&render_candidate_capability_registry(project, candidates));
+    out.push_str("```\n");
+    out
+}
+
+fn render_candidate_capability_registry(
+    project: &str,
+    candidates: &[CapabilityProseCandidate],
+) -> String {
+    let mut out = String::new();
+    out.push_str("## Capabilities\n\n");
+    out.push_str("### Capability Index\n\n");
+    out.push_str(
+        "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n",
+    );
+    out.push_str("|---|---:|---|---|---|---|---|\n");
+    if candidates.is_empty() {
+        out.push_str(&format!(
+            "| {} Capability | - | planned | planned | smoke | not_ready | candidate |\n",
+            markdown_cell(&project_display_name(project))
+        ));
+    } else {
+        for candidate in candidates {
+            out.push_str(&format!(
+                "| {} | {} | planned | planned | smoke | not_ready | candidate from README prose; confirm promise |\n",
+                markdown_cell(&candidate.title),
+                markdown_cell(candidate.root_wi.as_deref().unwrap_or("-")),
+            ));
+        }
+    }
+    out.push('\n');
+    for candidate in candidates {
+        out.push_str(&render_candidate_capability_section(candidate));
+    }
+    out
+}
+
+fn render_candidate_capability_section(candidate: &CapabilityProseCandidate) -> String {
+    let root_wi = candidate.root_wi.as_deref().unwrap_or("-");
+    let promise = candidate
+        .summary
+        .as_deref()
+        .filter(|summary| !summary.trim().is_empty())
+        .unwrap_or("(confirm promise)");
+    format!(
+        "### {title}\n\nID: {id}\nRoot WI: {root_wi}\nStatus: candidate\nRequired Verification: smoke\nPromise:\n{promise}\nGate Inventory:\n- (confirm gate inventory)\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {work_root} root | epic | {root_wi} | planned | planned | smoke | (confirm gate/evidence) |\n\n",
+        title = candidate.title.trim(),
+        id = candidate.id.trim(),
+        root_wi = markdown_cell(root_wi),
+        promise = promise.trim(),
+        work_root = markdown_cell(&candidate.title),
+    )
+}
+
+fn markdown_yaml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn humanize_project_title(project: &str) -> String {
@@ -3120,7 +3334,11 @@ fn choose_next_action(
             gap_id: None,
             claim_id: None,
             target: report.cap_path.display().to_string(),
-            command: format!("aw capability report --project {}", report.project),
+            command: if document.prose_candidates.is_empty() {
+                format!("aw capability report --project {}", report.project)
+            } else {
+                format!("aw capability draft --project {}", report.project)
+            },
             reason: reason.clone(),
             requires_hitl: true,
             hitl_question: Some(capability_map_hitl_question(
@@ -4798,41 +5016,59 @@ fn capability_prose_candidate_title_is_ignored(title: &str) -> bool {
 
 fn first_candidate_summary_line(lines: &[&str], start: usize, end: usize) -> Option<String> {
     let fenced = markdown_fenced_line_mask(lines);
+    let mut parts = Vec::new();
     for idx in start..end {
         if fenced[idx] {
             continue;
         }
         let trimmed = lines[idx].trim();
-        if trimmed.is_empty()
-            || trimmed.starts_with('|')
+        if trimmed.is_empty() {
+            if !parts.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if trimmed.starts_with('|')
             || trimmed.starts_with("<!--")
             || parse_heading(trimmed).is_some()
             || parse_markdown_contract_field_line(trimmed).is_some()
         {
+            if !parts.is_empty() {
+                break;
+            }
             continue;
         }
         let summary = candidate_summary_text(trimmed);
         if !summary.is_empty() {
-            return Some(summary);
+            parts.push(summary);
         }
     }
-    None
+    if parts.is_empty() {
+        None
+    } else {
+        Some(truncate_candidate_summary(&parts.join(" ")))
+    }
 }
 
 fn candidate_summary_text(line: &str) -> String {
-    let text = line
-        .trim()
-        .trim_start_matches("- ")
-        .trim_start_matches("* ")
-        .trim();
-    let mut out = String::new();
-    for ch in text.chars() {
-        if out.len() >= 180 {
-            break;
-        }
-        out.push(ch);
+    clean_markdown_inline_links(
+        line.trim()
+            .trim_start_matches("- ")
+            .trim_start_matches("* ")
+            .trim(),
+    )
+}
+
+fn truncate_candidate_summary(text: &str) -> String {
+    let text = text.trim();
+    let max_chars = 280;
+    if text.chars().count() <= max_chars {
+        return text.to_string();
     }
-    out.trim().to_string()
+    let mut out = text.chars().take(max_chars).collect::<String>();
+    out = out.trim_end().to_string();
+    out.push_str("...");
+    out
 }
 
 fn clean_markdown_inline_links(text: &str) -> String {
@@ -7811,10 +8047,37 @@ Mamba can execute the Python 3.12 language and standard library surface.
             .unwrap();
 
         assert_eq!(action.kind, CapabilityActionKind::DefineCapabilityMap);
+        assert_eq!(action.command, "aw capability draft --project jet");
         assert!(prompt.contains("Candidate README capability roots detected"));
         assert!(prompt.contains("C1. Py3.12 functional parity"));
         assert!(prompt.contains("#3331"));
         assert!(prompt.contains("inference only"));
+    }
+
+    #[test]
+    fn capability_map_draft_artifact_is_pending_review_not_readme_mutation() {
+        let candidates = vec![CapabilityProseCandidate {
+            id: "c1-py3-12-functional-parity-axis-1-3331".to_string(),
+            title: "C1. Py3.12 functional parity - Axis 1 (#3331)".to_string(),
+            line: 11,
+            root_wi: Some("#3331".to_string()),
+            summary: Some("Run real Python 3.12 programs without semantic divergence.".to_string()),
+        }];
+
+        let artifact = render_capability_map_draft(
+            "mamba",
+            Path::new("projects/mamba/README.md"),
+            &candidates,
+        );
+
+        assert!(artifact.contains("kind: capability_map_draft"));
+        assert!(artifact.contains("status: pending_review"));
+        assert!(artifact.contains("source: prose_candidates"));
+        assert!(artifact.contains("## Draft Canonical README Section"));
+        assert!(artifact.contains("ID: c1-py3-12-functional-parity-axis-1-3331"));
+        assert!(artifact.contains("Status: candidate"));
+        assert!(artifact.contains("(confirm gate inventory)"));
+        assert!(artifact.contains("This artifact is inference only"));
     }
 
     #[test]

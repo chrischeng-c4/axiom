@@ -14,7 +14,7 @@ promises from inference alone.
 ## Contract
 
 - Human API: `/aw:capability <prompt>`.
-- Agent API: use `aw run`, `aw capability report|next|init|migrate|run|check`,
+- Agent API: use `aw run`, `aw capability report|next|draft|init|migrate|run|check`,
   `aw standardize <project>`, `aw wi list/show`, `aw td ...`, and `aw cb ...`
   as needed to gather evidence.
 - Artifact: `cap_path`, defaulting to the project README when configured or
@@ -29,23 +29,29 @@ promises from inference alone.
    sections, WI inventory, TD refs, and evidence.
 3. Run `aw capability next --project <project>` when deciding the next bounded
    action. Follow the single `next_action` unless it requires HITL.
-4. If the configured README/capability map is missing and the human has
+4. If `next_action.kind=define_capability_map` and the next command is
+   `aw capability draft --project <project>`, run the draft command to write a
+   pending-review artifact under `/tmp/aw/{project}/capability-map-drafts/`.
+   This artifact is inference-only and must not be treated as a confirmed
+   README edit until the human confirms, revises, or defers the candidate
+   roots.
+5. If the configured README/capability map is missing and the human has
    confirmed the project should remain in the sweep, run
    `aw capability init --project <project>`, then rerun
    `aw capability check --project <project>`. This creates only the canonical
    README shell; it must not invent capability promises.
-5. If `next_action.kind=format_migration_required`, run
+6. If `next_action.kind=format_migration_required`, run
    `aw capability migrate --project <project>`, then rerun
    `aw capability check --project <project>`.
-6. For root-driven execution, run `aw run --project <project> --max-ticks 1`
+7. For root-driven execution, run `aw run --project <project> --max-ticks 1`
    and follow `invoke.command` plus `agent_prompt` until
    `completion.workflow_complete=true` or `requires_hitl=true`. Do not stop on
    `action=done` alone; a child root can be done while the parent still needs
    rollup.
-7. Use `aw capability check --project <project> --verify` after README or TD
+8. Use `aw capability check --project <project> --verify` after README or TD
    linkage edits when production proof matters; omit `--verify` only for a
    fast structural check.
-8. Only after explicit confirmation, propose edits that create or materially
+9. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
 ## README Schema
