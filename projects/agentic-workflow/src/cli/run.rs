@@ -1486,9 +1486,8 @@ fn capability_action_envelope_with_planning_base(
         CapabilityActionKind::HumanConfirmRequired
         | CapabilityActionKind::UpdateCapabilityStatus
         | CapabilityActionKind::EnvBlocked
-        | CapabilityActionKind::DefineVerificationContract => {
-            ("hitl", agent_command(&action.command))
-        }
+        | CapabilityActionKind::DefineVerificationContract
+        | CapabilityActionKind::AssignCapabilityType => ("hitl", agent_command(&action.command)),
         CapabilityActionKind::None => ("inspect_parent", String::new()),
     };
     let blocked = action.requires_hitl || matches!(action.kind, CapabilityActionKind::EnvBlocked);

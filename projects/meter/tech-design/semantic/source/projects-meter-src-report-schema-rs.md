@@ -21,7 +21,7 @@ Public API manifest for `projects/meter/src/report/schema.rs` generated from AST
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `catalog` | projects/meter/src/report/schema.rs | function | pub | 152 | catalog() -> Value |
+| `catalog` | projects/meter/src/report/schema.rs | function | pub | 151 | catalog() -> Value |
 | `json_schema` | projects/meter/src/report/schema.rs | function | pub | 20 | json_schema() -> Value |
 ## Source
 <!-- type: rust-source-unit lang: rust -->

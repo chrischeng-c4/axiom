@@ -21,7 +21,8 @@ use chrono::Utc;
 use walkdir::WalkDir;
 
 use crate::config::{
-    self, PortSpec, RetentionPolicy, RunnerConfig, ServiceConfig, ServicePreset, VatConfig,
+    self, PortSpec, RetentionPolicy, RunnerConfig, ServiceConfig, ServicePreset, ServiceRuntime,
+    VatConfig,
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
@@ -684,6 +685,11 @@ struct ServicePlan {
     prepare_duration_ms: u64,
     env: BTreeMap<String, String>,
     exported_env: Vec<String>,
+    /// Set when the service runs as a Docker container; carries the
+    /// `--name` so teardown can force-remove the container with no orphans.
+    docker_name: Option<String>,
+    /// The Docker image, when this service runs as a container.
+    image: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -699,6 +705,8 @@ struct ServiceHandle {
     child: Child,
     timeout_s: u64,
     ready_probe: ReadyProbe,
+    /// `docker --name` when the service is a container; force-removed on stop.
+    docker_name: Option<String>,
 }
 
 fn prepare_service(
@@ -707,19 +715,24 @@ fn prepare_service(
     service: &ServiceConfig,
 ) -> Result<ServicePlan> {
     let started = Instant::now();
-    let plan = if let Some(preset) = service.preset {
-        prepare_preset_service(vat, cfg, service, preset)?
+    let plan = if let Some(image) = &service.image {
+        // Explicit image: a Docker-only service (e.g. AlloyDB) with no native
+        // equivalent. Always a container.
+        prepare_image_service(vat, service, image)?
+    } else if let Some(preset) = service.preset {
+        // Preset: prefer the native Homebrew binary, fall back to the preset's
+        // official Docker image when the binary is missing (or as forced).
+        match resolve_preset_runtime(service, preset)? {
+            ResolvedRuntime::Native => prepare_preset_service(vat, cfg, service, preset)?,
+            ResolvedRuntime::Docker => prepare_preset_docker_service(vat, service, preset)?,
+        }
     } else {
         let env = export_command_service_env(service);
         ServicePlan {
             id: service.id.clone(),
             command: service.cmd.clone(),
             ready_http: service.ready_http.clone(),
-            ready_probe: service
-                .ready_http
-                .clone()
-                .map(ReadyProbe::Http)
-                .unwrap_or(ReadyProbe::None),
+            ready_probe: resolve_ready_probe(service, None),
             timeout_s: service.timeout_s,
             preset: None,
             port: None,
@@ -728,22 +741,30 @@ fn prepare_service(
             prepare_duration_ms: 0,
             exported_env: sorted_keys(&env),
             env,
+            docker_name: None,
+            image: None,
         }
     };
     let mut plan = plan;
     plan.prepare_duration_ms = started.elapsed().as_millis() as u64;
-    if plan.preset.is_some() {
+    if plan.prepare_mode != "direct_start" {
+        let is_docker = plan.docker_name.is_some();
+        let note = if is_docker {
+            "running service via `docker run` (ephemeral, --rm)"
+        } else if plan.prepare_mode == "cold_build" {
+            "first run slower; cached for future runs"
+        } else {
+            "using cached service image"
+        };
         emit_jsonl(serde_json::json!({
             "type": "prepare",
             "service": plan.id.as_str(),
             "preset": plan.preset.map(service_preset_name),
+            "runtime": if is_docker { "docker" } else { "native" },
+            "image": plan.image.as_deref(),
             "mode": plan.prepare_mode.as_str(),
             "cache_key": plan.cache_key.as_deref(),
-            "note": if plan.prepare_mode == "cold_build" {
-                "first run slower; cached for future runs"
-            } else {
-                "using cached service image"
-            },
+            "note": note,
         }))?;
     }
     Ok(plan)
@@ -786,6 +807,7 @@ fn start_service(
         child,
         timeout_s: plan.timeout_s,
         ready_probe: plan.ready_probe.clone(),
+        docker_name: plan.docker_name.clone(),
     })
 }
 
@@ -815,7 +837,7 @@ fn prepare_preset_service(
         } else {
             std::fs::create_dir_all(&cache_dir)
                 .with_context(|| format!("create {}", cache_dir.display()))?;
-            cold_prepare_service_image(service, preset, &cache_dir)?;
+            cold_prepare_service_image(cfg, service, preset, &cache_dir)?;
             if data_dir.exists() {
                 std::fs::remove_dir_all(&data_dir)
                     .with_context(|| format!("remove {}", data_dir.display()))?;
@@ -832,11 +854,16 @@ fn prepare_preset_service(
     let mut env = preset_exports(service, preset, port);
     add_service_runtime_env(&mut env, preset, &service.id, port, &data_dir);
     let command = preset_command(preset, port, &data_dir);
+    // A corpus-aware `ready_cmd` (e.g. a SQL row-count check) wins over the
+    // preset's default "server accepts connections" probe so readiness means
+    // "corpus loaded". `ready_http` is the next override; otherwise the preset
+    // default applies.
+    let ready_probe = resolve_ready_probe(service, Some(preset_ready_probe(preset, port)));
     Ok(ServicePlan {
         id: service.id.clone(),
         command,
         ready_http: service.ready_http.clone(),
-        ready_probe: preset_ready_probe(preset, port),
+        ready_probe,
         timeout_s: service.timeout_s,
         preset: Some(preset),
         port: Some(port),
@@ -845,10 +872,293 @@ fn prepare_preset_service(
         prepare_duration_ms: 0,
         exported_env: sorted_keys(&env),
         env,
+        docker_name: None,
+        image: None,
     })
 }
 
+/// Which way a `preset` service is actually provided on this host.
+enum ResolvedRuntime {
+    Native,
+    Docker,
+}
+
+/// Resolve a preset service's `runtime` against the host. `auto` prefers the
+/// native binary and falls back to Docker; `native`/`docker` force one path.
+/// On `auto` with neither available, emit a structured error and bail.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn resolve_preset_runtime(service: &ServiceConfig, preset: ServicePreset) -> Result<ResolvedRuntime> {
+    match service.runtime {
+        ServiceRuntime::Native => Ok(ResolvedRuntime::Native),
+        ServiceRuntime::Docker => Ok(ResolvedRuntime::Docker),
+        ServiceRuntime::Auto => {
+            let missing: Vec<&str> = required_binaries(preset)
+                .iter()
+                .filter(|binary| which(binary).is_none())
+                .copied()
+                .collect();
+            if missing.is_empty() {
+                Ok(ResolvedRuntime::Native)
+            } else if docker_available() {
+                Ok(ResolvedRuntime::Docker)
+            } else {
+                emit_jsonl(serde_json::json!({
+                    "type": "error",
+                    "code": "service_runtime_unavailable",
+                    "service": service.id.as_str(),
+                    "preset": service_preset_name(preset),
+                    "missing_native": missing,
+                    "docker": false,
+                }))?;
+                bail!(
+                    "service `{}` preset `{}`: native binaries missing ({}) and Docker is unavailable; \
+                     install them via Homebrew, install/start Docker, or set runtime explicitly",
+                    service.id,
+                    service_preset_name(preset),
+                    missing.join(", ")
+                );
+            }
+        }
+    }
+}
+
+/// Run a preset service from its official Docker image instead of the native
+/// binary. The exported connection env is identical to the native path — only
+/// the process behind the mapped host port differs.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn prepare_preset_docker_service(
+    vat: &store::Vat,
+    service: &ServiceConfig,
+    preset: ServicePreset,
+) -> Result<ServicePlan> {
+    ensure_docker_available(service)?;
+    let host_port = resolve_service_port(&service.port)?;
+    let container_port = service
+        .container_port
+        .unwrap_or_else(|| preset_container_port(preset));
+    let image = preset_image(preset, service.version.as_deref());
+    let name = container_name(&vat.meta.id, &service.id);
+    let mut container_env = preset_container_env(preset);
+    for (key, value) in &service.image_env {
+        container_env.insert(key.clone(), value.clone());
+    }
+    let command = docker_run_command(&name, &image, host_port, container_port, &container_env);
+    let env = preset_exports(service, preset, host_port);
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command,
+        ready_http: service.ready_http.clone(),
+        ready_probe: docker_ready_probe(service, host_port),
+        timeout_s: service.timeout_s,
+        preset: Some(preset),
+        port: Some(host_port),
+        prepare_mode: "docker_run".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: Some(name),
+        image: Some(image),
+    })
+}
+
+/// Run a Docker-only custom service (e.g. AlloyDB) declared with `image`.
+/// `export` values are templates: `{host}`/`{port}` are substituted with the
+/// mapped host endpoint. `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn prepare_image_service(
+    vat: &store::Vat,
+    service: &ServiceConfig,
+    image: &str,
+) -> Result<ServicePlan> {
+    ensure_docker_available(service)?;
+    let host_port = resolve_service_port(&service.port)?;
+    let container_port = service
+        .container_port
+        .context("image service missing container_port (validated earlier)")?;
+    let name = container_name(&vat.meta.id, &service.id);
+    let command = docker_run_command(&name, image, host_port, container_port, &service.image_env);
+    let env = image_exports(service, host_port);
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command,
+        ready_http: service.ready_http.clone(),
+        ready_probe: docker_ready_probe(service, host_port),
+        timeout_s: service.timeout_s,
+        preset: None,
+        port: Some(host_port),
+        prepare_mode: "docker_run".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: Some(name),
+        image: Some(image.to_string()),
+    })
+}
+
+/// Build a foreground `docker run` argv. `--rm` makes the container ephemeral;
+/// `--name` is deterministic so teardown can force-remove it; the port is bound
+/// to loopback only. Container env is emitted in sorted order (deterministic).
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn docker_run_command(
+    name: &str,
+    image: &str,
+    host_port: u16,
+    container_port: u16,
+    container_env: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut cmd = vec![
+        "docker".to_string(),
+        "run".to_string(),
+        "--rm".to_string(),
+        "--name".to_string(),
+        name.to_string(),
+        "-p".to_string(),
+        format!("127.0.0.1:{host_port}:{container_port}"),
+    ];
+    for (key, value) in container_env {
+        cmd.push("-e".to_string());
+        cmd.push(format!("{key}={value}"));
+    }
+    cmd.push(image.to_string());
+    cmd
+}
+
+/// Readiness for a container: an explicit `ready_http` wins, otherwise a TCP
+/// connect to the mapped host port — which needs no native client binary.
+fn docker_ready_probe(service: &ServiceConfig, host_port: u16) -> ReadyProbe {
+    match &service.ready_http {
+        Some(url) => ReadyProbe::Http(url.clone()),
+        None => ReadyProbe::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: host_port,
+        },
+    }
+}
+
+/// Sanitize a Docker `--name`: keep `[A-Za-z0-9_.-]`, replace the rest with `-`.
+fn container_name(vat_id: &str, service_id: &str) -> String {
+    format!("{vat_id}-{service_id}")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Official Docker image for a preset, tagged with `version` when supplied.
+fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
+    let (repo, default_tag) = match preset {
+        ServicePreset::Postgres => ("postgres", "16"),
+        ServicePreset::Redis => ("redis", "7"),
+        ServicePreset::Nats => ("nats", "2"),
+        ServicePreset::Rabbitmq => ("rabbitmq", "3"),
+        ServicePreset::Mysql => ("mysql", "8"),
+        ServicePreset::Mongo => ("mongo", "7"),
+    };
+    format!("{repo}:{}", version.unwrap_or(default_tag))
+}
+
+/// Port the preset's official image listens on inside the container.
+fn preset_container_port(preset: ServicePreset) -> u16 {
+    match preset {
+        ServicePreset::Postgres => 5432,
+        ServicePreset::Redis => 6379,
+        ServicePreset::Nats => 4222,
+        ServicePreset::Rabbitmq => 5672,
+        ServicePreset::Mysql => 3306,
+        ServicePreset::Mongo => 27017,
+    }
+}
+
+/// Container env that makes the preset's official image accept the same
+/// password-less connection the native preset exports a URL for.
+fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    match preset {
+        ServicePreset::Postgres => {
+            env.insert("POSTGRES_HOST_AUTH_METHOD".to_string(), "trust".to_string());
+        }
+        ServicePreset::Mysql => {
+            env.insert("MYSQL_ALLOW_EMPTY_PASSWORD".to_string(), "1".to_string());
+        }
+        ServicePreset::Redis
+        | ServicePreset::Nats
+        | ServicePreset::Mongo
+        | ServicePreset::Rabbitmq => {}
+    }
+    env
+}
+
+/// Exports for a Docker-only `image` service. Each `export` value is a template
+/// with `{host}`/`{port}` placeholders; raw endpoint vars are always provided.
+fn image_exports(service: &ServiceConfig, host_port: u16) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    for (key, template) in &service.export {
+        let value = template
+            .replace("{host}", "127.0.0.1")
+            .replace("{port}", &host_port.to_string());
+        env.insert(key.clone(), value);
+    }
+    let upper = service.id.to_uppercase().replace(['-', '.'], "_");
+    env.insert(format!("VAT_SERVICE_{upper}_HOST"), "127.0.0.1".to_string());
+    env.insert(format!("VAT_SERVICE_{upper}_PORT"), host_port.to_string());
+    env
+}
+
+/// Whether Docker is usable: the binary is on PATH and the daemon answers.
+fn docker_available() -> bool {
+    which("docker").is_some() && docker_daemon_up()
+}
+
+fn docker_daemon_up() -> bool {
+    Command::new("docker")
+        .arg("info")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Gate a Docker-backed service on a reachable daemon, emitting the structured
+/// `docker_unavailable` error (never a panic) when it is not.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
+fn ensure_docker_available(service: &ServiceConfig) -> Result<()> {
+    if which("docker").is_none() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "docker_unavailable",
+            "service": service.id.as_str(),
+            "reason": "docker binary not found on PATH",
+        }))?;
+        bail!(
+            "service `{}` needs Docker but the `docker` binary was not found on PATH",
+            service.id
+        );
+    }
+    if !docker_daemon_up() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "docker_unavailable",
+            "service": service.id.as_str(),
+            "reason": "docker daemon not reachable (`docker info` failed)",
+        }))?;
+        bail!(
+            "service `{}` needs Docker but the daemon is not reachable (`docker info` failed)",
+            service.id
+        );
+    }
+    Ok(())
+}
+
 fn cold_prepare_service_image(
+    cfg: &VatConfig,
     service: &ServiceConfig,
     preset: ServicePreset,
     cache_dir: &Path,
@@ -866,6 +1176,13 @@ fn cold_prepare_service_image(
             if !status.success() {
                 bail!("postgres initdb failed for service `{}`", service.id);
             }
+            // Apply `.sql` corpus seeds into the data dir ONCE, here in the
+            // cold-prepare path. The populated dir is then cached and cloned
+            // warm (clonefile COW) on every run, so the corpus is not rebuilt.
+            cold_seed_postgres(cfg, service, cache_dir)?;
+        }
+        ServicePreset::Opensearch => {
+            cold_prepare_opensearch_image(service, cache_dir)?;
         }
         ServicePreset::Mysql
         | ServicePreset::Mongo
@@ -874,6 +1191,153 @@ fn cold_prepare_service_image(
         | ServicePreset::Nats => {}
     }
     Ok(())
+}
+
+/// Apply each `.sql` seed to a freshly-initdb'd cluster by briefly starting a
+/// local postgres on a private socket dir (no TCP), running `psql -f`, then
+/// stopping cleanly. Runs during cold prepare so the result is cached.
+fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path) -> Result<()> {
+    if service.seed.is_empty() {
+        return Ok(());
+    }
+    // Unix-socket-only on a per-prepare socket dir keeps the temp server off
+    // the network and avoids port races during a cold build.
+    let sock_dir = data_dir.join("seed-sock");
+    std::fs::create_dir_all(&sock_dir)
+        .with_context(|| format!("create {}", sock_dir.display()))?;
+    let sock_arg = format!(
+        "-h '' -k {} -p 5432",
+        shell_single_quote(&sock_dir.to_string_lossy())
+    );
+    let start = Command::new("pg_ctl")
+        .arg("-D")
+        .arg(data_dir)
+        .args(["-w", "-t", "60", "-o"])
+        .arg(&sock_arg)
+        .arg("start")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("start temporary postgres for corpus seeding")?;
+    if !start.success() {
+        bail!(
+            "could not start temporary postgres to seed service `{}`",
+            service.id
+        );
+    }
+
+    // Apply every seed, stopping the server even if one fails.
+    let mut seed_result = Ok(());
+    for seed in &service.seed {
+        let path = config::resolve_relative(&cfg.root, seed);
+        let status = Command::new("psql")
+            .args(["-v", "ON_ERROR_STOP=1", "-h"])
+            .arg(&sock_dir)
+            .args(["-p", "5432", "-U", "postgres", "-d", "postgres", "-f"])
+            .arg(&path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                seed_result = Err(anyhow::anyhow!(
+                    "seed `{}` failed (exit {:?}) for service `{}`",
+                    path.display(),
+                    s.code(),
+                    service.id
+                ));
+                break;
+            }
+            Err(err) => {
+                seed_result = Err(anyhow::Error::from(err).context(format!(
+                    "run psql -f {} for service `{}`",
+                    path.display(),
+                    service.id
+                )));
+                break;
+            }
+        }
+    }
+
+    let stop = Command::new("pg_ctl")
+        .arg("-D")
+        .arg(data_dir)
+        .args(["-w", "-t", "60", "-m", "fast", "stop"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("stop temporary postgres after corpus seeding")?;
+    seed_result?;
+    if !stop.success() {
+        bail!(
+            "temporary postgres did not stop cleanly after seeding service `{}`",
+            service.id
+        );
+    }
+    // Drop the throwaway socket dir so it is not baked into the cached image.
+    let _ = std::fs::remove_dir_all(&sock_dir);
+    Ok(())
+}
+
+/// Build a single-node dev OpenSearch image: a config dir (security plugin
+/// disabled, `discovery.type=single-node`) plus empty data/logs dirs. The
+/// `opensearch` binary reads this dir via OPENSEARCH_PATH_CONF at run time.
+fn cold_prepare_opensearch_image(service: &ServiceConfig, cache_dir: &Path) -> Result<()> {
+    let config_dir = cache_dir.join("config");
+    std::fs::create_dir_all(&config_dir)
+        .with_context(|| format!("create {}", config_dir.display()))?;
+    std::fs::create_dir_all(cache_dir.join("data"))?;
+    std::fs::create_dir_all(cache_dir.join("logs"))?;
+
+    // Seed the run-time config from the Homebrew install when present (it
+    // carries jvm.options / log4j2.properties); otherwise write the minimum.
+    if let Some(brew_conf) = opensearch_brew_config_dir() {
+        for name in ["jvm.options", "log4j2.properties", "fips_java.security"] {
+            let src = brew_conf.join(name);
+            if src.is_file() {
+                std::fs::copy(&src, config_dir.join(name))
+                    .with_context(|| format!("copy {} into opensearch image", src.display()))?;
+            }
+        }
+        let opts_d = config_dir.join("jvm.options.d");
+        std::fs::create_dir_all(&opts_d)?;
+    }
+
+    // A dev single-node node. We do NOT set `plugins.security.disabled`: the
+    // Homebrew no-jdk distribution ships WITHOUT the security plugin, so that
+    // setting is unknown and OpenSearch refuses to boot if it is present. With
+    // no security plugin the node is already open (HTTP, no auth/TLS) — exactly
+    // what a dev EC peer wants. Network/discovery/paths are forced on the CLI
+    // per run, so they are intentionally omitted here.
+    let yml = "\
+cluster.name: vat-opensearch
+node.name: vat-node
+bootstrap.memory_lock: false
+";
+    std::fs::write(config_dir.join("opensearch.yml"), yml)
+        .with_context(|| format!("write opensearch.yml for service `{}`", service.id))?;
+    Ok(())
+}
+
+/// Locate the Homebrew OpenSearch config dir (for jvm.options etc.). Best
+/// effort: returns None if the layout is not the expected Homebrew one.
+fn opensearch_brew_config_dir() -> Option<PathBuf> {
+    for candidate in [
+        "/opt/homebrew/etc/opensearch",
+        "/usr/local/etc/opensearch",
+    ] {
+        let path = PathBuf::from(candidate);
+        if path.join("jvm.options").is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Single-quote a string for safe inclusion in a `-o` shell-parsed option.
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn ensure_preset_binaries(service: &ServiceConfig, preset: ServicePreset) -> Result<()> {
@@ -902,12 +1366,18 @@ fn ensure_preset_binaries(service: &ServiceConfig, preset: ServicePreset) -> Res
 
 fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
     match preset {
-        ServicePreset::Postgres => &["postgres", "initdb", "pg_isready"],
+        // pg_ctl + psql are used during cold prepare to apply `.sql` corpus
+        // seeds; they ship with the same postgres formula as `postgres`.
+        ServicePreset::Postgres => &["postgres", "initdb", "pg_isready", "pg_ctl", "psql"],
         ServicePreset::Redis => &["redis-server"],
         ServicePreset::Nats => &["nats-server"],
         ServicePreset::Rabbitmq => &["rabbitmq-server"],
         ServicePreset::Mysql => &["mysqld", "mysqladmin"],
         ServicePreset::Mongo => &["mongod"],
+        // Assume the Homebrew `opensearch` binary is on PATH, matching how the
+        // other presets assume their server binary. Readiness uses the built-in
+        // HTTP probe, so no extra client binary is required.
+        ServicePreset::Opensearch => &["opensearch"],
     }
 }
 
@@ -918,6 +1388,7 @@ fn preset_uses_service_image(preset: ServicePreset) -> bool {
             | ServicePreset::Mysql
             | ServicePreset::Mongo
             | ServicePreset::Rabbitmq
+            | ServicePreset::Opensearch
     )
 }
 
@@ -1011,6 +1482,20 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
             "--quiet".to_string(),
         ],
         ServicePreset::Rabbitmq => vec!["rabbitmq-server".to_string()],
+        // Single-node dev OpenSearch bound to loopback. Paths are forced via
+        // -E overrides into the cloned per-run image so concurrent runs never
+        // share data/logs; the prepared config dir (no security plugin →
+        // open HTTP) is exported via OPENSEARCH_PATH_CONF in
+        // add_service_runtime_env.
+        ServicePreset::Opensearch => vec![
+            "opensearch".to_string(),
+            format!("-Ehttp.port={port}"),
+            "-Ehttp.host=127.0.0.1".to_string(),
+            "-Enetwork.host=127.0.0.1".to_string(),
+            "-Ediscovery.type=single-node".to_string(),
+            format!("-Epath.data={}", data_dir.join("data").display()),
+            format!("-Epath.logs={}", data_dir.join("logs").display()),
+        ],
     }
 }
 
@@ -1032,6 +1517,7 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
             port.to_string(),
             "--protocol=tcp".to_string(),
         ]),
+        ServicePreset::Opensearch => ReadyProbe::Http(format!("http://127.0.0.1:{port}/")),
         ServicePreset::Redis
         | ServicePreset::Nats
         | ServicePreset::Mongo
@@ -1040,6 +1526,21 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
             port,
         },
     }
+}
+
+/// Pick the readiness probe for a service, honoring explicit overrides.
+///
+/// Precedence: an explicit `ready_cmd` (corpus-aware, e.g. a SQL row-count
+/// `>= N`) wins so "ready" means "corpus loaded"; then `ready_http`; then the
+/// preset default (`None` for a command-only service).
+fn resolve_ready_probe(service: &ServiceConfig, preset_default: Option<ReadyProbe>) -> ReadyProbe {
+    if !service.ready_cmd.is_empty() {
+        return ReadyProbe::Cmd(service.ready_cmd.clone());
+    }
+    if let Some(url) = &service.ready_http {
+        return ReadyProbe::Http(url.clone());
+    }
+    preset_default.unwrap_or(ReadyProbe::None)
 }
 
 fn preset_exports(
@@ -1060,6 +1561,7 @@ fn preset_exports(
             format!("mysql://root@127.0.0.1:{port}/mysql"),
         ),
         ServicePreset::Mongo => ("MONGODB_URI", format!("mongodb://127.0.0.1:{port}/test")),
+        ServicePreset::Opensearch => ("OPENSEARCH_URL", format!("http://127.0.0.1:{port}")),
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -1100,6 +1602,17 @@ fn add_service_runtime_env(
             data_dir.to_string_lossy().into_owned(),
         );
     }
+    if preset == ServicePreset::Opensearch {
+        // Point OpenSearch at the per-run cloned config dir (security disabled,
+        // single-node) prepared during cold build. Cap the dev heap so several
+        // single-node nodes can coexist on a laptop.
+        env.insert(
+            "OPENSEARCH_PATH_CONF".to_string(),
+            data_dir.join("config").to_string_lossy().into_owned(),
+        );
+        env.entry("OPENSEARCH_JAVA_OPTS".to_string())
+            .or_insert_with(|| "-Xms512m -Xmx512m".to_string());
+    }
 }
 
 fn sorted_keys(env: &BTreeMap<String, String>) -> Vec<String> {
@@ -1114,6 +1627,7 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::Rabbitmq => "rabbitmq",
         ServicePreset::Mysql => "mysql",
         ServicePreset::Mongo => "mongo",
+        ServicePreset::Opensearch => "opensearch",
     }
 }
 
@@ -1251,15 +1765,23 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
 
 fn stop_services(services: &mut [ServiceHandle]) {
     for service in services.iter_mut().rev() {
-        if service.child.try_wait().ok().flatten().is_some() {
-            continue;
+        if service.child.try_wait().ok().flatten().is_none() {
+            kill_child(&mut service.child);
+            let _ = service.child.wait();
+            if service.record.status == ProcessStatus::Running
+                || service.record.status == ProcessStatus::Ready
+            {
+                service.record.status = ProcessStatus::Exited;
+            }
         }
-        kill_child(&mut service.child);
-        let _ = service.child.wait();
-        if service.record.status == ProcessStatus::Running
-            || service.record.status == ProcessStatus::Ready
-        {
-            service.record.status = ProcessStatus::Exited;
+        // Force-remove the container regardless of how the `docker run` child
+        // fared — a detached or wedged container must never outlive the run.
+        if let Some(name) = &service.docker_name {
+            let _ = Command::new("docker")
+                .args(["rm", "-f", name])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
     }
 }
@@ -1329,19 +1851,321 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ready_cmd_overrides_http_and_preset_default() {
+        let mut service = test_service("pg", &[]);
+        service.preset = Some(ServicePreset::Postgres);
+        service.ready_http = Some("http://127.0.0.1:7373/".to_string());
+        service.ready_cmd = vec!["sh".to_string(), "-c".to_string(), "exit 0".to_string()];
+        let preset_default = preset_ready_probe(ServicePreset::Postgres, 5432);
+        match resolve_ready_probe(&service, Some(preset_default)) {
+            ReadyProbe::Cmd(cmd) => assert_eq!(cmd, service.ready_cmd),
+            other => panic!("expected ready_cmd to win, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ready_http_overrides_preset_default_when_no_ready_cmd() {
+        let mut service = test_service("pg", &[]);
+        service.preset = Some(ServicePreset::Postgres);
+        service.ready_http = Some("http://127.0.0.1:9200/".to_string());
+        let preset_default = preset_ready_probe(ServicePreset::Postgres, 5432);
+        match resolve_ready_probe(&service, Some(preset_default)) {
+            ReadyProbe::Http(url) => assert_eq!(url, "http://127.0.0.1:9200/"),
+            other => panic!("expected ready_http, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn preset_default_applies_when_no_override() {
+        let service = test_service("pg", &[]);
+        match resolve_ready_probe(&service, Some(preset_ready_probe(ServicePreset::Postgres, 5432)))
+        {
+            ReadyProbe::Cmd(cmd) => assert_eq!(cmd[0], "pg_isready"),
+            other => panic!("expected pg_isready probe, got {other:?}"),
+        }
+        // No preset default and no override => no probe.
+        assert!(matches!(
+            resolve_ready_probe(&service, None),
+            ReadyProbe::None
+        ));
+    }
+
+    #[test]
+    fn opensearch_preset_command_and_exports() {
+        let data_dir = PathBuf::from("/tmp/vat-os/data");
+        let command = preset_command(ServicePreset::Opensearch, 9250, &data_dir);
+        assert_eq!(command[0], "opensearch");
+        assert!(command.iter().any(|a| a == "-Ehttp.port=9250"));
+        assert!(command
+            .iter()
+            .any(|a| a == "-Ediscovery.type=single-node"));
+        assert!(command
+            .iter()
+            .any(|a| a.starts_with("-Epath.data=") && a.contains("data")));
+
+        match preset_ready_probe(ServicePreset::Opensearch, 9250) {
+            ReadyProbe::Http(url) => assert_eq!(url, "http://127.0.0.1:9250/"),
+            other => panic!("expected http ready probe, got {other:?}"),
+        }
+
+        let service = {
+            let mut s = test_service("search", &[]);
+            s.preset = Some(ServicePreset::Opensearch);
+            s
+        };
+        let exports = preset_exports(&service, ServicePreset::Opensearch, 9250);
+        assert_eq!(
+            exports.get("OPENSEARCH_URL").map(String::as_str),
+            Some("http://127.0.0.1:9250")
+        );
+
+        let mut env = exports;
+        add_service_runtime_env(
+            &mut env,
+            ServicePreset::Opensearch,
+            "search",
+            9250,
+            &data_dir,
+        );
+        assert!(env
+            .get("OPENSEARCH_PATH_CONF")
+            .map(|p| p.ends_with("config"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn opensearch_uses_service_image_cache() {
+        assert!(preset_uses_service_image(ServicePreset::Opensearch));
+    }
+
+    #[test]
+    fn opensearch_cold_prepare_writes_dev_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cache = temp.path().join("image");
+        std::fs::create_dir_all(&cache).unwrap();
+        let service = {
+            let mut s = test_service("search", &[]);
+            s.preset = Some(ServicePreset::Opensearch);
+            s
+        };
+        cold_prepare_opensearch_image(&service, &cache).expect("prepare opensearch image");
+        let yml = std::fs::read_to_string(cache.join("config").join("opensearch.yml"))
+            .expect("opensearch.yml written");
+        assert!(yml.contains("cluster.name: vat-opensearch"));
+        // The Homebrew no-jdk build has no security plugin, so this setting is
+        // UNKNOWN and would make OpenSearch refuse to boot — it must be absent.
+        assert!(!yml.contains("plugins.security.disabled"));
+        assert!(cache.join("data").is_dir());
+        assert!(cache.join("logs").is_dir());
+    }
+
+    /// End-to-end pg corpus seeding. Skips gracefully when the postgres
+    /// toolchain is not installed (vat's standard skip pattern).
+    #[test]
+    fn postgres_cold_seed_applies_sql_corpus() {
+        for binary in ["initdb", "postgres", "pg_ctl", "psql"] {
+            if which(binary).is_none() {
+                eprintln!("skipping postgres_cold_seed_applies_sql_corpus: `{binary}` not on PATH");
+                return;
+            }
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let seed = temp.path().join("schema.sql");
+        std::fs::write(
+            &seed,
+            "CREATE TABLE docs (id int primary key);\nINSERT INTO docs VALUES (1),(2),(3);\n",
+        )
+        .unwrap();
+
+        let mut service = test_service("pg", &[]);
+        service.preset = Some(ServicePreset::Postgres);
+        service.seed = vec![PathBuf::from("schema.sql")];
+        let cfg = VatConfig {
+            version: 1,
+            name: None,
+            default_runner: None,
+            workspace: crate::config::WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: vec![service.clone()],
+            runners: vec![RunnerConfig {
+                id: "ec".to_string(),
+                requires: vec!["pg".to_string()],
+                cmd: vec!["true".to_string()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            path: temp.path().join("vat.toml"),
+            root: temp.path().to_path_buf(),
+            digest: String::new(),
+        };
+
+        let cache = temp.path().join("image");
+        std::fs::create_dir_all(&cache).unwrap();
+        // Full cold-prepare path: initdb + seed apply + clean shutdown.
+        cold_prepare_service_image(&cfg, &service, ServicePreset::Postgres, &cache)
+            .expect("cold prepare + seed postgres");
+
+        // The throwaway seed socket dir must not be baked into the cached image.
+        assert!(!cache.join("seed-sock").exists());
+        // A real cluster directory was produced.
+        assert!(cache.join("PG_VERSION").is_file());
+
+        // Re-open the cached cluster and verify the corpus survived caching.
+        let sock = temp.path().join("verify-sock");
+        std::fs::create_dir_all(&sock).unwrap();
+        let opt = format!("-h '' -k {} -p 5432", sock.display());
+        let start = Command::new("pg_ctl")
+            .arg("-D")
+            .arg(&cache)
+            .args(["-w", "-t", "60", "-o"])
+            .arg(&opt)
+            .arg("start")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("start cached postgres");
+        assert!(start.success(), "cached postgres should start");
+        let out = Command::new("psql")
+            .args(["-tAq", "-h"])
+            .arg(&sock)
+            .args([
+                "-p",
+                "5432",
+                "-U",
+                "postgres",
+                "-d",
+                "postgres",
+                "-c",
+                "select count(*) from docs",
+            ])
+            .output()
+            .expect("query cached corpus");
+        let _ = Command::new("pg_ctl")
+            .arg("-D")
+            .arg(&cache)
+            .args(["-w", "-t", "60", "-m", "fast", "stop"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let count = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(count.trim(), "3", "seeded corpus rows must persist in cache");
+    }
+
     fn test_service(id: &str, requires: &[&str]) -> ServiceConfig {
         ServiceConfig {
             id: id.to_string(),
             requires: requires.iter().map(|value| value.to_string()).collect(),
             cmd: vec!["true".to_string()],
             preset: None,
+            image: None,
+            container_port: None,
+            image_env: BTreeMap::new(),
+            runtime: ServiceRuntime::default(),
             version: None,
             port: PortSpec::default(),
             seed: Vec::new(),
             export: BTreeMap::new(),
             ready_http: None,
+            ready_cmd: Vec::new(),
             timeout_s: 60,
         }
+    }
+
+    fn image_service(id: &str, image: &str, container_port: u16) -> ServiceConfig {
+        ServiceConfig {
+            id: id.to_string(),
+            requires: Vec::new(),
+            cmd: Vec::new(),
+            preset: None,
+            image: Some(image.to_string()),
+            container_port: Some(container_port),
+            image_env: BTreeMap::new(),
+            runtime: ServiceRuntime::default(),
+            version: None,
+            port: PortSpec::default(),
+            seed: Vec::new(),
+            export: BTreeMap::new(),
+            ready_http: None,
+            ready_cmd: Vec::new(),
+            timeout_s: 60,
+        }
+    }
+
+    #[test]
+    fn docker_run_command_is_well_formed_and_deterministic() {
+        let mut env = BTreeMap::new();
+        env.insert("POSTGRES_HOST_AUTH_METHOD".to_string(), "trust".to_string());
+        env.insert("POSTGRES_DB".to_string(), "app".to_string());
+        let cmd = docker_run_command("vat-abc-pg", "postgres:16", 54321, 5432, &env);
+        assert_eq!(
+            cmd,
+            vec![
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                "vat-abc-pg",
+                "-p",
+                "127.0.0.1:54321:5432",
+                // BTreeMap iteration is sorted -> deterministic argv.
+                "-e",
+                "POSTGRES_DB=app",
+                "-e",
+                "POSTGRES_HOST_AUTH_METHOD=trust",
+                "postgres:16",
+            ]
+        );
+    }
+
+    #[test]
+    fn preset_image_uses_version_tag_when_present() {
+        assert_eq!(preset_image(ServicePreset::Postgres, None), "postgres:16");
+        assert_eq!(
+            preset_image(ServicePreset::Postgres, Some("15")),
+            "postgres:15"
+        );
+        assert_eq!(preset_image(ServicePreset::Redis, None), "redis:7");
+    }
+
+    #[test]
+    fn forced_runtime_does_not_probe_host() {
+        let mut svc = test_service("pg", &[]);
+        svc.cmd = Vec::new();
+        svc.preset = Some(ServicePreset::Postgres);
+        svc.runtime = ServiceRuntime::Native;
+        assert!(matches!(
+            resolve_preset_runtime(&svc, ServicePreset::Postgres).unwrap(),
+            ResolvedRuntime::Native
+        ));
+        svc.runtime = ServiceRuntime::Docker;
+        assert!(matches!(
+            resolve_preset_runtime(&svc, ServicePreset::Postgres).unwrap(),
+            ResolvedRuntime::Docker
+        ));
+    }
+
+    #[test]
+    fn container_name_sanitizes_disallowed_chars() {
+        assert_eq!(container_name("vat-5oyh3vc", "pg"), "vat-5oyh3vc-pg");
+        assert_eq!(container_name("vat/x", "a b"), "vat-x-a-b");
+    }
+
+    #[test]
+    fn image_exports_substitute_host_and_port_and_add_raw_vars() {
+        let mut svc = image_service("alloy-db", "google/alloydbomni:latest", 5432);
+        svc.export.insert(
+            "DATABASE_URL".to_string(),
+            "postgres://postgres:pw@{host}:{port}/db".to_string(),
+        );
+        let env = image_exports(&svc, 6000);
+        assert_eq!(
+            env.get("DATABASE_URL").unwrap(),
+            "postgres://postgres:pw@127.0.0.1:6000/db"
+        );
+        assert_eq!(env.get("VAT_SERVICE_ALLOY_DB_HOST").unwrap(), "127.0.0.1");
+        assert_eq!(env.get("VAT_SERVICE_ALLOY_DB_PORT").unwrap(), "6000");
     }
 
     fn spawn_trapping_service(root: &Path, order_path: &Path, id: &str) -> ServiceHandle {
@@ -1381,6 +2205,7 @@ mod tests {
             child,
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
+            docker_name: None,
         }
     }
 }

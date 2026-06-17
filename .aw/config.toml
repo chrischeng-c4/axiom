@@ -111,6 +111,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "cap"
 path = "projects/cap"
+td_path = "projects/cap/tech-design"
 label = "project:cap"
 
 [[projects.workspaces]]
@@ -125,6 +126,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "vat"
 path = "projects/vat"
+td_path = "projects/vat/tech-design"
 cap_path = "projects/vat/README.md"
 label = "project:vat"
 
@@ -140,6 +142,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "arena"
 path = "projects/arena"
+td_path = "projects/arena/tech-design"
 cap_path = "projects/arena/README.md"
 label = "project:arena"
 
@@ -155,6 +158,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "guard"
 path = "projects/guard"
+td_path = "projects/guard/tech-design"
 cap_path = "projects/guard/README.md"
 label = "project:guard"
 
@@ -170,6 +174,7 @@ codegen.profile = "rust/score-crate"
 [[projects]]
 name = "rig"
 path = "projects/rig"
+td_path = "projects/rig/tech-design"
 cap_path = "projects/rig/README.md"
 label = "project:rig"
 
@@ -198,6 +203,7 @@ test_cmd = "cargo test -p mamba"
 [[projects]]
 name = "lumen"
 path = "projects/lumen"
+td_path = "projects/lumen/tech-design"
 cap_path = "projects/lumen/README.md"
 label = "project:lumen"
 # EC tool bindings (contract before implementation). `aw health --verify-ec`
@@ -596,6 +602,7 @@ test_cmd = "cargo test -p cclab-plot"
 [[projects]]
 name = "meter"
 path = "projects/meter"
+td_path = "projects/meter/tech-design"
 cap_path = "projects/meter/README.md"
 label = "project:meter"
 

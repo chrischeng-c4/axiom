@@ -292,11 +292,23 @@ semantic_domain:
           - name: "EC_END_MARKER"
             kind: "constant"
             public: false
+          - name: "EC_TOOL_BEGIN_MARKER"
+            kind: "constant"
+            public: false
+          - name: "EC_TOOL_END_MARKER"
+            kind: "constant"
+            public: false
           - name: "EcArgs"
             kind: "struct"
             public: true
           - name: "EcCommand"
             kind: "enum"
+            public: true
+          - name: "EcDraftArgs"
+            kind: "struct"
+            public: true
+          - name: "EcFillArgs"
+            kind: "struct"
             public: true
           - name: "EcGenArgs"
             kind: "struct"
@@ -325,15 +337,6 @@ semantic_domain:
           - name: "EcProjectContext"
             kind: "struct"
             public: true
-          - name: "ExternalContractDocument"
-            kind: "struct"
-            public: false
-          - name: "ExternalContractToml"
-            kind: "struct"
-            public: false
-          - name: "ExternalToolManifestToml"
-            kind: "struct"
-            public: false
           - name: "E2eYaml"
             kind: "struct"
             public: false
@@ -355,6 +358,18 @@ semantic_domain:
           - name: "load_project_ec_manifest"
             kind: "function"
             public: true
+          - name: "run_draft"
+            kind: "function"
+            public: false
+          - name: "run_fill"
+            kind: "function"
+            public: false
+          - name: "render_ec_draft"
+            kind: "function"
+            public: false
+          - name: "merge_ec_section"
+            kind: "function"
+            public: false
           - name: "run_gen"
             kind: "function"
             public: false
@@ -371,6 +386,9 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "build_expected_manifest"
+            kind: "function"
+            public: false
+          - name: "extract_ec_markdown_contracts"
             kind: "function"
             public: false
           - name: "extract_td_e2e_cases"
@@ -391,7 +409,7 @@ semantic_domain:
           - name: "default_ec_command"
             kind: "function"
             public: false
-          - name: "digest_cases"
+          - name: "digest_manifest_inputs"
             kind: "function"
             public: false
           - name: "hash_field"
@@ -2838,9 +2856,10 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-      EC now treats `external-contracts/{behavior,efficiency,security,stability}`
-      as the primary External Contracts source, generates tests and tool
-      manifests for rig/meter/arena/guard/vat, and exposes `aw ec verify`.
+      EC now treats `ec/{behavior,efficiency,security,stability}` markdown
+      as the primary External Contracts source, exposes `aw ec draft/fill`,
+      generates tests plus tool manifests for rig/meter/arena/guard/vat, and
+      keeps generated EC state out of `aw.toml`.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/tasks.rs"
     action: modify

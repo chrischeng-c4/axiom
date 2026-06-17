@@ -38,6 +38,8 @@ pub enum CapabilityCommand {
     Run(CapabilityRunArgs),
     /// Validate capability README sections and TD capability refs.
     Check(CapabilityCheckArgs),
+    /// Assign a capability's type, persisting it to .aw/capability-types.toml.
+    SetType(CapabilitySetTypeArgs),
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -133,6 +135,20 @@ pub struct CapabilityCheckArgs {
     #[arg(long)]
     pub human: bool,
     /// Pretty-print the JSON check report.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilitySetTypeArgs {
+    /// Capability id to assign a type to (the README capability heading id).
+    #[arg(long)]
+    pub capability: String,
+    /// Capability type: AgentFirst, Service, or Devops.
+    #[arg(long = "type")]
+    pub r#type: String,
+    /// Pretty-print the JSON result.
     #[arg(long)]
     pub pretty: bool,
 }
@@ -525,6 +541,7 @@ pub enum CapabilityActionKind {
     EnvBlocked,
     DefineVerificationContract,
     LinkClaimVerification,
+    AssignCapabilityType,
     None,
 }
 
@@ -760,7 +777,39 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             }
             Ok(())
         }
+        CapabilityCommand::SetType(args) => set_capability_type(&project, args),
     }
+}
+
+/// Persist a capability's type to `.aw/capability-types.toml`. This is the
+/// direct (non-interactive) resume path for the `assign_capability_type` HITL
+/// question: an agent answers by running `aw capability set-type` with the
+/// chosen type, which the upsert helper writes back, after which `aw capability
+/// run` no longer prompts for that capability and `aw ec` derives
+/// required_for_production from the type.
+fn set_capability_type(project: &str, args: CapabilitySetTypeArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let capability_type = crate::cli::capability_type::CapabilityType::from_cli_str(&args.r#type)?;
+    let path = crate::cli::capability_type::upsert_capability_type(
+        &project_root,
+        &args.capability,
+        capability_type,
+    )?;
+    let payload = serde_json::json!({
+        "action": "set_capability_type",
+        "project": project,
+        "capability_id": args.capability,
+        "capability_type": capability_type.as_str(),
+        "required_ec_dimensions":
+            crate::cli::capability_type::required_ec_dimensions(&capability_type),
+        "path": path.display().to_string(),
+    });
+    if args.pretty {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("{}", serde_json::to_string(&payload)?);
+    }
+    Ok(())
 }
 
 async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<()> {
@@ -1097,7 +1146,19 @@ async fn build_capability_report_inner(
         run_results: Vec::new(),
     };
     apply_production_readiness_to_items(&mut report.capabilities, &production_readiness);
-    report.next_action = choose_next_action(&report, &document);
+    let capability_types = {
+        // README pillar grouping is primary; .aw/capability-types.toml overrides.
+        let mut t =
+            crate::cli::capability_type::load_capability_types_from_readme(&report.cap_path)
+                .unwrap_or_default();
+        for (id, ty) in
+            crate::cli::capability_type::load_capability_types(&project_root).unwrap_or_default()
+        {
+            t.insert(id, ty);
+        }
+        t
+    };
+    report.next_action = choose_next_action(&report, &document, &capability_types);
     if !report.blockers.is_empty()
         || report.next_action.kind != CapabilityActionKind::None
         || verified_count < capability_count
@@ -1479,6 +1540,7 @@ fn capability_wi_evidence(
 fn choose_next_action(
     report: &CapabilityReport,
     document: &CapabilityDocument,
+    capability_types: &BTreeMap<String, crate::cli::capability_type::CapabilityType>,
 ) -> CapabilityAction {
     if document.requires_format_migration() {
         return CapabilityAction {
@@ -1534,6 +1596,36 @@ fn choose_next_action(
                 reason: "non-candidate capability is missing verification_contract".to_string(),
                 requires_hitl: true,
                 hitl_question: Some(verification_contract_hitl_question(report, capability)),
+            };
+        }
+    }
+
+    // A capability's TYPE decides which EC dimensions are production-required.
+    // If a real (non-candidate, non-retired) capability has no type assigned in
+    // .aw/capability-types.toml, prompt for one so `aw ec` can derive
+    // required_for_production instead of falling back to the YAML flag.
+    for item in &report.capabilities {
+        if matches!(
+            item.status,
+            CapabilityStatus::Candidate | CapabilityStatus::Retired
+        ) {
+            continue;
+        }
+        if !capability_types.contains_key(&item.id) {
+            return CapabilityAction {
+                kind: CapabilityActionKind::AssignCapabilityType,
+                capability_id: Some(item.id.clone()),
+                gap_id: None,
+                claim_id: None,
+                target: item.title.clone(),
+                command: format!(
+                    "aw capability set-type --project {} --capability {} --type <AgentFirst|Service|Devops>",
+                    report.project, item.id
+                ),
+                reason: "capability has no type assigned; required EC dimensions cannot be derived"
+                    .to_string(),
+                requires_hitl: true,
+                hitl_question: Some(capability_type_hitl_question(report, item)),
             };
         }
     }
@@ -1906,6 +1998,45 @@ fn update_capability_status_hitl_question(
         ],
         "mark_verified",
     )
+}
+
+fn capability_type_hitl_question(
+    report: &CapabilityReport,
+    item: &CapabilityReportItem,
+) -> HitlQuestion {
+    let mut question = capability_hitl_question(
+        format!("capability:{}:assign_type", item.id),
+        format!(
+            "What capability type is `{}`? The type decides which EC dimensions are production-required (AgentFirst -> behavior; Service -> behavior+efficiency+security+stability; Devops -> behavior+stability).",
+            item.title
+        ),
+        item.title.clone(),
+        "capability has no type assigned in .aw/capability-types.toml; required EC dimensions cannot be derived",
+        &report.project,
+        vec![
+            hitl_choice(
+                "agent_first",
+                "AgentFirst",
+                "Agent-facing capability. Only behavioral correctness is production-required.",
+            ),
+            hitl_choice(
+                "service",
+                "Service",
+                "Externally-served capability. Behavior, efficiency, security, and stability are all production-required.",
+            ),
+            hitl_choice(
+                "devops",
+                "Devops",
+                "Operational/devops capability. Behavior and stability are production-required.",
+            ),
+        ],
+        "service",
+    );
+    question.resume_command = format!(
+        "aw capability set-type --project {} --capability {} --type <AgentFirst|Service|Devops> && aw capability run --project {} --non-interactive --max-ticks 1",
+        report.project, item.id, report.project
+    );
+    question
 }
 
 fn has_non_epic_wi_evidence(report: &CapabilityReport) -> bool {
@@ -3735,7 +3866,9 @@ fn extract_hash_numbers(text: &str) -> Vec<u64> {
 }
 
 fn run_verification_command(project_root: &Path, command: &str) -> VerificationRuntimeResult {
-    let output = std::process::Command::new("sh")
+    let mut command_process = std::process::Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let output = command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)
@@ -3811,7 +3944,9 @@ fn run_next_action_command(
         };
     }
     let executed_command = command_for_current_aw_binary(&action.command);
-    let output = std::process::Command::new("sh")
+    let mut command_process = std::process::Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let output = command_process
         .arg("-c")
         .arg(&executed_command)
         .current_dir(project_root)
@@ -4287,6 +4422,22 @@ mod tests {
 
     fn cap_doc(body: &str) -> CapabilityDocument {
         parse_capability_document(body, Path::new("README.md")).unwrap()
+    }
+
+    /// A capability-type map that assigns `Service` to every capability id in
+    /// the report and document, so the `assign_capability_type` HITL check is
+    /// satisfied and these tests exercise their original next-action path.
+    fn all_typed(
+        report: &CapabilityReport,
+        document: &CapabilityDocument,
+    ) -> BTreeMap<String, crate::cli::capability_type::CapabilityType> {
+        report
+            .capabilities
+            .iter()
+            .map(|item| item.id.clone())
+            .chain(document.capabilities.iter().map(|cap| cap.id.clone()))
+            .map(|id| (id, crate::cli::capability_type::CapabilityType::Service))
+            .collect()
     }
 
     fn sample_report(next_action: CapabilityAction) -> CapabilityReport {
@@ -5168,7 +5319,8 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types);
 
         assert_eq!(
             action.kind,
@@ -5268,7 +5420,8 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types);
 
         assert_eq!(action.kind, CapabilityActionKind::RunVerify);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -5353,8 +5506,95 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types);
 
+        assert_eq!(action.kind, CapabilityActionKind::None);
+    }
+
+    /// A real (non-candidate, non-retired) capability with NO type assigned in
+    /// .aw/capability-types.toml triggers the assign-capability-type HITL; the
+    /// same report with a type assigned proceeds past it.
+    #[test]
+    fn next_action_requires_capability_type_when_unset() {
+        let body = one_markdown_capability()
+            .replace("| Status | auditing |", "| Status | verified |")
+            .replace(
+                "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
+            );
+        let document = cap_doc(&body);
+        let report = CapabilityReport {
+            action: "capability",
+            project: "jet".to_string(),
+            cap_path: PathBuf::from("projects/jet/README.md"),
+            format_version: 1,
+            status: "blocked".to_string(),
+            test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            production_ready: false,
+            production_status: ProductionStatus::Blocked,
+            production_scope: Vec::new(),
+            production_blockers: Vec::new(),
+            capability_count: 1,
+            verified_count: 1,
+            percent: 100.0,
+            claim_count: 0,
+            verified_claim_count: 0,
+            claim_percent: 0.0,
+            capabilities: vec![CapabilityReportItem {
+                id: "package-manager".to_string(),
+                title: "Package Manager".to_string(),
+                status: CapabilityStatus::Verified,
+                promise: "Replace package manager flows.".to_string(),
+                current_state: "Install surface exists.".to_string(),
+                gaps: Vec::new(),
+                td_refs: Vec::new(),
+                wi_refs: Vec::new(),
+                wi_evidence: Vec::new(),
+                claims: Vec::new(),
+                claim_count: 0,
+                verified_claim_count: 0,
+                claim_percent: 0.0,
+                verification: Vec::new(),
+                verified: true,
+                release_scope: true,
+                full_regenerability_required: false,
+                dependencies: Vec::new(),
+                dependency_closure: Vec::new(),
+                production_ready: true,
+                production_blockers: Vec::new(),
+            }],
+            blockers: Vec::new(),
+            next_action: CapabilityAction {
+                kind: CapabilityActionKind::None,
+                capability_id: None,
+                gap_id: None,
+                claim_id: None,
+                target: "jet".to_string(),
+                command: String::new(),
+                reason: String::new(),
+                requires_hitl: false,
+                hitl_question: None,
+            },
+            run_results: Vec::new(),
+        };
+
+        // No type assigned -> assign-capability-type HITL.
+        let empty = BTreeMap::new();
+        let action = choose_next_action(&report, &document, &empty);
+        assert_eq!(action.kind, CapabilityActionKind::AssignCapabilityType);
+        assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
+        assert!(action.requires_hitl);
+        let question = action.hitl_question.expect("hitl question present");
+        assert_eq!(question.id, "capability:package-manager:assign_type");
+        assert_eq!(question.default_choice.as_deref(), Some("service"));
+        let choice_ids: Vec<&str> = question.choices.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(choice_ids, vec!["agent_first", "service", "devops"]);
+
+        // Type assigned -> the verified, gapless capability yields no action.
+        let typed = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &typed);
+        assert_ne!(action.kind, CapabilityActionKind::AssignCapabilityType);
         assert_eq!(action.kind, CapabilityActionKind::None);
     }
 
@@ -5456,7 +5696,8 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types);
 
         assert_eq!(action.kind, CapabilityActionKind::None);
     }
@@ -5567,7 +5808,8 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types);
 
         assert_eq!(action.kind, CapabilityActionKind::RunTd);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -5681,7 +5923,8 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types);
 
         assert_eq!(action.kind, CapabilityActionKind::HumanConfirmRequired);
         assert_eq!(

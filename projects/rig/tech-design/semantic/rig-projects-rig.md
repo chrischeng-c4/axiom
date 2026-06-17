@@ -42,6 +42,16 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/rig"
+      - path: "projects/rig/install.sh"
+        language: "shell"
+        ownership_state: "codegen"
+        generator_primitives: ["source_unit"]
+        source_evidence_node:
+          layer: "project-root"
+          ecosystem: "shell"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/rig"
 ```
 
 ## Changes
@@ -56,5 +66,11 @@ changes:
     description: |
       Generated TD-first agent context map from project config, README capability map,
       TD root, build script, and workspace test command.
+    impl_mode: codegen
+  - path: "projects/rig/install.sh"
+    action: modify
+    section: schema
+    description: |
+      Project-local source installer dispatch for the rig CLI.
     impl_mode: codegen
 ```

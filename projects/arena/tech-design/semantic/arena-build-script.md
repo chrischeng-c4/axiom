@@ -1,6 +1,12 @@
 ---
 id: semantic-arena-build-script
 summary: Lossless source-unit coverage for the arena project build script.
+capability_refs:
+  - id: n-target-comparison-runner
+    role: primary
+    claim: sequential-target-fanout-and-measurement
+    coverage: partial
+    rationale: "The project build script keeps arena's N-target comparison runner CLI build/install workflow runnable for agents."
 fill_sections: [text-source-unit, changes]
 ---
 

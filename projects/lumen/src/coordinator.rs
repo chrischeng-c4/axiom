@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Write coordinator — the seam between the HTTP write handlers and the
 //! log-driven apply loop.
@@ -61,16 +61,17 @@ struct CompletionState {
 /// `None` on the default / non-AOF path, so `start_from` is byte-identical to
 /// today. The everysec fsync runs off the hot path via `maybe_sync` (driven by
 /// the loop after each batch), so an append never blocks on the disk.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 pub type SharedAof = Arc<Mutex<crate::aof::AofWriter>>;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 pub struct WriteCoordinator {
     wal: SharedWal,
     applied: AtomicU64,
     completions: Mutex<CompletionState>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 impl WriteCoordinator {
     /// Spawn the apply loop and return the coordinator. The loop tails
     /// the log from the beginning and folds it into `engine`.

@@ -37,13 +37,13 @@ cleans up according to the run policy.
 | Production readiness | ready |
 | Tech design root | `projects/vat/tech-design` |
 | TD lock | `projects/vat/tech-design/td.lock` |
-| External-contract inventory | `projects/vat/tests/aw-ec.toml` |
+| External-contract inventory | `projects/vat/aw.toml` |
 | Source ownership | full codegen, 100.0% (32/32) |
 | Semantic coverage | 100.0% |
 | Traceability coverage | 93.9% |
 | External-contract gate | passed, 6/6 |
 | Test gate | `cargo test -p vat` passed |
-| Health gate | `aw health vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
+| Health gate | `aw health --project vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
 
 ## Agent-Native GPU-Native Dev Containers
 
@@ -78,8 +78,11 @@ cleans up according to the run policy.
 - **Not a long-lived process manager.** Services in `vat.toml` are dependencies
   of one runner invocation. vat starts them, waits for readiness, runs the
   runner, captures evidence, and terminates them.
-- **Not an image registry / build system.** No Dockerfile. A vat's environment
-  is a declarative [`EnvSpec`](src/spec.rs) an agent reads and rewrites.
+- **Not an image registry / build system.** No Dockerfile, and vat builds no
+  images. A vat's environment is a declarative [`EnvSpec`](src/spec.rs) an agent
+  reads and rewrites. A `vat.toml` *service* may run as an ephemeral `docker run`
+  container (a `preset` with `runtime = "docker"`, or an explicit `image`), but
+  the runner is always a host process — vat never containerizes your workload.
 
 ## Quick start
 
@@ -192,9 +195,17 @@ when = "missing:node_modules/.modules.yaml"
 
 [[services]]
 id = "pg"
-preset = "postgres"
+preset = "postgres"        # native binary preferred, Docker image fallback
+# runtime = "auto"         # auto (default) | native | docker
 seed = ["schema.sql", "fixtures.sql"]
 export = { DATABASE_URL = "DATABASE_URL" }
+
+[[services]]
+id = "alloy"               # Docker-only dependency (no native binary)
+image = "google/alloydbomni:latest"
+container_port = 5432
+image_env = { POSTGRES_PASSWORD = "pw" }
+export = { ALLOY_URL = "postgres://postgres:pw@{host}:{port}/postgres" }
 
 [[runners]]
 id = "e2e"
@@ -204,9 +215,25 @@ timeout_s = 300
 artifacts = ["test-results/**", "playwright-report/**"]
 ```
 
-Preset services are local binaries, not Docker images. vat checks for required
-binaries, cold-prepares cached service data when needed, clones cached data on
-later runs, auto-allocates ports, exports runner env vars, and reports only a
-few JSONL checkpoints unless the agent asks for logs/state/diff.
+A service is provided in one of three ways, and **native (Homebrew) is
+preferred**:
+
+- `preset` — a built-in service. With the default `runtime = "auto"` vat uses
+  the native binary when it is installed and falls back to the preset's official
+  Docker image when it is not; `runtime = "native"` / `"docker"` force one path.
+- `image` — a Docker-only dependency that has no native equivalent (e.g.
+  AlloyDB). Requires `container_port`; `image_env` is passed into the container;
+  in `export`, `{host}`/`{port}` resolve to the mapped host endpoint and
+  `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
+- `cmd` — an explicit native command.
+
+For the native path vat checks for required binaries, cold-prepares cached
+service data when needed, and clones it on later runs. For the Docker path it
+runs an ephemeral `docker run --rm` container bound to loopback, removed at
+teardown — the **runner itself is never containerized**, so the host GPU is
+untouched. Either way vat auto-allocates ports, exports runner env vars, and
+reports only a few JSONL checkpoints unless the agent asks for logs/state/diff.
+A Docker-backed service with no reachable daemon fails with a structured
+`docker_unavailable` error rather than a panic.
 
 [`Sandbox`]: src/sandbox/mod.rs

@@ -204,6 +204,50 @@ cmd = ["sh", "-c", "true"]
 
 #[test]
 fn missing_preset_binary_reports_jsonl_error() {
+    // `runtime = "native"` forbids the Docker fallback, so a missing binary is a
+    // hard error — the structured `missing_service_binary` envelope, not a panic.
+    let project = tempfile::tempdir().unwrap();
+    let vat_home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("vat.toml"),
+        r#"
+version = 1
+
+[[services]]
+id = "redis"
+preset = "redis"
+runtime = "native"
+
+[[runners]]
+id = "test"
+requires = ["redis"]
+cmd = ["sh", "-c", "true"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(vat_bin())
+        .current_dir(project.path())
+        .env("VAT_HOME", vat_home.path())
+        .env("PATH", project.path())
+        .arg("run")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let events = jsonl(&output.stdout);
+    assert!(events.iter().any(|event| {
+        event["type"] == "error"
+            && event["code"] == "missing_service_binary"
+            && event["service"] == "redis"
+    }));
+}
+
+#[test]
+fn auto_runtime_without_native_or_docker_reports_unavailable() {
+    // Default `runtime = "auto"` prefers the native binary and falls back to
+    // Docker. With an empty PATH neither is present, so vat must emit the
+    // structured `service_runtime_unavailable` envelope and fail (no panic).
     let project = tempfile::tempdir().unwrap();
     let vat_home = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -235,7 +279,7 @@ cmd = ["sh", "-c", "true"]
     let events = jsonl(&output.stdout);
     assert!(events.iter().any(|event| {
         event["type"] == "error"
-            && event["code"] == "missing_service_binary"
+            && event["code"] == "service_runtime_unavailable"
             && event["service"] == "redis"
     }));
 }
@@ -267,8 +311,13 @@ fn llm_guide_mentions_core_agent_contract() {
         "vat diff <id>",
         "vat logs <id>",
         "vat.toml",
-        "not Docker",
-        "not Docker, OCI, Compose, a Linux runtime, a VM, a daemon",
+        // Boundaries: vat is not a Docker replacement and never containerizes
+        // the runner, even though dependency services may be containers.
+        "not a Docker/OCI/Compose replacement",
+        "never containerized",
+        // Native-or-Docker service contract is discoverable.
+        "native or Docker",
+        "runtime = \"docker\"",
     ] {
         assert!(
             stdout.contains(expected),

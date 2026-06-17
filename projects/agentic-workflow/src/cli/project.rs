@@ -638,7 +638,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
         None
     } else {
         Some(format!(
-            "traceability not evaluated; run `aw health --project {project}`"
+            "traceability not evaluated; run `aw health --project {project} full`"
         ))
     };
     let (cb, cb_verify_note) = if verify_cb {
@@ -653,7 +653,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
         (
             cb_verify_not_evaluated(),
             Some(format!(
-                "cb verify not evaluated; run `aw health --project {project}`"
+                "cb verify not evaluated; run `aw health --project {project} full`"
             )),
         )
     };
@@ -716,7 +716,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
             None
         } else {
             Some(format!(
-                "cold rebuild not evaluated; run `aw health --project {project}`"
+                "cold rebuild not evaluated; run `aw health --project {project} full`"
             ))
         };
         if let Some(note) = &report.cold_rebuild_note {
@@ -801,7 +801,7 @@ fn apply_scoped_production_readiness(
                             None
                         } else {
                             Some(format!(
-                                        "capability production readiness not evaluated; run `aw health --project {}`",
+                                        "capability production readiness not evaluated; run `aw health --project {} full`",
                                         report.project
                                     ))
                         },
@@ -1389,7 +1389,7 @@ impl ProjectTestGateReport {
             evaluated: false,
             status: ProjectTestGateStatus::NotEvaluated,
             note: Some(format!(
-                "test gates not evaluated; run `aw health --project {project}`"
+                "test gates not evaluated; run `aw health --project {project} full`"
             )),
             command_count: 0,
             passed_count: 0,
@@ -1544,7 +1544,9 @@ fn run_project_test_command(
         .reopen()
         .with_context(|| format!("open stderr capture for test command `{command}`"))?;
 
-    let mut child = Command::new("sh")
+    let mut command_process = Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let mut child = command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)
@@ -2157,7 +2159,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     if !report.traceability_evaluated {
         missing.push(report.traceability_note.clone().unwrap_or_else(|| {
             format!(
-                "traceability not evaluated; run `aw health --project {}`",
+                "traceability not evaluated; run `aw health --project {} full`",
                 report.project
             )
         }));
@@ -2165,7 +2167,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     if !report.cb_verify_evaluated {
         missing.push(report.cb_verify_note.clone().unwrap_or_else(|| {
             format!(
-                "cb verify not evaluated; run `aw health --project {}`",
+                "cb verify not evaluated; run `aw health --project {} full`",
                 report.project
             )
         }));
@@ -2175,7 +2177,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     {
         missing.push(report.cold_rebuild_note.clone().unwrap_or_else(|| {
             format!(
-                "cold rebuild not evaluated; run `aw health --project {}`",
+                "cold rebuild not evaluated; run `aw health --project {} full`",
                 report.project
             )
         }));
@@ -2183,7 +2185,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     if report.test_gates.status == ProjectTestGateStatus::NotEvaluated {
         missing.push(report.test_gates.note.clone().unwrap_or_else(|| {
             format!(
-                "test gates not evaluated; run `aw health --project {}`",
+                "test gates not evaluated; run `aw health --project {} full`",
                 report.project
             )
         }));
@@ -2267,9 +2269,6 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             report.project
         ));
     }
-    if !project_health_missing_evaluations(report).is_empty() {
-        return Some(format!("aw health --project {}", report.project));
-    }
     if report.claim_closure.blocker_count > 0 {
         return Some(format!("aw health --project {} claims", report.project));
     }
@@ -2307,6 +2306,9 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             report.project
         ));
     }
+    if !project_health_missing_evaluations(report).is_empty() {
+        return Some(format!("aw health --project {} full", report.project));
+    }
     Some(format!("aw run --project {} --max-ticks 1", report.project))
 }
 
@@ -2314,13 +2316,6 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
 fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     if report.production_ready {
         return "project production readiness is complete".to_string();
-    }
-    let missing_evaluations = project_health_missing_evaluations(report);
-    if !missing_evaluations.is_empty() {
-        return format!(
-            "production readiness needs full health verification: {}",
-            missing_evaluations.join("; ")
-        );
     }
     if report.workflow_lock_count > 0 {
         return report
@@ -2389,6 +2384,13 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     if !report.traceability_ready {
         return "TD/source/command traceability is incomplete; advance traceability closure"
             .to_string();
+    }
+    let missing_evaluations = project_health_missing_evaluations(report);
+    if !missing_evaluations.is_empty() {
+        return format!(
+            "production readiness needs full health verification: {}",
+            missing_evaluations.join("; ")
+        );
     }
     report.blockers.first().cloned().unwrap_or_else(|| {
         "project production readiness is blocked; return to project root".to_string()
@@ -2536,7 +2538,7 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
             | ProjectHealthSection::Blockers => HealthVerificationFlags::none(),
         }
     } else {
-        HealthVerificationFlags::all()
+        HealthVerificationFlags::none()
     }
 }
 
@@ -2697,7 +2699,11 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                 .into_iter()
                 .find(|project| project.name == report.project);
             let mut commands = Vec::new();
-            for case in &manifest.cases {
+            for case in manifest
+                .cases
+                .iter()
+                .filter(|case| case.required_for_production)
+            {
                 commands.push(run_project_ec_command(
                     case,
                     project_model.as_ref(),
@@ -2861,6 +2867,12 @@ fn build_claim_closure_report(
     let mut claims = Vec::new();
 
     for capability in &document.capabilities {
+        if capability.status == crate::cli::capability::CapabilityStatus::Retired {
+            continue;
+        }
+        if capability.status != crate::cli::capability::CapabilityStatus::Verified {
+            continue;
+        }
         let Some(contract) = capability.verification_contract.as_ref() else {
             continue;
         };
@@ -3041,7 +3053,7 @@ impl EcBinding {
                     .dir
                     .as_deref()
                     .context("ec binding `rig` requires `dir`")?;
-                Ok(format!("rig run --dir {dir}"))
+                Ok(format!("rig test --dir {dir}"))
             }
             "meter" => {
                 let target = self
@@ -3131,7 +3143,9 @@ fn run_project_ec_command(
         .reopen()
         .with_context(|| format!("open stderr capture for EC command `{command}`"))?;
 
-    let status = Command::new("sh")
+    let mut command_process = Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let status = command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)
@@ -3631,9 +3645,26 @@ mod tests {
     }
 
     #[test]
-    fn health_without_verify_flags_defaults_to_full_verification() {
+    fn health_without_verify_flags_defaults_to_metrics_only() {
         let flags =
             effective_health_verification_flags(&health_args(false, false, false, false, false));
+
+        assert_eq!(
+            flags,
+            HealthVerificationFlags {
+                traceability: false,
+                cb: false,
+                cold: false,
+                tests: false,
+                ec: false,
+            }
+        );
+    }
+
+    #[test]
+    fn health_full_section_runs_full_verification() {
+        let flags =
+            effective_health_verification_flags(&health_section_args(ProjectHealthSection::Full));
 
         assert_eq!(
             flags,
@@ -3806,7 +3837,7 @@ mod tests {
                 ProjectEcGateStatus::Failed
             },
             note: None,
-            manifest_path: "projects/demo/aw.toml".to_string(),
+            manifest_path: "projects/demo/tests/aw-ec.toml".to_string(),
             expected_case_count: 1,
             case_count: 1,
             expected_tool_manifest_count: 0,
@@ -3984,7 +4015,7 @@ mod tests {
             dir: Some("tests/rig/scenarios".into()),
             meter: None,
         };
-        assert_eq!(rig.command().unwrap(), "rig run --dir tests/rig/scenarios");
+        assert_eq!(rig.command().unwrap(), "rig test --dir tests/rig/scenarios");
 
         let meter = EcBinding {
             tool: "meter".into(),

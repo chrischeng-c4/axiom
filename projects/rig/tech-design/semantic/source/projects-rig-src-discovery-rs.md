@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-discovery-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,14 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/discovery.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/discovery.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Discovered` | projects/rig/src/discovery.rs | struct | pub | 13 |  |
+| `discover` | projects/rig/src/discovery.rs | function | pub | 21 | discover(root: &Path) -> std::io::Result<Vec<Discovered>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

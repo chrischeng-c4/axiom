@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Columnar mmap disk segment — Stage 2 disk-tier (Phase 0 + 2a + 2b).
 //!
@@ -177,8 +177,8 @@ fn page_align(n: usize) -> usize {
 
 /// A directory entry locating one fixed-width column inside the file. CBOR is
 /// only read once on open (cold path), so its overhead is irrelevant.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 pub struct ColumnRef {
     pub name: String,
     /// `ROLE_*` discriminant identifying what the column holds.
@@ -225,7 +225,7 @@ struct Header {
     total_doc_len: u64,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 impl Header {
     /// Serialize the scalar fields (40 bytes) little-endian. The caller pads
     /// the remainder of the [`HEADER_LEN`] block with zeros. The first 24 bytes
@@ -295,7 +295,7 @@ struct Footer {
     magic2: u32,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 impl Footer {
     /// Serialize the 24 footer bytes little-endian.
     fn to_bytes(&self) -> [u8; FOOTER_LEN] {
@@ -476,7 +476,7 @@ fn sortable_bits(x: f64) -> u64 {
 /// `values[id]` is doc `id`'s live value (a deleted base doc is `None`, so it is
 /// excluded from BOTH the forward column AND the sorted index), making the
 /// on-disk index exactly the live in-RAM `values` snapshot.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 pub fn write_number_segment(path: &Path, applied_seq: u64, values: &[Option<f64>]) -> Result<()> {
     let n_docs: u32 = values
         .len()
@@ -574,7 +574,7 @@ pub fn write_number_segment(path: &Path, applied_seq: u64, values: &[Option<f64>
 /// `None` = absent) to `path`. Same layout as the Number column but the
 /// forward column stores the raw `u64` hash directly (no f64-bits transform) —
 /// role [`ROLE_HASH`]. Mirrors [`write_number_segment`] for everything else.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 pub fn write_hash_segment(path: &Path, applied_seq: u64, values: &[Option<u64>]) -> Result<()> {
     let n_docs: u32 = values
         .len()
@@ -619,7 +619,7 @@ pub fn write_hash_segment(path: &Path, applied_seq: u64, values: &[Option<u64>])
 /// present slice MUST be exactly `dim` long. Role [`ROLE_VECTOR`], width 4. No
 /// scalar quantization — the bytes on disk are the exact `f32` bits, so a
 /// zero-copy scan is bit-identical to the in-RAM corpus.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 pub fn write_vector_segment(
     path: &Path,
     applied_seq: u64,
@@ -744,7 +744,7 @@ struct VarBlockBody {
     entries: Vec<VarEntry>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 impl VarBlockBody {
     /// Reconstruct the full byte strings in this block (rolling the shared
     /// prefix forward). Returns one `Vec<u8>` per entry, in id order.
@@ -782,7 +782,7 @@ struct VarColumnWriter {
     index: Vec<VarBlockMeta>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 impl VarColumnWriter {
     fn new() -> Self {
         Self {
@@ -1052,7 +1052,7 @@ fn append_u32_column(buf: &mut Vec<u8>, values: &[u32]) -> Result<(u64, u64)> {
 /// exactly `postings`'s BTreeMap key order, so term `t`'s dict index locates
 /// its posting block. On reopen the inverted index is NOT rebuilt in RAM — the
 /// reader serves Term/Terms/df straight off this column.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 pub fn write_keyword_segment(
     path: &Path,
     applied_seq: u64,
@@ -1153,7 +1153,7 @@ pub fn write_keyword_segment(
 /// `postings`'s BTreeMap key order, so element `t`'s dict index locates its
 /// posting block. On reopen the inverted index is NOT rebuilt in RAM — the
 /// reader serves membership / Terms / df straight off this column.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 pub fn write_set_segment(
     path: &Path,
     applied_seq: u64,
@@ -1304,7 +1304,7 @@ fn append_var_blob_column(
 /// docid-sorted). `lens[i]` is doc `i`'s length. The reader+writer round-trip
 /// the postings exactly, so the sealed BM25 path is bit-identical to the live
 /// path.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 pub fn write_text_segment(
     path: &Path,
     applied_seq: u64,
@@ -1375,7 +1375,7 @@ pub fn write_text_segment(
 /// the column's entry count IS `n_docs`. `n_docs` is also stamped in the header
 /// for cross-checking. Makes the sealed collection self-describing + reopenable
 /// without a CBOR snapshot.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 pub fn write_eid_segment(path: &Path, applied_seq: u64, eids: &[&str]) -> Result<()> {
     let n_docs: u32 = eids
         .len()
@@ -1518,7 +1518,7 @@ fn posting_cache_bytes() -> u64 {
 ///
 /// `Send + Sync`: `Arc<Mmap>` + owned fields + `moka::sync::Cache` are all
 /// `Send + Sync`; there is no self-referential borrow or `'static` transmute.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 pub struct SegmentReader {
     mmap: Arc<memmap2::Mmap>,
     dir: Vec<ColumnRef>,
@@ -1548,7 +1548,7 @@ pub struct SegmentReader {
     text_posting_cache: moka::sync::Cache<u64, CachedTextPosting>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 impl std::fmt::Debug for SegmentReader {
     /// A terse, allocation-free summary — the mmap bytes and CBOR directory are
     /// not interesting in a `{:?}` dump and would be huge. Lets containers that
@@ -1562,7 +1562,7 @@ impl std::fmt::Debug for SegmentReader {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-segment-rs.md#source
 impl SegmentReader {
     /// Open and validate a segment file. Reads the footer first, validates
     /// `magic2`, the directory crc32, then the header magic / version /

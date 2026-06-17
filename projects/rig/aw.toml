@@ -9,3 +9,85 @@ paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p rig"
 codegen.profile = "rust/score-crate"
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "rig"
+generated_from_td_digest = "sha256:c0d0be9ffeee7fa1fd8fddfa030eca423abb29b7f99f33a04594087f9cabdb76"
+
+[[aw.ec.generated.cases]]
+id = "rig-floor-ratchet-pin-gates"
+capability_id = "load-pins"
+claim_id = "floor-and-ratchet-pin-gates"
+contract_id = "floor-and-ratchet-pin-gates"
+category = "performance"
+td_ref = "projects/rig/tech-design/logic/external-contracts.md#rig-floor-ratchet-pin-gates"
+test_path = "projects/rig/tests/performance_rig_floor_ratchet_pin_gates.rs"
+command = "cargo test -p rig"
+required_for_production = true
+assertions = [
+    "pin gate tests pass",
+    "floor and ratchet baseline semantics remain covered",
+]
+
+[[aw.ec.generated.cases]]
+id = "rig-open-loop-load-generator"
+capability_id = "load-pins"
+claim_id = "open-loop-load-generator"
+contract_id = "open-loop-load-generator"
+category = "performance"
+td_ref = "projects/rig/tech-design/logic/external-contracts.md#rig-open-loop-load-generator"
+test_path = "projects/rig/tests/performance_rig_open_loop_load_generator.rs"
+command = "cargo test -p rig"
+required_for_production = true
+assertions = [
+    "load generator tests pass",
+    "open-loop load remains part of rig's public contract",
+]
+
+[[aw.ec.generated.cases]]
+id = "rig-record-contract-json-report"
+capability_id = "scenario-engine"
+claim_id = "record-contract-check-and-json-report"
+contract_id = "record-contract-check-and-json-report"
+category = "behavior"
+td_ref = "projects/rig/tech-design/logic/external-contracts.md#rig-record-contract-json-report"
+test_path = "projects/rig/tests/behavior_rig_record_contract_json_report.rs"
+command = "cargo test -p rig"
+required_for_production = true
+assertions = [
+    "rig record-contract and report tests pass",
+    "rig.report/1 remains the single agent-readable output contract",
+]
+
+[[aw.ec.generated.cases]]
+id = "rig-scenario-step-dsl-execution"
+capability_id = "scenario-engine"
+claim_id = "scenario-step-dsl-execution"
+contract_id = "scenario-step-dsl-execution"
+category = "behavior"
+td_ref = "projects/rig/tech-design/logic/external-contracts.md#rig-scenario-step-dsl-execution"
+test_path = "projects/rig/tests/behavior_rig_scenario_step_dsl_execution.rs"
+command = "cargo test -p rig"
+required_for_production = true
+assertions = [
+    "scenario engine tests pass",
+    "step DSL execution remains covered by rig's unit and e2e tests",
+]
+
+[[aw.ec.generated.cases]]
+id = "rig-vat-delegated-scenario-execution"
+capability_id = "vat-wrapped-runs"
+claim_id = "vat-delegated-scenario-execution"
+contract_id = "vat-delegated-scenario-execution"
+category = "stability"
+td_ref = "projects/rig/tech-design/logic/external-contracts.md#rig-vat-delegated-scenario-execution"
+test_path = "projects/rig/tests/stability_rig_vat_delegated_scenario_execution.rs"
+command = "cargo test -p rig"
+required_for_production = true
+assertions = [
+    "vat delegation tests pass",
+    "rig keeps environment setup delegated to vat",
+]
+# AW-EC-END
