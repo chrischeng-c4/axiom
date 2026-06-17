@@ -64,9 +64,10 @@ promises from inference alone.
 10. After a human has reviewed a draft artifact and replaced all placeholders,
    use `aw capability apply-draft --project <project> --draft <path>
    --reviewed` to apply the canonical `## Capabilities` section to README.
-   The command refuses unreviewed placeholder drafts and only proves structure;
-   run `aw capability check --project <project>` afterward, and use
-   `--verify` only when production proof matters.
+   The command refuses unreviewed placeholder drafts, including unresolved
+   `Review Decisions` worksheets, and only proves structure; run
+   `aw capability check --project <project>` afterward, and use `--verify`
+   only when production proof matters.
 11. When the sweep shows `create_wi`, use
    `aw capability sweep --write-wi-plans --human` to write local
    pending-review WI planning artifacts for all create-WI projects. These are

@@ -1486,6 +1486,7 @@ fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Resu
 }
 
 fn extract_reviewed_draft_registry(draft_body: &str) -> Result<String> {
+    validate_review_decisions_are_resolved(draft_body)?;
     let registry = extract_draft_registry(draft_body)?;
     if registry.contains("(confirm") {
         anyhow::bail!(
@@ -1493,6 +1494,37 @@ fn extract_reviewed_draft_registry(draft_body: &str) -> Result<String> {
         );
     }
     Ok(registry)
+}
+
+fn validate_review_decisions_are_resolved(draft_body: &str) -> Result<()> {
+    let Some(section) = extract_review_decisions_section(draft_body) else {
+        return Ok(());
+    };
+    let unresolved_tokens = [
+        "confirm / rename / split / merge / defer",
+        "define / defer",
+        "(confirm type)",
+        "(confirm public surfaces)",
+        "(confirm EC dimensions and runners)",
+        "(confirm gates or inventory refs)",
+    ];
+    if unresolved_tokens
+        .iter()
+        .any(|token| section.contains(token))
+    {
+        anyhow::bail!(
+            "draft Review Decisions still contain unresolved placeholders; complete the worksheet before applying"
+        );
+    }
+    Ok(())
+}
+
+fn extract_review_decisions_section(draft_body: &str) -> Option<&str> {
+    let marker = "## Review Decisions";
+    let start = draft_body.find(marker)?;
+    let after_marker = &draft_body[start + marker.len()..];
+    let end = after_marker.find("\n## ").unwrap_or(after_marker.len());
+    Some(after_marker[..end].trim())
 }
 
 fn extract_draft_registry(draft_body: &str) -> Result<String> {
@@ -9863,6 +9895,50 @@ Mamba can execute the Python 3.12 language and standard library surface.
         let err = extract_reviewed_draft_registry(&artifact).unwrap_err();
 
         assert!(err.to_string().contains("placeholders"));
+    }
+
+    #[test]
+    fn apply_draft_requires_review_decisions_before_readme_mutation() {
+        let draft = r#"# Cue Capability Map Draft
+
+## Review Decisions
+
+| Candidate | Decision | Type | Surfaces | EC Dimensions | Root WI | Gate Inventory |
+|---|---|---|---|---|---:|---|
+| Workflow Control Plane | confirm / rename / split / merge / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | #3893 | (confirm gates or inventory refs) |
+
+## Draft Canonical README Section
+
+```md
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Workflow Control Plane | #3893 | planned | planned | smoke | not_ready | human confirmed |
+
+### Workflow Control Plane
+
+ID: workflow-control-plane
+Type: DeveloperTool
+Root WI: #3893
+Status: confirmed
+Required Verification: smoke
+Promise:
+Cue provides a team workflow control plane over AW Core concepts.
+Gate Inventory:
+- projects/cue/tests/workflow-control-plane.md
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |
+```
+"#;
+
+        let err = extract_reviewed_draft_registry(draft).unwrap_err();
+
+        assert!(err.to_string().contains("Review Decisions"));
     }
 
     #[test]
