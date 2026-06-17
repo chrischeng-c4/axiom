@@ -338,8 +338,21 @@ pub fn register() {
         MbValue::from_ptr(MbObject::new_str("..".to_string())),
     );
 
-    // os.environ (stub dict)
+    // os.environ — populated from the real process environment (CPython
+    // semantics) so a child reads the variables a parent set via
+    // subprocess(env=...), and `os.environ.get(...)` reflects the actual env.
     let environ = MbObject::new_dict();
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*environ).data {
+            let mut map = lock.write().unwrap();
+            for (k, v) in std::env::vars() {
+                map.insert(
+                    super::super::dict_ops::DictKey::Str(k),
+                    MbValue::from_ptr(MbObject::new_str(v)),
+                );
+            }
+        }
+    }
     attrs.insert("environ".to_string(), MbValue::from_ptr(environ));
 
     // os.pathsep / os.extsep / os.altsep / os.devnull (#1261).
