@@ -3138,10 +3138,11 @@ fn block_health_report(report: &mut ProjectHealthReport, blocker: String) {
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 impl EcBinding {
-    /// wi-13 R2: deterministic verify command for one EC tool binding. Total
-    /// over the four known tools; a missing argument or an unknown tool is
-    /// an error the dispatch surfaces as a Failed EC command, not a
-    /// health-run abort.
+    /// wi-13 R2: deterministic verify command for one EC tool binding. Current
+    /// bindings use rig/meter/vat/guard. Arena remains accepted for legacy
+    /// compatibility; new capability contracts should not default to it.
+    /// A missing argument or an unknown tool is an error the dispatch surfaces
+    /// as a Failed EC command, not a health-run abort.
     pub fn command(&self) -> Result<String> {
         if let Some(command) = self
             .command
@@ -3195,7 +3196,7 @@ impl EcBinding {
             }
             other => {
                 anyhow::bail!(
-                    "unknown ec binding tool `{other}` (expected arena|rig|meter|vat|guard)"
+                    "unknown ec binding tool `{other}` (expected rig|meter|vat|guard, or legacy arena)"
                 )
             }
         }
@@ -4132,9 +4133,10 @@ mod tests {
         }
     }
 
-    /// wi-38 AC2: the builder emits deterministic tool shapes, including vat and guard.
+    /// wi-38 AC2: the builder emits deterministic tool shapes, including vat,
+    /// guard, and legacy arena compatibility.
     #[test]
-    fn ec_binding_command_builds_arena_rig_meter_vat_guard() {
+    fn ec_binding_command_builds_rig_meter_vat_guard_and_legacy_arena() {
         let arena = EcBinding {
             tool: "arena".into(),
             command: None,
@@ -4243,7 +4245,7 @@ mod tests {
             .command()
             .unwrap_err()
             .to_string()
-            .contains("expected arena|rig|meter|vat|guard"));
+            .contains("expected rig|meter|vat|guard, or legacy arena"));
 
         let armless = EcBinding {
             tool: "arena".into(),
@@ -4265,19 +4267,19 @@ mod tests {
     fn resolve_ec_command_dispatches_bound_category() {
         let mut ec = BTreeMap::new();
         ec.insert(
-            "benchmark".to_string(),
+            "efficiency".to_string(),
             EcBinding {
-                tool: "arena".into(),
+                tool: "meter".into(),
                 command: None,
-                spec: Some("tests/arena/x.toml".into()),
+                spec: None,
                 dir: None,
-                meter: None,
+                meter: Some("projects/lumen".into()),
             },
         );
         let project = ec_project(ec);
 
-        let bound = resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap();
-        assert_eq!(bound, "arena run --spec tests/arena/x.toml");
+        let bound = resolve_project_ec_command(&ec_case("efficiency"), Some(&project)).unwrap();
+        assert_eq!(bound, "meter run --target projects/lumen");
 
         let unbound = resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
         assert_eq!(unbound, "cargo test -p demo");
@@ -4306,7 +4308,7 @@ mod tests {
 [[projects]]
 name = "lumen"
 path = "projects/lumen"
-ec.benchmark = { tool = "arena", spec = "tests/arena/x.toml" }
+ec.efficiency = { tool = "meter", meter = "projects/lumen" }
 
 [[projects.workspaces]]
 paths = ["projects/lumen/**"]
@@ -4314,16 +4316,16 @@ target = "rust"
 "#;
         let parsed: crate::models::project::ProjectsToml = toml::from_str(doc).unwrap();
         let project = &parsed.projects[0];
-        assert_eq!(project.ec["benchmark"].tool, "arena");
+        assert_eq!(project.ec["efficiency"].tool, "meter");
         assert_eq!(
-            project.ec["benchmark"].spec.as_deref(),
-            Some("tests/arena/x.toml")
+            project.ec["efficiency"].meter.as_deref(),
+            Some("projects/lumen")
         );
 
         let reserialized = toml::to_string(&parsed).unwrap();
         assert!(
-            reserialized.contains("[projects.ec.benchmark]")
-                || reserialized.contains("ec.benchmark")
+            reserialized.contains("[projects.ec.efficiency]")
+                || reserialized.contains("ec.efficiency")
         );
         let reparsed: crate::models::project::ProjectsToml = toml::from_str(&reserialized).unwrap();
         assert_eq!(parsed, reparsed);

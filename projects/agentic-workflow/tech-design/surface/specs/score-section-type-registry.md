@@ -83,7 +83,7 @@ properties:
       - { name: component,     family: JsonSchemaFamily, generator: projects/agentic-workflow/src/generators/frontend.rs,       heading_match: "Component",       use_for: "UI component contract (Custom Elements Manifest)" }
       - { name: design-token,  family: JsonSchemaFamily, generator: projects/agentic-workflow/src/generators/frontend.rs,       heading_match: "Design Token",    use_for: "Design tokens (W3C DTCG)" }
       - { name: manifest,      family: JsonSchemaFamily, generator: projects/agentic-workflow/src/generators/frontend.rs,       heading_match: "Manifest",        use_for: "Package-manifest deps" }
-      - { name: tool-contract, family: ConfigFamily,     generator: projects/agentic-workflow/src/cli/ec.rs,                   heading_match: "Tool Contract",   use_for: "AW EC bridge from TD contracts to native vat/rig/meter/guard/arena manifests" }
+      - { name: tool-contract, family: ConfigFamily,     generator: projects/agentic-workflow/src/cli/ec.rs,                   heading_match: "Tool Contract",   use_for: "AW EC bridge from TD contracts to native vat/rig/meter/guard manifests; arena remains legacy compatibility" }
       - { name: runtime-image, family: JsonSchemaFamily, generator: projects/agentic-workflow/src/generate/gen/operations.rs,   heading_match: "Runtime Image",   use_for: "Container image build contract (Dockerfile, build context, entrypoint, image metadata)" }
       - { name: deployment,    family: JsonSchemaFamily, generator: projects/agentic-workflow/src/generate/gen/operations.rs,   heading_match: "Deployment",      use_for: "Runtime deployment manifests (Kubernetes, Kustomize base/component/overlay resources)" }
   deprecated:

@@ -102,10 +102,11 @@ Use `aw ec draft --project <name> <id>` to create an EC markdown skeleton and
 `aw ec fill --project <name> <path> --section <type> --body-file <file>` to fill
 typed sections such as `e2e-test` and `tool-contract`. `aw ec gen --project
 <name>` reads `external-contracts/**/*.md` and generates project-local tests
-and integrated tool configuration for `rig`, `meter`, `arena`, `guard`, and
-`vat`. It does not write generated state into `aw.toml`; `aw.toml` remains the
-project root config. Legacy TD `e2e-test` and `tool-contract` sections remain a
-compatibility import source only when `external-contracts/` has no contracts.
+and integrated tool configuration for `rig`, `meter`, `guard`, and `vat`, while
+retaining `arena` only as a legacy compatibility import. It does not write
+generated state into `aw.toml`; `aw.toml` remains the project root config.
+Legacy TD `e2e-test` and `tool-contract` sections remain a compatibility import
+source only when `external-contracts/` has no contracts.
 
 TD section types and EC contracts are artifact-producing inputs. A typed TD
 section must drive source, tests, config, manifests, deployment artifacts, or a
@@ -264,7 +265,7 @@ Gate Inventory:
 | CB generation and standardize scan defaults | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md` |
 | Project dirty-scope protection | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib semantic_coverage_excludes_aw_ec_generated_wrappers`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md` |
 | EC evidence documentation | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_doc` |
-| EC external-contract source | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_manifest`; aw ec draft/fill authors project-local external-contract markdown and aw ec gen generates tests plus rig/meter/arena/guard/vat tool configs without writing aw.toml |
+| EC external-contract source | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_manifest`; aw ec draft/fill authors project-local external-contract markdown and aw ec gen generates tests plus rig/meter/guard/vat tool configs without writing aw.toml; arena is retained as a legacy compatibility import |
 | EC tool binding dispatch | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_binding_command`; `cargo test -p agentic-workflow --lib resolve_ec_command_dispatches_bound_category`; projects/agentic-workflow/tech-design/config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md; projects/agentic-workflow/tech-design/logic/aw-ec-add-vat-binding-command-support.md |
 
 ### Manual Evidence Artifacts
