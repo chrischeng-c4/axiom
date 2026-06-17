@@ -140,8 +140,28 @@ fn resolve_nbytes(n: MbValue) -> usize {
     if raw < 0 { 0 } else { raw as usize }
 }
 
+/// Like `resolve_nbytes` but raises `ValueError` (returning `None`) for a
+/// negative count — `secrets.token_*(-1)` propagates os.urandom's
+/// "negative argument not allowed" instead of silently clamping to 0.
+fn resolve_nbytes_checked(n: MbValue) -> Option<usize> {
+    if n.is_none() {
+        return Some(DEFAULT_ENTROPY);
+    }
+    let raw = n.as_int().unwrap_or(DEFAULT_ENTROPY as i64);
+    if raw < 0 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "negative argument not allowed".to_string(),
+            )),
+        );
+        return None;
+    }
+    Some(raw as usize)
+}
+
 pub fn mb_secrets_token_bytes(n: MbValue) -> MbValue {
-    let count = resolve_nbytes(n);
+    let Some(count) = resolve_nbytes_checked(n) else { return MbValue::none(); };
     let mut buf = vec![0u8; count];
     OsRng.fill_bytes(&mut buf);
     MbValue::from_ptr(MbObject::new_bytes(buf))
@@ -155,7 +175,7 @@ pub fn mb_secrets_token_bytes(n: MbValue) -> MbValue {
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 
 pub fn mb_secrets_token_hex(n: MbValue) -> MbValue {
-    let count = resolve_nbytes(n);
+    let Some(count) = resolve_nbytes_checked(n) else { return MbValue::none(); };
     let mut buf = vec![0u8; count];
     OsRng.fill_bytes(&mut buf);
     let mut hex = Vec::with_capacity(count * 2);
@@ -205,7 +225,7 @@ fn urlsafe_b64encode_no_pad(data: &[u8]) -> String {
 }
 
 pub fn mb_secrets_token_urlsafe(n: MbValue) -> MbValue {
-    let count = resolve_nbytes(n);
+    let Some(count) = resolve_nbytes_checked(n) else { return MbValue::none(); };
     let mut buf = vec![0u8; count];
     OsRng.fill_bytes(&mut buf);
     MbValue::from_ptr(MbObject::new_str(urlsafe_b64encode_no_pad(&buf)))
@@ -313,7 +333,16 @@ pub fn mb_secrets_choice(seq: MbValue) -> MbValue {
     seq.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::List(ref lock) = (*ptr).data {
             let items = lock.read().unwrap();
-            if items.is_empty() { return None; }
+            if items.is_empty() {
+                // CPython: secrets.choice([]) -> IndexError, not None.
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "Cannot choose from an empty sequence".to_string(),
+                    )),
+                );
+                return None;
+            }
             let mut b = [0u8; 8];
             OsRng.fill_bytes(&mut b);
             let idx = u64::from_le_bytes(b) as usize % items.len();

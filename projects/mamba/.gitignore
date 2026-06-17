@@ -7,3 +7,7 @@ vendor/typeshed/
 /base/
 /dirlinktest
 
+/@mamba_test
+/main.py
+/t_main/
+/mbtmp_named_*

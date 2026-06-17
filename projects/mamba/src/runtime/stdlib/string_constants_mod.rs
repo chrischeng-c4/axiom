@@ -1167,7 +1167,21 @@ extern "C" fn m_template_is_valid(this: MbValue) -> MbValue {
 /// string.capwords(s, sep=None):
 ///   (sep or ' ').join(x.capitalize() for x in s.split(sep))
 pub fn mb_string_capwords(val: MbValue, sep: MbValue) -> MbValue {
-    let s = match str_of(val) { Some(s) => s, None => return MbValue::none() };
+    let s = match str_of(val) {
+        Some(s) => s,
+        // capwords calls `val.split(...)`; a non-string raises AttributeError
+        // ("'int' object has no attribute 'split'"), matching CPython, not a
+        // silent None.
+        None => {
+            return raise(
+                "AttributeError",
+                &format!(
+                    "'{}' object has no attribute 'split'",
+                    super::super::builtins::value_type_name(val)
+                ),
+            );
+        }
+    };
     let sep_str = if sep.is_none() { None } else { str_of(sep) };
 
     let words: Vec<String> = match &sep_str {
@@ -1215,7 +1229,9 @@ mod tests {
 
     #[test]
     fn test_formatter_parse_basic() {
+        // CPython 3.12: list(Formatter().parse('foo{0}{1}-{1}')) yields
+        // [('foo','0','',None), ('','1','',None), ('-','1','',None)] — 3 tuples.
         let parsed = formatter_parse("foo{0}{1}-{1}").unwrap();
-        assert_eq!(parsed.len(), 4);
+        assert_eq!(parsed.len(), 3);
     }
 }

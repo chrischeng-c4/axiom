@@ -991,10 +991,12 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
     };
 
     // 2. Parse
-    let module = match parser::parse(&source, FileId(9999)) {
+    let mut module = match parser::parse(&source, FileId(9999)) {
         Ok(m) => m,
         Err(_) => return,
     };
+    crate::lower::pep695::desugar_module(&mut module);
+    let module = module;
 
     // 3. Type-check
     let mut checker = TypeChecker::new();

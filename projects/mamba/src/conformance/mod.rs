@@ -105,7 +105,7 @@ fn run_and_capture(src: &str, path: &Path, timeout_secs: u64) -> Result<String, 
     // Serialize entire JIT pipeline (init + compile + execute) across test
     // threads. Concurrent JITModule finalization causes SIGBUS on aarch64.
     // Guard is held until function exit (after execution thread completes).
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     let module = parser::parse(src, FileId(0))
         .map_err(|e| format!("{}: parse error: {e}", path.display()))?;

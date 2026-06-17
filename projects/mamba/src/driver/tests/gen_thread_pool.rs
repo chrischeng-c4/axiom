@@ -27,7 +27,7 @@ const TEST_TIMEOUT_SECS: u64 = 30;
 /// Run Python source through the full JIT pipeline, capturing stdout.
 /// Each compilation gets its own isolated JitMemory mmap region (#1114).
 fn jit_capture(src: &str) -> String {
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     let module = parser::parse(src, FileId(0)).expect("parse failed");
     let mut checker = TypeChecker::new();

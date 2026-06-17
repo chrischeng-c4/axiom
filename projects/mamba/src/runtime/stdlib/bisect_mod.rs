@@ -85,6 +85,15 @@ fn is_bisect_sequence(val: MbValue) -> bool {
                 // A `list` subclass is a sequence even when it doesn't redefine
                 // `__len__`/`__getitem__` (it inherits them from `list`).
                 super::super::class::class_mro_any(class_name, |c| c == "list")
+                    // collections.UserList / UserString are sequence wrappers;
+                    // their __len__/__getitem__ are served by native dispatch
+                    // (not the instance method table), so instance_has_dunder
+                    // misses them. seq_len/seq_get route through mb_len /
+                    // mb_obj_getitem, which handle the wrappers correctly.
+                    || matches!(
+                        super::super::stdlib::collections_mod::user_wrapper_kind(class_name),
+                        Some("list") | Some("str")
+                    )
                     || (instance_has_dunder(val, class_name, "__len__")
                         && instance_has_dunder(val, class_name, "__getitem__"))
             }

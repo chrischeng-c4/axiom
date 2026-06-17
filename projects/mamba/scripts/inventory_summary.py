@@ -89,7 +89,9 @@ CFG_FEATURE_RE = re.compile(r"#\[\s*cfg\([^)]*feature\s*=")
 
 def count_rust_tests(tests_dir: Path) -> RustTestCounts:
     counts = RustTestCounts()
-    rs_files = sorted(p for p in tests_dir.glob("*.rs") if p.is_file())
+    # Domain-directory layout: Rust entrypoints live under
+    # tests/<domain>/..., not at the tests/ root, so recurse.
+    rs_files = sorted(p for p in tests_dir.rglob("*.rs") if p.is_file())
     counts.files = len(rs_files)
     for path in rs_files:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -135,22 +137,24 @@ def _count_py(root: Path, pattern: str = "*.py") -> int:
     return sum(1 for _ in root.rglob(pattern))
 
 
-def count_fixtures(fixtures_dir: Path) -> FixtureCounts:
+def count_fixtures(tests_dir: Path) -> FixtureCounts:
+    # Dimension-first layout (tests/harness/cpython/conventions/
+    # FIXTURE-LAYOUT.md): conformance fixtures live directly under
+    # tests/cpython/{facet}/..., Lib/test seeds under the harness config
+    # tree's per-outcome contract dirs.
     counts = FixtureCounts()
-    conformance = fixtures_dir / "conformance"
-    cpython = fixtures_dir / "cpython"
-    cpython_seed = fixtures_dir / "cpython_lib_test" / "seed"
+    conformance = tests_dir / "cpython"
+    cpython_seed = tests_dir / "harness" / "cpython" / "config" / "seeds"
 
     counts.conformance_py = _count_py(conformance)
-    counts.cpython_compat_py = _count_py(cpython)
+    counts.cpython_compat_py = _count_py(conformance / "_regression")
     counts.cpython_lib_test_seed = sum(
-        1 for p in cpython_seed.glob("*.py") if p.is_file()
+        1 for p in cpython_seed.rglob("*.py") if p.is_file()
     ) if cpython_seed.is_dir() else 0
 
-    if conformance.is_dir():
-        counts.real_world_py = sum(
-            1 for p in conformance.rglob("real_world/*.py") if p.is_file()
-        )
+    real_world = conformance / "real_world"
+    if real_world.is_dir():
+        counts.real_world_py = _count_py(real_world)
     return counts
 
 
@@ -174,11 +178,11 @@ def count_benches(benches_dir: Path) -> BenchCounts:
 
 def compute(root: Path) -> Inventory:
     tests_dir = root / "tests"
-    fixtures_dir = tests_dir / "fixtures"
+    cpython_dir = tests_dir / "cpython"
     benches_dir = root / "benches"
 
     missing: list[str] = []
-    for required in (tests_dir, fixtures_dir):
+    for required in (tests_dir, cpython_dir):
         if not required.is_dir():
             missing.append(str(required))
     if missing:
@@ -188,7 +192,7 @@ def compute(root: Path) -> Inventory:
 
     return Inventory(
         rust_tests=count_rust_tests(tests_dir),
-        fixtures=count_fixtures(fixtures_dir),
+        fixtures=count_fixtures(tests_dir),
         benches=count_benches(benches_dir),
     )
 

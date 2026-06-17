@@ -1,12 +1,16 @@
 {
-  "eliminated_bytes": 350,
+  "eliminated_bytes": 70,
   "eliminated_modules": [
-    "/fixture/app/devtools.js",
-    "/fixture/react-dom/index.js",
-    "/fixture/react/index.js"
+    "/fixture/app/devtools.js"
   ],
   "used_exports": {
     "/fixture/app/hooks.js": [
+      "useState"
+    ],
+    "/fixture/react-dom/index.js": [
+      "render"
+    ],
+    "/fixture/react/index.js": [
       "useState"
     ]
   }

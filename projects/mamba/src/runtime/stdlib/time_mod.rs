@@ -189,6 +189,15 @@ pub fn register() {
         });
     }
 
+    // isinstance(tt, time.struct_time): bind the factory func addr to the
+    // class name the instance builder stamps.
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(
+            d_struct_time as *const () as usize as u64,
+            "struct_time".to_string(),
+        );
+    });
+
     // Integer clock-id constants.
     attrs.insert("CLOCK_REALTIME".to_string(), MbValue::from_int(CLOCK_REALTIME));
     attrs.insert("CLOCK_MONOTONIC".to_string(), MbValue::from_int(CLOCK_MONOTONIC));
@@ -229,6 +238,30 @@ fn raise_exc(exc_type: &str, msg: &str) -> MbValue {
     MbValue::none()
 }
 fn raise_value_error(msg: &str) -> MbValue { raise_exc("ValueError", msg) }
+fn raise_type_error(msg: &str) -> MbValue { raise_exc("TypeError", msg) }
+
+fn is_bytes_value(v: MbValue) -> bool {
+    v.as_ptr().is_some_and(|p| unsafe {
+        matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+    })
+}
+
+/// True iff `v` is a struct_time Instance or a 9-tuple — what asctime/mktime
+/// accept. Short tuples and scalars raise per CPython.
+fn timetuple_arity(v: MbValue) -> Option<usize> {
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Instance { class_name, .. } if class_name == "struct_time" => {
+                    return Some(9);
+                }
+                ObjData::Tuple(items) => return Some(items.len()),
+                _ => {}
+            }
+        }
+    }
+    None
+}
 fn raise_overflow_error(msg: &str) -> MbValue { raise_exc("OverflowError", msg) }
 fn raise_os_error(msg: &str) -> MbValue { raise_exc("OSError", msg) }
 
@@ -478,7 +511,7 @@ pub fn mb_time_sleep(secs: MbValue) -> MbValue {
         if i == 0 { std::time::Duration::ZERO }
         else { std::time::Duration::from_secs(i as u64) }
     } else {
-        return MbValue::none();
+        return raise_type_error("an integer or float is required");
     };
     if !duration.is_zero() {
         std::thread::sleep(duration);
@@ -520,6 +553,15 @@ pub fn mb_time_localtime(secs: MbValue) -> MbValue {
 
 /// time.mktime(struct_time) -> float (local epoch seconds)
 pub fn mb_time_mktime(st: MbValue) -> MbValue {
+    match timetuple_arity(st) {
+        Some(n) if n >= 9 => {}
+        Some(_) => {
+            return raise_type_error("function takes exactly 9 arguments");
+        }
+        None => {
+            return raise_type_error("Tuple or struct_time argument required");
+        }
+    }
     let Some(naive) = struct_time_to_naive(st) else {
         return MbValue::from_float(0.0);
     };
@@ -533,6 +575,9 @@ pub fn mb_time_mktime(st: MbValue) -> MbValue {
 
 /// time.asctime(struct_time=None) -> str
 pub fn mb_time_asctime(st: MbValue) -> MbValue {
+    if !st.is_none() && timetuple_arity(st).is_none() {
+        return raise_type_error("Tuple or struct_time argument required");
+    }
     let naive_opt = if st.is_none() {
         Some(Local::now().naive_local())
     } else {
@@ -650,6 +695,9 @@ pub fn mb_time_get_clock_info(name: MbValue) -> MbValue {
 
 /// time.strftime(format, struct_time=None) -> str
 pub fn mb_time_strftime(fmt: MbValue, st: MbValue) -> MbValue {
+    if is_bytes_value(fmt) {
+        return raise_type_error("strftime() argument 1 must be str, not bytes");
+    }
     let format_str = extract_str(fmt).unwrap_or_default();
     let naive = if st.is_none() {
         Local::now().naive_local()
@@ -667,6 +715,9 @@ pub fn mb_time_strftime(fmt: MbValue, st: MbValue) -> MbValue {
 
 /// time.strptime(string, format=None) -> struct_time
 pub fn mb_time_strptime(s: MbValue, fmt: MbValue) -> MbValue {
+    if is_bytes_value(s) || is_bytes_value(fmt) {
+        return raise_type_error("strptime() argument must be str, not bytes");
+    }
     let input = extract_str(s).unwrap_or_default();
     let format_str = extract_str(fmt).unwrap_or_else(|| "%a %b %e %H:%M:%S %Y".to_string());
     match NaiveDateTime::parse_from_str(&input, &format_str) {
@@ -1029,9 +1080,15 @@ mod tests {
     }
 
     #[test]
-    fn test_strptime_parse_failure_returns_sentinel() {
-        let st = mb_time_strptime(s("not a date"), s("%Y-%m-%d"));
-        assert_eq!(get_field(st, "tm_isdst").as_int(), Some(-1));
+    fn test_strptime_parse_failure_raises_valueerror() {
+        // CPython 3.12: time.strptime raises ValueError when the input does
+        // not match the format (the old sentinel struct_time is retired).
+        let _ = mb_time_strptime(s("not a date"), s("%Y-%m-%d"));
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("ValueError"),
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]

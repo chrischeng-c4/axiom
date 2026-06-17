@@ -152,14 +152,40 @@ pub fn mb_tokio_shutdown() {
     // Tokio handles cleanup on process exit.
 }
 
+/// Serializes tests that touch the global COROUTINES / TASKS maps. Shared
+/// with `runtime::tests::thread_safety` — its Tokio tests would otherwise
+/// race with `reset_async_for_test()` clearing TASKS underneath them.
+#[cfg(test)]
+pub(crate) static TOKIO_TEST_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
+/// Test helper: poll a task id until `done` or the deadline elapses. A fixed
+/// sleep is flaky under full-suite parallel load.
+#[cfg(test)]
+pub(crate) fn wait_task_done(task_id: u64, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let done = TASKS
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&task_id)
+            .map(|t| t.done)
+            .unwrap_or(false);
+        if done {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::async_rt::{mb_coroutine_complete, mb_coroutine_new};
     use super::super::gc::{gc_disable, gc_enable};
     use super::*;
-
-    static TOKIO_TEST_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
-        std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
 
     fn reset_async_for_test() {
         COROUTINES
@@ -190,16 +216,8 @@ mod tests {
         let task = mb_tokio_spawn(coro);
         assert!(task.is_int());
 
-        // Give Tokio time to complete
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
         let task_id = task.as_int().unwrap() as u64;
-        let done = TASKS
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&task_id)
-            .map(|t| t.done)
-            .unwrap_or(false);
+        let done = wait_task_done(task_id, std::time::Duration::from_secs(60));
         assert!(done, "Tokio task should complete for exhausted coroutine");
         gc_enable();
     }

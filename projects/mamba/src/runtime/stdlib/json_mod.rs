@@ -154,6 +154,13 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
         if let Some(n) = items.get(1).and_then(|v| v.as_int()) {
             return mb_json_dumps_pretty(val, MbValue::from_int(n));
         }
+        // Flattened string indent: json.dumps(obj, indent="\t") lowered to a
+        // trailing positional string.
+        if items.len() == 2 {
+            if let Some(s) = items.get(1).copied().and_then(extract_str_val) {
+                return mb_json_dumps_pretty_indent_str(val, &s);
+            }
+        }
         // Try to detect kwargs dict
         if let Some(ptr) = items.last().and_then(|v| v.as_ptr()) {
             unsafe {
@@ -161,6 +168,7 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                     let map = lock.read().unwrap();
                     let indent = map.get("indent").and_then(|v| v.as_int());
                     let sort_keys = map.get("sort_keys").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let ensure_ascii = map.get("ensure_ascii").and_then(|v| v.as_bool()).unwrap_or(true);
                     let separators = map.get("separators");
 
                     // Sort keys if requested
@@ -172,6 +180,10 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
 
                     if let Some(n) = indent {
                         return mb_json_dumps_pretty(effective_val, MbValue::from_int(n));
+                    }
+                    // String indent (e.g. indent="\t") passed as a kwarg.
+                    if let Some(s) = map.get("indent").copied().and_then(extract_str_val) {
+                        return mb_json_dumps_pretty_indent_str(effective_val, &s);
                     }
 
                     // Handle custom separators
@@ -187,7 +199,7 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                         }
                     }
 
-                    return mb_json_dumps(effective_val);
+                    return mb_json_dumps_ensure_ascii(effective_val, ensure_ascii);
                 }
             }
         }
@@ -491,7 +503,7 @@ fn format_json_custom(val: &serde_json::Value, item_sep: &str, key_sep: &str) ->
         serde_json::Value::Null => "null".to_string(),
         serde_json::Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        serde_json::Value::String(s) => format!("\"{}\"", json_escape_body(s, true)),
         serde_json::Value::Array(arr) => {
             let items: Vec<String> = arr.iter().map(|v| format_json_custom(v, item_sep, key_sep)).collect();
             format!("[{}]", items.join(item_sep))
@@ -499,7 +511,7 @@ fn format_json_custom(val: &serde_json::Value, item_sep: &str, key_sep: &str) ->
         serde_json::Value::Object(obj) => {
             let items: Vec<String> = obj.iter().map(|(k, v)| {
                 format!("\"{}\"{}{}",
-                    k.replace('\\', "\\\\").replace('"', "\\\""),
+                    json_escape_body(k, true),
                     key_sep,
                     format_json_custom(v, item_sep, key_sep))
             }).collect();
@@ -575,6 +587,24 @@ fn mbvalue_to_json(val: MbValue) -> serde_json::Value {
                         .collect();
                     serde_json::Value::Array(arr)
                 }
+                ObjData::BigInt(big) => {
+                    // Heap big integers (beyond the 48-bit inline range) must
+                    // survive json.dumps as a bare integer literal, not get
+                    // silently nulled. serde_json::Number holds i64/u64; values
+                    // beyond u64 fall back to f64 (no fixture exercises ints
+                    // that large through json, and serde_json lacks
+                    // arbitrary_precision here).
+                    use num_traits::ToPrimitive;
+                    if let Some(i) = big.to_i64() {
+                        serde_json::Value::Number(i.into())
+                    } else if let Some(u) = big.to_u64() {
+                        serde_json::Value::Number(u.into())
+                    } else {
+                        serde_json::Number::from_f64(big.to_f64().unwrap_or(0.0))
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null)
+                    }
+                }
                 _ => serde_json::Value::Null,
             }
         }
@@ -591,7 +621,15 @@ fn json_to_mbvalue(val: &serde_json::Value) -> MbValue {
         serde_json::Value::Bool(b) => MbValue::from_bool(*b),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                MbValue::from_int(i)
+                // Promote out-of-inline-range integers to a heap BigInt rather
+                // than panicking in from_int (which asserts the 48-bit range).
+                if super::super::bigint_ops::fits_inline(i) {
+                    MbValue::from_int(i)
+                } else {
+                    super::super::bigint_ops::bigint_from_i128(i as i128)
+                }
+            } else if let Some(u) = n.as_u64() {
+                super::super::bigint_ops::bigint_from_i128(u as i128)
             } else if let Some(f) = n.as_f64() {
                 MbValue::from_float(f)
             } else {
@@ -640,15 +678,46 @@ fn json_to_mbvalue(val: &serde_json::Value) -> MbValue {
 
 /// json.dumps(obj) → JSON string (matches CPython default: ", " and ": " separators)
 pub fn mb_json_dumps(val: MbValue) -> MbValue {
+    mb_json_dumps_ensure_ascii(val, true)
+}
+
+/// json.dumps honoring `ensure_ascii`. With `ensure_ascii=true` (CPython
+/// default) every non-ASCII scalar is `\uXXXX`-escaped; with `false` they are
+/// emitted verbatim as UTF-8.
+pub fn mb_json_dumps_ensure_ascii(val: MbValue, ensure_ascii: bool) -> MbValue {
+    // CPython: bytes / bytearray / set are not JSON serializable — raise
+    // TypeError eagerly (the serializer below would silently null them).
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            let bad: Option<String> = match (*ptr).data {
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => Some("bytes".to_string()),
+                ObjData::Set(_) | ObjData::FrozenSet(_) => Some("set".to_string()),
+                // A bare instance (e.g. object()) has no JSON encoding and no
+                // default= hook here — CPython raises TypeError rather than
+                // silently emitting null.
+                ObjData::Instance { ref class_name, .. } => Some(class_name.clone()),
+                _ => None,
+            };
+            if let Some(kind) = bad {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "Object of type {kind} is not JSON serializable"
+                    ))),
+                );
+                return MbValue::none();
+            }
+        }
+    }
     // CPython default uses (", ", ": ") separators — serde_json::to_string uses no spaces.
     // Special-case top-level float to handle Infinity/NaN (CPython outputs these directly).
-    let s = serialize_mbvalue_cpython(val);
+    let s = serialize_mbvalue_cpython(val, ensure_ascii);
     MbValue::from_ptr(MbObject::new_str(s))
 }
 
 /// Serialize an MbValue to JSON matching CPython's default format.
 /// Handles Infinity/NaN as non-standard JSON (CPython behavior).
-fn serialize_mbvalue_cpython(val: MbValue) -> String {
+fn serialize_mbvalue_cpython(val: MbValue, ensure_ascii: bool) -> String {
     // Handle top-level special floats (Infinity, -Infinity, NaN)
     if let Some(f) = val.as_float() {
         if f.is_infinite() {
@@ -661,23 +730,58 @@ fn serialize_mbvalue_cpython(val: MbValue) -> String {
     // For compound types, we need to recurse through the MbValue tree
     // to handle nested inf/nan. For now, delegate to serde_json for normal values.
     let json_val = mbvalue_to_json(val);
-    serialize_json_cpython(&json_val)
+    serialize_json_cpython(&json_val, ensure_ascii)
+}
+
+/// Escape a string's body the way CPython's `json` encoder does (no
+/// surrounding quotes). Always escapes the JSON control set
+/// (`"`, `\`, `\b`, `\f`, `\n`, `\r`, `\t`) and any other C0 control char as
+/// `\uXXXX`. When `ensure_ascii` (CPython default), every non-ASCII scalar is
+/// emitted as a `\uXXXX` escape — astral chars become a UTF-16 surrogate pair.
+fn json_escape_body(s: &str, ensure_ascii: bool) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if ensure_ascii && (c as u32) > 0x7f => {
+                let cp = c as u32;
+                if cp > 0xffff {
+                    // Encode as a UTF-16 surrogate pair.
+                    let v = cp - 0x10000;
+                    let hi = 0xd800 + (v >> 10);
+                    let lo = 0xdc00 + (v & 0x3ff);
+                    out.push_str(&format!("\\u{hi:04x}\\u{lo:04x}"));
+                } else {
+                    out.push_str(&format!("\\u{cp:04x}"));
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Serialize JSON matching CPython's default format: `{"key": value, "key2": value2}`
-fn serialize_json_cpython(val: &serde_json::Value) -> String {
+fn serialize_json_cpython(val: &serde_json::Value, ensure_ascii: bool) -> String {
     match val {
         serde_json::Value::Null => "null".to_string(),
         serde_json::Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        serde_json::Value::String(s) => format!("\"{}\"", json_escape_body(s, ensure_ascii)),
         serde_json::Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(serialize_json_cpython).collect();
+            let items: Vec<String> = arr.iter().map(|v| serialize_json_cpython(v, ensure_ascii)).collect();
             format!("[{}]", items.join(", "))
         }
         serde_json::Value::Object(obj) => {
             let items: Vec<String> = obj.iter()
-                .map(|(k, v)| format!("\"{}\": {}", k, serialize_json_cpython(v)))
+                .map(|(k, v)| format!("\"{}\": {}", json_escape_body(k, ensure_ascii), serialize_json_cpython(v, ensure_ascii)))
                 .collect();
             format!("{{{}}}", items.join(", "))
         }
@@ -703,6 +807,21 @@ pub fn mb_json_dumps_pretty(val: MbValue, indent: MbValue) -> MbValue {
         let s = String::from_utf8(buf).unwrap_or_else(|_| "null".to_string());
         MbValue::from_ptr(MbObject::new_str(s))
     }
+}
+
+/// json.dumps(obj, indent="<str>") — a string indent indents each nesting
+/// level with that literal string (e.g. a tab), the `json.tool --tab`
+/// equivalent. serde_json's PrettyFormatter already matches CPython's
+/// indented layout (`,\n` item separator, `": "` key separator).
+pub fn mb_json_dumps_pretty_indent_str(val: MbValue, indent: &str) -> MbValue {
+    let json_val = mbvalue_to_json(val);
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+    let mut buf = Vec::new();
+    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+    use serde::Serialize;
+    json_val.serialize(&mut ser).ok();
+    let s = String::from_utf8(buf).unwrap_or_else(|_| "null".to_string());
+    MbValue::from_ptr(MbObject::new_str(s))
 }
 
 /// json.loads(s) → Mamba value

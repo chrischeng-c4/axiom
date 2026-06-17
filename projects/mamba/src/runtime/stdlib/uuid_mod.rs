@@ -284,6 +284,50 @@ fn load(handle: MbValue) -> UuidState {
     UuidState { bytes: [0u8; 16] }
 }
 
+/// Mutate a live UUID handle's state in place (e.g. version override).
+fn with_state_mut(id: u64, f: impl FnOnce(&mut UuidState)) {
+    UUIDS.with(|m| {
+        if let Some(s) = m.borrow_mut().get_mut(&id) {
+            f(s);
+        }
+    });
+}
+
+/// uuid3/uuid5 namespace contract: CPython reads `namespace.bytes`, so a
+/// non-UUID namespace is an AttributeError. Returns false (after raising)
+/// when `namespace` is not a live UUID handle.
+fn require_uuid_namespace(namespace: MbValue) -> bool {
+    let ok = namespace
+        .as_int()
+        .is_some_and(|id| UUIDS.with(|m| m.borrow().contains_key(&(id as u64))));
+    if !ok {
+        let tn = if namespace.is_none() {
+            "NoneType"
+        } else if namespace.as_int().is_some() {
+            "int"
+        } else if namespace.is_float() {
+            "float"
+        } else if let Some(ptr) = namespace.as_ptr() {
+            unsafe {
+                match (*ptr).data {
+                    ObjData::Str(_) => "str",
+                    ObjData::Bytes(_) => "bytes",
+                    _ => "object",
+                }
+            }
+        } else {
+            "object"
+        };
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "'{tn}' object has no attribute 'bytes'"
+            ))),
+        );
+    }
+    ok
+}
+
 // ── Public surface — free fns used by both dispatchers and class.rs.
 
 /// `uuid.uuid4()` — random UUID per RFC 4122 §4.4.
@@ -403,6 +447,9 @@ fn uuid1_kwargs(arg: MbValue) -> Option<(Option<u128>, Option<u128>)> {
 
 /// `uuid.uuid3(namespace, name)` — MD5 hash of namespace.bytes + name.
 pub fn mb_uuid_uuid3(namespace: MbValue, name: MbValue) -> MbValue {
+    if !require_uuid_namespace(namespace) {
+        return MbValue::none();
+    }
     let ns = load(namespace);
     let mut hasher = Md5::new();
     hasher.update(ns.bytes);
@@ -416,6 +463,9 @@ pub fn mb_uuid_uuid3(namespace: MbValue, name: MbValue) -> MbValue {
 
 /// `uuid.uuid5(namespace, name)` — SHA-1 hash truncated to 16 bytes.
 pub fn mb_uuid_uuid5(namespace: MbValue, name: MbValue) -> MbValue {
+    if !require_uuid_namespace(namespace) {
+        return MbValue::none();
+    }
     let ns = load(namespace);
     let mut hasher = Sha1::new();
     hasher.update(ns.bytes);
@@ -521,6 +571,21 @@ fn uuid_from_kwargs_dict(arg: MbValue) -> Option<MbValue> {
         let get = |k: &str| -> Option<MbValue> {
             map.get(&DictKey::Str(k.to_string())).copied()
         };
+        // CPython: exactly ONE of hex/bytes/bytes_le/fields/int may be given.
+        let given = ["hex", "bytes", "bytes_le", "fields", "int"]
+            .iter()
+            .filter(|k| get(k).is_some())
+            .count();
+        if given > 1 {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "one of the hex, bytes, bytes_le, fields, or int arguments must be given"
+                        .to_string(),
+                )),
+            );
+            return Some(MbValue::none());
+        }
         if let Some(v) = get("hex") {
             return Some(construct_uuid_from_value(v));
         }
@@ -868,9 +933,51 @@ dispatch_binary!(dispatch_uuid5, mb_uuid_uuid5);
 /// the type-dispatching constructor.
 unsafe extern "C" fn dispatch_UUID(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let arg = a.iter().copied().find(|v| !v.is_none())
-        .unwrap_or_else(MbValue::none);
-    mb_uuid_UUID(arg)
+    // `UUID(hexstr, version=N)`: a positional value plus a kwargs dict.
+    // Validate the version range BEFORE constructing (CPython raises
+    // ValueError('illegal version number') for version ∉ 1..=5).
+    let mut version: Option<i64> = None;
+    let mut positional: Option<MbValue> = None;
+    let mut kwargs_dict: Option<MbValue> = None;
+    for v in a.iter().copied() {
+        if v.is_none() {
+            continue;
+        }
+        let is_dict = v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) });
+        if is_dict {
+            kwargs_dict = Some(v);
+        } else if positional.is_none() {
+            positional = Some(v);
+        }
+    }
+    if let Some(kw) = kwargs_dict {
+        if let Some(ptr) = kw.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let map = lock.read().unwrap();
+                    if let Some(v) = map.get("version") {
+                        version = v.as_int();
+                    }
+                }
+            }
+        }
+    }
+    if let Some(ver) = version {
+        if !(1..=5).contains(&ver) {
+            raise_value_error("illegal version number");
+            return MbValue::none();
+        }
+    }
+    // Prefer the positional form; otherwise dispatch on the kwargs dict.
+    let arg = positional.or(kwargs_dict).unwrap_or_else(MbValue::none);
+    let result = mb_uuid_UUID(arg);
+    // Apply the requested version bits to the constructed UUID.
+    if let (Some(ver), Some(id)) = (version, result.as_int()) {
+        if is_uuid_handle(id as u64) {
+            with_state_mut(id as u64, |state| apply_version(&mut state.bytes, ver as u8));
+        }
+    }
+    result
 }
 dispatch_unary!(dispatch_from_int, mb_uuid_from_int);
 // Attribute-getter dispatchers, also exposed as module-level helpers
@@ -1109,8 +1216,10 @@ mod tests {
     #[test]
     fn test_getnode_multicast_bit() {
         // CPython convention: synthetic node has multicast bit set.
-        let n = mb_uuid_getnode().as_int().unwrap();
-        assert_ne!(n & (1i64 << 40), 0);
+        // getnode() returns a BigInt when the 48-bit node exceeds the
+        // 47-bit inline range, so extract through the BigInt-aware path.
+        let n = int_arg_bigint(mb_uuid_getnode()).expect("getnode yields an int");
+        assert_ne!(n & BigInt::from(1u64 << 40), BigInt::from(0));
     }
 
     #[test]

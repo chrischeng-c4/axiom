@@ -2,51 +2,48 @@
 //!
 //! decimal module for Mamba — Python 3.12 `decimal` stdlib.
 //!
-//! Provides `Decimal(val)` constructor and arithmetic via `__add__`,
-//! `__sub__`, `__mul__`, `__truediv__`, plus `__str__` / `__repr__`
-//! readback. Used both as a module-level free function (`decimal_add`
-//! / `decimal_sub` / `decimal_mul` / `decimal_str`) and via method-style
-//! dispatch on Decimal handles (e.g. `d.add(other)`).
+//! Provides `Decimal(val)` construction, exact decimal arithmetic
+//! (`+ - * / // % **`, unary `+ - abs`), rich comparison against
+//! int/float/Fraction/Decimal, and `str()` / `repr()` / `bool()` /
+//! `int()` / `float()` readback, plus the fixture-covered method
+//! surface (`as_tuple`, `as_integer_ratio`, `quantize`, `sqrt`,
+//! `compare`, `max`/`min`, `scaleb`, `fma`, `is_nan`-family).
 //!
 //! HANDWRITE-BEGIN reason: per-section primitive vocabulary for stdlib
 //! shims (register_module + flat-args dispatch + bytes-borrowing extract
 //! + integer-handle protocol like file_io/generator/hashlib/hmac) is not
 //! yet emitted by score codegen. Tracked as part of the brute-force
 //! Phase 2 sweep; will be replaced when aw standardize lands the
-//! stdlib-shim section type. Task #24 of issue #1414 cluster — 3rd
-//! cross-family data point per the native-shim ceiling rule.
+//! stdlib-shim section type.
 //!
 //! Implementation notes:
 //!
-//! - Real arbitrary-precision decimal arithmetic via `rust_decimal::Decimal`.
-//!   The previous shim shipped an f64-backed stub that round-tripped
-//!   through `parse::<f64>()` — that is structurally wrong for `decimal`
-//!   (the entire point of `decimal` is IEEE-754-safe fixed-point work).
-//!
 //! - Decimal objects are **integer handles** (i64 IDs), backed by a
 //!   thread-local `HashMap<u64, MbDecimal>` table — same protocol used by
-//!   `hashlib_mod` (see Task #16 / `4b92719da`). Method dispatch
-//!   (`add`/`sub`/`mul`/`truediv`/`str_`) goes through
-//!   `class.rs::mb_call_method`'s integer-handle dispatch arm; `str()` /
-//!   `repr()` on a handle is currently handled by callers walking the
-//!   free function (`decimal_str`) or by the bench fixture using the
-//!   module-level helpers directly. Mamba's print/repr dispatch on int
-//!   handles falls through to the integer formatter; bench code uses
-//!   `decimal_str(d)` to read back.
+//!   `hashlib_mod` / `fractions_mod`. The dynamic binary-op entry points
+//!   in `builtins.rs` (`mb_add`, `mb_eq`, `mb_str`, ...) intercept
+//!   Decimal handles before their int fast paths (#2129 carve-out), so
+//!   `Decimal('0.1') + Decimal('0.2')` no longer adds raw handle ids.
 //!
-//! - Cross-family pair: CPython's `_decimal` wraps libmpdec (a C library).
-//!   `rust_decimal` is a pure-Rust 128-bit fixed-point implementation
-//!   with different micro-architecture. Per the native-shim ceiling
-//!   rule, expect ~8–10× wall-time band, not the 10–15× band same-family
-//!   pairs hit. Internal-time gap is treated as informational under
-//!   framing (B).
+//! - Finite payloads use `rust_decimal::Decimal` (96-bit mantissa,
+//!   scale 0..=28 — covers CPython's default 28-digit context for the
+//!   fixture-covered range). Special values (Infinity / NaN / sNaN) are
+//!   tracked alongside via `DecClass`, since `rust_decimal` cannot
+//!   represent them. Arithmetic is performed exactly on BigInt
+//!   coefficient/scale pairs and rounded half-even to 28 significant
+//!   digits (CPython's default context), so `0.1 + 0.2 == 0.3` exactly
+//!   and `1/3` matches CPython's 28-digit quotient.
 //!
-//! - Decimal has no natural bulk-work entry point (unlike hashlib's
-//!   `update(1MB)` or zlib's `compress(1MB)`); arithmetic is per-op.
-//!   The bench fixture therefore measures dispatch + arithmetic in a
-//!   tight loop. Under framing (B) this is acceptable — wall-time is
-//!   the ship gate; the per-op dispatch cost factors in but reflects
-//!   real end-user usage of `decimal`.
+//! - Cross-type comparison (int / float / Fraction) is exact rational
+//!   comparison over BigInt — `Decimal('0.1') != 0.1` holds because the
+//!   binary float is expanded to its exact fraction, not round-tripped
+//!   through shortest-repr parsing.
+//!
+//! - Known carve-outs: exponents outside rust_decimal's 0..=28 scale
+//!   window (e.g. `1E-100`, quantize/round targets above E+0) collapse
+//!   toward zero or stay unrepresented; `Decimal(float)` uses
+//!   shortest-repr conversion rather than the exact binary expansion;
+//!   context objects (getcontext/localcontext) remain presence stubs.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -57,9 +54,51 @@ use super::super::rc::{MbObject, ObjData};
 
 use rust_decimal::Decimal;
 use std::str::FromStr;
+use num_bigint::BigInt;
+use num_traits::{Signed, ToPrimitive, Zero};
 
+/// CPython default context precision (significant digits).
+const PREC: usize = 28;
+
+/// Maximum scale representable by `rust_decimal`.
+const MAX_SCALE: i64 = 28;
+
+/// Special-value classification for one Decimal handle.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DecClass {
+    Finite,
+    Inf,
+    QNan,
+    SNan,
+}
+
+/// Backing state for one Decimal handle. For `Finite`, `value` carries
+/// the payload (including negative zero via rust_decimal's sign flag)
+/// and `neg` mirrors its sign; for specials, `neg` is the sign and
+/// `value` is unused (zero).
+#[derive(Clone, Copy)]
 struct MbDecimal {
+    class: DecClass,
     value: Decimal,
+    neg: bool,
+}
+
+impl MbDecimal {
+    fn finite(value: Decimal) -> Self {
+        MbDecimal { class: DecClass::Finite, neg: value.is_sign_negative(), value }
+    }
+    fn inf(neg: bool) -> Self {
+        MbDecimal { class: DecClass::Inf, value: Decimal::ZERO, neg }
+    }
+    fn qnan() -> Self {
+        MbDecimal { class: DecClass::QNan, value: Decimal::ZERO, neg: false }
+    }
+    fn snan() -> Self {
+        MbDecimal { class: DecClass::SNan, value: Decimal::ZERO, neg: false }
+    }
+    fn is_nan(&self) -> bool {
+        matches!(self.class, DecClass::QNan | DecClass::SNan)
+    }
 }
 
 /// Base = 1<<46. Owns [1<<46, (1<<47) - 1] (~70.4T ids) — the last safe
@@ -83,10 +122,14 @@ fn alloc_decimal_id() -> u64 {
     })
 }
 
-/// Class.rs `mb_call_method` / `mb_getattr` calls this to decide whether
-/// to route `int.method()` / `int.attr` into the decimal protocol or
-/// fall through to the generic primitive int methods.
+/// Class.rs `mb_call_method` / `mb_getattr` and the builtins binary-op
+/// hooks call this to decide whether to route an int value through the
+/// decimal protocol. The range guard keeps primitive-int hot paths to a
+/// single compare before the table probe.
 pub fn is_decimal_handle(id: u64) -> bool {
+    if id < DECIMAL_HANDLE_BASE {
+        return false;
+    }
     DECIMAL_IDS.with(|s| s.borrow().contains(&id))
 }
 
@@ -129,19 +172,30 @@ pub fn release_handle(id: u64) -> bool {
     true
 }
 
-fn make_handle(value: Decimal) -> MbValue {
+fn make_state_handle(state: MbDecimal) -> MbValue {
     let id = alloc_decimal_id();
     DECIMALS.with(|m| {
-        m.borrow_mut().insert(id, MbDecimal { value });
+        m.borrow_mut().insert(id, state);
     });
     DECIMAL_IDS.with(|s| { s.borrow_mut().insert(id); });
     MbValue::from_int(id as i64)
 }
 
-fn get_decimal(handle: MbValue) -> Option<Decimal> {
+fn make_handle(value: Decimal) -> MbValue {
+    make_state_handle(MbDecimal::finite(value))
+}
+
+fn get_state(handle: MbValue) -> Option<MbDecimal> {
     handle.as_int().and_then(|id| {
-        DECIMALS.with(|m| m.borrow().get(&(id as u64)).map(|d| d.value))
+        if (id as u64) < DECIMAL_HANDLE_BASE {
+            return None;
+        }
+        DECIMALS.with(|m| m.borrow().get(&(id as u64)).copied())
     })
+}
+
+fn get_decimal(handle: MbValue) -> Option<Decimal> {
+    get_state(handle).map(|d| d.value)
 }
 
 /// Borrow `&str` from an MbValue holding a string. Empty for other shapes.
@@ -157,78 +211,37 @@ fn with_str<R>(val: MbValue, f: impl FnOnce(&str) -> R) -> R {
     f("")
 }
 
-/// Best-effort conversion of an MbValue into a `Decimal`.
-///
-/// Accepts:
-/// - already-allocated Decimal handles (int id pointing into the table)
-/// - integer literals via `as_int_pyint`
-/// - float literals via `as_float` (round-trips through string for
-///   IEEE-754-correct conversion — `Decimal::from_f64_retain` keeps
-///   the binary float drift, which is the trap `decimal` exists to
-///   avoid)
-/// - string literals — the standard CPython entry point
-///
-/// Returns `Decimal::ZERO` on parse failure, matching the existing stub's
-/// silent-fallback shape.
-fn coerce_decimal(val: MbValue) -> Decimal {
-    // 1. Already-allocated handle?
-    if let Some(d) = get_decimal(val) {
-        return d;
-    }
-    // 2. Plain pyint?
-    if let Some(i) = val.as_int_pyint() {
-        return Decimal::from(i);
-    }
-    // 3. Plain float? Route through string to honour `decimal`'s semantic
-    //    intent — even though CPython's `Decimal(1.1)` keeps the binary
-    //    drift, we mirror that here via `from_f64_retain`.
-    if let Some(f) = val.as_float() {
-        return Decimal::try_from(f).unwrap_or(Decimal::ZERO);
-    }
-    // 4. String?
-    let mut out = Decimal::ZERO;
-    with_str(val, |s| {
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            if let Ok(d) = Decimal::from_str(trimmed) {
-                out = d;
-            } else if let Ok(d) = Decimal::from_scientific(trimmed) {
-                out = d;
-            }
-        }
-    });
-    out
-}
-
-/// Recognise the CPython special-value coefficient strings that `decimal`
-/// accepts as valid `Decimal` literals even though `rust_decimal` cannot
-/// represent them (NaN / sNaN / Infinity). Mirrors CPython's grammar:
-/// an optional sign, then one of `inf`, `infinity`, `nan`, `nan<digits>`,
-/// `snan`, `snan<digits>` (case-insensitive). These must NOT raise
-/// `InvalidOperation` in the constructor — only genuinely malformed
-/// coefficients do.
-fn is_special_decimal_str(s: &str) -> bool {
+/// Parse CPython special-value literals (Infinity / NaN / sNaN, optional
+/// sign and NaN payload). Returns the matching state when recognised.
+fn parse_special_decimal_str(s: &str) -> Option<MbDecimal> {
     let mut t = s.trim();
     if t.is_empty() {
-        return false;
+        return None;
     }
-    if let Some(rest) = t.strip_prefix(['+', '-']) {
+    let mut neg = false;
+    if let Some(rest) = t.strip_prefix('-') {
+        neg = true;
+        t = rest;
+    } else if let Some(rest) = t.strip_prefix('+') {
         t = rest;
     }
     let lower = t.to_ascii_lowercase();
     if lower == "inf" || lower == "infinity" {
-        return true;
+        return Some(MbDecimal::inf(neg));
     }
-    // nan / snan optionally followed by a payload of decimal digits.
-    let payload = if let Some(p) = lower.strip_prefix("snan") {
-        Some(p)
+    let (payload, signaling) = if let Some(p) = lower.strip_prefix("snan") {
+        (p, true)
+    } else if let Some(p) = lower.strip_prefix("nan") {
+        (p, false)
     } else {
-        lower.strip_prefix("nan")
+        return None;
     };
-    if let Some(p) = payload {
-        return p.chars().all(|c| c.is_ascii_digit());
+    if payload.chars().all(|c| c.is_ascii_digit()) {
+        let mut st = if signaling { MbDecimal::snan() } else { MbDecimal::qnan() };
+        st.neg = neg;
+        return Some(st);
     }
-    false
+    None
 }
 
 /// Raise `decimal.InvalidOperation` and return `None`. The JIT checks the
@@ -238,6 +251,22 @@ fn is_special_decimal_str(s: &str) -> bool {
 fn raise_invalid_operation(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("InvalidOperation".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn raise_division_by_zero(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("DivisionByZero".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn raise_overflow(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("Overflow".to_string())),
         MbValue::from_ptr(MbObject::new_str(msg.to_string())),
     );
     MbValue::none()
@@ -259,10 +288,1070 @@ fn raise_value_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+// ── Exact coefficient/scale arithmetic core ─────────────────────────────
+
+/// `10^n` as BigInt.
+fn pow10(n: u32) -> BigInt {
+    let mut p = BigInt::from(1u32);
+    let ten = BigInt::from(10u32);
+    for _ in 0..n {
+        p *= &ten;
+    }
+    p
+}
+
+/// Significant-digit count of |c| (0 counts as 1 digit).
+fn digit_count(c: &BigInt) -> usize {
+    let s = c.magnitude().to_string();
+    s.len()
+}
+
+/// Round `|c|` by dropping `drop` trailing decimal digits, half-even.
+fn round_half_even_abs(c_abs: &BigInt, drop: u32) -> BigInt {
+    if drop == 0 {
+        return c_abs.clone();
+    }
+    let p = pow10(drop);
+    let q = c_abs / &p;
+    let r = c_abs % &p;
+    let twice = &r * 2u32;
+    if twice > p {
+        q + 1u32
+    } else if twice < p {
+        q
+    } else if (&q % 2u32).is_zero() {
+        q
+    } else {
+        q + 1u32
+    }
+}
+
+/// Rounding modes for `quantize` / `round_at`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rounding {
+    Down,
+    Up,
+    HalfUp,
+    HalfDown,
+    HalfEven,
+    Floor,
+    Ceiling,
+    ZeroFiveUp,
+}
+
+fn rounding_from_str(s: &str) -> Option<Rounding> {
+    Some(match s {
+        "ROUND_DOWN" => Rounding::Down,
+        "ROUND_UP" => Rounding::Up,
+        "ROUND_HALF_UP" => Rounding::HalfUp,
+        "ROUND_HALF_DOWN" => Rounding::HalfDown,
+        "ROUND_HALF_EVEN" => Rounding::HalfEven,
+        "ROUND_FLOOR" => Rounding::Floor,
+        "ROUND_CEILING" => Rounding::Ceiling,
+        "ROUND_05UP" => Rounding::ZeroFiveUp,
+        _ => return None,
+    })
+}
+
+/// Round `|c|` by dropping `drop` trailing digits under `mode`, where
+/// `neg` is the sign of the full value (modes FLOOR/CEILING need it).
+fn round_abs_with_mode(c_abs: &BigInt, drop: u32, mode: Rounding, neg: bool) -> BigInt {
+    if drop == 0 {
+        return c_abs.clone();
+    }
+    let p = pow10(drop);
+    let q = c_abs / &p;
+    let r = c_abs % &p;
+    if r.is_zero() {
+        return q;
+    }
+    let twice = &r * 2u32;
+    let round_up = match mode {
+        Rounding::Down => false,
+        Rounding::Up => true,
+        Rounding::HalfUp => twice >= p,
+        Rounding::HalfDown => twice > p,
+        Rounding::HalfEven => {
+            twice > p || (twice == p && !(&q % 2u32).is_zero())
+        }
+        Rounding::Floor => neg,
+        Rounding::Ceiling => !neg,
+        Rounding::ZeroFiveUp => {
+            let last = (&q % 10u32).to_u32().unwrap_or(0);
+            last == 0 || last == 5
+        }
+    };
+    if round_up { q + 1u32 } else { q }
+}
+
+/// Build a finite `MbDecimal` from an exact signed coefficient and scale
+/// (value = c * 10^-s), rounding half-even to 28 significant digits and
+/// clamping into rust_decimal's representable window. Returns `Err(())`
+/// only when the magnitude is too large to represent after rounding.
+fn finite_from_coeff_scale(c: BigInt, s: i64) -> Result<MbDecimal, ()> {
+    let neg = c.is_negative();
+    let mut c_abs: BigInt = c.magnitude().to_owned().into();
+    let mut s = s;
+    // Negative scale → fold the zeros into the coefficient.
+    if s < 0 {
+        c_abs = &c_abs * pow10((-s) as u32);
+        s = 0;
+    }
+    // Round to context precision.
+    let digits = digit_count(&c_abs);
+    if digits > PREC {
+        let drop = (digits - PREC) as i64;
+        if drop > s {
+            // Rounding would push the exponent above 0 — magnitude beyond
+            // rust_decimal's window (>= 1e28 integer part).
+            return Err(());
+        }
+        c_abs = round_half_even_abs(&c_abs, drop as u32);
+        s -= drop;
+    }
+    // Clamp the scale into rust_decimal's window (values below ~1e-28
+    // collapse toward zero — documented carve-out).
+    if s > MAX_SCALE {
+        let drop = (s - MAX_SCALE) as u32;
+        c_abs = round_half_even_abs(&c_abs, drop);
+        s = MAX_SCALE;
+    }
+    // Rounding may have produced a 29-digit power of ten; re-check.
+    if digit_count(&c_abs) > PREC {
+        if s >= 1 {
+            c_abs = round_half_even_abs(&c_abs, 1);
+            s -= 1;
+        } else {
+            return Err(());
+        }
+    }
+    let mag: BigInt = c_abs;
+    let Some(i) = mag.to_i128() else { return Err(()) };
+    let signed = if neg { -i } else { i };
+    match Decimal::try_from_i128_with_scale(signed, s as u32) {
+        Ok(mut d) => {
+            if neg && d.is_zero() {
+                d.set_sign_negative(true);
+            }
+            Ok(MbDecimal::finite(d))
+        }
+        Err(_) => Err(()),
+    }
+}
+
+/// Decompose a finite payload into (signed coefficient, scale).
+fn coeff_scale(d: &Decimal) -> (BigInt, i64) {
+    (BigInt::from(d.mantissa()), d.scale() as i64)
+}
+
+// ── Operand classification (shared with the builtins comparison hooks) ──
+
+/// Numeric operand normal form for exact comparison.
+enum NumOperand {
+    Rational(BigInt, BigInt), // num / den, den > 0
+    Inf(bool),                // negative?
+    Nan,
+}
+
+/// Exact rational expansion of a finite f64 (mantissa × 2^exp).
+fn f64_to_rational(f: f64) -> (BigInt, BigInt) {
+    let bits = f.to_bits();
+    let sign = (bits >> 63) & 1 == 1;
+    let exp_field = ((bits >> 52) & 0x7FF) as i64;
+    let frac = bits & 0x000F_FFFF_FFFF_FFFF;
+    let (mant, e) = if exp_field == 0 {
+        (frac, -1074i64)
+    } else {
+        (frac | (1u64 << 52), exp_field - 1075)
+    };
+    let mut num = BigInt::from(mant);
+    let mut den = BigInt::from(1u32);
+    if e >= 0 {
+        num <<= e as usize;
+    } else {
+        den <<= (-e) as usize;
+    }
+    if sign {
+        num = -num;
+    }
+    (num, den)
+}
+
+/// Classify an MbValue as a numeric operand for exact comparison.
+/// Handles Decimal handles, Fraction handles, bool/int/BigInt, float.
+/// Complex with zero imaginary part participates via its real float.
+fn classify_numeric(v: MbValue) -> Option<NumOperand> {
+    if let Some(st) = get_state(v) {
+        return Some(match st.class {
+            DecClass::Finite => {
+                let (c, s) = coeff_scale(&st.value);
+                NumOperand::Rational(c, pow10(s as u32))
+            }
+            DecClass::Inf => NumOperand::Inf(st.neg),
+            DecClass::QNan | DecClass::SNan => NumOperand::Nan,
+        });
+    }
+    if let Some(id) = v.as_int() {
+        let idu = id as u64;
+        if idu >= super::super::integer_handle_registry::HANDLE_MIN_ID {
+            if let Some((n, d)) = super::fractions_mod::handle_num_den(idu) {
+                return Some(NumOperand::Rational(BigInt::from(n), BigInt::from(d)));
+            }
+        }
+    }
+    if let Some(b) = v.as_bool() {
+        return Some(NumOperand::Rational(BigInt::from(b as i64), BigInt::from(1u32)));
+    }
+    if let Some(i) = v.as_int() {
+        return Some(NumOperand::Rational(BigInt::from(i), BigInt::from(1u32)));
+    }
+    if let Some(f) = v.as_float() {
+        if f.is_nan() {
+            return Some(NumOperand::Nan);
+        }
+        if f.is_infinite() {
+            return Some(NumOperand::Inf(f < 0.0));
+        }
+        let (n, d) = f64_to_rational(f);
+        return Some(NumOperand::Rational(n, d));
+    }
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::BigInt(b) => {
+                    return Some(NumOperand::Rational(b.clone(), BigInt::from(1u32)));
+                }
+                ObjData::Complex(re, im) => {
+                    if *im == 0.0 && re.is_finite() {
+                        let (n, d) = f64_to_rational(*re);
+                        return Some(NumOperand::Rational(n, d));
+                    }
+                    return None;
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+fn cmp_operands(a: &NumOperand, b: &NumOperand) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (NumOperand::Nan, _) | (_, NumOperand::Nan) => None,
+        (NumOperand::Inf(an), NumOperand::Inf(bn)) => Some(if an == bn {
+            Ordering::Equal
+        } else if *an {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }),
+        (NumOperand::Inf(an), _) => Some(if *an { Ordering::Less } else { Ordering::Greater }),
+        (_, NumOperand::Inf(bn)) => Some(if *bn { Ordering::Greater } else { Ordering::Less }),
+        (NumOperand::Rational(an, ad), NumOperand::Rational(bn, bd)) => {
+            Some((an * bd).cmp(&(bn * ad)))
+        }
+    }
+}
+
+/// Shared `==` hook for Decimal/Fraction handles in `mb_values_eq`.
+/// Returns `None` when the other operand is not numeric (caller treats
+/// the pair as unequal, matching CPython's `False`).
+pub fn mb_numeric_handle_eq(a: MbValue, b: MbValue) -> Option<bool> {
+    let oa = classify_numeric(a)?;
+    let ob = classify_numeric(b)?;
+    match (&oa, &ob) {
+        (NumOperand::Nan, _) | (_, NumOperand::Nan) => Some(false),
+        _ => Some(cmp_operands(&oa, &ob) == Some(std::cmp::Ordering::Equal)),
+    }
+}
+
+/// Shared `<` hook for Decimal/Fraction handles in `mb_values_lt`.
+/// Returns `None` for non-numeric operands; raises `InvalidOperation`
+/// (and yields `false`) when NaN participates in an ordering, matching
+/// CPython.
+pub fn mb_numeric_handle_lt(a: MbValue, b: MbValue) -> Option<bool> {
+    let oa = classify_numeric(a)?;
+    let ob = classify_numeric(b)?;
+    if matches!(oa, NumOperand::Nan) || matches!(ob, NumOperand::Nan) {
+        raise_invalid_operation("comparison involving NaN");
+        return Some(false);
+    }
+    Some(cmp_operands(&oa, &ob) == Some(std::cmp::Ordering::Less))
+}
+
+/// Integral-and-fits-i64 readback used by the `hash()` hook so that
+/// `hash(Decimal('2'))`/`hash(Fraction(2,1))` match `hash(2)`.
+pub fn mb_numeric_handle_integral_i64(v: MbValue) -> Option<i64> {
+    match classify_numeric(v)? {
+        NumOperand::Rational(n, d) => {
+            let (q, r) = (&n / &d, &n % &d);
+            if r.is_zero() { q.to_i64() } else { None }
+        }
+        _ => None,
+    }
+}
+
+/// Exact f64 readback: returns `Some(f)` when the handle's value is
+/// exactly representable as that f64 (so the `hash()` hook can delegate
+/// to the float hash and stay consistent with `==`).
+pub fn mb_numeric_handle_exact_f64(v: MbValue) -> Option<f64> {
+    let st = get_state(v);
+    let approx: f64 = if let Some(st) = st {
+        match st.class {
+            DecClass::Finite => st.value.to_f64()?,
+            DecClass::Inf => {
+                return Some(if st.neg { f64::NEG_INFINITY } else { f64::INFINITY });
+            }
+            _ => return None,
+        }
+    } else if let Some(id) = v.as_int() {
+        let (n, d) = super::fractions_mod::handle_num_den(id as u64)?;
+        n as f64 / d as f64
+    } else {
+        return None;
+    };
+    if !approx.is_finite() {
+        return None;
+    }
+    let (fa, fd) = f64_to_rational(approx);
+    match classify_numeric(v)? {
+        NumOperand::Rational(n, d) => {
+            if n * fd == fa * d { Some(approx) } else { None }
+        }
+        _ => None,
+    }
+}
+
+/// Decimal handle → exact (numerator, denominator) i64 pair when both
+/// fit; used by `fractions.Fraction(Decimal(...))` construction.
+pub fn decimal_to_num_den(v: MbValue) -> Option<(i64, i64)> {
+    let st = get_state(v)?;
+    if st.class != DecClass::Finite {
+        return None;
+    }
+    let (c, s) = coeff_scale(&st.value);
+    let den = pow10(s as u32);
+    let g = gcd_big(&c, &den);
+    let n = (&c / &g).to_i64()?;
+    let d = (&den / &g).to_i64()?;
+    Some((n, d))
+}
+
+fn gcd_big(a: &BigInt, b: &BigInt) -> BigInt {
+    let mut a = a.magnitude().to_owned();
+    let mut b = b.magnitude().to_owned();
+    while !b.is_zero() {
+        let t = b.clone();
+        b = &a % &b;
+        a = t;
+    }
+    BigInt::from(a)
+}
+
+// ── Arithmetic operand coercion ──────────────────────────────────────────
+
+/// Result of coercing an arithmetic operand: either a Decimal state or
+/// the Python type name of the unsupported operand (for the TypeError).
+fn arith_operand(v: MbValue) -> Result<MbDecimal, &'static str> {
+    if let Some(st) = get_state(v) {
+        return Ok(st);
+    }
+    if let Some(id) = v.as_int() {
+        let idu = id as u64;
+        if idu >= super::super::integer_handle_registry::HANDLE_MIN_ID
+            && super::fractions_mod::is_fraction_handle(idu)
+        {
+            return Err("fractions.Fraction");
+        }
+        // Plain int (bool handled below by as_int_pyint? as_int excludes bool)
+        return Ok(MbDecimal::finite(Decimal::from(id)));
+    }
+    if let Some(b) = v.as_bool() {
+        return Ok(MbDecimal::finite(Decimal::from(b as i64)));
+    }
+    if v.is_float() {
+        return Err("float");
+    }
+    if v.is_none() {
+        return Err("NoneType");
+    }
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::BigInt(b) => {
+                    return finite_from_coeff_scale(b.clone(), 0).map_err(|_| "int");
+                }
+                ObjData::Complex(..) => return Err("complex"),
+                ObjData::Str(_) => return Err("str"),
+                ObjData::List(_) => return Err("list"),
+                ObjData::Tuple(_) => return Err("tuple"),
+                ObjData::Dict(_) => return Err("dict"),
+                _ => return Err("object"),
+            }
+        }
+    }
+    Err("object")
+}
+
+fn raise_unsupported_operand(op: &str, other: &str) -> MbValue {
+    raise_type_error(&format!(
+        "unsupported operand type(s) for {op}: 'decimal.Decimal' and '{other}'"
+    ))
+}
+
+/// Coerce both operands for a binary arithmetic op; raises TypeError and
+/// returns `None` if either side is unsupported.
+fn arith_pair(op: &str, a: MbValue, b: MbValue) -> Option<(MbDecimal, MbDecimal)> {
+    let lhs = match arith_operand(a) {
+        Ok(d) => d,
+        Err(name) => {
+            raise_unsupported_operand(op, name);
+            return None;
+        }
+    };
+    let rhs = match arith_operand(b) {
+        Ok(d) => d,
+        Err(name) => {
+            raise_unsupported_operand(op, name);
+            return None;
+        }
+    };
+    if lhs.class == DecClass::SNan || rhs.class == DecClass::SNan {
+        raise_invalid_operation("sNaN operand");
+        return None;
+    }
+    Some((lhs, rhs))
+}
+
+fn overflow_result() -> MbValue {
+    raise_overflow("above Emax")
+}
+
+// ── Public arithmetic surface ────────────────────────────────────────────
+
+/// `a + b` — exact addition, rounded to 28 significant digits.
+pub fn mb_decimal_add(a: MbValue, b: MbValue) -> MbValue {
+    let Some((lhs, rhs)) = arith_pair("+", a, b) else { return MbValue::none() };
+    if lhs.is_nan() || rhs.is_nan() {
+        return make_state_handle(MbDecimal::qnan());
+    }
+    match (lhs.class, rhs.class) {
+        (DecClass::Inf, DecClass::Inf) => {
+            if lhs.neg == rhs.neg {
+                make_state_handle(MbDecimal::inf(lhs.neg))
+            } else {
+                raise_invalid_operation("-INF + INF")
+            }
+        }
+        (DecClass::Inf, _) => make_state_handle(MbDecimal::inf(lhs.neg)),
+        (_, DecClass::Inf) => make_state_handle(MbDecimal::inf(rhs.neg)),
+        _ => {
+            let (ca, sa) = coeff_scale(&lhs.value);
+            let (cb, sb) = coeff_scale(&rhs.value);
+            let s = sa.max(sb);
+            let ca = ca * pow10((s - sa) as u32);
+            let cb = cb * pow10((s - sb) as u32);
+            match finite_from_coeff_scale(ca + cb, s) {
+                Ok(st) => make_state_handle(st),
+                Err(()) => overflow_result(),
+            }
+        }
+    }
+}
+
+/// `a - b`.
+pub fn mb_decimal_sub(a: MbValue, b: MbValue) -> MbValue {
+    let Some((lhs, rhs)) = arith_pair("-", a, b) else { return MbValue::none() };
+    if lhs.is_nan() || rhs.is_nan() {
+        return make_state_handle(MbDecimal::qnan());
+    }
+    match (lhs.class, rhs.class) {
+        (DecClass::Inf, DecClass::Inf) => {
+            if lhs.neg != rhs.neg {
+                make_state_handle(MbDecimal::inf(lhs.neg))
+            } else {
+                raise_invalid_operation("INF - INF")
+            }
+        }
+        (DecClass::Inf, _) => make_state_handle(MbDecimal::inf(lhs.neg)),
+        (_, DecClass::Inf) => make_state_handle(MbDecimal::inf(!rhs.neg)),
+        _ => {
+            let (ca, sa) = coeff_scale(&lhs.value);
+            let (cb, sb) = coeff_scale(&rhs.value);
+            let s = sa.max(sb);
+            let ca = ca * pow10((s - sa) as u32);
+            let cb = cb * pow10((s - sb) as u32);
+            match finite_from_coeff_scale(ca - cb, s) {
+                Ok(st) => make_state_handle(st),
+                Err(()) => overflow_result(),
+            }
+        }
+    }
+}
+
+/// `a * b`.
+pub fn mb_decimal_mul(a: MbValue, b: MbValue) -> MbValue {
+    let Some((lhs, rhs)) = arith_pair("*", a, b) else { return MbValue::none() };
+    if lhs.is_nan() || rhs.is_nan() {
+        return make_state_handle(MbDecimal::qnan());
+    }
+    let sign = lhs_sign(&lhs) != lhs_sign(&rhs);
+    match (lhs.class, rhs.class) {
+        (DecClass::Inf, _) | (_, DecClass::Inf) => {
+            let other_zero = (lhs.class == DecClass::Finite && lhs.value.is_zero())
+                || (rhs.class == DecClass::Finite && rhs.value.is_zero());
+            if other_zero {
+                raise_invalid_operation("0 * INF")
+            } else {
+                make_state_handle(MbDecimal::inf(sign))
+            }
+        }
+        _ => {
+            let (ca, sa) = coeff_scale(&lhs.value);
+            let (cb, sb) = coeff_scale(&rhs.value);
+            match finite_from_coeff_scale(ca * cb, sa + sb) {
+                Ok(mut st) => {
+                    if st.value.is_zero() {
+                        st.value.set_sign_negative(sign);
+                        st.neg = sign;
+                    }
+                    make_state_handle(st)
+                }
+                Err(()) => overflow_result(),
+            }
+        }
+    }
+}
+
+fn lhs_sign(d: &MbDecimal) -> bool {
+    match d.class {
+        DecClass::Finite => d.value.is_sign_negative(),
+        _ => d.neg,
+    }
+}
+
+/// Exact division core on (coeff, scale) pairs implementing the spec's
+/// divide: exact results take the exponent closest to the ideal exponent
+/// (ea - eb); inexact results round half-even to 28 significant digits.
+fn divide_finite(lhs: &Decimal, rhs: &Decimal) -> Result<MbDecimal, ()> {
+    let (ca, sa) = coeff_scale(lhs);
+    let (cb, sb) = coeff_scale(rhs);
+    let neg = (ca.is_negative()) != (cb.is_negative());
+    let ca_abs: BigInt = ca.magnitude().to_owned().into();
+    let cb_abs: BigInt = cb.magnitude().to_owned().into();
+    let ideal_exp = sb - sa; // in scale terms: ideal scale = sa - sb
+    let ideal_scale = -ideal_exp;
+    if ca_abs.is_zero() {
+        // 0 / x → 0 with the ideal scale (clamped).
+        let s = ideal_scale.clamp(0, MAX_SCALE);
+        let mut st = finite_from_coeff_scale(BigInt::from(0u32), s)?;
+        if neg {
+            st.value.set_sign_negative(true);
+            st.neg = true;
+        }
+        return Ok(st);
+    }
+    // Scale the dividend so the integer quotient has at least PREC+1 digits.
+    let da = digit_count(&ca_abs) as i64;
+    let db = digit_count(&cb_abs) as i64;
+    let k = (db + PREC as i64 + 1 - da).max(0);
+    let scaled = &ca_abs * pow10(k as u32);
+    let mut q = &scaled / &cb_abs;
+    let r = &scaled % &cb_abs;
+    // exponent of q (power-of-ten terms): exp = -sa - k + sb
+    if r.is_zero() {
+        // Exact: bring the exponent as close to ideal as possible.
+        let mut exp = -sa - k + sb;
+        // Remove trailing zeros while below the ideal exponent.
+        while exp < ideal_exp && (&q % 10u32).is_zero() {
+            q /= 10u32;
+            exp += 1;
+        }
+        // Pad toward the ideal exponent while staying within precision.
+        while exp > ideal_exp && digit_count(&q) < PREC {
+            q *= 10u32;
+            exp -= 1;
+        }
+        let signed = if neg { -q } else { q };
+        return finite_from_coeff_scale(signed, -exp);
+    }
+    // Inexact: round half-even at PREC digits. The live remainder `r` is
+    // nonzero (sticky), so an exact midpoint cannot occur: dropped digits
+    // at exactly half round up, anything below half stays down.
+    let extra = (digit_count(&q) as i64 - PREC as i64).max(0) as u32;
+    let mut exp = -sa - k + sb + extra as i64;
+    let mut rounded = if extra > 0 {
+        let p = pow10(extra);
+        let qq = &q / &p;
+        let rem = &q % &p;
+        let twice = &rem * 2u32;
+        if twice >= p { qq + 1u32 } else { qq }
+    } else {
+        q
+    };
+    // Re-normalize if rounding produced PREC+1 digits (999..9 → 1000..0).
+    if digit_count(&rounded) > PREC {
+        rounded = round_half_even_abs(&rounded, 1);
+        exp += 1;
+    }
+    let signed = if neg { -rounded } else { rounded };
+    finite_from_coeff_scale(signed, -exp)
+}
+
+/// `a / b`. Raises `DivisionByZero` on zero divisor (CPython default
+/// context traps it).
+pub fn mb_decimal_truediv(a: MbValue, b: MbValue) -> MbValue {
+    let Some((lhs, rhs)) = arith_pair("/", a, b) else { return MbValue::none() };
+    if lhs.is_nan() || rhs.is_nan() {
+        return make_state_handle(MbDecimal::qnan());
+    }
+    let sign = lhs_sign(&lhs) != lhs_sign(&rhs);
+    match (lhs.class, rhs.class) {
+        (DecClass::Inf, DecClass::Inf) => raise_invalid_operation("INF / INF"),
+        (DecClass::Inf, _) => make_state_handle(MbDecimal::inf(sign)),
+        (_, DecClass::Inf) => make_state_handle(MbDecimal::finite(Decimal::ZERO)),
+        _ => {
+            if rhs.value.is_zero() {
+                if lhs.value.is_zero() {
+                    return raise_invalid_operation("0 / 0");
+                }
+                return raise_division_by_zero("x / 0");
+            }
+            match divide_finite(&lhs.value, &rhs.value) {
+                Ok(st) => make_state_handle(st),
+                Err(()) => overflow_result(),
+            }
+        }
+    }
+}
+
+/// Truncating integer division and remainder on finite payloads —
+/// `decimal`'s `//` and `%` truncate toward zero (remainder keeps the
+/// dividend's sign), unlike Python int floor semantics.
+fn divmod_finite(lhs: &Decimal, rhs: &Decimal) -> Option<(MbDecimal, MbDecimal)> {
+    let (ca, sa) = coeff_scale(lhs);
+    let (cb, sb) = coeff_scale(rhs);
+    let s = sa.max(sb);
+    let ca = ca * pow10((s - sa) as u32);
+    let cb = cb * pow10((s - sb) as u32);
+    let q = &ca / &cb; // BigInt division truncates toward zero
+    let r = &ca % &cb;
+    let q_st = finite_from_coeff_scale(q, 0).ok()?;
+    let r_st = finite_from_coeff_scale(r, s).ok()?;
+    Some((q_st, r_st))
+}
+
+/// `a // b` — truncating division to an integral Decimal.
+pub fn mb_decimal_floordiv(a: MbValue, b: MbValue) -> MbValue {
+    let Some((lhs, rhs)) = arith_pair("//", a, b) else { return MbValue::none() };
+    if lhs.is_nan() || rhs.is_nan() {
+        return make_state_handle(MbDecimal::qnan());
+    }
+    match (lhs.class, rhs.class) {
+        (DecClass::Inf, DecClass::Inf) => raise_invalid_operation("INF // INF"),
+        (DecClass::Inf, _) => {
+            make_state_handle(MbDecimal::inf(lhs.neg != lhs_sign(&rhs)))
+        }
+        (_, DecClass::Inf) => make_state_handle(MbDecimal::finite(Decimal::ZERO)),
+        _ => {
+            if rhs.value.is_zero() {
+                return raise_division_by_zero("x // 0");
+            }
+            match divmod_finite(&lhs.value, &rhs.value) {
+                Some((q, _)) => make_state_handle(q),
+                None => overflow_result(),
+            }
+        }
+    }
+}
+
+/// `a % b` — remainder with the dividend's sign.
+pub fn mb_decimal_rem(a: MbValue, b: MbValue) -> MbValue {
+    let Some((lhs, rhs)) = arith_pair("%", a, b) else { return MbValue::none() };
+    if lhs.is_nan() || rhs.is_nan() {
+        return make_state_handle(MbDecimal::qnan());
+    }
+    match (lhs.class, rhs.class) {
+        (DecClass::Inf, _) => raise_invalid_operation("INF % x"),
+        (_, DecClass::Inf) => make_state_handle(lhs),
+        _ => {
+            if rhs.value.is_zero() {
+                return raise_invalid_operation("x % 0");
+            }
+            match divmod_finite(&lhs.value, &rhs.value) {
+                Some((_, r)) => make_state_handle(r),
+                None => overflow_result(),
+            }
+        }
+    }
+}
+
+/// `divmod(a, b)` — `(a // b, a % b)` as a tuple.
+pub fn mb_decimal_divmod(a: MbValue, b: MbValue) -> MbValue {
+    let q = mb_decimal_floordiv(a, b);
+    if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+        return MbValue::none();
+    }
+    let r = mb_decimal_rem(a, b);
+    MbValue::from_ptr(MbObject::new_tuple(vec![q, r]))
+}
+
+/// `a ** b` — integral exponents only (fixture-covered slice).
+pub fn mb_decimal_pow(a: MbValue, b: MbValue) -> MbValue {
+    let Some((lhs, rhs)) = arith_pair("**", a, b) else { return MbValue::none() };
+    if lhs.is_nan() || rhs.is_nan() {
+        return make_state_handle(MbDecimal::qnan());
+    }
+    if lhs.class != DecClass::Finite || rhs.class != DecClass::Finite {
+        return raise_invalid_operation("power with infinite operand");
+    }
+    // The exponent must be integral.
+    let (cb, sb) = coeff_scale(&rhs.value);
+    let den = pow10(sb as u32);
+    if !(&cb % &den).is_zero() {
+        return raise_invalid_operation("x ** (non-integer)");
+    }
+    let n = match (&cb / &den).to_i64() {
+        Some(n) => n,
+        None => return raise_invalid_operation("exponent too large"),
+    };
+    if n == 0 {
+        return make_handle(Decimal::ONE);
+    }
+    let (ca, sa) = coeff_scale(&lhs.value);
+    if ca.is_zero() && n < 0 {
+        return raise_division_by_zero("0 ** negative");
+    }
+    let abs_n = n.unsigned_abs();
+    // Guard against runaway magnitude: estimate result digit count.
+    let est_digits = (digit_count(&ca) as u64).saturating_mul(abs_n);
+    if est_digits > 50_000 {
+        return raise_invalid_operation("exponent too large for this build");
+    }
+    let mut coeff = BigInt::from(1u32);
+    for _ in 0..abs_n {
+        coeff *= &ca;
+    }
+    let scale = sa.saturating_mul(abs_n as i64);
+    if n > 0 {
+        match finite_from_coeff_scale(coeff, scale) {
+            Ok(st) => make_state_handle(st),
+            Err(()) => overflow_result(),
+        }
+    } else {
+        // 1 / (lhs ** |n|) via the exact division core.
+        let base = match finite_from_coeff_scale(coeff, scale) {
+            Ok(st) => st,
+            Err(()) => return overflow_result(),
+        };
+        match divide_finite(&Decimal::ONE, &base.value) {
+            Ok(st) => make_state_handle(st),
+            Err(()) => overflow_result(),
+        }
+    }
+}
+
+/// Unary `-` — CPython's minus applies the context, which normalizes
+/// `-0` to `0`.
+pub fn mb_decimal_neg(v: MbValue) -> MbValue {
+    let Some(st) = get_state(v) else { return MbValue::none() };
+    match st.class {
+        DecClass::Finite => {
+            let mut d = st.value;
+            if d.is_zero() {
+                d.set_sign_negative(false);
+            } else {
+                d.set_sign_negative(!d.is_sign_negative());
+            }
+            make_handle(d)
+        }
+        DecClass::Inf => make_state_handle(MbDecimal::inf(!st.neg)),
+        _ => make_state_handle(MbDecimal::qnan()),
+    }
+}
+
+/// Unary `+` — identity through the context (normalizes `-0` to `0`).
+pub fn mb_decimal_pos(v: MbValue) -> MbValue {
+    let Some(st) = get_state(v) else { return MbValue::none() };
+    match st.class {
+        DecClass::Finite => {
+            let mut d = st.value;
+            if d.is_zero() {
+                d.set_sign_negative(false);
+            }
+            make_handle(d)
+        }
+        _ => make_state_handle(st),
+    }
+}
+
+/// `abs(d)`.
+pub fn mb_decimal_abs(v: MbValue) -> MbValue {
+    let Some(st) = get_state(v) else { return MbValue::none() };
+    match st.class {
+        DecClass::Finite => make_handle(st.value.abs()),
+        DecClass::Inf => make_state_handle(MbDecimal::inf(false)),
+        _ => make_state_handle(MbDecimal::qnan()),
+    }
+}
+
+// ── Conversion / readback ────────────────────────────────────────────────
+
+/// Spec `to-sci-string` rendering from (neg, coefficient digits, exponent).
+fn to_sci_string(neg: bool, digits: &str, exp: i64) -> String {
+    let n = digits.len() as i64;
+    let adjusted = exp + n - 1;
+    let sign = if neg { "-" } else { "" };
+    if exp <= 0 && adjusted >= -6 {
+        // Plain notation.
+        if exp == 0 {
+            return format!("{sign}{digits}");
+        }
+        let point = n + exp; // digits before the decimal point
+        if point > 0 {
+            let (int_part, frac_part) = digits.split_at(point as usize);
+            return format!("{sign}{int_part}.{frac_part}");
+        }
+        let zeros = "0".repeat((-point) as usize);
+        return format!("{sign}0.{zeros}{digits}");
+    }
+    // Scientific notation with adjusted exponent.
+    let exp_str = if adjusted >= 0 {
+        format!("E+{adjusted}")
+    } else {
+        format!("E{adjusted}")
+    };
+    if digits.len() == 1 {
+        format!("{sign}{digits}{exp_str}")
+    } else {
+        let (first, rest) = digits.split_at(1);
+        format!("{sign}{first}.{rest}{exp_str}")
+    }
+}
+
+fn state_to_string(st: &MbDecimal) -> String {
+    match st.class {
+        DecClass::Inf => {
+            if st.neg { "-Infinity".to_string() } else { "Infinity".to_string() }
+        }
+        DecClass::QNan => {
+            if st.neg { "-NaN".to_string() } else { "NaN".to_string() }
+        }
+        DecClass::SNan => {
+            if st.neg { "-sNaN".to_string() } else { "sNaN".to_string() }
+        }
+        DecClass::Finite => {
+            let d = &st.value;
+            let neg = d.is_sign_negative();
+            let digits = d.mantissa().unsigned_abs().to_string();
+            to_sci_string(neg, &digits, -(d.scale() as i64))
+        }
+    }
+}
+
+/// `str(d)` — the canonical decimal string.
+pub fn mb_decimal_str(d: MbValue) -> MbValue {
+    let Some(st) = get_state(d) else {
+        return MbValue::from_ptr(MbObject::new_str("0".to_string()));
+    };
+    MbValue::from_ptr(MbObject::new_str(state_to_string(&st)))
+}
+
+/// `repr(d)` — `Decimal('...')`.
+pub fn mb_decimal_repr(d: MbValue) -> MbValue {
+    let Some(st) = get_state(d) else {
+        return MbValue::from_ptr(MbObject::new_str("Decimal('0')".to_string()));
+    };
+    MbValue::from_ptr(MbObject::new_str(format!("Decimal('{}')", state_to_string(&st))))
+}
+
+/// `bool(d)` — False only for (signed) zero.
+pub fn mb_decimal_bool(d: MbValue) -> MbValue {
+    let Some(st) = get_state(d) else { return MbValue::from_bool(false) };
+    MbValue::from_bool(match st.class {
+        DecClass::Finite => !st.value.is_zero(),
+        _ => true,
+    })
+}
+
+/// `int(d)` / `math.trunc(d)` — truncate toward zero. Raises for NaN /
+/// Infinity like CPython.
+pub fn mb_decimal_int(d: MbValue) -> MbValue {
+    let Some(st) = get_state(d) else { return MbValue::from_int(0) };
+    match st.class {
+        DecClass::QNan | DecClass::SNan => {
+            raise_value_error("cannot convert NaN to integer")
+        }
+        DecClass::Inf => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "cannot convert Infinity to integer".to_string(),
+                )),
+            );
+            MbValue::none()
+        }
+        DecClass::Finite => {
+            let (c, s) = coeff_scale(&st.value);
+            let q = &c / pow10(s as u32);
+            big_to_mb_int(q)
+        }
+    }
+}
+
+fn big_to_mb_int(b: BigInt) -> MbValue {
+    if let Some(i) = b.to_i64() {
+        if (-(1i64 << 47)..(1i64 << 47)).contains(&i) {
+            return MbValue::from_int(i);
+        }
+    }
+    MbValue::from_ptr(MbObject::new_bigint(b))
+}
+
+/// `math.floor(d)` — exact floor to an int.
+pub fn mb_decimal_floor(d: MbValue) -> MbValue {
+    decimal_floor_ceil(d, true)
+}
+
+/// `math.ceil(d)` — exact ceiling to an int.
+pub fn mb_decimal_ceil(d: MbValue) -> MbValue {
+    decimal_floor_ceil(d, false)
+}
+
+fn decimal_floor_ceil(d: MbValue, floor: bool) -> MbValue {
+    let Some(st) = get_state(d) else { return MbValue::from_int(0) };
+    match st.class {
+        DecClass::QNan | DecClass::SNan => raise_value_error("cannot convert NaN to integer"),
+        DecClass::Inf => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "cannot convert Infinity to integer".to_string(),
+                )),
+            );
+            MbValue::none()
+        }
+        DecClass::Finite => {
+            let (c, s) = coeff_scale(&st.value);
+            let den = pow10(s as u32);
+            let q = &c / &den;
+            let r = &c % &den;
+            let adjust = if r.is_zero() {
+                BigInt::from(0u32)
+            } else if floor && c.is_negative() {
+                BigInt::from(-1)
+            } else if !floor && !c.is_negative() {
+                BigInt::from(1)
+            } else {
+                BigInt::from(0u32)
+            };
+            big_to_mb_int(q + adjust)
+        }
+    }
+}
+
+/// `float(d)`.
+pub fn mb_decimal_float(d: MbValue) -> MbValue {
+    let Some(st) = get_state(d) else { return MbValue::from_float(0.0) };
+    MbValue::from_float(match st.class {
+        DecClass::Finite => st.value.to_f64().unwrap_or(0.0),
+        DecClass::Inf => {
+            if st.neg { f64::NEG_INFINITY } else { f64::INFINITY }
+        }
+        _ => f64::NAN,
+    })
+}
+
+/// `round(d)` / `round(d, n)` — banker's rounding; no-ndigits form
+/// returns an int, ndigits form returns a Decimal.
+pub fn mb_decimal_round(d: MbValue, ndigits: MbValue, ndigits_given: bool) -> MbValue {
+    let Some(st) = get_state(d) else { return MbValue::from_int(0) };
+    if st.is_nan() {
+        if !ndigits_given {
+            return raise_value_error("cannot round a NaN");
+        }
+        return make_state_handle(MbDecimal::qnan());
+    }
+    if st.class == DecClass::Inf {
+        if !ndigits_given {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "cannot round an infinity".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+        return make_state_handle(st);
+    }
+    let (c, s) = coeff_scale(&st.value);
+    if !ndigits_given {
+        // → int, half-even at the units place.
+        let neg = c.is_negative();
+        let c_abs: BigInt = c.magnitude().to_owned().into();
+        let q = round_half_even_abs(&c_abs, s as u32);
+        return big_to_mb_int(if neg { -q } else { q });
+    }
+    let n = match ndigits.as_int() {
+        Some(n) => n,
+        None => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "'str' object cannot be interpreted as an integer".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    };
+    quantize_to_scale(&st, n.min(MAX_SCALE).max(-64), Rounding::HalfEven)
+        .map(make_state_handle)
+        .unwrap_or_else(|| make_handle(Decimal::ZERO))
+}
+
+/// Rescale a finite state to `target_scale` under `mode`. Returns None
+/// when the result cannot be represented.
+fn quantize_to_scale(st: &MbDecimal, target_scale: i64, mode: Rounding) -> Option<MbDecimal> {
+    let (c, s) = coeff_scale(&st.value);
+    let neg = c.is_negative() || (st.value.is_zero() && st.value.is_sign_negative());
+    let c_abs: BigInt = c.magnitude().to_owned().into();
+    let rounded_abs = if target_scale >= s {
+        // Scale up — exact (pad with zeros).
+        &c_abs * pow10((target_scale - s) as u32)
+    } else {
+        round_abs_with_mode(&c_abs, (s - target_scale) as u32, mode, neg)
+    };
+    if digit_count(&rounded_abs) > PREC {
+        return None;
+    }
+    let clamped = target_scale.clamp(0, MAX_SCALE);
+    let adjusted_abs = if clamped > target_scale {
+        // Target exponent above 0 — only representable when the digits
+        // carry the difference as trailing zeros (e.g. round(x, -10) on a
+        // small value collapses to zero).
+        &rounded_abs * pow10((clamped - target_scale) as u32)
+    } else {
+        rounded_abs
+    };
+    if digit_count(&adjusted_abs) > PREC {
+        return None;
+    }
+    let signed = if neg { -adjusted_abs } else { adjusted_abs };
+    finite_from_coeff_scale(signed, clamped).ok().map(|mut s2| {
+        if neg && s2.value.is_zero() {
+            s2.value.set_sign_negative(true);
+            s2.neg = true;
+        }
+        s2
+    })
+}
+
+// ── Validation helpers for the tuple constructor ─────────────────────────
+
 /// Validate a CPython argument-tuple form `(sign, (d0, d1, ...), exponent)`.
 /// Returns an error message string when a coefficient digit is out of the
 /// `0..=9` range (CPython raises `ValueError`), or the sign is not 0/1.
-/// `Ok(())` means the tuple is structurally acceptable for our purposes.
 fn validate_decimal_tuple(items: &[MbValue]) -> Result<(), String> {
     if items.len() != 3 {
         return Err("Invalid tuple size in creation of Decimal from list or tuple.".to_string());
@@ -307,8 +1396,17 @@ fn validate_decimal_tuple(items: &[MbValue]) -> Result<(), String> {
     )
 }
 
-/// Build a `Decimal` from a validated CPython `(sign, digits, exp)` tuple.
-fn decimal_from_tuple(items: &[MbValue]) -> Decimal {
+/// `'F'` exponent in the tuple form means Infinity.
+fn tuple_exponent_is_infinity(exp: MbValue) -> bool {
+    let mut is_f = false;
+    with_str(exp, |s| {
+        is_f = s == "F";
+    });
+    is_f
+}
+
+/// Build a finite state from a validated CPython `(sign, digits, exp)` tuple.
+fn decimal_from_tuple(items: &[MbValue]) -> MbDecimal {
     let sign = items[0].as_int_pyint().unwrap_or(0);
     let exp = items[2].as_int_pyint().unwrap_or(0);
     let mut coeff = String::new();
@@ -329,14 +1427,13 @@ fn decimal_from_tuple(items: &[MbValue]) -> Decimal {
     if coeff.is_empty() {
         coeff.push('0');
     }
-    let sci = format!("{}{}E{}", if sign == 1 { "-" } else { "" }, coeff, exp);
-    Decimal::from_scientific(&sci)
-        .or_else(|_| Decimal::from_str(&sci))
-        .unwrap_or(Decimal::ZERO)
+    let c: BigInt = BigInt::from_str(&coeff).unwrap_or_else(|_| BigInt::from(0u32));
+    let signed = if sign == 1 { -c } else { c };
+    finite_from_coeff_scale(signed, -exp)
+        .unwrap_or_else(|_| MbDecimal::finite(Decimal::ZERO))
 }
 
-// ── Public surface — free functions called by the dispatch thunks
-//    AND by method dispatch in class.rs::mb_call_method.
+// ── Public surface — construction ────────────────────────────────────────
 
 /// `Decimal(val)` — construct a new Decimal handle.
 ///
@@ -351,8 +1448,8 @@ pub fn mb_decimal_new_argc(val: MbValue, provided: bool) -> MbValue {
     }
 
     // Already-allocated handle (Decimal(Decimal(...))) — copy through.
-    if let Some(d) = get_decimal(val) {
-        return make_handle(d);
+    if let Some(st) = get_state(val) {
+        return make_state_handle(st);
     }
 
     // None argument is a TypeError in CPython (cannot convert NoneType).
@@ -365,28 +1462,48 @@ pub fn mb_decimal_new_argc(val: MbValue, provided: bool) -> MbValue {
         return make_handle(Decimal::from(i));
     }
 
-    // Float.
+    // Float — shortest-repr conversion (exact binary expansion is a
+    // documented carve-out); specials map to their Decimal classes.
     if let Some(f) = val.as_float() {
-        return make_handle(Decimal::try_from(f).unwrap_or(Decimal::ZERO));
+        if f.is_nan() {
+            return make_state_handle(MbDecimal::qnan());
+        }
+        if f.is_infinite() {
+            return make_state_handle(MbDecimal::inf(f < 0.0));
+        }
+        let mut d = Decimal::try_from(f).unwrap_or(Decimal::ZERO);
+        if f == 0.0 && f.is_sign_negative() {
+            d.set_sign_negative(true);
+        }
+        return make_handle(d);
     }
 
-    // Argument-tuple form: (sign, digits, exponent).
     if let Some(ptr) = val.as_ptr() {
-        let is_seq = unsafe {
-            matches!(&(*ptr).data, ObjData::Tuple(_) | ObjData::List(_))
-        };
-        if is_seq {
-            let items: Vec<MbValue> = unsafe {
-                match &(*ptr).data {
+        unsafe {
+            // Heap big integer.
+            if let ObjData::BigInt(ref b) = (*ptr).data {
+                return match finite_from_coeff_scale(b.clone(), 0) {
+                    Ok(st) => make_state_handle(st),
+                    Err(()) => overflow_result(),
+                };
+            }
+            // Argument-tuple form: (sign, digits, exponent).
+            if matches!(&(*ptr).data, ObjData::Tuple(_) | ObjData::List(_)) {
+                let items: Vec<MbValue> = match &(*ptr).data {
                     ObjData::Tuple(d) => d.clone(),
                     ObjData::List(lk) => lk.read().unwrap().to_vec(),
                     _ => Vec::new(),
+                };
+                // 'F' exponent → Infinity (sign from the first element).
+                if items.len() == 3 && tuple_exponent_is_infinity(items[2]) {
+                    let neg = items[0].as_int_pyint() == Some(1);
+                    return make_state_handle(MbDecimal::inf(neg));
                 }
-            };
-            return match validate_decimal_tuple(&items) {
-                Ok(()) => make_handle(decimal_from_tuple(&items)),
-                Err(msg) => raise_value_error(&msg),
-            };
+                return match validate_decimal_tuple(&items) {
+                    Ok(()) => make_state_handle(decimal_from_tuple(&items)),
+                    Err(msg) => raise_value_error(&msg),
+                };
+            }
         }
     }
 
@@ -404,16 +1521,15 @@ pub fn mb_decimal_new_argc(val: MbValue, provided: bool) -> MbValue {
                     result = Some(raise_invalid_operation(
                         "[<class 'decimal.ConversionSyntax'>]",
                     ));
-                } else if let Ok(d) = Decimal::from_str(trimmed) {
+                } else if let Some(special) = parse_special_decimal_str(trimmed) {
+                    result = Some(make_state_handle(special));
+                } else if let Ok(mut d) = Decimal::from_str(trimmed) {
+                    if d.is_zero() && trimmed.starts_with('-') {
+                        d.set_sign_negative(true);
+                    }
                     result = Some(make_handle(d));
                 } else if let Ok(d) = Decimal::from_scientific(trimmed) {
                     result = Some(make_handle(d));
-                } else if is_special_decimal_str(trimmed) {
-                    // Valid CPython special value that rust_decimal cannot
-                    // store; represent as zero so construction succeeds
-                    // (no exception) — special-value arithmetic is out of
-                    // scope for this shim but the literal itself is legal.
-                    result = Some(make_handle(Decimal::ZERO));
                 } else {
                     result = Some(raise_invalid_operation(
                         "[<class 'decimal.ConversionSyntax'>]",
@@ -424,8 +1540,8 @@ pub fn mb_decimal_new_argc(val: MbValue, provided: bool) -> MbValue {
         }
     }
 
-    // Unknown shape — fall back to silent coercion (legacy behaviour).
-    make_handle(coerce_decimal(val))
+    // Unknown shape — InvalidOperation (conversion syntax).
+    raise_invalid_operation("[<class 'decimal.ConversionSyntax'>]")
 }
 
 /// `Decimal(val)` — legacy single-argument entry point (always treats the
@@ -434,50 +1550,862 @@ pub fn mb_decimal_new(val: MbValue) -> MbValue {
     mb_decimal_new_argc(val, true)
 }
 
-/// `a + b` — return a fresh Decimal handle.
-pub fn mb_decimal_add(a: MbValue, b: MbValue) -> MbValue {
-    let lhs = coerce_decimal(a);
-    let rhs = coerce_decimal(b);
-    make_handle(lhs + rhs)
-}
-
-/// `a - b`.
-pub fn mb_decimal_sub(a: MbValue, b: MbValue) -> MbValue {
-    let lhs = coerce_decimal(a);
-    let rhs = coerce_decimal(b);
-    make_handle(lhs - rhs)
-}
-
-/// `a * b`.
-pub fn mb_decimal_mul(a: MbValue, b: MbValue) -> MbValue {
-    let lhs = coerce_decimal(a);
-    let rhs = coerce_decimal(b);
-    make_handle(lhs * rhs)
-}
-
-/// `a / b`. Falls back to `Decimal::ZERO` on divide-by-zero (matches the
-/// stub's silent-fallback shape rather than raising — bench fixtures
-/// avoid hitting this path).
-pub fn mb_decimal_truediv(a: MbValue, b: MbValue) -> MbValue {
-    let lhs = coerce_decimal(a);
-    let rhs = coerce_decimal(b);
-    let out = if rhs.is_zero() { Decimal::ZERO } else { lhs / rhs };
-    make_handle(out)
-}
-
-/// `str(d)` / `repr(d)` — return the canonical decimal string.
-pub fn mb_decimal_str(d: MbValue) -> MbValue {
-    let value = get_decimal(d).unwrap_or(Decimal::ZERO);
-    MbValue::from_ptr(MbObject::new_str(value.to_string()))
-}
-
-/// `d.is_zero()` — bench helper, mirrors CPython's accessor.
+/// `d.is_zero()` — kept as the bench-fixture readback (int 0/1 shape).
 pub fn mb_decimal_is_zero(d: MbValue) -> MbValue {
-    let value = get_decimal(d).unwrap_or(Decimal::ZERO);
-    MbValue::from_int(if value.is_zero() { 1 } else { 0 })
+    let Some(st) = get_state(d) else { return MbValue::from_int(0) };
+    let z = st.class == DecClass::Finite && st.value.is_zero();
+    MbValue::from_int(if z { 1 } else { 0 })
 }
 
-// ── Flat-args dispatch thunks (free-function entry points)
+// ── Method dispatch (class.rs integer-handle arm) ────────────────────────
+
+/// Extract a `rounding=` argument: a positional rounding-mode string or
+/// a trailing kwargs dict (the method-call lowering packs keywords into
+/// one trailing dict).
+fn extract_rounding(args: &[MbValue]) -> Rounding {
+    for &a in args {
+        let mut found: Option<Rounding> = None;
+        with_str(a, |s| {
+            found = rounding_from_str(s);
+        });
+        if let Some(r) = found {
+            return r;
+        }
+        if let Some(ptr) = a.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let guard = lock.read().unwrap();
+                    let k = super::super::dict_ops::DictKey::Str("rounding".to_string());
+                    if let Some(v) = guard.get(&k) {
+                        let mut found2: Option<Rounding> = None;
+                        with_str(*v, |s| {
+                            found2 = rounding_from_str(s);
+                        });
+                        if let Some(r) = found2 {
+                            return r;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Rounding::HalfEven
+}
+
+/// Coerce a method operand (Decimal handle or int) into a state; raises
+/// InvalidOperation on unsupported shapes and returns None.
+fn method_operand(v: MbValue) -> Option<MbDecimal> {
+    match arith_operand(v) {
+        Ok(st) => Some(st),
+        Err(_) => {
+            raise_invalid_operation("unsupported operand");
+            None
+        }
+    }
+}
+
+/// Integer square root (floor) of a non-negative BigInt.
+fn isqrt_big(n: &BigInt) -> BigInt {
+    if n.is_zero() {
+        return BigInt::from(0u32);
+    }
+    // Newton's method seeded from the bit length.
+    let bits = n.bits();
+    let mut x = BigInt::from(1u32) << ((bits / 2) + 1) as usize;
+    loop {
+        let y = (&x + n / &x) / 2u32;
+        if y >= x {
+            return x;
+        }
+        x = y;
+    }
+}
+
+/// `d.sqrt()` — correctly-rounded square root to 28 significant digits.
+fn decimal_sqrt(st: &MbDecimal) -> MbValue {
+    match st.class {
+        DecClass::QNan | DecClass::SNan => return make_state_handle(MbDecimal::qnan()),
+        DecClass::Inf => {
+            if st.neg {
+                return raise_invalid_operation("sqrt(-INF)");
+            }
+            return make_state_handle(MbDecimal::inf(false));
+        }
+        DecClass::Finite => {}
+    }
+    let (c, s) = coeff_scale(&st.value);
+    if c.is_negative() {
+        return raise_invalid_operation("sqrt of a negative number");
+    }
+    if c.is_zero() {
+        // sqrt of (possibly signed) zero: exponent halves.
+        let half = (s + 1) / 2;
+        return match finite_from_coeff_scale(BigInt::from(0u32), half) {
+            Ok(r) => make_state_handle(r),
+            Err(()) => make_handle(Decimal::ZERO),
+        };
+    }
+    // Make the exponent even: value = c * 10^-s.
+    let mut c2 = c.clone();
+    let mut s2 = s;
+    if s2 % 2 != 0 {
+        c2 *= 10u32;
+        s2 += 1;
+    }
+    // Exact case first.
+    let root = isqrt_big(&c2);
+    if &root * &root == c2 {
+        return match finite_from_coeff_scale(root, s2 / 2) {
+            Ok(r) => make_state_handle(r),
+            Err(()) => overflow_result(),
+        };
+    }
+    // Inexact: extend to PREC digits and round (the spec rounds the
+    // exact root half-even; an irrational root never lands exactly on a
+    // half, so floor + midpoint test suffices).
+    let shift = 2 * (PREC as i64 + 2);
+    let scaled = &c2 * pow10(shift as u32);
+    let r = isqrt_big(&scaled);
+    // result = r * 10^-(PREC+2) * 10^(-s2/2); decide r vs r+1 by midpoint.
+    let mid = (&r * 2u32 + 1u32) * (&r * 2u32 + 1u32);
+    let q = if mid <= &scaled * 4u32 { r + 1u32 } else { r };
+    let total_scale = s2 / 2 + PREC as i64 + 2;
+    // Round to PREC digits half-even.
+    let digits = digit_count(&q) as i64;
+    let drop = (digits - PREC as i64).max(0);
+    let rounded = round_half_even_abs(&q, drop as u32);
+    match finite_from_coeff_scale(rounded, total_scale - drop) {
+        Ok(rst) => make_state_handle(rst),
+        Err(()) => overflow_result(),
+    }
+}
+
+fn signed_zero_or_value_cmp(a: &MbDecimal, b: &MbDecimal) -> Option<std::cmp::Ordering> {
+    let oa = state_operand(a);
+    let ob = state_operand(b);
+    cmp_operands(&oa, &ob)
+}
+
+fn state_operand(st: &MbDecimal) -> NumOperand {
+    match st.class {
+        DecClass::Finite => {
+            let (c, s) = coeff_scale(&st.value);
+            NumOperand::Rational(c, pow10(s as u32))
+        }
+        DecClass::Inf => NumOperand::Inf(st.neg),
+        _ => NumOperand::Nan,
+    }
+}
+
+/// Method-name dispatcher used by `class.rs::mb_call_method` for Decimal
+/// handle receivers. Returns `None` when the method name is unknown
+/// (caller falls through to generic handling).
+pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Option<MbValue> {
+    let a0 = args.first().copied().unwrap_or_else(MbValue::none);
+    let st = get_state(handle)?;
+    Some(match method {
+        // Legacy bench/free-function names.
+        "add" | "__add__" | "__radd__" => mb_decimal_add(handle, a0),
+        "sub" | "__sub__" => mb_decimal_sub(handle, a0),
+        "__rsub__" => mb_decimal_sub(a0, handle),
+        "mul" | "__mul__" | "__rmul__" => mb_decimal_mul(handle, a0),
+        "truediv" | "__truediv__" => mb_decimal_truediv(handle, a0),
+        "__rtruediv__" => mb_decimal_truediv(a0, handle),
+        "__floordiv__" => mb_decimal_floordiv(handle, a0),
+        "__rfloordiv__" => mb_decimal_floordiv(a0, handle),
+        "__mod__" => mb_decimal_rem(handle, a0),
+        "__rmod__" => mb_decimal_rem(a0, handle),
+        "__divmod__" => mb_decimal_divmod(handle, a0),
+        "__pow__" => mb_decimal_pow(handle, a0),
+        "__pos__" => mb_decimal_pos(handle),
+        "__neg__" => mb_decimal_neg(handle),
+        "__abs__" | "copy_abs" => mb_decimal_abs(handle),
+        "copy_negate" => {
+            // Unlike unary minus, copy_negate flips the sign without
+            // context normalization (keeps -0).
+            match st.class {
+                DecClass::Finite => {
+                    let mut d = st.value;
+                    d.set_sign_negative(!d.is_sign_negative());
+                    make_handle(d)
+                }
+                DecClass::Inf => make_state_handle(MbDecimal::inf(!st.neg)),
+                _ => make_state_handle(st),
+            }
+        }
+        "__eq__" | "__ne__" => {
+            let eq = mb_numeric_handle_eq(handle, a0);
+            match eq {
+                Some(r) => MbValue::from_bool(if method == "__eq__" { r } else { !r }),
+                None => MbValue::from_bool(method == "__ne__"),
+            }
+        }
+        "__lt__" | "__le__" | "__gt__" | "__ge__" => {
+            // Ordering against complex is NotImplemented in CPython even
+            // when the imaginary part is zero (equality is the exception).
+            if let Some(ptr) = a0.as_ptr() {
+                unsafe {
+                    if matches!(&(*ptr).data, ObjData::Complex(..)) {
+                        return Some(MbValue::not_implemented());
+                    }
+                }
+            }
+            let oa = classify_numeric(handle);
+            let ob = classify_numeric(a0);
+            match (oa, ob) {
+                (Some(x), Some(y)) => {
+                    if matches!(x, NumOperand::Nan) || matches!(y, NumOperand::Nan) {
+                        raise_invalid_operation("comparison involving NaN");
+                        return Some(MbValue::none());
+                    }
+                    let ord = cmp_operands(&x, &y);
+                    let r = match method {
+                        "__lt__" => ord == Some(std::cmp::Ordering::Less),
+                        "__le__" => ord != Some(std::cmp::Ordering::Greater),
+                        "__gt__" => ord == Some(std::cmp::Ordering::Greater),
+                        _ => ord != Some(std::cmp::Ordering::Less),
+                    };
+                    MbValue::from_bool(r)
+                }
+                _ => MbValue::not_implemented(),
+            }
+        }
+        "__format__" => {
+            // CPython: the format spec must be a str — a bytes (or other
+            // non-str) spec is a TypeError, raised before any formatting.
+            let spec = a0.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+            });
+            match spec {
+                Some(s) => mb_numeric_handle_format(handle, &s)
+                    .unwrap_or_else(|| mb_decimal_str(handle)),
+                None => raise_type_error("__format__() argument 1 must be str, not bytes"),
+            }
+        }
+        "__str__" | "str_" | "to_eng_string" => mb_decimal_str(handle),
+        "__repr__" => mb_decimal_repr(handle),
+        "__bool__" => mb_decimal_bool(handle),
+        "__int__" | "__trunc__" | "to_integral" | "to_integral_value" | "to_integral_exact" => {
+            if matches!(method, "to_integral" | "to_integral_value" | "to_integral_exact") {
+                if st.class != DecClass::Finite {
+                    return Some(make_state_handle(st));
+                }
+                let mode = extract_rounding(args);
+                return Some(
+                    quantize_to_scale(&st, 0, mode)
+                        .map(make_state_handle)
+                        .unwrap_or_else(|| raise_invalid_operation("quantize result has too many digits")),
+                );
+            }
+            mb_decimal_int(handle)
+        }
+        "__float__" => mb_decimal_float(handle),
+        "__round__" => {
+            let given = !args.is_empty() && !a0.is_none();
+            mb_decimal_round(handle, a0, given)
+        }
+        "__copy__" | "__deepcopy__" | "canonical" => make_state_handle(st),
+        "is_zero" => mb_decimal_bool_inverse_zero(&st),
+        "is_nan" => MbValue::from_bool(st.is_nan()),
+        "is_qnan" => MbValue::from_bool(st.class == DecClass::QNan),
+        "is_snan" => MbValue::from_bool(st.class == DecClass::SNan),
+        "is_infinite" => MbValue::from_bool(st.class == DecClass::Inf),
+        "is_finite" => MbValue::from_bool(st.class == DecClass::Finite),
+        "is_signed" => MbValue::from_bool(match st.class {
+            DecClass::Finite => st.value.is_sign_negative(),
+            _ => st.neg,
+        }),
+        "is_canonical" => MbValue::from_bool(true),
+        "adjusted" => {
+            if st.class != DecClass::Finite {
+                MbValue::from_int(0)
+            } else {
+                let (c, s) = coeff_scale(&st.value);
+                let digits = digit_count(&c) as i64;
+                MbValue::from_int(-s + digits - 1)
+            }
+        }
+        "as_tuple" => {
+            let (sign, digits, exp): (i64, Vec<MbValue>, MbValue) = match st.class {
+                DecClass::Inf => (
+                    if st.neg { 1 } else { 0 },
+                    vec![MbValue::from_int(0)],
+                    MbValue::from_ptr(MbObject::new_str("F".to_string())),
+                ),
+                DecClass::QNan | DecClass::SNan => (
+                    if st.neg { 1 } else { 0 },
+                    vec![],
+                    MbValue::from_ptr(MbObject::new_str(
+                        if st.class == DecClass::QNan { "n" } else { "N" }.to_string(),
+                    )),
+                ),
+                DecClass::Finite => {
+                    let d = &st.value;
+                    let sign = if d.is_sign_negative() { 1 } else { 0 };
+                    let digits_str = d.mantissa().unsigned_abs().to_string();
+                    let digits: Vec<MbValue> = digits_str
+                        .bytes()
+                        .map(|b| MbValue::from_int((b - b'0') as i64))
+                        .collect();
+                    (sign, digits, MbValue::from_int(-(d.scale() as i64)))
+                }
+            };
+            MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_int(sign),
+                MbValue::from_ptr(MbObject::new_tuple(digits)),
+                exp,
+            ]))
+        }
+        "as_integer_ratio" => {
+            match st.class {
+                DecClass::Finite => {
+                    let (c, s) = coeff_scale(&st.value);
+                    let den = pow10(s as u32);
+                    let g = gcd_big(&c, &den);
+                    let n = &c / &g;
+                    let d = &den / &g;
+                    MbValue::from_ptr(MbObject::new_tuple(vec![
+                        big_to_mb_int(n),
+                        big_to_mb_int(d),
+                    ]))
+                }
+                DecClass::Inf => {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "cannot convert Infinity to integer ratio".to_string(),
+                        )),
+                    );
+                    MbValue::none()
+                }
+                _ => raise_value_error("cannot convert NaN to integer ratio"),
+            }
+        }
+        "compare" | "compare_signal" | "compare_total" | "compare_total_mag" => {
+            let other = method_operand(a0)?;
+            let other = if method == "compare_total_mag" {
+                let mut o = other;
+                if o.class == DecClass::Finite {
+                    o.value = o.value.abs();
+                } else {
+                    o.neg = false;
+                }
+                o
+            } else {
+                other
+            };
+            let me = if method == "compare_total_mag" {
+                let mut m = st;
+                if m.class == DecClass::Finite {
+                    m.value = m.value.abs();
+                } else {
+                    m.neg = false;
+                }
+                m
+            } else {
+                st
+            };
+            if me.is_nan() || other.is_nan() {
+                return Some(make_state_handle(MbDecimal::qnan()));
+            }
+            let ord = signed_zero_or_value_cmp(&me, &other);
+            let v = match ord {
+                Some(std::cmp::Ordering::Less) => Decimal::from(-1),
+                Some(std::cmp::Ordering::Greater) => Decimal::ONE,
+                _ => Decimal::ZERO,
+            };
+            make_handle(v)
+        }
+        "max" | "min" | "max_mag" | "min_mag" => {
+            let other = method_operand(a0)?;
+            if st.is_nan() {
+                return Some(make_state_handle(other));
+            }
+            if other.is_nan() {
+                return Some(make_state_handle(st));
+            }
+            let (me_c, ot_c) = if method.ends_with("_mag") {
+                let mut m = st;
+                let mut o = other;
+                if m.class == DecClass::Finite { m.value = m.value.abs(); } else { m.neg = false; }
+                if o.class == DecClass::Finite { o.value = o.value.abs(); } else { o.neg = false; }
+                (m, o)
+            } else {
+                (st, other)
+            };
+            let ord = signed_zero_or_value_cmp(&me_c, &ot_c)
+                .unwrap_or(std::cmp::Ordering::Equal);
+            let pick_self = if method.starts_with("max") {
+                ord != std::cmp::Ordering::Less
+            } else {
+                ord != std::cmp::Ordering::Greater
+            };
+            make_state_handle(if pick_self { st } else { other })
+        }
+        "quantize" => {
+            let exp_st = method_operand(a0)?;
+            if st.class != DecClass::Finite || exp_st.class != DecClass::Finite {
+                if st.is_nan() || exp_st.is_nan() {
+                    return Some(make_state_handle(MbDecimal::qnan()));
+                }
+                return Some(raise_invalid_operation("quantize with non-finite operand"));
+            }
+            let target_scale = exp_st.value.scale() as i64;
+            let mode = extract_rounding(&args[1.min(args.len())..]);
+            quantize_to_scale(&st, target_scale, mode)
+                .map(make_state_handle)
+                .unwrap_or_else(|| raise_invalid_operation("quantize result has too many digits"))
+        }
+        "same_quantum" => {
+            let other = method_operand(a0)?;
+            let same = match (st.class, other.class) {
+                (DecClass::Finite, DecClass::Finite) => {
+                    st.value.scale() == other.value.scale()
+                }
+                (a, b) => a == b,
+            };
+            MbValue::from_bool(same)
+        }
+        "scaleb" => {
+            // Decimal handles are int-tagged, so the handle test must run
+            // before `as_int_pyint` (which would read the raw id).
+            let n = if let Some(s2) = get_state(a0) {
+                if s2.class == DecClass::Finite {
+                    let (c, sc) = coeff_scale(&s2.value);
+                    let den = pow10(sc as u32);
+                    if (&c % &den).is_zero() { (&c / &den).to_i64() } else { None }
+                } else {
+                    None
+                }
+            } else {
+                a0.as_int_pyint()
+            };
+            let Some(n) = n else {
+                return Some(raise_invalid_operation("scaleb operand must be integral"));
+            };
+            if st.class != DecClass::Finite {
+                return Some(make_state_handle(st));
+            }
+            let (c, s) = coeff_scale(&st.value);
+            match finite_from_coeff_scale(c, s - n) {
+                Ok(r) => make_state_handle(r),
+                Err(()) => overflow_result(),
+            }
+        }
+        "fma" => {
+            // d.fma(other, third) — exact multiply-add, then one rounding.
+            let other = method_operand(a0)?;
+            let third = method_operand(args.get(1).copied().unwrap_or_else(MbValue::none))?;
+            if st.is_nan() || other.is_nan() || third.is_nan() {
+                return Some(make_state_handle(MbDecimal::qnan()));
+            }
+            if st.class != DecClass::Finite
+                || other.class != DecClass::Finite
+                || third.class != DecClass::Finite
+            {
+                return Some(raise_invalid_operation("fma with non-finite operand"));
+            }
+            let (ca, sa) = coeff_scale(&st.value);
+            let (cb, sb) = coeff_scale(&other.value);
+            let (cc, sc) = coeff_scale(&third.value);
+            let prod = ca * cb;
+            let ps = sa + sb;
+            let s = ps.max(sc);
+            let p2 = prod * pow10((s - ps) as u32);
+            let c2 = cc * pow10((s - sc) as u32);
+            match finite_from_coeff_scale(p2 + c2, s) {
+                Ok(r) => make_state_handle(r),
+                Err(()) => overflow_result(),
+            }
+        }
+        "sqrt" => decimal_sqrt(&st),
+        "normalize" => {
+            if st.class != DecClass::Finite {
+                return Some(make_state_handle(st));
+            }
+            let mut d = st.value;
+            d = d.normalize();
+            make_handle(d)
+        }
+        "conjugate" | "real" => make_state_handle(st),
+        "imag" => make_handle(Decimal::ZERO),
+        "radix" => make_handle(Decimal::from(10)),
+        "__hash__" => {
+            let small = mb_numeric_handle_integral_i64(handle)
+                .filter(|i| (-(1i64 << 47)..(1i64 << 47)).contains(i));
+            if let Some(i) = small {
+                MbValue::from_int(if i == -1 { -2 } else { i })
+            } else {
+                let s = state_to_string(&st);
+                let mut h: i64 = 0;
+                for b in s.bytes() {
+                    h = h.wrapping_mul(31).wrapping_add(b as i64);
+                }
+                let h = ((h << 16) >> 16).max(i64::MIN + 1);
+                MbValue::from_int(if h == -1 { -2 } else { h })
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn mb_decimal_bool_inverse_zero(st: &MbDecimal) -> MbValue {
+    MbValue::from_bool(st.class == DecClass::Finite && st.value.is_zero())
+}
+
+// ── __format__ mini-language (decimal subset) ────────────────────────────
+//
+// Port of the `_pydecimal.__format__` pipeline for the fixture-covered
+// subset: [[fill]align][sign][z][#][0][width][,|_][.precision][eEfFgGn%].
+
+struct FormatSpec {
+    fill: char,
+    align: char, // '<' '>' '=' '^'
+    sign: char,  // '-' '+' ' '
+    coerce_z: bool,
+    alt: bool,
+    width: usize,
+    thousands: Option<char>,
+    precision: Option<i64>,
+    typ: Option<char>,
+}
+
+fn parse_format_spec(spec: &str) -> Option<FormatSpec> {
+    let chars: Vec<char> = spec.chars().collect();
+    let mut i = 0usize;
+    let mut fill = ' ';
+    let mut align: Option<char> = None;
+    if chars.len() >= 2 && matches!(chars[1], '<' | '>' | '=' | '^') {
+        fill = chars[0];
+        align = Some(chars[1]);
+        i = 2;
+    } else if !chars.is_empty() && matches!(chars[0], '<' | '>' | '=' | '^') {
+        align = Some(chars[0]);
+        i = 1;
+    }
+    let mut sign = '-';
+    if i < chars.len() && matches!(chars[i], '+' | '-' | ' ') {
+        sign = chars[i];
+        i += 1;
+    }
+    let mut coerce_z = false;
+    if i < chars.len() && chars[i] == 'z' {
+        coerce_z = true;
+        i += 1;
+    }
+    let mut alt = false;
+    if i < chars.len() && chars[i] == '#' {
+        alt = true;
+        i += 1;
+    }
+    if i < chars.len() && chars[i] == '0' && align.is_none() {
+        fill = '0';
+        align = Some('=');
+        i += 1;
+    }
+    let mut width = 0usize;
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        width = width * 10 + (chars[i] as usize - '0' as usize);
+        i += 1;
+    }
+    let mut thousands = None;
+    if i < chars.len() && (chars[i] == ',' || chars[i] == '_') {
+        thousands = Some(chars[i]);
+        i += 1;
+    }
+    let mut precision = None;
+    if i < chars.len() && chars[i] == '.' {
+        i += 1;
+        let mut p = 0i64;
+        let mut any = false;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            p = p * 10 + (chars[i] as i64 - '0' as i64);
+            i += 1;
+            any = true;
+        }
+        if !any {
+            return None;
+        }
+        precision = Some(p);
+    }
+    let mut typ = None;
+    if i < chars.len() {
+        let t = chars[i];
+        if matches!(t, 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | 'n' | '%') {
+            typ = Some(t);
+            i += 1;
+        } else {
+            return None;
+        }
+    }
+    if i != chars.len() {
+        return None;
+    }
+    Some(FormatSpec {
+        fill,
+        align: align.unwrap_or('>'),
+        sign,
+        coerce_z,
+        alt,
+        width,
+        thousands,
+        precision,
+        typ,
+    })
+}
+
+/// Round `|c| * 10^exp` to `prec_digits` significant digits, half-even.
+fn round_sig(c_abs: BigInt, exp: i64, prec_digits: i64) -> (BigInt, i64) {
+    if c_abs.is_zero() {
+        return (c_abs, exp);
+    }
+    let digits = digit_count(&c_abs) as i64;
+    if digits <= prec_digits {
+        return (c_abs, exp);
+    }
+    let drop = digits - prec_digits;
+    let mut r = round_half_even_abs(&c_abs, drop as u32);
+    let mut e = exp + drop;
+    if digit_count(&r) as i64 > prec_digits {
+        r = round_half_even_abs(&r, 1);
+        e += 1;
+    }
+    (r, e)
+}
+
+fn sign_prefix(neg: bool, sign: char) -> String {
+    if neg {
+        "-".to_string()
+    } else {
+        match sign {
+            '+' => "+".to_string(),
+            ' ' => " ".to_string(),
+            _ => String::new(),
+        }
+    }
+}
+
+/// CPython `_insert_thousands_sep` port: group the integer digits in 3s
+/// from the right, zero-padding the leftmost group(s) until the grouped
+/// string is at least `min_width` chars (zero-pad-with-grouping rule).
+fn insert_thousands_sep(mut digits: String, sep: Option<char>, mut min_width: i64) -> String {
+    let Some(sep) = sep else {
+        let pad = (min_width.max(0) as usize).saturating_sub(digits.len());
+        return "0".repeat(pad) + &digits;
+    };
+    let mut groups: Vec<String> = Vec::new();
+    loop {
+        let l = (digits.len() as i64).max(min_width.max(1)).min(3) as usize;
+        let take = l.min(digits.len());
+        let tail = digits.split_off(digits.len() - take);
+        groups.push("0".repeat(l - take) + &tail);
+        min_width -= l as i64;
+        if digits.is_empty() && min_width <= 0 {
+            break;
+        }
+        min_width -= 1; // separator width
+    }
+    let mut out = String::new();
+    for (i, g) in groups.iter().rev().enumerate() {
+        if i > 0 {
+            out.push(sep);
+        }
+        out.push_str(g);
+    }
+    out
+}
+
+fn format_align_signed(sign: &str, body: &str, spec: &FormatSpec) -> String {
+    let content_len = sign.chars().count() + body.chars().count();
+    if content_len >= spec.width {
+        return format!("{sign}{body}");
+    }
+    let pad = spec.width - content_len;
+    let fill: String = std::iter::repeat(spec.fill).take(pad).collect();
+    match spec.align {
+        '<' => format!("{sign}{body}{fill}"),
+        '=' => format!("{sign}{fill}{body}"),
+        '^' => {
+            let half = pad / 2;
+            let left: String = std::iter::repeat(spec.fill).take(half).collect();
+            let right: String = std::iter::repeat(spec.fill).take(pad - half).collect();
+            format!("{left}{sign}{body}{right}")
+        }
+        _ => format!("{fill}{sign}{body}"),
+    }
+}
+
+fn format_decimal_state(st: &MbDecimal, spec: &FormatSpec) -> String {
+    let neg0 = match st.class {
+        DecClass::Finite => st.value.is_sign_negative(),
+        _ => st.neg,
+    };
+    // Special values format as their words; type/precision are ignored.
+    if st.class != DecClass::Finite {
+        let body = match st.class {
+            DecClass::Inf => "Infinity",
+            DecClass::QNan => "NaN",
+            DecClass::SNan => "sNaN",
+            DecClass::Finite => unreachable!(),
+        };
+        let sign_str = sign_prefix(neg0, spec.sign);
+        return format_align_signed(&sign_str, body, spec);
+    }
+    let typ = spec.typ.unwrap_or('\0'); // '\0' = no presentation type
+    let mut neg = neg0;
+    let (c, s) = coeff_scale(&st.value);
+    let mut c_abs: BigInt = c.magnitude().to_owned().into();
+    let mut exp = -s;
+    if typ == '%' {
+        exp += 2;
+    }
+    // Rounding per presentation type.
+    match typ {
+        'e' | 'E' => {
+            if let Some(p) = spec.precision {
+                let (r, e) = round_sig(c_abs, exp, p + 1);
+                c_abs = r;
+                exp = e;
+            }
+        }
+        'f' | 'F' | '%' => {
+            if let Some(p) = spec.precision {
+                let target = -p;
+                if exp < target {
+                    c_abs = round_half_even_abs(&c_abs, (target - exp) as u32);
+                    exp = target;
+                } else if exp > target {
+                    c_abs = &c_abs * pow10((exp - target) as u32);
+                    exp = target;
+                }
+            }
+        }
+        _ => {
+            // g/G/n and no-type behave alike for rounding.
+            if let Some(p) = spec.precision {
+                let (r, e) = round_sig(c_abs, exp, p.max(1));
+                c_abs = r;
+                exp = e;
+            }
+        }
+    }
+    // 'z': coerce a negative-zero result to positive zero.
+    if spec.coerce_z && c_abs.is_zero() {
+        neg = false;
+    }
+    let digits = c_abs.to_string();
+    let leftdigits = exp + digits.len() as i64;
+    let dotplace: i64 = match typ {
+        'e' | 'E' => {
+            if c_abs.is_zero() && spec.precision.is_some() {
+                1 - spec.precision.unwrap()
+            } else {
+                1
+            }
+        }
+        'f' | 'F' | '%' => leftdigits,
+        _ => {
+            if exp <= 0 && leftdigits > -6 {
+                leftdigits
+            } else {
+                1
+            }
+        }
+    };
+    let (intpart, fracpart) = if dotplace <= 0 {
+        (
+            "0".to_string(),
+            "0".repeat((-dotplace) as usize) + &digits,
+        )
+    } else if dotplace as usize >= digits.len() {
+        (
+            digits.clone() + &"0".repeat(dotplace as usize - digits.len()),
+            String::new(),
+        )
+    } else {
+        (
+            digits[..dotplace as usize].to_string(),
+            digits[dotplace as usize..].to_string(),
+        )
+    };
+    let out_exp = leftdigits - dotplace;
+    let mut tail = String::new();
+    if !fracpart.is_empty() || spec.alt {
+        tail.push('.');
+        tail.push_str(&fracpart);
+    }
+    if out_exp != 0 || matches!(typ, 'e' | 'E') {
+        let echar = match typ {
+            'e' | 'g' | 'n' => 'e',
+            'E' | 'G' => 'E',
+            _ => 'E', // no-type renders like str()
+        };
+        tail.push(echar);
+        if out_exp >= 0 {
+            tail.push('+');
+        }
+        tail.push_str(&out_exp.to_string());
+    }
+    if typ == '%' {
+        tail.push('%');
+    }
+    let sign_str = sign_prefix(neg, spec.sign);
+    // Zero-padding interacts with thousands grouping: pad the integer
+    // digits (inside the grouping) so the whole field reaches `width`.
+    let min_width: i64 = if spec.fill == '0' && spec.align == '=' {
+        spec.width as i64 - (tail.chars().count() + sign_str.chars().count()) as i64
+    } else {
+        0
+    };
+    let int_grouped = if spec.thousands.is_some() || min_width > 0 {
+        insert_thousands_sep(intpart, spec.thousands, min_width)
+    } else {
+        intpart
+    };
+    let body = int_grouped + &tail;
+    format_align_signed(&sign_str, &body, spec)
+}
+
+/// `format(x, spec)` / f-string hook for Decimal and Fraction handles.
+/// Returns `None` when `v` is not such a handle or the spec is outside
+/// the supported mini-language (caller falls back to its formatter).
+pub fn mb_numeric_handle_format(v: MbValue, spec_str: &str) -> Option<MbValue> {
+    // Cheap handle check first — this hook sits on the hot f-string
+    // formatting path, so non-handle values must exit on a range compare.
+    let id = v.as_int()? as u64;
+    if id < super::super::integer_handle_registry::HANDLE_MIN_ID {
+        return None;
+    }
+    if is_decimal_handle(id) {
+        let spec = parse_format_spec(spec_str)?;
+        let st = get_state(v)?;
+        return Some(MbValue::from_ptr(MbObject::new_str(format_decimal_state(
+            &st, &spec,
+        ))));
+    }
+    let (n, d) = super::fractions_mod::handle_num_den(id)?;
+    let spec = parse_format_spec(spec_str)?;
+    if spec.typ.is_none() {
+        // Untyped spec formats the rational's str() form.
+        let body = if d == 1 {
+            format!("{}", n.abs())
+        } else {
+            format!("{}/{}", n.abs(), d)
+        };
+        let sign_str = sign_prefix(n < 0, spec.sign);
+        return Some(MbValue::from_ptr(MbObject::new_str(format_align_signed(
+            &sign_str, &body, &spec,
+        ))));
+    }
+    // Typed spec: divide exactly through the 28-digit core and reuse the
+    // decimal pipeline.
+    let st = divide_finite(&Decimal::from(n), &Decimal::from(d)).ok()?;
+    Some(MbValue::from_ptr(MbObject::new_str(format_decimal_state(
+        &st, &spec,
+    ))))
+}
+
+// ── Flat-args dispatch thunks (free-function entry points) ───────────────
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -531,18 +2459,50 @@ unsafe extern "C" fn dispatch_decimal_setcontext(
 }
 
 unsafe extern "C" fn dispatch_decimal_localcontext(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
+    args_ptr: *const MbValue,
+    nargs: usize,
 ) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    // kwargs ride a trailing dict: capitals/clamp accept only 0 or 1.
+    if let Some(last) = a.last() {
+        if let Some(ptr) = last.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let guard = lock.read().unwrap();
+                    for key in ["capitals", "clamp"] {
+                        if let Some(v) = guard.get(key) {
+                            let ok = matches!(v.as_int(), Some(0) | Some(1))
+                                || v.as_bool().is_some();
+                            if !ok {
+                                drop(guard);
+                                super::super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str(
+                                        "ValueError".to_string(),
+                                    )),
+                                    MbValue::from_ptr(MbObject::new_str(format!(
+                                        "{key} must be 0 or 1"
+                                    ))),
+                                );
+                                return MbValue::none();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     MbValue::none()
 }
 
-// Retained for documentation / potential future Context-object modelling.
-// `decimal.Context` is now registered as a callable type-object shell (so the
-// surface `callable` + `hasattr(prec/rounding)` probes pass), not as this func
-// stub, hence the `dead_code` allowance.
-#[allow(dead_code)]
-unsafe extern "C" fn dispatch_decimal_context(
+/// Surface-only stub for `Decimal` instance methods registered on the class so
+/// that `hasattr(decimal.Decimal, "is_finite")` / `callable(...)` resolve to a
+/// callable unbound method via mb_getattr's func->native-class method bridge.
+/// Instance receivers route through `dispatch_method` instead.
+unsafe extern "C" fn dispatch_decimal_method_stub(
     _args_ptr: *const MbValue,
     _nargs: usize,
 ) -> MbValue {
@@ -555,19 +2515,6 @@ dispatch_binary!(dispatch_decimal_mul, mb_decimal_mul);
 dispatch_binary!(dispatch_decimal_truediv, mb_decimal_truediv);
 dispatch_unary!(dispatch_decimal_str, mb_decimal_str);
 dispatch_unary!(dispatch_decimal_is_zero, mb_decimal_is_zero);
-
-/// Surface-only stub for `Decimal` instance methods registered on the class so
-/// that `hasattr(decimal.Decimal, "is_finite")` / `callable(...)` resolve to a
-/// callable unbound method via mb_getattr's func->native-class method bridge.
-/// Real per-method behaviour lives in the still-red `behavior` suite; this stub
-/// only needs to make the method *present and callable* for the surface gate.
-#[allow(dead_code)]
-unsafe extern "C" fn dispatch_decimal_method_stub(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
-    MbValue::none()
-}
 
 // ── Module registration ──────────────────────────────────────────────────
 
@@ -599,13 +2546,7 @@ fn int_val(i: i64) -> MbValue {
 ///
 /// Used for `decimal.Context`, which the surface fixtures probe with
 /// `callable(decimal.Context)` **and** `hasattr(decimal.Context, "prec")` /
-/// `hasattr(decimal.Context, "rounding")`. A bare `from_func` stub satisfies
-/// `callable` but not the `hasattr` checks (a func value carries no
-/// attributes); a plain instance carries attributes but is not `callable`.
-/// The type-object shell satisfies both. No passing fixture in any dimension
-/// constructs `decimal.Context(...)` with observable semantics (it is only
-/// built inside the still-red `behavior` suite), so promoting it from a
-/// None-returning func stub to a type object regresses nothing.
+/// `hasattr(decimal.Context, "rounding")`.
 fn make_type_class_shell(name: &str, attrs: &[(&str, MbValue)]) -> MbValue {
     let inst_ptr = MbObject::new_instance("type".to_string());
     unsafe {
@@ -652,22 +2593,30 @@ pub fn register() {
     // (surface) and `except decimal.InvalidOperation:` / `raise
     // InvalidOperation` (errors) resolve correctly: `mb_exception_matches`
     // compares the raised type-name string against the resolved attribute.
-    for name in [
-        "DecimalException",
-        "Clamped",
-        "InvalidOperation",
-        "ConversionSyntax",
-        "DivisionByZero",
-        "DivisionImpossible",
-        "DivisionUndefined",
-        "Inexact",
-        "InvalidContext",
-        "Rounded",
-        "Subnormal",
-        "Overflow",
-        "Underflow",
-        "FloatOperation",
-    ] {
+    // Register the signal tree with CPython's bases so issubclass()
+    // resolves the full hierarchy through the class-registry MRO.
+    let signal_tree: &[(&str, &[&str])] = &[
+        ("DecimalException", &["ArithmeticError"]),
+        ("Clamped", &["DecimalException"]),
+        ("InvalidOperation", &["DecimalException"]),
+        ("ConversionSyntax", &["InvalidOperation"]),
+        ("DivisionByZero", &["DecimalException", "ZeroDivisionError"]),
+        ("DivisionImpossible", &["InvalidOperation"]),
+        ("DivisionUndefined", &["InvalidOperation", "ZeroDivisionError"]),
+        ("Inexact", &["DecimalException"]),
+        ("InvalidContext", &["InvalidOperation"]),
+        ("Rounded", &["DecimalException"]),
+        ("Subnormal", &["DecimalException"]),
+        ("Overflow", &["Inexact", "Rounded"]),
+        ("Underflow", &["Inexact", "Rounded", "Subnormal"]),
+        ("FloatOperation", &["DecimalException", "TypeError"]),
+    ];
+    for (name, bases) in signal_tree {
+        super::super::class::mb_class_register(
+            name,
+            bases.iter().map(|b| b.to_string()).collect(),
+            std::collections::HashMap::new(),
+        );
         attrs.insert(name.to_string(), str_val(name));
     }
 
@@ -699,11 +2648,7 @@ pub fn register() {
     // `hasattr(decimal.Context, "rounding")`, so a bare `from_func` stub is not
     // enough (a func value carries no attributes). Register a callable
     // type-object shell that carries the CPython default context attributes
-    // (`prec == 28`, `rounding == ROUND_HALF_EVEN`) as fields. This is *not*
-    // routed through `dispatch_decimal_context`, so the previous None-returning
-    // `Context()` behaviour changes to "construct a generic instance"; no
-    // passing fixture in any dimension constructs `decimal.Context(...)` with
-    // observable semantics, so nothing regresses.
+    // (`prec == 28`, `rounding == ROUND_HALF_EVEN`) as fields.
     attrs.insert(
         "Context".to_string(),
         make_type_class_shell(
@@ -734,13 +2679,8 @@ pub fn register() {
     // unbound method via mb_getattr's func->native-class method bridge. The
     // bridge keys on NATIVE_TYPE_NAMES[ctor_addr] -> class name, then validates
     // the attribute against the CLASS_REGISTRY table mb_class_register populates.
-    // Surface fixtures probe `hasattr(decimal.Decimal, "is_finite"/"ln"/"is_nan"
-    // /"quantize"/"sqrt")` and `callable(...)`; without the class table + the
-    // NATIVE_TYPE_NAMES mapping these are absent (the bare ctor func carries no
-    // attributes). Stub funcs satisfy callability — real arithmetic for these
-    // methods lives in the behavior suite, which constructs none of them today,
-    // so nothing regresses. The method set mirrors CPython 3.12's public
-    // `dir(Decimal)`.
+    // Instance receivers route through `dispatch_method` (real behaviour);
+    // these stub funcs exist so class-attribute access stays callable.
     {
         let stub = dispatch_decimal_method_stub as usize as u64;
         super::super::module::register_variadic_func(stub);
@@ -828,20 +2768,50 @@ mod tests {
     fn test_decimal_truediv() {
         let a = mb_decimal_new(s("10"));
         let b = mb_decimal_new(s("4"));
-        // 10 / 4 = 2.5 — rust_decimal preserves operand scale so the
-        // rendered form is "2.50" (CPython's `_decimal` likewise pads
-        // to the context precision). Either form is semantically equal.
+        // CPython: Decimal('10') / Decimal('4') == Decimal('2.5').
         let out = read_str(mb_decimal_str(mb_decimal_truediv(a, b)));
-        assert!(out == "2.5" || out == "2.50", "got {out:?}");
+        assert_eq!(out, "2.5");
     }
 
     #[test]
-    fn test_decimal_truediv_by_zero_is_zero() {
+    fn test_decimal_truediv_exact_pads_to_ideal_exponent() {
+        // CPython: Decimal('10.0') / Decimal('2') == Decimal('5.0').
+        let a = mb_decimal_new(s("10.0"));
+        let b = mb_decimal_new(s("2"));
+        assert_eq!(read_str(mb_decimal_str(mb_decimal_truediv(a, b))), "5.0");
+        // CPython: Decimal('20') / Decimal('2') == Decimal('10').
+        let c = mb_decimal_new(s("20"));
+        let d = mb_decimal_new(s("2"));
+        assert_eq!(read_str(mb_decimal_str(mb_decimal_truediv(c, d))), "10");
+    }
+
+    #[test]
+    fn test_decimal_truediv_inexact_rounds_to_28_digits() {
+        let a = mb_decimal_new(s("1"));
+        let b = mb_decimal_new(s("3"));
+        assert_eq!(
+            read_str(mb_decimal_str(mb_decimal_truediv(a, b))),
+            "0.3333333333333333333333333333"
+        );
+        let c = mb_decimal_new(s("2"));
+        let d = mb_decimal_new(s("3"));
+        assert_eq!(
+            read_str(mb_decimal_str(mb_decimal_truediv(c, d))),
+            "0.6666666666666666666666666667"
+        );
+    }
+
+    #[test]
+    fn test_decimal_truediv_by_zero_raises() {
         let a = mb_decimal_new(s("10"));
         let b = mb_decimal_new(s("0"));
-        // Silent fallback to zero — bench fixtures avoid this path.
         let out = mb_decimal_truediv(a, b);
-        assert_eq!(mb_decimal_is_zero(out).as_int(), Some(1));
+        assert!(out.is_none());
+        assert_eq!(
+            super::super::super::exception::mb_has_exception().as_bool(),
+            Some(true)
+        );
+        super::super::super::exception::mb_clear_exception();
     }
 
     #[test]
@@ -859,5 +2829,43 @@ mod tests {
         assert!(is_decimal_handle(id));
         // Foreign id is not recognised.
         assert!(!is_decimal_handle(u64::MAX));
+    }
+
+    #[test]
+    fn test_decimal_specials_and_compare() {
+        let inf = mb_decimal_new(s("Infinity"));
+        assert_eq!(read_str(mb_decimal_str(inf)), "Infinity");
+        let neg = mb_decimal_neg(inf);
+        assert_eq!(read_str(mb_decimal_str(neg)), "-Infinity");
+        let big = mb_decimal_new(s("999999"));
+        assert_eq!(mb_numeric_handle_lt(big, inf), Some(true));
+        let nan = mb_decimal_new(s("NaN"));
+        let one = mb_decimal_new(s("1"));
+        let sum = mb_decimal_add(nan, one);
+        assert_eq!(read_str(mb_decimal_str(sum)), "NaN");
+    }
+
+    #[test]
+    fn test_decimal_eq_cross_type_exact() {
+        let d = mb_decimal_new(s("0.1"));
+        // Decimal('0.1') != float 0.1 (binary expansion differs).
+        assert_eq!(mb_numeric_handle_eq(d, MbValue::from_float(0.1)), Some(false));
+        let q = mb_decimal_new(s("0.25"));
+        assert_eq!(mb_numeric_handle_eq(q, MbValue::from_float(0.25)), Some(true));
+        let ten = mb_decimal_new(s("10"));
+        assert_eq!(mb_numeric_handle_eq(ten, MbValue::from_int(10)), Some(true));
+    }
+
+    #[test]
+    fn test_decimal_sqrt() {
+        let nine = mb_decimal_new(s("9"));
+        let r = decimal_sqrt(&get_state(nine).unwrap());
+        assert_eq!(read_str(mb_decimal_str(r)), "3");
+        let two = mb_decimal_new(s("2"));
+        let r2 = decimal_sqrt(&get_state(two).unwrap());
+        assert_eq!(
+            read_str(mb_decimal_str(r2)),
+            "1.414213562373095048801688724"
+        );
     }
 }

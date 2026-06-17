@@ -505,7 +505,13 @@ pub fn mb_signal_getitimer(_which: MbValue) -> MbValue {
 }
 
 /// signal.setitimer(which, seconds, interval=0.0) -> previous (value, interval).
-pub fn mb_signal_setitimer(_args: &[MbValue]) -> MbValue {
+pub fn mb_signal_setitimer(args: &[MbValue]) -> MbValue {
+    // CPython: `which` must be an int (an ITIMER_* constant). A non-int is a
+    // TypeError raised before the timer is touched.
+    let which = args.first().copied().unwrap_or_else(MbValue::none);
+    if which.as_int().is_none() {
+        return raise_type_error("an integer is required");
+    }
     MbValue::from_ptr(MbObject::new_list(Vec::new()))
 }
 

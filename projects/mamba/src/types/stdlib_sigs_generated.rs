@@ -78121,7 +78121,7 @@ pub const STDLIB_SIGS_GENERATED: &[StdlibSig] = &[
         qualifier: "",
         name: "setswitchinterval",
         kind: SigKind::ModuleFn,
-        params: &[p("interval", CoreTy::Float, false)],
+        params: &[p("interval", CoreTy::Typed, false)],
         enforceable: true,
     },
     StdlibSig {

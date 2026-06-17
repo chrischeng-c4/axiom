@@ -1109,14 +1109,19 @@ fn test_pipeline_for_loop_uses_iterator_protocol() {
 
 #[test]
 fn test_pipeline_fstring_calls_mb_str() {
-    // Task 4.7: f-string interpolation calls mb_str for conversion
+    // Task 4.7 / #21: a spec-less f-string field lowers to mb_fstring_value
+    // (format(x, "") semantics: type-level __format__ dispatch with a str()
+    // fast path for non-instances).
     let mir = pipeline("x: int = 42\nf\"value is {x}\"\n");
     let main = &mir.bodies[0];
     let externs: Vec<&str> = main.blocks.iter()
         .flat_map(|b| &b.stmts)
         .filter_map(|i| if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None })
         .collect();
-    assert!(externs.contains(&"mb_str"), "f-string should call mb_str for conversion");
+    assert!(
+        externs.contains(&"mb_fstring_value"),
+        "f-string should call mb_fstring_value for conversion"
+    );
 }
 
 #[test]

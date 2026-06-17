@@ -11,7 +11,21 @@ macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-            $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
+            let arg = a.get(0).copied().unwrap_or_else(MbValue::none);
+            // Every stat mode helper operates on an integer mode (`mode & ...`);
+            // a non-int argument (e.g. S_ISDIR("x")) is a TypeError, not a
+            // silent 0-mode.
+            if arg.as_int_pyint().is_none() {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "unsupported operand type(s) for &: '{}' and 'int'",
+                        super::super::builtins::value_type_name(arg)
+                    ))),
+                );
+                return MbValue::none();
+            }
+            $fn(arg)
         }
     };
 }

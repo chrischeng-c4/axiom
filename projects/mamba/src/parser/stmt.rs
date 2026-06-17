@@ -516,6 +516,10 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn parse_params(&mut self) -> crate::error::Result<Vec<Param>> {
         let mut params = Vec::new();
+        // PEP 570/3102 introspection markers: after a bare `*` or `*args`,
+        // every regular param is keyword-only; a `/` retroactively marks all
+        // params parsed so far as positional-only.
+        let mut seen_star = false;
         while self.peek_kind() != Some(TokenKind::RParen)
             && self.peek_kind() != Some(TokenKind::Eof)
         {
@@ -531,6 +535,8 @@ impl<'a> Parser<'a> {
                     ),
                     default: None,
                     kind: ParamKind::Regular,
+                    pos_only: false,
+                    kw_only: false,
                     span: self.span_from(p_start),
                 });
             } else if self.peek_kind() == Some(TokenKind::DoubleStar) {
@@ -546,11 +552,19 @@ impl<'a> Parser<'a> {
                 };
                 params.push(Param {
                     name, ty, default: None,
-                    kind: ParamKind::DoubleStar, span: self.span_from(p_start),
+                    kind: ParamKind::DoubleStar,
+                    pos_only: false, kw_only: false,
+                    span: self.span_from(p_start),
                 });
             } else if self.peek_kind() == Some(TokenKind::Slash) {
-                // `/` positional-only separator — skip
+                // `/` positional-only separator — everything before it is
+                // positional-only (introspection metadata; binding unchanged).
                 self.advance();
+                for p in params.iter_mut() {
+                    if p.kind == ParamKind::Regular {
+                        p.pos_only = true;
+                    }
+                }
             } else if self.peek_kind() == Some(TokenKind::Star) {
                 // bare `*` (keyword-only separator) vs `*args`
                 self.advance();
@@ -558,6 +572,7 @@ impl<'a> Parser<'a> {
                     // bare `*` — keyword-only separator, no param.
                     // Consume the trailing comma so the loop can continue to
                     // the keyword-only parameters that follow.
+                    seen_star = true;
                     if self.peek_kind() == Some(TokenKind::Comma) {
                         self.advance();
                     }
@@ -571,9 +586,12 @@ impl<'a> Parser<'a> {
                 } else {
                     Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start))
                 };
+                seen_star = true;
                 params.push(Param {
                     name, ty, default: None,
-                    kind: ParamKind::Star, span: self.span_from(p_start),
+                    kind: ParamKind::Star,
+                    pos_only: false, kw_only: false,
+                    span: self.span_from(p_start),
                 });
             } else if self.peek_kind().as_ref().map_or(false, Self::is_name_token) {
                 let (ns, ne) = self.expect_name()?;
@@ -592,7 +610,9 @@ impl<'a> Parser<'a> {
                 };
                 params.push(Param {
                     name, ty, default,
-                    kind: ParamKind::Regular, span: self.span_from(p_start),
+                    kind: ParamKind::Regular,
+                    pos_only: false, kw_only: seen_star,
+                    span: self.span_from(p_start),
                 });
             } else {
                 break;
@@ -604,7 +624,10 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    pub(crate) fn parse_optional_type_params(&mut self) -> crate::error::Result<Vec<Name>> {
+    pub(crate) fn parse_optional_type_params(
+        &mut self,
+    ) -> crate::error::Result<Vec<crate::parser::ast::TypeParam>> {
+        use crate::parser::ast::{TypeParam, TypeParamKind};
         if self.peek_kind() != Some(TokenKind::LBracket) {
             return Ok(Vec::new());
         }
@@ -617,38 +640,58 @@ impl<'a> Parser<'a> {
             if self.peek_kind() == Some(TokenKind::DoubleStar) {
                 self.advance(); // consume **
                 let (s, e) = self.expect_name()?;
-                params.push(self.text_at(s, e).to_string());
+                params.push(TypeParam {
+                    name: self.text_at(s, e).to_string(),
+                    kind: TypeParamKind::ParamSpec,
+                    bound: None,
+                    constraints: None,
+                });
             }
             // TypeVarTuple: *Ts
             else if self.peek_kind() == Some(TokenKind::Star) {
                 self.advance(); // consume *
                 let (s, e) = self.expect_name()?;
-                params.push(self.text_at(s, e).to_string());
+                params.push(TypeParam {
+                    name: self.text_at(s, e).to_string(),
+                    kind: TypeParamKind::TypeVarTuple,
+                    bound: None,
+                    constraints: None,
+                });
             }
             // Regular type param: T  or  T: bound  or  T: (c1, c2, ...)
             else {
                 let (s, e) = self.expect_name()?;
-                params.push(self.text_at(s, e).to_string());
-                // Optional bound: T: type  or  T: (type1, type2, ...)
+                let name = self.text_at(s, e).to_string();
+                let mut bound = None;
+                let mut constraints = None;
+                // Optional bound: T: expr  or  T: (expr1, expr2, ...)
                 if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance(); // consume :
                     if self.peek_kind() == Some(TokenKind::LParen) {
                         // Constrained: T: (int, float, str)
                         self.advance(); // consume (
+                        let mut items = Vec::new();
                         while self.peek_kind() != Some(TokenKind::RParen)
                             && self.peek_kind() != Some(TokenKind::Eof)
                         {
-                            self.parse_type_expr()?;
+                            items.push(self.parse_expr()?);
                             if self.peek_kind() == Some(TokenKind::Comma) {
                                 self.advance();
                             }
                         }
                         self.expect(TokenKind::RParen)?;
+                        constraints = Some(items);
                     } else {
-                        // Bounded: T: int
-                        self.parse_type_expr()?;
+                        // Bounded: T: int  (any non-tuple expression)
+                        bound = Some(self.parse_expr()?);
                     }
                 }
+                params.push(TypeParam {
+                    name,
+                    kind: TypeParamKind::TypeVar,
+                    bound,
+                    constraints,
+                });
             }
             if self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();

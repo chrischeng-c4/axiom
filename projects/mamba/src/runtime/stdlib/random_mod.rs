@@ -214,7 +214,21 @@ fn extract_list(val: MbValue) -> Option<Vec<MbValue>> {
 fn extract_f64(val: MbValue, default: f64) -> f64 {
     val.as_float()
         .or_else(|| val.as_int().map(|i| i as f64))
+        // bool is an int subtype: True/False weights count as 1/0.
+        .or_else(|| val.as_bool().map(|b| if b { 1.0 } else { 0.0 }))
         .unwrap_or(default)
+}
+
+/// Materialize an iterator-handle argument (e.g. `range(n)` used as a
+/// choices/sample population or cum_weights) into a List value; every other
+/// value passes through unchanged.
+fn materialize_arg(val: MbValue) -> MbValue {
+    if super::super::iter::is_iter_handle(val) {
+        if let Some(items) = super::super::iter::drain_iter_to_vec(val) {
+            return MbValue::from_ptr(MbObject::new_list(items));
+        }
+    }
+    val
 }
 
 fn extract_i64(val: MbValue, default: i64) -> i64 {
@@ -457,9 +471,32 @@ pub fn mb_random_method_sample(receiver: MbValue, pop: MbValue, k: MbValue) -> M
     let items = match extract_list(pop) {
         Some(v) => v,
         None => {
-            return raise_type_error(
-                "Population must be a sequence.  For dicts or sets, use sorted(d).",
-            );
+            // range objects are sequences in CPython — materialize a handle.
+            let drained = if pop.as_int().is_some() {
+                let handle = super::super::iter::mb_iter(pop);
+                if handle.is_none() {
+                    None
+                } else {
+                    let mut out = Vec::new();
+                    loop {
+                        if super::super::iter::mb_has_next(handle).as_bool() != Some(true) {
+                            break;
+                        }
+                        out.push(super::super::iter::mb_next(handle));
+                    }
+                    Some(out)
+                }
+            } else {
+                None
+            };
+            match drained {
+                Some(v) => v,
+                None => {
+                    return raise_type_error(
+                        "Population must be a sequence.  For dicts or sets, use sorted(d).",
+                    );
+                }
+            }
         }
     };
 
@@ -486,9 +523,20 @@ pub fn mb_random_method_sample(receiver: MbValue, pop: MbValue, k: MbValue) -> M
                     "The number of counts does not match the population",
                 );
             }
-            // A non-sequence (scalar) counts is a TypeError in CPython; leave
-            // that to the TypeError-specific path.
-            None => {}
+            // CPython runs `counts = list(counts)` — a scalar is the
+            // iteration TypeError.
+            None => {
+                let tn = if counts.is_float() {
+                    "float"
+                } else if counts.as_bool().is_some() {
+                    "bool"
+                } else if counts.as_int().is_some() {
+                    "int"
+                } else {
+                    "object"
+                };
+                return raise_type_error(&format!("'{tn}' object is not iterable"));
+            }
         }
         // total = sum(counts); the expanded population has `total` elements.
         // CPython: `if not 0 <= k <= total: raise ValueError`. A negative
@@ -582,6 +630,21 @@ pub fn mb_random_method_choices_full(
     receiver: MbValue, pop: MbValue, weights: MbValue, cum_weights: MbValue, k: MbValue,
 ) -> MbValue {
     let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
+    // `choices(range(n), ...)` / `cum_weights=range(1, n+1)`: materialize
+    // iterator-handle arguments into lists up front.
+    let pop = materialize_arg(pop);
+    let weights = materialize_arg(weights);
+    let cum_weights = materialize_arg(cum_weights);
+    // CPython: weights and cum_weights are mutually exclusive, and each must
+    // be a sequence (a scalar is a TypeError).
+    if !weights.is_none() && !cum_weights.is_none() {
+        return raise_type_error("Cannot specify both weights and cumulative weights");
+    }
+    for w in [weights, cum_weights] {
+        if !w.is_none() && weight_seq_len(w).is_none() {
+            return raise_type_error("weights must be a sequence");
+        }
+    }
     let raw_k = extract_i64(k, 1);
 
     // Population length (str / list / tuple). Needed for the weight-length
@@ -665,15 +728,20 @@ pub fn mb_random_method_choices_full(
             let total = *cum.last().unwrap();
             for _ in 0..count {
                 let r = next_f64(id) * total;
-                // bisect_right over the cumulative table.
-                let mut idx = cum.iter().position(|&c| r < c).unwrap_or(n - 1);
+                // bisect_right over the cumulative table (binary search — the
+                // table can hold 100k+ entries for range() populations).
+                let mut idx = cum.partition_point(|&c| c <= r);
                 if idx >= n { idx = n - 1; }
                 out.push(items[idx]);
             }
         }
         _ => {
+            // floor(random() * n) — the SAME one-f64-per-pick consumption as
+            // the weighted branch, so `choices(pop, k=..)` and
+            // `choices(pop, [1]*n, k=..)` draw identical streams from one
+            // seed (CPython parity: both spend one random() per pick).
             for _ in 0..count {
-                let idx = (next_u64(id) % n as u64) as usize;
+                let idx = ((next_f64(id) * n as f64) as usize).min(n - 1);
                 out.push(items[idx]);
             }
         }
@@ -803,8 +871,20 @@ pub fn mb_random_method_vonmisesvariate(receiver: MbValue, mu: MbValue, kappa: M
 
 pub fn mb_random_method_gammavariate(receiver: MbValue, alpha: MbValue, beta: MbValue) -> MbValue {
     let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
-    let a = extract_f64(alpha, 1.0).max(f64::EPSILON);
-    let b = extract_f64(beta, 1.0);
+    // CPython: gammavariate requires alpha > 0 and beta > 0.
+    let raw_a = extract_f64(alpha, 1.0);
+    let raw_b = extract_f64(beta, 1.0);
+    if raw_a <= 0.0 || raw_b <= 0.0 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "gammavariate: alpha and beta must be > 0.0".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    let a = raw_a.max(f64::EPSILON);
+    let b = raw_b;
     // Marsaglia–Tsang 2000, with α<1 handled via boost trick.
     let val = if a < 1.0 {
         let g = sample_gamma(id, a + 1.0);
@@ -844,6 +924,22 @@ pub fn mb_random_method_betavariate(receiver: MbValue, alpha: MbValue, beta: MbV
 /// CPython raises ValueError for `n < 0` or `p` outside `[0, 1]`.
 pub fn mb_random_method_binomialvariate(receiver: MbValue, n: MbValue, p: MbValue) -> MbValue {
     let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
+    // Keyword calls (`binomialvariate(**kwargs)` / `binomialvariate(n, p=x)`)
+    // pack the keywords into a dict occupying a positional slot.
+    let mut n = n;
+    let mut p = p;
+    for slot in [n, p] {
+        if is_dict_value(slot) {
+            if slot.to_bits() == n.to_bits() {
+                n = MbValue::none();
+            }
+            if slot.to_bits() == p.to_bits() {
+                p = MbValue::none();
+            }
+            if let Some(x) = kwarg_get(slot, "n") { n = x; }
+            if let Some(x) = kwarg_get(slot, "p") { p = x; }
+        }
+    }
     let n_trials = extract_i64(n, 1);
     let prob = extract_f64(p, 0.5);
     if n_trials < 0 {
@@ -933,13 +1029,79 @@ pub fn mb_random_method_randbytes(receiver: MbValue, n: MbValue) -> MbValue {
 
 /// `getstate()` → `(handle_id,)` 1-tuple — opaque token. Restore via
 /// `setstate`, valid for the lifetime of the handle.
-pub fn mb_random_method_getstate(receiver: MbValue) -> MbValue {
-    let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
-    MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(id as i64)]))
+thread_local! {
+    /// getstate() snapshots: cloned generator states keyed by snapshot id.
+    static SAVED_STATES: std::cell::RefCell<HashMap<u64, Mt>> =
+        std::cell::RefCell::new(HashMap::new());
+    static NEXT_STATE_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
 }
 
-/// `setstate(state)` — no-op since state is just the handle id.
-pub fn mb_random_method_setstate(_receiver: MbValue, _state: MbValue) -> MbValue {
+pub fn mb_random_method_getstate(receiver: MbValue) -> MbValue {
+    let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
+    // Snapshot the live generator so setstate() can rewind exactly.
+    let snapshot = RANDOMS.with(|m| m.borrow().get(&id).cloned());
+    let state_id = NEXT_STATE_ID.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    });
+    if let Some(rng) = snapshot {
+        SAVED_STATES.with(|m| {
+            m.borrow_mut().insert(state_id, rng);
+        });
+    }
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_int(3),
+        MbValue::from_int(state_id as i64),
+    ]))
+}
+
+/// Pickle bridge — dumps(): snapshot the handle's live generator and return
+/// an opaque state id (same registry getstate() uses). Same-process loads()
+/// rehydrates from it; cross-process pickles are out of scope for this shim.
+pub fn pickle_snapshot(id: u64) -> Option<u64> {
+    let snapshot = RANDOMS.with(|m| m.borrow().get(&id).cloned())?;
+    let state_id = NEXT_STATE_ID.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    });
+    SAVED_STATES.with(|m| {
+        m.borrow_mut().insert(state_id, snapshot);
+    });
+    Some(state_id)
+}
+
+/// Pickle bridge — loads(): build a fresh handle whose generator continues
+/// from the snapshot. The snapshot stays registered so repeated loads() of
+/// the same blob each get an identical stream.
+pub fn pickle_restore(state_id: u64) -> Option<MbValue> {
+    let saved = SAVED_STATES.with(|m| m.borrow().get(&state_id).cloned())?;
+    let id = make_handle(None);
+    RANDOMS.with(|m| {
+        m.borrow_mut().insert(id, saved);
+    });
+    Some(MbValue::from_int(id as i64))
+}
+
+/// `setstate(state)` — restore the generator snapshotted by getstate().
+pub fn mb_random_method_setstate(receiver: MbValue, state: MbValue) -> MbValue {
+    let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
+    let state_id = state.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::Tuple(items) => items.get(1).and_then(|v| v.as_int()),
+            ObjData::List(lock) => lock.read().ok().and_then(|g| g.get(1).and_then(|v| v.as_int())),
+            _ => None,
+        }
+    });
+    if let Some(sid) = state_id {
+        let saved = SAVED_STATES.with(|m| m.borrow().get(&(sid as u64)).cloned());
+        if let Some(rng) = saved {
+            RANDOMS.with(|m| {
+                m.borrow_mut().insert(id, rng);
+            });
+        }
+    }
     MbValue::none()
 }
 
@@ -950,6 +1112,14 @@ unsafe extern "C" fn dispatch_random(_args_ptr: *const MbValue, _nargs: usize) -
 }
 unsafe extern "C" fn dispatch_seed(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    // seed(a=None, version=2): more than two positionals is a TypeError.
+    let positional = a.iter().filter(|v| !is_dict_value(**v)).count();
+    if positional > 2 {
+        return raise_type_error(&format!(
+            "seed() takes from 1 to 3 positional arguments but {} were given",
+            positional + 1
+        ));
+    }
     mb_random_method_seed(MbValue::none(), a.first().copied().unwrap_or_else(MbValue::none))
 }
 unsafe extern "C" fn dispatch_randint(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -1020,7 +1190,7 @@ unsafe extern "C" fn dispatch_choices(args_ptr: *const MbValue, nargs: usize) ->
 /// `choices(pop, weights_seq)` supplies the weight sequence positionally at
 /// index 1. Returns `(weights, cum_weights, k)` with `none()` for absent
 /// optionals.
-fn parse_choices_kwargs(a: &[MbValue]) -> (MbValue, MbValue, MbValue) {
+pub(crate) fn parse_choices_kwargs(a: &[MbValue]) -> (MbValue, MbValue, MbValue) {
     let mut weights = MbValue::none();
     let mut cum_weights = MbValue::none();
     let mut k = MbValue::from_int(1);
@@ -1034,16 +1204,11 @@ fn parse_choices_kwargs(a: &[MbValue]) -> (MbValue, MbValue, MbValue) {
         }
     }
 
-    // Positional weights at index 1 (only when it isn't the trailing dict).
+    // Positional index 1 is `weights` in the CPython signature — including a
+    // scalar, which the validation downstream rejects with TypeError.
     if let Some(&pos1) = a.get(1) {
         if !is_dict_value(pos1) && weights.is_none() && cum_weights.is_none() {
-            // Distinguish positional `weights` from a positional `k`:
-            // a weight sequence is a list/tuple; a bare int is `k`.
-            if weight_seq_len(pos1).is_some() {
-                weights = pos1;
-            } else if pos1.as_int().is_some() {
-                k = pos1;
-            }
+            weights = pos1;
         }
     }
 
@@ -1149,6 +1314,178 @@ unsafe extern "C" fn dispatch_setstate(args_ptr: *const MbValue, nargs: usize) -
     mb_random_method_setstate(MbValue::none(), a.first().copied().unwrap_or_else(MbValue::none))
 }
 
+// ── User subclasses of random.Random ──
+//
+// A `class T(random.Random)` instance is a plain Instance with no generator
+// state; mb_call_method routes its method calls here. CPython's
+// `__init_subclass__` picks the `_randbelow` strategy from the FIRST class in
+// the MRO that defines `getrandbits` or `random`; we re-derive that per call.
+
+/// The 24 instance methods the native handle protocol understands.
+pub fn is_random_method_name(name: &str) -> bool {
+    matches!(
+        name,
+        "random" | "seed" | "randint" | "randrange" | "uniform" | "triangular"
+            | "choice" | "shuffle" | "sample" | "choices" | "gauss"
+            | "normalvariate" | "expovariate" | "lognormvariate"
+            | "vonmisesvariate" | "gammavariate" | "betavariate"
+            | "paretovariate" | "weibullvariate" | "getrandbits" | "randbytes"
+            | "getstate" | "setstate" | "binomialvariate"
+    )
+}
+
+/// Lazily allocate (and cache on the instance) a native generator handle for
+/// a user `random.Random` subclass instance.
+pub fn handle_for_instance(recv: MbValue) -> MbValue {
+    if let Some(ptr) = recv.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(h) = fields.read().unwrap().get("__random_handle__") {
+                    return *h;
+                }
+                let id = make_handle(None);
+                let h = MbValue::from_int(id as i64);
+                fields.write().unwrap().insert("__random_handle__".to_string(), h);
+                return h;
+            }
+        }
+    }
+    recv
+}
+
+enum RandBelow {
+    Getrandbits,
+    Random,
+    Native,
+}
+
+/// CPython `Random.__init_subclass__`: the first MRO class (before the native
+/// base) defining `getrandbits` or `random` decides the `_randbelow` route.
+fn randbelow_kind(class_name: &str) -> RandBelow {
+    for cls in super::super::class::class_mro_list(class_name) {
+        if cls == "Random" || cls == "SystemRandom" {
+            break;
+        }
+        if super::super::class::class_defines_own_method(&cls, "getrandbits") {
+            return RandBelow::Getrandbits;
+        }
+        if super::super::class::class_defines_own_method(&cls, "random") {
+            return RandBelow::Random;
+        }
+    }
+    RandBelow::Native
+}
+
+/// Is `method` user-defined anywhere in the MRO before the native base?
+fn user_overrides(class_name: &str, method: &str) -> bool {
+    for cls in super::super::class::class_mro_list(class_name) {
+        if cls == "Random" || cls == "SystemRandom" {
+            break;
+        }
+        if super::super::class::class_defines_own_method(&cls, method) {
+            return true;
+        }
+    }
+    false
+}
+
+fn call_self_method1(recv: MbValue, name: &str, arg: MbValue) -> MbValue {
+    let n = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![arg]));
+    super::super::class::mb_call_method(recv, n, args)
+}
+
+/// `_randbelow(n)` honoring user overrides (the whole point of the CPython
+/// dispatch contract: an overridden getrandbits/random must be exercised).
+fn randbelow_subclass(recv: MbValue, class_name: &str, n: i64) -> i64 {
+    if n <= 0 {
+        return 0;
+    }
+    match randbelow_kind(class_name) {
+        RandBelow::Getrandbits => {
+            let k = 64 - (n as u64).leading_zeros() as i64; // n.bit_length()
+            for _ in 0..10_000 {
+                let r = call_self_method1(recv, "getrandbits", MbValue::from_int(k));
+                let r = r.as_int_pyint().unwrap_or(0);
+                if r < n {
+                    return r;
+                }
+            }
+            0
+        }
+        RandBelow::Random => {
+            let zero_args = MbValue::from_ptr(MbObject::new_list(vec![]));
+            let nm = MbValue::from_ptr(MbObject::new_str("random".to_string()));
+            let f = super::super::class::mb_call_method(recv, nm, zero_args)
+                .as_float()
+                .unwrap_or(0.0);
+            ((f * n as f64) as i64).clamp(0, n - 1)
+        }
+        RandBelow::Native => {
+            let handle = handle_for_instance(recv);
+            let id = handle.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
+            (next_u64(id) % n as u64) as i64
+        }
+    }
+}
+
+/// Method dispatch for user subclass instances of random.Random. Returns
+/// None when the method is user-overridden (the generic path must call the
+/// user code) or unknown.
+pub fn random_subclass_method(recv: MbValue, method: &str, args: &[MbValue]) -> Option<MbValue> {
+    let class_name = recv.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })?;
+    if !is_random_method_name(method) {
+        return None;
+    }
+    // A user override wins for direct calls — fall through to generic dispatch.
+    if user_overrides(&class_name, method) {
+        return None;
+    }
+    match method {
+        "randrange" => {
+            // randrange(stop) / randrange(start, stop[, step])
+            let a0 = args.first().and_then(|v| v.as_int_pyint());
+            let a1 = args.get(1).and_then(|v| v.as_int_pyint());
+            let step = args.get(2).and_then(|v| v.as_int_pyint()).unwrap_or(1);
+            let (start, width) = match (a0, a1) {
+                (Some(stop), None) => (0, stop),
+                (Some(start), Some(stop)) => (start, stop - start),
+                _ => (0, 0),
+            };
+            if width <= 0 || step == 0 {
+                return Some(raise_value_error("empty range for randrange()"));
+            }
+            let slots = if step == 1 { width } else { (width + step - 1) / step };
+            Some(MbValue::from_int(start + step * randbelow_subclass(recv, &class_name, slots)))
+        }
+        "randint" => {
+            let a = args.first().and_then(|v| v.as_int_pyint()).unwrap_or(0);
+            let b = args.get(1).and_then(|v| v.as_int_pyint()).unwrap_or(0);
+            if b < a {
+                return Some(raise_value_error("empty range for randrange()"));
+            }
+            Some(MbValue::from_int(a + randbelow_subclass(recv, &class_name, b - a + 1)))
+        }
+        _ => {
+            // Everything else: delegate to the native handle protocol (the
+            // class.rs random-handle arm) through the instance's handle.
+            let handle = handle_for_instance(recv);
+            if !handle.is_int() {
+                return None;
+            }
+            let nm = MbValue::from_ptr(MbObject::new_str(method.to_string()));
+            let rest = MbValue::from_ptr(MbObject::new_list(args.to_vec()));
+            Some(super::super::class::mb_call_method(handle, nm, rest))
+        }
+    }
+}
+
 /// `Random(seed=None)` — constructor returns a handle id wrapped as int.
 unsafe extern "C" fn dispatch_Random(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
@@ -1207,12 +1544,49 @@ pub fn register() {
         });
     }
 
+    // random.Random doubles as a subclassable base: map the constructor to
+    // its class name and register a method-name table so unbound access
+    // (`random.Random.getrandbits`) resolves to an __unbound_method__ wrapper
+    // and user subclasses inherit the surface. The stub values are never
+    // invoked — unbound dispatch routes by NAME through the handle protocol.
+    for (cls, addr) in [
+        ("Random", dispatch_Random as usize),
+        ("SystemRandom", dispatch_SystemRandom as usize),
+    ] {
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(addr as u64, cls.to_string());
+        });
+        let stub = MbValue::from_func(addr);
+        let mut methods: HashMap<String, MbValue> = HashMap::new();
+        for name in [
+            "random", "seed", "randint", "randrange", "uniform", "triangular",
+            "choice", "shuffle", "sample", "choices", "gauss", "normalvariate",
+            "expovariate", "lognormvariate", "vonmisesvariate", "gammavariate",
+            "betavariate", "paretovariate", "weibullvariate", "getrandbits",
+            "randbytes", "getstate", "setstate", "binomialvariate",
+        ] {
+            methods.insert(name.to_string(), stub);
+        }
+        super::super::class::mb_class_register(cls, vec![], methods);
+    }
+
     // Module-level float constants (CPython exposes these in `random`).
     // `TWOPI` is used internally by vonmisesvariate; surfaced as an attr.
     attrs.insert(
         "TWOPI".to_string(),
         MbValue::from_float(2.0 * std::f64::consts::PI),
     );
+    // CPython's module-level magic constants (test_random::testMagicConstants).
+    attrs.insert(
+        "NV_MAGICCONST".to_string(),
+        MbValue::from_float(4.0 * (-0.5f64).exp() / 2.0f64.sqrt()),
+    );
+    attrs.insert("LOG4".to_string(), MbValue::from_float(4.0f64.ln()));
+    attrs.insert(
+        "SG_MAGICCONST".to_string(),
+        MbValue::from_float(1.0 + 4.5f64.ln()),
+    );
+    attrs.insert("RECIP_BPF".to_string(), MbValue::from_float((-53.0f64).exp2()));
 
         // surface: missing CPython module constants (auto-added)
     attrs.insert("BPF".into(), MbValue::from_int(53));

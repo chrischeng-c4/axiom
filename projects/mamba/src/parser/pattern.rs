@@ -736,13 +736,15 @@ mod tests {
 
     #[test]
     fn test_or_pattern() {
-        // Use binding patterns to avoid expr-level BitOr consumption
-        match parse_pattern("a | b | c") {
+        // Literal alternatives: capture patterns in non-final alternation
+        // position are a compile-time SyntaxError (CPython pattern rules),
+        // so `a | b | c` is no longer parseable inside a case.
+        match parse_pattern("1 | 2 | 3") {
             Pattern::Or(alts) => {
                 assert_eq!(alts.len(), 3);
-                assert!(matches!(&alts[0].node, Pattern::Binding(n) if n == "a"));
-                assert!(matches!(&alts[1].node, Pattern::Binding(n) if n == "b"));
-                assert!(matches!(&alts[2].node, Pattern::Binding(n) if n == "c"));
+                assert!(matches!(&alts[0].node, Pattern::Literal(Expr::IntLit(1))));
+                assert!(matches!(&alts[1].node, Pattern::Literal(Expr::IntLit(2))));
+                assert!(matches!(&alts[2].node, Pattern::Literal(Expr::IntLit(3))));
             }
             other => panic!("expected Or, got {other:?}"),
         }

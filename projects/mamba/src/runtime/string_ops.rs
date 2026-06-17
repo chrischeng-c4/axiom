@@ -319,6 +319,22 @@ pub fn mb_str_index(s: MbValue, sub: MbValue, start: MbValue, end: MbValue) -> M
     result
 }
 
+/// str.rindex — like rfind but raises ValueError when the substring is absent.
+pub fn mb_str_rindex(s: MbValue, sub: MbValue, start: MbValue, end: MbValue) -> MbValue {
+    let result = mb_str_rfind(s, sub, start, end);
+    if let Some(idx) = result.as_int() {
+        if idx < 0 {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "substring not found".to_string())),
+            );
+            return MbValue::none();
+        }
+    }
+    result
+}
+
 pub fn mb_str_rfind(s: MbValue, sub: MbValue, start: MbValue, end: MbValue) -> MbValue {
     unsafe {
         match (as_str(s), as_str(sub)) {
@@ -981,6 +997,25 @@ pub fn mb_str_encode(s: MbValue) -> MbValue {
 /// Supported encodings: `utf-8` / `utf8` (no errors needed) and `ascii`
 /// (errors may be `strict` / `ignore` / `replace`). Other encodings fall
 /// back to UTF-8 to keep behaviour permissive rather than panicking.
+/// Canonical name of a known CPython *non-text* codec (bytes-transform codecs
+/// like base64/rot_13/zlib), normalised across `-`/`_` and the `_codec`
+/// suffix. `str.encode` / `bytes.decode` reject these with LookupError ("not a
+/// text encoding"); they are only usable via `codecs.encode()`/`decode()`.
+pub(crate) fn nontext_codec_name(enc: &str) -> Option<&'static str> {
+    let norm = enc.replace('-', "_");
+    let norm = norm.strip_suffix("_codec").unwrap_or(&norm);
+    Some(match norm {
+        "base64" | "base_64" => "base64",
+        "bz2" => "bz2",
+        "hex" => "hex",
+        "quopri" => "quopri",
+        "rot13" | "rot_13" => "rot_13",
+        "uu" => "uu",
+        "zlib" => "zlib",
+        _ => return None,
+    })
+}
+
 pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
     unsafe {
         let st = match as_str(s) { Some(t) => t, None => return MbValue::none() };
@@ -1067,7 +1102,21 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                 for ch in st.chars() { out.extend_from_slice(&(ch as u32).to_le_bytes()); }
                 out
             }
-            _ => st.as_bytes().to_vec(),
+            _ => {
+                // A known non-text codec (rot_13, base64, ...) is a LookupError
+                // via str.encode; unrecognised names keep the lenient utf-8
+                // fallback (covers valid text codecs not enumerated above).
+                if let Some(canon) = nontext_codec_name(&enc) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{canon}' is not a text encoding; use codecs.encode() to handle arbitrary codecs"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
+                st.as_bytes().to_vec()
+            }
         };
         MbValue::from_ptr(MbObject::new_bytes(bytes))
     }
@@ -1265,7 +1314,25 @@ pub fn mb_str_removesuffix(s: MbValue, suffix: MbValue) -> MbValue {
 /// Supports: fill, align (<>^), width, precision, type (d,f,s,e,x,o,b).
 pub fn mb_format_value(val: MbValue, spec: MbValue) -> MbValue {
     unsafe {
+        // An Instance whose class registers __format__ formats itself
+        // (ipaddress addresses, user classes); everything else goes through
+        // the built-in spec formatter.
+        if let Some(ptr) = val.as_ptr() {
+            if let super::rc::ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let method = super::class::lookup_method(class_name, "__format__");
+                if !method.is_none() {
+                    // Direct method-value call: format() dispatches on the
+                    // TYPE, ignoring a per-instance __format__ attribute.
+                    return super::class::call_method_value2(method, val, spec);
+                }
+            }
+        }
         let spec_str = as_str(spec).unwrap_or("");
+        // Decimal / Fraction integer handles carry their own __format__
+        // pipeline (#2129) — without this, the raw handle id is formatted.
+        if let Some(out) = super::stdlib::decimal_mod::mb_numeric_handle_format(val, spec_str) {
+            return out;
+        }
         let formatted = format_with_spec(val, spec_str);
         new_str(formatted)
     }
@@ -1279,6 +1346,24 @@ pub fn mb_format_value(val: MbValue, spec: MbValue) -> MbValue {
 /// Kept as a thin wrapper for call-site compatibility.
 fn format_with_spec(val: MbValue, spec: &str) -> String {
     apply_format_spec(val, spec)
+}
+
+/// Spec-less f-string field (`f"{x}"`): CPython calls format(x, "") which
+/// dispatches type-level `__format__`; objects without one fall back to
+/// str(). Keeps the historical mb_str fast path for every non-instance.
+pub fn mb_fstring_value(val: MbValue) -> MbValue {
+    unsafe {
+        if let Some(ptr) = val.as_ptr() {
+            if let super::rc::ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let method = super::class::lookup_method(class_name, "__format__");
+                if !method.is_none() {
+                    let empty = new_str(String::new());
+                    return super::class::call_method_value2(method, val, empty);
+                }
+            }
+        }
+    }
+    super::builtins::mb_str(val)
 }
 
 
@@ -1345,6 +1430,47 @@ fn strip_g_trailing_zeros(s: &str, alternate: bool) -> String {
         head.to_string()
     };
     format!("{}{}", head_stripped, tail)
+}
+
+/// Format the magnitude of a finite float in Python 'g'-family style:
+/// `precision` significant digits, switching to exponential past a threshold.
+/// `none_type=false` is the 'g'/'G' presentation type (scientific when
+/// `exp >= precision`); `none_type=true` is the empty presentation type with an
+/// explicit precision, which switches one decade earlier (`exp >= precision-1`).
+/// Returns the unsigned body only (no sign prefix). The decimal exponent is read
+/// from the rounded 'e' form so a round-up across a power of ten (e.g. 99.0 at
+/// precision 1 → "1e+02") picks the right branch, matching CPython.
+fn format_g_magnitude(
+    f_val: f64,
+    precision: Option<usize>,
+    upper: bool,
+    alternate: bool,
+    none_type: bool,
+) -> String {
+    // Python: precision 0 is treated as 1; default is 6.
+    let p = precision.unwrap_or(6).max(1);
+    let abs_v = f_val.abs();
+    let e_prec = p - 1;
+    let e_str = if upper {
+        format!("{:.prec$E}", abs_v, prec = e_prec)
+    } else {
+        format!("{:.prec$e}", abs_v, prec = e_prec)
+    };
+    // Rust prints "<mantissa>e<exp>" with no '+' and no leading zeros.
+    let exp: i32 = e_str
+        .rsplit(|c| c == 'e' || c == 'E')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let sci_threshold = if none_type { p as i32 - 1 } else { p as i32 };
+    if exp < -4 || exp >= sci_threshold {
+        let r = strip_g_trailing_zeros(&e_str, alternate);
+        pythonize_exponent(&r, upper)
+    } else {
+        let f_prec = (p as i32 - 1 - exp).max(0) as usize;
+        let r = format!("{:.prec$}", abs_v, prec = f_prec);
+        strip_g_trailing_zeros(&r, alternate)
+    }
 }
 
 /// Apply a Python format spec (e.g., ".2f", ">10", "<10", "05d") to a value.
@@ -1429,6 +1555,42 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
         '\0'
     };
 
+    // CPython format-code/type validation: a known code applied to the wrong
+    // scalar type (or an unknown code) raises ValueError instead of silently
+    // coercing. Only scalar values participate — container/instance handling
+    // keeps its existing behavior.
+    {
+        let is_str_val = unsafe { as_str(val).is_some() };
+        let is_bool_val = val.as_bool().is_some();
+        let is_int_val = val.as_int().is_some() || is_bool_val;
+        let is_float_val = !is_int_val && val.as_float().is_some();
+        if is_str_val || is_int_val || is_float_val {
+            let type_name = if is_str_val { "str" }
+                else if is_float_val { "float" }
+                else if is_bool_val { "bool" }
+                else { "int" };
+            let bad = match type_char {
+                'b' | 'c' | 'd' | 'o' | 'x' | 'X' => !is_int_val,
+                'e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%' => is_str_val,
+                'n' => is_str_val,
+                's' => !is_str_val,
+                // A second grouping separator after `,`/`_` (e.g. `,_`).
+                ',' | '_' => true,
+                '\0' => false,
+                c => c.is_ascii_alphabetic(),
+            };
+            if bad {
+                super::exception::mb_raise(
+                    new_str("ValueError".to_string()),
+                    new_str(format!(
+                        "Unknown format code '{type_char}' for object of type '{type_name}'"
+                    )),
+                );
+                return String::new();
+            }
+        }
+    }
+
     // Build the sign/magnitude pieces separately so `+`/` ` prefix survives
     // zero-padding (CPython: `"{:+05d}".format(3)` → `"+0003"`).
     let extract_int = || -> i64 {
@@ -1453,7 +1615,28 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
         let with_sep = String::from_utf8(out).unwrap_or_else(|_| num.to_string());
         if minus { format!("-{with_sep}") } else { with_sep }
     };
-    let (sign_prefix, body) = match type_char {
+    // Non-finite floats render as canonical inf/nan, with case following the
+    // presentation letter (CPython): lowercase 'f'/'e'/'g'/'%'/None → inf/nan,
+    // uppercase 'F'/'E'/'G' → INF/NAN. Rust's own `{}` prints "NaN"/"inf", so
+    // intercept before the per-type formatting. Sign flags still apply; numeric
+    // zero-padding does not (handled at the width step below).
+    let nonfinite_float = val.as_float().filter(|fv| !fv.is_finite()).and_then(|fv| {
+        if !matches!(type_char, 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | '%' | '\0') {
+            return None;
+        }
+        let upper = matches!(type_char, 'F' | 'E' | 'G');
+        let word = if fv.is_nan() {
+            if upper { "NAN" } else { "nan" }
+        } else if upper { "INF" } else { "inf" };
+        let prefix = if fv.is_sign_negative() { "-" }
+            else if sign == '+' { "+" }
+            else if sign == ' ' { " " }
+            else { "" };
+        Some((prefix.to_string(), word.to_string()))
+    });
+    let is_nonfinite_float = nonfinite_float.is_some();
+    let (sign_prefix, body) = if let Some(nf) = nonfinite_float { nf } else {
+    match type_char {
         '%' => {
             // Percent type: multiply by 100, format as fixed-point, append '%'.
             let f_val = val.as_float()
@@ -1489,32 +1672,7 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
             let f_val = val.as_float()
                 .or_else(|| val.as_int().map(|i| i as f64))
                 .unwrap_or(0.0);
-            // Python: precision 0 is treated as 1; default is 6.
-            let p = precision.unwrap_or(6).max(1);
-            let upper = type_char == 'G';
-            let abs_v = f_val.abs();
-            // Compute decimal exponent of leading digit: floor(log10(|x|)).
-            let exp: i32 = if abs_v == 0.0 {
-                0
-            } else {
-                abs_v.log10().floor() as i32
-            };
-            let raw = if exp < -4 || exp >= p as i32 {
-                // Use e style with precision p-1.
-                let e_prec = p - 1;
-                let r = if upper {
-                    format!("{:.prec$E}", abs_v, prec = e_prec)
-                } else {
-                    format!("{:.prec$e}", abs_v, prec = e_prec)
-                };
-                let r = strip_g_trailing_zeros(&r, alternate);
-                pythonize_exponent(&r, upper)
-            } else {
-                // Use f style with precision p-1-exp.
-                let f_prec = (p as i32 - 1 - exp).max(0) as usize;
-                let r = format!("{:.prec$}", abs_v, prec = f_prec);
-                strip_g_trailing_zeros(&r, alternate)
-            };
+            let raw = format_g_magnitude(f_val, precision, type_char == 'G', alternate, false);
             let prefix = if f_val.is_sign_negative() { "-".to_string() }
                 else if sign == '+' { "+".to_string() }
                 else if sign == ' ' { " ".to_string() }
@@ -1584,6 +1742,28 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
             (format!("{sign_part}{alt_prefix}"), digits)
         }
         's' | '\0' => {
+            // None-type float with an explicit precision is 'g'-like (significant
+            // digits, exponential past the threshold) but keeps a trailing ".0"
+            // when the result would otherwise look integral (CPython's
+            // Py_DTSF_ADD_DOT_0). The `str`-style char truncation below only
+            // applies to actual strings — a float here always has type '\0'
+            // ('s' on a float already raised ValueError in the validation block).
+            if thousands.is_none()
+                && precision.is_some()
+                && val.as_float().is_some()
+                && val.as_int().is_none()
+            {
+                let f_val = val.as_float().unwrap();
+                let mut body = format_g_magnitude(f_val, precision, false, alternate, true);
+                if !body.contains(|c| c == '.' || c == 'e' || c == 'E') {
+                    body.push_str(".0");
+                }
+                let prefix = if f_val.is_sign_negative() { "-".to_string() }
+                    else if sign == '+' { "+".to_string() }
+                    else if sign == ' ' { " ".to_string() }
+                    else { String::new() };
+                (prefix, body)
+            } else
             // When no type is given but thousands was requested and the value
             // is numeric, behave like `d` / `f` so `"{:,}".format(1234567)` →
             // `"1,234,567"`.
@@ -1634,12 +1814,16 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
             }
         }
         _ => (String::new(), value_to_string(val)),
+    }
     };
     let formatted = format!("{sign_prefix}{body}");
 
     // Apply width and alignment
     if width > formatted.len() {
         let padding = width - formatted.len();
+        // Non-finite floats use space fill even when '0' was requested
+        // (CPython: `format(inf, "010")` → `"       inf"`).
+        let zero_fill = zero_fill && !is_nonfinite_float;
         let actual_fill = if zero_fill && align == '\0' { '0' } else { fill };
         let actual_align = if align == '\0' {
             if zero_fill { '>' } else if val.as_ptr().is_some() { '<' } else { '>' }
@@ -2088,6 +2272,14 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
                 let guard = lock.read().unwrap();
                 let k = super::dict_ops::DictKey::Str(name.to_string());
                 return guard.get(&k).copied();
+            }
+            // Mapping-protocol objects (e.g. re.Match) look up via
+            // __getitem__ semantics.
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "re.Match" {
+                    return fields.read().unwrap()
+                        .get(&format!("group_name_{name}")).copied();
+                }
             }
         }
         None
@@ -2590,6 +2782,8 @@ pub fn value_to_string(val: MbValue) -> String {
         "None".to_string()
     } else if val.is_not_implemented() {
         "NotImplemented".to_string()
+    } else if val.is_ellipsis() {
+        "Ellipsis".to_string()
     } else if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -2621,6 +2815,11 @@ pub fn value_to_string(val: MbValue) -> String {
                 ObjData::Instance { class_name, ref fields } => {
                     if class_name == "UnionType" {
                         return super::builtins::union_type_repr(val);
+                    }
+                    // Class-body enum member without a user __str__:
+                    // str(Color.RED) → "Color.RED".
+                    if let Some(s) = super::stdlib::enum_class::member_str(val) {
+                        return s;
                     }
                     // slice repr matches CPython's "slice(start, stop, step)"
                     // surface — keep print() / str() / repr() consistent. (#1256)
@@ -2681,6 +2880,12 @@ pub fn value_to_string(val: MbValue) -> String {
                     if class_name == "datetime.timedelta" {
                         return super::stdlib::datetime_mod::timedelta_str(val);
                     }
+                    if class_name == "datetime.time" {
+                        return super::stdlib::datetime_mod::time_str(val);
+                    }
+                    if class_name == "datetime.timezone" {
+                        return super::stdlib::datetime_mod::timezone_str(val);
+                    }
                     // namedtuple: dynamic class_name → marker-field dispatch. (#1648)
                     if let Some(s) = super::stdlib::collections_mod::namedtuple_repr(val) {
                         return s;
@@ -2724,9 +2929,14 @@ pub fn value_to_string(val: MbValue) -> String {
                                 1 => {
                                     let a0 = items[0];
                                     if class_name == "KeyError" {
-                                        if let Some(p) = a0.as_ptr() {
-                                            if let ObjData::Str(ref s) = (*p).data {
-                                                return format!("'{}'", s.replace('\'', "\\'"));
+                                        // KeyError.__str__ is repr(key); use the
+                                        // shared repr for CPython-matching quote
+                                        // selection (a `'`-containing key is
+                                        // double-quoted, not single-escaped).
+                                        let r = super::builtins::mb_repr(a0);
+                                        if let Some(p) = r.as_ptr() {
+                                            if let ObjData::Str(ref rs) = (*p).data {
+                                                return rs.clone();
                                             }
                                         }
                                     }
@@ -2749,7 +2959,12 @@ pub fn value_to_string(val: MbValue) -> String {
                         if let Some(msg_ptr) = msg_val.as_ptr() {
                             if let ObjData::Str(ref s) = (*msg_ptr).data {
                                 if class_name == "KeyError" {
-                                    return format!("'{}'", s.replace('\'', "\\'"));
+                                    let r = super::builtins::mb_repr(*msg_val);
+                                    if let Some(p) = r.as_ptr() {
+                                        if let ObjData::Str(ref rs) = (*p).data {
+                                            return rs.clone();
+                                        }
+                                    }
                                 }
                                 return s.clone();
                             }
@@ -2805,6 +3020,58 @@ pub fn value_to_string(val: MbValue) -> String {
 }
 
 // ── Method Dispatch ──
+
+/// Parse a C99 hexadecimal floating-point string (CPython `float.fromhex`):
+/// optional sign, optional `0x`/`0X` prefix, hex mantissa with an optional
+/// fractional `.`, optional binary exponent `p±ddd` (decimal); plus the
+/// case-insensitive specials `inf`/`infinity`/`nan`. Returns `None` for any
+/// malformed input so the caller can raise ValueError.
+fn parse_hex_float(input: &str) -> Option<f64> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (sign, rest) = match s.as_bytes()[0] {
+        b'+' => (1.0_f64, &s[1..]),
+        b'-' => (-1.0_f64, &s[1..]),
+        _ => (1.0_f64, s),
+    };
+    let lower = rest.to_ascii_lowercase();
+    match lower.as_str() {
+        "inf" | "infinity" => return Some(sign * f64::INFINITY),
+        "nan" => return Some(f64::NAN),
+        _ => {}
+    }
+    let body = lower.strip_prefix("0x").unwrap_or(&lower);
+    // Split off the optional binary exponent.
+    let (mantissa, exp) = match body.split_once('p') {
+        Some((m, e)) => {
+            // Exponent must be a (possibly signed) decimal integer.
+            if e.is_empty() {
+                return None;
+            }
+            (m, e.parse::<i32>().ok()?)
+        }
+        None => (body, 0),
+    };
+    let (int_part, frac_part) = match mantissa.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (mantissa, ""),
+    };
+    if int_part.is_empty() && frac_part.is_empty() {
+        return None;
+    }
+    let mut value = 0.0_f64;
+    for c in int_part.chars() {
+        value = value * 16.0 + c.to_digit(16)? as f64;
+    }
+    let mut scale = 1.0_f64 / 16.0;
+    for c in frac_part.chars() {
+        value += c.to_digit(16)? as f64 * scale;
+        scale /= 16.0;
+    }
+    Some(sign * value * 2f64.powi(exp))
+}
 
 /// Dispatch a method call on a string object.
 /// `name` is the method name, `receiver` is the string, `args` is a list of arguments.
@@ -2886,6 +3153,12 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let end = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_str_index(receiver, sub, start, end)
+        }
+        "rindex" => {
+            let sub = arg(0);
+            let start = if argc() > 1 { arg(1) } else { MbValue::none() };
+            let end = if argc() > 2 { arg(2) } else { MbValue::none() };
+            mb_str_rindex(receiver, sub, start, end)
         }
         "count" => {
             let sub = arg(0);
@@ -3023,6 +3296,23 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                     if let ObjData::Str(ref s) = (*ptr).data { s.clone() } else { String::new() }
                 } else { String::new() }
             };
+            // float.fromhex parses a C99 hexadecimal floating-point string and
+            // raises ValueError on malformed input — distinct from the
+            // bytes/bytearray hex-pair decoder below.
+            if recv_str == "float" {
+                return match parse_hex_float(&hex_s) {
+                    Some(f) => MbValue::from_float(f),
+                    None => {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "invalid hexadecimal floating-point string".to_string(),
+                            )),
+                        );
+                        MbValue::none()
+                    }
+                };
+            }
             let bytes_data: Vec<u8> = (0..hex_s.len() / 2)
                 .filter_map(|i| u8::from_str_radix(&hex_s[i*2..i*2+2], 16).ok())
                 .collect();

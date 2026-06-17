@@ -43,8 +43,39 @@ unsafe extern "C" fn dispatch_ssl_context(_a: *const MbValue, _n: usize) -> MbVa
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_create_default_context(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_dict())
+/// `ssl.create_default_context(purpose=Purpose.SERVER_AUTH)` — returns a real
+/// SSLContext instance with CPython's secure defaults: SERVER_AUTH (the
+/// default) yields a PROTOCOL_TLS_CLIENT context (check_hostname=True,
+/// CERT_REQUIRED); CLIENT_AUTH yields a PROTOCOL_TLS_SERVER context.
+unsafe extern "C" fn dispatch_create_default_context(a: *const MbValue, n: usize) -> MbValue {
+    let mut protocol = 16i64; // PROTOCOL_TLS_CLIENT
+    if n >= 1 && !a.is_null() {
+        let purpose = *a;
+        if purpose_oid(purpose).as_deref() == Some("1.3.6.1.5.5.7.3.2") {
+            protocol = 17; // CLIENT_AUTH → PROTOCOL_TLS_SERVER
+        }
+    }
+    let inst = MbValue::from_ptr(MbObject::new_instance("SSLContext".to_string()));
+    seed_context_fields(inst, protocol);
+    inst
+}
+
+/// Read the `oid` member of a `ssl.Purpose` namespace value.
+fn purpose_oid(purpose: MbValue) -> Option<String> {
+    let ptr = purpose.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            if let Some(v) = map.get(&DictKey::Str("oid".to_string())) {
+                if let Some(vp) = v.as_ptr() {
+                    if let ObjData::Str(ref s) = (*vp).data {
+                        return Some(s.clone());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 unsafe extern "C" fn dispatch_wrap_socket(_a: *const MbValue, _n: usize) -> MbValue {
@@ -89,8 +120,53 @@ unsafe extern "C" fn dispatch_rand_status(_a: *const MbValue, _n: usize) -> MbVa
     MbValue::from_bool(true)
 }
 
-unsafe extern "C" fn dispatch_rand_bytes(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+thread_local! {
+    /// SplitMix64 state for RAND_bytes — seeded from wall-clock nanos so
+    /// consecutive draws differ (CPython: RAND_bytes(16) != RAND_bytes(16)).
+    static RAND_STATE: std::cell::Cell<u64> = std::cell::Cell::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E37_79B9_7F4A_7C15) | 1,
+    );
+}
+
+fn next_rand_u64() -> u64 {
+    RAND_STATE.with(|s| {
+        let seeded = s.get().wrapping_add(0x9E37_79B9_7F4A_7C15);
+        s.set(seeded);
+        let mut x = seeded;
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^ (x >> 31)
+    })
+}
+
+/// `ssl.RAND_bytes(num)` — returns `num` random bytes; negative `num` raises
+/// ValueError("num must be positive") (CPython 3.12 _ssl semantics).
+unsafe extern "C" fn dispatch_rand_bytes(a: *const MbValue, n: usize) -> MbValue {
+    if n == 0 || a.is_null() {
+        return raise_err("TypeError", "RAND_bytes() missing required argument: 'num'");
+    }
+    let num = match (*a).as_int() {
+        Some(v) => v,
+        None => {
+            return raise_err(
+                "TypeError",
+                &format!("'{}' object cannot be interpreted as an integer", py_type_name(*a)),
+            );
+        }
+    };
+    if num < 0 {
+        return raise_err("ValueError", "num must be positive");
+    }
+    let mut bytes = Vec::with_capacity(num as usize);
+    while bytes.len() < num as usize {
+        let chunk = next_rand_u64().to_le_bytes();
+        let take = std::cmp::min(8, num as usize - bytes.len());
+        bytes.extend_from_slice(&chunk[..take]);
+    }
+    MbValue::from_ptr(MbObject::new_bytes(bytes))
 }
 
 unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
@@ -136,23 +212,476 @@ fn first_arg(args: MbValue) -> MbValue {
     MbValue::none()
 }
 
+/// Raise a Python exception by class name and return None (native helper).
+fn raise_err(exc: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Best-effort Python type name for error messages.
+fn py_type_name(v: MbValue) -> String {
+    if v.is_none() { return "NoneType".to_string(); }
+    if v.as_bool().is_some() { return "bool".to_string(); }
+    if v.as_int().is_some() { return "int".to_string(); }
+    if v.as_float().is_some() { return "float".to_string(); }
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            return match &(*ptr).data {
+                ObjData::Str(_) => "str".to_string(),
+                ObjData::Bytes(_) => "bytes".to_string(),
+                ObjData::ByteArray(_) => "bytearray".to_string(),
+                ObjData::List(_) => "list".to_string(),
+                ObjData::Tuple(_) => "tuple".to_string(),
+                ObjData::Dict(_) => "dict".to_string(),
+                ObjData::BigInt(_) => "int".to_string(),
+                ObjData::Instance { class_name, .. } => class_name.clone(),
+                _ => "object".to_string(),
+            };
+        }
+    }
+    "object".to_string()
+}
+
+fn get_field(inst: MbValue, key: &str) -> Option<MbValue> {
+    let ptr = inst.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            return fields.read().unwrap().get(key).copied();
+        }
+    }
+    None
+}
+
+/// Int coercion that also accepts bool (CPython int-conversion of True/False).
+fn as_int_like(v: MbValue) -> Option<i64> {
+    v.as_int().or_else(|| v.as_bool().map(|b| b as i64))
+}
+
+/// Seed a fresh SSLContext instance with CPython 3.12 defaults for `protocol`.
+/// PROTOCOL_TLS_CLIENT (16) verifies by default; everything else does not.
+fn seed_context_fields(inst: MbValue, protocol: i64) {
+    let is_client = protocol == 16;
+    set_field(inst, "protocol", MbValue::from_int(protocol));
+    set_field(inst, "minimum_version", MbValue::from_int(-2)); // TLSVersion.MINIMUM_SUPPORTED
+    set_field(inst, "maximum_version", MbValue::from_int(-1)); // TLSVersion.MAXIMUM_SUPPORTED
+    set_field(inst, "verify_mode", MbValue::from_int(if is_client { 2 } else { 0 }));
+    set_field(inst, "check_hostname", MbValue::from_bool(is_client));
+    set_field(inst, "post_handshake_auth", MbValue::from_bool(false));
+    set_field(inst, "hostname_checks_common_name", MbValue::from_bool(true));
+    set_field(inst, "num_tickets", MbValue::from_int(2));
+    // OP_ALL | OP_NO_COMPRESSION | ... — the observed default bitmask on
+    // CPython 3.12/OpenSSL 3.x. Fixtures require an int that ORs cleanly.
+    set_field(inst, "options", MbValue::from_int(0x8252_0050));
+    set_field(inst, "_cipher_filter", new_str("DEFAULT"));
+}
+
 unsafe extern "C" fn init_ssl_context(self_v: MbValue, args: MbValue) -> MbValue {
-    // SSLContext(protocol=PROTOCOL_TLS). Store the protocol and seed the
-    // version-range attributes so the instance is well-formed before the caller
-    // overwrites them.
-    let protocol = first_arg(args);
-    let protocol = if protocol.is_none() { MbValue::from_int(2) } else { protocol };
-    set_field(self_v, "protocol", protocol);
-    set_field(self_v, "minimum_version", MbValue::from_int(-2)); // TLSVersion.MINIMUM_SUPPORTED
-    set_field(self_v, "maximum_version", MbValue::from_int(-1)); // TLSVersion.MAXIMUM_SUPPORTED
-    set_field(self_v, "verify_mode", MbValue::from_int(0));      // CERT_NONE
-    set_field(self_v, "check_hostname", MbValue::from_bool(false));
+    // SSLContext(protocol=PROTOCOL_TLS). Validate the protocol number the way
+    // CPython does, then seed the attribute surface.
+    let protocol_arg = first_arg(args);
+    let protocol = if protocol_arg.is_none() {
+        2 // PROTOCOL_TLS
+    } else {
+        match as_int_like(protocol_arg) {
+            Some(v) => v,
+            None => {
+                return raise_err(
+                    "TypeError",
+                    &format!("'{}' object cannot be interpreted as an integer",
+                             py_type_name(protocol_arg)),
+                );
+            }
+        }
+    };
+    if !matches!(protocol, 2 | 3 | 4 | 5 | 16 | 17) {
+        return raise_err(
+            "ValueError",
+            &format!("invalid or unsupported protocol version {protocol}"),
+        );
+    }
+    seed_context_fields(self_v, protocol);
     MbValue::none()
 }
 
 /// Generic no-op SSLContext method (load_cert_chain / set_ciphers / ...): returns None.
 unsafe extern "C" fn ctx_method_noop(_self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::none()
+}
+
+// ── SSLContext property setters (mb_setattr hook) ───────────────────────────
+
+/// CPython property-setter semantics for SSLContext attribute writes.
+/// Returns true when the write was fully handled (stored or raised); false
+/// lets mb_setattr fall through to the plain field write.
+pub fn sslcontext_setattr(obj: MbValue, attr: &str, value: MbValue) -> bool {
+    match attr {
+        "check_hostname" => {
+            let truthy = super::super::builtins::mb_bool(value).as_bool().unwrap_or(false);
+            // Enabling hostname checks on a CERT_NONE context promotes
+            // verify_mode to CERT_REQUIRED (CPython context.c).
+            if truthy {
+                let vm = get_field(obj, "verify_mode").and_then(as_int_like).unwrap_or(0);
+                if vm == 0 {
+                    set_field(obj, "verify_mode", MbValue::from_int(2));
+                }
+            }
+            set_field(obj, "check_hostname", MbValue::from_bool(truthy));
+            true
+        }
+        "verify_mode" => {
+            let v = match as_int_like(value) {
+                Some(v) => v,
+                None => {
+                    raise_err("TypeError", &format!(
+                        "'{}' object cannot be interpreted as an integer",
+                        py_type_name(value)));
+                    return true;
+                }
+            };
+            if !matches!(v, 0 | 1 | 2) {
+                raise_err("ValueError", "invalid value for verify_mode");
+                return true;
+            }
+            let check_hostname = get_field(obj, "check_hostname")
+                .and_then(|c| c.as_bool()).unwrap_or(false);
+            if v == 0 && check_hostname {
+                raise_err("ValueError",
+                    "Cannot set verify_mode to CERT_NONE when check_hostname is enabled.");
+                return true;
+            }
+            set_field(obj, "verify_mode", MbValue::from_int(v));
+            true
+        }
+        "minimum_version" | "maximum_version" => {
+            let v = match as_int_like(value) {
+                Some(v) => v,
+                None => {
+                    raise_err("TypeError", &format!(
+                        "'{}' object cannot be interpreted as an integer",
+                        py_type_name(value)));
+                    return true;
+                }
+            };
+            // TLSVersion members only: MINIMUM/MAXIMUM_SUPPORTED + SSLv3..TLSv1.3.
+            if !matches!(v, -2 | -1 | 768 | 769 | 770 | 771 | 772) {
+                raise_err("ValueError",
+                    &format!("Unsupported TLS/SSL version {v:#x}"));
+                return true;
+            }
+            set_field(obj, attr, MbValue::from_int(v));
+            true
+        }
+        "num_tickets" => {
+            let v = match as_int_like(value) {
+                Some(v) => v,
+                None => {
+                    raise_err("TypeError", &format!(
+                        "'{}' object cannot be interpreted as an integer",
+                        py_type_name(value)));
+                    return true;
+                }
+            };
+            if v < 0 {
+                raise_err("ValueError", "value must be non-negative");
+                return true;
+            }
+            let protocol = get_field(obj, "protocol").and_then(as_int_like).unwrap_or(2);
+            if protocol != 17 {
+                raise_err("ValueError", "SSLContext is not a server context.");
+                return true;
+            }
+            set_field(obj, "num_tickets", MbValue::from_int(v));
+            true
+        }
+        "options" => {
+            // Out-of-range u64 → OverflowError; non-int → TypeError.
+            if let Some(ptr) = value.as_ptr() {
+                unsafe {
+                    if let ObjData::BigInt(_) = (*ptr).data {
+                        raise_err("OverflowError",
+                            "Python int too large to convert to C unsigned long");
+                        return true;
+                    }
+                }
+            }
+            let v = match as_int_like(value) {
+                Some(v) => v,
+                None => {
+                    raise_err("TypeError", &format!(
+                        "argument must be int, not {}", py_type_name(value)));
+                    return true;
+                }
+            };
+            if v < 0 {
+                raise_err("OverflowError", "can't convert negative int to unsigned");
+                return true;
+            }
+            set_field(obj, "options", MbValue::from_int(v));
+            true
+        }
+        _ => false,
+    }
+}
+
+// ── Ciphers / session stats ─────────────────────────────────────────────────
+
+/// (name, protocol, code, kx, au, enc, bits) — OpenSSL 3.x default-list shape.
+/// No PSK / SRP / MD5 / RC4 / 3DES entries: the default list excludes weak
+/// primitives (default_ciphers_exclude_weak).
+const CIPHER_TABLE: &[(&str, &str, i64, &str, &str, &str, i64)] = &[
+    ("TLS_AES_256_GCM_SHA384",        "TLSv1.3", 0x1302, "any",   "any",   "AESGCM(256)",   256),
+    ("TLS_CHACHA20_POLY1305_SHA256",  "TLSv1.3", 0x1303, "any",   "any",   "CHACHA20/POLY1305(256)", 256),
+    ("TLS_AES_128_GCM_SHA256",        "TLSv1.3", 0x1301, "any",   "any",   "AESGCM(128)",   128),
+    ("ECDHE-ECDSA-AES256-GCM-SHA384", "TLSv1.2", 0xC02C, "ECDH",  "ECDSA", "AESGCM(256)",   256),
+    ("ECDHE-RSA-AES256-GCM-SHA384",   "TLSv1.2", 0xC030, "ECDH",  "RSA",   "AESGCM(256)",   256),
+    ("DHE-RSA-AES256-GCM-SHA384",     "TLSv1.2", 0x009F, "DH",    "RSA",   "AESGCM(256)",   256),
+    ("ECDHE-ECDSA-CHACHA20-POLY1305", "TLSv1.2", 0xCCA9, "ECDH",  "ECDSA", "CHACHA20/POLY1305(256)", 256),
+    ("ECDHE-RSA-CHACHA20-POLY1305",   "TLSv1.2", 0xCCA8, "ECDH",  "RSA",   "CHACHA20/POLY1305(256)", 256),
+    ("DHE-RSA-CHACHA20-POLY1305",     "TLSv1.2", 0xCCAA, "DH",    "RSA",   "CHACHA20/POLY1305(256)", 256),
+    ("ECDHE-ECDSA-AES128-GCM-SHA256", "TLSv1.2", 0xC02B, "ECDH",  "ECDSA", "AESGCM(128)",   128),
+    ("ECDHE-RSA-AES128-GCM-SHA256",   "TLSv1.2", 0xC02F, "ECDH",  "RSA",   "AESGCM(128)",   128),
+    ("DHE-RSA-AES128-GCM-SHA256",     "TLSv1.2", 0x009E, "DH",    "RSA",   "AESGCM(128)",   128),
+    ("ECDHE-ECDSA-AES256-SHA384",     "TLSv1.2", 0xC024, "ECDH",  "ECDSA", "AES(256)",      256),
+    ("ECDHE-RSA-AES256-SHA384",       "TLSv1.2", 0xC028, "ECDH",  "RSA",   "AES(256)",      256),
+    ("ECDHE-ECDSA-AES128-SHA256",     "TLSv1.2", 0xC023, "ECDH",  "ECDSA", "AES(128)",      128),
+    ("ECDHE-RSA-AES128-SHA256",       "TLSv1.2", 0xC027, "ECDH",  "RSA",   "AES(128)",      128),
+    ("AES256-GCM-SHA384",             "TLSv1.2", 0x009D, "RSA",   "RSA",   "AESGCM(256)",   256),
+    ("AES128-GCM-SHA256",             "TLSv1.2", 0x009C, "RSA",   "RSA",   "AESGCM(128)",   128),
+    ("AES256-SHA256",                 "TLSv1.2", 0x003D, "RSA",   "RSA",   "AES(256)",      256),
+    ("AES128-SHA256",                 "TLSv1.2", 0x003C, "RSA",   "RSA",   "AES(128)",      128),
+];
+
+/// Build one get_ciphers() entry with CPython's field shape.
+fn cipher_dict(entry: &(&str, &str, i64, &str, &str, &str, i64)) -> MbValue {
+    let (name, proto, code, kx, au, enc, bits) = *entry;
+    let aead = enc.contains("GCM") || enc.contains("POLY1305");
+    let description = format!(
+        "{name} {proto} Kx={kx} Au={au} Enc={enc} Mac=AEAD"
+    );
+    make_ns(&[
+        ("id",            MbValue::from_int(0x0300_0000 | code)),
+        ("name",          new_str(name)),
+        ("protocol",      new_str(proto)),
+        ("description",   new_str(&description)),
+        ("strength_bits", MbValue::from_int(bits)),
+        ("alg_bits",      MbValue::from_int(bits)),
+        ("aead",          MbValue::from_bool(aead)),
+        ("symmetric",     new_str(&enc.to_lowercase())),
+        ("digest",        MbValue::none()),
+        ("kea",           new_str(&format!("kx-{}", kx.to_lowercase()))),
+        ("auth",          new_str(&format!("auth-{}", au.to_lowercase()))),
+    ])
+}
+
+/// `SSLContext.get_ciphers()` — non-empty list of cipher dicts; honors the
+/// narrowing applied by set_ciphers (AESGCM keeps the GCM suites).
+unsafe extern "C" fn ctx_get_ciphers(self_v: MbValue, _args: MbValue) -> MbValue {
+    let filter = get_field(self_v, "_cipher_filter")
+        .and_then(|v| v.as_ptr().and_then(|p| {
+            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        }))
+        .unwrap_or_else(|| "DEFAULT".to_string());
+    let upper = filter.to_uppercase();
+    let narrowed_to_gcm = upper.contains("AESGCM");
+    let mut items = Vec::new();
+    for entry in CIPHER_TABLE {
+        if narrowed_to_gcm && !entry.0.contains("GCM") {
+            continue;
+        }
+        items.push(cipher_dict(entry));
+    }
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+/// Cipher-string keywords OpenSSL's parser accepts (subset). A set_ciphers
+/// string none of whose tokens are recognized selects no cipher → SSLError.
+const CIPHER_KEYWORDS: &[&str] = &[
+    "ALL", "DEFAULT", "COMPLEMENTOFDEFAULT", "COMPLEMENTOFALL", "HIGH", "MEDIUM",
+    "LOW", "ANULL", "ENULL", "NULL", "EXPORT", "AES", "AESGCM", "AESCCM",
+    "AES128", "AES256", "CHACHA20", "CAMELLIA", "3DES", "DES", "RC4", "MD5",
+    "SHA", "SHA1", "SHA256", "SHA384", "RSA", "KRSA", "ARSA", "DSS", "DHE",
+    "EDH", "ECDHE", "EECDH", "ECDSA", "ECDH", "ADH", "AECDH", "PSK", "SRP",
+    "KRB5", "SEED", "IDEA", "TLSV1", "TLSV1.0", "TLSV1.2", "TLSV1.3", "SSLV3",
+];
+
+/// `SSLContext.set_ciphers(s)` — validates the OpenSSL cipher string; a string
+/// that selects nothing raises SSLError("No cipher can be selected.").
+unsafe extern "C" fn ctx_set_ciphers(self_v: MbValue, args: MbValue) -> MbValue {
+    let arg = first_arg(args);
+    let s = match arg.as_ptr().and_then(|p| {
+        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+    }) {
+        Some(s) => s,
+        None => {
+            return raise_err("TypeError",
+                &format!("cipher string must be str, not {}", py_type_name(arg)));
+        }
+    };
+    let mut any_recognized = false;
+    for raw in s.split(|c: char| matches!(c, ':' | ',' | ' ')) {
+        let token = raw.trim_start_matches(['!', '-', '+']);
+        if token.is_empty() { continue; }
+        if let Some(directive) = token.strip_prefix('@') {
+            let name = directive.split('=').next().unwrap_or("");
+            if matches!(name.to_uppercase().as_str(), "STRENGTH" | "SECLEVEL") {
+                any_recognized = true;
+            }
+            continue;
+        }
+        let upper = token.to_uppercase();
+        if CIPHER_KEYWORDS.contains(&upper.as_str())
+            || CIPHER_TABLE.iter().any(|e| e.0 == upper)
+            || upper.split('+').all(|part| CIPHER_KEYWORDS.contains(&part))
+        {
+            any_recognized = true;
+        }
+    }
+    if !any_recognized {
+        return raise_err("SSLError", "No cipher can be selected.");
+    }
+    set_field(self_v, "_cipher_filter", new_str(&s));
+    MbValue::none()
+}
+
+/// `SSLContext.session_stats()` — the zeroed stats dict of a fresh context.
+unsafe extern "C" fn ctx_session_stats(_self_v: MbValue, _args: MbValue) -> MbValue {
+    make_ns(&[
+        ("number",               MbValue::from_int(0)),
+        ("connect",              MbValue::from_int(0)),
+        ("connect_good",         MbValue::from_int(0)),
+        ("connect_renegotiate",  MbValue::from_int(0)),
+        ("accept",               MbValue::from_int(0)),
+        ("accept_good",          MbValue::from_int(0)),
+        ("accept_renegotiate",   MbValue::from_int(0)),
+        ("hits",                 MbValue::from_int(0)),
+        ("misses",               MbValue::from_int(0)),
+        ("timeouts",             MbValue::from_int(0)),
+        ("cache_full",           MbValue::from_int(0)),
+    ])
+}
+
+/// load_cert_chain / load_verify_locations: a missing file path raises
+/// FileNotFoundError (CPython surfaces the OSError from OpenSSL's BIO open).
+unsafe extern "C" fn ctx_load_path_checked(_self_v: MbValue, args: MbValue) -> MbValue {
+    let arg = first_arg(args);
+    if let Some(p) = arg.as_ptr() {
+        if let ObjData::Str(ref path) = (*p).data {
+            if !std::path::Path::new(path.as_str()).exists() {
+                return raise_err("FileNotFoundError",
+                    &format!("No such file or directory: {path:?}"));
+            }
+        }
+    }
+    MbValue::none()
+}
+
+/// `SSLContext.wrap_socket(sock, ...)` — TLS itself is not wired yet, but the
+/// CPython argument contract holds: a non-socket first argument fails with
+/// AttributeError when wrap_socket reaches for the socket surface.
+unsafe extern "C" fn ctx_wrap_socket(_self_v: MbValue, args: MbValue) -> MbValue {
+    let sock = first_arg(args);
+    let is_instance = sock.as_ptr()
+        .map(|p| matches!((*p).data, ObjData::Instance { .. }))
+        .unwrap_or(false);
+    if !is_instance {
+        return raise_err("AttributeError",
+            &format!("'{}' object has no attribute 'fileno'", py_type_name(sock)));
+    }
+    MbValue::none()
+}
+
+/// Named curves OpenSSL 3.x accepts for set_ecdh_curve.
+const KNOWN_CURVES: &[&str] = &[
+    "prime192v1", "prime256v1", "secp224r1", "secp256k1", "secp384r1",
+    "secp521r1", "brainpoolP256r1", "brainpoolP384r1", "brainpoolP512r1",
+    "sect233k1", "sect233r1", "sect283k1", "sect283r1", "sect409k1",
+    "sect409r1", "sect571k1", "sect571r1", "x25519", "x448",
+];
+
+/// `SSLContext.set_ecdh_curve(name)` — str/bytes of a known curve; None is a
+/// TypeError, an unknown curve name a ValueError.
+unsafe extern "C" fn ctx_set_ecdh_curve(_self_v: MbValue, args: MbValue) -> MbValue {
+    let arg = first_arg(args);
+    let name = match arg.as_ptr().and_then(|p| match &(*p).data {
+        ObjData::Str(s) => Some(s.clone()),
+        ObjData::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+        _ => None,
+    }) {
+        Some(s) => s,
+        None => {
+            return raise_err("TypeError",
+                &format!("curve name must be str or bytes, not {}", py_type_name(arg)));
+        }
+    };
+    if !KNOWN_CURVES.iter().any(|c| c.eq_ignore_ascii_case(&name)) {
+        return raise_err("ValueError", &format!("unknown curve name: {name}"));
+    }
+    MbValue::none()
+}
+
+/// All positional args from the packed args list (variadic-init convention).
+fn args_vec(args: MbValue) -> Vec<MbValue> {
+    if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::List(lock) => return lock.read().unwrap().to_vec(),
+                ObjData::Tuple(items) => return items.clone(),
+                _ => {}
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// `SSLError.__init__` — OSError-style: 2+ args store (errno, strerror);
+/// `args` always carries the full constructor tuple.
+unsafe extern "C" fn ssl_error_init(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = args_vec(args);
+    let args_tuple = MbValue::from_ptr(MbObject::new_tuple(items.clone()));
+    set_field(self_v, "args", args_tuple);
+    if items.len() >= 2 {
+        set_field(self_v, "errno", items[0]);
+        set_field(self_v, "strerror", items[1]);
+        // message powers the generic traceback/str fallbacks.
+        if let Some(p) = items[1].as_ptr() {
+            if let ObjData::Str(ref s) = (*p).data {
+                set_field(self_v, "message", new_str(s));
+            }
+        }
+    } else if let Some(first) = items.first() {
+        set_field(self_v, "message", super::super::builtins::mb_str(*first));
+    }
+    MbValue::none()
+}
+
+/// `SSLError.__str__` — CPython Modules/_ssl.c SSLError_str: the strerror
+/// when it is a str, otherwise str(self.args).
+unsafe extern "C" fn ssl_error_str(self_v: MbValue) -> MbValue {
+    if let Some(strerror) = get_field(self_v, "strerror") {
+        if let Some(p) = strerror.as_ptr() {
+            if let ObjData::Str(ref s) = (*p).data {
+                return MbValue::from_ptr(MbObject::new_str(s.clone()));
+            }
+        }
+    }
+    let args = get_field(self_v, "args").unwrap_or_else(|| {
+        MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
+    });
+    super::super::builtins::mb_str(args)
+}
+
+/// SSLObject / SSLSocket have no public constructor (CPython 3.12).
+unsafe extern "C" fn ssl_object_init(_self_v: MbValue, _args: MbValue) -> MbValue {
+    raise_err("TypeError",
+        "SSLObject does not have a public constructor. Instances are returned by SSLContext.wrap_bio().")
+}
+
+unsafe extern "C" fn ssl_socket_init(_self_v: MbValue, _args: MbValue) -> MbValue {
+    raise_err("TypeError",
+        "SSLSocket does not have a public constructor. Instances are returned by SSLContext.wrap_socket().")
 }
 
 /// Register the ssl exception taxonomy + `SSLContext` in CLASS_REGISTRY.
@@ -184,7 +713,35 @@ fn register_ssl_classes() {
     ];
     for &(name, bases) in exc_specs {
         let base_vec: Vec<String> = bases.iter().map(|s| s.to_string()).collect();
-        super::super::class::mb_class_register(name, base_vec, empty());
+        if name == "SSLError" {
+            // OSError-style (errno, strerror) constructor + strerror-first str.
+            // Subclasses inherit both through the MRO.
+            let init_addr = ssl_error_init as usize;
+            super::super::module::register_variadic_func(init_addr as u64);
+            let mut methods: HashMap<String, MbValue> = HashMap::new();
+            methods.insert("__init__".to_string(), MbValue::from_func(init_addr));
+            // __str__ takes self only — registered non-variadic so the
+            // single-arg mb_call_method1 dispatch matches its ABI.
+            methods.insert("__str__".to_string(), MbValue::from_func(ssl_error_str as usize));
+            super::super::class::mb_class_register(name, base_vec, methods);
+        } else {
+            super::super::class::mb_class_register(name, base_vec, empty());
+        }
+    }
+
+    // SSLObject / SSLSocket: real classes (subclassable) whose __init__ raises
+    // CPython's "no public constructor" TypeError.
+    {
+        let obj_init = ssl_object_init as usize;
+        let sock_init = ssl_socket_init as usize;
+        super::super::module::register_variadic_func(obj_init as u64);
+        super::super::module::register_variadic_func(sock_init as u64);
+        let mut obj_methods: HashMap<String, MbValue> = HashMap::new();
+        obj_methods.insert("__init__".to_string(), MbValue::from_func(obj_init));
+        super::super::class::mb_class_register("SSLObject", Vec::new(), obj_methods);
+        let mut sock_methods: HashMap<String, MbValue> = HashMap::new();
+        sock_methods.insert("__init__".to_string(), MbValue::from_func(sock_init));
+        super::super::class::mb_class_register("SSLSocket", Vec::new(), sock_methods);
     }
 
     // SSLContext: real class so `ssl.SSLContext(protocol)` constructs an
@@ -196,11 +753,24 @@ fn register_ssl_classes() {
         super::super::module::register_variadic_func(noop_addr as u64);
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         methods.insert("__init__".to_string(), MbValue::from_func(init_addr));
+        let typed: &[(&str, usize)] = &[
+            ("get_ciphers",           ctx_get_ciphers       as usize),
+            ("set_ciphers",           ctx_set_ciphers       as usize),
+            ("session_stats",         ctx_session_stats     as usize),
+            ("load_cert_chain",       ctx_load_path_checked as usize),
+            ("load_verify_locations", ctx_load_path_checked as usize),
+            ("set_ecdh_curve",        ctx_set_ecdh_curve    as usize),
+            ("wrap_socket",           ctx_wrap_socket       as usize),
+        ];
+        for (m, addr) in typed {
+            super::super::module::register_variadic_func(*addr as u64);
+            methods.insert((*m).to_string(), MbValue::from_func(*addr));
+        }
         for m in [
-            "load_cert_chain", "load_verify_locations", "load_default_certs",
-            "set_alpn_protocols", "set_npn_protocols", "set_ciphers",
-            "wrap_socket", "wrap_bio", "get_ciphers", "set_servername_callback",
-            "session_stats", "cert_store_stats", "get_ca_certs",
+            "load_default_certs",
+            "set_alpn_protocols", "set_npn_protocols",
+            "wrap_bio", "set_servername_callback",
+            "cert_store_stats", "get_ca_certs",
         ] {
             methods.insert(m.to_string(), MbValue::from_func(noop_addr));
         }
@@ -350,7 +920,7 @@ pub fn register() {
     // (see register_ssl_classes); their module attrs are class-name strings so
     // callable() / construction / issubclass resolve through CLASS_REGISTRY.
     for cls in [
-        "SSLContext",
+        "SSLContext", "SSLObject", "SSLSocket",
         "SSLError", "SSLZeroReturnError", "SSLWantReadError", "SSLWantWriteError",
         "SSLSyscallError", "SSLEOFError", "SSLCertVerificationError",
         "CertificateError", "socket_error",
@@ -362,9 +932,21 @@ pub fn register() {
     // objects with member attributes; a Dict namespace resolves
     // hasattr(ssl.X, MEMBER) directly. Values are the real CPython members.
     attrs.insert("Purpose".into(), make_ns(&[
-        // ssl.Purpose.{SERVER,CLIENT}_AUTH carry the extended-key-usage OID.
-        ("SERVER_AUTH", new_str("1.3.6.1.5.5.7.3.1")),
-        ("CLIENT_AUTH", new_str("1.3.6.1.5.5.7.3.2")),
+        // ssl.Purpose.{SERVER,CLIENT}_AUTH are _ASN1Object-shaped members
+        // carrying (nid, shortname, longname, oid) for the extended-key-usage
+        // OIDs (CPython Lib/ssl.py Purpose enum).
+        ("SERVER_AUTH", make_ns(&[
+            ("nid",       MbValue::from_int(129)),
+            ("shortname", new_str("serverAuth")),
+            ("longname",  new_str("TLS Web Server Authentication")),
+            ("oid",       new_str("1.3.6.1.5.5.7.3.1")),
+        ])),
+        ("CLIENT_AUTH", make_ns(&[
+            ("nid",       MbValue::from_int(130)),
+            ("shortname", new_str("clientAuth")),
+            ("longname",  new_str("TLS Web Client Authentication")),
+            ("oid",       new_str("1.3.6.1.5.5.7.3.2")),
+        ])),
     ]));
     attrs.insert("TLSVersion".into(), make_ns(&[
         ("MINIMUM_SUPPORTED", MbValue::from_int(-2)),
@@ -379,7 +961,6 @@ pub fn register() {
     let dispatchers: &[(&str, usize)] = &[
         ("create_default_context",      dispatch_create_default_context       as *const () as usize),
         ("SSLSession",                  dispatch_class_shell                  as *const () as usize),
-        ("SSLSocket",                   dispatch_class_shell                  as *const () as usize),
         ("MemoryBIO",                   dispatch_class_shell                  as *const () as usize),
         ("wrap_socket",                 dispatch_wrap_socket                  as *const () as usize),
         ("match_hostname",              dispatch_match_hostname               as *const () as usize),
@@ -400,7 +981,6 @@ pub fn register() {
         ("VerifyMode",                  dispatch_class_shell                  as *const () as usize),
         // Additional classes/types.
         ("DefaultVerifyPaths",          dispatch_class_shell                  as *const () as usize),
-        ("SSLObject",                   dispatch_class_shell                  as *const () as usize),
         ("socket",                      dispatch_class_shell                  as *const () as usize),
         // Module-level functions.
         ("create_connection",           dispatch_ssl_context                  as *const () as usize),

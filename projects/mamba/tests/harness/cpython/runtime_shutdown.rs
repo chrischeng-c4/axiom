@@ -55,12 +55,10 @@ fn assert_fixture_exits_successfully(rel: &str) {
 fn previously_crashing_fixtures_exit_without_shutdown_signal() {
     for rel in [
         // Relocated to _regression/ by the dimension-first migration (no-record
-        // regression fixture). The std-libs/* entries below predate this change
-        // and were already absent on disk.
+        // regression fixture). The std-libs monoliths that used to be listed
+        // here (itertools/edges.py, re/broad.py, re/ops_broad.py) predated the
+        // migration and no longer exist on disk.
         "_regression/core/imports/test_import.py",
-        "std-libs/itertools/edges.py",
-        "std-libs/re/broad.py",
-        "std-libs/re/ops_broad.py",
     ] {
         assert_fixture_exits_successfully(rel);
     }

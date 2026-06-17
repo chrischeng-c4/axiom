@@ -233,7 +233,8 @@ impl<'a> Parser<'a> {
                             let is_raw = matches!(self.peek_kind(), Some(TokenKind::RawFStr(_)));
                             self.advance();
                             let mut parts = vec![FStringPart::Literal(buf)];
-                            parts.extend(parse_fstring_parts(&s, is_raw));
+                            parts.extend(parse_fstring_parts(&s, is_raw)
+                                .map_err(|m| crate::error::MambaError::syntax(self.span_from(start), m))?);
                             // keep absorbing trailing literals/f-strings.
                             loop {
                                 match self.peek_kind() {
@@ -246,7 +247,8 @@ impl<'a> Parser<'a> {
                                     Some(TokenKind::FStr(s2)) | Some(TokenKind::RawFStr(s2)) => {
                                         let raw2 = matches!(self.peek_kind(), Some(TokenKind::RawFStr(_)));
                                         self.advance();
-                                        parts.extend(parse_fstring_parts(&s2, raw2));
+                                        parts.extend(parse_fstring_parts(&s2, raw2)
+                                            .map_err(|m| crate::error::MambaError::syntax(self.span_from(start), m))?);
                                     }
                                     _ => break,
                                 }
@@ -275,7 +277,8 @@ impl<'a> Parser<'a> {
                 let v = v.clone();
                 let is_raw = matches!(self.peek_kind(), Some(TokenKind::RawFStr(_)));
                 self.advance();
-                let mut parts = parse_fstring_parts(&v, is_raw);
+                let mut parts = parse_fstring_parts(&v, is_raw)
+                    .map_err(|m| crate::error::MambaError::syntax(self.span_from(start), m))?;
                 // f-string + (str | f-string) implicit join.
                 loop {
                     match self.peek_kind() {
@@ -288,7 +291,8 @@ impl<'a> Parser<'a> {
                         Some(TokenKind::FStr(s)) | Some(TokenKind::RawFStr(s)) => {
                             let raw2 = matches!(self.peek_kind(), Some(TokenKind::RawFStr(_)));
                             self.advance();
-                            parts.extend(parse_fstring_parts(&s, raw2));
+                            parts.extend(parse_fstring_parts(&s, raw2)
+                                .map_err(|m| crate::error::MambaError::syntax(self.span_from(start), m))?);
                         }
                         _ => break,
                     }
@@ -603,7 +607,7 @@ fn finish_fstring_literal(lit: String, is_raw: bool) -> String {
 /// Parse f-string content into literal/expression parts.  `is_raw` carries the
 /// `r` prefix (`rf'...'` / `fr'...'`): when set, backslash escapes in the
 /// literal runs are kept verbatim.
-fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
+fn parse_fstring_parts(content: &str, is_raw: bool) -> Result<Vec<FStringPart>, String> {
     let mut parts = Vec::new();
     // Accumulate the literal run as raw bytes so multi-byte UTF-8 characters
     // survive intact; decode to a `String` (lossily, though `content` is valid
@@ -692,13 +696,15 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
                     } else if b == quote {
                         str_stack.pop();
                         i += 1;
-                    } else if b == b'\'' || b == b'"' {
-                        str_stack.push(b);
-                        i += 1;
                     } else {
+                        // Any other byte — including the OTHER quote kind —
+                        // is plain string content (`f"""{"eric's"}"""`).
                         i += 1;
                     }
                 }
+            }
+            if depth > 0 {
+                return Err("f-string: expecting '}'".to_string());
             }
             let raw = &content[start..i];
             i += 1; // skip closing }
@@ -706,24 +712,58 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
             // We must not split inside brackets/parens/strings (e.g., `d['key']`).
             let (expr_with_conv, format_spec) = split_expr_and_spec(raw);
             // Peel off `!r`, `!s`, or `!a` conversion suffix at top level.
-            let (expr_str, conversion) = split_expr_and_conversion(expr_with_conv);
+            let (expr_str0, conversion) = split_expr_and_conversion(expr_with_conv);
+            // `=` self-documenting form (PEP 498 / 3.8 debug specifier):
+            // `{expr=}`, `{expr = }`, `{expr=!r}`, `{expr=:spec}`. The text up
+            // to and including the `=` (plus surrounding whitespace) is echoed
+            // verbatim, then the value follows — repr by default unless an
+            // explicit conversion or spec is present.
+            let trimmed = expr_str0.trim_end();
+            let is_debug_eq = trimmed.ends_with('=')
+                && !trimmed.ends_with("==")
+                && !trimmed.ends_with("!=")
+                && !trimmed.ends_with("<=")
+                && !trimmed.ends_with(">=")
+                && !trimmed.ends_with(":=");
+            let (expr_str, debug_echo) = if is_debug_eq {
+                (trimmed[..trimmed.len() - 1].trim_end(), Some(expr_str0.to_string()))
+            } else {
+                (expr_str0, None)
+            };
+            if expr_str.trim().is_empty() {
+                return Err("f-string: valid expression required before '}'".to_string());
+            }
             // Detect nested f-strings: if the entire expression is `f"..."` or
             // `f'...'`, recursively invoke parse_fstring_parts on the inner
             // content for more direct handling (PEP-701 nested f-strings).
             let mut expr_node = if let Some(inner) = strip_fstring_literal(expr_str) {
                 // The nested literal is `f"..."`/`f'...'` (strip_fstring_literal
                 // only matches the bare `f` prefix), so it is never raw.
-                let inner_parts = parse_fstring_parts(inner, false);
+                let inner_parts = parse_fstring_parts(inner, false)?;
                 Expr::FString(inner_parts)
             } else {
                 parse_fstring_expr(expr_str)
             };
+            if matches!(expr_node, Expr::Starred(_))
+                || expr_str.trim_start().starts_with('*')
+            {
+                return Err("f-string: cannot use starred expression here".to_string());
+            }
             let span = Span::dummy();
+            if let Some(echo) = debug_echo {
+                parts.push(FStringPart::Literal(echo));
+            }
             // Apply conversion by wrapping the expression in a call to the
             // corresponding builtin. `!s` is a no-op because the default
             // conversion already calls str(). `!r` and `!a` both go through
-            // repr() — mamba doesn't distinguish ASCII yet.
-            if let Some(conv) = conversion {
+            // repr() — mamba doesn't distinguish ASCII yet. The `=` debug
+            // form defaults to repr when no conversion or spec is given.
+            let effective_conv = match conversion {
+                Some(c) => Some(c),
+                None if is_debug_eq && format_spec.is_none() => Some('r'),
+                None => None,
+            };
+            if let Some(conv) = effective_conv {
                 if conv == 'r' || conv == 'a' {
                     let inner = Spanned::new(expr_node, span);
                     expr_node = Expr::Call {
@@ -732,7 +772,15 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
                     };
                 }
             }
-            parts.push(FStringPart::Expr(Spanned::new(expr_node, span), format_spec));
+            // Structure the spec: a static spec is one Literal part; a spec
+            // containing replacement fields parses recursively so the nested
+            // expressions evaluate at runtime ({value:{width}}).
+            let spec_parts = match format_spec {
+                None => None,
+                Some(sp) if !sp.contains('{') => Some(vec![FStringPart::Literal(sp)]),
+                Some(sp) => Some(parse_fstring_parts(&sp, is_raw)?),
+            };
+            parts.push(FStringPart::Expr(Spanned::new(expr_node, span), spec_parts));
         } else {
             // Copy the raw byte into the literal run; multi-byte UTF-8 sequences
             // are preserved (decoded as a unit when the run is flushed) instead
@@ -747,7 +795,7 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Vec<FStringPart> {
             is_raw,
         )));
     }
-    parts
+    Ok(parts)
 }
 
 /// If `s` is a standalone f-string literal (`f"..."` or `f'...'`), return
@@ -1317,14 +1365,14 @@ mod tests {
 
     #[test]
     fn test_parse_fstring_parts_literal_only() {
-        let parts = parse_fstring_parts("hello world", false);
+        let parts = parse_fstring_parts("hello world", false).unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "hello world"));
     }
 
     #[test]
     fn test_parse_fstring_parts_single_expr() {
-        let parts = parse_fstring_parts("hello {name}", false);
+        let parts = parse_fstring_parts("hello {name}", false).unwrap();
         assert_eq!(parts.len(), 2);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "hello "));
         assert!(matches!(&parts[1], FStringPart::Expr(_, None)));
@@ -1332,17 +1380,19 @@ mod tests {
 
     #[test]
     fn test_parse_fstring_parts_with_format_spec() {
-        let parts = parse_fstring_parts("{x:.2f}", false);
+        let parts = parse_fstring_parts("{x:.2f}", false).unwrap();
         assert_eq!(parts.len(), 1);
         match &parts[0] {
-            FStringPart::Expr(_, Some(spec)) => assert_eq!(spec, ".2f"),
+            FStringPart::Expr(_, Some(spec)) => {
+                assert!(matches!(&spec[..], [FStringPart::Literal(l)] if l == ".2f"));
+            }
             other => panic!("expected Expr with spec, got {other:?}"),
         }
     }
 
     #[test]
     fn test_parse_fstring_parts_escaped_braces() {
-        let parts = parse_fstring_parts("{{literal}}", false);
+        let parts = parse_fstring_parts("{{literal}}", false).unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "{literal}"));
     }
@@ -1351,7 +1401,7 @@ mod tests {
     fn test_parse_fstring_literal_escapes_cooked() {
         // Non-raw f-string: literal runs get Python escape processing, so
         // `\n` collapses to a newline (matching `str` literals).
-        let parts = parse_fstring_parts("a\\nb", false);
+        let parts = parse_fstring_parts("a\\nb", false).unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "a\nb"));
     }
@@ -1359,7 +1409,7 @@ mod tests {
     #[test]
     fn test_parse_fstring_literal_escapes_raw_kept() {
         // Raw f-string (`rf'...'`/`fr'...'`): backslash escapes stay verbatim.
-        let parts = parse_fstring_parts("a\\nb", true);
+        let parts = parse_fstring_parts("a\\nb", true).unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "a\\nb"));
     }

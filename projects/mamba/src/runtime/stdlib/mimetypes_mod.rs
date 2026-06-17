@@ -441,6 +441,18 @@ fn url_scheme_path(url: &str) -> (String, String) {
 ///   4. The encoding map (`.gz` -> gzip) is consulted case-SENSITIVELY.
 ///   5. The final extension is lowercased before the types-map lookup.
 pub fn mb_mimetypes_guess_type(url: MbValue, strict: MbValue) -> MbValue {
+    // guess_type requires a str/bytes/PathLike; a bare scalar (int/None/float)
+    // is a TypeError (os.fspath rejects it), not a silent ("", None) result.
+    if url.as_ptr().is_none() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "expected str, bytes or os.PathLike object, not {}",
+                super::super::builtins::value_type_name(url)
+            ))),
+        );
+        return MbValue::none();
+    }
     let url_s = extract_pathlike(url).unwrap_or_default();
     let strict_flag = !matches!(strict.as_bool(), Some(false));
     let none_pair =
@@ -586,13 +598,14 @@ pub fn mb_mimetypes_add_type(type_val: MbValue, ext_val: MbValue, strict: MbValu
 /// Instance-method bindings for the `MimeTypes` dict stub: `(name, addr)` of
 /// the native dispatcher to seed into a fresh instance so `db.<name>(...)`
 /// resolves to the same code path as the module-level `mimetypes.<name>(...)`.
-fn instance_methods() -> [(&'static str, usize); 5] {
+fn instance_methods() -> [(&'static str, usize); 6] {
     [
         ("guess_type", dispatch_guess_type as *const () as usize),
         ("guess_extension", dispatch_guess_extension as *const () as usize),
         ("guess_all_extensions", dispatch_guess_all_extensions as *const () as usize),
         ("add_type", dispatch_add_type as *const () as usize),
         ("read_mime_types", dispatch_read_mime_types as *const () as usize),
+        ("read", dispatch_read as *const () as usize),
     ]
 }
 
@@ -737,6 +750,29 @@ unsafe extern "C" fn dispatch_read_mime_types(args_ptr: *const MbValue, nargs: u
     mb_mimetypes_read_mime_types(a.first().copied().unwrap_or_else(MbValue::none))
 }
 
+/// `MimeTypes().read(filename)` — unlike the module-level `read_mime_types`
+/// (which catches and returns None), the instance method opens the file and so
+/// a missing path raises FileNotFoundError (CPython).
+unsafe extern "C" fn dispatch_read(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let filename = a.first().copied().unwrap_or_else(MbValue::none);
+    let path = extract_str(filename).unwrap_or_default();
+    if std::fs::metadata(&path).is_err() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "[Errno 2] No such file or directory: '{path}'"
+            ))),
+        );
+        return MbValue::none();
+    }
+    mb_mimetypes_read_mime_types(filename)
+}
+
 /// Build a Dict MbValue from a static (key, val) slice.
 fn build_static_dict(entries: &[(&str, &str)]) -> MbValue {
     let dict = MbObject::new_dict();
@@ -775,6 +811,12 @@ pub fn register() {
             s.borrow_mut().insert(*addr as u64);
         });
     }
+    // `read` is an instance-only method (not a module-level function), so it is
+    // not in the dispatchers list above — register its addr so is_native_func
+    // recognises it when dispatched off a MimeTypes instance.
+    NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(dispatch_read as *const () as usize as u64);
+    });
 
     // Module attrs.
     attrs.insert("inited".to_string(), MbValue::from_bool(true));

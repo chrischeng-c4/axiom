@@ -69,6 +69,7 @@ unsafe extern "C" fn dispatch_parse_qs(args_ptr: *const MbValue, nargs: usize) -
     let args = args_slice(args_ptr, nargs);
     super::http_mod::mb_urllib_parse_qs(
         args.first().copied().unwrap_or_else(MbValue::none),
+        false, "utf-8", "replace",
     )
 }
 
@@ -76,6 +77,7 @@ unsafe extern "C" fn dispatch_parse_qsl(args_ptr: *const MbValue, nargs: usize) 
     let args = args_slice(args_ptr, nargs);
     super::http_mod::mb_urllib_parse_qsl(
         args.first().copied().unwrap_or_else(MbValue::none),
+        false, "utf-8", "replace",
     )
 }
 

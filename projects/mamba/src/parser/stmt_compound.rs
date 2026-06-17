@@ -355,6 +355,9 @@ impl<'a> Parser<'a> {
             arms.push(MatchArm { pattern, guard, body, span: self.span_from(arm_start) });
         }
         if self.peek_kind() == Some(TokenKind::Dedent) { self.advance(); }
+        if let Err(msg) = validate_match_arms(&arms) {
+            return Err(crate::error::MambaError::syntax(self.span_from(start), msg));
+        }
         Ok(Spanned::new(Stmt::Match { expr, arms }, self.span_from(start)))
     }
 
@@ -660,7 +663,9 @@ impl<'a> Parser<'a> {
         let name = self.text_at(ns, ne).to_string();
         let type_params = self.parse_optional_type_params()?;
         self.expect(TokenKind::Eq)?;
-        let value = self.parse_type_expr()?;
+        // PEP 695: the alias value is an arbitrary expression, evaluated
+        // lazily at runtime (e.g. `type Lazy[T] = lambda: T`).
+        let value = self.parse_expr()?;
         self.skip_newlines();
         Ok(Spanned::new(
             Stmt::TypeAlias { name, type_params, value },
@@ -712,7 +717,8 @@ mod tests {
     fn test_fn_def_with_type_params() {
         match parse_stmt("def foo[T, U]():\n    pass\n") {
             Stmt::FnDef { type_params, .. } => {
-                assert_eq!(type_params, vec!["T", "U"]);
+                let names: Vec<&str> = type_params.iter().map(|p| p.name.as_str()).collect();
+                assert_eq!(names, vec!["T", "U"]);
             }
             other => panic!("expected FnDef, got {other:?}"),
         }
@@ -779,7 +785,8 @@ mod tests {
     fn test_class_def_with_type_params() {
         match parse_stmt("class Foo[T]:\n    pass\n") {
             Stmt::ClassDef { type_params, .. } => {
-                assert_eq!(type_params, vec!["T"]);
+                let names: Vec<&str> = type_params.iter().map(|p| p.name.as_str()).collect();
+                assert_eq!(names, vec!["T"]);
             }
             other => panic!("expected ClassDef, got {other:?}"),
         }
@@ -1291,7 +1298,7 @@ mod tests {
             Stmt::TypeAlias { name, type_params, value } => {
                 assert_eq!(name, "Number");
                 assert!(type_params.is_empty());
-                assert!(matches!(value.node, TypeExpr::Named(ref n) if n == "int"));
+                assert!(matches!(value.node, Expr::Ident(ref n) if n == "int"));
             }
             other => panic!("expected TypeAlias, got {other:?}"),
         }
@@ -1301,7 +1308,7 @@ mod tests {
     fn test_type_alias_union() {
         match parse_stmt("type Number = int | float\n") {
             Stmt::TypeAlias { value, .. } => {
-                assert!(matches!(value.node, TypeExpr::Union(_)));
+                assert!(matches!(value.node, Expr::BinOp { op: BinOp::BitOr, .. }));
             }
             other => panic!("expected TypeAlias(Union), got {other:?}"),
         }
@@ -1312,7 +1319,8 @@ mod tests {
         match parse_stmt("type Container[T] = list[int]\n") {
             Stmt::TypeAlias { name, type_params, .. } => {
                 assert_eq!(name, "Container");
-                assert_eq!(type_params, vec!["T"]);
+                let names: Vec<&str> = type_params.iter().map(|p| p.name.as_str()).collect();
+                assert_eq!(names, vec!["T"]);
             }
             other => panic!("expected TypeAlias, got {other:?}"),
         }
@@ -1359,4 +1367,201 @@ mod tests {
         assert!(result.is_err());
     }
 
+}
+
+// ── match-pattern static validation (CPython compile-time SyntaxErrors) ──
+
+/// Literal mapping-pattern key, normalized so CPython's value-equality
+/// duplicate rule holds: 0 == False == 0.0 == -0.
+enum MatchKey {
+    Num(f64),
+    Str(String),
+    NoneKey,
+}
+
+fn match_key_of(expr: &Expr) -> Option<MatchKey> {
+    match expr {
+        Expr::IntLit(i) => Some(MatchKey::Num(*i as f64)),
+        Expr::FloatLit(f) => Some(MatchKey::Num(*f)),
+        Expr::BoolLit(b) => Some(MatchKey::Num(if *b { 1.0 } else { 0.0 })),
+        Expr::StrLit(s) => Some(MatchKey::Str(s.clone())),
+        Expr::NoneLit => Some(MatchKey::NoneKey),
+        Expr::UnaryOp { op: crate::parser::ast::UnaryOp::Neg, operand } => {
+            match match_key_of(&operand.node) {
+                Some(MatchKey::Num(n)) => Some(MatchKey::Num(-n)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn match_keys_equal(a: &MatchKey, b: &MatchKey) -> bool {
+    match (a, b) {
+        // -0.0 == 0.0 under f64 PartialEq, matching CPython 0/-0/False/0.0.
+        (MatchKey::Num(x), MatchKey::Num(y)) => x == y,
+        (MatchKey::Str(x), MatchKey::Str(y)) => x == y,
+        (MatchKey::NoneKey, MatchKey::NoneKey) => true,
+        _ => false,
+    }
+}
+
+/// True when the pattern matches any subject (a bare capture/wildcard or an
+/// OR whose last alternative is irrefutable, or an AS over one).
+fn pattern_is_irrefutable(p: &Pattern) -> bool {
+    match p {
+        Pattern::Wildcard | Pattern::Binding(_) => true,
+        Pattern::Or(alts) => alts
+            .last()
+            .map(|a| pattern_is_irrefutable(&a.node))
+            .unwrap_or(false),
+        Pattern::As { pattern, .. } => pattern_is_irrefutable(&pattern.node),
+        _ => false,
+    }
+}
+
+/// Per-pattern walk: records capture names (duplicates are SyntaxErrors),
+/// checks mapping-key duplicates, class-pattern keyword repeats, and OR
+/// alternation rules (same bound names per branch; only the final
+/// alternative may be irrefutable).
+fn validate_pattern(p: &Pattern, names: &mut Vec<String>) -> Result<(), String> {
+    match p {
+        Pattern::Wildcard | Pattern::Literal(_) => Ok(()),
+        Pattern::Binding(n) => {
+            if names.iter().any(|x| x == n) {
+                return Err(format!("multiple assignments to name '{n}' in pattern"));
+            }
+            names.push(n.clone());
+            Ok(())
+        }
+        Pattern::Star(name) => {
+            if let Some(n) = name {
+                if n != "_" {
+                    if names.iter().any(|x| x == n) {
+                        return Err(format!("multiple assignments to name '{n}' in pattern"));
+                    }
+                    names.push(n.clone());
+                }
+            }
+            Ok(())
+        }
+        Pattern::As { pattern, name } => {
+            if name == "_" {
+                return Err("cannot use '_' as a target".to_string());
+            }
+            validate_pattern(&pattern.node, names)?;
+            if names.iter().any(|x| x == name) {
+                return Err(format!("multiple assignments to name '{name}' in pattern"));
+            }
+            names.push(name.clone());
+            Ok(())
+        }
+        Pattern::Sequence(items) => {
+            for it in items {
+                validate_pattern(&it.node, names)?;
+            }
+            Ok(())
+        }
+        Pattern::Mapping { pairs, rest } => {
+            let mut keys: Vec<MatchKey> = Vec::new();
+            for (k, sub) in pairs {
+                if let Some(key) = match_key_of(&k.node) {
+                    if keys.iter().any(|seen| match_keys_equal(seen, &key)) {
+                        return Err("mapping pattern checks duplicate key".to_string());
+                    }
+                    keys.push(key);
+                }
+                validate_pattern(&sub.node, names)?;
+            }
+            if let Some(r) = rest {
+                if r != "_" {
+                    if names.iter().any(|x| x == r) {
+                        return Err(format!("multiple assignments to name '{r}' in pattern"));
+                    }
+                    names.push(r.clone());
+                }
+            }
+            Ok(())
+        }
+        Pattern::ClassPattern { patterns, .. } => {
+            let mut kw_seen: Vec<&String> = Vec::new();
+            for (kw, sub) in patterns {
+                if let Some(name) = kw {
+                    if kw_seen.iter().any(|x| *x == name) {
+                        return Err(format!(
+                            "attribute name repeated in class pattern: {name}"
+                        ));
+                    }
+                    kw_seen.push(name);
+                }
+                validate_pattern(&sub.node, names)?;
+            }
+            Ok(())
+        }
+        Pattern::Constructor { fields, .. } => {
+            for n in fields {
+                if n != "_" {
+                    if names.iter().any(|x| x == n) {
+                        return Err(format!("multiple assignments to name '{n}' in pattern"));
+                    }
+                    names.push(n.clone());
+                }
+            }
+            Ok(())
+        }
+        Pattern::Or(alts) => {
+            // Only the final alternative may be irrefutable.
+            for a in alts.iter().take(alts.len().saturating_sub(1)) {
+                if pattern_is_irrefutable(&a.node) {
+                    return Err(
+                        "wildcard makes remaining patterns unreachable".to_string()
+                    );
+                }
+            }
+            // Every alternative must bind the same set of names; the whole
+            // OR contributes that set once to the enclosing pattern.
+            let mut first_set: Option<Vec<String>> = None;
+            for a in alts {
+                let mut branch = Vec::new();
+                validate_pattern(&a.node, &mut branch)?;
+                let mut sorted = branch.clone();
+                sorted.sort();
+                match &first_set {
+                    None => first_set = Some(sorted),
+                    Some(expected) => {
+                        if *expected != sorted {
+                            return Err(
+                                "alternative patterns bind different names".to_string()
+                            );
+                        }
+                    }
+                }
+            }
+            if let Some(set) = first_set {
+                for n in set {
+                    if names.iter().any(|x| *x == n) {
+                        return Err(format!("multiple assignments to name '{n}' in pattern"));
+                    }
+                    names.push(n);
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Whole-statement validation: per-arm pattern rules plus the cross-arm
+/// rule that an unguarded irrefutable case must be the last one.
+fn validate_match_arms(arms: &[MatchArm]) -> Result<(), String> {
+    for (idx, arm) in arms.iter().enumerate() {
+        let mut names = Vec::new();
+        validate_pattern(&arm.pattern.node, &mut names)?;
+        if idx + 1 < arms.len()
+            && arm.guard.is_none()
+            && pattern_is_irrefutable(&arm.pattern.node)
+        {
+            return Err("wildcard makes remaining patterns unreachable".to_string());
+        }
+    }
+    Ok(())
 }

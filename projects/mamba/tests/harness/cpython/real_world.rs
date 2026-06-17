@@ -49,8 +49,7 @@ enum ExpectedOutcome {
 fn fixtures_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
-        .join("conformance")
+        .join("cpython")
 }
 
 fn manifest_path() -> PathBuf {
@@ -178,7 +177,7 @@ fn real_world_fixtures_pass_under_both_interpreters() {
         let category = if is_required { "required" } else { "optional" };
 
         if has_python3 {
-            let out = Command::new("python3")
+            let out = Command::new(common::python3_bin())
                 .arg(script)
                 .output()
                 .expect("failed to spawn python3");

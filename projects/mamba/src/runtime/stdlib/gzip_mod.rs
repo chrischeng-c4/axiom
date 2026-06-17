@@ -82,8 +82,61 @@ unsafe extern "C" fn dispatch_decompress(args_ptr: *const MbValue, nargs: usize)
     mb_gzip_decompress(args.first().copied().unwrap_or_else(MbValue::none))
 }
 
-dispatch_unary!(dispatch_open, mb_gzip_open);
-dispatch_unary!(dispatch_gzip_file, mb_gzip_file);
+/// gzip.open(filename, mode="rb", ...) / gzip.GzipFile(filename, mode="rb",
+/// *, fileobj=None) — real streaming files over the shared compressed-file
+/// layer. The keyword form `GzipFile(fileobj=...)` lowers to a trailing
+/// kwargs dict; resolve the source and mode from it when present.
+unsafe extern "C" fn dispatch_gzip_ctor(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let mut source = args.first().copied().unwrap_or_else(MbValue::none);
+    let mut mode = "r".to_string();
+    if let Some(m) = args.get(1).filter(|v| !is_kwargs_dict(**v)).and_then(|v| {
+        v.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        })
+    }) {
+        mode = m;
+    }
+    let mut encoding = None;
+    let mut errors = None;
+    if let Some(last) = args.last() {
+        if let Some(p) = last.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*p).data {
+                    use super::super::dict_ops::DictKey;
+                    let map = lock.read().unwrap();
+                    let get_str = |key: &str| -> Option<String> {
+                        map.get(&DictKey::Str(key.to_string())).and_then(|v| {
+                            v.as_ptr().and_then(|sp| {
+                                if let ObjData::Str(ref s) = (*sp).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                    };
+                    if let Some(fo) = map.get(&DictKey::Str("fileobj".to_string())) {
+                        source = *fo;
+                    }
+                    if let Some(m) = get_str("mode") {
+                        mode = m;
+                    }
+                    encoding = get_str("encoding");
+                    errors = get_str("errors");
+                }
+            }
+        }
+    }
+    super::compressed_file::make_file_opts(
+        "GzipFile",
+        super::compressed_file::Codec::Gzip,
+        source,
+        &mode,
+        encoding,
+        errors,
+    )
+}
 
 /// Register the gzip module with mamba's stdlib registry.
 pub fn register() {
@@ -93,15 +146,10 @@ pub fn register() {
     let dispatchers: Vec<(&str, usize)> = vec![
         ("compress",   dispatch_compress   as usize),
         ("decompress", dispatch_decompress as usize),
-        // `open` and `GzipFile` are func stubs so that `callable(gzip.open)`
-        // and `callable(gzip.GzipFile)` are True — surface fixtures
-        // (open_is_callable / gzipfile_is_callable) only assert callability,
-        // and a `from_ptr` class-shell / string sentinel is NOT callable,
-        // so a `from_func` entry is the correct shape. Sibling of bz2.open.
-        // The streaming file layer is not yet implemented; these return a
-        // benign sentinel value.
-        ("open",       dispatch_open       as usize),
-        ("GzipFile",   dispatch_gzip_file  as usize),
+        // `open` and `GzipFile` construct real streaming files through the
+        // shared compressed-file layer (Codec::Gzip).
+        ("open",       dispatch_gzip_ctor  as usize),
+        ("GzipFile",   dispatch_gzip_ctor  as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -145,28 +193,10 @@ pub fn register() {
     attrs.insert("READ".into(), MbValue::from_int(1));
     attrs.insert("READ_BUFFER_SIZE".into(), MbValue::from_int(131072));
     attrs.insert("WRITE".into(), MbValue::from_int(2));
+    // Streaming method table shared with bz2.BZ2File / lzma.LZMAFile.
+    super::compressed_file::register_class("GzipFile");
+
     super::register_module("gzip", attrs);
-}
-
-/// gzip.open(filename, mode="rb", ...) -> file object.
-///
-/// Func stub: surface fixtures only assert `callable(gzip.open)`. The
-/// streaming file layer (GzipFile) is not yet implemented, so this returns
-/// a benign sentinel value. `from_func` is what makes `callable()` report
-/// True; the return value is unused by surface tests. Sibling of mb_bz2_open.
-pub fn mb_gzip_open(_filename: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str("gzip.open".to_string()))
-}
-
-/// gzip.GzipFile(filename=None, mode=None, ...) -> file object.
-///
-/// Func stub: surface fixtures only assert `callable(gzip.GzipFile)`. A
-/// class-shell / string sentinel value is NOT callable, so this is a
-/// `from_func` entry. The streaming file object itself is not implemented;
-/// bulk callers use compress/decompress. The return value is unused by
-/// surface tests.
-pub fn mb_gzip_file(_filename: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str("GzipFile".to_string()))
 }
 
 /// Borrow the byte payload of `val` as `&[u8]` for the duration of `f`.
