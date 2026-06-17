@@ -79,8 +79,8 @@ Markdown capability headings and tables below are machine-readable input for `aw
 |---|---:|---|---|---|---|---|
 | Static Security Scan | - | implemented | verified | smoke | ready | compass-backed security diagnostics normalized into `guard.report/1` |
 | Security Policy Profile | - | implemented | verified | smoke | ready | `guard-baseline-static/1`, `guard-security-lint/1`, and `guard-strict/1` map security diagnostics/lint into policy findings |
-| Security EC Profile | - | implemented | verified | smoke | ready | AW EC/health consumes guard reports as first-class security evidence |
-| Dynamic Security Evidence | - | implemented | verified | smoke | ready | vat/rig/meter/arena evidence adapters run and fold into `guard.report/1` |
+| Security EC Profile | - | implemented | blocked | smoke | blocked | AW EC/health consumes guard reports as first-class security evidence |
+| Dynamic Security Evidence | - | implemented | blocked | smoke | blocked | vat/rig/meter/arena evidence adapters run and fold into `guard.report/1` |
 
 ### Static Security Scan
 
@@ -122,7 +122,7 @@ Gate Inventory:
 ID: security-ec-profile
 Type: SecurityTool
 Root WI: -
-Status: verified
+Status: blocked
 Required Verification: smoke
 Promise:
 AW EC and health treat guard output as first-class security evidence.
@@ -139,7 +139,7 @@ Gate Inventory:
 ID: dynamic-security-evidence
 Type: SecurityTool
 Root WI: -
-Status: verified
+Status: blocked
 Required Verification: smoke
 Promise:
 guard will compose static findings with vat-isolated execution, rig attack journeys, meter resource evidence, and arena security-performance budgets.

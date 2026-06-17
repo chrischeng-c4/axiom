@@ -1081,7 +1081,9 @@ fn update_capability_index_for_status(
     capability_id: &str,
     status: CapabilityStatus,
 ) -> String {
-    if status != CapabilityStatus::Retired {
+    let verification_update = capability_index_verification_for_status(status);
+    let production_update = capability_index_production_for_status(status);
+    if verification_update.is_none() && production_update.is_none() {
         return content.to_string();
     }
     let mut lines = content
@@ -1097,8 +1099,9 @@ fn update_capability_index_for_status(
             continue;
         };
         let capability_idx = find_table_column(&headers, &["capability", "id"]);
+        let verification_idx = find_table_column(&headers, &["verification"]);
         let production_idx = find_table_column(&headers, &["production"]);
-        if let (Some(capability_idx), Some(production_idx)) = (capability_idx, production_idx) {
+        if let Some(capability_idx) = capability_idx {
             for (row_offset, row) in rows.iter().enumerate() {
                 let row_id = slugify(&table_cell(row, capability_idx));
                 if row_id != capability_id {
@@ -1108,7 +1111,12 @@ fn update_capability_index_for_status(
                 while updated_row.len() < headers.len() {
                     updated_row.push(String::new());
                 }
-                updated_row[production_idx] = "retired".to_string();
+                if let (Some(idx), Some(value)) = (verification_idx, verification_update) {
+                    updated_row[idx] = value.to_string();
+                }
+                if let (Some(idx), Some(value)) = (production_idx, production_update) {
+                    updated_row[idx] = value.to_string();
+                }
                 replacements.push((
                     cursor + 2 + row_offset,
                     format!(
@@ -1135,6 +1143,28 @@ fn update_capability_index_for_status(
         out.push('\n');
     }
     out
+}
+
+fn capability_index_verification_for_status(status: CapabilityStatus) -> Option<&'static str> {
+    match status {
+        CapabilityStatus::Candidate | CapabilityStatus::Confirmed | CapabilityStatus::Auditing => {
+            Some("planned")
+        }
+        CapabilityStatus::Blocked => Some("blocked"),
+        CapabilityStatus::Verified => Some("verified"),
+        CapabilityStatus::Retired => None,
+    }
+}
+
+fn capability_index_production_for_status(status: CapabilityStatus) -> Option<&'static str> {
+    match status {
+        CapabilityStatus::Candidate | CapabilityStatus::Confirmed | CapabilityStatus::Auditing => {
+            Some("not_ready")
+        }
+        CapabilityStatus::Blocked => Some("blocked"),
+        CapabilityStatus::Verified => Some("ready"),
+        CapabilityStatus::Retired => Some("retired"),
+    }
 }
 
 fn set_capability_surface(project: &str, args: CapabilitySetSurfaceArgs) -> Result<()> {
@@ -6990,6 +7020,48 @@ Gate Inventory:
             "| Package Manager | #3779 | implemented | verified | smoke | retired | install flow |"
         ));
         assert!(updated.contains("Status: retired"));
+    }
+
+    #[test]
+    fn set_status_blocked_updates_capability_index_verification_and_production() {
+        let body = r#"# demo
+
+## Brief
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Dynamic Security Evidence | - | implemented | verified | smoke | ready | vat/rig/meter evidence adapters |
+
+### Dynamic Security Evidence
+
+ID: dynamic-security-evidence
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+Compose dynamic security evidence.
+Gate Inventory:
+- `cargo test -p guard`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Dynamic security evidence | epic | - | implemented | verified | smoke | `cargo test -p guard` |
+"#;
+        let updated = upsert_capability_status_in_readme(
+            body,
+            "dynamic-security-evidence",
+            CapabilityStatus::Blocked,
+        )
+        .unwrap();
+
+        assert!(updated.contains(
+            "| Dynamic Security Evidence | - | implemented | blocked | smoke | blocked | vat/rig/meter evidence adapters |"
+        ));
+        assert!(updated.contains("Status: blocked"));
     }
 
     #[test]
