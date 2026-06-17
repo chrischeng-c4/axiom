@@ -2468,32 +2468,65 @@ fn derive_report_ec_dimensions(
                 crate::cli::capability_type::category_is_required_for_type(
                     &ty,
                     dimension.dimension.as_str(),
-                )
+                ) && capability_declares_ec_dimension_content(capability, dimension.dimension)
             });
             dimension
         })
         .collect::<Vec<_>>();
     if let Some(capability_type) = capability_type {
-        for category in crate::cli::capability_type::required_ec_dimensions(&capability_type) {
-            let Some(kind) = parse_ec_dimension_kind(category) else {
-                continue;
-            };
-            if dimensions
-                .iter()
-                .any(|dimension| dimension.dimension == kind)
-            {
-                continue;
-            }
+        if !dimensions
+            .iter()
+            .any(|dimension| dimension.dimension == CapabilityEcDimensionKind::Behavior)
+            && capability_declares_ec_dimension_content(
+                capability,
+                CapabilityEcDimensionKind::Behavior,
+            )
+        {
             dimensions.push(CapabilityEcDimension {
-                dimension: kind,
+                dimension: CapabilityEcDimensionKind::Behavior,
                 runner: String::new(),
-                summary: "required by capability type".to_string(),
-                required_for_production: Some(true),
+                summary: "declared by behavior surfaces or verification contract".to_string(),
+                required_for_production: Some(
+                    crate::cli::capability_type::category_is_required_for_type(
+                        &capability_type,
+                        CapabilityEcDimensionKind::Behavior.as_str(),
+                    ),
+                ),
                 efficiency_backfill: None,
             });
         }
     }
     dimensions
+}
+
+fn capability_declares_ec_dimension_content(
+    capability: &CapabilitySection,
+    dimension: CapabilityEcDimensionKind,
+) -> bool {
+    if capability
+        .ec_dimensions
+        .iter()
+        .any(|declared| declared.dimension == dimension && ec_dimension_has_content(declared))
+    {
+        return true;
+    }
+    matches!(dimension, CapabilityEcDimensionKind::Behavior)
+        && (!capability.surfaces.is_empty()
+            || capability
+                .verification_contract
+                .as_ref()
+                .is_some_and(verification_contract_has_content)
+            || !capability.evidence.verification.is_empty())
+}
+
+fn ec_dimension_has_content(dimension: &CapabilityEcDimension) -> bool {
+    !dimension.runner.trim().is_empty()
+        || !dimension.summary.trim().is_empty()
+        || dimension.efficiency_backfill.is_some()
+}
+
+fn verification_contract_has_content(contract: &CapabilityVerificationContract) -> bool {
+    !contract.required_maturity.is_empty() || !contract.claims.is_empty()
 }
 
 fn choose_next_action(
@@ -2576,10 +2609,12 @@ fn choose_next_action(
         }
     }
 
-    // A capability's TYPE decides which EC dimensions are production-required.
+    // A capability's TYPE decides the ceiling for production-required EC
+    // dimensions; README-declared dimension content opts into that ceiling.
     // If a real (non-candidate, non-retired) capability has no type assigned in
-    // .aw/capability-types.toml, prompt for one so `aw ec` can derive
-    // required_for_production instead of falling back to the YAML flag.
+    // .aw/capability-types.toml, prompt for one so `aw ec` can derive the
+    // production requirement for declared dimensions instead of falling back to
+    // the YAML flag.
     for item in &report.capabilities {
         if matches!(
             item.status,
@@ -2598,7 +2633,7 @@ fn choose_next_action(
                     "aw capability set-type --project {} --capability {} --type <AgentFirst|Service|Devops|DeveloperTool|RuntimeTool|SecurityTool>",
                     report.project, item.id
                 ),
-                reason: "capability has no type assigned; required EC dimensions cannot be derived"
+                reason: "capability has no type assigned; required EC dimension ceiling cannot be derived"
                     .to_string(),
                 requires_hitl: true,
                 hitl_question: Some(capability_type_hitl_question(report, item)),
@@ -3042,11 +3077,11 @@ fn capability_type_hitl_question(
     let mut question = capability_hitl_question(
         format!("capability:{}:assign_type", item.id),
         format!(
-            "What capability type is `{}`? The type decides which EC dimensions are production-required (AgentFirst -> behavior; Service -> behavior+efficiency+security+stability; Devops -> behavior+stability; DeveloperTool/RuntimeTool -> behavior+efficiency+stability; SecurityTool -> behavior+security+stability).",
+            "What capability type is `{}`? The type decides the production-required ceiling for declared EC dimensions (AgentFirst -> behavior; Service -> behavior+efficiency+security+stability; Devops -> behavior+stability; DeveloperTool/RuntimeTool -> behavior+efficiency+stability; SecurityTool -> behavior+security+stability).",
             item.title
         ),
         item.title.clone(),
-        "capability has no type assigned in .aw/capability-types.toml; required EC dimensions cannot be derived",
+        "capability has no type assigned in .aw/capability-types.toml; required EC dimension ceiling cannot be derived",
         &report.project,
         vec![
             hitl_choice(
@@ -7361,7 +7396,7 @@ Cube: projects/lumen/tests/perf-cube.json
     }
 
     #[test]
-    fn report_ec_required_for_production_is_derived_from_type_not_readme_required_column() {
+    fn report_ec_required_for_production_uses_type_ceiling_for_declared_dimensions() {
         let body = r#"# demo
 
 ## Tooling
@@ -7416,7 +7451,7 @@ Gate Inventory:
     }
 
     #[test]
-    fn report_ec_dimensions_backfill_required_categories_from_type() {
+    fn report_ec_dimensions_do_not_materialize_empty_type_dimensions() {
         let body = r#"# demo
 
 ## Search
@@ -7437,6 +7472,34 @@ Gate Inventory:
         assert!(capability.ec_dimensions.is_empty());
 
         let derived = derive_report_ec_dimensions(capability, &BTreeMap::new());
+
+        assert_eq!(derived.len(), 1);
+        assert_eq!(derived[0].dimension, CapabilityEcDimensionKind::Behavior);
+        assert_eq!(derived[0].required_for_production, Some(true));
+    }
+
+    #[test]
+    fn report_ec_dimensions_require_efficiency_only_when_slot_declares_content() {
+        let body = r#"# demo
+
+## Search
+
+ID: search
+Root WI: #78
+Status: auditing
+Type: Service
+Efficiency Operating Point: 1M docs, qps=100, metric=p99_ms, ratchet=0.8
+Efficiency Cube: projects/lumen/.aw/ec/efficiency/search.cube.json
+Required Verification: smoke
+Promise:
+Expose a service search capability.
+Gate Inventory:
+- `cargo test -p demo search`
+"#;
+        let doc = cap_doc(body);
+        let capability = &doc.capabilities[0];
+
+        let derived = derive_report_ec_dimensions(capability, &BTreeMap::new());
         let required = derived
             .iter()
             .map(|dimension| {
@@ -7447,7 +7510,7 @@ Gate Inventory:
             })
             .collect::<BTreeMap<_, _>>();
 
-        assert_eq!(derived.len(), 4);
+        assert_eq!(derived.len(), 2);
         assert_eq!(
             required.get(&CapabilityEcDimensionKind::Behavior),
             Some(&true)
@@ -7456,14 +7519,8 @@ Gate Inventory:
             required.get(&CapabilityEcDimensionKind::Efficiency),
             Some(&true)
         );
-        assert_eq!(
-            required.get(&CapabilityEcDimensionKind::Security),
-            Some(&true)
-        );
-        assert_eq!(
-            required.get(&CapabilityEcDimensionKind::Stability),
-            Some(&true)
-        );
+        assert!(!required.contains_key(&CapabilityEcDimensionKind::Security));
+        assert!(!required.contains_key(&CapabilityEcDimensionKind::Stability));
     }
 
     #[test]

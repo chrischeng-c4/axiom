@@ -105,6 +105,11 @@ Status-gated contract rules:
 - `candidate` capabilities may omit required verification.
 - `confirmed`, `auditing`, `blocked`, and `verified` capabilities must define
   required verification through tables.
+- Capability type defines the production-required EC dimension ceiling; a
+  non-behavior dimension becomes production-required only when the README
+  declares content for it through `EC Dimensions:` or the efficiency backfill
+  slot. Do not materialize empty efficiency/security/stability sections just
+  because the capability type could require them.
 - Required claims default `required_for_verified: true` and must include a
   maturity plus either a gate command or fixture/inventory reference.
 - Gate pass/fail is runtime-only from `aw capability report --verify`; do not
