@@ -5924,7 +5924,87 @@ fn parse_capability_prose_candidates(body: &str) -> Vec<CapabilityProseCandidate
         }
         idx = capabilities_end;
     }
+    candidates.extend(parse_capability_table_candidates(&lines, &fenced));
     dedupe_capability_prose_candidates(candidates)
+}
+
+fn parse_capability_table_candidates(
+    lines: &[&str],
+    fenced: &[bool],
+) -> Vec<CapabilityProseCandidate> {
+    let mut candidates = Vec::new();
+    let mut idx = 0;
+    while idx < lines.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
+        let Some((headers, rows, next_idx)) = parse_markdown_table_at(lines, idx) else {
+            idx += 1;
+            continue;
+        };
+        let Some(capability_column) = find_table_column(&headers, &["capability"]) else {
+            idx = next_idx;
+            continue;
+        };
+        if capability_table_is_contract_or_index(&headers) {
+            idx = next_idx;
+            continue;
+        }
+        let summary_column = find_table_column(
+            &headers,
+            &[
+                "whyitmatters",
+                "purpose",
+                "summary",
+                "description",
+                "behavior",
+                "notes",
+            ],
+        );
+        for (row_offset, row) in rows.iter().enumerate() {
+            let title = clean_markdown_inline_links(&table_cell(row, capability_column));
+            let title = strip_markdown_emphasis(&title);
+            let id = slugify(&title);
+            if id.is_empty() || candidate_table_title_is_ignored(&title) {
+                continue;
+            }
+            let summary = summary_column
+                .map(|column| candidate_summary_text(&table_cell(row, column)))
+                .filter(|summary| !summary.trim().is_empty());
+            let promise = summary.clone();
+            let summary = summary.map(|summary| truncate_candidate_summary(&summary));
+            let row_text = row.join(" ");
+            candidates.push(CapabilityProseCandidate {
+                id,
+                title,
+                line: idx + 3 + row_offset,
+                root_wi: first_issue_ref(&row_text),
+                summary,
+                promise,
+            });
+        }
+        idx = next_idx;
+    }
+    candidates
+}
+
+fn capability_table_is_contract_or_index(headers: &[String]) -> bool {
+    markdown_contract_indices(headers).is_some()
+        || legacy_capability_column_indices(headers).is_some()
+        || (find_table_column(headers, &["rootwi"]).is_some()
+            && find_table_column(headers, &["impl", "implementation"]).is_some()
+            && find_table_column(headers, &["verification"]).is_some()
+            && find_table_column(headers, &["production"]).is_some())
+}
+
+fn candidate_table_title_is_ignored(title: &str) -> bool {
+    let normalized = normalize_table_token(title);
+    normalized.is_empty()
+        || normalized == "capability"
+        || normalized == "capabilityindex"
+        || normalized == "definecapabilityroot"
+        || title.contains("(confirm")
 }
 
 fn capability_prose_candidate_title_is_ignored(title: &str) -> bool {
@@ -5972,12 +6052,20 @@ fn first_candidate_promise_text(lines: &[&str], start: usize, end: usize) -> Opt
 }
 
 fn candidate_summary_text(line: &str) -> String {
-    clean_markdown_inline_links(
+    strip_markdown_emphasis(&clean_markdown_inline_links(
         line.trim()
             .trim_start_matches("- ")
             .trim_start_matches("* ")
             .trim(),
-    )
+    ))
+}
+
+fn strip_markdown_emphasis(text: &str) -> String {
+    text.trim()
+        .trim_matches('*')
+        .trim_matches('_')
+        .trim()
+        .to_string()
 }
 
 fn truncate_candidate_summary(text: &str) -> String {
@@ -9141,6 +9229,57 @@ Mamba should improve both runtime CPU and memory profile on selected workloads.
             .findings
             .iter()
             .any(|finding| finding.contains("candidate prose capability roots detected")));
+    }
+
+    #[test]
+    fn capability_tables_without_contract_fields_are_candidate_input() {
+        let doc = cap_doc(
+            r#"# cue
+
+Cue turns business intent into governed internal work.
+
+## Required Platform Capabilities
+
+| Capability | Why it matters |
+|------------|----------------|
+| WorkItem lifecycle | Required ticket and routing state for every prompt-to-X flow |
+| App Spec schema | Contract that generation, runtime, policy, and tests share |
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert!(doc.capabilities.is_empty());
+        assert_eq!(doc.prose_candidates.len(), 2);
+        assert_eq!(doc.prose_candidates[0].id, "workitem-lifecycle");
+        assert_eq!(doc.prose_candidates[0].title, "WorkItem lifecycle");
+        assert_eq!(
+            doc.prose_candidates[0].promise.as_deref(),
+            Some("Required ticket and routing state for every prompt-to-X flow")
+        );
+        assert_eq!(doc.prose_candidates[1].id, "app-spec-schema");
+        assert!(doc
+            .findings
+            .iter()
+            .any(|finding| finding.contains("candidate prose capability roots detected")));
+    }
+
+    #[test]
+    fn canonical_capability_index_is_not_candidate_input() {
+        let doc = cap_doc(
+            r#"# Demo
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Search | #1 | planned | planned | smoke | not_ready | candidate |
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert!(doc.prose_candidates.is_empty());
     }
 
     #[test]

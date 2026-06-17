@@ -136,6 +136,7 @@ scenarios:
       - "init creates only a canonical README shell and does not invent capability promises"
       - "draft emits pending-review field-style capability contracts with placeholders for Type, Surfaces, EC Dimensions, Root WI, Promise, and Gate Inventory"
       - "draft may truncate Candidate Roots summary cells, but Draft Canonical README Promise fields preserve the full source prose"
+      - "draft treats non-contract Markdown tables with a Capability column, such as Required Platform Capabilities, as pending-review candidate roots instead of emitting only a blank worksheet"
       - "apply-draft refuses unreviewed placeholder drafts and writes only reviewed canonical capability sections"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
       - "next emits exactly one next_action"
@@ -523,8 +524,13 @@ requirements:
     text: "aw capability draft preserves full source prose in Draft Canonical README Promise fields even when candidate summaries are truncated"
     risk: high
     verifymethod: test
-  issue_inventory_optional:
+  draft_table_candidate_roots:
     id: AW-CAP-WI-13
+    text: "aw capability draft uses README tables with a Capability column as pending-review candidate roots when no canonical capability contracts exist"
+    risk: medium
+    verifymethod: test
+  issue_inventory_optional:
+    id: AW-CAP-WI-14
     text: "aw capability report/next/run/check expose include/skip issue-inventory flags so README and TD parsing remain usable when the issue backend is unavailable"
     risk: medium
     verifymethod: test
