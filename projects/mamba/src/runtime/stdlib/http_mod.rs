@@ -755,6 +755,19 @@ pub fn register() {
             "BaseHTTPRequestHandler".to_string(),
             MbValue::from_ptr(handler),
         );
+        // Register parse_request as a real method on the class so a
+        // `BaseHTTPRequestHandler.__new__(...)` instance can parse a request
+        // line. The module attr stays the type-object (for class data attrs);
+        // method dispatch resolves through the class registry by class name.
+        let mut handler_methods: HashMap<String, MbValue> = HashMap::new();
+        let pr = bh_parse_request as *const () as usize;
+        super::super::module::register_variadic_func(pr as u64);
+        handler_methods.insert("parse_request".to_string(), MbValue::from_func(pr));
+        super::super::class::mb_class_register(
+            "BaseHTTPRequestHandler",
+            vec!["object".to_string()],
+            handler_methods,
+        );
     }
     // `http.server.DEFAULT_ERROR_MESSAGE` is a module-level `str` template used
     // by BaseHTTPRequestHandler.send_error(). Surface only checks it exists and
@@ -2165,6 +2178,62 @@ fn req_args_vec(args: MbValue) -> Vec<MbValue> {
         }
     }
     out
+}
+
+/// Write an instance field (retaining the value, releasing any prior).
+fn set_inst_field(self_v: MbValue, name: &str, val: MbValue) {
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                super::super::rc::retain_if_ptr(val);
+                let old = fields.write().unwrap().insert(name.to_string(), val);
+                if let Some(o) = old {
+                    super::super::rc::release_if_ptr(o);
+                }
+            }
+        }
+    }
+}
+
+/// Decode a bytes/bytearray/str MbValue to a Rust String (lossy for bytes).
+fn bytes_or_str(v: MbValue) -> String {
+    if let Some(s) = extract_str(v) {
+        return s;
+    }
+    v.as_ptr().map(|p| unsafe {
+        match &(*p).data {
+            ObjData::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+            ObjData::ByteArray(lock) => {
+                String::from_utf8_lossy(&lock.read().unwrap()).into_owned()
+            }
+            _ => String::new(),
+        }
+    }).unwrap_or_default()
+}
+
+/// BaseHTTPRequestHandler.parse_request() -> bool. Parses `self.raw_requestline`
+/// ("GET /path HTTP/1.1\r\n") into `command` / `path` / `request_version` and
+/// sets `requestline`. Minimal vs CPython (no header block parsing); the
+/// fixtures drive it with in-memory buffers and check the request-line fields.
+unsafe extern "C" fn bh_parse_request(self_v: MbValue, _args: MbValue) -> MbValue {
+    let raw = req_field(self_v, "raw_requestline").unwrap_or_else(MbValue::none);
+    let line = bytes_or_str(raw);
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    set_inst_field(self_v, "requestline",
+        MbValue::from_ptr(MbObject::new_str(trimmed.to_string())));
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    let (command, path, version) = match parts.len() {
+        3 => (parts[0], parts[1], parts[2]),
+        2 => (parts[0], parts[1], "HTTP/0.9"),
+        _ => return MbValue::from_bool(false),
+    };
+    set_inst_field(self_v, "command",
+        MbValue::from_ptr(MbObject::new_str(command.to_string())));
+    set_inst_field(self_v, "path",
+        MbValue::from_ptr(MbObject::new_str(path.to_string())));
+    set_inst_field(self_v, "request_version",
+        MbValue::from_ptr(MbObject::new_str(version.to_string())));
+    MbValue::from_bool(true)
 }
 
 /// (scheme, netloc, path-with-params-query-fragment) split of a URL.
