@@ -60,7 +60,7 @@ AW uses canonical agent-facing command names for the main lifecycle:
 The canonical flow for greenfield projects is:
 
 ```text
-aw capability report/next/run -> aw ec draft/fill -> aw ec gen -> aw td -> aw cb -> aw health
+aw capability report/next/migrate/check -> aw ec draft/fill -> aw ec gen -> aw td -> aw cb -> aw health
 ```
 
 Greenfield starts by defining capabilities and required external contracts. EC
