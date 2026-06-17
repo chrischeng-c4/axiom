@@ -458,17 +458,14 @@ pub fn mb_time_time() -> MbValue {
     MbValue::from_float(duration.as_secs_f64())
 }
 
-/// time.time_ns() -> float (nanoseconds since epoch as f64)
-///
-/// Carve-out: mamba's tagged int is 48-bit; wallclock-ns (~1.8e18) does
-/// not fit. We return f64 instead. Sub-microsecond precision is lost at
-/// current epoch magnitudes — callers needing integer ns should compose
-/// from `time()` and a sub-second monotonic delta.
+/// time.time_ns() -> int
 pub fn mb_time_time_ns() -> MbValue {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    MbValue::from_float(duration.as_nanos() as f64)
+    // CPython returns an int; nanosecond epoch exceeds mamba's 48-bit inline
+    // int, so route through int_from_i64 (promotes to BigInt as needed).
+    super::super::bigint_ops::int_from_i64(duration.as_nanos() as i64)
 }
 
 thread_local! {
@@ -480,9 +477,9 @@ pub fn mb_time_monotonic() -> MbValue {
     MONO_EPOCH.with(|e| MbValue::from_float(e.elapsed().as_secs_f64()))
 }
 
-/// time.monotonic_ns() -> float (see time_ns carve-out re: 48-bit tagged int)
+/// time.monotonic_ns() -> int
 pub fn mb_time_monotonic_ns() -> MbValue {
-    MONO_EPOCH.with(|e| MbValue::from_float(e.elapsed().as_nanos() as f64))
+    MONO_EPOCH.with(|e| super::super::bigint_ops::int_from_i64(e.elapsed().as_nanos() as i64))
 }
 
 /// time.perf_counter() -> float
@@ -526,9 +523,9 @@ pub fn mb_time_process_time() -> MbValue {
     MbValue::from_float(cpu_time_ns(false) as f64 / 1e9)
 }
 
-/// time.process_time_ns() -> float (see time_ns carve-out re: 48-bit tagged int)
+/// time.process_time_ns() -> int
 pub fn mb_time_process_time_ns() -> MbValue {
-    MbValue::from_float(cpu_time_ns(false) as f64)
+    super::super::bigint_ops::int_from_i64(cpu_time_ns(false))
 }
 
 /// time.thread_time() -> float (CPU time for this thread)
@@ -536,9 +533,9 @@ pub fn mb_time_thread_time() -> MbValue {
     MbValue::from_float(cpu_time_ns(true) as f64 / 1e9)
 }
 
-/// time.thread_time_ns() -> float (see time_ns carve-out re: 48-bit tagged int)
+/// time.thread_time_ns() -> int
 pub fn mb_time_thread_time_ns() -> MbValue {
-    MbValue::from_float(cpu_time_ns(true) as f64)
+    super::super::bigint_ops::int_from_i64(cpu_time_ns(true))
 }
 
 /// time.tzset() -> None
@@ -844,6 +841,10 @@ mod tests {
         })
     }
 
+    fn int_like_as_f64(val: MbValue) -> f64 {
+        unsafe { crate::runtime::bigint_ops::int_as_f64(val).expect("expected int-like value") }
+    }
+
     // -- time / time_ns --
 
     #[test]
@@ -854,18 +855,15 @@ mod tests {
     }
 
     #[test]
-    fn test_time_ns_returns_float() {
-        // Carve-out: mamba's 48-bit tagged int can't hold wallclock-ns;
-        // time_ns returns f64 instead. Sub-microsecond precision lost.
+    fn test_time_ns_returns_int() {
         let t = mb_time_time_ns();
-        assert!(t.as_float().is_some());
-        assert!(t.as_float().unwrap() > 1.7e18);
+        assert!(int_like_as_f64(t) > 1.7e18);
     }
 
     #[test]
     fn test_time_ns_consistent_with_time() {
         let f = mb_time_time().as_float().unwrap();
-        let n = mb_time_time_ns().as_float().unwrap();
+        let n = int_like_as_f64(mb_time_time_ns());
         let from_ns = n / 1e9;
         assert!((from_ns - f).abs() < 1.0);
     }
@@ -880,10 +878,9 @@ mod tests {
     }
 
     #[test]
-    fn test_monotonic_ns_returns_float() {
+    fn test_monotonic_ns_returns_int() {
         let t = mb_time_monotonic_ns();
-        assert!(t.as_float().is_some());
-        assert!(t.as_float().unwrap() >= 0.0);
+        assert!(int_like_as_f64(t) >= 0.0);
     }
 
     #[test]
@@ -901,8 +898,8 @@ mod tests {
     }
 
     #[test]
-    fn test_perf_counter_ns_returns_float() {
-        assert!(mb_time_perf_counter_ns().as_float().is_some());
+    fn test_perf_counter_ns_returns_int() {
+        assert!(int_like_as_f64(mb_time_perf_counter_ns()) >= 0.0);
     }
 
     // -- process_time / thread_time --
@@ -915,8 +912,8 @@ mod tests {
     }
 
     #[test]
-    fn test_process_time_ns_returns_float() {
-        assert!(mb_time_process_time_ns().as_float().is_some());
+    fn test_process_time_ns_returns_int() {
+        assert!(int_like_as_f64(mb_time_process_time_ns()) >= 0.0);
     }
 
     #[test]
@@ -927,8 +924,8 @@ mod tests {
     }
 
     #[test]
-    fn test_thread_time_ns_returns_float() {
-        assert!(mb_time_thread_time_ns().as_float().is_some());
+    fn test_thread_time_ns_returns_int() {
+        assert!(int_like_as_f64(mb_time_thread_time_ns()) >= 0.0);
     }
 
     // -- sleep --
@@ -1055,8 +1052,7 @@ mod tests {
     #[test]
     fn test_clock_gettime_ns_realtime() {
         let r = mb_time_clock_gettime_ns(MbValue::from_int(CLOCK_REALTIME));
-        // ns clocks return f64 (see time_ns carve-out).
-        assert!(r.as_float().unwrap() > 0.0);
+        assert!(int_like_as_f64(r) > 0.0);
     }
 
     #[test]
