@@ -154,6 +154,7 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 ID: search
 Type: Service
+Surfaces: HTTP: `POST /index` + `POST /search` - Client API on :7373 for indexing caller-owned records and querying ranked external_id results.; CLI: `lumen serve` - Starts the search service with configured persistence, API, and replication settings.
 EC Dimensions: behavior: `rig` - request/query scenario conformance over the service API; efficiency: `rig + meter` - load pins plus resource attribution for service search workloads; security: `guard` - service API authorization and security findings gate; stability: `rig` - resilience scenarios for partition, packet loss, and recovery behavior
 Efficiency Operating Point: local-vat-lumen-search-service
 Efficiency Cube: projects/lumen/.aw/ec/efficiency/search-service.cube.json
@@ -483,6 +484,7 @@ self-onboards an agent with no docs site and no running server.
 
 ID: agentic-integration
 Type: AgentFirst
+Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm outline` + `lumen llm workflow` + `lumen llm integration` + `lumen llm quickstart` + `lumen llm recipes` - Offline self-description and agent onboarding commands that require no server, network, or docs site.
 Root WI: 4143
 Status: verified
 Required Verification: smoke, conformance
