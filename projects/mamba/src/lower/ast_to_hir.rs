@@ -3762,6 +3762,22 @@ impl<'a> AstLowerer<'a> {
             ast::Stmt::Break => Some(HirStmt::Break { span: stmt.span }),
             ast::Stmt::Continue => Some(HirStmt::Continue { span: stmt.span }),
             ast::Stmt::ExprStmt(expr) => {
+                // A bare statement that is a reference to a name resolving to
+                // nothing (no local, global, builtin, or outer-scope capture)
+                // is a runtime `NameError` in CPython. The checker's
+                // compile-time "undefined name" diagnostic is suppressed in
+                // such fixtures via `# type: ignore`, so lowering reaches here
+                // with an unresolvable Ident; emit the raise rather than
+                // silently dropping the statement (which printed "no_raise").
+                if let ast::Expr::Ident(name) = &expr.node {
+                    if self.resolve_name(name, expr.span).is_none()
+                        && !self.outer_scope_names.contains_key(name.as_str())
+                    {
+                        if let Some(raise) = self.name_error_raise(name, stmt.span) {
+                            return Some(raise);
+                        }
+                    }
+                }
                 let e = self.lower_expr(expr)?;
                 Some(HirStmt::Expr {
                     expr: e,
@@ -6372,6 +6388,26 @@ impl<'a> AstLowerer<'a> {
         }
         // Fall back to global scope (functions, classes — still in checker)
         self.checker.symbols.lookup(name)
+    }
+
+    /// Build `raise NameError("name '<name>' is not defined")` as a HirStmt for
+    /// a reference to an undefined name. Returns None when the `NameError`
+    /// builtin itself can't be resolved (so the caller falls back to normal
+    /// lowering rather than emitting a broken raise).
+    fn name_error_raise(&self, name: &str, span: Span) -> Option<HirStmt> {
+        let ne_sym = self.resolve_name("NameError", span)?;
+        let any_ty = self.checker.tcx.any();
+        let func = HirExpr::Var(ne_sym, any_ty);
+        let msg = HirExpr::StrLit(
+            format!("name '{name}' is not defined"),
+            self.checker.tcx.str(),
+        );
+        let call = HirExpr::Call {
+            func: Box::new(func),
+            args: vec![msg],
+            ty: any_ty,
+        };
+        Some(HirStmt::Raise { value: Some(call), from: None, span })
     }
 
     #[allow(dead_code)]
