@@ -1143,6 +1143,23 @@ fn resolve_annotation(anno: &str) -> Option<MbValue> {
         | "slice" => Some(super::super::builtins::make_type_object(name)),
         "None" | "NoneType" => Some(super::super::builtins::make_type_object("NoneType")),
         "Any" | "typing.Any" => Some(special_form("Any")),
+        // Generic aliases (`List[int]`, `Optional[str]`, `dict[str, int]`),
+        // unions (`int | str`), and bare typing special-form names are valid
+        // annotations that evaluate without error in CPython. We don't model the
+        // full construct, but they must NOT raise NameError — only genuinely
+        // undefined bare names do (preserving get_type_hints_bad_forward_ref).
+        // The Any sentinel is a stand-in so the key is still recorded.
+        s if s.contains('[')
+            || s.contains('|')
+            || matches!(
+                s,
+                "Optional" | "List" | "Dict" | "Set" | "Tuple" | "FrozenSet"
+                    | "Union" | "Callable" | "Sequence" | "Mapping" | "Iterable"
+                    | "Iterator" | "ClassVar" | "Final"
+            ) =>
+        {
+            Some(special_form("Any"))
+        }
         _ => None,
     }
 }
