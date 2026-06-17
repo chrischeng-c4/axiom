@@ -967,6 +967,7 @@ pub struct CapabilityDraftReport {
     pub candidate_count: usize,
     pub agent_review_required: bool,
     pub review_status: &'static str,
+    pub apply_command: String,
     pub check_command: String,
 }
 
@@ -1322,6 +1323,8 @@ fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Resu
     }
     let project_root = crate::find_project_root()?;
     let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    let check_command =
+        capability_check_command(project, args.cap_path.as_ref().map(|_| cap_path.as_path()));
     let draft_body = std::fs::read_to_string(&args.draft)
         .with_context(|| format!("failed to read capability draft {}", args.draft.display()))?;
     let registry = extract_reviewed_draft_registry(&draft_body)?;
@@ -1347,7 +1350,7 @@ fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Resu
         status: if changed { "applied" } else { "unchanged" }.to_string(),
         changed,
         capability_count: document.capabilities.len(),
-        check_command: format!("aw capability check --project {project}"),
+        check_command,
     };
 
     if args.human {
@@ -1443,7 +1446,12 @@ fn replace_capabilities_section(body: &str, registry: &str) -> Result<String> {
 fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
-    let report = build_capability_draft_report(project, &cap_path, args.output.as_deref())?;
+    let report = build_capability_draft_report(
+        project,
+        &cap_path,
+        args.output.as_deref(),
+        args.cap_path.as_ref().map(|_| cap_path.as_path()),
+    )?;
     if args.human {
         println!("{}", report.path.display());
     } else if args.pretty || args.json {
@@ -1458,6 +1466,7 @@ fn build_capability_draft_report(
     project: &str,
     cap_path: &Path,
     output: Option<&Path>,
+    cap_path_override: Option<&Path>,
 ) -> Result<CapabilityDraftReport> {
     let cap_body = std::fs::read_to_string(cap_path)
         .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
@@ -1478,6 +1487,8 @@ fn build_capability_draft_report(
 
     let body = render_capability_map_draft(project, cap_path, &document.prose_candidates);
     let path = write_capability_draft_artifact(project, output, &body)?;
+    let apply_command = capability_apply_draft_command(project, &path, cap_path_override);
+    let check_command = capability_check_command(project, cap_path_override);
     Ok(CapabilityDraftReport {
         schema_version: "aw.cli.v1",
         action: "capability_draft",
@@ -1489,8 +1500,35 @@ fn build_capability_draft_report(
         candidate_count: document.prose_candidates.len(),
         agent_review_required: true,
         review_status: "pending",
-        check_command: format!("aw capability check --project {project}"),
+        apply_command,
+        check_command,
     })
+}
+
+fn capability_check_command(project: &str, cap_path_override: Option<&Path>) -> String {
+    let mut command = format!("aw capability check --project {project}");
+    if let Some(path) = cap_path_override {
+        command.push_str(" --cap-path ");
+        command.push_str(&shell_quote(&path.display().to_string()));
+    }
+    command
+}
+
+fn capability_apply_draft_command(
+    project: &str,
+    draft_path: &Path,
+    cap_path_override: Option<&Path>,
+) -> String {
+    let mut command = format!(
+        "aw capability apply-draft --project {project} --draft {}",
+        shell_quote(&draft_path.display().to_string())
+    );
+    if let Some(path) = cap_path_override {
+        command.push_str(" --cap-path ");
+        command.push_str(&shell_quote(&path.display().to_string()));
+    }
+    command.push_str(" --reviewed");
+    command
 }
 
 fn capability_draft_source(candidates: &[CapabilityProseCandidate]) -> &'static str {
@@ -1790,7 +1828,9 @@ fn write_capability_sweep_drafts(
 ) -> Result<Vec<CapabilityDraftReport>> {
     capability_sweep_draft_projects(projects)
         .into_iter()
-        .map(|project| build_capability_draft_report(&project.project, &project.cap_path, None))
+        .map(|project| {
+            build_capability_draft_report(&project.project, &project.cap_path, None, None)
+        })
         .collect()
 }
 
@@ -1818,15 +1858,16 @@ fn render_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> Stri
     out.push_str("---\n\n");
     out.push_str("# Capability Map Draft Review Index\n\n");
     out.push_str("These artifacts are inference only. Review, revise, or defer each root before copying any canonical contract into README.\n\n");
-    out.push_str("| Project | Source | Candidates | Draft | Check |\n");
-    out.push_str("|---|---|---:|---|---|\n");
+    out.push_str("| Project | Source | Candidates | Draft | Apply After Review | Check |\n");
+    out.push_str("|---|---|---:|---|---|---|\n");
     for draft in drafts {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | `{}` |\n",
+            "| {} | {} | {} | {} | `{}` | `{}` |\n",
             markdown_cell(&draft.project),
             draft.source,
             draft.candidate_count,
             markdown_cell(&draft.path.display().to_string()),
+            markdown_cell(&draft.apply_command),
             markdown_cell(&draft.check_command),
         ));
     }
@@ -8570,6 +8611,24 @@ Keep this section.
     }
 
     #[test]
+    fn draft_commands_preserve_cap_path_override() {
+        let cap_path = Path::new("/tmp/aw draft/cue README.md");
+        let draft_path = Path::new("/tmp/aw draft/cue capability draft.md");
+
+        let apply = capability_apply_draft_command("cue", draft_path, Some(cap_path));
+        let check = capability_check_command("cue", Some(cap_path));
+
+        assert_eq!(
+            apply,
+            "aw capability apply-draft --project cue --draft '/tmp/aw draft/cue capability draft.md' --cap-path '/tmp/aw draft/cue README.md' --reviewed"
+        );
+        assert_eq!(
+            check,
+            "aw capability check --project cue --cap-path '/tmp/aw draft/cue README.md'"
+        );
+    }
+
+    #[test]
     fn legacy_format_next_action_uses_explicit_migrate_command() {
         let document = cap_doc(one_capability());
         let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
@@ -8874,6 +8933,7 @@ Gate Inventory:
             candidate_count: 0,
             agent_review_required: true,
             review_status: "pending",
+            apply_command: "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed".to_string(),
             check_command: "aw capability check --project pg".to_string(),
         }]);
 
@@ -8881,6 +8941,9 @@ Gate Inventory:
         assert!(index.contains("draft_count: 1"));
         assert!(index.contains("| pg | empty_capability_map | 0 |"));
         assert!(index.contains("/tmp/aw/pg/capability-map-drafts/draft.md"));
+        assert!(index.contains(
+            "`aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed`"
+        ));
         assert!(index.contains("`aw capability check --project pg`"));
         assert!(index.contains("Do not edit README until the capability promise is confirmed."));
     }
