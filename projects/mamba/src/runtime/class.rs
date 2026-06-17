@@ -2965,6 +2965,13 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 return super::builtins::mb_type(obj);
             }
         }
+        // A module's __dict__ is its namespace mapping. Return a snapshot
+        // (same as vars(module)) rather than the live module dict, so iterating
+        // it works (e.g. errno's uppercase constants) without letting callers
+        // mutate the module through __dict__. Without this it was None.
+        if attr_name == "__dict__" && super::module::is_module_value(obj) {
+            return mb_vars(obj);
+        }
         // EnumClass._member_type_: the mixed-in data type (int / str / object).
         if attr_name == "_member_type_" {
             if let Some(cn) = resolve_class_name(obj) {
