@@ -5159,6 +5159,27 @@ impl<'a> AstLowerer<'a> {
                             });
                         }
                     }
+                    // A bare-Ident `*`-splat call that ALSO carries a `**mapping`
+                    // (`collect(0, *[1,2], k=9, **{"m":8})`) must bind its keywords
+                    // — the generic mb_call_spread below drops them. Route through
+                    // mb_call_spread_kwargs with the already-expanded positional
+                    // spread list plus the merged kwargs dict. Scoped to calls with
+                    // a `**` splat (explicit-kwargs-only `*`-splat calls keep their
+                    // existing handling); the builtin idents (zip/min/max/sum/print)
+                    // returned earlier.
+                    if matches!(func.node, ast::Expr::Ident(_))
+                        && args.iter().any(|a| matches!(a, ast::CallArg::DoubleStarArg(_)))
+                    {
+                        if let Some(kwargs_dict) = self.build_kwargs_dict(args, any_ty) {
+                            return Some(HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_call_spread_kwargs".to_string(), any_ty,
+                                )),
+                                args: vec![f, spread_list, kwargs_dict],
+                                ty: any_ty,
+                            });
+                        }
+                    }
                     return Some(HirExpr::Call {
                         func: Box::new(HirExpr::StrLit("mb_call_spread".to_string(), any_ty)),
                         args: vec![f, spread_list],
@@ -5221,6 +5242,15 @@ impl<'a> AstLowerer<'a> {
                     };
                     if let Some(ref fname) = func_name {
                         if let Some(param_info) = self.func_param_info.get(fname).cloned() {
+                            // A `**mapping` splat has dynamic keys the static
+                            // reorder below cannot bind (it only matches literal
+                            // keyword names; the splat would be dropped). Route the
+                            // whole call through mb_call_spread_kwargs, which binds
+                            // the kwargs dict — including to a `**kwargs` receiver —
+                            // at runtime.
+                            if args.iter().any(|a| matches!(a, ast::CallArg::DoubleStarArg(_))) {
+                                return Some(self.build_spread_kwargs_call(f, args, any_ty));
+                            }
                             // Separate regular params from *args/**kwargs for ordered resolution.
                             let regular_params: Vec<(
                                 usize,
@@ -5396,63 +5426,7 @@ impl<'a> AstLowerer<'a> {
                 if has_dstar && !pack_trailing_kwargs && !has_star
                     && matches!(func.node, ast::Expr::Ident(_))
                 {
-                    let merge = |acc: HirExpr, next: HirExpr| HirExpr::Call {
-                        func: Box::new(HirExpr::StrLit("mb_dict_merge".to_string(), any_ty)),
-                        args: vec![acc, next],
-                        ty: any_ty,
-                    };
-                    let mut pos_elems: Vec<HirExpr> = Vec::new();
-                    let mut kw_acc: Option<HirExpr> = None;
-                    let mut pend: Vec<(HirExpr, HirExpr)> = Vec::new();
-                    for a in args {
-                        match a {
-                            ast::CallArg::Positional(e) | ast::CallArg::StarArg(e) => {
-                                if let Some(he) = self.lower_expr(e) { pos_elems.push(he); }
-                            }
-                            ast::CallArg::Keyword { name, value } => {
-                                if let Some(he) = self.lower_expr(value) {
-                                    pend.push((
-                                        HirExpr::StrLit(name.clone(), self.checker.tcx.str()),
-                                        he,
-                                    ));
-                                }
-                            }
-                            ast::CallArg::DoubleStarArg(e) => {
-                                if let Some(he) = self.lower_expr(e) {
-                                    if !pend.is_empty() {
-                                        let chunk = HirExpr::Dict {
-                                            entries: std::mem::take(&mut pend), ty: any_ty,
-                                        };
-                                        kw_acc = Some(match kw_acc.take() {
-                                            None => chunk,
-                                            Some(prev) => merge(prev, chunk),
-                                        });
-                                    }
-                                    kw_acc = Some(match kw_acc.take() {
-                                        None => he,
-                                        Some(prev) => merge(prev, he),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    if !pend.is_empty() {
-                        let chunk = HirExpr::Dict { entries: pend, ty: any_ty };
-                        kw_acc = Some(match kw_acc.take() {
-                            None => chunk,
-                            Some(prev) => merge(prev, chunk),
-                        });
-                    }
-                    let kwargs_dict =
-                        kw_acc.unwrap_or(HirExpr::Dict { entries: vec![], ty: any_ty });
-                    let pos_list = HirExpr::List { elements: pos_elems, ty: any_ty };
-                    return Some(HirExpr::Call {
-                        func: Box::new(HirExpr::StrLit(
-                            "mb_call_spread_kwargs".to_string(), any_ty,
-                        )),
-                        args: vec![f, pos_list, kwargs_dict],
-                        ty: any_ty,
-                    });
+                    return Some(self.build_spread_kwargs_call(f, args, any_ty));
                 }
 
                 let hir_args: Vec<HirExpr> = if pack_trailing_kwargs {
@@ -6482,6 +6456,130 @@ impl<'a> AstLowerer<'a> {
         }
         // Fall back to global scope (functions, classes — still in checker)
         self.checker.symbols.lookup(name)
+    }
+
+    /// Build a `mb_call_spread_kwargs(f, pos_list, kwargs_dict)` call for a
+    /// call carrying a `**mapping` splat. Positionals (and any `*` splats) form
+    /// the ordered positional list; explicit keywords and each `**mapping` merge
+    /// in source order via mb_dict_merge into the kwargs dict. The runtime helper
+    /// binds the kwargs dict to the callee's declared params (or `**kwargs`
+    /// receiver) at call time — the static reorder can't, since the keys are
+    /// dynamic.
+    fn build_spread_kwargs_call(
+        &mut self,
+        f: HirExpr,
+        args: &[ast::CallArg],
+        any_ty: TypeId,
+    ) -> HirExpr {
+        let merge = |acc: HirExpr, next: HirExpr| HirExpr::Call {
+            func: Box::new(HirExpr::StrLit("mb_dict_merge".to_string(), any_ty)),
+            args: vec![acc, next],
+            ty: any_ty,
+        };
+        let mut pos_elems: Vec<HirExpr> = Vec::new();
+        let mut kw_acc: Option<HirExpr> = None;
+        let mut pend: Vec<(HirExpr, HirExpr)> = Vec::new();
+        for a in args {
+            match a {
+                ast::CallArg::Positional(e) | ast::CallArg::StarArg(e) => {
+                    if let Some(he) = self.lower_expr(e) { pos_elems.push(he); }
+                }
+                ast::CallArg::Keyword { name, value } => {
+                    if let Some(he) = self.lower_expr(value) {
+                        pend.push((
+                            HirExpr::StrLit(name.clone(), self.checker.tcx.str()),
+                            he,
+                        ));
+                    }
+                }
+                ast::CallArg::DoubleStarArg(e) => {
+                    if let Some(he) = self.lower_expr(e) {
+                        if !pend.is_empty() {
+                            let chunk = HirExpr::Dict {
+                                entries: std::mem::take(&mut pend), ty: any_ty,
+                            };
+                            kw_acc = Some(match kw_acc.take() {
+                                None => chunk,
+                                Some(prev) => merge(prev, chunk),
+                            });
+                        }
+                        kw_acc = Some(match kw_acc.take() {
+                            None => he,
+                            Some(prev) => merge(prev, he),
+                        });
+                    }
+                }
+            }
+        }
+        if !pend.is_empty() {
+            let chunk = HirExpr::Dict { entries: pend, ty: any_ty };
+            kw_acc = Some(match kw_acc.take() {
+                None => chunk,
+                Some(prev) => merge(prev, chunk),
+            });
+        }
+        let kwargs_dict = kw_acc.unwrap_or(HirExpr::Dict { entries: vec![], ty: any_ty });
+        let pos_list = HirExpr::List { elements: pos_elems, ty: any_ty };
+        HirExpr::Call {
+            func: Box::new(HirExpr::StrLit("mb_call_spread_kwargs".to_string(), any_ty)),
+            args: vec![f, pos_list, kwargs_dict],
+            ty: any_ty,
+        }
+    }
+
+    /// Build the merged kwargs dict for a call's explicit keywords and
+    /// `**mapping` splats, in source order (later wins, via mb_dict_merge).
+    /// Returns None when the call has no keyword/`**` arguments.
+    fn build_kwargs_dict(
+        &mut self,
+        args: &[ast::CallArg],
+        any_ty: TypeId,
+    ) -> Option<HirExpr> {
+        let merge = |acc: HirExpr, next: HirExpr| HirExpr::Call {
+            func: Box::new(HirExpr::StrLit("mb_dict_merge".to_string(), any_ty)),
+            args: vec![acc, next],
+            ty: any_ty,
+        };
+        let mut kw_acc: Option<HirExpr> = None;
+        let mut pend: Vec<(HirExpr, HirExpr)> = Vec::new();
+        for a in args {
+            match a {
+                ast::CallArg::Keyword { name, value } => {
+                    if let Some(he) = self.lower_expr(value) {
+                        pend.push((
+                            HirExpr::StrLit(name.clone(), self.checker.tcx.str()),
+                            he,
+                        ));
+                    }
+                }
+                ast::CallArg::DoubleStarArg(e) => {
+                    if let Some(he) = self.lower_expr(e) {
+                        if !pend.is_empty() {
+                            let chunk = HirExpr::Dict {
+                                entries: std::mem::take(&mut pend), ty: any_ty,
+                            };
+                            kw_acc = Some(match kw_acc.take() {
+                                None => chunk,
+                                Some(prev) => merge(prev, chunk),
+                            });
+                        }
+                        kw_acc = Some(match kw_acc.take() {
+                            None => he,
+                            Some(prev) => merge(prev, he),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !pend.is_empty() {
+            let chunk = HirExpr::Dict { entries: pend, ty: any_ty };
+            kw_acc = Some(match kw_acc.take() {
+                None => chunk,
+                Some(prev) => merge(prev, chunk),
+            });
+        }
+        kw_acc
     }
 
     /// Build `raise NameError("name '<name>' is not defined")` as a HirStmt for
