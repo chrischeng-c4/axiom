@@ -1270,6 +1270,7 @@ pub(crate) fn raise_value_error(msg: String) {
 
 /// int(value) — convert to integer.
 pub fn mb_int(val: MbValue) -> MbValue {
+    let val = super::stdlib::enum_class::int_member_value(val).unwrap_or(val);
     if is_decimal_handle_value(val) {
         return super::stdlib::decimal_mod::mb_decimal_int(val);
     }
@@ -2595,6 +2596,8 @@ fn numeric_handle_binop(op: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
 }
 
 pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     if is_array_handle_value(a) || is_array_handle_value(b) {
         return super::stdlib::array_mod::mb_array_concat(a, b);
     }
@@ -2853,6 +2856,8 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("-", a, b) {
         return r;
     }
@@ -3333,6 +3338,8 @@ pub fn mb_rshift(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("*", a, b) {
         return r;
     }
@@ -3531,6 +3538,8 @@ fn floor_divmod_i128(a: i128, b: i128) -> (i128, i128) {
 }
 
 pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("/", a, b) {
         return r;
     }
@@ -3610,6 +3619,8 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("%", a, b) {
         return r;
     }
@@ -4619,6 +4630,8 @@ fn setlike_items(v: MbValue) -> Option<Vec<MbValue>> {
 }
 
 pub fn mb_lt(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     if enum_ordering_guard(a, b, "<") {
         return MbValue::from_bool(false);
     }
@@ -5644,6 +5657,7 @@ fn float_hash_i64(f: f64) -> i64 {
 }
 
 pub fn mb_hash(val: MbValue) -> MbValue {
+    let val = super::stdlib::enum_class::int_member_value(val).unwrap_or(val);
     // Python 3.12: slice is hashable, with `hash(slice(a,b,c)) ==
     // hash((a,b,c))`. Delegating to the tuple hash also reproduces CPython's
     // error for an unhashable component — `hash(slice(1,2,[]))` raises
@@ -6018,6 +6032,8 @@ fn raise_zero_neg_pow() -> MbValue {
 
 /// pow(base, exp) — power operator.
 pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
+    let base = super::stdlib::enum_class::int_member_value(base).unwrap_or(base);
+    let exp = super::stdlib::enum_class::int_member_value(exp).unwrap_or(exp);
     if let Some(r) = numeric_handle_binop("**", base, exp) {
         return r;
     }
@@ -8402,6 +8418,8 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
 
 /// floor division: a // b
 pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     if let Some(r) = numeric_handle_binop("//", a, b) {
         return r;
     }
@@ -8487,6 +8505,8 @@ pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
 
 /// gt comparison: a > b
 pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     // complex ordering raises in CPython — guard here so the message carries
     // '>' (delegating to mb_lt(b, a) would mislabel the operator).
     if complex_ordering_guard(a, b, ">") {
@@ -8535,6 +8555,8 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
 
 /// le comparison: a <= b
 pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     // complex ordering raises in CPython — guard with the '<=' op symbol.
     if complex_ordering_guard(a, b, "<=") {
         return MbValue::from_bool(false);
@@ -8568,6 +8590,8 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
 
 /// ge comparison: a >= b
 pub fn mb_ge(a: MbValue, b: MbValue) -> MbValue {
+    let a = super::stdlib::enum_class::int_member_value(a).unwrap_or(a);
+    let b = super::stdlib::enum_class::int_member_value(b).unwrap_or(b);
     // complex ordering raises in CPython — guard with the '>=' op symbol.
     if complex_ordering_guard(a, b, ">=") {
         return MbValue::from_bool(false);
