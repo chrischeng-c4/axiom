@@ -2679,6 +2679,76 @@ fn make_type_class_shell(name: &str, attrs: &[(&str, MbValue)]) -> MbValue {
     MbValue::from_ptr(inst_ptr)
 }
 
+// ── Context arithmetic/utility methods (int operands coerced to Decimal) ──
+
+/// Positional args of a Context instance method (runtime passes a List/Tuple).
+fn ctx_method_args(args: MbValue) -> Vec<MbValue> {
+    args.as_ptr().map(|p| unsafe {
+        match &(*p).data {
+            ObjData::List(lock) => lock.read().unwrap().to_vec(),
+            ObjData::Tuple(items) => items.clone(),
+            _ => Vec::new(),
+        }
+    }).unwrap_or_default()
+}
+
+/// First positional argument coerced to a Decimal handle (CPython Context
+/// methods accept int/str and coerce via the Decimal constructor).
+fn ctx_first_decimal(args: MbValue) -> MbValue {
+    let pos = ctx_method_args(args);
+    let a = pos.first().copied().unwrap_or_else(MbValue::none);
+    let is_dec = a.as_int().map(|i| is_decimal_handle(i as u64)).unwrap_or(false);
+    if is_dec { a } else { mb_decimal_new(a) }
+}
+
+unsafe extern "C" fn ctx_to_eng_string(_self: MbValue, args: MbValue) -> MbValue {
+    dispatch_method(ctx_first_decimal(args), "to_eng_string", &[]).unwrap_or_else(MbValue::none)
+}
+unsafe extern "C" fn ctx_normalize(_self: MbValue, args: MbValue) -> MbValue {
+    dispatch_method(ctx_first_decimal(args), "normalize", &[]).unwrap_or_else(MbValue::none)
+}
+unsafe extern "C" fn ctx_to_integral_value(_self: MbValue, args: MbValue) -> MbValue {
+    dispatch_method(ctx_first_decimal(args), "to_integral_value", &[]).unwrap_or_else(MbValue::none)
+}
+unsafe extern "C" fn ctx_copy_decimal(_self: MbValue, args: MbValue) -> MbValue {
+    ctx_first_decimal(args)
+}
+/// Context.number_class(x) -> CPython class string ("+Normal", "-Zero", …).
+unsafe extern "C" fn ctx_number_class(_self: MbValue, args: MbValue) -> MbValue {
+    let s = with_str(mb_decimal_str(ctx_first_decimal(args)), |s| s.to_string());
+    let neg = s.starts_with('-');
+    let sign = if neg { "-" } else { "+" };
+    let cls = if s.contains("sNaN") {
+        "sNaN".to_string()
+    } else if s.contains("NaN") {
+        "NaN".to_string()
+    } else if s.to_ascii_lowercase().contains("inf") {
+        format!("{sign}Infinity")
+    } else {
+        let body = s.trim_start_matches(['+', '-']);
+        let mantissa = body.split(['E', 'e']).next().unwrap_or("");
+        let is_zero = mantissa.chars().all(|c| c == '0' || c == '.');
+        if is_zero { format!("{sign}Zero") } else { format!("{sign}Normal") }
+    };
+    str_val(&cls)
+}
+
+/// Register Context arithmetic/utility methods on the `Context` class.
+fn register_context_methods() {
+    let mut m: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("to_eng_string",     ctx_to_eng_string     as *const () as usize),
+        ("normalize",         ctx_normalize         as *const () as usize),
+        ("to_integral_value", ctx_to_integral_value as *const () as usize),
+        ("copy_decimal",      ctx_copy_decimal      as *const () as usize),
+        ("number_class",      ctx_number_class      as *const () as usize),
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+        m.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register("Context", Vec::new(), m);
+}
+
 pub fn register() {
     let mut attrs: HashMap<String, MbValue> = HashMap::new();
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -2861,6 +2931,9 @@ pub fn register() {
             methods.insert(name.to_string(), MbValue::from_func(stub as usize));
         }
         super::super::class::mb_class_register("Decimal", vec![], methods);
+
+        // Context arithmetic/utility methods (coerce int operands -> Decimal).
+        register_context_methods();
 
         // Bridge the `Decimal` constructor func -> its class name so the
         // func->native-class method bridge in mb_getattr fires.
