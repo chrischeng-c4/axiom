@@ -4238,6 +4238,9 @@ fn markdown_capability_document_needs_canonicalization(body: &str) -> bool {
             continue;
         }
         if let Some((level, title)) = parse_heading(lines[idx]) {
+            if markdown_heading_is_noncanonical_efficiency_backfill(&lines, idx, &title) {
+                return true;
+            }
             if level == 2 && title.eq_ignore_ascii_case("Capability Index") {
                 return true;
             }
@@ -4265,6 +4268,24 @@ fn markdown_capability_document_needs_canonicalization(body: &str) -> bool {
         idx += 1;
     }
     false
+}
+
+fn markdown_heading_is_noncanonical_efficiency_backfill(
+    lines: &[&str],
+    heading_idx: usize,
+    title: &str,
+) -> bool {
+    let normalized = normalize_table_token(title);
+    if normalized != "efficiency" {
+        return false;
+    }
+    let section_end = next_heading(lines, heading_idx + 1).unwrap_or(lines.len());
+    let values = parse_markdown_field_values(lines, heading_idx + 1, section_end);
+    values.contains_key("operatingpoint")
+        || values.contains_key("efficiencyoperatingpoint")
+        || values.contains_key("cube")
+        || values.contains_key("cuberef")
+        || values.contains_key("efficiencycube")
 }
 
 fn markdown_block_has_capability_contract(lines: &[&str], start: usize, end: usize) -> bool {
@@ -4406,8 +4427,11 @@ fn parse_markdown_capability_block(
     ) {
         merge_efficiency_backfill_slot(&mut ec_dimensions, slot);
     }
-    if let Some(slot) = parse_efficiency_backfill_section(lines, heading_idx + 1, block_end) {
+    if let Some((slot, section_span)) =
+        parse_efficiency_backfill_section(lines, heading_idx + 1, block_end)
+    {
         merge_efficiency_backfill_slot(&mut ec_dimensions, slot);
+        machine_table_spans.push(section_span);
     }
     ec_dimensions = dedupe_ec_dimensions(ec_dimensions);
     surfaces = dedupe_surfaces(surfaces);
@@ -5160,7 +5184,31 @@ fn parse_efficiency_backfill_section(
     lines: &[&str],
     start: usize,
     block_end: usize,
-) -> Option<CapabilityEfficiencyBackfillSlot> {
+) -> Option<(CapabilityEfficiencyBackfillSlot, (usize, usize))> {
+    let (section_start, section_end) =
+        find_efficiency_backfill_section_span(lines, start, block_end)?;
+    let values = parse_markdown_field_values(lines, section_start + 1, section_end);
+    let slot = parse_efficiency_slot_from_contract(
+        values
+            .get("operatingpoint")
+            .or_else(|| values.get("efficiencyoperatingpoint"))
+            .map(String::as_str)
+            .unwrap_or("-"),
+        values
+            .get("cube")
+            .or_else(|| values.get("cuberef"))
+            .or_else(|| values.get("efficiencycube"))
+            .map(String::as_str)
+            .unwrap_or("-"),
+    )?;
+    Some((slot, (section_start, section_end)))
+}
+
+fn find_efficiency_backfill_section_span(
+    lines: &[&str],
+    start: usize,
+    block_end: usize,
+) -> Option<(usize, usize)> {
     let fenced = markdown_fenced_line_mask(lines);
     let mut cursor = start;
     while cursor < block_end {
@@ -5180,20 +5228,7 @@ fn parse_efficiency_backfill_section(
         let section_end = next_heading(lines, cursor + 1)
             .filter(|idx| *idx < block_end)
             .unwrap_or(block_end);
-        let values = parse_markdown_field_values(lines, cursor + 1, section_end);
-        return parse_efficiency_slot_from_contract(
-            values
-                .get("operatingpoint")
-                .or_else(|| values.get("efficiencyoperatingpoint"))
-                .map(String::as_str)
-                .unwrap_or("-"),
-            values
-                .get("cube")
-                .or_else(|| values.get("cuberef"))
-                .or_else(|| values.get("efficiencycube"))
-                .map(String::as_str)
-                .unwrap_or("-"),
-        );
+        return Some((cursor, section_end));
     }
     None
 }
@@ -7825,6 +7860,52 @@ Gate Inventory:
         assert!(k8s < code && code < http);
         assert!(migrated.contains(
             "```bash\n# 1. build\nkubectl apply -k k8s/overlays/myenv\n```\n\n### HTTP / REST Integration"
+        ));
+    }
+
+    #[test]
+    fn markdown_migration_canonicalizes_plain_efficiency_backfill_section() {
+        let body = r#"# demo
+
+## Brief
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Search | - | implemented | auditing | conformance | not_ready | search service |
+
+### Search
+
+ID: search
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Serve ranked external ids.
+Gate Inventory:
+- `cargo test -p lumen planner`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Query planner | epic | - | implemented | passing | conformance | `cargo test -p lumen planner` |
+
+#### Efficiency
+
+Operating point: 1M docs, qps=100, metric=p99_ms
+Cube: projects/lumen/.aw/ec/efficiency/search.cube.json
+"#;
+        let doc = cap_doc(body);
+        assert!(doc.requires_format_migration());
+
+        let migrated = render_capability_markdown_migration(body, &doc, "lumen");
+
+        assert!(!migrated.contains("\n#### Efficiency\n"));
+        assert!(migrated.contains(
+            "\n#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n\nOperating point: 1M docs, qps=100, metric=p99_ms\nCube: projects/lumen/.aw/ec/efficiency/search.cube.json\n"
         ));
     }
 
