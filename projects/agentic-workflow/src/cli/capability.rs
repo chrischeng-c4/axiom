@@ -9502,6 +9502,7 @@ fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<
     for warning in &report.warnings {
         println!("warning: {warning}");
     }
+    println!("{}", capability_human_readiness_line(report));
     println!(
         "test gates: {:?} [{}/{} passed]",
         report.test_gates.status, report.test_gates.passed_count, report.test_gates.command_count
@@ -9509,6 +9510,29 @@ fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<
     print_contract_facets(report);
     print_next_action(&report.next_action);
     Ok(())
+}
+
+fn capability_human_readiness_line(report: &CapabilityReport) -> String {
+    format!(
+        "readiness: loop={}; production={}/{} [scope={}, blockers={}]",
+        capability_loop_status(report),
+        production_status_label(report.production_status),
+        if report.production_ready {
+            "ready"
+        } else {
+            "not_ready"
+        },
+        report.production_scope.len(),
+        report.production_blockers.len(),
+    )
+}
+
+fn production_status_label(status: ProductionStatus) -> &'static str {
+    match status {
+        ProductionStatus::Ready => "ready",
+        ProductionStatus::Blocked => "blocked",
+        ProductionStatus::NotEvaluated => "not_evaluated",
+    }
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -10874,6 +10898,22 @@ Gate Inventory:
             Some("aw td create 3779")
         );
         assert!(summary.get("run_results").is_none());
+    }
+
+    #[test]
+    fn human_readiness_line_separates_loop_and_production_readiness() {
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.status = "healthy".to_string();
+        report.production_status = ProductionStatus::Blocked;
+        report.production_scope = vec!["package-manager".to_string()];
+        report
+            .production_blockers
+            .push("package-manager: catalog/claim verification is not complete".to_string());
+
+        assert_eq!(
+            capability_human_readiness_line(&report),
+            "readiness: loop=continue; production=blocked/not_ready [scope=1, blockers=1]"
+        );
     }
 
     #[test]
