@@ -280,6 +280,7 @@ macro_rules! disp_unary {
 
 disp_unary!(d_isfunction, mb_inspect_isfunction);
 disp_unary!(d_ismodule, mb_inspect_ismodule);
+disp_unary!(d_isroutine, mb_inspect_isroutine);
 disp_unary!(d_isclass, mb_inspect_isclass);
 disp_unary!(d_ismethod, mb_inspect_ismethod);
 disp_unary!(d_getmembers, mb_inspect_getmembers);
@@ -294,7 +295,7 @@ pub fn register() {
         ("isclass", d_isclass as *const () as usize),
         ("ismethod", d_ismethod as *const () as usize),
         ("isbuiltin", d_isfunction as *const () as usize),
-        ("isroutine", d_isfunction as *const () as usize),
+        ("isroutine", d_isroutine as *const () as usize),
         ("ismodule", d_ismodule as *const () as usize),
         ("isgeneratorfunction", d_isfunction as *const () as usize),
         ("iscoroutinefunction", d_isfunction as *const () as usize),
@@ -1116,6 +1117,33 @@ pub fn mb_inspect_isfunction(obj: MbValue) -> MbValue {
 /// functions and False for modules.)
 pub fn mb_inspect_ismodule(obj: MbValue) -> MbValue {
     MbValue::from_bool(super::super::module::is_module_value(obj))
+}
+
+/// inspect.isroutine(obj) -> bool. A routine is a function, builtin, bound
+/// method, or other callable wrapper that stands in for one (functools
+/// singledispatch / partial / lru_cache wrappers). Was mis-wired to isfunction,
+/// which is False for those Instance-based wrappers.
+pub fn mb_inspect_isroutine(obj: MbValue) -> MbValue {
+    if mb_inspect_isfunction(obj).as_bool() == Some(true)
+        || mb_inspect_ismethod(obj).as_bool() == Some(true)
+    {
+        return MbValue::from_bool(true);
+    }
+    if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if matches!(
+                    class_name.as_str(),
+                    "functools.singledispatch"
+                        | "functools.partial"
+                        | "functools.lru_cache_wrapper"
+                ) {
+                    return MbValue::from_bool(true);
+                }
+            }
+        }
+    }
+    MbValue::from_bool(false)
 }
 
 /// inspect.isclass(obj) -> bool.
