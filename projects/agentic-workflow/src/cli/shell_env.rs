@@ -35,9 +35,16 @@ fn default_path_for(home: Option<&str>, existing_path: Option<&str>) -> String {
         ));
     }
     parts.extend(
-        ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
-            .iter()
-            .map(|path| path.to_string()),
+        [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+        .iter()
+        .map(|path| path.to_string()),
     );
     if let Some(home) = home {
         parts.push(format!("{home}/.cargo/bin"));
@@ -67,6 +74,7 @@ mod tests {
         assert!(
             path.starts_with("/Users/example/.rustup/toolchains/stable-aarch64-apple-darwin/bin:")
         );
+        assert!(path.contains(":/opt/homebrew/bin:/usr/local/bin:"));
         assert!(path.contains(":/Users/example/.cargo/bin:"));
         assert!(path.ends_with(":/opt/tool/bin"));
     }
