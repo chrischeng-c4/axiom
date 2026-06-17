@@ -5410,7 +5410,7 @@ impl<'a> AstLowerer<'a> {
                             | "property"
                     ) || self.dataclasses_kwarg_idents.contains(name.as_str())
                 );
-                let pack_trailing_kwargs = (is_method_call && has_any_kwargs)
+                let pack_trailing_kwargs = (is_method_call && (has_any_kwargs || has_dstar))
                     || (is_native_kwargs_ident && (has_any_kwargs || has_dstar));
 
                 // `f(**d)` / `f(a, **d)` / `f(k=1, **d)` to a bare-Ident callee
