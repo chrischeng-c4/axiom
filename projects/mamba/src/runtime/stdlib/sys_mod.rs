@@ -220,6 +220,12 @@ unsafe extern "C" fn structseq_len(self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_int(struct_seq_entries(self_v).len() as i64)
 }
 
+/// __iter__: iterate the ordered fields, so a struct sequence unpacks like the
+/// tuple it models (`first, *rest = vi`, `f(*sys.get_asyncgen_hooks())`).
+unsafe extern "C" fn structseq_iter(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::iter::mb_iter(struct_seq_tuple(self_v))
+}
+
 unsafe extern "C" fn structseq_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let key = ss_args_first(args);
     let entries = struct_seq_entries(self_v);
@@ -280,6 +286,7 @@ pub(crate) fn register_struct_seq_class_with(
     for addr in [
         structseq_len as *const () as usize,
         structseq_getitem as *const () as usize,
+        structseq_iter as *const () as usize,
         structseq_lt as *const () as usize,
         structseq_gt as *const () as usize,
     ] {
@@ -293,6 +300,10 @@ pub(crate) fn register_struct_seq_class_with(
     m.insert(
         "__getitem__".into(),
         MbValue::from_func(structseq_getitem as *const () as usize),
+    );
+    m.insert(
+        "__iter__".into(),
+        MbValue::from_func(structseq_iter as *const () as usize),
     );
     m.insert(
         "__eq__".into(),
