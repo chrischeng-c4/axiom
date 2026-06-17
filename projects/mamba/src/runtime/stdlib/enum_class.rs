@@ -272,6 +272,17 @@ fn class_kind(class_name: &str) -> Option<EnumKind> {
     ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.kind))
 }
 
+/// `EnumClass._member_type_`: the data type the enum mixes in — "int" for
+/// IntEnum/IntFlag, "str" for StrEnum / (str, Enum), "object" for a plain
+/// Enum/Flag. None for a non-enum class.
+pub fn member_type_name(class_name: &str) -> Option<&'static str> {
+    class_kind(class_name).map(|k| match k {
+        EnumKind::IntFlag | EnumKind::IntMixin => "int",
+        EnumKind::StrEnum | EnumKind::StrMixin => "str",
+        EnumKind::Plain | EnumKind::Flag => "object",
+    })
+}
+
 /// Build a fresh member Instance (rc=1, fields populated directly so the
 /// `__slots__` gate never applies).
 fn new_member(class_name: &str, member_name: &str, value: MbValue) -> MbValue {
