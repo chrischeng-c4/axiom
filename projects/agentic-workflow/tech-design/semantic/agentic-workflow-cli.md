@@ -4,9 +4,22 @@ summary: Semantic coverage for "projects/agentic-workflow/src/cli"
 capability_refs:
   - id: "aw-core-client-model-workitem-first-artifact-lifecycle"
     role: primary
+    gap: "core-concept-model-and-invariants"
     claim: "core-concept-model-and-invariants"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/agentic-workflow/src/cli`."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: ec-evidence-documentation
+    claim: ec-evidence-documentation
+    coverage: partial
+    rationale: "The CLI semantic domain covers `aw ec doc` rendering, check, preview, and EC evidence documentation behavior in src/cli/ec.rs."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: ec-external-contract-source
+    claim: ec-external-contract-source
+    coverage: partial
+    rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated manifest behavior in src/cli/ec.rs."
 fill_sections: [schema, changes]
 ---
 
