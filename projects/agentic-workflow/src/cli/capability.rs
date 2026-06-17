@@ -893,6 +893,8 @@ pub struct CapabilityReport {
     pub claim_percent: f64,
     pub capabilities: Vec<CapabilityReportItem>,
     pub blockers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     pub next_action: CapabilityAction,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub run_results: Vec<CapabilityRunResult>,
@@ -1805,6 +1807,7 @@ async fn build_capability_report_inner(
     let document = parse_capability_document_repairing_previous_migration(&cap_body, &cap_path)
         .with_context(|| format!("failed to parse capability map from {}", cap_path.display()))?;
     let mut blockers = document.findings.clone();
+    let mut warnings = Vec::new();
     let capability_types = {
         // README pillar grouping / explicit Type fields are primary. The
         // sidecar exists only as migration fallback and must not override
@@ -1823,7 +1826,7 @@ async fn build_capability_report_inner(
     if include_issue_inventory && !document.is_legacy_only() {
         match load_project_issues(&project_root, project).await {
             Ok(found) => issues = found,
-            Err(err) => blockers.push(format!("issue inventory unavailable: {err}")),
+            Err(err) => warnings.push(format!("issue inventory unavailable: {err}")),
         }
     }
 
@@ -1978,6 +1981,7 @@ async fn build_capability_report_inner(
         claim_percent,
         capabilities: report_items,
         blockers,
+        warnings,
         next_action: CapabilityAction {
             kind: CapabilityActionKind::None,
             capability_id: None,
@@ -2041,6 +2045,7 @@ fn capability_map_read_blocked_report(
         claim_percent: 0.0,
         capabilities: Vec::new(),
         blockers: vec![reason],
+        warnings: Vec::new(),
         next_action,
         run_results: Vec::new(),
     }
@@ -6294,6 +6299,9 @@ fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<
     for blocker in &report.blockers {
         println!("blocker: {blocker}");
     }
+    for warning in &report.warnings {
+        println!("warning: {warning}");
+    }
     println!(
         "test gates: {:?} [{}/{} passed]",
         report.test_gates.status, report.test_gates.passed_count, report.test_gates.command_count
@@ -6447,6 +6455,7 @@ fn capability_coverage_summary(report: &CapabilityReport) -> serde_json::Value {
         "verified_claim_count": report.verified_claim_count,
         "claim_percent": report.claim_percent,
         "blocker_count": report.blockers.len(),
+        "warning_count": report.warnings.len(),
         "production_ready": report.production_ready,
         "production_status": &report.production_status,
         "test_gate_status": &report.test_gates.status,
@@ -6655,6 +6664,7 @@ mod tests {
             claim_percent: 0.0,
             capabilities: Vec::new(),
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action,
             run_results: Vec::new(),
         }
@@ -6785,6 +6795,27 @@ mod tests {
             summary["next"]["command"].as_str(),
             Some("aw capability report --project jet --verify")
         );
+    }
+
+    #[test]
+    fn capability_summary_keeps_issue_inventory_warning_out_of_missing() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::RunTd,
+            "aw td create 3779",
+            false,
+        ));
+        report
+            .warnings
+            .push("issue inventory unavailable: gh auth missing".to_string());
+
+        let summary = capability_summary(&report, false);
+        let missing = summary["completion"]["missing"].as_array().unwrap();
+
+        assert_eq!(summary["coverage"]["blocker_count"].as_u64(), Some(0));
+        assert_eq!(summary["coverage"]["warning_count"].as_u64(), Some(1));
+        assert!(!missing.iter().any(|value| value
+            .as_str()
+            .is_some_and(|missing| missing.contains("issue inventory unavailable"))));
     }
 
     fn one_capability() -> &'static str {
@@ -8152,6 +8183,7 @@ capability_refs:
                 production_blockers: Vec::new(),
             }],
             blockers: document.findings.clone(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -8256,6 +8288,7 @@ capability_refs:
                 production_blockers: Vec::new(),
             }],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -8345,6 +8378,7 @@ capability_refs:
                 production_blockers: Vec::new(),
             }],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -8421,6 +8455,7 @@ capability_refs:
                 production_blockers: Vec::new(),
             }],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -8551,6 +8586,7 @@ capability_refs:
                 production_blockers: Vec::new(),
             }],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -8669,6 +8705,7 @@ capability_refs:
                 },
             ],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -8790,6 +8827,7 @@ capability_refs:
                 },
             ],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
