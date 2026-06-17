@@ -106,6 +106,23 @@ thread_local! {
 /// import machinery does this automatically when the submodule loads; here
 /// we mirror it because the stdlib stubs register the dotted names eagerly.
 pub fn mb_module_register(name: &str, attrs: HashMap<String, MbValue>) {
+    // Register native module functions' __name__ / __module__ so introspection
+    // works: time.time.__name__ == "time", time.time.__module__ == "time".
+    // (For a top-level module function __qualname__ == __name__, handled by the
+    // shared __name__/__qualname__ getattr path.) Each native function is a
+    // distinct extern pointer, so keying FUNC_NAMES by its bits is stable.
+    for (attr_name, val) in &attrs {
+        if val.as_func().is_some() {
+            super::closure::mb_func_set_name(
+                *val,
+                MbValue::from_ptr(MbObject::new_str(attr_name.clone())),
+            );
+            super::closure::mb_func_set_module(
+                *val,
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+        }
+    }
     MODULES.with(|mods| {
         mods.borrow_mut().insert(
             name.to_string(),
