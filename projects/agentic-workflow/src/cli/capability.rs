@@ -251,6 +251,9 @@ pub struct CapabilitySweepArgs {
     /// Include issue inventory when computing next actions.
     #[arg(long = "include-issue-inventory")]
     pub include_issue_inventory: bool,
+    /// Skip issue inventory for a fast structural sweep.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
     /// Write pending-review capability-map drafts for define-map projects.
     #[arg(long = "write-drafts")]
     pub write_drafts: bool,
@@ -1755,32 +1758,29 @@ async fn run_capability_sweep(
 ) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let rows = capability_sweep_project_rows(&project_root, selected_project)?;
+    let include_issue_inventory = args.include_issue_inventory || !args.skip_issue_inventory;
     let mut reports = Vec::new();
     for row in rows {
         let project = row.name.clone();
-        let report = match build_capability_report(
-            &project,
-            None,
-            args.verify,
-            args.include_issue_inventory,
-        )
-        .await
-        {
-            Ok(report) => report,
-            Err(err) => {
-                let cap_path = capability_path_from_row(&project_root, &row)
-                    .unwrap_or_else(|_| project_root.join("README.md"));
-                capability_map_read_failure_report(
-                    &project,
-                    cap_path,
-                    ProjectTestGateReport::not_evaluated(&project),
-                    format!("failed to build capability report: {err:#}"),
-                )
-            }
-        };
+        let report =
+            match build_capability_report(&project, None, args.verify, include_issue_inventory)
+                .await
+            {
+                Ok(report) => report,
+                Err(err) => {
+                    let cap_path = capability_path_from_row(&project_root, &row)
+                        .unwrap_or_else(|_| project_root.join("README.md"));
+                    capability_map_read_failure_report(
+                        &project,
+                        cap_path,
+                        ProjectTestGateReport::not_evaluated(&project),
+                        format!("failed to build capability report: {err:#}"),
+                    )
+                }
+            };
         reports.push(report);
     }
-    let mut sweep = capability_sweep_report(&reports, args.verify, args.include_issue_inventory);
+    let mut sweep = capability_sweep_report(&reports, args.verify, include_issue_inventory);
     if args.write_drafts {
         sweep.write_drafts = true;
         sweep.drafts = write_capability_sweep_drafts(&sweep.projects)?;
