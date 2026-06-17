@@ -65,7 +65,9 @@ promises from inference alone.
    use `aw capability apply-draft --project <project> --draft <path>
    --reviewed` to apply the canonical `## Capabilities` section to README.
    The command refuses unreviewed placeholder drafts, including unresolved
-   `Review Decisions` worksheets, and only proves structure; run
+   `Review Decisions` worksheets. Completed `Review Decisions` values are
+   materialized into the canonical section for Type, Surfaces, EC Dimensions,
+   Root WI, and gate inventory before README mutation; run
    `aw capability check --project <project>` afterward, and use `--verify`
    only when production proof matters.
 11. When the sweep shows `create_wi`, use
