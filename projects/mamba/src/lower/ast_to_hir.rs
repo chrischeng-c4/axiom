@@ -3222,6 +3222,13 @@ impl<'a> AstLowerer<'a> {
                                 type_expr_repr(&ty.node),
                                 default,
                             ));
+                        } else if fname != "__slots__" {
+                            // `y: str = "hi"` in a non-dataclass class body binds a
+                            // real class attribute (CPython), unlike a bare `x: int`.
+                            // Mirror the plain-assignment path.
+                            if let Some(val_expr) = self.lower_expr(value) {
+                                class_attr_assigns.push((fname.clone(), val_expr));
+                            }
                         }
                     }
                 }
