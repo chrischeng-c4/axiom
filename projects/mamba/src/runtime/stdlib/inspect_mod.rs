@@ -1334,6 +1334,21 @@ pub fn mb_inspect_ismethod(obj: MbValue) -> MbValue {
 /// If obj is an Instance, returns a list of 2-tuples for each field in
 /// the instance's attribute dictionary. Otherwise returns an empty list.
 pub fn mb_inspect_getmembers(obj: MbValue) -> MbValue {
+    // A class (user classes are represented as class-name strings / type
+    // objects): enumerate its class attributes and methods across the MRO.
+    if mb_inspect_isclass(obj).as_bool() == Some(true) {
+        let name = super::super::class::resolve_class_name(obj).unwrap_or_default();
+        let members: Vec<MbValue> = super::super::class::class_members(&name)
+            .into_iter()
+            .map(|(k, v)| {
+                let name_val = MbValue::from_ptr(MbObject::new_str(k));
+                MbValue::from_ptr(MbObject::new_tuple_borrowed(vec![name_val, v]))
+            })
+            .collect();
+        if !members.is_empty() {
+            return MbValue::from_ptr(MbObject::new_list(members));
+        }
+    }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             match &(*ptr).data {
