@@ -350,6 +350,18 @@ fn extract_arg_token(val: MbValue) -> Result<String, ()> {
                 ObjData::Bytes(b) => {
                     return Ok(String::from_utf8_lossy(b).to_string());
                 }
+                // os.PathLike: an instance defining __fspath__ — decode by
+                // calling it (CPython's os.fspath path).
+                ObjData::Instance { ref class_name, .. } => {
+                    if !super::super::class::lookup_method(class_name, "__fspath__").is_none() {
+                        let mname = MbValue::from_ptr(MbObject::new_str("__fspath__".to_string()));
+                        let empty = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                        let r = super::super::class::mb_call_method(val, mname, empty);
+                        if let Some(s) = extract_str(r) {
+                            return Ok(s);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
