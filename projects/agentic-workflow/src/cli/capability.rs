@@ -17,6 +17,7 @@ use super::production::{
     ProductionStatus,
 };
 use super::project::{project_test_gate_report, ProjectTestGateReport, ProjectTestGateStatus};
+use super::workflow_guard;
 
 const CAPABILITY_MIGRATION_INSERT_MARKER: &str = "<!-- aw:capability-migration-insert -->";
 
@@ -998,6 +999,10 @@ pub struct CapabilityWiEvidence {
     pub gap_id: String,
     pub issue_type: String,
     pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_command: Option<String>,
     pub title: String,
 }
 
@@ -3844,11 +3849,20 @@ fn capability_wi_evidence(
                 .iter()
                 .find(|issue| issue.github_id.or(issue.gitlab_id) == Some(number))
             {
+                let projection = workflow_guard::parse_projection(&issue.body);
                 evidence.push(CapabilityWiEvidence {
                     reference: issue_ref(issue),
                     gap_id: gap.id.clone(),
                     issue_type: issue.issue_type.as_str().to_string(),
                     state: issue.state.as_str().to_string(),
+                    phase: issue.phase.clone().or_else(|| {
+                        projection
+                            .as_ref()
+                            .and_then(|projection| projection.active_phase.clone())
+                    }),
+                    expected_command: projection
+                        .as_ref()
+                        .and_then(|projection| projection.expected_command.clone()),
                     title: issue.title.clone(),
                 });
             } else {
@@ -3857,6 +3871,8 @@ fn capability_wi_evidence(
                     gap_id: gap.id.clone(),
                     issue_type: "unknown".to_string(),
                     state: "unknown".to_string(),
+                    phase: None,
+                    expected_command: None,
                     title: String::new(),
                 });
             }
@@ -4071,11 +4087,11 @@ fn choose_next_action(
                     .wi_evidence
                     .iter()
                     .find(|evidence| evidence.gap_id == gap.id);
+                let active_issue_is_epic =
+                    active_issue.is_some_and(|issue| issue.issue_type == IssueType::Epic.as_str());
+                let td_spec_path = td_spec_path_for_gap(item, &gap.id);
                 let (kind, command, reason) = match gap.active_wi.as_deref() {
-                    Some(_active)
-                        if active_issue
-                            .is_some_and(|issue| issue.issue_type == IssueType::Epic.as_str()) =>
-                    {
+                    Some(_active) if active_issue_is_epic => {
                         if let Some(action) = first_child_wi_action(report) {
                             return action;
                         }
@@ -4094,10 +4110,12 @@ fn choose_next_action(
                             )
                         }
                     }
-                    Some(active) if !active.trim().is_empty() => (
-                        CapabilityActionKind::RunTd,
-                        format!("aw td create {}", active.trim().trim_start_matches('#')),
-                        "active WI exists; continue WI -> TD -> CB lifecycle".to_string(),
+                    Some(active) if !active.trim().is_empty() => lifecycle_action_for_work_item(
+                        report,
+                        active.trim().trim_start_matches('#'),
+                        active_issue,
+                        td_spec_path,
+                        "active WI exists; continue WI -> TD -> CB lifecycle",
                     ),
                     _ => (
                         CapabilityActionKind::CreateWi,
@@ -4699,6 +4717,95 @@ fn has_non_epic_wi_evidence(report: &CapabilityReport) -> bool {
     })
 }
 
+fn lifecycle_action_for_work_item(
+    report: &CapabilityReport,
+    work_item: &str,
+    evidence: Option<&CapabilityWiEvidence>,
+    td_spec_path: Option<&str>,
+    default_reason: &str,
+) -> (CapabilityActionKind, String, String) {
+    if let Some(command) = evidence
+        .and_then(|evidence| evidence.expected_command.as_deref())
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+    {
+        return (
+            action_kind_for_lifecycle_command(command),
+            command.to_string(),
+            "active WI has a workflow expected_command; follow lifecycle lock".to_string(),
+        );
+    }
+
+    match evidence.and_then(|evidence| evidence.phase.as_deref()) {
+        Some("td_reviewed") => (
+            CapabilityActionKind::RunCb,
+            cb_gen_command(work_item, td_spec_path),
+            "active WI has reviewed TD; continue CB generation".to_string(),
+        ),
+        Some("cb_genned") | Some("cb_fill_in_progress") => (
+            CapabilityActionKind::RunCb,
+            format!("aw cb fill {work_item}"),
+            "active WI has generated CB output; continue handwrite fill".to_string(),
+        ),
+        Some("cb_filled") => (
+            CapabilityActionKind::RunCb,
+            format!("aw cb review {work_item}"),
+            "active WI has filled CB output; continue CB review".to_string(),
+        ),
+        Some("cb_reviewed") => (
+            CapabilityActionKind::RunTd,
+            format!("aw td merge {work_item}"),
+            "active WI has reviewed CB output; merge TD/CB lifecycle".to_string(),
+        ),
+        Some("td_merged") => (
+            CapabilityActionKind::RunVerify,
+            format!("aw capability report --project {} --verify", report.project),
+            "active WI has merged TD/CB lifecycle; verify capability readiness".to_string(),
+        ),
+        _ => (
+            CapabilityActionKind::RunTd,
+            format!("aw td create {work_item}"),
+            default_reason.to_string(),
+        ),
+    }
+}
+
+fn action_kind_for_lifecycle_command(command: &str) -> CapabilityActionKind {
+    let command = command.trim();
+    if command.starts_with("aw cb ") {
+        CapabilityActionKind::RunCb
+    } else if command.starts_with("aw capability report")
+        || command.starts_with("aw capability check")
+    {
+        CapabilityActionKind::RunVerify
+    } else if command.starts_with("aw td ") {
+        CapabilityActionKind::RunTd
+    } else {
+        CapabilityActionKind::RunTd
+    }
+}
+
+fn cb_gen_command(work_item: &str, td_spec_path: Option<&str>) -> String {
+    match td_spec_path.map(str::trim).filter(|path| !path.is_empty()) {
+        Some(path) => format!("aw cb gen {work_item} --spec-path {}", shell_quote(path)),
+        None => format!("aw cb gen {work_item}"),
+    }
+}
+
+fn td_spec_path_for_gap<'a>(item: &'a CapabilityReportItem, gap_id: &str) -> Option<&'a str> {
+    item.td_refs
+        .iter()
+        .find(|td_ref| {
+            td_ref.gap.as_deref() == Some(gap_id) && td_ref.role == CapabilityRefRole::Primary
+        })
+        .or_else(|| {
+            item.td_refs
+                .iter()
+                .find(|td_ref| td_ref.gap.as_deref() == Some(gap_id))
+        })
+        .map(|td_ref| td_ref.spec_path.as_str())
+}
+
 fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> {
     for item in &report.capabilities {
         for gap in &item.gaps {
@@ -4721,8 +4828,15 @@ fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> 
             if work_item.is_empty() {
                 continue;
             }
+            let (kind, command, reason) = lifecycle_action_for_work_item(
+                report,
+                work_item,
+                Some(evidence),
+                td_spec_path_for_gap(item, &gap.id),
+                "bounded child WI exists; continue WI -> TD -> CB lifecycle",
+            );
             return Some(CapabilityAction {
-                kind: CapabilityActionKind::RunTd,
+                kind,
                 capability_id: Some(item.id.clone()),
                 gap_id: Some(gap.id.clone()),
                 claim_id: None,
@@ -4731,8 +4845,8 @@ fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> 
                 } else {
                     evidence.title.clone()
                 },
-                command: format!("aw td create {work_item}"),
-                reason: "bounded child WI exists; continue WI -> TD -> CB lifecycle".to_string(),
+                command,
+                reason,
                 requires_hitl: false,
                 hitl_question: None,
             });
@@ -11409,6 +11523,8 @@ capability_refs:
                         gap_id: "production-replacement-readiness".to_string(),
                         issue_type: "epic".to_string(),
                         state: "open".to_string(),
+                        phase: None,
+                        expected_command: None,
                         title: "epic(jet): production replacement readiness".to_string(),
                     }],
                     claims: Vec::new(),
@@ -11446,6 +11562,8 @@ capability_refs:
                         gap_id: "package-manager-readiness".to_string(),
                         issue_type: "test".to_string(),
                         state: "open".to_string(),
+                        phase: None,
+                        expected_command: None,
                         title: "audit(jet): package manager production replacement readiness"
                             .to_string(),
                     }],
@@ -11531,6 +11649,8 @@ capability_refs:
                         gap_id: "production-replacement-readiness".to_string(),
                         issue_type: "epic".to_string(),
                         state: "open".to_string(),
+                        phase: None,
+                        expected_command: None,
                         title: "epic(jet): production replacement readiness".to_string(),
                     }],
                     claims: Vec::new(),
@@ -11568,6 +11688,8 @@ capability_refs:
                         gap_id: "package-manager-readiness".to_string(),
                         issue_type: "test".to_string(),
                         state: "closed".to_string(),
+                        phase: None,
+                        expected_command: None,
                         title: "audit(jet): package manager production replacement readiness"
                             .to_string(),
                     }],
@@ -11621,6 +11743,64 @@ capability_refs:
         let question = action.hitl_question.expect("epic rollup asks human");
         assert_eq!(question.tool_hint, "ask_user_question");
         assert_eq!(question.default_choice.as_deref(), Some("approve_rollup"));
+    }
+
+    #[test]
+    fn lifecycle_action_for_reviewed_td_runs_cb_gen_with_spec_path() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let evidence = CapabilityWiEvidence {
+            reference: "#57".to_string(),
+            gap_id: "generated-manual-ec-evidence-schema".to_string(),
+            issue_type: "enhancement".to_string(),
+            state: "open".to_string(),
+            phase: Some("td_reviewed".to_string()),
+            expected_command: None,
+            title: "Promote generated manuals to first-class AW evidence artifacts".to_string(),
+        };
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "57",
+            Some(&evidence),
+            Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+            "active WI exists; continue WI -> TD -> CB lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::RunCb);
+        assert_eq!(
+            command,
+            "aw cb gen 57 --spec-path 'projects/agentic-workflow/tech-design/logic/manual.md'"
+        );
+        assert_eq!(reason, "active WI has reviewed TD; continue CB generation");
+    }
+
+    #[test]
+    fn lifecycle_action_prefers_expected_command_from_workflow_projection() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let evidence = CapabilityWiEvidence {
+            reference: "#57".to_string(),
+            gap_id: "generated-manual-ec-evidence-schema".to_string(),
+            issue_type: "enhancement".to_string(),
+            state: "open".to_string(),
+            phase: Some("td_reviewed".to_string()),
+            expected_command: Some("aw cb fill 57".to_string()),
+            title: "Promote generated manuals to first-class AW evidence artifacts".to_string(),
+        };
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "57",
+            Some(&evidence),
+            Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+            "active WI exists; continue WI -> TD -> CB lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::RunCb);
+        assert_eq!(command, "aw cb fill 57");
+        assert_eq!(
+            reason,
+            "active WI has a workflow expected_command; follow lifecycle lock"
+        );
     }
 }
 // CODEGEN-END
