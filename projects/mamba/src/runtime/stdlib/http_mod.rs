@@ -706,6 +706,8 @@ pub fn register() {
     // `http.client.responses` maps each status code (int) to its reason
     // phrase (str), e.g. `responses[404] == 'Not Found'`.
     client_attrs.insert("responses".into(), make_responses_dict());
+    // Real (minimal) HTTPConnection with putrequest/putheader validation.
+    register_httpconnection_class(&mut client_attrs);
     super::register_module("http.client", client_attrs);
 
     // http.server — same callable-shell treatment.
@@ -894,6 +896,13 @@ fn make_type_object(name: &str) -> MbValue {
 }
 
 // ── Helpers ──
+
+fn raise(exc: &str, msg: String) {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg)),
+    );
+}
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
@@ -2361,6 +2370,87 @@ unsafe extern "C" fn rm_header_items(self_v: MbValue, _args: MbValue) -> MbValue
         }
     }
     MbValue::from_ptr(MbObject::new_list(items))
+}
+
+const HTTPCONN_CLASS: &str = "http.client.HTTPConnection";
+
+unsafe extern "C" fn d_httpconnection_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let inst = MbObject::new_instance(HTTPCONN_CLASS.to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut f = fields.write().unwrap();
+            let host = a.first().copied().unwrap_or_else(MbValue::none);
+            f.insert("host".into(), host);
+            // request state: "idle" until putrequest starts a request.
+            f.insert("_HTTPConnection__state".into(),
+                MbValue::from_ptr(MbObject::new_str("Idle".to_string())));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+unsafe extern "C" fn hc_putrequest(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = req_args_vec(args);
+    let method = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let url = a.get(1).copied().and_then(extract_str).unwrap_or_default();
+    // CPython rejects control characters in the method (ValueError) and the
+    // URL (http.client.InvalidURL).
+    if method.contains(['\n', '\r', '\t', ' ']) {
+        raise("ValueError", "method can't contain control characters".to_string());
+        return MbValue::none();
+    }
+    if url.contains(['\n', '\r']) {
+        raise("InvalidURL", "URL can't contain control characters".to_string());
+        return MbValue::none();
+    }
+    if let Some(p) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields.write().unwrap().insert("_HTTPConnection__state".into(),
+                    MbValue::from_ptr(MbObject::new_str("Request-started".to_string())));
+            }
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn hc_putheader(self_v: MbValue, _args: MbValue) -> MbValue {
+    let state = self_v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().unwrap().get("_HTTPConnection__state").copied().and_then(extract_str)
+        } else { None }
+    }).unwrap_or_default();
+    if state != "Request-started" {
+        raise("CannotSendHeader", "Cannot send header".to_string());
+    }
+    MbValue::none()
+}
+
+/// Register a minimal stateful http.client.HTTPConnection (putrequest /
+/// putheader with CPython's control-char + ordering validation).
+fn register_httpconnection_class(attrs: &mut HashMap<String, MbValue>) {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let mut map: Map<String, MbValue> = Map::new();
+    map.insert("putrequest".into(), var(hc_putrequest as *const () as usize));
+    map.insert("putheader".into(), var(hc_putheader as *const () as usize));
+    super::super::class::mb_class_register(HTTPCONN_CLASS, vec!["object".to_string()], map);
+    attrs.insert("HTTPConnection".to_string(),
+        MbValue::from_func(d_httpconnection_new as *const () as usize));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(d_httpconnection_new as *const () as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(d_httpconnection_new as *const () as u64, HTTPCONN_CLASS.to_string());
+    });
 }
 
 /// Register the Request class + rewire urllib.request.Request.
