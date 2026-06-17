@@ -2764,6 +2764,67 @@ impl<'a> HirToMir<'a> {
                     } else {
                         self.emit_none()
                     };
+                    // `return <expr>` where <expr> raised must route through the
+                    // enclosing try handler (same as the plain-function path
+                    // below). Without this, a method's `return d[k]` inside a
+                    // nested try escaped the except clause. Also inline any
+                    // pending finally / with-exit before returning.
+                    if let Some(&(handler_block, _)) = self.try_handler_stack.last() {
+                        let has_exc = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(has_exc),
+                            name: "mb_has_exception".to_string(),
+                            args: vec![],
+                            ty: self.tcx.bool(),
+                        });
+                        let return_block = self.fresh_block();
+                        self.finish_block(Terminator::Branch {
+                            cond: has_exc,
+                            then_block: handler_block,
+                            else_block: return_block,
+                        });
+                        self.start_block(return_block);
+                    }
+                    if !self.finally_body_stack.is_empty() {
+                        let pending_finally: Vec<Vec<crate::hir::HirStmt>> = self
+                            .finally_body_stack
+                            .iter()
+                            .rev()
+                            .filter(|f| !f.is_empty())
+                            .cloned()
+                            .collect();
+                        if !pending_finally.is_empty() {
+                            let handler_count = self.try_handler_stack.len();
+                            for _ in 0..handler_count {
+                                self.emit_extern_call(None, "mb_pop_handler");
+                            }
+                            let saved_finally = std::mem::take(&mut self.finally_body_stack);
+                            let saved_try = std::mem::take(&mut self.try_handler_stack);
+                            for finally_stmts in &pending_finally {
+                                for s in finally_stmts {
+                                    self.lower_stmt(s);
+                                }
+                            }
+                            self.finally_body_stack = saved_finally;
+                            self.try_handler_stack = saved_try;
+                        }
+                    }
+                    if !self.with_ctx_stack.is_empty()
+                        && self.finally_body_stack.is_empty()
+                        && self.try_handler_stack.is_empty()
+                    {
+                        let none_vreg = self.emit_none();
+                        let ctxs: Vec<VReg> =
+                            self.with_ctx_stack.iter().rev().copied().collect();
+                        for ctx in ctxs {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: None,
+                                name: "mb_context_exit".to_string(),
+                                args: vec![ctx, none_vreg],
+                                ty: self.tcx.any(),
+                            });
+                        }
+                    }
                     self.finish_block(Terminator::Return(Some(ret_vreg)));
                 } else {
                     let ret_vreg = value.as_ref().map(|v| {
