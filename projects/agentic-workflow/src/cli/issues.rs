@@ -3349,6 +3349,7 @@ struct CapabilityRow {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CapabilityMap {
+    capability_count: usize,
     rows: Vec<CapabilityRow>,
     health_note: Option<String>,
 }
@@ -3411,6 +3412,7 @@ async fn run_plan(args: PlanArgs) -> Result<()> {
     let capability_rows =
         crate::cli::capability::capability_rows_for_wi_plan(&capability_document, &td_refs)?;
     let capability_map = CapabilityMap {
+        capability_count: capability_document.capabilities.len(),
         rows: capability_rows
             .into_iter()
             .map(
@@ -3435,8 +3437,16 @@ async fn run_plan(args: PlanArgs) -> Result<()> {
             .collect(),
         health_note: extract_project_health_note(&cap_body),
     };
-    let (backend_name, project, issues) =
-        load_project_open_issues(&project_root, &project, args.repo.clone()).await?;
+    let (backend_name, project, issues, warnings) =
+        match load_project_open_issues(&project_root, &project, args.repo.clone()).await {
+            Ok((backend_name, project, issues)) => (backend_name, project, issues, Vec::new()),
+            Err(err) => (
+                "unavailable".to_string(),
+                project.clone(),
+                Vec::new(),
+                vec![format!("issue inventory unavailable: {err:#}")],
+            ),
+        };
     let title = args
         .title
         .clone()
@@ -3450,6 +3460,7 @@ async fn run_plan(args: PlanArgs) -> Result<()> {
         &capability_map,
         &issues,
         &candidates,
+        &warnings,
     );
     let path = write_planning_artifact(
         &project,
@@ -3469,9 +3480,11 @@ async fn run_plan(args: PlanArgs) -> Result<()> {
                 "backend": backend_name,
                 "path": path,
                 "cap_path": cap_path,
-                "capability_count": capability_map.rows.len(),
+                "capability_count": capability_map.capability_count,
+                "planning_row_count": capability_map.rows.len(),
                 "issue_count": issues.len(),
                 "candidate_count": candidates.len(),
+                "warnings": warnings,
                 "agent_review_required": true,
                 "review_status": "pending",
             }))?
@@ -4060,6 +4073,7 @@ fn parse_capability_map(body: &str) -> Result<CapabilityMap> {
             anyhow::bail!("capability map table is present but contains no capability rows");
         }
         return Ok(CapabilityMap {
+            capability_count: rows.len(),
             rows,
             health_note: extract_project_health_note(body),
         });
@@ -4394,6 +4408,7 @@ fn render_capability_wi_plan(
     capability_map: &CapabilityMap,
     issues: &[Issue],
     candidates: &[CapabilityCandidate],
+    warnings: &[String],
 ) -> String {
     let mut out = String::new();
     out.push_str("---\n");
@@ -4408,10 +4423,20 @@ fn render_capability_wi_plan(
     ));
     out.push_str(&format!(
         "capability_count: {}\n",
+        capability_map.capability_count
+    ));
+    out.push_str(&format!(
+        "planning_row_count: {}\n",
         capability_map.rows.len()
     ));
     out.push_str(&format!("issue_count: {}\n", issues.len()));
     out.push_str(&format!("candidate_count: {}\n", candidates.len()));
+    if !warnings.is_empty() {
+        out.push_str("warnings:\n");
+        for warning in warnings {
+            out.push_str(&format!("  - {}\n", yaml_quote(warning)));
+        }
+    }
     out.push_str("agent_review_required: true\n");
     out.push_str("review_status: pending\n");
     out.push_str("---\n\n");
@@ -4425,6 +4450,13 @@ fn render_capability_wi_plan(
     out.push_str(&format!("- Capability map: `{}`\n", cap_path.display()));
     out.push_str(&format!("- Issue backend: `{}`\n", backend_name));
     out.push_str(&format!("- Open work-items scanned: `{}`\n", issues.len()));
+    if !warnings.is_empty() {
+        out.push_str("\n### Planning Warnings\n\n");
+        for warning in warnings {
+            out.push_str(&format!("- {}\n", warning));
+        }
+        out.push('\n');
+    }
     if let Some(note) = &capability_map.health_note {
         out.push_str("\n### Project Health Note\n\n");
         out.push_str(note);
@@ -5736,6 +5768,7 @@ Generator ownership is complete; package-manager roadmap remains open.
     #[test]
     fn capability_plan_marks_unmatched_gaps_as_wi_candidates() {
         let map = CapabilityMap {
+            capability_count: 2,
             rows: vec![
                 CapabilityRow {
                     capability: "Package manager".to_string(),
@@ -5769,11 +5802,29 @@ Generator ownership is complete; package-manager roadmap remains open.
             &map,
             &[],
             &candidates,
+            &[],
         );
         assert!(body.contains("kind: capability_plan"));
+        assert!(body.contains("capability_count: 2"));
+        assert!(body.contains("planning_row_count: 2"));
         assert!(body.contains("Close capability gap: Package manager"));
         assert!(body.contains("## Recommended CLI Sequence"));
         assert!(body.contains("does not mutate the tracker"));
+
+        let warned = render_capability_wi_plan(
+            "jet",
+            "Jet capability plan",
+            "unavailable",
+            Path::new("/repo/projects/jet/README.md"),
+            &map,
+            &[],
+            &candidates,
+            &["issue inventory unavailable: gh auth missing".to_string()],
+        );
+        assert!(warned.contains("warnings:"));
+        assert!(warned.contains("## Source"));
+        assert!(warned.contains("### Planning Warnings"));
+        assert!(warned.contains("issue inventory unavailable: gh auth missing"));
     }
 
     #[test]
