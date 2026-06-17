@@ -91,6 +91,14 @@ unsafe extern "C" fn dispatch_locale_stub(_args_ptr: *const MbValue, _nargs: usi
     MbValue::none()
 }
 
+/// locale.getencoding() / getpreferredencoding([do_setlocale]) -> str.
+/// CPython returns the current locale's codec name; mamba runs UTF-8, and
+/// "UTF-8" round-trips through codecs.lookup. The optional do_setlocale arg
+/// (getpreferredencoding) is accepted and ignored.
+unsafe extern "C" fn dispatch_locale_getencoding(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str("UTF-8".to_string()))
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -101,6 +109,8 @@ pub fn register() {
         ("atoi", dispatch_atoi as usize),
         ("strcoll", dispatch_strcoll as usize),
         ("strxfrm", dispatch_strxfrm as usize),
+        ("getencoding", dispatch_locale_getencoding as usize),
+        ("getpreferredencoding", dispatch_locale_getencoding as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -122,8 +132,6 @@ pub fn register() {
         "delocalize",
         "dgettext",
         "getdefaultlocale",
-        "getencoding",
-        "getpreferredencoding",
         "gettext",
         "localeconv",
         "localize",
