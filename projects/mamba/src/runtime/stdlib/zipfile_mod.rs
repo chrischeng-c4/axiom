@@ -1041,6 +1041,34 @@ unsafe extern "C" fn extfile_read(self_v: MbValue, args: MbValue) -> MbValue {
     new_bytes(data[pos..end].to_vec())
 }
 
+/// ZipExtFile.tell() -> current position in the decompressed stream.
+unsafe extern "C" fn extfile_tell(self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_int(get_field(self_v, "_pos").and_then(|v| v.as_int()).unwrap_or(0))
+}
+
+/// ZipExtFile.seek(offset, whence=SEEK_SET) -> new position. Seekable since
+/// the whole member is decompressed in memory; whence 0/1/2 = SET/CUR/END.
+unsafe extern "C" fn extfile_seek(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = seq_items(args);
+    let offset = items.first().and_then(|v| v.as_int()).unwrap_or(0);
+    let whence = items.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+    let len = get_field(self_v, "_data").and_then(extract_bytes).map(|b| b.len() as i64).unwrap_or(0);
+    let cur = get_field(self_v, "_pos").and_then(|v| v.as_int()).unwrap_or(0);
+    let base = match whence {
+        1 => cur,
+        2 => len,
+        _ => 0,
+    };
+    let new_pos = (base + offset).clamp(0, len);
+    set_field(self_v, "_pos", MbValue::from_int(new_pos));
+    MbValue::from_int(new_pos)
+}
+
+/// ZipExtFile.seekable() -> True (in-memory member is always seekable).
+unsafe extern "C" fn extfile_seekable(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_bool(true)
+}
+
 unsafe extern "C" fn extfile_enter(self_v: MbValue, _args: MbValue) -> MbValue {
     self_v
 }
@@ -1311,6 +1339,9 @@ fn register_zip_classes() {
 
     let mut ext: Map<String, MbValue> = Map::new();
     ext.insert("read".into(), var(extfile_read as *const () as usize));
+    ext.insert("tell".into(), var(extfile_tell as *const () as usize));
+    ext.insert("seek".into(), var(extfile_seek as *const () as usize));
+    ext.insert("seekable".into(), var(extfile_seekable as *const () as usize));
     ext.insert("__enter__".into(), var(extfile_enter as *const () as usize));
     ext.insert("__exit__".into(), var(extfile_exit as *const () as usize));
     super::super::class::mb_class_register("zipfile.ZipExtFile", vec![], ext);
