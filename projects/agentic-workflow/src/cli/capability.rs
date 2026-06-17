@@ -7062,6 +7062,9 @@ fn validate_efficiency_backfill_slots(capability: &CapabilitySection) -> Vec<Str
 
 fn markdown_capability_document_needs_canonicalization(body: &str) -> bool {
     let lines = body.lines().collect::<Vec<_>>();
+    if markdown_capability_document_missing_canonical_scaffold(&lines) {
+        return true;
+    }
     let fenced = markdown_fenced_line_mask(&lines);
     let mut idx = 0;
     while idx < lines.len() {
@@ -7098,6 +7101,134 @@ fn markdown_capability_document_needs_canonicalization(body: &str) -> bool {
             continue;
         }
         idx += 1;
+    }
+    false
+}
+
+fn markdown_capability_document_missing_canonical_scaffold(lines: &[&str]) -> bool {
+    let fenced = markdown_fenced_line_mask(lines);
+    let has_contract = markdown_has_capability_contract_heading(lines, &fenced);
+    if !has_contract {
+        return false;
+    }
+    let has_h1 = lines.iter().enumerate().any(|(idx, line)| {
+        !fenced[idx]
+            && parse_heading(line)
+                .map(|(level, _)| level == 1)
+                .unwrap_or(false)
+    });
+    if !has_h1 {
+        return true;
+    }
+    let has_brief = lines.iter().enumerate().any(|(idx, line)| {
+        !fenced[idx]
+            && parse_heading(line)
+                .map(|(level, title)| level == 2 && title.eq_ignore_ascii_case("Brief"))
+                .unwrap_or(false)
+    });
+    if !has_brief {
+        return true;
+    }
+    let Some((capabilities_start, capabilities_end)) =
+        markdown_capabilities_section_span(lines, &fenced)
+    else {
+        return true;
+    };
+    let has_h3_index = (capabilities_start + 1..capabilities_end).any(|idx| {
+        !fenced[idx]
+            && parse_heading(lines[idx])
+                .map(|(level, title)| level == 3 && title.eq_ignore_ascii_case("Capability Index"))
+                .unwrap_or(false)
+    });
+    if !has_h3_index {
+        return true;
+    }
+    markdown_has_capability_contract_outside_section(
+        lines,
+        &fenced,
+        capabilities_start + 1,
+        capabilities_end,
+    )
+}
+
+fn markdown_capabilities_section_span(lines: &[&str], fenced: &[bool]) -> Option<(usize, usize)> {
+    lines.iter().enumerate().find_map(|(idx, line)| {
+        if fenced[idx] {
+            return None;
+        }
+        parse_heading(line)
+            .filter(|(level, title)| *level == 2 && title.eq_ignore_ascii_case("Capabilities"))
+            .map(|_| {
+                let end = (idx + 1..lines.len())
+                    .find(|next| {
+                        !fenced[*next]
+                            && parse_heading(lines[*next])
+                                .map(|(level, _)| level <= 2)
+                                .unwrap_or(false)
+                    })
+                    .unwrap_or(lines.len());
+                (idx, end)
+            })
+    })
+}
+
+fn markdown_has_capability_contract_heading(lines: &[&str], fenced: &[bool]) -> bool {
+    let mut cursor = 0;
+    while cursor < lines.len() {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[cursor]) else {
+            cursor += 1;
+            continue;
+        };
+        if level < 2
+            || title.eq_ignore_ascii_case("Capability Index")
+            || title.starts_with("Capability:")
+        {
+            cursor += 1;
+            continue;
+        }
+        let block_end = next_heading(lines, cursor + 1).unwrap_or(lines.len());
+        if markdown_block_has_capability_contract(lines, cursor + 1, block_end) {
+            return true;
+        }
+        cursor = block_end;
+    }
+    false
+}
+
+fn markdown_has_capability_contract_outside_section(
+    lines: &[&str],
+    fenced: &[bool],
+    section_start: usize,
+    section_end: usize,
+) -> bool {
+    let mut cursor = 0;
+    while cursor < lines.len() {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[cursor]) else {
+            cursor += 1;
+            continue;
+        };
+        if level < 2
+            || title.eq_ignore_ascii_case("Capability Index")
+            || title.starts_with("Capability:")
+        {
+            cursor += 1;
+            continue;
+        }
+        let block_end = next_heading(lines, cursor + 1).unwrap_or(lines.len());
+        if markdown_block_has_capability_contract(lines, cursor + 1, block_end)
+            && (cursor < section_start || cursor >= section_end || level < 3)
+        {
+            return true;
+        }
+        cursor = block_end;
     }
     false
 }
@@ -10586,6 +10717,82 @@ Gate Inventory:
             Some(CapabilityType::DeveloperTool)
         );
         assert_eq!(document.capabilities[0].surfaces[0].kind, "CLI");
+    }
+
+    #[test]
+    fn canonical_field_style_requires_brief_heading() {
+        let body = r#"# demo
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | partial | planned | conformance | not_ready | install flow |
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Surfaces: CLI: `jet install` - package install surface
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+"#;
+        let document = cap_doc(body);
+
+        assert_eq!(document.format, CapabilityDocumentFormat::MarkdownTables);
+        assert!(document.requires_format_migration());
+        assert_eq!(document.format_version(), 1);
+    }
+
+    #[test]
+    fn canonical_field_style_requires_capabilities_parent_and_h3_index() {
+        let missing_parent = r#"# demo
+
+## Brief
+
+Demo project.
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | partial | planned | conformance | not_ready | install flow |
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+"#;
+        let missing_index = missing_parent.replace(
+            "### Capability Index",
+            "## Capabilities\n\n## Capability Index",
+        );
+
+        let parent_doc = cap_doc(missing_parent);
+        assert!(parent_doc.requires_format_migration());
+        assert_eq!(parent_doc.format_version(), 1);
+
+        let index_doc = cap_doc(&missing_index);
+        assert!(index_doc.requires_format_migration());
+        assert_eq!(index_doc.format_version(), 1);
     }
 
     #[test]
