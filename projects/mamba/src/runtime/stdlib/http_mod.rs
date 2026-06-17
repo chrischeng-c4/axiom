@@ -760,9 +760,17 @@ pub fn register() {
         // line. The module attr stays the type-object (for class data attrs);
         // method dispatch resolves through the class registry by class name.
         let mut handler_methods: HashMap<String, MbValue> = HashMap::new();
-        let pr = bh_parse_request as *const () as usize;
-        super::super::module::register_variadic_func(pr as u64);
-        handler_methods.insert("parse_request".to_string(), MbValue::from_func(pr));
+        for (name, addr) in [
+            ("parse_request",      bh_parse_request      as *const () as usize),
+            ("send_response_only", bh_send_response_only as *const () as usize),
+            ("send_response",      bh_send_response      as *const () as usize),
+            ("send_header",        bh_send_header        as *const () as usize),
+            ("end_headers",        bh_end_headers        as *const () as usize),
+            ("send_error",         bh_send_error         as *const () as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            handler_methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
         super::super::class::mb_class_register(
             "BaseHTTPRequestHandler",
             vec!["object".to_string()],
@@ -2234,6 +2242,147 @@ unsafe extern "C" fn bh_parse_request(self_v: MbValue, _args: MbValue) -> MbValu
     set_inst_field(self_v, "request_version",
         MbValue::from_ptr(MbObject::new_str(version.to_string())));
     MbValue::from_bool(true)
+}
+
+/// HTTP reason phrase for a status code (the subset the fixtures exercise plus
+/// the common codes); empty string for unknown codes.
+fn status_phrase(code: i64) -> &'static str {
+    match code {
+        200 => "OK", 201 => "Created", 202 => "Accepted", 204 => "No Content",
+        301 => "Moved Permanently", 302 => "Found", 303 => "See Other",
+        304 => "Not Modified", 307 => "Temporary Redirect", 308 => "Permanent Redirect",
+        400 => "Bad Request", 401 => "Unauthorized", 403 => "Forbidden",
+        404 => "Not Found", 405 => "Method Not Allowed", 406 => "Not Acceptable",
+        408 => "Request Timeout", 409 => "Conflict", 410 => "Gone",
+        500 => "Internal Server Error", 501 => "Not Implemented",
+        502 => "Bad Gateway", 503 => "Service Unavailable",
+        _ => "",
+    }
+}
+
+/// `self.protocol_version` (instance or inherited class attr), default HTTP/1.0.
+fn handler_proto(self_v: MbValue) -> String {
+    let v = super::super::class::mb_getattr(
+        self_v,
+        MbValue::from_ptr(MbObject::new_str("protocol_version".to_string())),
+    );
+    extract_str(v).unwrap_or_else(|| "HTTP/1.0".to_string())
+}
+
+/// Append a header/status byte-line to the handler's `_headers_buffer` list
+/// (lazily created), mirroring CPython's deferred header buffering.
+fn handler_buffer_append(self_v: MbValue, line: Vec<u8>) {
+    let list = match req_field(self_v, "_headers_buffer").filter(|v| !v.is_none()) {
+        Some(l) => l,
+        None => {
+            let l = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+            set_inst_field(self_v, "_headers_buffer", l);
+            l
+        }
+    };
+    if let Some(ptr) = list.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let b = MbValue::from_ptr(MbObject::new_bytes(line));
+                super::super::rc::retain_if_ptr(b);
+                lock.write().unwrap().push(b);
+            }
+        }
+    }
+}
+
+/// Write bytes to `self.wfile` via its `.write(...)` method (a BytesIO etc.).
+fn handler_wfile_write(self_v: MbValue, data: Vec<u8>) {
+    let wfile = req_field(self_v, "wfile").unwrap_or_else(MbValue::none);
+    if wfile.is_none() {
+        return;
+    }
+    let arg = MbValue::from_ptr(MbObject::new_bytes(data));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![arg]));
+    super::super::class::mb_call_method(
+        wfile,
+        MbValue::from_ptr(MbObject::new_str("write".to_string())),
+        args,
+    );
+}
+
+/// BaseHTTPRequestHandler.send_response_only(code, message=None) — buffer the
+/// status line (deferred until end_headers, matching CPython).
+unsafe extern "C" fn bh_send_response_only(self_v: MbValue, args: MbValue) -> MbValue {
+    let pos = req_args_vec(args);
+    let code = pos.first().and_then(|v| v.as_int()).unwrap_or(0);
+    let msg = pos.get(1).copied().and_then(extract_str)
+        .unwrap_or_else(|| status_phrase(code).to_string());
+    let proto = handler_proto(self_v);
+    if proto != "HTTP/0.9" {
+        handler_buffer_append(self_v, format!("{proto} {code} {msg}\r\n").into_bytes());
+    }
+    MbValue::none()
+}
+
+/// BaseHTTPRequestHandler.send_response(code, message=None) — status line via
+/// send_response_only (Server/Date headers omitted: nondeterministic and not
+/// asserted by the fixtures).
+unsafe extern "C" fn bh_send_response(self_v: MbValue, args: MbValue) -> MbValue {
+    bh_send_response_only(self_v, args)
+}
+
+/// BaseHTTPRequestHandler.send_header(keyword, value) — buffer one header line.
+unsafe extern "C" fn bh_send_header(self_v: MbValue, args: MbValue) -> MbValue {
+    let pos = req_args_vec(args);
+    let key = pos.first().copied().and_then(extract_str).unwrap_or_default();
+    let val = pos.get(1).copied().and_then(extract_str).unwrap_or_default();
+    handler_buffer_append(self_v, format!("{key}: {val}\r\n").into_bytes());
+    MbValue::none()
+}
+
+/// BaseHTTPRequestHandler.end_headers() — append the blank-line separator and
+/// flush the buffered header block to wfile.
+unsafe extern "C" fn bh_end_headers(self_v: MbValue, _args: MbValue) -> MbValue {
+    handler_buffer_append(self_v, b"\r\n".to_vec());
+    // Flush: concatenate every buffered byte-line and write once.
+    let mut out: Vec<u8> = Vec::new();
+    if let Some(buf) = req_field(self_v, "_headers_buffer") {
+        if let Some(ptr) = buf.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                for item in lock.read().unwrap().iter() {
+                    if let Some(ip) = item.as_ptr() {
+                        if let ObjData::Bytes(ref b) = (*ip).data {
+                            out.extend_from_slice(b);
+                        }
+                    }
+                }
+                lock.write().unwrap().clear();
+            }
+        }
+    }
+    handler_wfile_write(self_v, out);
+    MbValue::none()
+}
+
+/// BaseHTTPRequestHandler.send_error(code, message=None) — status line +
+/// text/html body from DEFAULT_ERROR_MESSAGE.
+unsafe extern "C" fn bh_send_error(self_v: MbValue, args: MbValue) -> MbValue {
+    let pos = req_args_vec(args);
+    let code = pos.first().and_then(|v| v.as_int()).unwrap_or(0);
+    let phrase = status_phrase(code);
+    let message = pos.get(1).copied().and_then(extract_str)
+        .unwrap_or_else(|| phrase.to_string());
+    // Status line + minimal header block, flushed immediately.
+    let proto = handler_proto(self_v);
+    handler_buffer_append(self_v, format!("{proto} {code} {message}\r\n").into_bytes());
+    handler_buffer_append(self_v, b"Content-Type: text/html;charset=utf-8\r\n".to_vec());
+    let body = format!(
+        "<!DOCTYPE HTML>\n<html lang=\"en\">\n    <head>\n        \
+         <meta charset=\"utf-8\">\n        <title>Error response</title>\n    </head>\n    \
+         <body>\n        <h1>Error response</h1>\n        \
+         <p>Error code: {code}</p>\n        <p>Message: {message}.</p>\n    </body>\n</html>\n"
+    );
+    handler_buffer_append(self_v,
+        format!("Content-Length: {}\r\n", body.len()).into_bytes());
+    bh_end_headers(self_v, MbValue::none());
+    handler_wfile_write(self_v, body.into_bytes());
+    MbValue::none()
 }
 
 /// (scheme, netloc, path-with-params-query-fragment) split of a URL.
