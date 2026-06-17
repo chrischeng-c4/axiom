@@ -682,12 +682,20 @@ pub fn enum_class_call(class_name: &str, args_list: MbValue) -> Option<MbValue> 
                 if is_enum_member(result) {
                     return Some(result);
                 }
-                super::super::exception::mb_raise(
-                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(format!(
-                        "error in {class_name}._missing_: returned a non-member"
-                    ))),
+                // CPython: a _missing_ that returns a non-member raises
+                // TypeError chained (via __context__) from the ValueError the
+                // failed value lookup would otherwise raise.
+                let value_repr = repr_string(arg);
+                let cause = super::super::exception::MbException::new(
+                    "ValueError",
+                    &format!("{value_repr} is not a valid {class_name}"),
                 );
+                let err = super::super::exception::MbException::new(
+                    "TypeError",
+                    &format!("error in {class_name}._missing_: returned a non-member"),
+                )
+                .with_context(cause);
+                super::super::exception::set_current_exception(err);
                 return Some(MbValue::none());
             }
         }
