@@ -3231,6 +3231,20 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         }
     }
 
+    // __annotations__ on functions: dict of {param: anno, "return": anno} built
+    // from the registered signature metadata. Gated on registry presence so a
+    // class-name string (whose __annotations__ is a class attr) and plain
+    // values fall through to their own paths.
+    if attr_name == "__annotations__" {
+        let registered = !super::closure::mb_func_get_name(obj).is_none();
+        if registered {
+            let anns = super::closure::mb_func_get_annotations(obj);
+            if !anns.is_none() {
+                return anns;
+            }
+        }
+    }
+
     // __wrapped__ on functions: set by functools.wraps / update_wrapper. Only
     // returns a value when the wrapper actually recorded one.
     if attr_name == "__wrapped__" {

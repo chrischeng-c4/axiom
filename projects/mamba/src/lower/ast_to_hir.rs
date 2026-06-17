@@ -3149,6 +3149,11 @@ impl<'a> AstLowerer<'a> {
         let mut class_attr_assigns: Vec<(String, HirExpr)> = Vec::new();
         // R14: __slots__ declaration from class body.
         let mut slots: Option<Vec<String>> = None;
+        // PEP 526: ordered (name, annotation_repr) for EVERY annotated class-body
+        // name (`a: int = 1` and bare `x: float`), recorded for all classes so
+        // `C.__annotations__` exposes the mapping (CPython semantics). Values are
+        // the textual annotation, matching mamba's module-level `__annotations__`.
+        let mut class_annotations: Vec<(String, String)> = Vec::new();
 
         // PRE-SCAN: Extract __init__ param names BEFORE any method lowering (#827).
         // lower_fn_inner calls enter_local_scope() which clears local_names, so we must
@@ -3211,6 +3216,7 @@ impl<'a> AstLowerer<'a> {
                             explicit_match_args = Some(names);
                         }
                     } else {
+                        class_annotations.push((fname.clone(), type_expr_repr(&ty.node)));
                         if let Some(fid) = self.resolve_name(fname, stmt.span) {
                             fields.push((fid, self.checker.tcx.int()));
                         }
@@ -3236,6 +3242,7 @@ impl<'a> AstLowerer<'a> {
                 // field fact with no default. (Outside dataclasses these are
                 // type-info-only and remain dropped.)
                 ast::Stmt::BareAnnotation { name: fname, ty } => {
+                    class_annotations.push((fname.clone(), type_expr_repr(&ty.node)));
                     if dataclass_decorated {
                         dataclass_fields.push((fname.clone(), type_expr_repr(&ty.node), None));
                     }
@@ -3403,6 +3410,27 @@ impl<'a> AstLowerer<'a> {
                 }
             }
         });
+
+        // PEP 526: expose `C.__annotations__` as a class attribute mapping every
+        // annotated class-body name to its textual annotation. Built for all
+        // classes (not just dataclasses) so introspection matches CPython.
+        if !class_annotations.is_empty() {
+            let str_ty = self.checker.tcx.str();
+            let any_ty = self.checker.tcx.any();
+            let entries: Vec<(HirExpr, HirExpr)> = class_annotations
+                .iter()
+                .map(|(n, r)| {
+                    (
+                        HirExpr::StrLit(n.clone(), str_ty),
+                        HirExpr::StrLit(r.clone(), str_ty),
+                    )
+                })
+                .collect();
+            class_attr_assigns.push((
+                "__annotations__".to_string(),
+                HirExpr::Dict { entries, ty: any_ty },
+            ));
+        }
 
         // Class-body docstring: first bare string statement (inspect.getdoc).
         let class_doc = body.first().and_then(|s| {
