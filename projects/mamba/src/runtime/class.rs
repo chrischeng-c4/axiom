@@ -5745,6 +5745,18 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
             );
             return;
         }
+        // Fraction is immutable (__slots__, read-only numerator/denominator):
+        // any attribute assignment raises AttributeError.
+        if super::stdlib::fractions_mod::is_fraction_handle(id as u64) {
+            let name = extract_str(attr).unwrap_or_default();
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "'Fraction' object has no attribute '{name}'"
+                ))),
+            );
+            return;
+        }
     }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {

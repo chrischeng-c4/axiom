@@ -582,7 +582,20 @@ unsafe extern "C" fn dispatch_call(args_ptr: *const MbValue, nargs: usize) -> Mb
             return MbValue::none();
         }
     };
-    let rest: Vec<MbValue> = a[1..].to_vec();
+    // The call-lowering appends keyword args as a trailing dict. Forward them
+    // as real kwargs (mb_call_spread would bind the dict positionally, so
+    // `operator.call(f, a=2)` wrongly produced `(({'a':2},), {})`).
+    let mut rest: Vec<MbValue> = a[1..].to_vec();
+    let trailing_kwargs = rest.last().copied().filter(|v| {
+        v.as_ptr().is_some_and(|p| unsafe {
+            matches!((*p).data, super::super::rc::ObjData::Dict(_))
+        })
+    });
+    if let Some(kw) = trailing_kwargs {
+        rest.pop();
+        let pos_list = MbValue::from_ptr(MbObject::new_list(rest));
+        return builtins::mb_call_spread_kwargs(func, pos_list, kw);
+    }
     let args_list = MbValue::from_ptr(MbObject::new_list(rest));
     builtins::mb_call_spread(func, args_list)
 }
