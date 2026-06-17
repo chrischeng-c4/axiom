@@ -17,7 +17,7 @@ use crate::services::issue_parser::{validate_structured_issue, ValidationError};
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 // Top-level args for `aw wi`.
@@ -3354,6 +3354,24 @@ struct CapabilityMap {
     health_note: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityWiPlanReport {
+    pub action: &'static str,
+    pub kind: &'static str,
+    pub project: String,
+    pub backend: String,
+    pub path: PathBuf,
+    pub cap_path: PathBuf,
+    pub capability_count: usize,
+    pub planning_row_count: usize,
+    pub issue_count: usize,
+    pub candidate_count: usize,
+    pub warnings: Vec<String>,
+    pub agent_review_required: bool,
+    pub review_status: &'static str,
+    pub plan_command: String,
+}
+
 #[derive(Deserialize, Default)]
 struct CapabilityConfig {
     #[serde(default)]
@@ -3393,6 +3411,20 @@ pub(crate) async fn load_project_open_issues(
 }
 
 async fn run_plan(args: PlanArgs) -> Result<()> {
+    let json = args.json;
+    let report = build_capability_wi_plan_report(args).await?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("{}", report.path.display());
+    }
+    Ok(())
+}
+
+pub(crate) async fn build_capability_wi_plan_report(
+    args: PlanArgs,
+) -> Result<CapabilityWiPlanReport> {
     let project_root = crate::find_project_root()?;
     let project = resolve_single_project_name(&project_root, args.project.as_deref())
         .map_err(|e| anyhow::anyhow!("{}", e.to_envelope_message()))?;
@@ -3470,29 +3502,36 @@ async fn run_plan(args: PlanArgs) -> Result<()> {
         &body,
     )?;
 
-    if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "action": "planned",
-                "kind": "capability_plan",
-                "project": project,
-                "backend": backend_name,
-                "path": path,
-                "cap_path": cap_path,
-                "capability_count": capability_map.capability_count,
-                "planning_row_count": capability_map.rows.len(),
-                "issue_count": issues.len(),
-                "candidate_count": candidates.len(),
-                "warnings": warnings,
-                "agent_review_required": true,
-                "review_status": "pending",
-            }))?
-        );
-    } else {
-        println!("{}", path.display());
+    let plan_command = capability_wi_plan_command(&project, args.cap_path.as_deref());
+    Ok(CapabilityWiPlanReport {
+        action: "planned",
+        kind: "capability_plan",
+        project: project.clone(),
+        backend: backend_name,
+        path,
+        cap_path,
+        capability_count: capability_map.capability_count,
+        planning_row_count: capability_map.rows.len(),
+        issue_count: issues.len(),
+        candidate_count: candidates.len(),
+        warnings,
+        agent_review_required: true,
+        review_status: "pending",
+        plan_command,
+    })
+}
+
+fn capability_wi_plan_command(project: &str, cap_path_override: Option<&Path>) -> String {
+    let mut command = format!("aw wi plan --project {project}");
+    if let Some(path) = cap_path_override {
+        command.push_str(" --cap-path ");
+        command.push_str(&shell_quote(&path.display().to_string()));
     }
-    Ok(())
+    command
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 async fn run_epicize(args: EpicizeArgs) -> Result<()> {
@@ -5825,6 +5864,17 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(warned.contains("## Source"));
         assert!(warned.contains("### Planning Warnings"));
         assert!(warned.contains("issue inventory unavailable: gh auth missing"));
+    }
+
+    #[test]
+    fn capability_wi_plan_command_preserves_cap_path_override() {
+        let command =
+            capability_wi_plan_command("lumen", Some(Path::new("/tmp/aw plan/lumen README.md")));
+
+        assert_eq!(
+            command,
+            "aw wi plan --project lumen --cap-path '/tmp/aw plan/lumen README.md'"
+        );
     }
 
     #[test]
