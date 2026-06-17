@@ -409,6 +409,23 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
                 };
                 f.default = take("default");
                 f.default_factory = take("default_factory");
+                // A non-callable default_factory is a TypeError (CPython raises
+                // it when the factory is invoked; we reject at decoration time,
+                // which the same try/except observes).
+                if let Some(fac) = f.default_factory {
+                    if !fac.is_none()
+                        && super::super::builtins::mb_callable(fac).as_bool() != Some(true)
+                    {
+                        super::super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "default_factory must be callable".to_string(),
+                            )),
+                        );
+                        unsafe { release_if_ptr(d); }
+                        return;
+                    }
+                }
                 f.metadata = take("metadata");
                 f.init = truthy_flag(marker_get(d, "init"), true);
                 f.repr = truthy_flag(marker_get(d, "repr"), true);
