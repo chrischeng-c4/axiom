@@ -86,6 +86,8 @@ Markdown capability headings and tables below are machine-readable input for `aw
 
 ID: static-security-scan
 Type: SecurityTool
+Surfaces: CLI: `guard scan [path]` + `guard report` + `guard spec` + `guard llm` - Security scan, report reprojection, offline spec, and agent playbook entrypoints.
+EC Dimensions: security: `guard` - compass-backed static source/config diagnostics normalized into guard.report/1 findings
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -103,6 +105,8 @@ Gate Inventory:
 
 ID: security-policy-profile
 Type: SecurityTool
+Surfaces: CLI: `guard scan --profile baseline-static` + `guard scan --profile security-lint` + `guard scan --profile strict` - Policy profile selection for baseline static, security lint, and strict security severity normalization.
+EC Dimensions: security: `guard` - policy severity, remediation, and gate semantics for security findings
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -121,6 +125,8 @@ Gate Inventory:
 
 ID: security-ec-profile
 Type: SecurityTool
+Surfaces: CLI: `aw ec check --project guard` + `guard scan --profile security-lint --compact --no-persist` - AW EC/health bridge and security-lint scan used as security evidence.
+EC Dimensions: security: `aw ec + guard` - AW EC treats guard reports as first-class security gate evidence
 Root WI: -
 Status: blocked
 Required Verification: smoke
@@ -138,6 +144,8 @@ Gate Inventory:
 
 ID: dynamic-security-evidence
 Type: SecurityTool
+Surfaces: CLI: `guard scan --vat-runner <id>` + `guard scan --rig-scenario <path>` + `guard scan --meter-target <path>` + `guard scan --meter-command <cmd>` - Dynamic security evidence adapters for isolated execution, exploit/e2e journeys, and resource-abuse signals.
+EC Dimensions: security: `guard + vat + rig + meter` - dynamic security evidence folded into guard.report/1 from isolated runs, exploit journeys, and resource signals
 Root WI: -
 Status: blocked
 Required Verification: smoke
