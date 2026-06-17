@@ -4970,20 +4970,25 @@ impl<'a> AstLowerer<'a> {
                     // We pack all positional args into a list and use mb_call_spread.
                     // For `f(*lst)` with only a star arg, the list IS the spread list.
                     // For `f(a, *lst, b)`, we build a combined [a] + lst + [b] list.
-                    let mut list_elems: Vec<HirExpr> = Vec::new();
-                    let mut star_exprs: Vec<HirExpr> = Vec::new();
-                    // Keyword args in a `*args` call (e.g. `heapq.merge(*streams,
-                    // key=fn)`) must NOT be flattened into the positional spread
-                    // list — that loses the keyword name and mis-positions the
-                    // value as a leading "iterable". Collect them separately so
-                    // they can be appended as a trailing kwargs dict the native
-                    // (args_ptr, nargs) dispatcher recovers by convention.
+                    // Build ordered segments preserving SOURCE ORDER:
+                    //   f(a, *xs, c, *ys)  →  [a] ++ xs ++ [c] ++ ys
+                    // Consecutive positionals coalesce into one List segment; each
+                    // *star is its own iterable segment. The prior code collected
+                    // ALL positionals into a single leading slab, so a positional
+                    // AFTER a star (`f(*xs, c)`) was mis-ordered to the front
+                    // (`[c] ++ xs`). Keyword args in a `*args` call (e.g.
+                    // `heapq.merge(*streams, key=fn)`) must NOT be flattened into
+                    // the positional spread — they are collected separately and
+                    // appended as a trailing kwargs dict the native dispatcher
+                    // recovers by convention.
+                    let mut segments: Vec<HirExpr> = Vec::new();
+                    let mut pending: Vec<HirExpr> = Vec::new();
                     let mut kw_entries: Vec<(HirExpr, HirExpr)> = Vec::new();
                     for a in args {
                         match a {
                             ast::CallArg::Positional(e) => {
                                 if let Some(he) = self.lower_expr(e) {
-                                    list_elems.push(he);
+                                    pending.push(he);
                                 }
                             }
                             ast::CallArg::Keyword { name, value } => {
@@ -4993,50 +4998,66 @@ impl<'a> AstLowerer<'a> {
                                 }
                             }
                             ast::CallArg::StarArg(e) => {
+                                if !pending.is_empty() {
+                                    segments.push(HirExpr::List {
+                                        elements: std::mem::take(&mut pending), ty: any_ty,
+                                    });
+                                }
                                 if let Some(he) = self.lower_expr(e) {
-                                    star_exprs.push(he);
+                                    segments.push(he);
                                 }
                             }
                             ast::CallArg::DoubleStarArg(_) => {}
                         }
                     }
-                    // Lowering shapes:
-                    //   f(*xs)                  → spread_list = xs                  (pure splat)
-                    //   f(a, b, *xs)            → spread_list = mb_args_concat([a, b], xs)
-                    //   f(a, *xs, *ys)          → spread_list = mb_args_concat(mb_args_concat([a], xs), ys)
-                    //   f(a, b) without splat   → not this path (has_star == false)
-                    // Suffix-positional (e.g. `f(*xs, c)`) is interleaved with pre-star
-                    // into `list_elems` by the loop above; we conservatively prepend the
-                    // whole `list_elems` slab in front of the splat. That is correct for
-                    // `f(prefix, *xs)` (the common case driven by #2098 — struct.pack,
-                    // assertRaises forwarding); a post-star positional drops to the end
-                    // of the combined list, which is wrong only for the rare
-                    // `f(*xs, c)` shape — tracked as a follow-up.
-                    let mut spread_list = if list_elems.is_empty() && star_exprs.len() == 1 {
-                        star_exprs.remove(0)
-                    } else if star_exprs.is_empty() {
-                        // Unreachable in practice (has_star implies a StarArg branch
-                        // pushed something into star_exprs), kept as a safety net.
+                    if !pending.is_empty() {
+                        segments.push(HirExpr::List {
+                            elements: std::mem::take(&mut pending),
+                            ty: any_ty,
+                        });
+                    }
+                    // Fold segments left-to-right with mb_args_concat, which
+                    // REQUIRES its prefix (first arg) to be a materialized List —
+                    // a non-list prefix is treated as empty and its items lost. So
+                    // when the first segment is a bare starred iterable (`f(*xs)`),
+                    // seed the fold from an empty list; a List-valued first segment
+                    // is used directly. A lone segment (`f(*xs)`) passes straight
+                    // through to mb_call_spread.
+                    let mut spread_list = if segments.len() == 1 {
+                        segments.remove(0)
+                    } else if segments.is_empty() {
                         HirExpr::List {
-                            elements: list_elems.clone(),
+                            elements: Vec::new(),
                             ty: any_ty,
                         }
                     } else {
-                        let prefix = HirExpr::List {
-                            elements: list_elems.clone(),
-                            ty: any_ty,
+                        let mut seg_iter = segments.into_iter();
+                        let first = seg_iter.next().unwrap();
+                        let mut acc = if matches!(first, HirExpr::List { .. }) {
+                            first
+                        } else {
+                            HirExpr::Call {
+                                func: Box::new(HirExpr::StrLit(
+                                    "mb_args_concat".to_string(),
+                                    any_ty,
+                                )),
+                                args: vec![
+                                    HirExpr::List {
+                                        elements: Vec::new(),
+                                        ty: any_ty,
+                                    },
+                                    first,
+                                ],
+                                ty: any_ty,
+                            }
                         };
-                        // Fold each star expr in turn so multi-star calls work:
-                        //   acc_0 = prefix
-                        //   acc_{i+1} = mb_args_concat(acc_i, star_i)
-                        let mut acc = prefix;
-                        for star in star_exprs.drain(..) {
+                        for seg in seg_iter {
                             acc = HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit(
                                     "mb_args_concat".to_string(),
                                     any_ty,
                                 )),
-                                args: vec![acc, star],
+                                args: vec![acc, seg],
                                 ty: any_ty,
                             };
                         }
