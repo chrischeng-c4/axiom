@@ -321,6 +321,22 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
         return None;
     }
 
+    // StrEnum requires str member values — a non-str (non-auto) value is a
+    // TypeError at class creation (CPython). auto() resolves to the member
+    // name (a str), so only explicit non-str values are rejected.
+    if kind == EnumKind::StrEnum
+        && value.as_int() != Some(super::enum_mod::AUTO_SENTINEL)
+        && extract_str(value).is_none()
+    {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                format!("{} is not a string", repr_string(value)),
+            )),
+        );
+        return None;
+    }
+
     ENUM_CLASSES.with(|m| {
         let mut map = m.borrow_mut();
         let info = map.entry(class_name.to_string()).or_insert_with(|| {
