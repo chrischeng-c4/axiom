@@ -60,12 +60,33 @@ capability_refs:
 command_refs:
   - command: aw run
   - command: aw capability
+  - command: aw capability apply-draft
   - command: aw capability check
+  - command: aw capability draft
   - command: aw capability init
+  - command: aw capability migrate
   - command: aw capability next
   - command: aw capability report
   - command: aw capability run
+  - command: aw capability set-ec-dimension
+  - command: aw capability set-status
+  - command: aw capability set-surface
+  - command: aw capability set-type
   - command: aw capability sweep
+  - command: aw caps
+  - command: aw caps apply-draft
+  - command: aw caps check
+  - command: aw caps draft
+  - command: aw caps init
+  - command: aw caps migrate
+  - command: aw caps next
+  - command: aw caps report
+  - command: aw caps run
+  - command: aw caps set-ec-dimension
+  - command: aw caps set-status
+  - command: aw caps set-surface
+  - command: aw caps set-type
+  - command: aw caps sweep
 ---
 
 # AW Capability Alignment WI Planning
@@ -82,8 +103,10 @@ scenarios:
     when: ["agent infers a candidate capability map"]
     then:
       - "candidate is not written to cap_path until human confirmation"
-      - "published README uses Markdown H1-Hn capability headings with contract/work-root tables"
-      - "YAML capability sections and legacy capability tables are migration input only and cannot count as verified"
+      - "published README uses # Project, ## Brief, ## Capabilities, ### Capability Index, and ### capability roots"
+      - "each capability root uses field-style contract lines for ID, Type, Surfaces, EC Dimensions, Root WI, Status, Required Verification, Promise, and Gate Inventory"
+      - "the lower Work Root table stays table-shaped because each row is naturally one work root"
+      - "YAML capability sections, Field/Value contract tables, and legacy one-row contract tables are migration input only and cannot count as verified"
 
   - id: S2
     title: "roadmap-sized request becomes epic or atomization draft"
@@ -125,6 +148,8 @@ scenarios:
     when: ["aw capability init creates a missing capability map shell, aw capability report|next|run|check executes for the project, or aw capability sweep executes across configured projects"]
     then:
       - "init creates only a canonical README shell and does not invent capability promises"
+      - "draft emits pending-review field-style capability contracts with placeholders for Type, Surfaces, EC Dimensions, Root WI, Promise, and Gate Inventory"
+      - "apply-draft refuses unreviewed placeholder drafts and writes only reviewed canonical capability sections"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
       - "next emits exactly one next_action"
       - "run executes at most one bounded tick unless --max-ticks raises the bound"
@@ -136,6 +161,12 @@ scenarios:
     given: ["capability status is confirmed, auditing, blocked, or verified"]
     when: ["aw capability check validates cap_path"]
     then:
+      - "capability type is one of AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool"
+      - "surfaces list public interfaces such as CLI, HTTP, UI, file/config, generated artifacts, or agent hook entrypoints with short purposes"
+      - "EC Dimensions list declared proof dimensions and runners; behavior is required for production when the capability is non-candidate"
+      - "Service may require behavior, efficiency, security, and stability; Devops behavior and stability; DeveloperTool/RuntimeTool behavior, efficiency, and stability; SecurityTool behavior, security, and stability; AgentFirst behavior"
+      - "non-behavior dimensions become production-required only when the README declares content for that dimension or an efficiency backfill slot"
+      - "efficiency dimensions may declare Efficiency Operating Point and Efficiency Cube, and generated/backfilled efficiency sections are owned by aw ec"
       - "capability must define required verification through README tables"
       - "required claims must include maturity plus either a gate command or a fixture/inventory reference"
       - "TD primary capability_refs must name a known claim for contracted capabilities"
@@ -250,9 +281,62 @@ authoritative stop condition: `action=done` only means the current root is done,
 while `completion.workflow_complete=true` means the root workflow has reached
 project-level 100%. Planning artifacts stay local under
 `/tmp/aw/{project}/...`; tracker mutation remains in the CRRR lane.
-Each capability H2 uses a vertical `Field | Value` metadata table followed by a
-work-root table; legacy single-row metadata tables remain parseable but are not
-the preferred README format.
+The canonical README capability map is Markdown-first and optimized for agents
+that need to understand the project before touching code:
+
+```md
+# Project
+
+## Brief
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+
+### <Capability Name>
+
+ID: <capability-id>
+Type: <AgentFirst|Service|Devops|DeveloperTool|RuntimeTool|SecurityTool>
+Surfaces:
+- CLI: `command` - short command purpose
+- HTTP: `METHOD /path` - short API purpose
+EC Dimensions:
+- behavior: `<runner>` - contract summary
+- efficiency: `<runner>` - operating point / cube summary
+- security: `<runner>` - security gate summary
+- stability: `<runner>` - resilience gate summary
+Efficiency Operating Point: <operating-point-id>
+Efficiency Cube: projects/<project>/.aw/ec/efficiency/<capability>.cube.json
+Root WI: #123
+Status: candidate|confirmed|auditing|blocked|verified|retired
+Required Verification: smoke, conformance, corpus, negative, dogfood
+Promise:
+...
+Gate Inventory:
+- ...
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+```
+
+Capability roots live under `## Capabilities` as `###` headings; they are not
+sibling `##` sections. The top contract is field-style text, not a one-row
+Markdown table and not a `Field | Value` table. The lower Work Root table stays
+table-shaped because each row is naturally one work root. YAML capability
+sections, `Field | Value` metadata tables, and one-row capability contract
+tables remain parseable only as migration input.
+
+Binary commands are public surfaces. README lists each command with a short
+purpose; detailed flags and option grammar stay in command help output.
+Behavior runners depend on the surface: web app end-to-end behavior uses
+`jet e2e` when the browser workflow drives frontend and API behavior together,
+pure backend API behavior uses `rig`, efficiency uses `meter` usually with a
+`rig` scenario and explicit operating point/cube, security uses `guard`, and
+`vat` is runner-like orchestration. `arena` is legacy compatibility rather than
+the default runner for new capability contracts.
 
 ## CLI
 <!-- type: cli lang: yaml -->
@@ -275,7 +359,7 @@ commands:
     behavior: "run the project standardization parent workflow to the first incomplete layer, then continue until production health is ready or a blocker/HITL stops the chain; blocked capability maps produce next.kind=blocked without a follow-up command"
     mutates_tracker: false
   - path: [capability, report]
-    behavior: "read README Markdown capability tables, WI inventory, TD refs, CB/evidence, and optional verification gates or inventory refs"
+    behavior: "read canonical README field-style capability contracts, migration-input legacy tables, WI inventory, TD refs, CB/evidence, EC dimension metadata, and optional verification gates or inventory refs"
     output: "JSON/text envelope with capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
     mutates_tracker: false
   - path: [capability, next]
@@ -288,8 +372,29 @@ commands:
       - name: max-ticks
         meaning: "defaults to one bounded tick"
     behavior: "execute the next bounded capability tick"
+  - path: [capability, draft]
+    behavior: "write pending-review inferred field-style capability contract drafts under /tmp without editing cap_path"
+    mutates_tracker: false
+  - path: [capability, apply-draft]
+    behavior: "apply a human-reviewed placeholder-free draft to cap_path and refuse unreviewed drafts"
+    mutates_tracker: false
+  - path: [capability, migrate]
+    behavior: "rewrite YAML, Field/Value, or one-row capability maps to canonical field-style Markdown contracts"
+    mutates_tracker: false
   - path: [capability, check]
-    behavior: "validate README Markdown capability format and TD capability refs"
+    behavior: "validate canonical README field-style capability format, capability type/surface/EC dimension data, generated efficiency backfill slots, and TD capability refs"
+    mutates_tracker: false
+  - path: [capability, set-type]
+    behavior: "persist a reviewed capability type into the README field-style contract"
+    mutates_tracker: false
+  - path: [capability, set-status]
+    behavior: "persist a reviewed capability status into the README field-style contract"
+    mutates_tracker: false
+  - path: [capability, set-surface]
+    behavior: "upsert a reviewed public surface entry into the README field-style contract"
+    mutates_tracker: false
+  - path: [capability, set-ec-dimension]
+    behavior: "upsert a reviewed EC dimension entry into the README field-style contract"
     mutates_tracker: false
   - path: [wi, plan]
     behavior: "read cap_path or project README Markdown capability tables, then write a local capability-to-WI planning draft; YAML/legacy tables require migration"
@@ -314,6 +419,17 @@ validation:
   capability_status: [candidate, confirmed, auditing, blocked, verified, retired]
   capability_gap_status: [open, in_progress, blocked, closed, deferred]
   capability_claim_maturity: [smoke, conformance, corpus, negative, dogfood]
+  capability_type: [AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, SecurityTool]
+  capability_surface_kind: [CLI, HTTP, UI, File, Config, Artifact, AgentHook]
+  ec_dimension: [behavior, efficiency, security, stability]
+  ec_runner_defaults:
+    web_app_e2e: jet e2e
+    backend_api: rig
+    efficiency: meter
+    efficiency_scenario: rig
+    security: guard
+    orchestration: vat
+    legacy_compatibility: arena
   work_root_impl: [planned, partial, implemented, blocked, out_of_scope]
   work_root_verification: [none, planned, failing, passing, verified, blocked]
   td_capability_ref_role: [primary, contributes, affected, regression_guard, out_of_scope]
@@ -321,6 +437,12 @@ validation:
   contract_rules:
     - "candidate may omit required verification"
     - "confirmed/auditing/blocked/verified require required verification through tables"
+    - "capability roots are ### headings under ## Capabilities"
+    - "top capability contracts are field-style lines, not one-row tables"
+    - "old YAML sections, Field/Value tables, and one-row contract tables are migration input only"
+    - "type defines the production-required EC dimension ceiling"
+    - "non-behavior EC dimensions are production-required only when declared in README or generated efficiency backfill slots"
+    - "aw ec owns generated/backfilled efficiency sections and cube slots"
     - "required claims require maturity and at least one gate command or fixture/inventory reference"
     - "primary TD refs to contracted capabilities require known claim"
   blocked_values:
@@ -372,7 +494,7 @@ requirements:
     verifymethod: test
   capability_h2_schema:
     id: AW-CAP-WI-8
-    text: "aw capability check validates README Markdown capability headings/tables and treats YAML or legacy tables as migration input"
+    text: "aw capability check validates README ## Brief / ## Capabilities / ### Capability Index / ### field-style capability contracts and treats YAML or legacy tables as migration input"
     risk: high
     verifymethod: test
   td_capability_refs:
@@ -382,7 +504,7 @@ requirements:
     verifymethod: test
   capability_contract:
     id: AW-CAP-WI-10
-    text: "aw capability check requires non-candidate capabilities to declare required verification through README tables or gate inventory refs"
+    text: "aw capability check requires non-candidate capabilities to declare type, surfaces, EC dimensions, and required verification through README fields or gate inventory refs"
     risk: high
     verifymethod: test
   claim_scoped_wi_plan:
