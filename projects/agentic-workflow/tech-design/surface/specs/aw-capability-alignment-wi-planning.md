@@ -160,6 +160,7 @@ scenarios:
       - "required claims must include maturity plus either a gate command or a fixture/inventory reference"
       - "TD primary capability_refs must name a known claim for contracted capabilities"
       - "aw wi plan uses required claims as bounded WI planning inputs"
+      - "aw wi plan emits a capability-level Review Summary that groups claim candidates by capability before the detailed planning matrix"
   - id: S8
     title: "root runner rolls child completion upward"
     given: ["agent invokes aw run with a project, capability, epic, or change root"]
@@ -540,6 +541,11 @@ requirements:
     text: "aw capability report/next/run/check expose include/skip issue-inventory flags so README and TD parsing remain usable when the issue backend is unavailable"
     risk: medium
     verifymethod: test
+  wi_plan_review_summary:
+    id: AW-CAP-WI-16
+    text: "aw wi plan emits a capability-level review summary with candidate counts, existing WI refs, next operator, and first action before the detailed matrix"
+    risk: medium
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -563,6 +569,7 @@ relations:
   - { from: capability_unit_tests, to: td_capability_refs, kind: verifies }
   - { from: capability_unit_tests, to: capability_contract, kind: verifies }
   - { from: issues_unit_tests, to: claim_scoped_wi_plan, kind: verifies }
+  - { from: issues_unit_tests, to: wi_plan_review_summary, kind: verifies }
   - { from: capability_unit_tests, to: draft_promise_preservation, kind: verifies }
 ---
 requirementDiagram
