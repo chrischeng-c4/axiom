@@ -184,6 +184,7 @@ Gate Inventory:
 | Markdown capability schema | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow markdown_capability_tables` |
 | Capability readiness reporting | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow fixture_reference_can_verify_required_claim` |
 | Capability project sweep | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow capability_sweep --lib`; `aw capability sweep --human` |
+| Missing README initialization | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow capability_init --lib`; `aw capability init --project cclab-core` |
 
 ### Work Item Planning
 

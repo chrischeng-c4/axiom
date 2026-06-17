@@ -2687,6 +2687,9 @@ semantic_domain:
           - name: "CapabilityCheckArgs"
             kind: "struct"
             public: true
+          - name: "CapabilityInitArgs"
+            kind: "struct"
+            public: true
           - name: "CapabilitySweepArgs"
             kind: "struct"
             public: true

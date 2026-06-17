@@ -43,6 +43,8 @@ pub enum CapabilityCommand {
     Migrate(CapabilityMigrateArgs),
     /// Validate capability README sections and TD capability refs.
     Check(CapabilityCheckArgs),
+    /// Create an empty canonical capability README when the configured map is missing.
+    Init(CapabilityInitArgs),
     /// Sweep all configured projects and summarize capability next actions.
     Sweep(CapabilitySweepArgs),
     /// Assign a capability's type, persisting it to the README contract.
@@ -165,6 +167,29 @@ pub struct CapabilityCheckArgs {
     #[arg(long)]
     pub human: bool,
     /// Pretty-print the JSON check report.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilityInitArgs {
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+    /// H1 title for the generated README shell.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Brief text for the generated README shell. Defaults to an unconfirmed placeholder.
+    #[arg(long)]
+    pub brief: Option<String>,
+    /// DEPRECATED compatibility no-op. Capability init emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit the generated README path only.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON result.
     #[arg(long)]
     pub pretty: bool,
 }
@@ -1070,6 +1095,10 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             }
             Ok(())
         }
+        CapabilityCommand::Init(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            init_capability_readme(&project, args)
+        }
         CapabilityCommand::SetType(args) => {
             let project = required_capability_project(selected_project.as_deref())?;
             set_capability_type(&project, args)
@@ -1114,6 +1143,83 @@ fn normalize_capability_check_report(report: &mut CapabilityReport) -> bool {
         };
     }
     check_failed
+}
+
+fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    if cap_path.exists() {
+        anyhow::bail!(
+            "capability map already exists at {}; use `aw capability migrate/check` instead",
+            cap_path.display()
+        );
+    }
+    let Some(parent) = cap_path.parent() else {
+        anyhow::bail!(
+            "capability map path {} has no parent directory",
+            cap_path.display()
+        );
+    };
+    if !parent.exists() {
+        anyhow::bail!(
+            "capability map parent directory does not exist: {}",
+            parent.display()
+        );
+    }
+    let title = args
+        .title
+        .clone()
+        .unwrap_or_else(|| humanize_project_title(project));
+    let brief = args.brief.clone().unwrap_or_else(|| {
+        format!(
+            "Capability map placeholder for `{project}`. Define project-specific product promises after human confirmation."
+        )
+    });
+    let body = render_empty_capability_readme(&title, &brief);
+    std::fs::write(&cap_path, body)
+        .with_context(|| format!("write capability map {}", cap_path.display()))?;
+    let payload = serde_json::json!({
+        "action": "capability_init",
+        "status": "created",
+        "project": project,
+        "cap_path": cap_path.display().to_string(),
+        "title": title,
+        "brief_confirmed": args.brief.is_some(),
+        "check_command": format!("aw capability check --project {project}"),
+    });
+    if args.human {
+        println!("{}", cap_path.display());
+    } else if args.pretty || args.json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("{}", serde_json::to_string(&payload)?);
+    }
+    Ok(())
+}
+
+fn render_empty_capability_readme(title: &str, brief: &str) -> String {
+    format!(
+        "# {title}\n\n## Brief\n\n{brief}\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n"
+    )
+}
+
+fn humanize_project_title(project: &str) -> String {
+    project
+        .split(['-', '_'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            let Some(first) = chars.next() else {
+                return String::new();
+            };
+            format!(
+                "{}{}",
+                first.to_uppercase().collect::<String>(),
+                chars.as_str()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 async fn run_capability_sweep(
@@ -7437,6 +7543,30 @@ mod tests {
         assert_eq!(project.project, "jet");
         assert_eq!(project.next_action_kind, "assign_capability_type");
         assert!(project.requires_hitl);
+    }
+
+    #[test]
+    fn capability_init_renders_empty_canonical_readme_shell() {
+        let body = render_empty_capability_readme(
+            "Cclab Core",
+            "Capability map placeholder for `cclab-core`.",
+        );
+        let doc = cap_doc(&body);
+
+        assert!(body.starts_with("# Cclab Core\n\n## Brief\n\n"));
+        assert!(body.contains("\n## Capabilities\n\n### Capability Index\n\n"));
+        assert!(body.contains(
+            "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |"
+        ));
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert!(doc.capabilities.is_empty());
+    }
+
+    #[test]
+    fn capability_init_humanizes_project_slug_title() {
+        assert_eq!(humanize_project_title("cclab-core"), "Cclab Core");
+        assert_eq!(humanize_project_title("agentkit"), "Agentkit");
+        assert_eq!(humanize_project_title("cclab_grid_wasm"), "Cclab Grid Wasm");
     }
 
     fn one_capability() -> &'static str {
