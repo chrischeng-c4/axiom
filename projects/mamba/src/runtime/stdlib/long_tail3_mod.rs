@@ -30,6 +30,13 @@ unsafe extern "C" fn dispatch_int_zero(_a: *const MbValue, _n: usize) -> MbValue
 unsafe extern "C" fn dispatch_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
 }
+// importlib.util.find_spec(name) -> spec | None. Routes to the real
+// module-registry lookup so a missing module yields None (not an empty
+// shell dict), matching CPython's "find_spec returns None when absent".
+unsafe extern "C" fn dispatch_importlib_find_spec(a: *const MbValue, n: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(a, n) };
+    super::importlib_mod::mb_importlib_find_spec(args.first().copied().unwrap_or_else(MbValue::none))
+}
 
 fn register_addrs(addrs: &[usize]) {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
@@ -1006,7 +1013,10 @@ fn register_importlib_subs() {
                 "spec_from_loader",
                 dispatch_class_shell as *const () as usize,
             ),
-            ("find_spec", dispatch_class_shell as *const () as usize),
+            (
+                "find_spec",
+                dispatch_importlib_find_spec as *const () as usize,
+            ),
             ("resolve_name", dispatch_empty_str as *const () as usize),
             (
                 "source_from_cache",
