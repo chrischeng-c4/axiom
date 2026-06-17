@@ -1,12 +1,12 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-14T08:41:22.122092+00:00"
-digest = "sha256:26fcdab57b59006b4dfb6cb5164285653b98cbc51f9959e497a25d90be7402c7"
+generated_at = "2026-06-17T17:46:09.946695+00:00"
+digest = "sha256:12fe24be3bfa4cd0935f5f438fe779546eceedebab40cdff7c153da275147f7d"
 
 [[files]]
 path = "logic/cap-hook-auto-command-optimizer-whitelist.md"
-digest = "sha256:32d74c28c212c7dea17cf2ebf71fceb219b90d24059dc32aba53b68bc5186232"
+digest = "sha256:646c91520fdcf634f139e1170e7f72d52db14d8a160ecb94eb5095495d7122b6"
 
 [[files]]
 path = "logic/external-contracts.md"
