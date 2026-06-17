@@ -1272,9 +1272,15 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
         .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
     let document = parse_capability_document(&cap_body, &cap_path)
         .with_context(|| format!("failed to parse capability map {}", cap_path.display()))?;
-    if document.prose_candidates.is_empty() {
+    if document.requires_format_migration() || !document.legacy_rows.is_empty() {
         anyhow::bail!(
-            "no prose capability candidates found in {}; use `aw capability init` for an empty map or `aw capability migrate` for legacy maps",
+            "legacy capability content found in {}; use `aw capability migrate` before drafting new roots",
+            cap_path.display()
+        );
+    }
+    if !document.capabilities.is_empty() {
+        anyhow::bail!(
+            "canonical capability contracts already found in {}; use `aw capability report/check` instead",
             cap_path.display()
         );
     }
@@ -1288,7 +1294,7 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
         cap_path,
         path,
         status: "pending_review".to_string(),
-        source: "prose_candidates",
+        source: capability_draft_source(&document.prose_candidates),
         candidate_count: document.prose_candidates.len(),
         agent_review_required: true,
         review_status: "pending",
@@ -1302,6 +1308,14 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
         println!("{}", serde_json::to_string(&report)?);
     }
     Ok(())
+}
+
+fn capability_draft_source(candidates: &[CapabilityProseCandidate]) -> &'static str {
+    if candidates.is_empty() {
+        "empty_capability_map"
+    } else {
+        "prose_candidates"
+    }
 }
 
 fn write_capability_draft_artifact(
@@ -1347,7 +1361,10 @@ fn render_capability_map_draft(
         markdown_yaml_string(&cap_path.display().to_string())
     ));
     out.push_str("status: pending_review\n");
-    out.push_str("source: prose_candidates\n");
+    out.push_str(&format!(
+        "source: {}\n",
+        capability_draft_source(candidates)
+    ));
     out.push_str(&format!("candidate_count: {}\n", candidates.len()));
     out.push_str("---\n\n");
     out.push_str(&format!(
@@ -1360,18 +1377,26 @@ fn render_capability_map_draft(
     out.push_str("## Candidate Roots\n\n");
     out.push_str("| Candidate | Proposed ID | Root WI | Source Line | Summary |\n");
     out.push_str("|---|---|---:|---:|---|\n");
-    for candidate in candidates {
-        out.push_str(&format!(
-            "| {} | `{}` | {} | {} | {} |\n",
-            markdown_cell(&candidate.title),
-            markdown_cell(&candidate.id),
-            markdown_cell(candidate.root_wi.as_deref().unwrap_or("-")),
-            candidate.line,
-            markdown_cell(candidate.summary.as_deref().unwrap_or("-")),
-        ));
+    if candidates.is_empty() {
+        out.push_str("| (define capability root) | `(confirm-id)` | - | - | README has no candidate capability roots; human must define product promises. |\n");
+    } else {
+        for candidate in candidates {
+            out.push_str(&format!(
+                "| {} | `{}` | {} | {} | {} |\n",
+                markdown_cell(&candidate.title),
+                markdown_cell(&candidate.id),
+                markdown_cell(candidate.root_wi.as_deref().unwrap_or("-")),
+                candidate.line,
+                markdown_cell(candidate.summary.as_deref().unwrap_or("-")),
+            ));
+        }
     }
     out.push_str("\n## Human Review Checklist\n\n");
-    out.push_str("- Confirm, rename, split, merge, or defer each candidate root.\n");
+    if candidates.is_empty() {
+        out.push_str("- Define the project capability root(s) before editing README.\n");
+    } else {
+        out.push_str("- Confirm, rename, split, merge, or defer each candidate root.\n");
+    }
     out.push_str("- Fill capability Type, public Surfaces, and EC Dimensions only after the product promise is confirmed.\n");
     out.push_str("- Replace `(confirm ...)` placeholders before writing to README.\n");
     out.push_str("- Run `aw capability check --project ");
@@ -1410,10 +1435,25 @@ fn render_candidate_capability_registry(
         }
     }
     out.push('\n');
-    for candidate in candidates {
-        out.push_str(&render_candidate_capability_section(candidate));
+    if candidates.is_empty() {
+        out.push_str(&render_empty_candidate_capability_section(project));
+    } else {
+        for candidate in candidates {
+            out.push_str(&render_candidate_capability_section(candidate));
+        }
     }
     out
+}
+
+fn render_empty_candidate_capability_section(project: &str) -> String {
+    let title = format!("{} Capability", project_display_name(project));
+    let id = slugify(&title);
+    format!(
+        "### {title}\n\nID: {id}\nStatus: candidate\nRequired Verification: smoke\nPromise:\n(confirm product promise)\nGate Inventory:\n- (confirm gate inventory)\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {work_root} root | epic | - | planned | planned | smoke | (confirm gate/evidence) |\n\n",
+        title = markdown_cell(&title),
+        id = markdown_cell(&id),
+        work_root = markdown_cell(&title),
+    )
 }
 
 fn render_candidate_capability_section(candidate: &CapabilityProseCandidate) -> String {
@@ -3377,11 +3417,7 @@ fn choose_next_action(
             gap_id: None,
             claim_id: None,
             target: report.cap_path.display().to_string(),
-            command: if document.prose_candidates.is_empty() {
-                format!("aw capability report --project {}", report.project)
-            } else {
-                format!("aw capability draft --project {}", report.project)
-            },
+            command: format!("aw capability draft --project {}", report.project),
             reason: reason.clone(),
             requires_hitl: true,
             hitl_question: Some(capability_map_hitl_question(
@@ -8105,6 +8141,7 @@ Mamba should improve both runtime CPU and memory profile on selected workloads.
         let action = choose_next_action(&report, &document, &BTreeMap::new());
 
         assert_eq!(action.kind, CapabilityActionKind::DefineCapabilityMap);
+        assert_eq!(action.command, "aw capability draft --project jet");
         assert!(action.requires_hitl);
         assert_eq!(
             action
@@ -8173,6 +8210,20 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert!(artifact.contains("ID: c1-py3-12-functional-parity-axis-1-3331"));
         assert!(artifact.contains("Status: candidate"));
         assert!(artifact.contains("(confirm gate inventory)"));
+        assert!(artifact.contains("This artifact is inference only"));
+    }
+
+    #[test]
+    fn empty_capability_map_draft_artifact_is_definition_worksheet() {
+        let artifact = render_capability_map_draft("cue", Path::new("projects/cue/README.md"), &[]);
+
+        assert!(artifact.contains("kind: capability_map_draft"));
+        assert!(artifact.contains("source: empty_capability_map"));
+        assert!(artifact.contains("candidate_count: 0"));
+        assert!(artifact.contains("README has no candidate capability roots"));
+        assert!(artifact.contains("### Cue Capability"));
+        assert!(artifact.contains("ID: cue-capability"));
+        assert!(artifact.contains("Promise:\n(confirm product promise)"));
         assert!(artifact.contains("This artifact is inference only"));
     }
 
