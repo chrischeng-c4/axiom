@@ -10,9 +10,31 @@
 // @command target/debug/guard scan projects/guard --compact --no-persist --arena-command "target/debug/arena spec --compact"
 // AW-EC-END
 
+// Contract: guard can fold arena budget evidence into its report
+// Contract: security-performance budget evidence remains visible in guard.report/1
 #[test]
-#[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
+#[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn guard_arena_security_budget_bridge() {
-    panic!("AW EC placeholder for guard-arena-security-budget-bridge");
+    let command = "target/debug/guard scan projects/guard --compact --no-persist --arena-command \"target/debug/arena spec --compact\"";
+    let id = "guard-arena-security-budget-bridge";
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !root.join(".aw").is_dir() {
+        assert!(
+            root.pop(),
+            "AW EC {id}: no .aw/ project root above {}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+    }
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&root)
+        .status()
+        .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    assert!(
+        status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}",
+        status.code()
+    );
 }
 // CODEGEN-END

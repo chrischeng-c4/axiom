@@ -734,6 +734,7 @@ artifacts = ["out.txt"]
             seed: Vec::new(),
             export: BTreeMap::new(),
             ready_http: None,
+            ready_cmd: Vec::new(),
             timeout_s: default_service_timeout(),
         }
     }

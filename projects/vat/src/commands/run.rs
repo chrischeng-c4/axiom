@@ -887,7 +887,10 @@ enum ResolvedRuntime {
 /// native binary and falls back to Docker; `native`/`docker` force one path.
 /// On `auto` with neither available, emit a structured error and bail.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#logic
-fn resolve_preset_runtime(service: &ServiceConfig, preset: ServicePreset) -> Result<ResolvedRuntime> {
+fn resolve_preset_runtime(
+    service: &ServiceConfig,
+    preset: ServicePreset,
+) -> Result<ResolvedRuntime> {
     match service.runtime {
         ServiceRuntime::Native => Ok(ResolvedRuntime::Native),
         ServiceRuntime::Docker => Ok(ResolvedRuntime::Docker),
@@ -1060,6 +1063,7 @@ fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
         ServicePreset::Rabbitmq => ("rabbitmq", "3"),
         ServicePreset::Mysql => ("mysql", "8"),
         ServicePreset::Mongo => ("mongo", "7"),
+        ServicePreset::Opensearch => ("opensearchproject/opensearch", "2"),
     };
     format!("{repo}:{}", version.unwrap_or(default_tag))
 }
@@ -1073,6 +1077,7 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
         ServicePreset::Rabbitmq => 5672,
         ServicePreset::Mysql => 3306,
         ServicePreset::Mongo => 27017,
+        ServicePreset::Opensearch => 9200,
     }
 }
 
@@ -1091,6 +1096,14 @@ fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
         | ServicePreset::Nats
         | ServicePreset::Mongo
         | ServicePreset::Rabbitmq => {}
+        ServicePreset::Opensearch => {
+            env.insert("discovery.type".to_string(), "single-node".to_string());
+            env.insert("plugins.security.disabled".to_string(), "true".to_string());
+            env.insert(
+                "OPENSEARCH_JAVA_OPTS".to_string(),
+                "-Xms512m -Xmx512m".to_string(),
+            );
+        }
     }
     env
 }
@@ -1203,8 +1216,7 @@ fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path)
     // Unix-socket-only on a per-prepare socket dir keeps the temp server off
     // the network and avoids port races during a cold build.
     let sock_dir = data_dir.join("seed-sock");
-    std::fs::create_dir_all(&sock_dir)
-        .with_context(|| format!("create {}", sock_dir.display()))?;
+    std::fs::create_dir_all(&sock_dir).with_context(|| format!("create {}", sock_dir.display()))?;
     let sock_arg = format!(
         "-h '' -k {} -p 5432",
         shell_single_quote(&sock_dir.to_string_lossy())
@@ -1323,10 +1335,7 @@ bootstrap.memory_lock: false
 /// Locate the Homebrew OpenSearch config dir (for jvm.options etc.). Best
 /// effort: returns None if the layout is not the expected Homebrew one.
 fn opensearch_brew_config_dir() -> Option<PathBuf> {
-    for candidate in [
-        "/opt/homebrew/etc/opensearch",
-        "/usr/local/etc/opensearch",
-    ] {
+    for candidate in ["/opt/homebrew/etc/opensearch", "/usr/local/etc/opensearch"] {
         let path = PathBuf::from(candidate);
         if path.join("jvm.options").is_file() {
             return Some(path);
@@ -1879,8 +1888,10 @@ mod tests {
     #[test]
     fn preset_default_applies_when_no_override() {
         let service = test_service("pg", &[]);
-        match resolve_ready_probe(&service, Some(preset_ready_probe(ServicePreset::Postgres, 5432)))
-        {
+        match resolve_ready_probe(
+            &service,
+            Some(preset_ready_probe(ServicePreset::Postgres, 5432)),
+        ) {
             ReadyProbe::Cmd(cmd) => assert_eq!(cmd[0], "pg_isready"),
             other => panic!("expected pg_isready probe, got {other:?}"),
         }
@@ -1897,9 +1908,7 @@ mod tests {
         let command = preset_command(ServicePreset::Opensearch, 9250, &data_dir);
         assert_eq!(command[0], "opensearch");
         assert!(command.iter().any(|a| a == "-Ehttp.port=9250"));
-        assert!(command
-            .iter()
-            .any(|a| a == "-Ediscovery.type=single-node"));
+        assert!(command.iter().any(|a| a == "-Ediscovery.type=single-node"));
         assert!(command
             .iter()
             .any(|a| a.starts_with("-Epath.data=") && a.contains("data")));
@@ -2050,7 +2059,11 @@ mod tests {
             .stderr(Stdio::null())
             .status();
         let count = String::from_utf8_lossy(&out.stdout);
-        assert_eq!(count.trim(), "3", "seeded corpus rows must persist in cache");
+        assert_eq!(
+            count.trim(),
+            "3",
+            "seeded corpus rows must persist in cache"
+        );
     }
 
     fn test_service(id: &str, requires: &[&str]) -> ServiceConfig {
@@ -2127,6 +2140,34 @@ mod tests {
             "postgres:15"
         );
         assert_eq!(preset_image(ServicePreset::Redis, None), "redis:7");
+        assert_eq!(
+            preset_image(ServicePreset::Opensearch, None),
+            "opensearchproject/opensearch:2"
+        );
+        assert_eq!(
+            preset_image(ServicePreset::Opensearch, Some("2.15.0")),
+            "opensearchproject/opensearch:2.15.0"
+        );
+    }
+
+    #[test]
+    fn opensearch_docker_defaults_are_passwordless_single_node() {
+        assert_eq!(preset_container_port(ServicePreset::Opensearch), 9200);
+
+        let env = preset_container_env(ServicePreset::Opensearch);
+
+        assert_eq!(
+            env.get("discovery.type").map(String::as_str),
+            Some("single-node")
+        );
+        assert_eq!(
+            env.get("plugins.security.disabled").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            env.get("OPENSEARCH_JAVA_OPTS").map(String::as_str),
+            Some("-Xms512m -Xmx512m")
+        );
     }
 
     #[test]
