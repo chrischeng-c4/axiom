@@ -154,7 +154,7 @@ pub fn is_user_abc(class_name: &str) -> bool {
 /// class in the MRO concretely overrides. Mirrors CPython's `ABCMeta.__new__`
 /// `__abstractmethods__` calculation. Returns names in sorted order for
 /// deterministic output.
-fn compute_user_abstractmethods(class_name: &str) -> Vec<String> {
+pub(crate) fn compute_user_abstractmethods(class_name: &str) -> Vec<String> {
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
         let Some(cls) = reg.get(class_name) else {
