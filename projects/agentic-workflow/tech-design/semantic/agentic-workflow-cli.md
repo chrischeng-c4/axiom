@@ -2687,6 +2687,18 @@ semantic_domain:
           - name: "CapabilityCheckArgs"
             kind: "struct"
             public: true
+          - name: "CapabilitySweepArgs"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySweepReport"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySweepGroup"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySweepProject"
+            kind: "struct"
+            public: true
           - name: "CapabilityStatus"
             kind: "enum"
             public: true

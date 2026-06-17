@@ -43,6 +43,8 @@ pub enum CapabilityCommand {
     Migrate(CapabilityMigrateArgs),
     /// Validate capability README sections and TD capability refs.
     Check(CapabilityCheckArgs),
+    /// Sweep all configured projects and summarize capability next actions.
+    Sweep(CapabilitySweepArgs),
     /// Assign a capability's type, persisting it to the README contract.
     SetType(CapabilitySetTypeArgs),
     /// Assign a capability's status, persisting it to the README contract.
@@ -163,6 +165,26 @@ pub struct CapabilityCheckArgs {
     #[arg(long)]
     pub human: bool,
     /// Pretty-print the JSON check report.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilitySweepArgs {
+    /// Run capability verification commands and configured project test gates.
+    #[arg(long)]
+    pub verify: bool,
+    /// Include issue inventory when computing next actions.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// DEPRECATED compatibility no-op. Capability sweep emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit a compact human-readable sweep.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON sweep.
     #[arg(long)]
     pub pretty: bool,
 }
@@ -931,6 +953,52 @@ pub struct CapabilityReport {
     pub run_results: Vec<CapabilityRunResult>,
 }
 
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilitySweepReport {
+    pub schema_version: &'static str,
+    pub action: &'static str,
+    pub status: &'static str,
+    pub project_count: usize,
+    pub verified_project_count: usize,
+    pub verify: bool,
+    pub include_issue_inventory: bool,
+    pub groups: Vec<CapabilitySweepGroup>,
+    pub projects: Vec<CapabilitySweepProject>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilitySweepGroup {
+    pub status: String,
+    pub next_action_kind: &'static str,
+    pub count: usize,
+    pub projects: Vec<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilitySweepProject {
+    pub project: String,
+    pub cap_path: PathBuf,
+    pub report_status: String,
+    pub loop_status: &'static str,
+    pub format_version: u8,
+    pub capability_count: usize,
+    pub verified_count: usize,
+    pub claim_count: usize,
+    pub verified_claim_count: usize,
+    pub production_ready: bool,
+    pub requires_hitl: bool,
+    pub blocker_count: usize,
+    pub warning_count: usize,
+    pub test_gate_status: ProjectTestGateStatus,
+    pub test_gate_passed_count: usize,
+    pub test_gate_command_count: usize,
+    pub next_action_kind: &'static str,
+    pub next_action: CapabilityAction,
+}
+
 #[derive(Deserialize, Default)]
 struct CapabilityConfig {
     #[serde(default)]
@@ -950,11 +1018,13 @@ struct CapabilityProjectRow {
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub async fn run(args: CapabilityArgs) -> Result<()> {
-    let project = args
-        .project
-        .ok_or_else(|| anyhow::anyhow!("capability requires --project <project>"))?;
+    let selected_project = args.project;
     match args.command {
+        CapabilityCommand::Sweep(sweep_args) => {
+            run_capability_sweep(selected_project.as_deref(), sweep_args).await
+        }
         CapabilityCommand::Report(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
             let report =
                 build_capability_report(&project, args.cap_path.as_deref(), args.verify, true)
                     .await?;
@@ -962,6 +1032,7 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             Ok(())
         }
         CapabilityCommand::Next(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
             let report =
                 build_capability_report(&project, args.cap_path.as_deref(), false, true).await?;
             if args.human {
@@ -979,39 +1050,247 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             }
             Ok(())
         }
-        CapabilityCommand::Run(args) => run_capability_tick(&project, args).await,
-        CapabilityCommand::Migrate(args) => migrate_capability_format(&project, args),
+        CapabilityCommand::Run(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            run_capability_tick(&project, args).await
+        }
+        CapabilityCommand::Migrate(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            migrate_capability_format(&project, args)
+        }
         CapabilityCommand::Check(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
             let mut report =
                 build_capability_report(&project, args.cap_path.as_deref(), args.verify, false)
                     .await?;
-            let check_failed = !report.blockers.is_empty()
-                || matches!(report.test_gates.status, ProjectTestGateStatus::Failed)
-                || report.next_action.kind == CapabilityActionKind::FormatMigrationRequired;
-            if !check_failed {
-                report.status = "healthy".to_string();
-                report.next_action = CapabilityAction {
-                    kind: CapabilityActionKind::None,
-                    capability_id: None,
-                    gap_id: None,
-                    claim_id: None,
-                    target: report.cap_path.display().to_string(),
-                    command: String::new(),
-                    reason: "capability format and TD refs are valid".to_string(),
-                    requires_hitl: false,
-                    hitl_question: None,
-                };
-            }
+            let check_failed = normalize_capability_check_report(&mut report);
             print_report(&report, args.human, args.pretty || args.json)?;
             if check_failed {
                 std::process::exit(1);
             }
             Ok(())
         }
-        CapabilityCommand::SetType(args) => set_capability_type(&project, args),
-        CapabilityCommand::SetStatus(args) => set_capability_status(&project, args),
-        CapabilityCommand::SetSurface(args) => set_capability_surface(&project, args),
-        CapabilityCommand::SetEcDimension(args) => set_capability_ec_dimension(&project, args),
+        CapabilityCommand::SetType(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_type(&project, args)
+        }
+        CapabilityCommand::SetStatus(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_status(&project, args)
+        }
+        CapabilityCommand::SetSurface(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_surface(&project, args)
+        }
+        CapabilityCommand::SetEcDimension(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_ec_dimension(&project, args)
+        }
+    }
+}
+
+fn required_capability_project(project: Option<&str>) -> Result<String> {
+    project
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("capability requires --project <project>"))
+}
+
+fn normalize_capability_check_report(report: &mut CapabilityReport) -> bool {
+    let check_failed = !report.blockers.is_empty()
+        || matches!(report.test_gates.status, ProjectTestGateStatus::Failed)
+        || report.next_action.kind == CapabilityActionKind::FormatMigrationRequired;
+    if !check_failed {
+        report.status = "healthy".to_string();
+        report.next_action = CapabilityAction {
+            kind: CapabilityActionKind::None,
+            capability_id: None,
+            gap_id: None,
+            claim_id: None,
+            target: report.cap_path.display().to_string(),
+            command: String::new(),
+            reason: "capability format and TD refs are valid".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        };
+    }
+    check_failed
+}
+
+async fn run_capability_sweep(
+    selected_project: Option<&str>,
+    args: CapabilitySweepArgs,
+) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let rows = capability_sweep_project_rows(&project_root, selected_project)?;
+    let mut reports = Vec::new();
+    for row in rows {
+        let project = row.name.clone();
+        let report = match build_capability_report(
+            &project,
+            None,
+            args.verify,
+            args.include_issue_inventory,
+        )
+        .await
+        {
+            Ok(report) => report,
+            Err(err) => {
+                let cap_path = capability_path_from_row(&project_root, &row)
+                    .unwrap_or_else(|_| project_root.join("README.md"));
+                capability_map_read_blocked_report(
+                    &project,
+                    cap_path,
+                    ProjectTestGateReport::not_evaluated(&project),
+                    format!("failed to build capability report: {err:#}"),
+                )
+            }
+        };
+        reports.push(report);
+    }
+    let sweep = capability_sweep_report(&reports, args.verify, args.include_issue_inventory);
+    if args.human {
+        print_capability_sweep(&sweep);
+    } else if args.pretty || args.json {
+        println!("{}", serde_json::to_string_pretty(&sweep)?);
+    } else {
+        println!("{}", serde_json::to_string(&sweep)?);
+    }
+    Ok(())
+}
+
+fn capability_sweep_project_rows(
+    project_root: &Path,
+    selected_project: Option<&str>,
+) -> Result<Vec<CapabilityProjectRow>> {
+    if let Some(project) = selected_project {
+        return resolve_project_row(project_root, project).map(|row| vec![row]);
+    }
+    Ok(
+        crate::services::project_registry::load_project_config_rows(project_root)?
+            .into_iter()
+            .map(|row| CapabilityProjectRow {
+                name: row.name,
+                path: Some(row.path),
+                td_path: row.td_path,
+                cap_path: row.cap_path,
+            })
+            .collect(),
+    )
+}
+
+fn capability_sweep_report(
+    reports: &[CapabilityReport],
+    verify: bool,
+    include_issue_inventory: bool,
+) -> CapabilitySweepReport {
+    let projects = reports
+        .iter()
+        .map(capability_sweep_project)
+        .collect::<Vec<_>>();
+    let verified_project_count = reports
+        .iter()
+        .filter(|report| capability_workflow_complete(report))
+        .count();
+    let status = if verified_project_count == reports.len() {
+        "done"
+    } else if reports
+        .iter()
+        .any(|report| capability_loop_status(report) == "blocked")
+    {
+        "blocked"
+    } else {
+        "continue"
+    };
+    CapabilitySweepReport {
+        schema_version: "aw.capability.sweep.v1",
+        action: "capability_sweep",
+        status,
+        project_count: reports.len(),
+        verified_project_count,
+        verify,
+        include_issue_inventory,
+        groups: capability_sweep_groups(&projects),
+        projects,
+    }
+}
+
+fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject {
+    CapabilitySweepProject {
+        project: report.project.clone(),
+        cap_path: report.cap_path.clone(),
+        report_status: report.status.clone(),
+        loop_status: capability_loop_status(report),
+        format_version: report.format_version,
+        capability_count: report.capability_count,
+        verified_count: report.verified_count,
+        claim_count: report.claim_count,
+        verified_claim_count: report.verified_claim_count,
+        production_ready: report.production_ready,
+        requires_hitl: report.next_action.requires_hitl
+            || report.next_action.kind == CapabilityActionKind::EnvBlocked,
+        blocker_count: report.blockers.len(),
+        warning_count: report.warnings.len(),
+        test_gate_status: report.test_gates.status,
+        test_gate_passed_count: report.test_gates.passed_count,
+        test_gate_command_count: report.test_gates.command_count,
+        next_action_kind: capability_action_kind_label(report.next_action.kind),
+        next_action: report.next_action.clone(),
+    }
+}
+
+fn capability_sweep_groups(projects: &[CapabilitySweepProject]) -> Vec<CapabilitySweepGroup> {
+    let mut grouped = BTreeMap::<(String, &'static str), Vec<String>>::new();
+    for project in projects {
+        grouped
+            .entry((project.report_status.clone(), project.next_action_kind))
+            .or_default()
+            .push(project.project.clone());
+    }
+    grouped
+        .into_iter()
+        .map(
+            |((status, next_action_kind), projects)| CapabilitySweepGroup {
+                status,
+                next_action_kind,
+                count: projects.len(),
+                projects,
+            },
+        )
+        .collect()
+}
+
+fn capability_action_kind_label(kind: CapabilityActionKind) -> &'static str {
+    match kind {
+        CapabilityActionKind::DefineCapabilityMap => "define_capability_map",
+        CapabilityActionKind::FormatMigrationRequired => "format_migration_required",
+        CapabilityActionKind::HumanConfirmRequired => "human_confirm_required",
+        CapabilityActionKind::CreateWi => "create_wi",
+        CapabilityActionKind::AtomizeWi => "atomize_wi",
+        CapabilityActionKind::RunTd => "run_td",
+        CapabilityActionKind::RunCb => "run_cb",
+        CapabilityActionKind::RunVerify => "run_verify",
+        CapabilityActionKind::UpdateCapabilityStatus => "update_capability_status",
+        CapabilityActionKind::EnvBlocked => "env_blocked",
+        CapabilityActionKind::DefineVerificationContract => "define_verification_contract",
+        CapabilityActionKind::LinkClaimVerification => "link_claim_verification",
+        CapabilityActionKind::AssignCapabilityType => "assign_capability_type",
+        CapabilityActionKind::None => "none",
+    }
+}
+
+fn print_capability_sweep(sweep: &CapabilitySweepReport) {
+    println!(
+        "capability sweep: {} [{}/{} projects complete]",
+        sweep.status, sweep.verified_project_count, sweep.project_count
+    );
+    for group in &sweep.groups {
+        println!(
+            "{}:{} [{}] {}",
+            group.status,
+            group.next_action_kind,
+            group.count,
+            group.projects.join(", ")
+        );
     }
 }
 
@@ -7112,6 +7391,52 @@ mod tests {
         assert!(!missing.iter().any(|value| value
             .as_str()
             .is_some_and(|missing| missing.contains("issue inventory unavailable"))));
+    }
+
+    #[test]
+    fn capability_sweep_groups_by_report_status_and_next_action() {
+        let mut healthy = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        healthy.status = "healthy".to_string();
+        healthy.verified_count = healthy.capability_count;
+
+        let mut blocked = sample_report(sample_action(
+            CapabilityActionKind::EnvBlocked,
+            "aw capability report --project pg",
+            true,
+        ));
+        blocked.project = "pg".to_string();
+
+        let sweep = capability_sweep_report(&[healthy, blocked], false, false);
+
+        assert_eq!(sweep.status, "blocked");
+        assert_eq!(sweep.project_count, 2);
+        assert_eq!(sweep.verified_project_count, 1);
+        assert_eq!(
+            sweep
+                .groups
+                .iter()
+                .map(|group| format!(
+                    "{}:{}:{}",
+                    group.status, group.next_action_kind, group.count
+                ))
+                .collect::<Vec<_>>(),
+            vec!["blocked:env_blocked:1", "healthy:none:1"]
+        );
+    }
+
+    #[test]
+    fn capability_sweep_project_exposes_stable_next_action_label() {
+        let report = sample_report(sample_action(
+            CapabilityActionKind::AssignCapabilityType,
+            "aw capability set-type --project jet --capability package-manager --type DeveloperTool",
+            true,
+        ));
+
+        let project = capability_sweep_project(&report);
+
+        assert_eq!(project.project, "jet");
+        assert_eq!(project.next_action_kind, "assign_capability_type");
+        assert!(project.requires_hitl);
     }
 
     fn one_capability() -> &'static str {
