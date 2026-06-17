@@ -135,6 +135,10 @@ Markdown capability headings and tables below are machine-readable input for `aw
 
 ID: aw-core-client-model-workitem-first-artifact-lifecycle
 Type: DeveloperTool
+Surfaces:
+- CLI: `aw wi` + `aw td` + `aw cb` + `aw run` - standalone AW Core client entrypoints over the shared workflow protocol.
+EC Dimensions:
+- behavior: shared WorkItem-first artifact admission, client boundary, and rollup semantics from the AW Core TD set.
 Root WI: #3894
 Status: verified
 Required Verification: smoke
@@ -153,6 +157,10 @@ Gate Inventory:
 
 ID: workflow-root-runner
 Type: DeveloperTool
+Surfaces:
+- CLI: `aw run` - root-scoped project, capability, and WI workflow runner for coding agents.
+EC Dimensions:
+- behavior: `cargo test -p agentic-workflow root_parser_accepts_capability_and_wi_roots` - root parsing and JSON envelope contract.
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -171,6 +179,10 @@ Gate Inventory:
 
 ID: capability-control-plane
 Type: DeveloperTool
+Surfaces:
+- CLI: `aw capability` - report, next, draft, migrate, check, init, sweep, and contract field setters.
+EC Dimensions:
+- behavior: `cargo test -p agentic-workflow markdown_capability_tables` - Markdown README contract parsing, migration, and readiness reporting.
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -190,6 +202,10 @@ Gate Inventory:
 
 ID: work-item-planning
 Type: DeveloperTool
+Surfaces:
+- CLI: `aw wi` - inventory, CRRR drafting, epicization, atomization, prioritization, and issue updates.
+EC Dimensions:
+- behavior: `cargo test -p agentic-workflow epicize_artifact_includes_markdown_capability_roots` - capability-to-WI planning projection.
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -207,6 +223,10 @@ Gate Inventory:
 
 ID: td-cb-lifecycle-automation
 Type: DeveloperTool
+Surfaces:
+- CLI: `aw td` + `aw cb` - tech-design lifecycle and code-artifact lifecycle commands.
+EC Dimensions:
+- behavior: `cargo test -p agentic-workflow td_branch_activation_only_uses_main` - TD/CB lifecycle command dispatch and phase rules.
 Root WI: -
 Status: verified
 Required Verification: smoke
@@ -224,6 +244,11 @@ Gate Inventory:
 
 ID: project-local-td-and-ec-gates
 Type: DeveloperTool
+Surfaces:
+- CLI: `aw ec` + `aw td check` - project-local external-contract, generated gate, and TD validation commands.
+EC Dimensions:
+- behavior: `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_manifest` - EC markdown source and generated tool manifest contract.
+- stability: `cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design` - project-local TD root resolution and dirty-scope protection.
 Root WI: #13
 Status: verified
 Required Verification: smoke
@@ -246,6 +271,10 @@ Gate Inventory:
 
 ID: manual-evidence-artifacts
 Type: DeveloperTool
+Surfaces:
+- CLI: `aw ec doc` - generated, checked, or previewed EC-derived product documentation evidence.
+EC Dimensions:
+- content: `cargo test -p agentic-workflow ec_doc_gen_writes_manual_from_manifest` - generated manual artifact schema and output convention.
 Root WI: #57
 Status: confirmed
 Required Verification: smoke
@@ -263,6 +292,10 @@ Gate Inventory:
 
 ID: existing-project-standardization
 Type: DeveloperTool
+Surfaces:
+- CLI: `aw standardize` + `aw health` - brownfield takeover guidance and readiness rollup.
+EC Dimensions:
+- behavior: `cargo test -p agentic-workflow standardize_subcommands_registered` - takeover command surface and readiness reporting.
 Root WI: -
 Status: verified
 Required Verification: smoke
