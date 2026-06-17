@@ -122,10 +122,15 @@ fn mod_name() -> MbValue {
 /// Read `warnings.showwarning` if it has been overridden by user code to a
 /// non-native callable; returns None when it is still the default native hook.
 fn read_module_showwarning() -> Option<MbValue> {
-    let v = super::super::module::mb_module_getattr(
-        mod_name(),
-        MbValue::from_ptr(MbObject::new_str("showwarning".to_string())),
-    );
+    // User code overrides via `warnings.showwarning = hook`, which lands in the
+    // module's user-visible namespace dict (the cached module value), NOT the
+    // registry-backed `attrs` that `mb_module_getattr` reads. Prefer the
+    // namespace dict so the override is observed; fall back to the registry.
+    let v = super::super::module::mb_module_value_getattr("warnings", "showwarning")
+        .unwrap_or_else(|| super::super::module::mb_module_getattr(
+            mod_name(),
+            MbValue::from_ptr(MbObject::new_str("showwarning".to_string())),
+        ));
     // The default hook is a native dispatcher fn-pointer. If user code replaced
     // it with a Python function/closure, route warnings through it.
     if let Some(addr) = v.as_func() {
