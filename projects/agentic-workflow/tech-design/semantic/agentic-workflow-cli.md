@@ -33,6 +33,12 @@ capability_refs:
     claim: ec-evidence-documentation
     coverage: full
     rationale: "The CLI semantic domain includes aw ec doc commands that turn project-local EC evidence into generated product documentation."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: ec-external-contract-source
+    claim: ec-external-contract-source
+    coverage: full
+    rationale: "The CLI semantic domain includes aw ec draft/fill/gen behavior for project-local external-contract markdown and generated test/tool config state."
 ---
 
 # Semantic TD: agentic-workflow/cli

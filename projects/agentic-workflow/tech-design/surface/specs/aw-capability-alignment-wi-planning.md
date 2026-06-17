@@ -33,6 +33,18 @@ capability_refs:
     claim: capability-readiness-reporting
     coverage: full
     rationale: "This spec defines capability readiness report, next, run, and check behavior."
+  - id: capability-control-plane
+    role: primary
+    gap: capability-project-sweep
+    claim: capability-project-sweep
+    coverage: full
+    rationale: "This spec defines capability sweep grouping, draft queues, WI plan queues, and executable action queues."
+  - id: capability-control-plane
+    role: primary
+    gap: missing-readme-initialization
+    claim: missing-readme-initialization
+    coverage: full
+    rationale: "This spec defines capability init behavior for projects with missing capability README shells."
   - id: work-item-planning
     role: primary
     gap: capability-to-epic-planning
