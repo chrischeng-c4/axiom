@@ -3339,6 +3339,9 @@ async fn run_find(args: FindArgs) -> Result<()> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CapabilityRow {
     capability: String,
+    capability_type: String,
+    surfaces: String,
+    ec_dimensions: String,
     current_state: String,
     gaps: String,
     active_wi: String,
@@ -3447,25 +3450,18 @@ pub(crate) async fn build_capability_wi_plan_report(
         capability_count: capability_document.capabilities.len(),
         rows: capability_rows
             .into_iter()
-            .map(
-                |(
-                    capability,
-                    current_state,
-                    gaps,
-                    active_wi,
-                    evidence,
-                    claim_id,
-                    claim_user_story,
-                )| CapabilityRow {
-                    capability,
-                    current_state,
-                    gaps,
-                    active_wi,
-                    evidence,
-                    claim_id,
-                    claim_user_story,
-                },
-            )
+            .map(|row| CapabilityRow {
+                capability: row.capability,
+                capability_type: row.capability_type,
+                surfaces: row.surfaces,
+                ec_dimensions: row.ec_dimensions,
+                current_state: row.current_state,
+                gaps: row.gaps,
+                active_wi: row.active_wi,
+                evidence: row.evidence,
+                claim_id: row.claim_id,
+                claim_user_story: row.claim_user_story,
+            })
             .collect(),
         health_note: extract_project_health_note(&cap_body),
     };
@@ -4015,6 +4011,9 @@ struct CapabilityCandidate {
 #[cfg(test)]
 struct CapabilityColumnIndices {
     capability: usize,
+    capability_type: Option<usize>,
+    surfaces: Option<usize>,
+    ec_dimensions: Option<usize>,
     current_state: usize,
     gaps: usize,
     active_wi: usize,
@@ -4098,6 +4097,18 @@ fn parse_capability_map(body: &str) -> Result<CapabilityMap> {
             }
             rows.push(CapabilityRow {
                 capability: table_cell(&cells, indices.capability),
+                capability_type: indices
+                    .capability_type
+                    .map(|idx| table_cell(&cells, idx))
+                    .unwrap_or_else(|| "-".to_string()),
+                surfaces: indices
+                    .surfaces
+                    .map(|idx| table_cell(&cells, idx))
+                    .unwrap_or_else(|| "-".to_string()),
+                ec_dimensions: indices
+                    .ec_dimensions
+                    .map(|idx| table_cell(&cells, idx))
+                    .unwrap_or_else(|| "-".to_string()),
                 current_state: table_cell(&cells, indices.current_state),
                 gaps: table_cell(&cells, indices.gaps),
                 active_wi: table_cell(&cells, indices.active_wi),
@@ -4150,12 +4161,18 @@ fn table_cell(cells: &[String], idx: usize) -> String {
 #[cfg(test)]
 fn capability_column_indices(cells: &[String]) -> Option<CapabilityColumnIndices> {
     let capability = find_table_column(cells, &["capability"])?;
+    let capability_type = find_table_column(cells, &["type", "capabilitytype"]);
+    let surfaces = find_table_column(cells, &["surface", "surfaces"]);
+    let ec_dimensions = find_table_column(cells, &["ecdimensions", "dimensions"]);
     let current_state = find_table_column(cells, &["currentstate", "state"])?;
     let gaps = find_table_column(cells, &["gaps", "gap"])?;
     let active_wi = find_table_column(cells, &["activewi", "activeworkitem", "activeworkitems"])?;
     let evidence = find_table_column(cells, &["evidence", "progress", "proof"])?;
     Some(CapabilityColumnIndices {
         capability,
+        capability_type,
+        surfaces,
+        ec_dimensions,
         current_state,
         gaps,
         active_wi,
@@ -4505,13 +4522,16 @@ fn render_capability_wi_plan(
     }
 
     out.push_str("## Capability Planning Matrix\n\n");
-    out.push_str("| Capability | Claim | Current state | Gap | Active WI | Matching open WI | Next planning operator | Evidence |\n");
-    out.push_str("|------------|-------|---------------|-----|-----------|------------------|------------------------|----------|\n");
+    out.push_str("| Capability | Type | Surfaces | EC Dimensions | Claim | Current state | Gap | Active WI | Matching open WI | Next planning operator | Evidence |\n");
+    out.push_str("|------------|------|----------|---------------|-------|---------------|-----|-----------|------------------|------------------------|----------|\n");
     for row in &capability_map.rows {
         let matches = matching_issues_for_capability(row, issues);
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             markdown_table_cell(&row.capability),
+            markdown_table_cell(&row.capability_type),
+            markdown_table_cell(&row.surfaces),
+            markdown_table_cell(&row.ec_dimensions),
             markdown_table_cell(
                 row.claim_id
                     .as_deref()
@@ -5811,6 +5831,9 @@ Generator ownership is complete; package-manager roadmap remains open.
             rows: vec![
                 CapabilityRow {
                     capability: "Package manager".to_string(),
+                    capability_type: "DeveloperTool".to_string(),
+                    surfaces: "CLI: `jet install` - install dependencies".to_string(),
+                    ec_dimensions: "behavior: `jet test` - package manager conformance<br>efficiency: `meter` - install profile".to_string(),
                     current_state: "Works for lockfile installs".to_string(),
                     gaps: "peer dependency roadmap missing".to_string(),
                     active_wi: "none".to_string(),
@@ -5820,6 +5843,9 @@ Generator ownership is complete; package-manager roadmap remains open.
                 },
                 CapabilityRow {
                     capability: "Dev server".to_string(),
+                    capability_type: "-".to_string(),
+                    surfaces: "-".to_string(),
+                    ec_dimensions: "-".to_string(),
                     current_state: "HMR works".to_string(),
                     gaps: "none".to_string(),
                     active_wi: "none".to_string(),
@@ -5846,6 +5872,10 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("kind: capability_plan"));
         assert!(body.contains("capability_count: 2"));
         assert!(body.contains("planning_row_count: 2"));
+        assert!(body.contains("| Capability | Type | Surfaces | EC Dimensions | Claim |"));
+        assert!(body.contains("DeveloperTool"));
+        assert!(body.contains("CLI: `jet install` - install dependencies"));
+        assert!(body.contains("efficiency: `meter` - install profile"));
         assert!(body.contains("Close capability gap: Package manager"));
         assert!(body.contains("## Recommended CLI Sequence"));
         assert!(body.contains("does not mutate the tracker"));
@@ -5881,6 +5911,9 @@ Generator ownership is complete; package-manager roadmap remains open.
     fn capability_matching_uses_active_wi_reference_before_creating_candidate() {
         let row = CapabilityRow {
             capability: "Package manager".to_string(),
+            capability_type: "DeveloperTool".to_string(),
+            surfaces: "CLI: `jet install`".to_string(),
+            ec_dimensions: "behavior: `jet test`".to_string(),
             current_state: "Works for lockfile installs".to_string(),
             gaps: "peer dependency roadmap missing".to_string(),
             active_wi: "#42".to_string(),
@@ -5901,6 +5934,9 @@ Generator ownership is complete; package-manager roadmap remains open.
     fn capability_claim_rows_do_not_match_broad_epic_by_keywords_only() {
         let row = CapabilityRow {
             capability: "Package Manager".to_string(),
+            capability_type: "DeveloperTool".to_string(),
+            surfaces: "CLI: `jet install`".to_string(),
+            ec_dimensions: "behavior: `jet test`".to_string(),
             current_state: "Install surface exists".to_string(),
             gaps: "claim package-manager-workspace-parity: workspace package discovery needs a bounded verification WI".to_string(),
             active_wi: "#3779".to_string(),

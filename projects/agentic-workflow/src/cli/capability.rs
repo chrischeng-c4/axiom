@@ -6984,13 +6984,7 @@ fn split_surface_contract_list(value: &str) -> Vec<String> {
 }
 
 fn clean_surface_summary(summary: &str) -> String {
-    let summary = summary.trim();
-    if summary.starts_with('`') {
-        if let Some((_commands, rest)) = summary.split_once(" - ") {
-            return rest.trim().to_string();
-        }
-    }
-    summary.to_string()
+    clean_leading_code_summary(summary)
 }
 
 fn parse_capability_ec_dimensions(value: &str) -> Vec<CapabilityEcDimension> {
@@ -7030,11 +7024,26 @@ fn split_ec_dimension_contract_list(value: &str) -> Vec<String> {
 }
 
 fn clean_runner_prefixed_summary(summary: &str) -> String {
+    clean_leading_code_summary(summary)
+}
+
+fn clean_leading_code_summary(summary: &str) -> String {
     let summary = summary.trim();
     if summary.starts_with('`') {
-        if let Some((_runner, rest)) = summary.split_once(" - ") {
+        if let Some((_commands, rest)) = summary.split_once(" - ") {
             return rest.trim().to_string();
         }
+    }
+    if let Some(rest) = summary
+        .strip_prefix('`')
+        .and_then(|after_open| after_open.split_once('`').map(|(_code, rest)| rest))
+    {
+        let rest = rest.trim();
+        let rest = rest.strip_prefix('-').unwrap_or(rest).trim();
+        if rest.is_empty() {
+            return String::new();
+        }
+        return rest.to_string();
     }
     summary.to_string()
 }
@@ -8656,20 +8665,25 @@ fn print_next_action(action: &CapabilityAction) {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityWiPlanRow {
+    pub capability: String,
+    pub capability_type: String,
+    pub surfaces: String,
+    pub ec_dimensions: String,
+    pub current_state: String,
+    pub gaps: String,
+    pub active_wi: String,
+    pub evidence: String,
+    pub claim_id: Option<String>,
+    pub claim_user_story: Option<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub fn capability_rows_for_wi_plan(
     document: &CapabilityDocument,
     td_refs: &[TdCapabilityEvidence],
-) -> Result<
-    Vec<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-    )>,
-> {
+) -> Result<Vec<CapabilityWiPlanRow>> {
     if document.is_legacy_only() {
         anyhow::bail!(
             "legacy capability table detected; migrate README to `## Capability:` sections before planning WIs"
@@ -8695,22 +8709,25 @@ pub fn capability_rows_for_wi_plan(
                     .unwrap_or_else(|| {
                         "Add at least one concrete verification gate to this claim.".to_string()
                     });
-                rows.push((
-                    capability.title.clone(),
-                    capability.current_state.clone(),
-                    if has_primary_td {
+                rows.push(CapabilityWiPlanRow {
+                    capability: capability.title.clone(),
+                    capability_type: capability_wi_plan_type(capability),
+                    surfaces: capability_wi_plan_surfaces(capability),
+                    ec_dimensions: capability_wi_plan_ec_dimensions(capability),
+                    current_state: capability.current_state.clone(),
+                    gaps: if has_primary_td {
                         "none".to_string()
                     } else {
                         format!("claim {}: {}", claim.id, claim.user_story)
                     },
-                    active_wi_for_capability(capability),
-                    format!(
+                    active_wi: active_wi_for_capability(capability),
+                    evidence: format!(
                         "claim gate: {}; oracle: {}; maturity: {:?}",
                         first_gate, claim.oracle, claim.maturity
                     ),
-                    Some(claim.id.clone()),
-                    Some(claim.user_story.clone()),
-                ));
+                    claim_id: Some(claim.id.clone()),
+                    claim_user_story: Some(claim.user_story.clone()),
+                });
             }
             continue;
         }
@@ -8734,26 +8751,70 @@ pub fn capability_rows_for_wi_plan(
                 .collect::<Vec<_>>()
                 .join(", ");
             let evidence = summarize_evidence(&capability.evidence);
-            (
-                capability.title.clone(),
-                capability.current_state.clone(),
-                if gap_summary.is_empty() {
+            CapabilityWiPlanRow {
+                capability: capability.title.clone(),
+                capability_type: capability_wi_plan_type(capability),
+                surfaces: capability_wi_plan_surfaces(capability),
+                ec_dimensions: capability_wi_plan_ec_dimensions(capability),
+                current_state: capability.current_state.clone(),
+                gaps: if gap_summary.is_empty() {
                     "none".to_string()
                 } else {
                     gap_summary
                 },
-                if active_wi.is_empty() {
+                active_wi: if active_wi.is_empty() {
                     "none".to_string()
                 } else {
                     active_wi
                 },
                 evidence,
-                None,
-                None,
-            )
+                claim_id: None,
+                claim_user_story: None,
+            }
         });
     }
     Ok(rows)
+}
+
+fn capability_wi_plan_type(capability: &CapabilitySection) -> String {
+    capability
+        .capability_type
+        .map(|capability_type| capability_type.as_str().to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn capability_wi_plan_surfaces(capability: &CapabilitySection) -> String {
+    let items = render_surface_field_items(&capability.surfaces);
+    if items.is_empty() {
+        "-".to_string()
+    } else {
+        items.join("<br>")
+    }
+}
+
+fn capability_wi_plan_ec_dimensions(capability: &CapabilitySection) -> String {
+    let items = capability
+        .ec_dimensions
+        .iter()
+        .map(|dimension| {
+            let mut item = render_ec_dimension_field_items(std::slice::from_ref(dimension))
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| dimension.dimension.as_str().to_string());
+            if let Some(slot) = dimension.efficiency_backfill.as_ref() {
+                item.push_str(&format!(
+                    " (operating point: {}; cube: {})",
+                    slot.operating_point, slot.cube
+                ));
+            }
+            item
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        "-".to_string()
+    } else {
+        items.join("<br>")
+    }
 }
 
 fn active_wi_for_capability(capability: &CapabilitySection) -> String {
@@ -10195,6 +10256,49 @@ Cube: projects/lumen/tests/perf-cube.json
             "1M docs, qps=100, metric=p99_ms, ratchet=0.8"
         );
         assert_eq!(slot.cube, "projects/lumen/tests/perf-cube.json");
+
+        let wi_rows = capability_rows_for_wi_plan(&doc, &[]).unwrap();
+        let query_planner = wi_rows
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("query-planner"))
+            .unwrap();
+        assert_eq!(query_planner.capability_type, "Service");
+        assert!(query_planner
+            .surfaces
+            .contains("HTTP: `GET /search` - serves ranked external ids."));
+        assert!(query_planner
+            .surfaces
+            .contains("CLI: `lumen serve` - starts the service."));
+        assert!(query_planner
+            .ec_dimensions
+            .contains("behavior: `rig run search-flow` - validates API behavior."));
+        assert!(query_planner
+            .ec_dimensions
+            .contains("efficiency: `rig load search-perf` - backfills latency and qps."));
+        assert!(query_planner.ec_dimensions.contains(
+            "operating point: 1M docs, qps=100, metric=p99_ms, ratchet=0.8; cube: projects/lumen/tests/perf-cube.json"
+        ));
+        assert!(query_planner
+            .ec_dimensions
+            .contains("security: `guard scan lumen-auth` - validates auth boundaries."));
+    }
+
+    #[test]
+    fn surface_and_dimension_summaries_strip_leading_command_prefixes() {
+        assert_eq!(
+            clean_surface_summary(
+                "`jet test` + `jet e2e` - Native test runner and product-flow e2e surface."
+            ),
+            "Native test runner and product-flow e2e surface."
+        );
+        assert_eq!(
+            clean_surface_summary("`GET /search` serves ranked external ids."),
+            "serves ranked external ids."
+        );
+        assert_eq!(
+            clean_runner_prefixed_summary("`rig + meter` - load pins plus resource attribution."),
+            "load pins plus resource attribution."
+        );
     }
 
     #[test]
