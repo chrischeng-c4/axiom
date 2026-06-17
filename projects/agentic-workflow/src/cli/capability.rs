@@ -336,7 +336,7 @@ pub struct CapabilitySetEcDimensionArgs {
     /// Capability id whose README contract should receive the EC dimension.
     #[arg(long)]
     pub capability: String,
-    /// EC dimension: behavior, efficiency, security, stability, or content.
+    /// EC dimension: behavior, efficiency, security, or stability.
     #[arg(long)]
     pub dimension: String,
     /// Tool/runner that verifies this dimension, for example rig, meter, guard, or jet e2e.
@@ -565,7 +565,6 @@ pub enum CapabilityEcDimensionKind {
     Efficiency,
     Security,
     Stability,
-    Content,
 }
 
 impl CapabilityEcDimensionKind {
@@ -575,7 +574,6 @@ impl CapabilityEcDimensionKind {
             CapabilityEcDimensionKind::Efficiency => "efficiency",
             CapabilityEcDimensionKind::Security => "security",
             CapabilityEcDimensionKind::Stability => "stability",
-            CapabilityEcDimensionKind::Content => "content",
         }
     }
 }
@@ -7330,7 +7328,6 @@ fn parse_ec_dimension_kind(value: &str) -> Option<CapabilityEcDimensionKind> {
         "efficiency" | "performance" | "perf" => Some(CapabilityEcDimensionKind::Efficiency),
         "security" | "secure" => Some(CapabilityEcDimensionKind::Security),
         "stability" | "resilience" | "reliability" => Some(CapabilityEcDimensionKind::Stability),
-        "content" | "docs" | "documentation" => Some(CapabilityEcDimensionKind::Content),
         _ => None,
     }
 }
@@ -10336,6 +10333,21 @@ Cube: projects/lumen/tests/perf-cube.json
             clean_runner_prefixed_summary("`rig + meter` - load pins plus resource attribution."),
             "load pins plus resource attribution."
         );
+    }
+
+    #[test]
+    fn ec_dimension_kind_rejects_content_dimension_aliases() {
+        assert_eq!(
+            parse_ec_dimension_kind("behavior"),
+            Some(CapabilityEcDimensionKind::Behavior)
+        );
+        assert_eq!(
+            parse_ec_dimension_kind("efficiency"),
+            Some(CapabilityEcDimensionKind::Efficiency)
+        );
+        assert_eq!(parse_ec_dimension_kind("content"), None);
+        assert_eq!(parse_ec_dimension_kind("docs"), None);
+        assert_eq!(parse_ec_dimension_kind("documentation"), None);
     }
 
     #[test]
