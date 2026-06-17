@@ -129,7 +129,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 | Work Item Planning | - | implemented | verified | smoke | ready | verified; epic/change split and bounded planning artifacts |
 | TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; WI to TD to CB to merge workflow |
 | Project-Local TD and EC Gates | #13 | implemented | verified | smoke | ready | verified; TD roots default to `<project.path>/tech-design`, EC contracts default to `<project.path>/external-contracts`, and generated tests/tool configs stay project-local |
-| Manual Evidence Artifacts | #57 | planned | planned | smoke | planned | confirmed; generated product manuals are tracked as EC evidence artifacts with runner commands and optional media |
+| Manual Evidence Artifacts | #57 | implemented | verified | smoke | ready | verified; generated product manuals are tracked as EC evidence artifacts with runner commands and optional media |
 | Existing Project Standardization | - | implemented | verified | smoke | ready | verified; takeover readiness, managed/semantic/traceability gates, and generator gap requests |
 
 ### AW Core Client Model
@@ -277,7 +277,7 @@ Surfaces:
 EC Dimensions:
 - content: `cargo test -p agentic-workflow ec_doc_gen_writes_manual_from_manifest` - generated manual artifact schema and output convention.
 Root WI: #57
-Status: confirmed
+Status: verified
 Required Verification: smoke
 Promise:
 AW treats generated product manuals as first-class EC evidence artifacts. A manual artifact records its project-local output path, the runner command that produces it, and optional screenshots, highlights, or step metadata without requiring every manual to use a visual overlay recorder.
