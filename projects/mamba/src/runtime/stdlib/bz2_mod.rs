@@ -329,13 +329,21 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
     let out = with_bytes(data, |b| {
         let mut dec = BzDecoder::new(b);
         let mut buf = Vec::with_capacity(b.len().saturating_mul(4));
-        dec.read_to_end(&mut buf).map(|_| buf)
+        dec.read_to_end(&mut buf).map(|_| {
+            // Bytes after the decoded bz2 stream are `unused_data` (CPython).
+            let consumed = (dec.total_in() as usize).min(b.len());
+            (buf, b[consumed..].to_vec())
+        })
     });
     match out {
-        Ok(buf) => {
+        Ok((buf, unused)) => {
             // A complete stream was decoded → end-of-stream reached.
             set_field(self_obj, "eof", MbValue::from_bool(true));
             set_field(self_obj, "needs_input", MbValue::from_bool(false));
+            if !unused.is_empty() {
+                set_field(self_obj, "unused_data",
+                    MbValue::from_ptr(MbObject::new_bytes(unused)));
+            }
             MbValue::from_ptr(MbObject::new_bytes(buf))
         }
         // A decode failure here is ambiguous between truly-invalid data and a
