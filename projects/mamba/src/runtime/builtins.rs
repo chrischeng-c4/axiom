@@ -8242,6 +8242,29 @@ fn merge_kwargs_dicts(a: MbValue, b: MbValue) -> MbValue {
     out
 }
 
+/// Detect `(*args, **kwargs)` presence for a callable. The addr-keyed
+/// registries (`is_variadic_func` / `is_kwargs_func`) only cover native and
+/// struct-seq targets; user JIT functions register their declared params but
+/// not addr flags, so fall back to the params registry (kind 2 = VAR_POSITIONAL,
+/// 4 = VAR_KEYWORD — inspect.Parameter ordinals). Without this, a `f(**d)` call
+/// to a `def f(*a, **k)` user function failed the has_star/has_kw gate and lost
+/// its keyword bindings.
+fn detect_star_kw(func: MbValue, addr: Option<usize>) -> (bool, bool) {
+    let mut has_star = addr.map(|a| super::module::is_variadic_func(a as u64)).unwrap_or(false);
+    let mut has_kw = addr.map(|a| super::module::is_kwargs_func(a as u64)).unwrap_or(false);
+    if !has_star || !has_kw {
+        if let Some(params) = super::closure::func_params(func) {
+            if params.iter().any(|p| p.kind == 2) {
+                has_star = true;
+            }
+            if params.iter().any(|p| p.kind == 4) {
+                has_kw = true;
+            }
+        }
+    }
+    (has_star, has_kw)
+}
+
 /// Invoke `func` with a structurally-separated positional args list and
 /// kwargs dict, honoring the compiled variadic/kwargs ABI. Used by
 /// `mb_call_spread_kwargs` for `(*args, **kw)` targets.
@@ -8259,8 +8282,7 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
         return unsafe { f(items.as_ptr(), items.len()) };
     }
     let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
-    let has_star = super::module::is_variadic_func(raw_addr as u64);
-    let has_kwargs = super::module::is_kwargs_func(raw_addr as u64);
+    let (has_star, has_kwargs) = detect_star_kw(func, Some(raw_addr));
     let raw_result = unsafe {
         if has_star && has_kwargs {
             let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
@@ -8336,12 +8358,18 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
     let is_native = addr
         .map(|a| super::module::is_native_func(a as u64))
         .unwrap_or(false);
-    let has_star = addr
-        .map(|a| super::module::is_variadic_func(a as u64))
-        .unwrap_or(false);
-    let has_kw = addr
-        .map(|a| super::module::is_kwargs_func(a as u64))
-        .unwrap_or(false);
+    let (has_star, has_kw) = if is_native {
+        // Native targets keep the addr-registry answer (the flattened-positional
+        // convention in step 5 depends on it); skip the params fallback.
+        (
+            addr.map(|a| super::module::is_variadic_func(a as u64))
+                .unwrap_or(false),
+            addr.map(|a| super::module::is_kwargs_func(a as u64))
+                .unwrap_or(false),
+        )
+    } else {
+        detect_star_kw(func, addr)
+    };
 
     // 3. `*args`-style user target: all positionals pack into one args list;
     //    the keywords pack into the kwargs dict. (Leading regular params
