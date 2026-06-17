@@ -12925,7 +12925,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     let data = fields.read().unwrap().get("_data").copied();
                     if let Some(data) = data {
                         if !data.is_none() {
-                            return mb_call_method(data, method_name, args);
+                            let raw = mb_call_method(data, method_name, args);
+                            // `copy()` returns the SAME wrapper class (CPython:
+                            // UserList.copy() -> UserList), not the bare payload.
+                            if name == "copy" {
+                                return super::stdlib::collections_mod::user_wrapper_rewrap_like(receiver, raw);
+                            }
+                            return raw;
                         }
                     }
                 }
