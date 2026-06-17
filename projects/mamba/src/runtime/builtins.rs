@@ -8038,6 +8038,10 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
         // (e.g. a float, whose untagged bits lack a NaN-prefix), so the re-box
         // steps below must pass it through rather than mis-boxing it as an int.
         let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
+        // *args/**kwargs presence: addr-registry (native / struct-seq) with a
+        // func_params fallback for user JIT functions, which register these flags
+        // by symbol-id rather than address.
+        let (has_star, has_kwargs) = detect_star_kw(func, Some(raw_addr));
         // Partial-default dispatch for closure handles: if the closure
         // declares more params than the call supplies, fill the missing
         // trailing slots from `defaults`. Skipped for variadic / native /
@@ -8046,8 +8050,8 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
         let mut items = items;
         if arity > items.len()
             && !super::module::is_native_func(raw_addr as u64)
-            && !super::module::is_variadic_func(raw_addr as u64)
-            && !super::module::is_kwargs_func(raw_addr as u64)
+            && !has_star
+            && !has_kwargs
         {
             let defaults = super::closure::closure_defaults(func);
             let needed = arity - items.len();
@@ -8062,53 +8066,41 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 unsafe { std::mem::transmute(raw_addr) };
             return unsafe { f(items.as_ptr(), items.len()) };
         }
-        // Variadic JIT functions (*args [, **kwargs]): compiled with an args-list
-        // parameter, optionally followed by a kwargs-dict parameter.
-        let has_star = super::module::is_variadic_func(raw_addr as u64);
-        let has_kwargs = super::module::is_kwargs_func(raw_addr as u64);
+        // Variadic / **kwargs JIT functions. The entry ABI lists every declared
+        // parameter in order, so it is f(regular_0, .., regular_{R-1},
+        // [args_list], [kwargs_dict]) — a function with leading regular params
+        // receives them as individual arguments BEFORE the packed *args list
+        // (`def full(a, b=2, *args, **kwargs)` → f(a, b, args_list, kwargs_dict)).
+        // Build that frame: regular slots (filling trailing defaults when the
+        // spread is short), *args collects the positional overflow, **kwargs is
+        // an empty dict (a positional spread carries no keywords). Then fall
+        // through to the fixed-arity dispatch.
         if has_star || has_kwargs {
-            let raw_result = {
-                let args_list = if has_star {
-                    Some(MbValue::from_ptr(MbObject::new_list(items.clone())))
+            let params = super::closure::func_params(func);
+            let r = params.as_ref()
+                .map(|ps| ps.iter().filter(|p| p.kind <= 1).count())
+                .unwrap_or(0);
+            let defaults = super::closure::closure_defaults(func);
+            let first_default = r.saturating_sub(defaults.len());
+            let mut frame: Vec<MbValue> = Vec::with_capacity(r + 2);
+            for i in 0..r {
+                if i < items.len() {
+                    frame.push(items[i]);
+                } else if i >= first_default && (i - first_default) < defaults.len() {
+                    frame.push(defaults[i - first_default]);
                 } else {
-                    None
-                };
-                let kwargs_dict = if has_kwargs {
-                    Some(MbValue::from_ptr(MbObject::new_dict()))
-                } else {
-                    None
-                };
-                unsafe {
-                    match (args_list, kwargs_dict) {
-                        (Some(al), Some(kd)) => {
-                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                std::mem::transmute(raw_addr);
-                            f(al, kd)
-                        }
-                        (Some(al), None) => {
-                            let f: extern "C" fn(MbValue) -> MbValue =
-                                std::mem::transmute(raw_addr);
-                            f(al)
-                        }
-                        (None, Some(kd)) => {
-                            let f: extern "C" fn(MbValue) -> MbValue =
-                                std::mem::transmute(raw_addr);
-                            f(kd)
-                        }
-                        (None, None) => unreachable!(),
-                    }
+                    frame.push(MbValue::none());
                 }
-            };
-            if is_boxed_ret {
-                return raw_result;
             }
-            let bits = raw_result.to_bits();
-            const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-            return if bits & NAN_PREFIX == NAN_PREFIX {
-                raw_result
-            } else {
-                mb_box_int(bits as i64)
-            };
+            if has_star {
+                let rest: Vec<MbValue> =
+                    if items.len() > r { items[r..].to_vec() } else { Vec::new() };
+                frame.push(MbValue::from_ptr(MbObject::new_list(rest)));
+            }
+            if has_kwargs {
+                frame.push(MbValue::from_ptr(MbObject::new_dict()));
+            }
+            items = frame;
         }
         // SAFETY: the function was compiled with the matching arity.
         // JIT-compiled functions use SystemV/C calling convention and may return
@@ -8242,6 +8234,97 @@ fn merge_kwargs_dicts(a: MbValue, b: MbValue) -> MbValue {
     out
 }
 
+/// Dispatch a JIT-compiled function by its exact frame arity (SystemV/C ABI),
+/// reboxing a raw-int return unless the callee is `any`/object-returning.
+/// Shared by the variadic spread + kwargs binding paths so the entry ABI
+/// `f(regular_0, .., args_list, kwargs_dict)` is honoured uniformly.
+fn dispatch_jit_frame(raw_addr: usize, items: &[MbValue], is_boxed_ret: bool) -> MbValue {
+    let raw_result: MbValue = unsafe {
+        match items.len() {
+            0 => {
+                let f: extern "C" fn() -> MbValue = std::mem::transmute(raw_addr);
+                f()
+            }
+            1 => {
+                let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(raw_addr);
+                f(items[0])
+            }
+            2 => {
+                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(raw_addr);
+                f(items[0], items[1])
+            }
+            3 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(raw_addr);
+                f(items[0], items[1], items[2])
+            }
+            4 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(raw_addr);
+                f(items[0], items[1], items[2], items[3])
+            }
+            5 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(raw_addr);
+                f(items[0], items[1], items[2], items[3], items[4])
+            }
+            6 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(items[0], items[1], items[2], items[3], items[4], items[5])
+            }
+            7 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6],
+                )
+            }
+            8 => {
+                let f: extern "C" fn(
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                    MbValue,
+                ) -> MbValue = std::mem::transmute(raw_addr);
+                f(
+                    items[0], items[1], items[2], items[3], items[4], items[5], items[6],
+                    items[7],
+                )
+            }
+            _ => MbValue::none(),
+        }
+    };
+    if is_boxed_ret {
+        return raw_result;
+    }
+    let bits = raw_result.to_bits();
+    const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
+    if bits & NAN_PREFIX == NAN_PREFIX {
+        raw_result
+    } else {
+        mb_box_int(bits as i64)
+    }
+}
+
 /// Detect `(*args, **kwargs)` presence for a callable. The addr-keyed
 /// registries (`is_variadic_func` / `is_kwargs_func`) only cover native and
 /// struct-seq targets; user JIT functions register their declared params but
@@ -8283,28 +8366,74 @@ fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -
     }
     let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
     let (has_star, has_kwargs) = detect_star_kw(func, Some(raw_addr));
-    let raw_result = unsafe {
-        if has_star && has_kwargs {
-            let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
-            f(args_list, kwargs_dict)
-        } else if has_kwargs {
-            let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(raw_addr);
-            f(kwargs_dict)
+    if !has_star && !has_kwargs {
+        // No declared variadic/kwargs slot: fall back to positional spread.
+        return mb_call_spread(func, args_list);
+    }
+    // Build the variadic entry frame: f(regular_0, .., regular_{R-1},
+    // [args_list], [kwargs_dict]). Regular params bind from positionals first,
+    // then from keyword args by name (filling defaults); positional overflow
+    // packs into *args and unmatched keywords into **kwargs. Without the regular
+    // split, `full(**{"a":1,"b":2,"k":99})` to `def full(a,b=2,*args,**kwargs)`
+    // passed the kwargs dict as `a` and read garbage for the trailing slots.
+    let pos = extract_items(args_list);
+    let kw_pairs = kwargs_dict_pairs(kwargs_dict);
+    let params = super::closure::func_params(func);
+    let regulars: Vec<super::closure::MbParamInfo> = params
+        .map(|ps| ps.into_iter().filter(|p| p.kind <= 1).collect())
+        .unwrap_or_default();
+    let mut frame: Vec<MbValue> = Vec::with_capacity(regulars.len() + 2);
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let n_pos = pos.len();
+    for (idx, p) in regulars.iter().enumerate() {
+        if idx < n_pos {
+            // Bound positionally. A keyword of the same name is a duplicate —
+            // CPython raises `f() got multiple values for argument 'name'`.
+            if kw_pairs.iter().any(|(k, _)| *k == p.name) {
+                let fname = super::closure::mb_func_get_name(func)
+                    .as_ptr()
+                    .and_then(|fp| unsafe {
+                        match &(*fp).data {
+                            ObjData::Str(ref s) => Some(s.clone()),
+                            _ => None,
+                        }
+                    })
+                    .unwrap_or_default();
+                raise_type_error(format!(
+                    "{fname}() got multiple values for argument '{}'", p.name
+                ));
+                return MbValue::none();
+            }
+            frame.push(pos[idx]);
+        } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
+            used.insert(k.clone());
+            frame.push(*v);
+        } else if p.has_default {
+            frame.push(p.default);
         } else {
-            // No declared kwargs slot: fall back to positional spread.
-            return mb_call_spread(func, args_list);
+            frame.push(MbValue::none());
         }
-    };
-    if is_boxed_ret {
-        return raw_result;
     }
-    let bits = raw_result.to_bits();
-    const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
-    if bits & NAN_PREFIX == NAN_PREFIX {
-        raw_result
-    } else {
-        mb_box_int(bits as i64)
+    if has_star {
+        let rest: Vec<MbValue> =
+            if n_pos > regulars.len() { pos[regulars.len()..].to_vec() } else { Vec::new() };
+        frame.push(MbValue::from_ptr(MbObject::new_list(rest)));
     }
+    if has_kwargs {
+        let extra = super::dict_ops::mb_dict_new();
+        for (k, v) in &kw_pairs {
+            if !used.contains(k) {
+                unsafe { super::rc::retain_if_ptr(*v); }
+                super::dict_ops::mb_dict_setitem(
+                    extra,
+                    MbValue::from_ptr(MbObject::new_str(k.clone())),
+                    *v,
+                );
+            }
+        }
+        frame.push(extra);
+    }
+    dispatch_jit_frame(raw_addr, &frame, is_boxed_ret)
 }
 
 /// Dynamic call with positional args AND keyword args kept structurally
