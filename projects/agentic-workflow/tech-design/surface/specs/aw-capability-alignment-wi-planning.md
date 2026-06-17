@@ -138,6 +138,7 @@ scenarios:
       - "draft may truncate Candidate Roots summary cells, but Draft Canonical README Promise fields preserve the full source prose"
       - "draft treats non-contract Markdown tables with a Capability column, such as Required Platform Capabilities, as pending-review candidate roots instead of emitting only a blank worksheet"
       - "draft treats Markdown bullets under explicit Features or Modules sections as pending-review candidate roots, and falls back to Implemented sections only when no clearer candidate list exists"
+      - "sweep --write-drafts emits a draft review index that separates inferred candidate review from human definition-needed worksheets"
       - "apply-draft refuses unreviewed placeholder drafts and writes only reviewed canonical capability sections"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
       - "next emits exactly one next_action"
@@ -546,6 +547,11 @@ requirements:
     text: "aw wi plan emits a capability-level review summary with candidate counts, existing WI refs, next operator, and first action before the detailed matrix"
     risk: medium
     verifymethod: test
+  draft_index_review_summary:
+    id: AW-CAP-WI-17
+    text: "aw capability sweep --write-drafts emits a review summary and suggested review order so candidate-root drafts are separated from definition-needed worksheets"
+    risk: medium
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -571,6 +577,7 @@ relations:
   - { from: issues_unit_tests, to: claim_scoped_wi_plan, kind: verifies }
   - { from: issues_unit_tests, to: wi_plan_review_summary, kind: verifies }
   - { from: capability_unit_tests, to: draft_promise_preservation, kind: verifies }
+  - { from: capability_unit_tests, to: draft_index_review_summary, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {
