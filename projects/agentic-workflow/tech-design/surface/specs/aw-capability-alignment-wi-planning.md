@@ -142,6 +142,7 @@ scenarios:
       - "apply-draft refuses unreviewed placeholder drafts and writes only reviewed canonical capability sections"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
       - "next emits exactly one next_action"
+      - "report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing instead of treating absent tracker evidence as a recreate-WI instruction"
       - "run executes at most one bounded tick unless --max-ticks raises the bound"
       - "check validates README capability format and TD capability refs without lifecycle execution"
       - "sweep emits grouped project rows by report status and next_action kind without mutating capability maps"
@@ -552,6 +553,11 @@ requirements:
     text: "aw capability sweep --write-drafts emits a review summary and suggested review order so candidate-root drafts are separated from definition-needed worksheets"
     risk: medium
     verifymethod: test
+  skip_issue_inventory_lifecycle:
+    id: AW-CAP-WI-18
+    text: "aw capability report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing while preserving tracker-backed recreate-WI protection when issue inventory is required"
+    risk: medium
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -578,6 +584,7 @@ relations:
   - { from: issues_unit_tests, to: wi_plan_review_summary, kind: verifies }
   - { from: capability_unit_tests, to: draft_promise_preservation, kind: verifies }
   - { from: capability_unit_tests, to: draft_index_review_summary, kind: verifies }
+  - { from: capability_unit_tests, to: skip_issue_inventory_lifecycle, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {
