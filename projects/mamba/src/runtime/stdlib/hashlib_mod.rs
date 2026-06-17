@@ -734,23 +734,39 @@ unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbV
     mb_hashlib_new_handle(&algo, data)
 }
 
-/// `hashlib.file_digest(fileobj, digest)` — surface stub. CPython reads the
-/// file object in chunks and feeds them into the named digest, returning the
-/// finalized hash object. The native file-object read protocol is not wired
-/// through this thunk yet, so this returns a fresh (empty) hash handle for the
-/// requested digest name — enough to satisfy the surface contract (presence +
-/// callability). Returning a real digest of file contents is a follow-up once
-/// the file-object read bridge lands.
+/// `hashlib.file_digest(fileobj, digest)` — read the file object's bytes and
+/// feed them into the digest, returning the finalized hash object. `digest` is
+/// either an algorithm name (str) or a zero-arg callable returning a fresh
+/// hasher (e.g. `lambda: hashlib.sha256()`).
 unsafe extern "C" fn dispatch_file_digest(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    // 2nd positional `digest` may be the algorithm name as a string.
-    let mut algo = String::from("sha256");
-    with_str(a.get(1).copied().unwrap_or_else(MbValue::none), |s| {
-        if !s.is_empty() {
-            algo = s.to_string();
-        }
-    });
-    mb_hashlib_new_handle(&algo, MbValue::none())
+    let fileobj = a.first().copied().unwrap_or_else(MbValue::none);
+    let digest_arg = a.get(1).copied().unwrap_or_else(MbValue::none);
+    // Read the whole file object (binary mode → bytes). On failure this is
+    // None and the digest is left empty (the prior stub behavior).
+    let data = super::super::file_io::mb_file_read(fileobj);
+
+    let is_str = digest_arg
+        .as_ptr()
+        .map(|p| matches!((*p).data, ObjData::Str(_)))
+        .unwrap_or(false);
+    if is_str {
+        let mut algo = String::from("sha256");
+        with_str(digest_arg, |s| {
+            if !s.is_empty() {
+                algo = s.to_string();
+            }
+        });
+        return mb_hashlib_new_handle(&algo, data);
+    }
+    // Callable digest: invoke with no args to obtain a fresh hasher, then feed
+    // the file contents into it.
+    let empty = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    let handle = super::super::builtins::mb_call_spread(digest_arg, empty);
+    if !data.is_none() {
+        mb_hashlib_update(handle, data);
+    }
+    handle
 }
 
 // ── PBKDF2-HMAC (RFC 8018) ────────────────────────────────────────────────
