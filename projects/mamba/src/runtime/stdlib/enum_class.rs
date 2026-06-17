@@ -367,7 +367,7 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
         return None;
     }
 
-    ENUM_CLASSES.with(|m| {
+    let (result, new_member_val) = ENUM_CLASSES.with(|m| {
         let mut map = m.borrow_mut();
         let info = map.entry(class_name.to_string()).or_insert_with(|| {
             HAVE_ENUM_CLASSES.with(|c| c.set(true));
@@ -423,7 +423,7 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
             unsafe { super::super::rc::retain_if_ptr(m) }; // by_name slot
             info.by_name.push((attr.to_string(), m));
             unsafe { super::super::rc::retain_if_ptr(m) }; // returned reference
-            return Some(m);
+            return (Some(m), None);
         }
 
         let member = new_member(class_name, attr, resolved);
@@ -444,8 +444,41 @@ pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) ->
         }
         unsafe { super::super::rc::retain_if_ptr(member) };
         info.by_name.push((attr.to_string(), member));
-        Some(member)
-    })
+        (Some(member), Some(member))
+    });
+
+    // A newly-created member whose enum class defines a custom `__init__` is
+    // initialised CPython-style: `member.__init__(*value)` when the value is a
+    // tuple (`EARTH = (mass, radius)` → `__init__(self, mass, radius)`), else
+    // `member.__init__(value)`. The ENUM_CLASSES borrow is released before this
+    // call so `__init__` may re-enter enum machinery freely. Aliases reuse an
+    // already-initialised member and are skipped.
+    if let Some(member) = new_member_val {
+        let init = super::super::class::lookup_method(class_name, "__init__");
+        if !init.is_none() {
+            // Build `*value` (tuple → unpacked, else the single value). The temp
+            // args list holds borrowed element refs and is GC-tracked, matching
+            // the runtime's dunder-dispatch convention (no manual retain/release).
+            let mut call_args: Vec<MbValue> = Vec::new();
+            if let Some(p) = value.as_ptr() {
+                unsafe {
+                    if let ObjData::Tuple(ref items) = (*p).data {
+                        call_args.extend(items.iter().copied());
+                    } else {
+                        call_args.push(value);
+                    }
+                }
+            } else {
+                call_args.push(value);
+            }
+            let args_list = MbValue::from_ptr(MbObject::new_list(call_args));
+            let name_val =
+                MbValue::from_ptr(MbObject::new_str("__init__".to_string()));
+            super::super::class::mb_call_method(member, name_val, args_list);
+        }
+    }
+
+    result
 }
 
 /// True when `name` is a converted class-body enum class.
