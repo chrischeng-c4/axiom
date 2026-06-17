@@ -2905,6 +2905,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 return super::builtins::mb_type(obj);
             }
         }
+        // EnumClass._member_type_: the mixed-in data type (int / str / object).
+        if attr_name == "_member_type_" {
+            if let Some(cn) = resolve_class_name(obj) {
+                if let Some(mt) = super::stdlib::enum_class::member_type_name(&cn) {
+                    return make_type_object(mt);
+                }
+            }
+        }
     }
     // Unbound-method wrappers (Cls.method): function attributes set by
     // decorators (@typing.override → __override__) live in the FUNC_ATTRS
