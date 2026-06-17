@@ -4301,6 +4301,7 @@ fn choose_next_action(
                         active_issue,
                         td_spec_path,
                         td_review_status,
+                        include_issue_inventory,
                         "active WI exists; continue WI -> TD -> CB lifecycle",
                     ),
                     _ => (
@@ -4924,6 +4925,7 @@ fn lifecycle_action_for_work_item(
     evidence: Option<&CapabilityWiEvidence>,
     td_spec_path: Option<&str>,
     td_review_status: Option<&str>,
+    require_issue_inventory: bool,
     default_reason: &str,
 ) -> (CapabilityActionKind, String, String) {
     if let Some(command) = evidence
@@ -4938,7 +4940,7 @@ fn lifecycle_action_for_work_item(
         );
     }
 
-    if lifecycle_issue_evidence_unresolved(evidence) {
+    if require_issue_inventory && lifecycle_issue_evidence_unresolved(evidence) {
         return (
             CapabilityActionKind::CreateWi,
             format!("aw wi plan --project {}", report.project),
@@ -5079,6 +5081,7 @@ fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> 
                 Some(evidence),
                 td_ref.map(|td_ref| td_ref.spec_path.as_str()),
                 td_ref.and_then(|td_ref| td_ref.review_status.as_deref()),
+                true,
                 "bounded child WI exists; continue WI -> TD -> CB lifecycle",
             );
             return Some(CapabilityAction {
@@ -12751,6 +12754,7 @@ capability_refs:
             Some(&evidence),
             Some("projects/agentic-workflow/tech-design/logic/manual.md"),
             None,
+            true,
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
@@ -12781,6 +12785,7 @@ capability_refs:
             Some(&evidence),
             Some("projects/agentic-workflow/tech-design/logic/manual.md"),
             Some("approved"),
+            true,
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
@@ -12802,6 +12807,7 @@ capability_refs:
             None,
             Some("projects/agentic-workflow/tech-design/logic/manual.md"),
             Some("approved"),
+            true,
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
@@ -12829,12 +12835,47 @@ capability_refs:
             Some(&evidence),
             Some(".aw/tech-design/projects/jet/specs/3783.md"),
             Some("approved"),
+            true,
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
         assert_eq!(kind, CapabilityActionKind::CreateWi);
         assert_eq!(command, "aw wi plan --project jet");
         assert!(reason.contains("before TD/CB lifecycle"));
+    }
+
+    #[test]
+    fn lifecycle_action_uses_readme_wi_when_issue_inventory_is_skipped() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let evidence = CapabilityWiEvidence {
+            reference: "#3783".to_string(),
+            gap_id: "wasm-multi-target-readiness".to_string(),
+            issue_type: "unknown".to_string(),
+            state: "unknown".to_string(),
+            phase: None,
+            expected_command: None,
+            title: String::new(),
+        };
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "3783",
+            Some(&evidence),
+            Some(".aw/tech-design/projects/jet/specs/3783.md"),
+            Some("approved"),
+            false,
+            "active WI exists; continue WI -> TD -> CB lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::RunCb);
+        assert_eq!(
+            command,
+            "aw cb gen 3783 --spec-path '.aw/tech-design/projects/jet/specs/3783.md'"
+        );
+        assert_eq!(
+            reason,
+            "active WI has approved TD evidence; continue CB generation"
+        );
     }
 }
 // CODEGEN-END
