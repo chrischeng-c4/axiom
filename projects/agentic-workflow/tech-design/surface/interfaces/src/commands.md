@@ -71,7 +71,6 @@ pub enum Commands {
     Health(project::ProjectHealthArgs),
 
     /// Product capability completion loop: report/next/run/check.
-    #[command(alias = "caps")]
     Capability(capability::CapabilityArgs),
 
     /// Generator gap request surface after takeover readiness.
