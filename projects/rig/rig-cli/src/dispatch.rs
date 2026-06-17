@@ -38,14 +38,12 @@ pub struct OutputOpts {
 pub enum Verb {
     /// Discover, lint, execute scenarios; gate pins; print ONE report.
     Run(RunArgs),
+    /// Lifecycle-case launcher: discover `[case]` TOMLs, run prepare/exercise(N)/clean, fold ONE report.
+    Test(TestArgs),
     /// Validate scenario record contracts only (path==record, key presence) — no execution.
     Lint(LintArgs),
     /// Re-project the persisted `.rig/last-report.json` (read-only).
     Report,
-    /// Offline self-describer (report schema + step-type catalog). v1.
-    Spec,
-    /// Offline agent playbook. v1.
-    Llm,
 }
 
 #[derive(Args, Debug, Default)]
@@ -71,9 +69,32 @@ pub struct RunArgs {
 #[derive(Args, Debug, Default)]
 /// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub struct LintArgs {
-    /// Directory to lint (defaults to the current directory).
-    #[arg(long, default_value = ".")]
-    pub dir: String,
+    /// Override the case directory (default: rig.toml `testpaths`).
+    #[arg(long)]
+    pub dir: Option<String>,
+}
+
+/// `rig test` flags — the lifecycle-case launcher.
+#[derive(Args, Debug, Default)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
+pub struct TestArgs {
+    /// Dimension to run (positional); omit to run every case from rig.toml `testpaths`.
+    pub dimension: Option<String>,
+    /// Run only the case(s) with this `[case].id` (repeatable).
+    #[arg(long)]
+    pub case: Vec<String>,
+    /// List the selected cases without executing them.
+    #[arg(long)]
+    pub collect: bool,
+    /// Record measured load metrics as new baselines instead of gating.
+    #[arg(long)]
+    pub update_baselines: bool,
+    /// Override the case directory (default: rig.toml `testpaths`).
+    #[arg(long)]
+    pub dir: Option<String>,
+    // Schedule (qps/workers/duration), pins, and testpaths live in rig.toml —
+    // rig is agent-first, the common path is a bare `rig test`. rig also never
+    // drives vat (vat -> rig: a vat runner's cmd is `rig test ...`).
 }
 
 /// Execute a parsed command and return the report to print.
@@ -81,10 +102,9 @@ pub struct LintArgs {
 pub fn execute(cmd: RigCommand) -> RigReport {
     match cmd.verb {
         Verb::Run(args) => run_run(args),
+        Verb::Test(args) => run_test(args),
         Verb::Lint(args) => run_lint(args),
         Verb::Report => run_report(),
-        Verb::Spec => stub_report("spec", "rig spec is not implemented yet (v1)"),
-        Verb::Llm => stub_report("llm", "rig llm is not implemented yet (v1)"),
     }
 }
 
@@ -92,6 +112,12 @@ fn run_run(args: RunArgs) -> RigReport {
     use rig::report::{finding_id, Finding, Invoke, Kind, Severity};
     use rig::scenario::{ExpectedOutcome, ScenarioKind};
     use rig::verdict::{bucket, Verdict};
+
+    // DEPRECATED: the flat `[record]/[[steps]]/[load]` scenario path. Prefer
+    // `rig test` with `[case]/[prepare]/[exercise]/[clean]` lifecycle cases.
+    eprintln!(
+        "warning: `rig run --dir` (flat scenarios) is deprecated; migrate to `rig test` with lifecycle cases."
+    );
 
     let target = args
         .scenario
@@ -337,6 +363,265 @@ fn run_run(args: RunArgs) -> RigReport {
     report
 }
 
+/// `rig test` — the lifecycle-case launcher. Discover `[case]` TOMLs under
+/// `--dir`, filter by `--dimension`/`--case`, run each case's prepare/exercise/
+/// clean (verdict for `n=1`, folded stats + pin gate for `n>1`), and emit ONE
+/// `rig.report/1`. `--collect` lists the selection without executing.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
+fn run_test(args: TestArgs) -> RigReport {
+    use rig::engine::case::{run_case, CaseResult, Mode};
+    use rig::engine::loadgen::Schedule;
+    use rig::report::{finding_id, Finding, Invoke, Kind, Severity};
+    use rig::scenario::{parse_case, ExpectedOutcome};
+    use rig::verdict::Verdict;
+
+    // Agent-first: testpaths / pins / schedule come from rig.toml; `--dir`
+    // is an optional override of the case directory.
+    let config = rig::config::Config::load_from(std::path::Path::new("."));
+    let dirs = match &args.dir {
+        Some(d) => vec![d.clone()],
+        None => config.case_dirs("."),
+    };
+    let target = dirs.join(", ");
+    let mut b = ReportBuilder::new("test", &target);
+    b.add_criterion("every required case verdict passes");
+    b.add_criterion("every load pin holds");
+
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for dir in &dirs {
+        if let Err(e) = collect_case_files(std::path::Path::new(dir), &mut files) {
+            b.tool_error(5, format!("could not walk `{dir}`: {e}"));
+            return b.finalize();
+        }
+    }
+    files.sort();
+
+    // Parse + filter the selection.
+    let mut selected = Vec::new();
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if !text.contains("[case]") {
+            continue; // not a lifecycle case file
+        }
+        let rel = path.display().to_string();
+        match parse_case(&path, &text) {
+            Ok(c) => {
+                if args
+                    .dimension
+                    .as_ref()
+                    .is_some_and(|d| &c.record.dimension != d)
+                {
+                    continue;
+                }
+                if !args.case.is_empty() && !args.case.contains(&c.record.id) {
+                    continue;
+                }
+                selected.push((rel, c));
+            }
+            Err(violations) => {
+                for v in violations {
+                    b.add_finding(Finding {
+                        id: finding_id(Kind::LintError, &rel),
+                        severity: Severity::High,
+                        kind: Kind::LintError,
+                        title: format!("lint: {rel}"),
+                        detail: v.message,
+                        remediation: "Fix the case so it parses and path==record.".into(),
+                        invoke: Invoke::command("rig test".to_string()),
+                        evidence: serde_json::json!({ "path": rel }),
+                    });
+                }
+                b.scenarios_mut().red += 1;
+            }
+        }
+    }
+
+    if args.collect {
+        for (rel, c) in &selected {
+            b.add_criterion(format!("selected {} <- {}", c.case_id(), rel));
+        }
+        return b.finalize();
+    }
+    if selected.is_empty() {
+        b.tool_error(3, format!("no lifecycle cases selected under `{target}`"));
+        return b.finalize();
+    }
+
+    let pins = match &config.pins {
+        Some(dir) => rig::pins::load_pins(std::path::Path::new(dir)).unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let mut baselines = rig::pins::BaselineStore::load(std::path::Path::new("."));
+    let mut baselines_dirty = false;
+
+    for (_rel, case) in selected {
+        if case.record.expected == ExpectedOutcome::Skip {
+            b.scenarios_mut().skip += 1;
+            continue;
+        }
+        let mode = if case.is_load() {
+            Mode::Load(Schedule {
+                target_qps: config.load.qps,
+                workers: config.load.workers,
+                duration_secs: config.load.duration_secs,
+                warmup_secs: 2,
+            })
+        } else {
+            Mode::Behavior
+        };
+
+        match run_case(&case, mode) {
+            CaseResult::Verdict {
+                verdict,
+                findings,
+                case_id,
+                ..
+            } => match verdict {
+                Verdict::Pass => b.scenarios_mut().pass += 1,
+                Verdict::Red => {
+                    b.scenarios_mut().red += 1;
+                    if case.record.required {
+                        b.add_findings(findings);
+                    } else {
+                        b.add_findings(findings.into_iter().map(|mut f| {
+                            f.severity = Severity::Info;
+                            f.detail = format!("[optional case — does not gate] {}", f.detail);
+                            f
+                        }));
+                    }
+                }
+                Verdict::Xfail => {
+                    b.scenarios_mut().xfail += 1;
+                    b.add_findings(findings.into_iter().map(|mut f| {
+                        f.severity = Severity::Info;
+                        f.detail = format!("[xfail — known gap] {}", f.detail);
+                        f
+                    }));
+                }
+                Verdict::Xpass => {
+                    b.scenarios_mut().xpass += 1;
+                    b.add_finding(Finding {
+                        id: finding_id(Kind::ScenarioError, &format!("xpass/{case_id}")),
+                        severity: Severity::Info,
+                        kind: Kind::ScenarioError,
+                        title: format!("`{case_id}` passed but is marked xfail"),
+                        detail: "Graduate it: set expected = \"pass\" in the case.".into(),
+                        remediation: "Flip the case's expected to pass.".into(),
+                        invoke: Invoke::command(format!("rig test --case {}", case.record.id)),
+                        evidence: serde_json::json!({ "case": case_id }),
+                    });
+                }
+                Verdict::Skip => b.scenarios_mut().skip += 1,
+            },
+            CaseResult::Stats {
+                case_id,
+                metric,
+                stats,
+                findings,
+                ..
+            } => {
+                b.add_findings(findings);
+                if let Some(abort) = &stats.abort {
+                    b.add_finding(Finding {
+                        id: finding_id(Kind::ScenarioError, &format!("load/{case_id}")),
+                        severity: Severity::High,
+                        kind: Kind::ScenarioError,
+                        title: format!("load case `{case_id}` aborted"),
+                        detail: abort.clone(),
+                        remediation: "Ensure the target is reachable before the load window."
+                            .into(),
+                        invoke: Invoke::command(format!("rig test --case {}", case.record.id)),
+                        evidence: serde_json::json!({ "abort": abort }),
+                    });
+                    b.scenarios_mut().red += 1;
+                    continue;
+                }
+                let matching: Vec<_> = pins.iter().filter(|p| p.matches(&case_id)).collect();
+                if matching.is_empty() {
+                    if let Some(value) = stats.get(&metric) {
+                        b.add_criterion(format!("{case_id} measured {metric}={value:.2} (no pin)"));
+                    }
+                    b.scenarios_mut().pass += 1;
+                    continue;
+                }
+                let mut breached = false;
+                for pin in matching {
+                    let Some(value) = stats.get(&pin.metric) else {
+                        continue;
+                    };
+                    if args.update_baselines {
+                        baselines.record(&case_id, &pin.metric, value);
+                        baselines_dirty = true;
+                        continue;
+                    }
+                    match rig::pins::gate(pin, &case_id, value, &baselines) {
+                        rig::pins::GateOutcome::Pass
+                        | rig::pins::GateOutcome::NoBaseline { .. } => {}
+                        other => {
+                            breached = true;
+                            b.add_finding(Finding {
+                                id: finding_id(
+                                    Kind::PinRegression,
+                                    &format!("{case_id}/{}", pin.metric),
+                                ),
+                                severity: Severity::High,
+                                kind: Kind::PinRegression,
+                                title: format!("pin `{}` breached for `{case_id}`", pin.metric),
+                                detail: format!("{other:?}"),
+                                remediation: "Investigate the regression or re-baseline with --update-baselines.".into(),
+                                invoke: Invoke::command(format!("rig test --case {}", case.record.id)),
+                                evidence: serde_json::json!({ "metric": pin.metric, "value": value }),
+                            });
+                        }
+                    }
+                }
+                if breached {
+                    b.scenarios_mut().red += 1;
+                } else {
+                    b.scenarios_mut().pass += 1;
+                }
+            }
+        }
+    }
+
+    if baselines_dirty {
+        if let Err(e) = baselines.save() {
+            b.add_missing(format!("baseline store not saved: {e}"));
+        }
+    }
+    let report = b.finalize();
+    rig::report::persist(&report, std::path::Path::new("."));
+    report
+}
+
+/// Recursively collect `*.toml` files under `root`, skipping `config/` (pins
+/// live there) and dot-dirs.
+fn collect_case_files(
+    root: &std::path::Path,
+    out: &mut Vec<std::path::PathBuf>,
+) -> std::io::Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            if name == "config" || name.starts_with('.') {
+                continue;
+            }
+            collect_case_files(&path, out)?;
+        } else if path.extension().is_some_and(|e| e == "toml") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
 /// `--vat`: resolve the [vat].runner set of the discovered scenarios, run
 /// each runner once through `vat run` (vat owns services/workspace; the
 /// runner's cmd re-invokes rig inside the COW clone), and fold every inner
@@ -511,28 +796,39 @@ fn run_load_scenario(scenario: &rig::scenario::Scenario, rel: &str) -> rig::engi
 fn run_lint(args: LintArgs) -> RigReport {
     use rig::report::{finding_id, Finding, Invoke, Kind, Severity};
 
-    let mut b = ReportBuilder::new("lint", &args.dir);
-    b.add_criterion("every scenario record matches its path and schema");
+    // Agent-first: lint the lifecycle cases under rig.toml `testpaths`; `--dir`
+    // overrides.
+    let config = rig::config::Config::load_from(std::path::Path::new("."));
+    let dirs = match &args.dir {
+        Some(d) => vec![d.clone()],
+        None => config.case_dirs("."),
+    };
+    let target = dirs.join(", ");
+    let mut b = ReportBuilder::new("lint", &target);
+    b.add_criterion("every case record matches its path and schema");
 
-    let root = std::path::Path::new(&args.dir);
-    let discovered = match rig::discovery::discover(root) {
-        Ok(d) => d,
-        Err(e) => {
-            b.tool_error(5, format!("could not walk `{}`: {e}", args.dir));
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for dir in &dirs {
+        if let Err(e) = collect_case_files(std::path::Path::new(dir), &mut files) {
+            b.tool_error(5, format!("could not walk `{dir}`: {e}"));
             return b.finalize();
         }
-    };
-    if discovered.is_empty() {
-        b.tool_error(3, format!("no scenario .toml files under `{}`", args.dir));
+    }
+    files.sort();
+    if files.is_empty() {
+        b.tool_error(3, format!("no case .toml files under `{target}`"));
         return b.finalize();
     }
-    let total = discovered.len();
+    let total = files.len();
     let mut clean = 0usize;
-    for d in discovered {
-        match d.result {
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let rel = path.display().to_string();
+        match rig::scenario::parse_case(&path, &text) {
             Ok(_) => clean += 1,
             Err(violations) => {
-                let rel = d.path.display().to_string();
                 for v in violations {
                     b.add_finding(Finding {
                         id: finding_id(Kind::LintError, &rel),
@@ -540,8 +836,8 @@ fn run_lint(args: LintArgs) -> RigReport {
                         kind: Kind::LintError,
                         title: format!("lint: {rel}"),
                         detail: v.message.clone(),
-                        remediation: "Fix the scenario record so path == record (dimension = parent dir, case = file stem) and the schema validates, then re-lint.".into(),
-                        invoke: Invoke::command(format!("rig lint --dir {}", args.dir)),
+                        remediation: "Fix the case so path == record (dimension = parent dir, id = file stem) and the schema validates, then re-lint.".into(),
+                        invoke: Invoke::command("rig lint".to_string()),
                         evidence: serde_json::json!({ "path": rel, "violation": v.message }),
                     });
                 }
@@ -549,8 +845,7 @@ fn run_lint(args: LintArgs) -> RigReport {
         }
     }
     b.agent_prompt(format!(
-        "rig lint checked {total} scenario file(s) under `{}`: {clean} clean.",
-        args.dir
+        "rig lint checked {total} case file(s) under `{target}`: {clean} clean."
     ));
     b.finalize()
 }
@@ -575,12 +870,6 @@ fn run_report() -> RigReport {
             b.finalize()
         }
     }
-}
-
-fn stub_report(verb: &str, msg: &str) -> RigReport {
-    let mut b = ReportBuilder::new(verb, ".");
-    b.tool_error(3, msg);
-    b.finalize()
 }
 
 /// Print the report as the single stdout document and return its exit code.
@@ -655,6 +944,64 @@ mod tests {
             "scenarios",
         ]);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn parses_test_verb_with_filters() {
+        let cmd = RigCommand::parse_from([
+            "rig",
+            "test",
+            "load",
+            "--dir",
+            "cases",
+            "--case",
+            "search_qps",
+        ]);
+        match cmd.verb {
+            Verb::Test(a) => {
+                assert_eq!(a.dimension.as_deref(), Some("load"));
+                assert_eq!(a.dir.as_deref(), Some("cases"));
+                assert_eq!(a.case, vec!["search_qps".to_string()]);
+            }
+            _ => panic!("expected test"),
+        }
+    }
+
+    #[test]
+    fn test_collect_lists_the_selected_case() {
+        let tmp = std::env::temp_dir().join(format!("rig-cases-collect-{}", std::process::id()));
+        let dir = tmp.join("api");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("search_basic.toml"),
+            "[case]\nid = \"search_basic\"\nsuite = \"lumen\"\ndimension = \"api\"\nsubject = \"search returns a hit\"\nexpected = \"pass\"\n[exercise]\n[exercise.request]\nmethod = \"GET\"\nurl = \"http://127.0.0.1:1/x\"\n[exercise.request.expect]\nstatus = 200\n",
+        )
+        .unwrap();
+        let r = run_test(TestArgs {
+            dir: Some(tmp.display().to_string()),
+            collect: true,
+            ..Default::default()
+        });
+        assert_eq!(r.exit_code, 0);
+        assert!(r
+            .completion
+            .criteria
+            .iter()
+            .any(|c| c.contains("lumen/api/search_basic")));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_on_empty_dir_is_usage_error() {
+        let tmp = std::env::temp_dir().join(format!("rig-test-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let r = run_test(TestArgs {
+            dir: Some(tmp.display().to_string()),
+            ..Default::default()
+        });
+        assert_eq!(r.exit_code, 3);
+        assert_eq!(r.schema_version, rig::report::SCHEMA_VERSION);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 // CODEGEN-END

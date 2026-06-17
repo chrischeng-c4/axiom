@@ -1,6 +1,6 @@
 ---
 id: projects-meter-scripts-ts-harness-js
-fill_sections: [overview, source, changes]
+fill_sections: [overview, text-source-unit, changes]
 capability_refs:
   - id: agent-use-first-cli
     role: primary
@@ -35,7 +35,7 @@ Public API manifest for `projects/meter/scripts/ts_harness.js` generated from AS
 | `v8` | projects/meter/scripts/ts_harness.js | constant | pub | 18 |  |
 | `{ glob }` | projects/meter/scripts/ts_harness.js | constant | pub | 17 |  |
 ## Source
-<!-- type: rust-source-unit lang: javascript -->
+<!-- type: text-source-unit lang: javascript -->
 
 ````javascript
 #!/usr/bin/env node
@@ -198,8 +198,8 @@ main().catch(error => {
 changes:
   - path: projects/meter/scripts/ts_harness.js
     action: modify
-    section: rust-source-unit
+    section: text-source-unit
     impl_mode: codegen
     description: |
-      Source template for `projects/meter/scripts/ts_harness.js` captured during meter full-codegen standardization.
+      Lossless text-source-unit for `projects/meter/scripts/ts_harness.js` captured during meter full-codegen standardization.
 ```

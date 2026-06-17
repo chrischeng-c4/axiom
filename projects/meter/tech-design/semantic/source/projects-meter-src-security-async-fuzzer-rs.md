@@ -21,20 +21,19 @@ Public API manifest for `projects/meter/src/security/async_fuzzer.rs` generated 
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `AsyncFuzzConfig` | projects/meter/src/security/async_fuzzer.rs | struct | pub | 20 |  |
-| `AsyncFuzzer` | projects/meter/src/security/async_fuzzer.rs | struct | pub | 95 |  |
-| `add_corpus` | projects/meter/src/security/async_fuzzer.rs | function | pub | 110 | add_corpus(&mut self, input: impl Into<String>) |
-| `fuzz_async` | projects/meter/src/security/async_fuzzer.rs | function | pub | 118 | fuzz_async(&mut self, target: F) -> FuzzResult |
-| `fuzz_http_endpoint` | projects/meter/src/security/async_fuzzer.rs | function | pub | 279 | fuzz_http_endpoint(&mut self, url: &str, method: &str) -> FuzzResult |
-| `fuzz_parallel` | projects/meter/src/security/async_fuzzer.rs | function | pub | 181 | fuzz_parallel(&mut self, target: F) -> FuzzResult |
-| `new` | projects/meter/src/security/async_fuzzer.rs | function | pub | 38 | new() -> Self |
-| `new` | projects/meter/src/security/async_fuzzer.rs | function | pub | 103 | new(config: AsyncFuzzConfig) -> Self |
-| `with_concurrent_mutations` | projects/meter/src/security/async_fuzzer.rs | function | pub | 80 | with_concurrent_mutations(mut self, concurrency: usize) -> Self |
-| `with_corpus` | projects/meter/src/security/async_fuzzer.rs | function | pub | 50 | with_corpus(mut self, corpus: Vec<String>) -> Self |
-| `with_iterations` | projects/meter/src/security/async_fuzzer.rs | function | pub | 56 | with_iterations(mut self, iterations: u32) -> Self |
-| `with_mutation_rate` | projects/meter/src/security/async_fuzzer.rs | function | pub | 68 | with_mutation_rate(mut self, rate: f32) -> Self |
-| `with_seed` | projects/meter/src/security/async_fuzzer.rs | function | pub | 62 | with_seed(mut self, seed: u64) -> Self |
-| `with_timeout_ms` | projects/meter/src/security/async_fuzzer.rs | function | pub | 74 | with_timeout_ms(mut self, timeout: u64) -> Self |
+| `AsyncFuzzConfig` | projects/meter/src/security/async_fuzzer.rs | struct | pub | 19 |  |
+| `AsyncFuzzer` | projects/meter/src/security/async_fuzzer.rs | struct | pub | 94 |  |
+| `add_corpus` | projects/meter/src/security/async_fuzzer.rs | function | pub | 109 | add_corpus(&mut self, input: impl Into<String>) |
+| `fuzz_async` | projects/meter/src/security/async_fuzzer.rs | function | pub | 117 | fuzz_async(&mut self, target: F) -> FuzzResult |
+| `fuzz_parallel` | projects/meter/src/security/async_fuzzer.rs | function | pub | 180 | fuzz_parallel(&mut self, target: F) -> FuzzResult |
+| `new` | projects/meter/src/security/async_fuzzer.rs | function | pub | 37 | new() -> Self |
+| `new` | projects/meter/src/security/async_fuzzer.rs | function | pub | 102 | new(config: AsyncFuzzConfig) -> Self |
+| `with_concurrent_mutations` | projects/meter/src/security/async_fuzzer.rs | function | pub | 79 | with_concurrent_mutations(mut self, concurrency: usize) -> Self |
+| `with_corpus` | projects/meter/src/security/async_fuzzer.rs | function | pub | 49 | with_corpus(mut self, corpus: Vec<String>) -> Self |
+| `with_iterations` | projects/meter/src/security/async_fuzzer.rs | function | pub | 55 | with_iterations(mut self, iterations: u32) -> Self |
+| `with_mutation_rate` | projects/meter/src/security/async_fuzzer.rs | function | pub | 67 | with_mutation_rate(mut self, rate: f32) -> Self |
+| `with_seed` | projects/meter/src/security/async_fuzzer.rs | function | pub | 61 | with_seed(mut self, seed: u64) -> Self |
+| `with_timeout_ms` | projects/meter/src/security/async_fuzzer.rs | function | pub | 73 | with_timeout_ms(mut self, timeout: u64) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

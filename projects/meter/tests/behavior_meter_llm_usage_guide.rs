@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec meter-llm-usage-guide
 // @capability agent-use-first-cli
+// @claim llm-usage-guide
 // @contract llm-usage-guide
 // @category behavior
+// @required_for_production true
 // @command cargo run -p meter-cli --bin meter -- llm guide
 // AW-EC-END
 

@@ -58,7 +58,7 @@ AW uses short agent-facing command names for the main lifecycle:
 The canonical flow for greenfield projects is:
 
 ```text
-aw caps -> aw ec -> aw ec gen -> aw td -> aw cb -> aw hc
+aw caps -> aw ec draft/fill -> aw ec gen -> aw td -> aw cb -> aw hc
 ```
 
 Greenfield starts by defining capabilities and required external contracts. EC
@@ -85,7 +85,8 @@ checks those typed edges, EC command results, and existing artifact health; it
 does not infer semantic coverage from prose. Production-required EC cases may
 not remain `unmapped`.
 
-EC source of truth lives under `projects/<name>/external-contracts/`:
+EC source of truth lives under `projects/<name>/external-contracts/` as
+markdown, using the same section authoring pattern as TD:
 
 ```text
 external-contracts/
@@ -95,9 +96,13 @@ external-contracts/
   stability/
 ```
 
-`aw ec gen --project <name>` reads those contracts and generates project-local
-tests plus integrated tool configuration for `rig`, `meter`, `arena`, `guard`,
-and `vat`. Legacy TD `e2e-test` and `tool-contract` sections remain a
+Use `aw ec draft --project <name> <id>` to create an EC markdown skeleton and
+`aw ec fill --project <name> <path> --section <type> --body-file <file>` to fill
+typed sections such as `e2e-test` and `tool-contract`. `aw ec gen --project
+<name>` reads `external-contracts/**/*.md` and generates project-local tests
+and integrated tool configuration for `rig`, `meter`, `arena`, `guard`, and
+`vat`. It does not write generated state into `aw.toml`; `aw.toml` remains the
+project root config. Legacy TD `e2e-test` and `tool-contract` sections remain a
 compatibility import source only when `external-contracts/` has no contracts.
 
 TD section types and EC contracts are artifact-producing inputs. A typed TD
@@ -208,7 +213,7 @@ belong in README capability text or ordinary docs, not in TD/EC typed sections.
 | ID | project-local-td-and-ec-gates |
 | Root WI | - |
 | Status | verified |
-| Promise | AW-managed projects keep their README, external contracts, tech designs, source, tests, and generated tool configs under the project tree by default: `td_path` is only an override, and EC contracts otherwise use `<project.path>/external-contracts`. |
+| Promise | AW-managed projects keep their README, external contracts, tech designs, source, tests, and generated tool configs under the project tree by default: `td_path` is only an override, EC contracts live under `<project.path>/external-contracts`, and generated EC state does not mutate `aw.toml`. |
 | Required Verification | smoke |
 | Gate Inventory | `cargo test -p agentic-workflow --lib`; `cargo test -p agentic-workflow ec_doc`; `aw td check projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md`; `aw td check projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md` |
 
@@ -219,7 +224,7 @@ belong in README capability text or ordinary docs, not in TD/EC typed sections.
 | CB generation and standardize scan defaults | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | Project dirty-scope protection | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | EC evidence documentation | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow ec_doc` |
-| EC external-contract source | change | #13 | implemented | verified | smoke | `aw ec gen` reads external-contracts/{behavior,efficiency,security,stability} and generates tests plus rig/meter/arena/guard/vat tool configs |
+| EC external-contract source | change | #13 | implemented | verified | smoke | `aw ec draft/fill` authors `external-contracts/{behavior,efficiency,security,stability}` markdown; `aw ec gen` generates tests plus rig/meter/arena/guard/vat tool configs without writing `aw.toml` |
 
 ## Manual Evidence Artifacts
 

@@ -16,8 +16,8 @@
 ## Agent Workflow
 
 - Continue: `aw run --project arena`.
-- Next managed step: `aw standardize managed next arena`.
-- Readiness: `aw health arena`.
+- Next managed step: `aw standardize managed next --project arena`.
+- Readiness: `aw health --project arena`.
 
 ## Commands
 

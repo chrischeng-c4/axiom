@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-backup_sink-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Pluggable destination for periodic backups.
 //!
@@ -26,6 +26,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Result};
 
 /// A backup destination.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-backup_sink-rs.md#source
 pub trait BackupSink: Send + Sync + 'static {
     /// Upload the snapshot bytes under a key derived from `timestamp`.
     /// Sinks may add a prefix / namespace; returns the key used.
@@ -42,14 +43,14 @@ pub trait BackupSink: Send + Sync + 'static {
 
 /// Local-filesystem sink. Useful for dev, integration tests, and the
 /// PVC-backed durable-store cohort that doesn't want a cloud dependency.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-backup_sink-rs.md#source
 pub struct LocalFsSink {
     pub root: PathBuf,
     pub prefix: String,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-backup_sink-rs.md#source
 impl LocalFsSink {
     pub fn new(root: impl Into<PathBuf>, prefix: impl Into<String>) -> Result<Self> {
         let root = root.into();
@@ -62,7 +63,7 @@ impl LocalFsSink {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-backup_sink-rs.md#source
 impl BackupSink for LocalFsSink {
     fn put(&self, timestamp: SystemTime, payload: &[u8]) -> Result<String> {
         let ts = timestamp

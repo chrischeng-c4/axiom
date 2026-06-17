@@ -1,6 +1,13 @@
 ---
 id: projects-vat-tests-vat_concurrent_runners-rs
 fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: partial
+    rationale: "The concurrent runner test verifies that multiple configured vat runners execute in one workspace and fold into one agent-readable result."
 ---
 
 # Standardized projects/vat/tests/vat_concurrent_runners.rs

@@ -1,7 +1,8 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-bin.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! `lumen` — the unified CLI. Today it has one subcommand, `serve`,
-//! which runs a serving node.
+//! `lumen` — the single agent-first CLI: `serve` (serving node), `spec` /
+//! `llm` (offline integration contract + agent topics), and `k8s` (operator
+//! + CRD generation). Agents start here: `lumen llm outline`.
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
@@ -47,22 +48,46 @@ enum Command {
     /// Run a serving node (HTTP API + background apply loop).
     Serve(ServeArgs),
     /// Print lumen's machine-readable integration spec — offline, no server.
-    /// Default: the OpenAPI 3 document; `--format json-schema` for the data
-    /// types; `--shapes` for the query-shape cookbook; `--fields` for the
-    /// field-type / analyzer catalog.
+    /// Default: the OpenAPI 3 JSON document; `--format openapi-yaml` for
+    /// LLM-readable OpenAPI YAML; `--format json-schema` for the data types;
+    /// `--shapes` for the query-shape cookbook; `--fields` for the field-type /
+    /// analyzer catalog.
     Spec(SpecArgs),
-    /// Print the agent integration playbook — offline, no server. `guide` (how
-    /// to wire lumen in: mental model + declare→ingest→search→hydrate + flavor
-    /// guide + non-goals), `quickstart` (copy-paste end-to-end), or `recipes`
-    /// (task → ready-to-POST query bodies). Markdown by default; `--format json`
-    /// for a machine-readable form.
+    /// Print agent-facing LLM topics — offline, no server. `outline` maps the
+    /// available topics; `workflow` covers mental model +
+    /// declare→ingest→search→hydrate; `integration` covers Postgres/AlloyDB
+    /// adapter boundaries; `quickstart` is copy-paste end-to-end; `recipes`
+    /// are task → ready-to-POST query bodies. Markdown by default; `--format
+    /// json` for a machine-readable form.
     Llm(LlmArgs),
+    /// Kubernetes operator + CRD generation. `operator` runs the Lumen reconcile
+    /// controller (requires a build with `--features operator`); `gen-crd` prints
+    /// the Lumen CustomResourceDefinition YAML for `kubectl apply`.
+    K8s(K8sArgs),
+}
+
+#[derive(clap::Args)]
+struct K8sArgs {
+    #[command(subcommand)]
+    cmd: K8sCmd,
+}
+
+#[derive(Subcommand)]
+enum K8sCmd {
+    /// Run the Lumen CRD reconcile controller (container CMD; needs `--features operator`).
+    Operator,
+    /// Print the Lumen CustomResourceDefinition as YAML and exit.
+    GenCrd,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
 enum LlmTopic {
-    /// The integration playbook (default).
-    Guide,
+    /// Topic map for agent context selection (default).
+    Outline,
+    /// Product model, declare → ingest → search → hydrate, and non-goals.
+    Workflow,
+    /// Recommended database/pubsub adapter boundary.
+    Integration,
     /// A copy-paste create → index → search walkthrough.
     Quickstart,
     /// Task → ready-to-POST query bodies (same source as `spec --shapes`).
@@ -79,8 +104,8 @@ enum LlmFormat {
 
 #[derive(Parser)]
 struct LlmArgs {
-    /// Which part of the playbook to print.
-    #[arg(value_enum, default_value_t = LlmTopic::Guide)]
+    /// Which agent-facing topic to print.
+    #[arg(value_enum, default_value_t = LlmTopic::Outline)]
     topic: LlmTopic,
     /// Output format.
     #[arg(long, value_enum, default_value_t = LlmFormat::Md)]
@@ -116,8 +141,11 @@ enum Persistence {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum SpecFormat {
-    /// Full OpenAPI 3 document (default).
+    /// Full OpenAPI 3 document as JSON (default).
     Openapi,
+    /// Full OpenAPI 3 document as YAML for LLM/agent reading.
+    #[value(alias = "yaml", alias = "openapi.yaml")]
+    OpenapiYaml,
     /// Just the component schemas (request/response data types).
     JsonSchema,
 }
@@ -207,6 +235,7 @@ async fn main() -> Result<()> {
             } else {
                 match args.format {
                     SpecFormat::Openapi => lumen::spec::openapi_json(),
+                    SpecFormat::OpenapiYaml => lumen::spec::openapi_yaml(),
                     SpecFormat::JsonSchema => lumen::spec::json_schema_json(),
                 }
             };
@@ -216,7 +245,9 @@ async fn main() -> Result<()> {
         Command::Llm(args) => {
             // Offline: no engine, no server, no I/O beyond stdout.
             let md = match args.topic {
-                LlmTopic::Guide => lumen::spec::llm_guide_md(),
+                LlmTopic::Outline => lumen::spec::llm_outline_md(),
+                LlmTopic::Workflow => lumen::spec::llm_workflow_md(),
+                LlmTopic::Integration => lumen::spec::llm_integration_md(),
                 LlmTopic::Quickstart => lumen::spec::llm_quickstart_md(),
                 LlmTopic::Recipes => lumen::spec::llm_recipes_md(),
             };
@@ -228,8 +259,14 @@ async fn main() -> Result<()> {
                     LlmTopic::Recipes => {
                         serde_json::to_string_pretty(&lumen::spec::query_shapes())?
                     }
-                    LlmTopic::Guide => serde_json::to_string_pretty(
-                        &serde_json::json!({ "topic": "guide", "markdown": md }),
+                    LlmTopic::Outline => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "outline", "markdown": md }),
+                    )?,
+                    LlmTopic::Workflow => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "workflow", "markdown": md }),
+                    )?,
+                    LlmTopic::Integration => serde_json::to_string_pretty(
+                        &serde_json::json!({ "topic": "integration", "markdown": md }),
                     )?,
                     LlmTopic::Quickstart => serde_json::to_string_pretty(
                         &serde_json::json!({ "topic": "quickstart", "markdown": md }),
@@ -239,7 +276,38 @@ async fn main() -> Result<()> {
             println!("{out}");
             Ok(())
         }
+        Command::K8s(args) => k8s(args).await,
     }
+}
+
+/// `lumen k8s` — operator control plane. Same binary/image as `serve`; the
+/// kube-rs dependency tree is gated behind the `operator` feature so a default
+/// build stays kube-free. The subcommand is always present in `--help`; without
+/// the feature it errors clearly instead of silently missing.
+#[cfg(feature = "operator")]
+async fn k8s(args: K8sArgs) -> Result<()> {
+    match args.cmd {
+        K8sCmd::GenCrd => {
+            print!("{}", lumen::operator::crd_yaml());
+            Ok(())
+        }
+        K8sCmd::Operator => {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+                )
+                .init();
+            lumen::operator::run().await
+        }
+    }
+}
+
+#[cfg(not(feature = "operator"))]
+async fn k8s(_args: K8sArgs) -> Result<()> {
+    anyhow::bail!(
+        "this lumen build was compiled without operator support; rebuild with \
+         `--features operator` (the published image includes it)"
+    )
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {

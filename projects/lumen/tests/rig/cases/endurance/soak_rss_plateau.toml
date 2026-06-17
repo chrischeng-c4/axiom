@@ -1,0 +1,42 @@
+# Lifecycle case (migrated from scenarios/endurance/soak_rss_plateau.toml). The
+# mixed search soak is the repeated exercise; RSS-plateau (window-2 <= 1.10x
+# window-1) is asserted out-of-band by meter/vat resident-set sampling.
+[case]
+id = "soak_rss_plateau"
+suite = "lumen"
+dimension = "endurance"
+subject = "steady-state RSS plateaus under a bounded-keyspace mixed workload"
+expected = "pass"
+required = true
+source_contract = "lumen-search-stability-resilience"
+
+[env]
+upstream = "127.0.0.1:7373"
+collection = "users"
+
+[prepare]
+needs = ["lumen"]
+runner = "rig-load"
+[[prepare.step]]
+type = "http"
+name = "collection_exists"
+method = "PUT"
+url = "http://{{upstream}}/collections/{{collection}}"
+body = '{"fields": {"bio": {"type": "text"}}}'
+expect = { statuses = [200, 201, 400, 409] }
+
+[exercise]
+n = 4000
+[exercise.request]
+method = "POST"
+url = "http://{{upstream}}/collections/{{collection}}/search"
+body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
+[exercise.request.expect]
+status = 200
+timeout_ms = 2000
+
+[load]
+metric = "p99_ms"
+
+[clean]
+delegate = "vat-cow"

@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec cap-command-lease-throttling
 // @capability command-lease-throttling
+// @claim lease-admission-and-process-supervision
 // @contract command-lease-throttling
 // @category behavior
+// @required_for_production true
 // @command cargo test -p cap throttle -- --nocapture && cargo test -p cap sampler -- --nocapture
 // AW-EC-END
 

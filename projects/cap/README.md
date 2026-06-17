@@ -27,7 +27,7 @@ pauses / resumes / kills the commands you run through it.
 | Production readiness | ready |
 | Tech design root | `projects/cap/tech-design` |
 | TD lock | `projects/cap/tech-design/td.lock` |
-| External-contract inventory | `projects/cap/tests/aw-ec.toml` |
+| External-contract inventory | `projects/cap/aw.toml` |
 | Source ownership | full codegen, 100.0% (15/15) |
 | Semantic coverage | 100.0% |
 | Traceability coverage | 100.0% |

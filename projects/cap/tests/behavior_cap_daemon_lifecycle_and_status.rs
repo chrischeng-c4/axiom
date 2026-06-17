@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec cap-daemon-lifecycle-and-status
 // @capability daemon-lifecycle-and-status
+// @claim daemon-process-lifecycle
 // @contract daemon-lifecycle-and-status
 // @category behavior
+// @required_for_production true
 // @command cargo test -p cap daemon -- --nocapture && cargo test -p cap cli -- --nocapture
 // AW-EC-END
 

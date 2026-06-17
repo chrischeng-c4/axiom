@@ -1,5 +1,11 @@
 ---
 id: projects-rig-rig-cli-src-dispatch-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,19 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/rig-cli/src/dispatch.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/rig-cli/src/dispatch.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `LintArgs` | projects/rig/rig-cli/src/dispatch.rs | struct | pub | 73 |  |
+| `OutputOpts` | projects/rig/rig-cli/src/dispatch.rs | struct | pub | 27 |  |
+| `RigCommand` | projects/rig/rig-cli/src/dispatch.rs | struct | pub | 17 |  |
+| `RunArgs` | projects/rig/rig-cli/src/dispatch.rs | struct | pub | 53 |  |
+| `Verb` | projects/rig/rig-cli/src/dispatch.rs | enum | pub | 38 |  |
+| `execute` | projects/rig/rig-cli/src/dispatch.rs | function | pub | 81 | execute(cmd: RigCommand) -> RigReport |
+| `print_report` | projects/rig/rig-cli/src/dispatch.rs | function | pub | 588 | print_report(report: &RigReport, opts: &OutputOpts) -> i32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

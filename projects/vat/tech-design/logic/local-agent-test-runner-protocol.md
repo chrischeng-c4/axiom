@@ -478,13 +478,41 @@ properties:
     type: array
     items:
       type: object
-      required: [id, cmd]
+      required: [id]
+      description: >
+        A run-scoped dependency service. It is backed by exactly one of: cmd
+        (an explicit native command), preset (a built-in service whose runtime
+        decides native-binary vs official Docker image), or image (a Docker-only
+        service such as AlloyDB, which requires container_port). The runner that
+        requires the service is always a host process — only the service may be
+        a container, so the host GPU story is unaffected.
       properties:
         id: { type: string }
+        requires:
+          type: array
+          items: { type: string }
         cmd:
           type: array
           items: { type: string }
           minItems: 1
+        preset: { type: string, enum: [postgres, redis, nats, rabbitmq, mysql, mongo] }
+        image: { type: string }
+        container_port: { type: integer }
+        image_env:
+          type: object
+          additionalProperties: { type: string }
+        runtime: { type: string, enum: [auto, native, docker], default: auto }
+        version: { type: string }
+        port:
+          oneOf:
+            - { type: string, const: auto }
+            - { type: integer }
+        seed:
+          type: array
+          items: { type: string }
+        export:
+          type: object
+          additionalProperties: { type: string }
         ready_http: { type: string }
         timeout_s: { type: integer, default: 60 }
       additionalProperties: false
@@ -529,7 +557,11 @@ images: []
 build_contexts: []
 x-aw-contract:
   surface: none
-  reason: "Vat does not add Docker, OCI, or runtime image behavior."
+  reason: >
+    Vat ships no image and builds none. It may run a run-scoped dependency
+    service as an ephemeral `docker run` container (a preset with runtime=docker,
+    or an explicit image), but it is not an image registry/builder and the
+    runner is always a host process.
 ```
 
 ## Deployment
@@ -589,6 +621,7 @@ e2e_tests:
   - id: vat-toml-runner-local-service-smoke
     name: "vat.toml runner local service smoke"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: local-agent-test-runner-protocol
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat vat_toml_runner -- --nocapture"

@@ -3,6 +3,7 @@
 //! Scenario model: one TOML file = `[record]` + `[env]` + `[vat]`? +
 //! `[limits]` + (`[[steps]]` | `[load]`).
 
+pub mod case;
 pub mod interp;
 pub mod load;
 pub mod record;
@@ -12,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+pub use case::{
+    lint_case, parse_case, CaseRecord, Clean, Exercise, LoadSpec, Prepare, QuerySpec, TestCase,
+};
 pub use interp::VarStore;
 pub use load::LoadProfile;
 pub use record::{lint_record, scenario_id, ExpectedOutcome, LintViolation, Record, ScenarioKind};

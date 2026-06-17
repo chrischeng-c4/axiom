@@ -7,6 +7,7 @@
 //! programmatic consumers and for the binary itself.
 
 pub mod capability;
+pub mod capability_type;
 pub mod cb;
 pub mod cb_arbitrate;
 pub mod cb_fill;
@@ -27,6 +28,7 @@ pub mod project;
 pub mod regenerability_policy;
 pub mod remote_push;
 pub mod run;
+pub(crate) mod shell_env;
 pub mod slug_workspace;
 pub mod standardize;
 pub mod td;

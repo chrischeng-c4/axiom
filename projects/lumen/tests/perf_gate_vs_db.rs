@@ -44,8 +44,14 @@ use tokio::task::JoinSet;
 const SEED: u64 = 1234;
 const WARMUP: usize = 5;
 const REPS: usize = 50;
-const PG_DSN: &str = "host=/tmp dbname=lumenbench";
-const OS_URL: &str = "http://localhost:9200";
+// EC env override: vat exports LUMEN_BENCH_PG_DSN / LUMEN_BENCH_OS_URL when it
+// provisions pg + OpenSearch; fall back to the local-dev defaults otherwise.
+fn pg_dsn() -> String {
+    std::env::var("LUMEN_BENCH_PG_DSN").unwrap_or_else(|_| "host=/tmp dbname=lumenbench".to_string())
+}
+fn os_url() -> String {
+    std::env::var("LUMEN_BENCH_OS_URL").unwrap_or_else(|_| "http://localhost:9200".to_string())
+}
 
 const CELLS: &[&str] = &[
     "text_bm25",
@@ -304,7 +310,11 @@ fn unit_vec(seed: u64) -> Vec<f32> {
     let mut v: Vec<f32> = (0..VEC_DIM)
         .map(|_| ((rng.next() >> 33) as f64 / (1u64 << 31) as f64 * 2.0 - 1.0) as f32)
         .collect();
-    let norm = v.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt() as f32;
+    let norm = v
+        .iter()
+        .map(|x| (*x as f64) * (*x as f64))
+        .sum::<f64>()
+        .sqrt() as f32;
     if norm > 0.0 {
         for x in &mut v {
             *x /= norm;
@@ -377,7 +387,9 @@ fn lumen_query(cell: &str) -> Value {
         "duplicated" => {
             json!({"query":{"duplicated":{"field":"city","min_group_size":2}},"limit":10})
         }
-        "knn" => json!({"query":{"knn":{"field":"embedding","vector":query_vec(),"k":KNN_K}},"limit":KNN_K}),
+        "knn" => {
+            json!({"query":{"knn":{"field":"embedding","vector":query_vec(),"k":KNN_K}},"limit":KNN_K})
+        }
         // filter-correct kNN: nearest within the city=taipei subset (the pgvector
         // post-filter recall-collapse case). lumen evaluates the filter then the
         // kNN over the survivors — no recall loss.
@@ -736,7 +748,7 @@ fn lumen_native_frame(cell: &str) -> Vec<u8> {
 // postgres: tokio-postgres
 // ---------------------------------------------------------------------------
 async fn pg_setup(docs: &[Doc], table: &str) -> Option<tokio_postgres::Client> {
-    let (client, connection) = match tokio_postgres::connect(PG_DSN, tokio_postgres::NoTls).await {
+    let (client, connection) = match tokio_postgres::connect(&pg_dsn(), tokio_postgres::NoTls).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("  ! postgres unavailable ({e}); skipping pg");
@@ -867,7 +879,7 @@ async fn pg_disk_bytes(client: &tokio_postgres::Client, table: &str) -> Option<u
 // ---------------------------------------------------------------------------
 async fn os_setup(docs: &[Doc], index: &str) -> Option<(reqwest::Client, String)> {
     let client = reqwest::Client::new();
-    let base = OS_URL.to_string();
+    let base = os_url();
     if client.get(&base).send().await.is_err() {
         eprintln!("  ! OpenSearch unavailable on {base}; skipping os");
         return None;
@@ -1290,7 +1302,7 @@ async fn pg_pool(cell: &str, table: &str, n: usize) -> Option<Req> {
     let mut clients = Vec::with_capacity(n);
     let mut stmts = Vec::with_capacity(n);
     for _ in 0..n {
-        let (c, conn) = tokio_postgres::connect(PG_DSN, tokio_postgres::NoTls)
+        let (c, conn) = tokio_postgres::connect(&pg_dsn(), tokio_postgres::NoTls)
             .await
             .ok()?;
         tokio::spawn(async move {
@@ -2066,13 +2078,14 @@ async fn competitive_perf_gate_disk() {
     let pg = pg_setup(&docs, pg_table).await;
     println!("loading opensearch ...");
     let os = os_setup(&docs, os_index).await;
+    let cells = parse_gate_cells();
 
     // measure every engine on every cell
     let mut disk_s = std::collections::BTreeMap::new();
     let mut mem_s = std::collections::BTreeMap::new();
     let mut pg_s = std::collections::BTreeMap::new();
     let mut os_s = std::collections::BTreeMap::new();
-    for &cell in CELLS {
+    for &cell in &cells {
         disk_s.insert(cell, measure_lumen(&lc_disk, &lbase_disk, cell).await);
         mem_s.insert(cell, measure_lumen(&lc_mem, &lbase_mem, cell).await);
         if let Some(c) = &pg {
@@ -2106,7 +2119,7 @@ async fn competitive_perf_gate_disk() {
     let mut regressions: Vec<String> = Vec::new();
     let mut reds: Vec<String> = Vec::new();
 
-    for &cell in CELLS {
+    for &cell in &cells {
         let d = &disk_s[cell];
         let m = &mem_s[cell];
         let ovh = if m.e2e_min > 0.0 {
@@ -2165,7 +2178,7 @@ async fn competitive_perf_gate_disk() {
         "{:<16} {:>10} {:>10} {:>8}",
         "cell", "disk_eng", "mem_eng", "ovh"
     );
-    for &cell in CELLS {
+    for &cell in &cells {
         let de = disk_s[cell].engine_min.unwrap_or(f64::NAN);
         let me = mem_s[cell].engine_min.unwrap_or(f64::NAN);
         let ovh = if me > 0.0 { de / me } else { f64::NAN };

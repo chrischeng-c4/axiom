@@ -16,8 +16,8 @@
 ## Agent Workflow
 
 - Continue: `aw run --project lumen`.
-- Next managed step: `aw standardize managed next lumen`.
-- Readiness: `aw health lumen`.
+- Next managed step: `aw standardize managed next --project lumen`.
+- Readiness: `aw health --project lumen`.
 
 ## Commands
 

@@ -14,8 +14,22 @@ details.
 | [lumen](projects/lumen/README.md) | K8s-native, log-replicated search specialist — exact, lexical (BM25), semantic (HNSW/GPU kNN), perceptual, and duplicate search in one engine. |
 | [vat](projects/vat/README.md) | Agent-native, GPU-native dev containers — a sandboxed host-process runtime (no VM) where the GPU just works on Apple Silicon, with a single JSON state surface for agents. |
 | [cap](projects/cap/README.md) | Resource-protection wrapper — throttles heavy local commands (and the Bash an agent fires) by watching free memory and pausing/resuming/killing, so nothing OOMs the box. |
-| [meter](projects/meter/README.md) | Local resource measurement for agent-driven Rust development — CPU hot spots, phase/boundary cost, benchmark regression folding, and delegated test-failure packaging as deterministic JSON. |
+| [meter](projects/meter/README.md) | Local resource measurement for agents — `measure` observes external executables for cpu/wall/RSS and sampled hot spots; `profile` folds embedded/source-aware phase data. |
 | [guard](projects/guard/README.md) | Security posture gate — turns compass static findings plus future vat/rig/meter/arena evidence into one agent-readable security report. |
+
+## Runtime Evidence Loop
+
+The runtime tools are intentionally split by responsibility:
+
+- `vat` prepares and runs the local environment.
+- `rig` drives requests, queries, and workload traffic.
+- `meter measure` observes a running executable or service from the outside and
+  records cpu time, wall time, peak RSS, and optional stack samples under
+  `.meter/`.
+- `meter profile` folds embedded/source-aware profiling data, such as phase
+  breakdowns emitted by code that uses meter APIs.
+- `arena` compares collected benchmark results across targets.
+- `guard` turns static and runtime security evidence into one posture report.
 
 ## License
 

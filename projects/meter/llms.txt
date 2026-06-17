@@ -16,8 +16,8 @@
 ## Agent Workflow
 
 - Continue: `aw run --project meter`.
-- Next managed step: `aw standardize managed next meter`.
-- Readiness: `aw health meter`.
+- Next managed step: `aw standardize managed next --project meter`.
+- Readiness: `aw health --project meter`.
 
 ## Commands
 
