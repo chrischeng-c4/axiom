@@ -5710,6 +5710,53 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
     }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
+            // obj.__class__ = NewClass reassigns a user instance's class
+            // (preserving its instance __dict__). CPython only permits this
+            // between heap (user-defined) types; assigning a builtin like list
+            // or str raises TypeError. Done before the generic field path so
+            // __class__ is never stored as a plain instance attribute.
+            if extract_str(attr).as_deref() == Some("__class__") {
+                // Classify the receiver (no borrow held across the mutation):
+                // 0 = user-heap instance (reassignable), 1 = native-stub
+                // instance (e.g. ET.Element stores a __class__ field — fall
+                // through to the generic path), 2 = builtin immutable value
+                // (str/bytes/tuple/… — __class__ reassignment is a TypeError).
+                let kind = match &(*ptr).data {
+                    ObjData::Instance { class_name, .. } => {
+                        if USER_CLASSES.with(|u| u.borrow().contains(class_name.as_str())) {
+                            0
+                        } else {
+                            1
+                        }
+                    }
+                    _ => 2,
+                };
+                let class_err = || {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "__class__ assignment only supported for mutable types or ModuleType subclasses".to_string(),
+                        )),
+                    );
+                };
+                if kind == 0 {
+                    let new_cn = resolve_class_name(value);
+                    let new_is_user = new_cn
+                        .as_deref()
+                        .map_or(false, |cn| USER_CLASSES.with(|u| u.borrow().contains(cn)));
+                    if new_is_user {
+                        if let ObjData::Instance { class_name, .. } = &mut (*ptr).data {
+                            *class_name = new_cn.unwrap();
+                        }
+                    } else {
+                        class_err();
+                    }
+                    return;
+                } else if kind == 2 {
+                    class_err();
+                    return;
+                }
+            }
             // Fast path for Instance objects (most common case: self.x = value in __init__).
             // Check Instance first before trying the Str/class-attr path, since instance
             // setattr is by far the hottest path during object construction.
