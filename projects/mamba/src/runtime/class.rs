@@ -7384,6 +7384,11 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
         "float"
     } else if obj.is_none() {
         "NoneType"
+    } else if obj.is_not_implemented() {
+        // NotImplemented / Ellipsis are tagged singletons (not ptr-backed).
+        "NotImplementedType"
+    } else if obj.is_ellipsis() {
+        "ellipsis"
     } else if let Some(ptr) = obj.as_ptr() {
         unsafe {
             match &(*ptr).data {
