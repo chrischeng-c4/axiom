@@ -650,6 +650,16 @@ pub struct LegacyCapabilityRow {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityProseCandidate {
+    pub id: String,
+    pub title: String,
+    pub line: usize,
+    pub root_wi: Option<String>,
+    pub summary: Option<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CapabilityDocument {
     pub cap_path: PathBuf,
@@ -657,6 +667,8 @@ pub struct CapabilityDocument {
     pub needs_canonicalization: bool,
     pub capabilities: Vec<CapabilitySection>,
     pub legacy_rows: Vec<LegacyCapabilityRow>,
+    #[serde(skip)]
+    pub prose_candidates: Vec<CapabilityProseCandidate>,
     pub findings: Vec<String>,
 }
 
@@ -3095,9 +3107,13 @@ fn choose_next_action(
     capability_types: &BTreeMap<String, crate::cli::capability_type::CapabilityType>,
 ) -> CapabilityAction {
     if document.capabilities.is_empty() && document.legacy_rows.is_empty() {
-        let reason =
+        let reason = if document.prose_candidates.is_empty() {
             "README has no capability roots; human must define product promises before AW can migrate/check"
-                .to_string();
+                .to_string()
+        } else {
+            "README has prose capability roots but no canonical capability contracts; human must confirm product promises before AW can migrate/check"
+                .to_string()
+        };
         return CapabilityAction {
             kind: CapabilityActionKind::DefineCapabilityMap,
             capability_id: None,
@@ -3107,7 +3123,11 @@ fn choose_next_action(
             command: format!("aw capability report --project {}", report.project),
             reason: reason.clone(),
             requires_hitl: true,
-            hitl_question: Some(capability_map_hitl_question(report, &reason)),
+            hitl_question: Some(capability_map_hitl_question(
+                report,
+                &reason,
+                &document.prose_candidates,
+            )),
         };
     }
 
@@ -3544,7 +3564,12 @@ fn candidate_capability_hitl_question(
     )
 }
 
-fn capability_map_hitl_question(report: &CapabilityReport, reason: &str) -> HitlQuestion {
+fn capability_map_hitl_question(
+    report: &CapabilityReport,
+    reason: &str,
+    candidates: &[CapabilityProseCandidate],
+) -> HitlQuestion {
+    let freeform_prompt = capability_map_freeform_prompt(reason, candidates);
     capability_hitl_question(
         "capability_map:define_roots".to_string(),
         format!(
@@ -3573,6 +3598,45 @@ fn capability_map_hitl_question(report: &CapabilityReport, reason: &str) -> Hitl
         ],
         "define_roots",
     )
+    .with_freeform_prompt(freeform_prompt)
+}
+
+impl HitlQuestion {
+    fn with_freeform_prompt(mut self, prompt: String) -> Self {
+        self.freeform_prompt = Some(prompt);
+        self
+    }
+}
+
+fn capability_map_freeform_prompt(reason: &str, candidates: &[CapabilityProseCandidate]) -> String {
+    if candidates.is_empty() {
+        return reason.to_string();
+    }
+    let mut prompt = String::from(reason);
+    prompt.push_str("\n\nCandidate README capability roots detected for human confirmation:");
+    for candidate in candidates.iter().take(8) {
+        prompt.push_str("\n- ");
+        prompt.push_str(&candidate.title);
+        prompt.push_str(&format!(" (id: {}, line: {}", candidate.id, candidate.line));
+        if let Some(root_wi) = candidate.root_wi.as_deref() {
+            prompt.push_str(&format!(", WI: {}", root_wi));
+        }
+        prompt.push(')');
+        if let Some(summary) = candidate.summary.as_deref() {
+            prompt.push_str(": ");
+            prompt.push_str(summary);
+        }
+    }
+    if candidates.len() > 8 {
+        prompt.push_str(&format!(
+            "\n- ... {} additional candidate roots omitted",
+            candidates.len() - 8
+        ));
+    }
+    prompt.push_str(
+        "\nThese candidates are inference only; confirm/revise/defer before writing canonical contracts.",
+    );
+    prompt
 }
 
 fn capability_map_config_hitl_question(project: &str, target: &str, reason: &str) -> HitlQuestion {
@@ -3824,6 +3888,7 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
     let needs_canonicalization = markdown_capability_document_needs_canonicalization(body);
     let yaml_capabilities = parse_h2_capability_sections(body)?;
     let legacy_rows = parse_legacy_capability_table(body);
+    let prose_candidates = parse_capability_prose_candidates(body);
     let (format, mut capabilities) = if !markdown_capabilities.is_empty() {
         if !yaml_capabilities.is_empty() {
             findings.push(
@@ -3844,10 +3909,17 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
     } else if !legacy_rows.is_empty() {
         (CapabilityDocumentFormat::LegacyTable, Vec::new())
     } else {
-        findings.push(
-            "no capability sections found; define README capability roots under ## Capabilities"
-                .to_string(),
-        );
+        if prose_candidates.is_empty() {
+            findings.push(
+                "no capability sections found; define README capability roots under ## Capabilities"
+                    .to_string(),
+            );
+        } else {
+            findings.push(
+                "no canonical capability contracts found; confirm candidate README roots before migration/check"
+                    .to_string(),
+            );
+        }
         (CapabilityDocumentFormat::Empty, Vec::new())
     };
     if capabilities.is_empty() && !legacy_rows.is_empty() {
@@ -3855,6 +3927,28 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
             "legacy capability table detected; migrate rows to Markdown capability sections"
                 .to_string(),
         );
+    }
+    if capabilities.is_empty() && legacy_rows.is_empty() && !prose_candidates.is_empty() {
+        let candidates = prose_candidates
+            .iter()
+            .take(8)
+            .map(|candidate| {
+                if let Some(root_wi) = candidate
+                    .root_wi
+                    .as_deref()
+                    .filter(|root_wi| !candidate.title.contains(*root_wi))
+                {
+                    format!("{} ({})", candidate.title, root_wi)
+                } else {
+                    candidate.title.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        findings.push(format!(
+            "candidate prose capability roots detected for HITL confirmation: {}",
+            candidates
+        ));
     }
 
     let index_summaries = parse_capability_index_summaries(body);
@@ -3895,6 +3989,7 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
         needs_canonicalization,
         capabilities,
         legacy_rows,
+        prose_candidates,
         findings,
     })
 }
@@ -4626,6 +4721,174 @@ fn parse_capability_index_summaries(body: &str) -> BTreeMap<String, CapabilityIn
         return summaries;
     }
     BTreeMap::new()
+}
+
+fn parse_capability_prose_candidates(body: &str) -> Vec<CapabilityProseCandidate> {
+    let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let mut candidates = Vec::new();
+    let mut idx = 0;
+    while idx < lines.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[idx]) else {
+            idx += 1;
+            continue;
+        };
+        if level != 2 || !title.eq_ignore_ascii_case("Capabilities") {
+            idx += 1;
+            continue;
+        }
+        let capabilities_end = next_heading_at_or_above(&lines, idx + 1, 2).unwrap_or(lines.len());
+        let mut cursor = idx + 1;
+        while cursor < capabilities_end {
+            if fenced[cursor] {
+                cursor += 1;
+                continue;
+            }
+            let Some((candidate_level, raw_candidate_title)) = parse_heading(lines[cursor]) else {
+                cursor += 1;
+                continue;
+            };
+            if candidate_level < 3 {
+                cursor += 1;
+                continue;
+            }
+            let block_end = next_heading_at_or_above(&lines, cursor + 1, candidate_level)
+                .unwrap_or(capabilities_end)
+                .min(capabilities_end);
+            if capability_prose_candidate_title_is_ignored(&raw_candidate_title)
+                || markdown_block_has_capability_contract(&lines, cursor + 1, block_end)
+            {
+                cursor = block_end;
+                continue;
+            }
+            let candidate_title = clean_markdown_inline_links(&raw_candidate_title);
+            let id = slugify(&candidate_title);
+            if id.is_empty() {
+                cursor = block_end;
+                continue;
+            }
+            let root_wi = first_issue_ref(&raw_candidate_title)
+                .or_else(|| first_issue_ref(&lines[cursor + 1..block_end].join("\n")));
+            let summary = first_candidate_summary_line(&lines, cursor + 1, block_end);
+            candidates.push(CapabilityProseCandidate {
+                id,
+                title: candidate_title,
+                line: cursor + 1,
+                root_wi,
+                summary,
+            });
+            cursor = block_end;
+        }
+        idx = capabilities_end;
+    }
+    dedupe_capability_prose_candidates(candidates)
+}
+
+fn capability_prose_candidate_title_is_ignored(title: &str) -> bool {
+    let normalized = normalize_table_token(title);
+    normalized == "capabilityindex"
+        || normalized == "efficiency"
+        || normalized.ends_with("generated")
+        || title.contains("GENERATED")
+}
+
+fn first_candidate_summary_line(lines: &[&str], start: usize, end: usize) -> Option<String> {
+    let fenced = markdown_fenced_line_mask(lines);
+    for idx in start..end {
+        if fenced[idx] {
+            continue;
+        }
+        let trimmed = lines[idx].trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with('|')
+            || trimmed.starts_with("<!--")
+            || parse_heading(trimmed).is_some()
+            || parse_markdown_contract_field_line(trimmed).is_some()
+        {
+            continue;
+        }
+        let summary = candidate_summary_text(trimmed);
+        if !summary.is_empty() {
+            return Some(summary);
+        }
+    }
+    None
+}
+
+fn candidate_summary_text(line: &str) -> String {
+    let text = line
+        .trim()
+        .trim_start_matches("- ")
+        .trim_start_matches("* ")
+        .trim();
+    let mut out = String::new();
+    for ch in text.chars() {
+        if out.len() >= 180 {
+            break;
+        }
+        out.push(ch);
+    }
+    out.trim().to_string()
+}
+
+fn clean_markdown_inline_links(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let Some(close_rel) = rest[open + 1..].find(']') else {
+            break;
+        };
+        let close = open + 1 + close_rel;
+        if !rest[close + 1..].starts_with('(') {
+            out.push_str(&rest[..=close]);
+            rest = &rest[close + 1..];
+            continue;
+        }
+        let Some(paren_close_rel) = rest[close + 2..].find(')') else {
+            break;
+        };
+        let paren_close = close + 2 + paren_close_rel;
+        out.push_str(&rest[..open]);
+        out.push_str(&rest[open + 1..close]);
+        rest = &rest[paren_close + 1..];
+    }
+    out.push_str(rest);
+    out.trim().to_string()
+}
+
+fn first_issue_ref(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        if bytes[idx] != b'#' {
+            idx += 1;
+            continue;
+        }
+        let start = idx + 1;
+        let mut end = start;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end > start {
+            return Some(format!("#{}", &text[start..end]));
+        }
+        idx += 1;
+    }
+    None
+}
+
+fn dedupe_capability_prose_candidates(
+    candidates: Vec<CapabilityProseCandidate>,
+) -> Vec<CapabilityProseCandidate> {
+    let mut seen = BTreeSet::new();
+    candidates
+        .into_iter()
+        .filter(|candidate| seen.insert(candidate.id.clone()))
+        .collect()
 }
 
 fn capability_maturity_summary(capability: &CapabilitySection) -> String {
@@ -7437,10 +7700,65 @@ mod tests {
         assert_eq!(doc.format_version(), 0);
         assert!(doc.capabilities.is_empty());
         assert!(doc.legacy_rows.is_empty());
+        assert!(doc.prose_candidates.is_empty());
         assert!(doc
             .findings
             .iter()
             .any(|finding| finding.contains("no capability sections found")));
+    }
+
+    #[test]
+    fn prose_capability_headings_are_candidate_input_not_contracts() {
+        let doc = cap_doc(
+            r#"# Mamba
+
+## Brief
+
+Python runtime.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+
+### C1. Py3.12 functional parity - Axis 1 ([#3331](https://github.com/chrischeng-c4/cclab/issues/3331))
+
+Mamba can execute the Python 3.12 language and standard library surface with CPython-compatible behavior.
+
+#### Gates
+
+- CPython fixture corpus
+
+### C2. Less CPU time AND less memory than CPython - Axis 2 ([#3880](https://github.com/chrischeng-c4/cclab/issues/3880))
+
+Mamba should improve both runtime CPU and memory profile on selected workloads.
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert_eq!(doc.format_version(), 0);
+        assert!(doc.capabilities.is_empty());
+        assert_eq!(doc.prose_candidates.len(), 2);
+        assert_eq!(
+            doc.prose_candidates[0].id,
+            "c1-py3-12-functional-parity-axis-1-3331"
+        );
+        assert_eq!(
+            doc.prose_candidates[0].title,
+            "C1. Py3.12 functional parity - Axis 1 (#3331)"
+        );
+        assert_eq!(doc.prose_candidates[0].root_wi.as_deref(), Some("#3331"));
+        assert!(doc.prose_candidates[0]
+            .summary
+            .as_deref()
+            .unwrap()
+            .contains("Python 3.12 language"));
+        assert!(doc
+            .findings
+            .iter()
+            .any(|finding| finding.contains("candidate prose capability roots detected")));
     }
 
     #[test]
@@ -7465,6 +7783,38 @@ mod tests {
                 .as_deref(),
             Some("define_roots")
         );
+    }
+
+    #[test]
+    fn prose_candidates_are_in_define_map_hitl_prompt() {
+        let document = cap_doc(
+            r#"# Mamba
+
+## Capabilities
+
+### C1. Py3.12 functional parity - Axis 1 (#3331)
+
+Mamba can execute the Python 3.12 language and standard library surface.
+"#,
+        );
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.capability_count = 0;
+        report.verified_count = 0;
+        report.format_version = document.format_version();
+        report.blockers = document.findings.clone();
+
+        let action = choose_next_action(&report, &document, &BTreeMap::new());
+        let prompt = action
+            .hitl_question
+            .as_ref()
+            .and_then(|question| question.freeform_prompt.as_deref())
+            .unwrap();
+
+        assert_eq!(action.kind, CapabilityActionKind::DefineCapabilityMap);
+        assert!(prompt.contains("Candidate README capability roots detected"));
+        assert!(prompt.contains("C1. Py3.12 functional parity"));
+        assert!(prompt.contains("#3331"));
+        assert!(prompt.contains("inference only"));
     }
 
     #[test]

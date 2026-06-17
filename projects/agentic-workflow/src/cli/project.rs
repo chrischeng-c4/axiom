@@ -3807,6 +3807,7 @@ mod tests {
                 line: 1,
             }],
             legacy_rows: Vec::new(),
+            prose_candidates: Vec::new(),
             findings: Vec::new(),
         }
     }
