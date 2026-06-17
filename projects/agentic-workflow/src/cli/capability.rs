@@ -1973,6 +1973,36 @@ fn render_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> Stri
     out.push_str("---\n\n");
     out.push_str("# Capability Map Draft Review Index\n\n");
     out.push_str("These artifacts are inference only. Review, revise, or defer each root before copying any canonical contract into README.\n\n");
+    out.push_str("## Review Summary\n\n");
+    out.push_str("| Lane | Projects | Candidate Roots | Action |\n");
+    out.push_str("|---|---:|---:|---|\n");
+    for row in capability_draft_index_summary_rows(drafts) {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            markdown_cell(&row.lane),
+            row.project_count,
+            row.candidate_count,
+            markdown_cell(&row.action),
+        ));
+    }
+    out.push_str("\n## Suggested Review Order\n\n");
+    out.push_str("| Project | Candidates | Draft | Check |\n");
+    out.push_str("|---|---:|---|---|\n");
+    let review_order = capability_draft_review_order(drafts);
+    if review_order.is_empty() {
+        out.push_str("| none | 0 | - | - |\n");
+    } else {
+        for draft in review_order {
+            out.push_str(&format!(
+                "| {} | {} | {} | `{}` |\n",
+                markdown_cell(&draft.project),
+                draft.candidate_count,
+                markdown_cell(&draft.path.display().to_string()),
+                markdown_cell(&draft.check_command),
+            ));
+        }
+    }
+    out.push('\n');
     out.push_str("| Project | Source | Candidates | Draft | Apply After Review | Check |\n");
     out.push_str("|---|---|---:|---|---|---|\n");
     for draft in drafts {
@@ -1993,6 +2023,62 @@ fn render_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> Stri
     );
     out.push_str("- Run each listed check command after README edits.\n");
     out
+}
+
+struct CapabilityDraftIndexSummaryRow {
+    lane: String,
+    project_count: usize,
+    candidate_count: usize,
+    action: String,
+}
+
+fn capability_draft_index_summary_rows(
+    drafts: &[CapabilityDraftReport],
+) -> Vec<CapabilityDraftIndexSummaryRow> {
+    let candidate_projects = drafts
+        .iter()
+        .filter(|draft| draft.candidate_count > 0)
+        .collect::<Vec<_>>();
+    let definition_projects = drafts
+        .iter()
+        .filter(|draft| draft.candidate_count == 0)
+        .collect::<Vec<_>>();
+    let mut rows = Vec::new();
+    if !candidate_projects.is_empty() {
+        rows.push(CapabilityDraftIndexSummaryRow {
+            lane: "candidate review".to_string(),
+            project_count: candidate_projects.len(),
+            candidate_count: candidate_projects
+                .iter()
+                .map(|draft| draft.candidate_count)
+                .sum(),
+            action: "confirm, merge, split, rename, or defer inferred roots".to_string(),
+        });
+    }
+    if !definition_projects.is_empty() {
+        rows.push(CapabilityDraftIndexSummaryRow {
+            lane: "definition needed".to_string(),
+            project_count: definition_projects.len(),
+            candidate_count: 0,
+            action: "define product promises before applying a README capability section"
+                .to_string(),
+        });
+    }
+    rows
+}
+
+fn capability_draft_review_order(drafts: &[CapabilityDraftReport]) -> Vec<&CapabilityDraftReport> {
+    let mut ordered = drafts
+        .iter()
+        .filter(|draft| draft.candidate_count > 0)
+        .collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        right
+            .candidate_count
+            .cmp(&left.candidate_count)
+            .then_with(|| left.project.cmp(&right.project))
+    });
+    ordered
 }
 
 async fn write_capability_sweep_wi_plans(
@@ -10103,23 +10189,46 @@ Gate Inventory:
 
     #[test]
     fn capability_sweep_draft_index_lists_review_queue() {
-        let index = render_capability_sweep_draft_index(&[CapabilityDraftReport {
-            schema_version: "aw.cli.v1",
-            action: "capability_draft",
-            project: "pg".to_string(),
-            cap_path: PathBuf::from("projects/pg/README.md"),
-            path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
-            status: "pending_review".to_string(),
-            source: "empty_capability_map",
-            candidate_count: 0,
-            agent_review_required: true,
-            review_status: "pending",
-            apply_command: "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed".to_string(),
-            check_command: "aw capability check --project pg".to_string(),
-        }]);
+        let index = render_capability_sweep_draft_index(&[
+            CapabilityDraftReport {
+                schema_version: "aw.cli.v1",
+                action: "capability_draft",
+                project: "pg".to_string(),
+                cap_path: PathBuf::from("projects/pg/README.md"),
+                path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
+                status: "pending_review".to_string(),
+                source: "empty_capability_map",
+                candidate_count: 0,
+                agent_review_required: true,
+                review_status: "pending",
+                apply_command: "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed".to_string(),
+                check_command: "aw capability check --project pg".to_string(),
+            },
+            CapabilityDraftReport {
+                schema_version: "aw.cli.v1",
+                action: "capability_draft",
+                project: "cue".to_string(),
+                cap_path: PathBuf::from("projects/cue/README.md"),
+                path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
+                status: "pending_review".to_string(),
+                source: "prose_candidates",
+                candidate_count: 3,
+                agent_review_required: true,
+                review_status: "pending",
+                apply_command: "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed".to_string(),
+                check_command: "aw capability check --project cue".to_string(),
+            },
+        ]);
 
         assert!(index.contains("kind: capability_map_draft_index"));
-        assert!(index.contains("draft_count: 1"));
+        assert!(index.contains("draft_count: 2"));
+        assert!(index.contains("## Review Summary"));
+        assert!(index.contains(
+            "| candidate review | 1 | 3 | confirm, merge, split, rename, or defer inferred roots |"
+        ));
+        assert!(index.contains("| definition needed | 1 | 0 | define product promises before applying a README capability section |"));
+        assert!(index.contains("## Suggested Review Order"));
+        assert!(index.contains("| cue | 3 | /tmp/aw/cue/capability-map-drafts/draft.md | `aw capability check --project cue` |"));
         assert!(index.contains("| pg | empty_capability_map | 0 |"));
         assert!(index.contains("/tmp/aw/pg/capability-map-drafts/draft.md"));
         assert!(index.contains(
