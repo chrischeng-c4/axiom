@@ -3925,6 +3925,16 @@ fn slice_as_tuple(v: MbValue) -> Option<MbValue> {
 
 /// Deep structural equality for MbValues.
 fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
+    // UserList / UserDict / UserString compare by their backing payload, so
+    // `UserList([0,1]) == [0,1]` and `UserList(x) == UserList(x)` hold (CPython
+    // forwards __eq__ to self.data). Unwrap any wrapper operand, then recurse.
+    let ua = super::stdlib::collections_mod::user_wrapper_data(a);
+    let ub = super::stdlib::collections_mod::user_wrapper_data(b);
+    if ua.is_some() || ub.is_some() {
+        let la = ua.map(|(_, d)| d).unwrap_or(a);
+        let lb = ub.map(|(_, d)| d).unwrap_or(b);
+        return mb_values_eq(la, lb);
+    }
     // slice == slice compares (start, stop, step) structurally (CPython).
     if let (Some(ta), Some(tb)) = (slice_as_tuple(a), slice_as_tuple(b)) {
         return mb_values_eq(ta, tb);
