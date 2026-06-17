@@ -448,7 +448,7 @@ unsafe extern "C" fn dispatch_enum_verify_apply(args: *const MbValue, n: usize) 
                 }
             }
             "NAMED_FLAGS" => {
-                let vals = super::enum_class::class_member_int_values(&name)
+                let vals = super::enum_class::class_all_member_int_values(&name)
                     .filter(|v| !v.is_empty())
                     .unwrap_or_else(|| super::enum_class::attrs_member_int_values(&name));
                 {
@@ -460,9 +460,12 @@ unsafe extern "C" fn dispatch_enum_verify_apply(args: *const MbValue, n: usize) 
                         .filter(|i| *i > 0 && (i & (i - 1)) == 0)
                         .fold(0, |acc, i| acc | i);
                     for (mname, v) in &vals {
-                        if v & !named_bits != 0 {
+                        let missing = v & !named_bits;
+                        if missing != 0 {
                             return verify_raise(format!(
-                                "invalid Flag '{name}': alias {mname} is missing a named flag"
+                                "invalid Flag '{name}': alias {mname} is missing combined \
+                                 values of 0x{missing:x} [use enum.show_flag_values(value) \
+                                 for details]"
                             ));
                         }
                     }

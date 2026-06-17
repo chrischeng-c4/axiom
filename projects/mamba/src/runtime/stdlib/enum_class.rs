@@ -1030,6 +1030,29 @@ pub fn class_member_int_values(class_name: &str) -> Option<Vec<(String, i64)>> {
     })
 }
 
+/// Every bound name's int value (canonical members AND non-canonical multi-bit
+/// Flag members / aliases), in definition order. NAMED_FLAGS verification needs
+/// the multi-bit members `class_member_int_values` filters out, since the whole
+/// check is "does every bit of a composite member have a single-bit name".
+pub fn class_all_member_int_values(class_name: &str) -> Option<Vec<(String, i64)>> {
+    if !have_enum_classes() {
+        return None;
+    }
+    ENUM_CLASSES.with(|m| {
+        let map = m.borrow();
+        let info = map.get(class_name)?;
+        let mut out = Vec::new();
+        for (name, member) in &info.by_name {
+            let v = member_value(*member);
+            if let Some(i) = v.as_int() {
+                out.push((name.clone(), i));
+            }
+        }
+        Some(out)
+    })
+}
+
+
 /// class_first_alias fallback for data-mixin enums (IntEnum et al.) that
 /// keep raw values as class attrs instead of ENUM_CLASSES members.
 pub fn attrs_first_alias(class_name: &str) -> Option<(String, String)> {
