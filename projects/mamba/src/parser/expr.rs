@@ -409,6 +409,17 @@ impl<'a> Parser<'a> {
                     span,
                 ))
             }
+            // `await` in operand position (e.g. `-await f()`, `await f() * 10`).
+            // It binds at the unary level — tighter than binary operators — so
+            // those parse as `-(await f())` and `(await f()) * 10`. (Top-level
+            // `await …` at the start of an expression is handled in parse_expr.)
+            TokenKind::Await => {
+                self.advance();
+                let bp = prefix_bp(&UnaryOp::Neg);
+                let operand = self.parse_expr_bp(bp)?;
+                let span = Span::new(self.file_id, start, operand.span.end);
+                Ok(Spanned::new(Expr::Await(Box::new(operand)), span))
+            }
             // Type keywords usable as expressions: int(x), bool(x), etc.
             TokenKind::IntType
             | TokenKind::FloatType
