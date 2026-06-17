@@ -163,6 +163,8 @@ scenarios:
       - "Service may require behavior, efficiency, security, and stability; Devops behavior and stability; DeveloperTool/RuntimeTool behavior, efficiency, and stability; SecurityTool behavior, security, and stability; AgentFirst behavior"
       - "non-behavior dimensions become production-required only when the README declares content for that dimension or an efficiency backfill slot"
       - "efficiency dimensions may declare Efficiency Operating Point and Efficiency Cube, and generated/backfilled efficiency sections are owned by aw ec"
+      - "Efficiency Operating Point and Efficiency Cube form one atomic backfill slot; if either field is present, both must be non-empty"
+      - "set-ec-dimension accepts Efficiency Operating Point and Efficiency Cube only for the efficiency EC dimension"
       - "capability must define required verification through README tables"
       - "required claims must include maturity plus either a gate command or a fixture/inventory reference"
       - "TD primary capability_refs must name a known claim for contracted capabilities"
@@ -410,7 +412,7 @@ commands:
     behavior: "upsert a reviewed public surface entry into the README field-style contract"
     mutates_tracker: false
   - path: [capability, set-ec-dimension]
-    behavior: "upsert a reviewed EC dimension entry into the README field-style contract"
+    behavior: "upsert a reviewed EC dimension entry into the README field-style contract; efficiency backfill options are allowed only for the efficiency dimension and must provide both operating point and cube"
     mutates_tracker: false
   - path: [wi, plan]
     behavior: "read cap_path or project README Markdown capability tables, then write a local capability-to-WI planning draft; YAML/legacy tables require migration"
@@ -459,6 +461,7 @@ validation:
     - "type defines the production-required EC dimension ceiling"
     - "non-behavior EC dimensions are production-required only when declared in README or generated efficiency backfill slots"
     - "aw ec owns generated/backfilled efficiency sections and cube slots"
+    - "efficiency backfill slots are atomic: operating point and cube must be supplied together and cannot be attached to non-efficiency dimensions"
     - "required claims require maturity and at least one gate command or fixture/inventory reference"
     - "primary TD refs to contracted capabilities require known claim"
   blocked_values:
@@ -593,6 +596,11 @@ requirements:
     text: "aw capability apply-draft materializes completed Review Decisions into the canonical README section before README mutation"
     risk: high
     verifymethod: test
+  efficiency_backfill_atomic:
+    id: AW-CAP-WI-25
+    text: "aw capability set-ec-dimension rejects partial efficiency backfill slots and rejects efficiency slots on non-efficiency dimensions"
+    risk: high
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -626,6 +634,7 @@ relations:
   - { from: capability_unit_tests, to: draft_review_decisions, kind: verifies }
   - { from: capability_unit_tests, to: draft_review_decisions_apply_gate, kind: verifies }
   - { from: capability_unit_tests, to: draft_review_decisions_materialize, kind: verifies }
+  - { from: capability_unit_tests, to: efficiency_backfill_atomic, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {
@@ -700,6 +709,84 @@ requirementDiagram
         risk: high
         verifymethod: test
     }
+    requirement draft_table_candidate_roots {
+        id: AW-CAP-WI-13
+        text: "draft treats Capability tables as candidate roots"
+        risk: medium
+        verifymethod: test
+    }
+    requirement draft_list_candidate_roots {
+        id: AW-CAP-WI-14
+        text: "draft treats feature/module lists as candidate roots"
+        risk: medium
+        verifymethod: test
+    }
+    requirement issue_inventory_optional {
+        id: AW-CAP-WI-15
+        text: "issue inventory can be included or skipped"
+        risk: medium
+        verifymethod: test
+    }
+    requirement wi_plan_review_summary {
+        id: AW-CAP-WI-16
+        text: "wi plan emits capability review summary"
+        risk: medium
+        verifymethod: test
+    }
+    requirement draft_index_review_summary {
+        id: AW-CAP-WI-17
+        text: "draft sweep emits review summary and order"
+        risk: medium
+        verifymethod: test
+    }
+    requirement skip_issue_inventory_lifecycle {
+        id: AW-CAP-WI-18
+        text: "skip issue inventory keeps lifecycle routing safe"
+        risk: medium
+        verifymethod: test
+    }
+    requirement migration_tail_repair_heading_levels {
+        id: AW-CAP-WI-19
+        text: "migration repair accepts H2 or H3 Capability Index"
+        risk: medium
+        verifymethod: test
+    }
+    requirement summary_contract_facets {
+        id: AW-CAP-WI-20
+        text: "compact summaries expose contract facets"
+        risk: medium
+        verifymethod: test
+    }
+    requirement json_stdout_pipe {
+        id: AW-CAP-WI-21
+        text: "JSON output treats broken pipe as successful close"
+        risk: medium
+        verifymethod: test
+    }
+    requirement draft_review_decisions {
+        id: AW-CAP-WI-22
+        text: "draft emits Review Decisions worksheet"
+        risk: medium
+        verifymethod: test
+    }
+    requirement draft_review_decisions_apply_gate {
+        id: AW-CAP-WI-23
+        text: "apply-draft rejects unresolved Review Decisions"
+        risk: high
+        verifymethod: test
+    }
+    requirement draft_review_decisions_materialize {
+        id: AW-CAP-WI-24
+        text: "apply-draft materializes reviewed decisions"
+        risk: high
+        verifymethod: test
+    }
+    requirement efficiency_backfill_atomic {
+        id: AW-CAP-WI-25
+        text: "efficiency backfill slots are atomic"
+        risk: high
+        verifymethod: test
+    }
     element issues_unit_tests {
         type: "cargo-test"
     }
@@ -727,6 +814,19 @@ requirementDiagram
     capability_unit_tests - verifies -> capability_contract
     issues_unit_tests - verifies -> claim_scoped_wi_plan
     capability_unit_tests - verifies -> draft_promise_preservation
+    capability_unit_tests - verifies -> draft_table_candidate_roots
+    capability_unit_tests - verifies -> draft_list_candidate_roots
+    capability_unit_tests - verifies -> issue_inventory_optional
+    issues_unit_tests - verifies -> wi_plan_review_summary
+    capability_unit_tests - verifies -> draft_index_review_summary
+    capability_unit_tests - verifies -> skip_issue_inventory_lifecycle
+    capability_unit_tests - verifies -> migration_tail_repair_heading_levels
+    capability_unit_tests - verifies -> summary_contract_facets
+    capability_unit_tests - verifies -> json_stdout_pipe
+    capability_unit_tests - verifies -> draft_review_decisions
+    capability_unit_tests - verifies -> draft_review_decisions_apply_gate
+    capability_unit_tests - verifies -> draft_review_decisions_materialize
+    capability_unit_tests - verifies -> efficiency_backfill_atomic
 ```
 
 ## Changes
@@ -744,6 +844,16 @@ changes:
     section: cli
     impl_mode: hand-written
     description: Add Markdown capability table parsing, claim progress reporting, TD claim validation, and claim-scoped next actions.
+  - path: projects/agentic-workflow/src/cli/capability.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: Validate efficiency backfill slots as atomic operating-point plus cube contracts scoped only to the efficiency EC dimension.
+  - path: projects/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md
+    action: modify
+    section: scenarios
+    impl_mode: hand-written
+    description: Specify the README capability efficiency backfill slot contract and its unit-test requirement.
   - path: projects/agentic-workflow/src/cli/issues.rs
     action: modify
     section: cli
