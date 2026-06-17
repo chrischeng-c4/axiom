@@ -2829,6 +2829,34 @@ fn choose_next_action(
     }
 
     for item in &report.capabilities {
+        if item.status == CapabilityStatus::Verified && !item.verified {
+            if let Some((claim, gate)) = failing_claim_verification_gate(item) {
+                return CapabilityAction {
+                    kind: CapabilityActionKind::RunVerify,
+                    capability_id: Some(item.id.clone()),
+                    gap_id: None,
+                    claim_id: Some(claim.id.clone()),
+                    target: item.title.clone(),
+                    command: gate.command.clone(),
+                    reason: "required capability claim has a failing verification gate".to_string(),
+                    requires_hitl: false,
+                    hitl_question: None,
+                };
+            }
+            if let Some(gate) = failing_capability_verification_gate(item) {
+                return CapabilityAction {
+                    kind: CapabilityActionKind::RunVerify,
+                    capability_id: Some(item.id.clone()),
+                    gap_id: None,
+                    claim_id: None,
+                    target: item.title.clone(),
+                    command: gate.command.clone(),
+                    reason: "capability has a failing verification gate".to_string(),
+                    requires_hitl: false,
+                    hitl_question: None,
+                };
+            }
+        }
         if item.status == CapabilityStatus::Verified
             && !item.verified
             && runtime_verification_not_evaluated(item)
@@ -2951,6 +2979,33 @@ fn runtime_verification_not_evaluated(item: &CapabilityReportItem) -> bool {
         }
     }
     has_gate
+}
+
+fn failing_claim_verification_gate(
+    item: &CapabilityReportItem,
+) -> Option<(&CapabilityClaimReport, &VerificationRuntimeResult)> {
+    item.claims
+        .iter()
+        .filter(|claim| claim.required_for_verified)
+        .find_map(|claim| {
+            claim
+                .gates
+                .iter()
+                .find(|gate| verification_gate_failed(gate))
+                .map(|gate| (claim, gate))
+        })
+}
+
+fn failing_capability_verification_gate(
+    item: &CapabilityReportItem,
+) -> Option<&VerificationRuntimeResult> {
+    item.verification
+        .iter()
+        .find(|gate| verification_gate_failed(gate))
+}
+
+fn verification_gate_failed(gate: &VerificationRuntimeResult) -> bool {
+    !matches!(gate.status.as_str(), "pass" | "not_run")
 }
 
 fn claim_inventory_verification_not_evaluated(item: &CapabilityReportItem) -> bool {
@@ -8766,7 +8821,7 @@ capability_refs:
     }
 
     #[test]
-    fn next_action_does_not_rerun_runtime_verification_after_gate_failed() {
+    fn next_action_reports_failing_runtime_verification_for_catalog_verified_capability() {
         let body = one_markdown_capability()
             .replace("| Status | auditing |", "| Status | verified |")
             .replace(
@@ -8846,7 +8901,10 @@ capability_refs:
         let types = all_typed(&report, &document);
         let action = choose_next_action(&report, &document, &types);
 
-        assert_eq!(action.kind, CapabilityActionKind::None);
+        assert_eq!(action.kind, CapabilityActionKind::RunVerify);
+        assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
+        assert_eq!(action.command, "cargo test -p jet pkg_manager::lockfile");
+        assert!(action.reason.contains("failing verification gate"));
     }
 
     /// A real (non-candidate, non-retired) capability with NO type assigned in
