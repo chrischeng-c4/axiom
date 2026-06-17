@@ -70,7 +70,11 @@ promises from inference alone.
    pending-review WI planning artifacts for all create-WI projects. These are
    review queues only; do not publish tracker changes until a human accepts the
    WI candidates.
-12. Only after explicit confirmation, propose edits that create or materially
+12. When the sweep shows non-HITL executable next actions such as `run_td` or
+   `run_verify`, use `aw capability sweep --write-action-queue --human` to
+   write a local execution queue. Execute one command at a time and refresh the
+   sweep after each material change.
+13. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
 ## README Schema
