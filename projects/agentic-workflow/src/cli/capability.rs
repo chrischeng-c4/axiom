@@ -5386,14 +5386,16 @@ fn lifecycle_action_for_work_item(
         );
     }
 
-    if require_issue_inventory && lifecycle_issue_evidence_unresolved(evidence) {
+    if lifecycle_issue_evidence_unresolved(evidence) {
+        let reason = if require_issue_inventory {
+            "active WI reference is not present in project issue inventory; sync or recreate a bounded WI before TD/CB lifecycle"
+        } else {
+            "active WI reference was not resolved because issue inventory was skipped; sync or recreate a bounded WI before TD/CB lifecycle"
+        };
         return (
             CapabilityActionKind::CreateWi,
             format!("aw wi plan --project {}", report.project),
-            wi_plan_reason(
-                report,
-                "active WI reference is not present in project issue inventory; sync or recreate a bounded WI before TD/CB lifecycle",
-            ),
+            wi_plan_reason(report, reason),
         );
     }
 
@@ -13609,7 +13611,7 @@ capability_refs:
     }
 
     #[test]
-    fn lifecycle_action_uses_readme_wi_when_issue_inventory_is_skipped() {
+    fn lifecycle_action_routes_skipped_issue_inventory_to_wi_plan_before_cb() {
         let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
         let evidence = CapabilityWiEvidence {
             reference: "#3783".to_string(),
@@ -13631,15 +13633,9 @@ capability_refs:
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
-        assert_eq!(kind, CapabilityActionKind::RunCb);
-        assert_eq!(
-            command,
-            "aw cb gen 3783 --spec-path '.aw/tech-design/projects/jet/specs/3783.md'"
-        );
-        assert_eq!(
-            reason,
-            "active WI has approved TD evidence; continue CB generation"
-        );
+        assert_eq!(kind, CapabilityActionKind::CreateWi);
+        assert_eq!(command, "aw wi plan --project jet");
+        assert!(reason.contains("issue inventory was skipped"));
     }
 }
 // CODEGEN-END
