@@ -330,7 +330,7 @@ pub fn register() {
         ("getinnerframes", d_empty_list as *const () as usize),
         ("formatargspec", d_empty_str as *const () as usize),
         ("formatargvalues", d_empty_str as *const () as usize),
-        ("unwrap", d_passthrough as *const () as usize),
+        ("unwrap", d_unwrap as *const () as usize),
     ];
     for (name, addr) in &dispatchers {
         attrs.insert((*name).to_string(), MbValue::from_func(*addr));
@@ -1152,6 +1152,47 @@ pub fn mb_inspect_isroutine(obj: MbValue) -> MbValue {
         }
     }
     MbValue::from_bool(false)
+}
+
+/// inspect.unwrap(func, *, stop=None) -> the innermost function, following the
+/// `__wrapped__` chain set by functools.wraps/update_wrapper. Stops early if
+/// `stop(f)` is truthy for the current wrapper.
+pub fn mb_inspect_unwrap(args: &[MbValue]) -> MbValue {
+    let mut func = args.first().copied().unwrap_or_else(MbValue::none);
+    // stop= arrives in a trailing kwargs dict (call-lowering convention).
+    let stop = args.iter().rev().find_map(|a| {
+        a.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Dict(ref lock) = (*p).data {
+                lock.read()
+                    .unwrap()
+                    .get(&super::super::dict_ops::DictKey::Str("stop".to_string()))
+                    .copied()
+            } else {
+                None
+            }
+        })
+    });
+    for _ in 0..2000 {
+        let wrapped = super::functools_mod::get_func_wrapped(func);
+        if wrapped.is_none() {
+            break;
+        }
+        if let Some(stop_fn) = stop {
+            if !stop_fn.is_none() {
+                let r = super::super::class::mb_call1_val(stop_fn, func);
+                if super::super::builtins::mb_bool(r).as_bool() == Some(true) {
+                    break;
+                }
+            }
+        }
+        func = wrapped;
+    }
+    func
+}
+
+unsafe extern "C" fn d_unwrap(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    mb_inspect_unwrap(a)
 }
 
 /// inspect.isabstract(obj) -> bool. True only for a class that still has
