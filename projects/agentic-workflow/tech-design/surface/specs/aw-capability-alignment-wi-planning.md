@@ -142,6 +142,7 @@ scenarios:
       - "apply-draft refuses unreviewed placeholder drafts and writes only reviewed canonical capability sections"
       - "format migration repair can strip a previously generated canonical tail that starts at either H2 or H3 Capability Index"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
+      - "report/next compact summaries expose capability type, surface, EC dimension, and efficiency backfill coverage so agents can inspect #78 contract facets without reading the full README"
       - "next emits exactly one next_action"
       - "report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing instead of treating absent tracker evidence as a recreate-WI instruction"
       - "run executes at most one bounded tick unless --max-ticks raises the bound"
@@ -564,6 +565,11 @@ requirements:
     text: "aw capability migration duplicate-repair can strip a previously generated canonical tail that starts at either H2 or H3 Capability Index before reparsing"
     risk: medium
     verifymethod: test
+  summary_contract_facets:
+    id: AW-CAP-WI-20
+    text: "aw capability compact summaries expose typed capability count, surface kinds, EC dimensions, and efficiency backfill slot count for agent-readable #78 contract review"
+    risk: medium
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -592,6 +598,7 @@ relations:
   - { from: capability_unit_tests, to: draft_index_review_summary, kind: verifies }
   - { from: capability_unit_tests, to: skip_issue_inventory_lifecycle, kind: verifies }
   - { from: capability_unit_tests, to: migration_tail_repair_heading_levels, kind: verifies }
+  - { from: capability_unit_tests, to: summary_contract_facets, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {

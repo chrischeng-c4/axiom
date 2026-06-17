@@ -8914,6 +8914,7 @@ fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<
         "test gates: {:?} [{}/{} passed]",
         report.test_gates.status, report.test_gates.passed_count, report.test_gates.command_count
     );
+    print_contract_facets(report);
     print_next_action(&report.next_action);
     Ok(())
 }
@@ -8930,6 +8931,7 @@ fn capability_summary(report: &CapabilityReport, include_run_results: bool) -> s
         "completion": capability_completion(report),
         "next": capability_next(report),
         "coverage": capability_coverage_summary(report),
+        "contract_facets": capability_contract_facets_summary(report),
         "next_action": &report.next_action,
     });
     if include_run_results && !report.run_results.is_empty() {
@@ -9068,6 +9070,85 @@ fn capability_coverage_summary(report: &CapabilityReport) -> serde_json::Value {
         "production_status": &report.production_status,
         "test_gate_status": &report.test_gates.status,
     })
+}
+
+fn capability_contract_facets_summary(report: &CapabilityReport) -> serde_json::Value {
+    let mut type_counts = BTreeMap::<String, usize>::new();
+    let mut surface_kinds = BTreeSet::<String>::new();
+    let mut ec_dimensions = BTreeSet::<String>::new();
+    let mut typed_count = 0usize;
+    let mut surface_capability_count = 0usize;
+    let mut ec_capability_count = 0usize;
+    let mut efficiency_backfill_count = 0usize;
+    for capability in report
+        .capabilities
+        .iter()
+        .filter(|capability| capability.status != CapabilityStatus::Retired)
+    {
+        if let Some(capability_type) = capability.capability_type {
+            typed_count += 1;
+            *type_counts
+                .entry(capability_type.as_str().to_string())
+                .or_default() += 1;
+        }
+        if !capability.surfaces.is_empty() {
+            surface_capability_count += 1;
+        }
+        for surface in &capability.surfaces {
+            let kind = surface.kind.trim();
+            if !kind.is_empty() {
+                surface_kinds.insert(kind.to_string());
+            }
+        }
+        if !capability.ec_dimensions.is_empty() {
+            ec_capability_count += 1;
+        }
+        for dimension in &capability.ec_dimensions {
+            ec_dimensions.insert(dimension.dimension.as_str().to_string());
+            if dimension.efficiency_backfill.is_some() {
+                efficiency_backfill_count += 1;
+            }
+        }
+    }
+    serde_json::json!({
+        "typed_count": typed_count,
+        "surface_capability_count": surface_capability_count,
+        "ec_capability_count": ec_capability_count,
+        "efficiency_backfill_count": efficiency_backfill_count,
+        "types": type_counts,
+        "surface_kinds": surface_kinds.into_iter().collect::<Vec<_>>(),
+        "ec_dimensions": ec_dimensions.into_iter().collect::<Vec<_>>(),
+    })
+}
+
+fn print_contract_facets(report: &CapabilityReport) {
+    let summary = capability_contract_facets_summary(report);
+    let typed_count = summary["typed_count"].as_u64().unwrap_or(0);
+    let surface_count = summary["surface_capability_count"].as_u64().unwrap_or(0);
+    let ec_count = summary["ec_capability_count"].as_u64().unwrap_or(0);
+    let efficiency_count = summary["efficiency_backfill_count"].as_u64().unwrap_or(0);
+    println!(
+        "contracts: typed {}/{}; surfaces {}; ec {}; efficiency slots {}",
+        typed_count, report.capability_count, surface_count, ec_count, efficiency_count
+    );
+    if let Some(values) = summary["surface_kinds"].as_array() {
+        let kinds = values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        if !kinds.is_empty() {
+            println!("surfaces: {}", kinds.join(", "));
+        }
+    }
+    if let Some(values) = summary["ec_dimensions"].as_array() {
+        let dimensions = values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        if !dimensions.is_empty() {
+            println!("ec dimensions: {}", dimensions.join(", "));
+        }
+    }
 }
 
 fn print_next_action(action: &CapabilityAction) {
@@ -10027,6 +10108,89 @@ Gate Inventory:
         assert!(!missing.iter().any(|value| value
             .as_str()
             .is_some_and(|missing| missing.contains("issue inventory unavailable"))));
+    }
+
+    #[test]
+    fn capability_summary_exposes_contract_facets() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::RunTd,
+            "aw td create 3779",
+            false,
+        ));
+        let mut item = sample_report_item_with_gap(Some("#3779"));
+        item.capability_type = Some(CapabilityType::DeveloperTool);
+        item.surfaces = vec![
+            CapabilitySurface {
+                kind: "CLI".to_string(),
+                commands: vec!["jet test".to_string()],
+                summary: "native test command".to_string(),
+                verification: String::new(),
+            },
+            CapabilitySurface {
+                kind: "WebAppE2E".to_string(),
+                commands: vec!["jet e2e".to_string()],
+                summary: "browser product-flow verification".to_string(),
+                verification: String::new(),
+            },
+        ];
+        item.ec_dimensions = vec![
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Behavior,
+                runner: "jet e2e".to_string(),
+                summary: "frontend behavior and app/API boundaries".to_string(),
+                required_for_production: Some(true),
+                efficiency_backfill: None,
+            },
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Efficiency,
+                runner: "meter".to_string(),
+                summary: "resource attribution".to_string(),
+                required_for_production: Some(true),
+                efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
+                    operating_point: "local-vat-jet-e2e".to_string(),
+                    cube: "projects/jet/.aw/ec/efficiency/e2e.cube.json".to_string(),
+                }),
+            },
+        ];
+        report.capabilities = vec![item];
+
+        let summary = capability_summary(&report, false);
+
+        assert_eq!(summary["contract_facets"]["typed_count"].as_u64(), Some(1));
+        assert_eq!(
+            summary["contract_facets"]["surface_capability_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["contract_facets"]["ec_capability_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["contract_facets"]["efficiency_backfill_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["contract_facets"]["types"]["DeveloperTool"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["contract_facets"]["surface_kinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["CLI", "WebAppE2E"]
+        );
+        assert_eq!(
+            summary["contract_facets"]["ec_dimensions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["behavior", "efficiency"]
+        );
     }
 
     #[test]
