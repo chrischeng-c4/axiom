@@ -8064,6 +8064,17 @@ pub fn mb_property_get(prop: MbValue, instance: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
+    // A closure-handle getter (`property(lambda self: ...)`) is an int handle,
+    // not a bare TAG_FUNC, so the func-pointer paths below can't dispatch it.
+    // Resolve it through the general value-call, which unpacks the closure.
+    if getter.as_func().is_none()
+        && getter.as_int().is_some()
+        && !super::closure::mb_closure_get_func(getter).is_none()
+    {
+        let result = mb_call1_val(getter, instance);
+        unsafe { super::rc::retain_if_ptr(result); }
+        return result;
+    }
     // Call the stored getter with instance. Try mb_call_method1 first
     // (CALLABLE_REGISTRY path for heap-pointer methods), then fall back to
     // direct TAG_FUNC invocation for JIT-compiled class methods that are
