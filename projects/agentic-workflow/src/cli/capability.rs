@@ -23,7 +23,10 @@ use super::production::{
     evaluate_capability_scope, inputs_from_report_items, ProductionReadinessReport,
     ProductionStatus,
 };
-use super::project::{project_test_gate_report, ProjectTestGateReport, ProjectTestGateStatus};
+use super::project::{
+    project_test_gate_report, ProjectTestCommandReport, ProjectTestCommandStatus,
+    ProjectTestGateReport, ProjectTestGateStatus,
+};
 use super::workflow_guard;
 
 const CAPABILITY_MIGRATION_INSERT_MARKER: &str = "<!-- aw:capability-migration-insert -->";
@@ -86,6 +89,9 @@ pub struct CapabilityReportArgs {
     /// Skip issue inventory for a README/TD-only report.
     #[arg(long = "skip-issue-inventory")]
     pub skip_issue_inventory: bool,
+    /// Write a local /tmp verification evidence artifact when --verify is used.
+    #[arg(long = "write-evidence")]
+    pub write_evidence: bool,
     /// DEPRECATED compatibility no-op. Capability reports emit JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -241,6 +247,9 @@ pub struct CapabilityCheckArgs {
     /// Skip issue inventory for a README/TD-only check.
     #[arg(long = "skip-issue-inventory")]
     pub skip_issue_inventory: bool,
+    /// Write a local /tmp verification evidence artifact when --verify is used.
+    #[arg(long = "write-evidence")]
+    pub write_evidence: bool,
     /// DEPRECATED compatibility no-op. Capability check emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -1275,7 +1284,14 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
                 include_issue_inventory,
             )
             .await?;
+            let evidence_path = maybe_write_capability_verify_evidence(
+                &report,
+                args.verify,
+                args.write_evidence,
+                include_issue_inventory,
+            )?;
             print_report(&report, args.human, args.pretty || args.json)?;
+            print_evidence_path(evidence_path.as_deref(), args.human);
             Ok(())
         }
         CapabilityCommand::Next(args) => {
@@ -1333,7 +1349,14 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             )
             .await?;
             let check_failed = normalize_capability_check_report(&mut report);
+            let evidence_path = maybe_write_capability_verify_evidence(
+                &report,
+                args.verify,
+                args.write_evidence,
+                include_issue_inventory,
+            )?;
             print_report(&report, args.human, args.pretty || args.json)?;
+            print_evidence_path(evidence_path.as_deref(), args.human);
             if check_failed {
                 std::process::exit(1);
             }
@@ -1391,6 +1414,242 @@ fn normalize_capability_check_report(report: &mut CapabilityReport) -> bool {
         };
     }
     check_failed
+}
+
+fn maybe_write_capability_verify_evidence(
+    report: &CapabilityReport,
+    verify: bool,
+    write_evidence: bool,
+    include_issue_inventory: bool,
+) -> Result<Option<PathBuf>> {
+    if !write_evidence {
+        return Ok(None);
+    }
+    if !verify {
+        anyhow::bail!("--write-evidence requires --verify");
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp")
+        .join("aw")
+        .join(&report.project)
+        .join("capability-verify-reports");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!(
+        "{stamp}-{}-capability-verify-report.md",
+        report.project
+    ));
+    let command = append_write_evidence_flag(&capability_report_command(
+        &report.project,
+        true,
+        include_issue_inventory,
+    ));
+    std::fs::write(&path, render_capability_verify_evidence(report, &command)).with_context(
+        || {
+            format!(
+                "failed to write capability verify evidence {}",
+                path.display()
+            )
+        },
+    )?;
+    Ok(Some(path))
+}
+
+fn print_evidence_path(path: Option<&Path>, human: bool) {
+    let Some(path) = path else {
+        return;
+    };
+    if human {
+        println!("evidence: {}", path.display());
+    } else {
+        eprintln!("capability evidence: {}", path.display());
+    }
+}
+
+fn render_capability_verify_evidence(report: &CapabilityReport, command: &str) -> String {
+    let generated_at = chrono::Utc::now().to_rfc3339();
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_verify_evidence\n");
+    out.push_str(&format!("project: {}\n", report.project));
+    out.push_str(&format!("status: {}\n", report.status));
+    out.push_str(&format!(
+        "loop_status: {}\n",
+        capability_loop_status(report)
+    ));
+    out.push_str(&format!(
+        "production_status: {}\n",
+        production_status_label(report.production_status)
+    ));
+    out.push_str(&format!("production_ready: {}\n", report.production_ready));
+    out.push_str(&format!("generated_at: {generated_at}\n"));
+    out.push_str("---\n\n");
+    out.push_str(&format!(
+        "# Capability Verify Evidence: {}\n\n",
+        report.project
+    ));
+    out.push_str("This is a runtime evidence artifact. It does not mutate README capability claims or store pass timestamps in source.\n\n");
+    out.push_str("## Invocation\n\n");
+    out.push_str("```sh\n");
+    out.push_str(command);
+    out.push_str("\n```\n\n");
+    out.push_str("## Summary\n\n");
+    out.push_str("| Metric | Value |\n");
+    out.push_str("|---|---|\n");
+    out.push_str(&format!(
+        "| Capability status | {} |\n",
+        markdown_cell(&report.status)
+    ));
+    out.push_str(&format!(
+        "| Capability verified | {}/{} ({:.1}%) |\n",
+        report.verified_count, report.capability_count, report.percent
+    ));
+    out.push_str(&format!(
+        "| Required claims verified | {}/{} ({:.1}%) |\n",
+        report.verified_claim_count, report.claim_count, report.claim_percent
+    ));
+    out.push_str(&format!(
+        "| Project test gates | {} [{}/{} passed] |\n",
+        project_test_gate_status_label(report.test_gates.status),
+        report.test_gates.passed_count,
+        report.test_gates.command_count
+    ));
+    out.push_str(&format!(
+        "| Production | {}/{} [scope={}, blockers={}] |\n",
+        production_status_label(report.production_status),
+        if report.production_ready {
+            "ready"
+        } else {
+            "not_ready"
+        },
+        report.production_scope.len(),
+        report.production_blockers.len()
+    ));
+    out.push('\n');
+
+    render_project_test_gate_evidence(&mut out, report);
+    render_runtime_gate_evidence(&mut out, report);
+    render_production_blocker_evidence(&mut out, report);
+    out
+}
+
+fn project_test_gate_status_label(status: ProjectTestGateStatus) -> &'static str {
+    match status {
+        ProjectTestGateStatus::NotEvaluated => "not_evaluated",
+        ProjectTestGateStatus::NotConfigured => "not_configured",
+        ProjectTestGateStatus::Passed => "passed",
+        ProjectTestGateStatus::Failed => "failed",
+    }
+}
+
+fn render_project_test_gate_evidence(out: &mut String, report: &CapabilityReport) {
+    out.push_str("## Project Test Gates\n\n");
+    if report.test_gates.commands.is_empty() {
+        out.push_str("- No project test gate commands were evaluated.\n\n");
+        return;
+    }
+    out.push_str("| Status | Command | Exit | Duration Ms |\n");
+    out.push_str("|---|---|---:|---:|\n");
+    for command in &report.test_gates.commands {
+        out.push_str(&format!(
+            "| {} | `{}` | {} | {} |\n",
+            project_test_command_status_label(command.status),
+            markdown_cell(&command.command),
+            command
+                .exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            command.duration_ms
+        ));
+    }
+    out.push('\n');
+    render_project_test_output_tails(out, &report.test_gates.commands);
+}
+
+fn project_test_command_status_label(status: ProjectTestCommandStatus) -> &'static str {
+    match status {
+        ProjectTestCommandStatus::Passed => "passed",
+        ProjectTestCommandStatus::Failed => "failed",
+        ProjectTestCommandStatus::TimedOut => "timed_out",
+    }
+}
+
+fn render_project_test_output_tails(out: &mut String, commands: &[ProjectTestCommandReport]) {
+    let commands_with_output = commands
+        .iter()
+        .filter(|command| {
+            command.status != ProjectTestCommandStatus::Passed
+                && (!command.stdout_tail.trim().is_empty()
+                    || !command.stderr_tail.trim().is_empty())
+        })
+        .collect::<Vec<_>>();
+    if commands_with_output.is_empty() {
+        return;
+    }
+    out.push_str("### Project Test Output Tails\n\n");
+    for command in commands_with_output {
+        out.push_str(&format!("#### `{}`\n\n", command.command));
+        if !command.stdout_tail.trim().is_empty() {
+            out.push_str("stdout:\n\n```text\n");
+            out.push_str(&markdown_fence_body(&command.stdout_tail));
+            out.push_str("\n```\n\n");
+        }
+        if !command.stderr_tail.trim().is_empty() {
+            out.push_str("stderr:\n\n```text\n");
+            out.push_str(&markdown_fence_body(&command.stderr_tail));
+            out.push_str("\n```\n\n");
+        }
+    }
+}
+
+fn markdown_fence_body(value: &str) -> String {
+    value.replace("```", "` ` `")
+}
+
+fn render_runtime_gate_evidence(out: &mut String, report: &CapabilityReport) {
+    out.push_str("## Runtime Gates\n\n");
+    let mut row_count = 0usize;
+    out.push_str("| Capability | Gate | Status | Command | Proves |\n");
+    out.push_str("|---|---|---|---|---|\n");
+    for capability in &report.capabilities {
+        for gate in &capability.verification {
+            row_count += 1;
+            render_runtime_gate_row(out, &capability.title, gate);
+        }
+        for claim in &capability.claims {
+            for gate in &claim.gates {
+                row_count += 1;
+                render_runtime_gate_row(out, &format!("{} / {}", capability.title, claim.id), gate);
+            }
+        }
+    }
+    if row_count == 0 {
+        out.push_str("| - | - | not_evaluated | - | - |\n");
+    }
+    out.push('\n');
+}
+
+fn render_runtime_gate_row(out: &mut String, capability: &str, gate: &VerificationRuntimeResult) {
+    out.push_str(&format!(
+        "| {} | {} | {} | `{}` | {} |\n",
+        markdown_cell(capability),
+        markdown_cell(&gate.id),
+        markdown_cell(&gate.status),
+        markdown_cell(&gate.command),
+        markdown_cell(gate.proves.as_deref().unwrap_or("-")),
+    ));
+}
+
+fn render_production_blocker_evidence(out: &mut String, report: &CapabilityReport) {
+    out.push_str("## Production Blockers\n\n");
+    if report.production_blockers.is_empty() {
+        out.push_str("- None.\n");
+        return;
+    }
+    for blocker in &report.production_blockers {
+        out.push_str("- ");
+        out.push_str(blocker);
+        out.push('\n');
+    }
 }
 
 fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()> {
@@ -2586,10 +2845,18 @@ fn capability_sweep_action_queue(
             action_kind: project.next_action_kind,
             action_group: project.next_action_group.clone(),
             target: project.next_action.target.clone(),
-            command: project.next_action.command.clone(),
+            command: capability_action_queue_command(project),
             reason: project.next_action.reason.clone(),
         })
         .collect()
+}
+
+fn capability_action_queue_command(project: &CapabilitySweepProject) -> String {
+    if project.next_action_kind == "run_verify" {
+        append_write_evidence_flag(&project.next_action.command)
+    } else {
+        project.next_action.command.clone()
+    }
 }
 
 fn is_capability_executable_action(action: &CapabilityAction) -> bool {
@@ -4970,6 +5237,18 @@ fn capability_report_command(project: &str, verify: bool, include_issue_inventor
         command.push_str(" --skip-issue-inventory");
     }
     command
+}
+
+fn append_write_evidence_flag(command: &str) -> String {
+    let trimmed = command.trim();
+    if trimmed
+        .split_whitespace()
+        .any(|part| part == "--write-evidence")
+    {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed} --write-evidence")
+    }
 }
 
 fn wi_plan_reason(report: &CapabilityReport, base_reason: &str) -> String {
@@ -11196,7 +11475,7 @@ Gate Inventory:
                 (
                     "meter".to_string(),
                     "run_verify".to_string(),
-                    "aw capability report --project meter --verify".to_string()
+                    "aw capability report --project meter --verify --write-evidence".to_string()
                 ),
             ]
         );
@@ -11297,7 +11576,8 @@ Gate Inventory:
                 action_kind: "run_verify",
                 action_group: "run_verify".to_string(),
                 target: "Runtime Resource Attribution".to_string(),
-                command: "aw capability report --project meter --verify".to_string(),
+                command: "aw capability report --project meter --verify --write-evidence"
+                    .to_string(),
                 reason: "runtime verification must be rerun".to_string(),
             },
         ]);
@@ -11306,8 +11586,73 @@ Gate Inventory:
         assert!(index.contains("action_count: 2"));
         assert!(index
             .contains("| jet | run_td | WASM And Multi-Target Execution | `aw td create 3783` |"));
-        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify` |"));
+        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify --write-evidence` |"));
         assert!(index.contains("Execute one command at a time"));
+    }
+
+    #[test]
+    fn capability_verify_evidence_requires_verify_mode() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let err = maybe_write_capability_verify_evidence(&report, false, true, false)
+            .expect_err("write evidence without verify should fail");
+
+        assert!(err
+            .to_string()
+            .contains("--write-evidence requires --verify"));
+    }
+
+    #[test]
+    fn capability_verify_evidence_renders_runtime_summary() {
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.status = "healthy".to_string();
+        report.test_gates = ProjectTestGateReport {
+            evaluated: true,
+            status: ProjectTestGateStatus::Failed,
+            note: None,
+            command_count: 1,
+            passed_count: 0,
+            failed_count: 1,
+            skipped_count: 0,
+            commands: vec![ProjectTestCommandReport {
+                workspace: "demo".to_string(),
+                command: "cargo test -p demo".to_string(),
+                status: ProjectTestCommandStatus::Failed,
+                exit_code: Some(101),
+                duration_ms: 123,
+                stdout_tail: "running 1 test".to_string(),
+                stderr_tail: "assertion failed".to_string(),
+            }],
+        };
+        report.production_status = ProductionStatus::Blocked;
+        report
+            .production_blockers
+            .push("demo: catalog/claim verification is not complete".to_string());
+        let mut item = sample_report_item_with_gap(None);
+        item.verification = vec![VerificationRuntimeResult {
+            id: "demo-gate".to_string(),
+            command: "cargo test -p demo demo_gate".to_string(),
+            status: "pass".to_string(),
+            proves: Some("demo runtime gate".to_string()),
+            exit_code: Some(0),
+            stdout: None,
+            stderr: None,
+        }];
+        report.capabilities = vec![item];
+
+        let body = render_capability_verify_evidence(
+            &report,
+            "aw capability report --project jet --verify --write-evidence",
+        );
+
+        assert!(body.contains("kind: capability_verify_evidence"));
+        assert!(body.contains("This is a runtime evidence artifact."));
+        assert!(body.contains("aw capability report --project jet --verify --write-evidence"));
+        assert!(body.contains("| Project test gates | failed [0/1 passed] |"));
+        assert!(body.contains("| failed | `cargo test -p demo` | 101 | 123 |"));
+        assert!(body.contains("### Project Test Output Tails"));
+        assert!(body.contains("assertion failed"));
+        assert!(body.contains("| Package Manager | demo-gate | pass | `cargo test -p demo demo_gate` | demo runtime gate |"));
+        assert!(body.contains("- demo: catalog/claim verification is not complete"));
     }
 
     #[test]
