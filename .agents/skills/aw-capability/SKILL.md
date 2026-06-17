@@ -65,7 +65,12 @@ promises from inference alone.
    The command refuses unreviewed placeholder drafts and only proves structure;
    run `aw capability check --project <project>` afterward, and use
    `--verify` only when production proof matters.
-11. Only after explicit confirmation, propose edits that create or materially
+11. When the sweep shows `create_wi`, use
+   `aw capability sweep --write-wi-plans --human` to write local
+   pending-review WI planning artifacts for all create-WI projects. These are
+   review queues only; do not publish tracker changes until a human accepts the
+   WI candidates.
+12. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
 ## README Schema

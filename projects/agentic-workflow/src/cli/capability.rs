@@ -253,6 +253,9 @@ pub struct CapabilitySweepArgs {
     /// Write pending-review capability-map drafts for define-map projects.
     #[arg(long = "write-drafts")]
     pub write_drafts: bool,
+    /// Write pending-review WI planning artifacts for create-WI projects.
+    #[arg(long = "write-wi-plans")]
+    pub write_wi_plans: bool,
     /// DEPRECATED compatibility no-op. Capability sweep emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -1084,12 +1087,17 @@ pub struct CapabilitySweepReport {
     pub verify: bool,
     pub include_issue_inventory: bool,
     pub write_drafts: bool,
+    pub write_wi_plans: bool,
     pub groups: Vec<CapabilitySweepGroup>,
     pub projects: Vec<CapabilitySweepProject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub drafts: Vec<CapabilityDraftReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wi_plans: Vec<crate::cli::issues::CapabilityWiPlanReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wi_plan_index_path: Option<PathBuf>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -1754,6 +1762,11 @@ async fn run_capability_sweep(
         sweep.drafts = write_capability_sweep_drafts(&sweep.projects)?;
         sweep.draft_index_path = write_capability_sweep_draft_index(&sweep.drafts)?;
     }
+    if args.write_wi_plans {
+        sweep.write_wi_plans = true;
+        sweep.wi_plans = write_capability_sweep_wi_plans(&sweep.projects).await?;
+        sweep.wi_plan_index_path = write_capability_sweep_wi_plan_index(&sweep.wi_plans)?;
+    }
     if args.human {
         print_capability_sweep(&sweep);
     } else if args.pretty || args.json {
@@ -1816,10 +1829,13 @@ fn capability_sweep_report(
         verify,
         include_issue_inventory,
         write_drafts: false,
+        write_wi_plans: false,
         groups: capability_sweep_groups(&projects),
         projects,
         drafts: Vec::new(),
         draft_index_path: None,
+        wi_plans: Vec::new(),
+        wi_plan_index_path: None,
     }
 }
 
@@ -1880,6 +1896,75 @@ fn render_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> Stri
     out
 }
 
+async fn write_capability_sweep_wi_plans(
+    projects: &[CapabilitySweepProject],
+) -> Result<Vec<crate::cli::issues::CapabilityWiPlanReport>> {
+    let mut plans = Vec::new();
+    for project in capability_sweep_wi_plan_projects(projects) {
+        let report =
+            crate::cli::issues::build_capability_wi_plan_report(crate::cli::issues::PlanArgs {
+                project: Some(project.project.clone()),
+                title: None,
+                cap_path: Some(project.cap_path.clone()),
+                output: None,
+                json: false,
+                repo: None,
+            })
+            .await?;
+        plans.push(report);
+    }
+    Ok(plans)
+}
+
+fn write_capability_sweep_wi_plan_index(
+    plans: &[crate::cli::issues::CapabilityWiPlanReport],
+) -> Result<Option<PathBuf>> {
+    if plans.is_empty() {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp").join("aw").join("capability-wi-plans");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-wi-plan-index.md"));
+    std::fs::write(&path, render_capability_sweep_wi_plan_index(plans)).with_context(|| {
+        format!(
+            "failed to write capability WI plan index {}",
+            path.display()
+        )
+    })?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_wi_plan_index(
+    plans: &[crate::cli::issues::CapabilityWiPlanReport],
+) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_wi_plan_index\n");
+    out.push_str("status: pending_review\n");
+    out.push_str(&format!("plan_count: {}\n", plans.len()));
+    out.push_str("---\n\n");
+    out.push_str("# Capability WI Plan Review Index\n\n");
+    out.push_str("These artifacts are local review inputs. Do not publish tracker changes until a human accepts the WI candidates.\n\n");
+    out.push_str("| Project | Backend | Candidates | Plan | Re-run |\n");
+    out.push_str("|---|---|---:|---|---|\n");
+    for plan in plans {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | `{}` |\n",
+            markdown_cell(&plan.project),
+            markdown_cell(&plan.backend),
+            plan.candidate_count,
+            markdown_cell(&plan.path.display().to_string()),
+            markdown_cell(&plan.plan_command),
+        ));
+    }
+    out.push_str("\n## Review Guardrails\n\n");
+    out.push_str("- Treat the capability README as the confirmed anchor.\n");
+    out.push_str("- Review candidates before using `aw wi draft init` or `aw wi create`.\n");
+    out.push_str("- When the issue backend is unavailable, keep the artifact local/review-only.\n");
+    out
+}
+
 fn capability_sweep_draft_projects(
     projects: &[CapabilitySweepProject],
 ) -> Vec<&CapabilitySweepProject> {
@@ -1892,6 +1977,19 @@ fn capability_sweep_draft_projects(
 fn is_capability_draft_action(action: &CapabilityAction) -> bool {
     action.kind == CapabilityActionKind::DefineCapabilityMap
         && action.command.trim().starts_with("aw capability draft")
+}
+
+fn capability_sweep_wi_plan_projects(
+    projects: &[CapabilitySweepProject],
+) -> Vec<&CapabilitySweepProject> {
+    projects
+        .iter()
+        .filter(|project| is_capability_wi_plan_action(&project.next_action))
+        .collect()
+}
+
+fn is_capability_wi_plan_action(action: &CapabilityAction) -> bool {
+    action.kind == CapabilityActionKind::CreateWi && action.command.trim().starts_with("aw wi plan")
 }
 
 fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject {
@@ -2021,6 +2119,20 @@ fn print_capability_sweep(sweep: &CapabilitySweepReport) {
                 draft.project,
                 draft.source,
                 draft.path.display()
+            );
+        }
+    }
+    if sweep.write_wi_plans {
+        println!("WI plans written [{}]", sweep.wi_plans.len());
+        if let Some(path) = &sweep.wi_plan_index_path {
+            println!("WI plan index {}", path.display());
+        }
+        for plan in &sweep.wi_plans {
+            println!(
+                "WI plan:{} candidates={} {}",
+                plan.project,
+                plan.candidate_count,
+                plan.path.display()
             );
         }
     }
@@ -8921,6 +9033,40 @@ Gate Inventory:
     }
 
     #[test]
+    fn capability_sweep_selects_create_wi_projects_for_wi_plans() {
+        let mut planable = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project lumen",
+            false,
+        ));
+        planable.project = "lumen".to_string();
+        planable.cap_path = PathBuf::from("projects/lumen/README.md");
+
+        let mut td_ready = sample_report(sample_action(
+            CapabilityActionKind::RunTd,
+            "aw td create 3783",
+            false,
+        ));
+        td_ready.project = "jet".to_string();
+
+        let sweep = capability_sweep_report(&[planable, td_ready], false, false);
+
+        let plan_projects = capability_sweep_wi_plan_projects(&sweep.projects)
+            .into_iter()
+            .map(|project| {
+                (
+                    project.project.as_str(),
+                    project.cap_path.display().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            plan_projects,
+            vec![("lumen", "projects/lumen/README.md".to_string())]
+        );
+    }
+
+    #[test]
     fn capability_sweep_draft_index_lists_review_queue() {
         let index = render_capability_sweep_draft_index(&[CapabilityDraftReport {
             schema_version: "aw.cli.v1",
@@ -8946,6 +9092,34 @@ Gate Inventory:
         ));
         assert!(index.contains("`aw capability check --project pg`"));
         assert!(index.contains("Do not edit README until the capability promise is confirmed."));
+    }
+
+    #[test]
+    fn capability_sweep_wi_plan_index_lists_review_queue() {
+        let index =
+            render_capability_sweep_wi_plan_index(&[crate::cli::issues::CapabilityWiPlanReport {
+                action: "planned",
+                kind: "capability_plan",
+                project: "lumen".to_string(),
+                backend: "unavailable".to_string(),
+                path: PathBuf::from("/tmp/aw/lumen/capability-plan/plan.md"),
+                cap_path: PathBuf::from("projects/lumen/README.md"),
+                capability_count: 17,
+                planning_row_count: 54,
+                issue_count: 0,
+                candidate_count: 48,
+                warnings: vec!["issue inventory unavailable: gh auth missing".to_string()],
+                agent_review_required: true,
+                review_status: "pending",
+                plan_command: "aw wi plan --project lumen".to_string(),
+            }]);
+
+        assert!(index.contains("kind: capability_wi_plan_index"));
+        assert!(index.contains("plan_count: 1"));
+        assert!(index.contains("| lumen | unavailable | 48 |"));
+        assert!(index.contains("/tmp/aw/lumen/capability-plan/plan.md"));
+        assert!(index.contains("`aw wi plan --project lumen`"));
+        assert!(index.contains("keep the artifact local/review-only"));
     }
 
     #[test]
