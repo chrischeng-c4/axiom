@@ -121,7 +121,14 @@ unsafe extern "C" fn dispatch_b32hexdecode(args_ptr: *const MbValue, nargs: usiz
     mb_base64_b32hexdecode_cf(data, casefold)
 }
 dispatch_unary_bytes_like!(dispatch_b16encode, mb_base64_b16encode, "b16encode");
-dispatch_unary!(dispatch_b16decode, mb_base64_b16decode);
+// b16decode(s, casefold=False). The `casefold` flag may arrive as a bare
+// positional bool or in a trailing kwargs dict.
+unsafe extern "C" fn dispatch_b16decode(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let data = a.first().copied().unwrap_or_else(MbValue::none);
+    let casefold = extract_casefold(&a[1.min(a.len())..]);
+    mb_base64_b16decode_cf(data, casefold)
+}
 // a85encode(b, *, foldspaces=False, wrapcol=0, pad=False, adobe=False).
 // We support the default codec plus the `adobe` framing flag (the only encode
 // keyword exercised by the CPython behavior fixtures). `adobe=True` frames the
@@ -1151,11 +1158,25 @@ pub fn mb_base64_b16encode(data: MbValue) -> MbValue {
 /// base64.b16decode(data) -> bytes (strict uppercase hex, like CPython's
 /// default `casefold=False`).
 pub fn mb_base64_b16decode(data: MbValue) -> MbValue {
-    let bytes = match unsafe { decode_data_bytes(&data) } {
+    mb_base64_b16decode_cf(data, false)
+}
+
+/// base64.b16decode(data, casefold=False). With `casefold=True`, lowercase hex
+/// is accepted (CPython upper-cases the input first); otherwise only uppercase
+/// hex is valid.
+pub fn mb_base64_b16decode_cf(data: MbValue, casefold: bool) -> MbValue {
+    let raw = match unsafe { decode_data_bytes(&data) } {
         Ok(b) => b,
         Err(()) => {
             return raise_value_error("string argument should contain only ASCII characters");
         }
+    };
+    let bytes: Vec<u8> = if casefold {
+        let mut v = raw.into_owned();
+        v.make_ascii_uppercase();
+        v
+    } else {
+        raw.into_owned()
     };
     // CPython 3.12: b16decode is strict — odd-length input or any byte
     // outside the uppercase hex alphabet raises binascii.Error.
