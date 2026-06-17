@@ -9,6 +9,7 @@
 # case = "distinct_key_setitem_no_loss"
 # subject = "dict.__setitem__"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "concurrency_matrix.py (single-mutation atomicity contract)"
 # status = "filled"

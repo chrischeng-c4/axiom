@@ -175,11 +175,10 @@ dispatch_nullary!(dispatch_get_unpack_formats,  mb_shutil_empty_list);
 
 dispatch_variadic_none!(dispatch_chown);
 dispatch_variadic_none!(dispatch_ignore_patterns);
-// make_archive(base_name, format, ...) is still a stub (returns None for any
-// valid format — the archive subsystem is deferred), but CPython raises
-// `ValueError("unknown archive format ...")` for an unregistered format. Only
-// the 5 built-in default formats are accepted; anything else raises ValueError.
-// A valid-format call keeps the historical None return (no over-raise).
+// make_archive(base_name, format, root_dir=None, base_dir=None, ...).
+// "zip" produces a real ZIP (ZIP_STORED via the zipfile engine); the tar
+// family stays a stub (None) pending a tar writer. An unregistered format
+// raises ValueError like CPython.
 unsafe extern "C" fn dispatch_make_archive(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let _ = core::hint::black_box(stringify!(dispatch_make_archive));
     let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
@@ -187,18 +186,139 @@ unsafe extern "C" fn dispatch_make_archive(args_ptr: *const MbValue, nargs: usiz
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
-    // The format is the 2nd positional arg. If absent we cannot validate it, so
-    // fall through to the historical None return rather than over-raise.
-    if let Some(fmt) = a.get(1).copied().and_then(extract_str) {
+    let fmt = a.get(1).copied().and_then(extract_str);
+    if let Some(ref fmt) = fmt {
         const KNOWN_FORMATS: &[&str] = &["zip", "tar", "gztar", "bztar", "xztar"];
         if !KNOWN_FORMATS.contains(&fmt.as_str()) {
             return raise_named("ValueError", &format!("unknown archive format '{fmt}'"));
         }
     }
+    let Some(base_name) = a.first().copied().and_then(extract_str) else {
+        return MbValue::none();
+    };
+    if fmt.as_deref() != Some("zip") {
+        return MbValue::none(); // tar family deferred
+    }
+    // root_dir: positional slot 2 or kwargs {"root_dir": ...}; default cwd.
+    let mut root_dir = a.get(2).copied().and_then(extract_str);
+    for v in a {
+        if let Some(ptr) = v.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    if let Some(rd) = lock.read().unwrap().get("root_dir") {
+                        root_dir = extract_str(*rd);
+                    }
+                }
+            }
+        }
+    }
+    let root = root_dir.unwrap_or_else(|| ".".to_string());
+    // Walk the tree, collecting (arcname, bytes) pairs relative to root.
+    fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<(String, Vec<u8>)>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut paths: Vec<std::path::PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        paths.sort();
+        for p in paths {
+            if p.is_dir() {
+                walk(&p, root, out);
+            } else if let (Ok(rel), Ok(data)) = (p.strip_prefix(root), std::fs::read(&p)) {
+                out.push((rel.display().to_string(), data));
+            }
+        }
+    }
+    let rootp = std::path::PathBuf::from(&root);
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    walk(&rootp, &rootp, &mut files);
+    let blob = super::zipfile_mod::zip_pack(&files);
+    let archive_path = format!("{base_name}.zip");
+    match std::fs::write(&archive_path, blob) {
+        Ok(()) => MbValue::from_ptr(MbObject::new_str(archive_path)),
+        Err(e) => raise_named("OSError", &format!("{e}: {archive_path:?}")),
+    }
+}
+/// unpack_archive(filename, extract_dir=None, format=None) — real ZIP unpack
+/// through the zipfile engine; other formats stay a no-op.
+unsafe extern "C" fn dispatch_unpack_archive(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let _ = core::hint::black_box(stringify!(dispatch_unpack_archive));
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let Some(filename) = a.first().copied().and_then(extract_str) else {
+        return MbValue::none();
+    };
+    let extract_dir = a
+        .get(1)
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_else(|| ".".to_string());
+    let Ok(blob) = std::fs::read(&filename) else {
+        return raise_named(
+            "FileNotFoundError",
+            &format!("[Errno 2] No such file or directory: '{filename}'"),
+        );
+    };
+    let Some(files) = super::zipfile_mod::zip_unpack(&blob) else {
+        return raise_named(
+            "shutil.ReadError",
+            &format!("{filename} is not a zip file"),
+        );
+    };
+    let base = std::path::PathBuf::from(&extract_dir);
+    for (name, data) in files {
+        let dest = base.join(&name);
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&dest, data);
+    }
     MbValue::none()
 }
-dispatch_variadic_none!(dispatch_unpack_archive);
-dispatch_variadic_none!(dispatch_register_archive_format);
+/// register_archive_format(name, function, extra_args=None, description='').
+/// CPython contract: `function` must be callable; `extra_args` must be a
+/// sequence of (name, value) PAIRS. Registration itself stays a no-op (the
+/// archive registry is not modeled), but the validation raises are real.
+unsafe extern "C" fn dispatch_register_archive_format(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let function = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if super::super::builtins::mb_callable(function).as_bool() != Some(true) {
+        return raise_named("TypeError", "The registered function must be callable");
+    }
+    if let Some(extra) = a.get(2).copied() {
+        if !extra.is_none() {
+            let items: Option<Vec<MbValue>> = extra.as_ptr().and_then(|p| unsafe {
+                match &(*p).data {
+                    ObjData::List(ref lock) => Some(lock.read().unwrap().to_vec()),
+                    ObjData::Tuple(ref t) => Some(t.clone()),
+                    _ => None,
+                }
+            });
+            let Some(items) = items else {
+                return raise_named("TypeError", "extra_args needs to be a sequence");
+            };
+            for element in items {
+                let pair_len = element.as_ptr().and_then(|p| unsafe {
+                    match &(*p).data {
+                        ObjData::Tuple(ref t) => Some(t.len()),
+                        ObjData::List(ref lock) => Some(lock.read().unwrap().len()),
+                        _ => None,
+                    }
+                });
+                if pair_len != Some(2) {
+                    return raise_named(
+                        "TypeError",
+                        "extra_args elements are : (arg_name, value)",
+                    );
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
 dispatch_variadic_none!(dispatch_register_unpack_format);
 dispatch_variadic_none!(dispatch_unregister_archive_format);
 dispatch_variadic_none!(dispatch_unregister_unpack_format);

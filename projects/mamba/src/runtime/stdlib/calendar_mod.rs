@@ -237,6 +237,42 @@ pub fn register() {
         });
     }
 
+    // HTMLCalendar doubles as a themable base class: map the constructor
+    // dispatcher to its class name (NATIVE_TYPE_NAMES) and register the css
+    // theming defaults as class attributes, so both
+    // `calendar.HTMLCalendar.cssclasses` and user-subclass overrides resolve.
+    for (cls, addr) in [
+        ("HTMLCalendar", dispatch_html_calendar as usize),
+        ("LocaleHTMLCalendar", dispatch_locale_html_calendar as usize),
+    ] {
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(addr as u64, cls.to_string());
+        });
+        // mb_class_set_class_attr only writes to registered classes.
+        super::super::class::mb_class_register(cls, vec![], std::collections::HashMap::new());
+        let str_list = |xs: &[&str]| {
+            MbValue::from_ptr(MbObject::new_list(
+                xs.iter()
+                    .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
+                    .collect(),
+            ))
+        };
+        let set_attr = |name: &str, v: MbValue| {
+            super::super::class::mb_class_set_class_attr(
+                MbValue::from_ptr(MbObject::new_str(cls.to_string())),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+                v,
+            );
+        };
+        set_attr("cssclasses", str_list(&HTML_CSS));
+        set_attr("cssclasses_weekday_head", str_list(&HTML_CSS_WEEKDAY_HEAD));
+        set_attr("cssclass_noday", MbValue::from_ptr(MbObject::new_str("noday".to_string())));
+        set_attr("cssclass_month", MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH.to_string())));
+        set_attr("cssclass_month_head", MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH_HEAD.to_string())));
+        set_attr("cssclass_year", MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR.to_string())));
+        set_attr("cssclass_year_head", MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR_HEAD.to_string())));
+    }
+
     // Data attributes — sequences eagerly built at register-time so
     // `callable(calendar.month_name) == False` parity holds.
     attrs.insert("month_name".to_string(), mb_calendar_month_name());
@@ -527,7 +563,33 @@ pub fn mb_calendar_firstweekday() -> MbValue {
 }
 
 pub fn mb_calendar_setfirstweekday(v: MbValue) -> MbValue {
-    let n = v.as_int().unwrap_or(0);
+    // CPython's guard is `if not MONDAY <= firstweekday <= SUNDAY`, so a
+    // non-int argument fails inside the comparison with TypeError.
+    let n = match v.as_int_pyint() {
+        Some(n) => n,
+        None => {
+            let tn = if v.is_float() {
+                "float"
+            } else if v.is_none() {
+                "NoneType"
+            } else if let Some(ptr) = v.as_ptr() {
+                unsafe {
+                    match (*ptr).data {
+                        ObjData::Str(_) => "str",
+                        ObjData::Bytes(_) => "bytes",
+                        ObjData::List(_) => "list",
+                        _ => "object",
+                    }
+                }
+            } else {
+                "object"
+            };
+            return calendar_raise(
+                "TypeError",
+                format!("'<=' not supported between instances of 'int' and '{tn}'"),
+            );
+        }
+    };
     // CPython: setfirstweekday raises IllegalWeekdayError for weekday ∉ 0..=6.
     if !(0..=6).contains(&n) {
         return calendar_raise(
@@ -723,11 +785,14 @@ fn monthrange(y: i64, m: i64) -> (i64, i64) {
 /// (year, month, day) tuple here, which keeps the day-number / structure
 /// fixtures (yeardayscalendar, itermonthdays3, etc.) correct.
 fn make_date(y: i64, m: i64, d: i64) -> MbValue {
-    MbValue::from_ptr(MbObject::new_tuple(vec![
+    // Real datetime.date instances (CPython: itermonthdates and the
+    // *datescalendar grids yield date objects, not (y, m, d) tuples).
+    let args = MbValue::from_ptr(MbObject::new_list(vec![
         MbValue::from_int(y),
         MbValue::from_int(m),
         MbValue::from_int(d),
-    ]))
+    ]));
+    super::datetime_mod::mb_datetime_new(args)
 }
 
 // ---- iteration: pure day-sequence helpers ----
@@ -1518,6 +1583,239 @@ const HTML_CSS_MONTH: &str = "month";
 const HTML_CSS_MONTH_HEAD: &str = "month";
 const HTML_CSS_YEAR: &str = "year";
 const HTML_CSS_YEAR_HEAD: &str = "year";
+
+// ---- Receiver-aware HTMLCalendar methods (user-subclass support) ----
+//
+// The instance-field method table above is flat-args (no self), so it cannot
+// honor `class Themed(calendar.HTMLCalendar): cssclass_month = ...`
+// overrides — a subclass instance has neither the method fields nor the
+// theme defaults. mb_call_method routes subclass receivers here instead;
+// every css value is read off the receiver (instance fields → user class
+// attrs via mb_getattr) with the CPython default as fallback.
+
+/// getattr(recv, name) as a String, with a default for missing/None.
+fn recv_css_str(recv: MbValue, name: &str, default: &str) -> String {
+    let v = super::super::class::mb_getattr(
+        recv,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    extract_str_val(v).unwrap_or_else(|| default.to_string())
+}
+
+/// getattr(recv, name) as a 7-element Vec<String> (per-weekday css classes).
+fn recv_css_list(recv: MbValue, name: &str, default: &[&str; 7]) -> Vec<String> {
+    let v = super::super::class::mb_getattr(
+        recv,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items: Vec<String> = lock
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|x| extract_str_val(*x))
+                    .collect();
+                if items.len() == 7 {
+                    return items;
+                }
+            }
+        }
+    }
+    default.iter().map(|s| s.to_string()).collect()
+}
+
+fn extract_str_val(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+    })
+}
+
+fn recv_firstweekday(recv: MbValue) -> i64 {
+    let v = super::super::class::mb_getattr(
+        recv,
+        MbValue::from_ptr(MbObject::new_str("firstweekday".to_string())),
+    );
+    v.as_int().unwrap_or(0).rem_euclid(7)
+}
+
+fn themed_formatday(recv: MbValue, day: i64, weekday: i64) -> String {
+    if day == 0 {
+        format!(
+            "<td class=\"{}\">&nbsp;</td>",
+            recv_css_str(recv, "cssclass_noday", "noday")
+        )
+    } else {
+        let css = recv_css_list(recv, "cssclasses", &HTML_CSS);
+        format!("<td class=\"{}\">{}</td>", css[weekday.rem_euclid(7) as usize], day)
+    }
+}
+
+fn themed_formatweek(recv: MbValue, week: &[(i64, i64)]) -> String {
+    let cells: String = week.iter().map(|(d, wd)| themed_formatday(recv, *d, *wd)).collect();
+    format!("<tr>{cells}</tr>")
+}
+
+fn themed_formatweekheader(recv: MbValue) -> String {
+    let fw = recv_firstweekday(recv);
+    let css = recv_css_list(recv, "cssclasses_weekday_head", &HTML_CSS_WEEKDAY_HEAD);
+    let mut s = String::from("<tr>");
+    for i in 0..7 {
+        let wd = ((fw + i) % 7) as usize;
+        s.push_str(&format!("<th class=\"{}\">{}</th>", css[wd], DAY_ABBR3[wd]));
+    }
+    s.push_str("</tr>");
+    s
+}
+
+fn themed_formatmonthname(recv: MbValue, year: i64, month: i64, withyear: bool) -> String {
+    let css = recv_css_str(recv, "cssclass_month_head", HTML_CSS_MONTH_HEAD);
+    if withyear {
+        format!(
+            "<tr><th colspan=\"7\" class=\"{}\">{} {}</th></tr>",
+            css, MONTH_FULL[month as usize % 13], year
+        )
+    } else {
+        format!(
+            "<tr><th colspan=\"7\" class=\"{}\">{}</th></tr>",
+            css, MONTH_FULL[month as usize % 13]
+        )
+    }
+}
+
+fn themed_format_month(recv: MbValue, year: i64, month: i64, withyear: bool) -> String {
+    let fw = recv_firstweekday(recv);
+    let mut s = String::new();
+    s.push_str(&format!(
+        "<table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" class=\"{}\">\n",
+        recv_css_str(recv, "cssclass_month", HTML_CSS_MONTH)
+    ));
+    s.push_str(&themed_formatmonthname(recv, year, month, withyear));
+    s.push('\n');
+    s.push_str(&themed_formatweekheader(recv));
+    s.push('\n');
+    let pairs: Vec<(i64, i64)> = monthdays_seq(fw, year, month)
+        .into_iter()
+        .enumerate()
+        .map(|(i, d)| (d, (fw + i as i64) % 7))
+        .collect();
+    for wk in pairs.chunks(7) {
+        s.push_str(&themed_formatweek(recv, wk));
+        s.push('\n');
+    }
+    s.push_str("</table>\n");
+    s
+}
+
+fn themed_format_year(recv: MbValue, year: i64, width: i64) -> String {
+    let width = if width <= 0 { 3 } else { width };
+    let mut s = String::new();
+    s.push_str(&format!(
+        "<table border=\"0\" cellpadding=\"0\" cellspacing=\"0\" class=\"{}\">\n",
+        recv_css_str(recv, "cssclass_year", HTML_CSS_YEAR)
+    ));
+    s.push_str(&format!(
+        "<tr><th colspan=\"{}\" class=\"{}\">{}</th></tr>",
+        width,
+        recv_css_str(recv, "cssclass_year_head", HTML_CSS_YEAR_HEAD),
+        year
+    ));
+    let mut m = 1i64;
+    while m <= 12 {
+        s.push_str("<tr>");
+        for mm in m..(m + width).min(13) {
+            s.push_str("<td>");
+            s.push_str(&themed_format_month(recv, year, mm, false));
+            s.push_str("</td>");
+        }
+        s.push_str("</tr>");
+        m += width;
+    }
+    s.push_str("</table>");
+    s
+}
+
+/// Extract a week argument (list of (day, weekday) 2-tuples).
+fn week_arg(v: MbValue) -> Vec<(i64, i64)> {
+    let mut out = Vec::new();
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                for item in lock.read().unwrap().iter() {
+                    if let Some(ip) = item.as_ptr() {
+                        if let ObjData::Tuple(ref t) = (*ip).data {
+                            if t.len() == 2 {
+                                out.push((
+                                    t[0].as_int_pyint().unwrap_or(0),
+                                    t[1].as_int_pyint().unwrap_or(0),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Receiver-aware method dispatch for user subclasses of HTMLCalendar (and
+/// the Calendar iteration surface they inherit). Returns None for methods
+/// not modeled here so the caller can fall through.
+pub fn html_calendar_subclass_method(
+    recv: MbValue,
+    method: &str,
+    args: &[MbValue],
+) -> Option<MbValue> {
+    let arg_int = |i: usize, d: i64| args.get(i).and_then(|v| v.as_int_pyint()).unwrap_or(d);
+    let arg_bool = |i: usize, d: bool| {
+        args.get(i)
+            .map(|v| super::super::builtins::mb_is_truthy(*v) != 0)
+            .unwrap_or(d)
+    };
+    let new_str = |s: String| MbValue::from_ptr(MbObject::new_str(s));
+    match method {
+        "formatmonth" => Some(new_str(themed_format_month(
+            recv, arg_int(0, 1970), arg_int(1, 1), arg_bool(2, true),
+        ))),
+        "formatmonthname" => Some(new_str(themed_formatmonthname(
+            recv, arg_int(0, 1970), arg_int(1, 1), arg_bool(2, true),
+        ))),
+        "formatweekheader" => Some(new_str(themed_formatweekheader(recv))),
+        "formatweek" => {
+            let week = week_arg(args.first().copied().unwrap_or_else(MbValue::none));
+            Some(new_str(themed_formatweek(recv, &week)))
+        }
+        "formatday" => Some(new_str(themed_formatday(recv, arg_int(0, 0), arg_int(1, 0)))),
+        "formatweekday" => {
+            let wd = arg_int(0, 0).rem_euclid(7) as usize;
+            let css = recv_css_list(recv, "cssclasses_weekday_head", &HTML_CSS_WEEKDAY_HEAD);
+            Some(new_str(format!("<th class=\"{}\">{}</th>", css[wd], DAY_ABBR3[wd])))
+        }
+        "formatyear" => Some(new_str(themed_format_year(recv, arg_int(0, 1970), arg_int(1, 3)))),
+        "monthdays2calendar" => {
+            let fw = recv_firstweekday(recv);
+            let (y, m) = (arg_int(0, 1970), arg_int(1, 1));
+            let pairs: Vec<MbValue> = monthdays_seq(fw, y, m)
+                .into_iter()
+                .enumerate()
+                .map(|(i, d)| {
+                    MbValue::from_ptr(MbObject::new_tuple(vec![
+                        MbValue::from_int(d),
+                        MbValue::from_int((fw + i as i64) % 7),
+                    ]))
+                })
+                .collect();
+            let weeks: Vec<MbValue> = pairs
+                .chunks(7)
+                .map(|wk| MbValue::from_ptr(MbObject::new_list(wk.to_vec())))
+                .collect();
+            Some(MbValue::from_ptr(MbObject::new_list(weeks)))
+        }
+        _ => None,
+    }
+}
 
 fn html_css_defaults(fields: &mut FxHashMap<String, MbValue>) {
     let css_list: Vec<MbValue> = HTML_CSS.iter()

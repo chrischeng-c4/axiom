@@ -42,6 +42,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
     use super::iter;
     use super::generator;
     use super::closure;
+    use super::pep695;
     use super::module;
     use super::async_rt;
     use super::set_ops;
@@ -154,6 +155,13 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_map_n", iter::mb_map_n as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_filter", builtins::mb_filter as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_call_spread", builtins::mb_call_spread as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_call_spread_kwargs", builtins::mb_call_spread_kwargs as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue, [I64, I64, I64], I64),
+        rt_sym!("mb_iadd", class::mb_iadd as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_isub", class::mb_isub as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_imul", class::mb_imul as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_iand", class::mb_iand as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_ior", class::mb_ior as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_ixor", class::mb_ixor as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         // ── String ops ──
         rt_sym!("mb_str_concat", string_ops::mb_str_concat as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_str_upper", string_ops::mb_str_upper as fn(super::MbValue) -> super::MbValue, [I64], I64),
@@ -267,9 +275,11 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_tuple_getitem", tuple_ops::mb_tuple_getitem as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_tuple_contains", tuple_ops::mb_tuple_contains as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_list_to_tuple", tuple_ops::mb_list_to_tuple as fn(super::MbValue) -> super::MbValue, [I64], I64),
+        rt_sym!("mb_star_args_to_tuple", tuple_ops::mb_star_args_to_tuple as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_tuple_from_iterable", tuple_ops::mb_tuple_from_iterable as fn(super::MbValue) -> super::MbValue, [I64], I64),
         // ── Exception ──
         rt_sym!("mb_raise", exception::mb_raise as fn(super::MbValue, super::MbValue), [I64, I64], Void),
+        rt_sym!("mb_arg_bind_error", exception::mb_arg_bind_error as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_reraise", exception::mb_reraise as fn(super::MbValue), [I64], Void),
         rt_sym!("mb_has_exception", exception::mb_has_exception as fn() -> super::MbValue, [], I64),
         rt_sym!("mb_catch_exception", exception::mb_catch_exception as fn() -> super::MbValue, [], I64),
@@ -282,6 +292,9 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_raise_from", exception::mb_raise_from as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
         rt_sym!("mb_raise_with_context", exception::mb_raise_with_context as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
         rt_sym!("mb_raise_from_with_context", exception::mb_raise_from_with_context as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64, I64], Void),
+        // ── PEP 695 runtime type parameters ──
+        rt_sym!("mb_pep695_typevar", pep695::mb_pep695_typevar as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue) -> super::MbValue, [I64, I64, I64, I64], I64),
+        rt_sym!("mb_pep695_type_alias", pep695::mb_pep695_type_alias as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue, [I64, I64, I64], I64),
         // ── Class ──
         rt_sym!("mb_getattr", class::mb_getattr as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_setattr", class::mb_setattr as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
@@ -295,9 +308,14 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_class_define", class::mb_class_define as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64, I64], Void),
         rt_sym!("mb_class_define_multi", class::mb_class_define_multi as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64, I64], Void),
         rt_sym!("mb_class_set_metaclass", class::mb_class_set_metaclass as fn(super::MbValue, super::MbValue), [I64, I64], Void),
+        rt_sym!("mb_class_set_doc", class::mb_class_set_doc as fn(super::MbValue, super::MbValue), [I64, I64], Void),
         rt_sym!("mb_class_set_abstractmethods", class::mb_class_set_abstractmethods as fn(super::MbValue, super::MbValue), [I64, I64], Void),
         rt_sym!("mb_class_set_class_attr", class::mb_class_set_class_attr as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
         rt_sym!("mb_class_set_kwargs", class::mb_class_set_kwargs as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
+        // PEP 557: ordered dataclass field facts, recorded right before the
+        // @dataclass decorator call (see hir_to_mir ClassDefPlaceholder).
+        rt_sym!("mb_dataclass_record_field", super::stdlib::dataclasses_mod::mb_dataclass_record_field as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64, I64], Void),
+        rt_sym!("mb_dataclass_record_field_nodefault", super::stdlib::dataclasses_mod::mb_dataclass_record_field_nodefault as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
         rt_sym!("mb_raise_instance", class::mb_raise_instance as fn(super::MbValue), [I64], Void),
         rt_sym!("mb_raise_instance_with_context", class::mb_raise_instance_with_context as fn(super::MbValue, super::MbValue), [I64, I64], Void),
         rt_sym!("mb_raise_instance_from", class::mb_raise_instance_from as fn(super::MbValue, super::MbValue), [I64, I64], Void),
@@ -342,6 +360,10 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_func_set_doc", closure::mb_func_set_doc as fn(super::MbValue, super::MbValue), [I64, I64], Void),
         rt_sym!("mb_func_set_argcount", closure::mb_func_set_argcount as fn(super::MbValue, super::MbValue), [I64, I64], Void),
         rt_sym!("mb_func_set_varnames", closure::mb_func_set_varnames as fn(super::MbValue, super::MbValue), [I64, I64], Void),
+        rt_sym!("mb_func_set_params", closure::mb_func_set_params as fn(super::MbValue, super::MbValue), [I64, I64], Void),
+        rt_sym!("mb_func_set_retanno", closure::mb_func_set_retanno as fn(super::MbValue, super::MbValue), [I64, I64], Void),
+        rt_sym!("mb_func_set_srcinfo", closure::mb_func_set_srcinfo as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
+        rt_sym!("mb_fstring_value", string_ops::mb_fstring_value as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_apply_decorator", closure::mb_apply_decorator as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_global_get", closure::mb_global_get as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_global_set", closure::mb_global_set as fn(super::MbValue, super::MbValue), [I64, I64], Void),
@@ -412,6 +434,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_vars", class::mb_vars as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_dir", class::mb_dir as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_dir_no_args", class::mb_dir_no_args as fn() -> super::MbValue, [], I64),
+        rt_sym!("mb_dir_arity_error", class::mb_dir_arity_error as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_check_setattr_dunder", class::mb_check_setattr_dunder as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_check_delattr_dunder", class::mb_check_delattr_dunder as fn(super::MbValue) -> super::MbValue, [I64], I64),
         // ── Dunder dispatch ──

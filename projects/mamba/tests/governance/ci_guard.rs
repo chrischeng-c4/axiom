@@ -48,7 +48,7 @@ fn top_level_tests_directory_contains_only_domain_dirs_and_docs() {
         let allowed = if path.is_dir() {
             DOMAIN_DIRS.contains(&name)
         } else {
-            matches!(name, "README.md")
+            matches!(name, "README.md" | "PRODUCTION-GATE.md")
         };
 
         if !allowed {
@@ -66,9 +66,30 @@ fn top_level_tests_directory_contains_only_domain_dirs_and_docs() {
 fn domain_roots_contain_only_entrypoints_and_taxonomy_dirs() {
     let mut violations = Vec::new();
 
+    // Dimension-first fixture layout (tests/harness/cpython/conventions/
+    // FIXTURE-LAYOUT.md): the cpython domain root holds one dir per facet,
+    // the flat walls, the no-record `_regression` tree, and the residual
+    // legacy bucket dirs (`core`, `std-libs`, `3rd-libs`) that still carry
+    // referenced manifests / bench placeholders.
     collect_domain_root_violations(
         "cpython",
-        &[".cache", "config", "conventions", "fixtures", "tools"],
+        &[
+            ".cache",
+            "_regression",
+            "3rd-libs",
+            "behavior",
+            "bench",
+            "concurrency",
+            "core",
+            "errors",
+            "perf",
+            "real_world",
+            "security",
+            "security-matrix",
+            "std-libs",
+            "surface",
+            "type",
+        ],
         &[],
         |_| false,
         &mut violations,
@@ -206,7 +227,7 @@ fn is_allowed_test_target_path(path: &str) -> bool {
 
 #[test]
 fn cpython_legacy_monolith_count_does_not_increase() {
-    let fixtures = manifest_dir().join("tests/cpython/fixtures");
+    let fixtures = manifest_dir().join("tests/cpython");
     let mut count = 0_usize;
     walk_py_files(&fixtures, &mut |path| {
         if matches!(
@@ -219,7 +240,7 @@ fn cpython_legacy_monolith_count_does_not_increase() {
 
     assert!(
         count <= MAX_LEGACY_CPYTHON_MONOLITHS,
-        "legacy CPython monolith fixtures increased to {count}; target shape is <bucket>/<lib>/<dimension>/<case>.py"
+        "legacy CPython monolith fixtures increased to {count}; target shape is <facet>/<bucket>/<lib>/<case>.py"
     );
 }
 

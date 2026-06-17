@@ -6314,6 +6314,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
+ "unicode-normalization",
  "unicode-properties",
  "wiremock",
  "xz2",
@@ -12381,7 +12382,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vat"
-version = "0.3.61"
+version = "0.3.62"
 dependencies = [
  "anyhow",
  "chrono",

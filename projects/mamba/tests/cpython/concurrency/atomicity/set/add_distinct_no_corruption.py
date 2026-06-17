@@ -9,6 +9,7 @@
 # case = "add_distinct_no_corruption"
 # subject = "set.add"
 # kind = "semantic"
+# xfail = ""
 # mem_carveout = ""
 # source = "concurrency_matrix.py (no-corruption absolute)"
 # status = "filled"

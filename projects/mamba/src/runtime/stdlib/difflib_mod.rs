@@ -1390,16 +1390,35 @@ fn raise_type_error(msg: String) {
 /// raised (caller should stop).
 fn check_types(a: MbValue, b: MbValue, args: &[MbValue]) -> bool {
     for seq in [a, b] {
-        if let Some(items) = extract_list(seq) {
-            if let Some(first) = items.first() {
-                if !is_str_value(*first) {
-                    raise_type_error(format!(
-                        "lines to compare must be str, not {} ({})",
-                        value_type_name(*first),
-                        value_repr(*first)
-                    ));
-                    return true;
-                }
+        // A non-iterable side is the iteration TypeError (CPython does
+        // `len(a)` over the sequence before comparing).
+        let iterable = seq.as_ptr().is_some_and(|ptr| unsafe {
+            matches!(
+                (*ptr).data,
+                ObjData::Str(_) | ObjData::List(_) | ObjData::Tuple(_)
+            )
+        }) || super::super::iter::is_iter_handle(seq);
+        if !iterable {
+            raise_not_iterable(seq);
+            return true;
+        }
+        // First-element str check on concrete sequences only — extracting
+        // from an iterator handle would drain it before the diff runs.
+        let first = seq.as_ptr().and_then(|ptr| unsafe {
+            match (*ptr).data {
+                ObjData::List(ref lock) => lock.read().unwrap().first().copied(),
+                ObjData::Tuple(ref t) => t.first().copied(),
+                _ => None,
+            }
+        });
+        if let Some(first) = first {
+            if !is_str_value(first) {
+                raise_type_error(format!(
+                    "lines to compare must be str, not {} ({})",
+                    value_type_name(first),
+                    value_repr(first)
+                ));
+                return true;
             }
         }
     }
@@ -1416,11 +1435,44 @@ fn check_types(a: MbValue, b: MbValue, args: &[MbValue]) -> bool {
 }
 
 fn extract_list(val: MbValue) -> Option<Vec<MbValue>> {
-    val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::List(ref lock) = (*ptr).data {
-            Some(lock.read().unwrap().to_vec())
-        } else { None }
-    })
+    if let Some(items) = val.as_ptr().and_then(|ptr| unsafe {
+        match (*ptr).data {
+            ObjData::List(ref lock) => Some(lock.read().unwrap().to_vec()),
+            ObjData::Tuple(ref t) => Some(t.clone()),
+            _ => None,
+        }
+    }) {
+        return Some(items);
+    }
+    if super::super::iter::is_iter_handle(val) {
+        return super::super::iter::drain_iter_to_vec(val);
+    }
+    None
+}
+
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// CPython iteration TypeError for a non-iterable argument.
+fn raise_not_iterable(val: MbValue) -> MbValue {
+    let tn = if val.is_none() {
+        "NoneType"
+    } else if val.as_bool().is_some() {
+        "bool"
+    } else if val.as_int().is_some() {
+        "int"
+    } else if val.is_float() {
+        "float"
+    } else {
+        "object"
+    };
+    raise_type_error(format!("'{tn}' object is not iterable"));
+    MbValue::none()
 }
 
 pub fn mb_difflib_SequenceMatcher(a: MbValue, b: MbValue) -> MbValue {
@@ -1555,9 +1607,46 @@ fn mb_difflib_unified_diff_full(args: &[MbValue]) -> MbValue {
 
 pub fn mb_difflib_get_close_matches(word: MbValue, possibilities: MbValue, n: MbValue, cutoff: MbValue) -> MbValue {
     let sw = extract_str(word).unwrap_or_default();
-    let cut = cutoff.as_float().unwrap_or(0.6);
-    let count = n.as_int().unwrap_or(3) as usize;
-    let items = extract_list(possibilities).unwrap_or_default();
+    // Keyword calls pack a dict into the first free positional slot; unfold
+    // n/cutoff from it.
+    let mut n = n;
+    let mut cutoff = cutoff;
+    for slot in [n, cutoff] {
+        if let Some(ptr) = slot.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let map = lock.read().unwrap();
+                    if slot.to_bits() == n.to_bits() {
+                        n = MbValue::none();
+                    }
+                    if slot.to_bits() == cutoff.to_bits() {
+                        cutoff = MbValue::none();
+                    }
+                    if let Some(v) = map.get("n") { n = *v; }
+                    if let Some(v) = map.get("cutoff") { cutoff = *v; }
+                }
+            }
+        }
+    }
+    let cut = cutoff
+        .as_float()
+        .or_else(|| cutoff.as_int().map(|i| i as f64))
+        .unwrap_or(0.6);
+    let count_raw = n.as_int().unwrap_or(3);
+    // CPython argument contract.
+    if count_raw <= 0 {
+        return raise_value_error(&format!("n must be > 0: {count_raw}"));
+    }
+    if !(0.0..=1.0).contains(&cut) {
+        return raise_value_error(&format!("cutoff must be in [0.0, 1.0]: {cut}"));
+    }
+    let count = count_raw as usize;
+    let items = match extract_list(possibilities) {
+        Some(v) => v,
+        None => {
+            return raise_not_iterable(possibilities);
+        }
+    };
     let mut scored: Vec<(f64, MbValue)> = items.into_iter().filter_map(|v| {
         extract_str(v).map(|s| (sequence_ratio(&sw, &s), v))
     }).filter(|(r, _)| *r >= cut).collect();

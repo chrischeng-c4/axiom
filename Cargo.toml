@@ -176,6 +176,15 @@ lto = true
 codegen-units = 1
 strip = true
 
+# Dev builds keep workspace code at opt-level 0 (fast incremental builds)
+# but compile DEPENDENCIES optimized: the mamba conformance suite spends
+# most of its wall time inside cranelift (JIT codegen per fixture), logos,
+# regex, and flate2 — all dependency crates. Optimizing only deps cuts the
+# conformance/lib suite wall time roughly in half at a one-time dependency
+# rebuild cost, with no change to incremental rebuilds of our own crates.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release.package.cap]
 opt-level = "z"
 codegen-units = 1

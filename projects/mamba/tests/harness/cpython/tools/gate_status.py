@@ -26,6 +26,7 @@ import argparse
 import os
 import shutil
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import harness_lib  # shared oracle/SUT runner (tools/): isolated scratch CWD + PYTHONBREAKPOINT=0
@@ -62,11 +63,14 @@ def main(argv=None) -> int:
     ap.add_argument("--per-bucket", type=int, default=None,
                     help="stratified sample: at most N spread across each bucket")
     ap.add_argument("--timeout", type=int, default=10)
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4,
+                    help="parallel fixture runners (subprocess-bound, threads scale)")
     args = ap.parse_args(argv)
 
     mamba_bin = os.environ.get("MAMBA_BIN") or shutil.which("mamba") or "mamba"
     overall = Counter()
     print(f"{'bucket':14} {'n':>6} {'PASS':>6} {'MAMBA_RED':>10} {'DIVERGE':>8} {'SKIP':>6}  pass_rate")
+    pool = ThreadPoolExecutor(max_workers=args.jobs)
     for bucket in BUCKETS:
         root = FIXTURES_DIR / bucket
         if not root.exists():
@@ -75,14 +79,13 @@ def main(argv=None) -> int:
         if args.per_bucket and len(fixtures) > args.per_bucket:
             step = len(fixtures) // args.per_bucket
             fixtures = fixtures[::step][: args.per_bucket]
-        c = Counter()
-        for fx in fixtures:
-            c[classify(fx, mamba_bin, args.timeout)] += 1
+        c = Counter(pool.map(lambda f: classify(f, mamba_bin, args.timeout), fixtures))
         overall += c
         _, graded, pr = harness_lib.compute_pass_rate(c)
         print(f"{bucket:14} {sum(c.values()):6} {c[harness_lib.PASS]:6} {c[harness_lib.MAMBA_RED]:10} "
               f"{c[harness_lib.DIVERGE]:8} {c[harness_lib.ORACLE_SKIP]:6}  {pr:5.1f}%")
 
+    pool.shutdown(wait=True)
     _, graded, pr = harness_lib.compute_pass_rate(overall)
     print(f"{'TOTAL':14} {sum(overall.values()):6} {overall[harness_lib.PASS]:6} {overall[harness_lib.MAMBA_RED]:10} "
           f"{overall[harness_lib.DIVERGE]:8} {overall[harness_lib.ORACLE_SKIP]:6}  {pr:5.1f}%")

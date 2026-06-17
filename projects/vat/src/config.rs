@@ -102,6 +102,27 @@ pub struct ServiceConfig {
     pub cmd: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<ServicePreset>,
+    /// Docker image backing this service. Mutually exclusive with `cmd` and
+    /// `preset`. vat starts it via `docker run` as a managed foreground child;
+    /// the runner itself is never containerized, so the host GPU story holds.
+    /// vat is not an image builder/registry — it pulls and runs, nothing more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// Port the service listens on *inside* the image. Mapped to the
+    /// auto-allocated (or fixed `port`) host port. Required for image services.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_port: Option<u16>,
+    /// Environment variables passed *into* the container (e.g.
+    /// `POSTGRES_PASSWORD`). Image services only.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub image_env: BTreeMap<String, String>,
+    /// How a `preset` service is provided. `auto` (default) prefers the native
+    /// host binary (Homebrew) and falls back to the preset's official Docker
+    /// image when the binary is missing; `native` forces the binary; `docker`
+    /// forces the image. Only meaningful with `preset` — `image` services are
+    /// always Docker and `cmd` services are always native.
+    #[serde(default)]
+    pub runtime: ServiceRuntime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default)]
@@ -133,6 +154,24 @@ pub enum ServicePreset {
     Mysql,
     Mongo,
     Opensearch,
+}
+
+/// How a `preset` service is provided. The default prefers the native binary
+/// (Homebrew) so the host GPU and zero-friction model hold, and only reaches
+/// for Docker when the binary is absent — or when the preset has no native
+/// equivalent on this host.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceRuntime {
+    /// Prefer the native binary; fall back to the preset's Docker image when it
+    /// is missing. The sensible default.
+    #[default]
+    Auto,
+    /// Require the native host binary; fail if it is not installed.
+    Native,
+    /// Always run the preset's official Docker image.
+    Docker,
 }
 
 /// Port policy for a service. Presets default to `auto` to avoid conflicts.
@@ -234,14 +273,28 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
     let mut service_ids = BTreeSet::new();
     for service in &cfg.services {
         validate_id("service", &service.id)?;
-        match (&service.preset, service.cmd.is_empty()) {
-            (None, true) => bail!("service `{}` must define cmd or preset", service.id),
-            (Some(_), false) => bail!(
-                "service `{}` must not define both cmd and preset",
+        let has_cmd = !service.cmd.is_empty();
+        let has_preset = service.preset.is_some();
+        let has_image = service.image.is_some();
+        match (has_cmd, has_preset, has_image) {
+            (false, false, false) => bail!(
+                "service `{}` must define exactly one of cmd, preset, or image",
                 service.id
             ),
-            (None, false) => validate_cmd("service", &service.id, &service.cmd)?,
-            (Some(_), true) => {}
+            (true, false, false) => validate_cmd("service", &service.id, &service.cmd)?,
+            (false, true, false) => {}
+            (false, false, true) => validate_image_service(service)?,
+            _ => bail!(
+                "service `{}` must define only one of cmd, preset, or image",
+                service.id
+            ),
+        }
+        if service.runtime != ServiceRuntime::Auto && !has_preset {
+            bail!(
+                "service `{}` sets `runtime` but only preset services accept it; \
+                 image services are always Docker and cmd services are always native",
+                service.id
+            );
         }
         if let PortSpec::Auto(value) = &service.port {
             if value != "auto" {
@@ -321,6 +374,28 @@ fn validate_service_dependency_cycle(
 fn validate_id(kind: &str, id: &str) -> Result<()> {
     if id.trim().is_empty() {
         bail!("{kind} id must not be empty");
+    }
+    Ok(())
+}
+
+/// An `image`-backed service runs a Docker container, so it needs a non-empty
+/// image reference and a container port to map onto the host.
+/// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+fn validate_image_service(service: &ServiceConfig) -> Result<()> {
+    if service
+        .image
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        bail!("service `{}` image must not be empty", service.id);
+    }
+    if service.container_port.is_none() {
+        bail!(
+            "service `{}` image requires `container_port` (the port the service listens on inside the image)",
+            service.id
+        );
     }
     Ok(())
 }
@@ -537,6 +612,10 @@ artifacts = ["out.txt"]
                 requires: vec!["db".into()],
                 cmd: vec!["true".into()],
                 preset: None,
+                image: None,
+                container_port: None,
+                image_env: BTreeMap::new(),
+                runtime: ServiceRuntime::default(),
                 version: None,
                 port: PortSpec::default(),
                 seed: Vec::new(),
@@ -574,6 +653,10 @@ artifacts = ["out.txt"]
                     requires: vec!["api".into()],
                     cmd: vec!["true".into()],
                     preset: None,
+                    image: None,
+                    container_port: None,
+                    image_env: BTreeMap::new(),
+                    runtime: ServiceRuntime::default(),
                     version: None,
                     port: PortSpec::default(),
                     seed: Vec::new(),
@@ -587,6 +670,10 @@ artifacts = ["out.txt"]
                     requires: vec!["web".into()],
                     cmd: vec!["true".into()],
                     preset: None,
+                    image: None,
+                    container_port: None,
+                    image_env: BTreeMap::new(),
+                    runtime: ServiceRuntime::default(),
                     version: None,
                     port: PortSpec::default(),
                     seed: Vec::new(),
@@ -608,6 +695,104 @@ artifacts = ["out.txt"]
             digest: String::new(),
         };
         assert!(validate(&cfg).is_err());
+    }
+
+    fn cfg_with_service(service: ServiceConfig) -> VatConfig {
+        VatConfig {
+            version: 1,
+            name: None,
+            default_runner: None,
+            workspace: WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: vec![service],
+            runners: vec![RunnerConfig {
+                id: "e2e".into(),
+                requires: vec!["svc".into()],
+                cmd: vec!["true".into()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            path: PathBuf::from("vat.toml"),
+            root: PathBuf::from("."),
+            digest: String::new(),
+        }
+    }
+
+    fn bare_service(id: &str) -> ServiceConfig {
+        ServiceConfig {
+            id: id.into(),
+            requires: Vec::new(),
+            cmd: Vec::new(),
+            preset: None,
+            image: None,
+            container_port: None,
+            image_env: BTreeMap::new(),
+            runtime: ServiceRuntime::default(),
+            version: None,
+            port: PortSpec::default(),
+            seed: Vec::new(),
+            export: BTreeMap::new(),
+            ready_http: None,
+            timeout_s: default_service_timeout(),
+        }
+    }
+
+    #[test]
+    fn accepts_image_backed_service() {
+        let mut svc = bare_service("svc");
+        svc.image = Some("postgres:16".into());
+        svc.container_port = Some(5432);
+        assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn rejects_service_with_no_backing() {
+        // Neither cmd, preset, nor image.
+        assert!(validate(&cfg_with_service(bare_service("svc"))).is_err());
+    }
+
+    #[test]
+    fn rejects_image_and_cmd_together() {
+        let mut svc = bare_service("svc");
+        svc.cmd = vec!["true".into()];
+        svc.image = Some("redis:7".into());
+        svc.container_port = Some(6379);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_image_and_preset_together() {
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::Postgres);
+        svc.image = Some("postgres:16".into());
+        svc.container_port = Some(5432);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_image_without_container_port() {
+        let mut svc = bare_service("svc");
+        svc.image = Some("postgres:16".into());
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_runtime_on_non_preset_service() {
+        // `runtime` only applies to preset services.
+        let mut svc = bare_service("svc");
+        svc.image = Some("postgres:16".into());
+        svc.container_port = Some(5432);
+        svc.runtime = ServiceRuntime::Docker;
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn accepts_preset_with_runtime() {
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::Postgres);
+        svc.runtime = ServiceRuntime::Docker;
+        assert!(validate(&cfg_with_service(svc)).is_ok());
     }
 }
 // CODEGEN-END

@@ -171,6 +171,9 @@ target-lexicon = "0.13"
 
 # Unicode general-category + numeric properties (CPython parity for str.isdigit / isdecimal / isnumeric)
 unicode-properties = "0.1"
+# Real NFC/NFD/NFKC/NFKD engine for the unicodedata module (already in the
+# workspace lockfile via other deps).
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 datatest-stable = "0.2"
@@ -239,10 +242,15 @@ harness = false
 # declarative pin TOMLs under tests/harness/cpython/config/perf/pins/ and emits one
 # test per pin via datatest_stable; G3.1 selector:
 #   cargo test -p mamba --release --test perf_pin -- perf_pin
+# Opt-in only (`test = false`): per docs/MVP_TEST_PROFILE.md G3.1 and the
+# harness header, the perf gate requires the release profile — under the
+# default debug `cargo test -p mamba` it measures debug-build CPU/RSS and
+# fails spuriously.
 [[test]]
 name = "perf_pin"
 path = "tests/harness/cpython/perf_pin.rs"
 harness = false
+test = false
 
 # mambalibs — mamba-only native library behavior
 [[test]]

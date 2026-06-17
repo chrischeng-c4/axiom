@@ -772,7 +772,7 @@ fn test_emit_refcount_enabled() {
     use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
     use crate::codegen::{CodegenBackend, CodegenOutput};
 
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     // Compile a function that exercises list getitem (borrowed→owned ref pattern).
     // With EMIT_REFCOUNT_CALLS=true, the JIT emits retain/release for locals.
@@ -853,7 +853,7 @@ fn test_conformance_with_refcount_basic() {
         }
     }
 
-    let guard = JIT_LOCK.lock().unwrap();
+    let guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     // Test 1: Simple arithmetic
     assert_eq!(jit_run_locked("def f() -> int:\n    return 1 + 2\n", &guard), 3);

@@ -113,6 +113,9 @@ dispatch_varargs!(dispatch_strerror, mb_os_strerror);
 dispatch_varargs!(dispatch_get_terminal_size, mb_os_get_terminal_size);
 dispatch_varargs!(dispatch_uname, mb_os_uname);
 dispatch_varargs!(dispatch_noop_none, mb_os_noop_none);
+dispatch_varargs!(dispatch_symlink, mb_os_symlink_v);
+dispatch_varargs!(dispatch_readlink, mb_os_readlink_v);
+dispatch_varargs!(dispatch_mkfifo, mb_os_mkfifo_v);
 dispatch_varargs!(dispatch_w_predicate_false, mb_os_w_predicate_false);
 dispatch_varargs!(dispatch_w_zero, mb_os_w_zero);
 dispatch_varargs!(dispatch_get_exec_path, mb_os_get_exec_path);
@@ -494,8 +497,8 @@ pub fn register() {
         ("ftruncate", dispatch_noop_none as *const () as usize),
         ("truncate", dispatch_noop_none as *const () as usize),
         ("link", dispatch_noop_none as *const () as usize),
-        ("symlink", dispatch_noop_none as *const () as usize),
-        ("readlink", dispatch_noop_none as *const () as usize),
+        ("symlink", dispatch_symlink as *const () as usize),
+        ("readlink", dispatch_readlink as *const () as usize),
         ("putenv", dispatch_noop_none as *const () as usize),
         ("unsetenv", dispatch_noop_none as *const () as usize),
         ("setpgid", dispatch_noop_none as *const () as usize),
@@ -514,7 +517,7 @@ pub fn register() {
         ("set_blocking", dispatch_noop_none as *const () as usize),
         ("set_inheritable", dispatch_noop_none as *const () as usize),
         ("register_at_fork", dispatch_noop_none as *const () as usize),
-        ("mkfifo", dispatch_noop_none as *const () as usize),
+        ("mkfifo", dispatch_mkfifo as *const () as usize),
         ("mknod", dispatch_noop_none as *const () as usize),
         ("makedev", dispatch_w_zero as *const () as usize),
         ("sched_yield", dispatch_noop_none as *const () as usize),
@@ -801,12 +804,93 @@ pub fn mb_os_cpu_count() -> MbValue {
 
 // ── os.path functions ──
 
+/// fspath contract: a path component must be str (our join models str-only;
+/// bytes mixing has its own message). Raises the CPython TypeError and
+/// returns true when `val` is not path-like.
+fn raise_bad_path_component(val: MbValue) -> bool {
+    if extract_str(val).is_some() {
+        return false;
+    }
+    // None stays lenient (no raise): `__file__` is still None in mamba, and
+    // the `os.path.join(os.path.dirname(__file__), ...)` idiom must keep
+    // flowing None through rather than hard-failing the whole script.
+    if val.is_none() {
+        return false;
+    }
+    let tn = if val.is_none() {
+        "NoneType"
+    } else if val.as_bool().is_some() {
+        "bool"
+    } else if val.as_int().is_some() {
+        "int"
+    } else if val.is_float() {
+        "float"
+    } else if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            match (*ptr).data {
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "Can't mix strings and bytes in path components".to_string(),
+                        )),
+                    );
+                    return true;
+                }
+                ObjData::List(_) => "list",
+                ObjData::Tuple(_) => "tuple",
+                ObjData::Dict(_) => "dict",
+                _ => "object",
+            }
+        }
+    } else {
+        "object"
+    };
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "expected str, bytes or os.PathLike object, not {tn}"
+        ))),
+    );
+    true
+}
+
+fn raise_file_not_found(path: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "[Errno 2] No such file or directory: '{path}'"
+        ))),
+    );
+    MbValue::none()
+}
+
 /// os.path.join(a, b) → string
 pub fn mb_os_path_join(a: MbValue, b: MbValue) -> MbValue {
+    // CPython: components must be uniformly str or uniformly bytes.
+    let is_bytes = |v: MbValue| {
+        v.as_ptr().is_some_and(|p| unsafe {
+            matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+        })
+    };
+    if is_bytes(a) != is_bytes(b) && extract_str(a).is_some() && extract_str(b).is_some() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "Can't mix strings and bytes in path components".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     if let (Some(sa), Some(sb)) = (extract_str(a), extract_str(b)) {
         let path = std::path::Path::new(&sa).join(&sb);
         MbValue::from_ptr(MbObject::new_str(path.display().to_string()))
     } else {
+        for v in [a, b] {
+            if raise_bad_path_component(v) {
+                return MbValue::none();
+            }
+        }
         MbValue::none()
     }
 }
@@ -928,7 +1012,8 @@ pub fn mb_os_path_getsize(path: MbValue) -> MbValue {
     if let Some(p) = extract_str(path) {
         match std::fs::metadata(&p) {
             Ok(meta) => MbValue::from_int(meta.len() as i64),
-            Err(_) => MbValue::from_int(-1),
+            // CPython surfaces the OS error (missing file → FileNotFoundError).
+            Err(_) => raise_file_not_found(&p),
         }
     } else {
         MbValue::from_int(-1)
@@ -1006,7 +1091,44 @@ pub fn mb_os_path_expandvars(path: MbValue) -> MbValue {
 }
 
 /// os.path.relpath(path, start) → string
-pub fn mb_os_path_relpath(path: MbValue, _start: MbValue) -> MbValue { path }
+/// os.path.relpath(path, start=os.curdir) — relative path from `start` to
+/// `path`, computed lexically over abspath'd components (CPython posixpath).
+pub fn mb_os_path_relpath(path: MbValue, start: MbValue) -> MbValue {
+    let Some(p) = extract_str(path) else { return path };
+    let s = extract_str(start)
+        .unwrap_or_else(|| std::env::current_dir()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|_| ".".to_string()));
+    let absify = |raw: &str| -> Vec<String> {
+        let joined = if raw.starts_with('/') {
+            raw.to_string()
+        } else {
+            let cwd = std::env::current_dir()
+                .map(|d| d.display().to_string())
+                .unwrap_or_default();
+            format!("{cwd}/{raw}")
+        };
+        let mut comps: Vec<String> = Vec::new();
+        for c in joined.split('/') {
+            match c {
+                "" | "." => {}
+                ".." => { comps.pop(); }
+                other => comps.push(other.to_string()),
+            }
+        }
+        comps
+    };
+    let pc = absify(&p);
+    let sc = absify(&s);
+    let common = pc.iter().zip(sc.iter()).take_while(|(a, b)| a == b).count();
+    let mut parts: Vec<String> = Vec::new();
+    for _ in common..sc.len() {
+        parts.push("..".to_string());
+    }
+    parts.extend(pc[common..].iter().cloned());
+    let rel = if parts.is_empty() { ".".to_string() } else { parts.join("/") };
+    MbValue::from_ptr(MbObject::new_str(rel))
+}
 
 fn collect_path_sequence(args: &[MbValue]) -> Vec<String> {
     if args.len() == 1 {
@@ -1076,12 +1198,79 @@ fn commonpath_strs(paths: &[String]) -> Result<String, &'static str> {
 pub fn mb_os_path_samefile(p1: MbValue, p2: MbValue) -> MbValue {
     match (extract_str(p1), extract_str(p2)) {
         (Some(a), Some(b)) => {
-            let ca = std::fs::canonicalize(&a).ok();
-            let cb = std::fs::canonicalize(&b).ok();
-            MbValue::from_bool(ca.is_some() && ca == cb)
+            // CPython os.stat()s both paths — a missing one raises
+            // FileNotFoundError rather than returning False.
+            let ca = match std::fs::canonicalize(&a) {
+                Ok(c) => c,
+                Err(_) => return raise_file_not_found(&a),
+            };
+            let cb = match std::fs::canonicalize(&b) {
+                Ok(c) => c,
+                Err(_) => return raise_file_not_found(&b),
+            };
+            MbValue::from_bool(ca == cb)
         }
         _ => MbValue::from_bool(false),
     }
+}
+
+/// os.symlink(src, dst) — create a symbolic link dst → src (POSIX).
+pub fn mb_os_symlink_v(args: &[MbValue]) -> MbValue {
+    let (Some(src), Some(dst)) = (
+        args.first().copied().and_then(extract_str),
+        args.get(1).copied().and_then(extract_str),
+    ) else {
+        return MbValue::none();
+    };
+    #[cfg(unix)]
+    if let Err(e) = std::os::unix::fs::symlink(&src, &dst) {
+        let kind = if e.kind() == std::io::ErrorKind::AlreadyExists {
+            "FileExistsError"
+        } else {
+            "OSError"
+        };
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str(kind.to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "[Errno 17] File exists: '{src}' -> '{dst}'"
+            ))),
+        );
+    }
+    MbValue::none()
+}
+
+/// os.readlink(path) — the target a symlink points at.
+pub fn mb_os_readlink_v(args: &[MbValue]) -> MbValue {
+    let Some(p) = args.first().copied().and_then(extract_str) else {
+        return MbValue::none();
+    };
+    match std::fs::read_link(&p) {
+        Ok(t) => MbValue::from_ptr(MbObject::new_str(t.display().to_string())),
+        Err(_) => raise_file_not_found(&p),
+    }
+}
+
+/// os.mkfifo(path, mode=0o666) — create a FIFO (POSIX).
+pub fn mb_os_mkfifo_v(args: &[MbValue]) -> MbValue {
+    let Some(p) = args.first().copied().and_then(extract_str) else {
+        return MbValue::none();
+    };
+    let mode = args.get(1).and_then(|v| v.as_int()).unwrap_or(0o666) as libc::mode_t;
+    #[cfg(unix)]
+    {
+        let c_path = match std::ffi::CString::new(p.clone()) {
+            Ok(c) => c,
+            Err(_) => return MbValue::none(),
+        };
+        let rc = unsafe { libc::mkfifo(c_path.as_ptr(), mode) };
+        if rc != 0 {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!("mkfifo failed: '{p}'"))),
+            );
+        }
+    }
+    MbValue::none()
 }
 
 /// os.makedirs(path) — create directory and all parents.
@@ -2245,8 +2434,12 @@ mod tests {
 
     #[test]
     fn test_os_path_getsize_nonexistent() {
+        // CPython contract: a missing path raises FileNotFoundError (the
+        // dispatcher returns none after raising).
         let path = s("/nonexistent_xyz_abc_123");
-        assert_eq!(mb_os_path_getsize(path).as_int(), Some(-1));
+        let result = mb_os_path_getsize(path);
+        assert!(result.is_none(), "missing path should raise, got {result:?}");
+        super::super::super::exception::mb_clear_exception();
     }
 
     #[test]

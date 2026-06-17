@@ -133,6 +133,20 @@ unsafe extern "C" fn dispatch_chain_from_iterable(
 ) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let source = a.first().copied().unwrap_or_else(MbValue::none);
+    // The argument to chain.from_iterable must itself be iterable; a bare
+    // scalar (e.g. chain.from_iterable(123)) raises TypeError like CPython.
+    // Scalars carry no pointer; iterator handles / generators are bare ints
+    // too, so exempt those before flagging.
+    if source.as_ptr().is_none()
+        && !super::super::iter::mb_is_iterator_handle(source)
+        && !super::super::generator::is_known_generator(source)
+    {
+        raise_type_error(&format!(
+            "'{}' object is not iterable",
+            super::super::builtins::value_type_name(source)
+        ));
+        return MbValue::none();
+    }
     let mut items: Vec<MbValue> = Vec::new();
     for sub in extract_list(source) {
         if real_exception_pending() {
@@ -506,6 +520,29 @@ fn extract_list(val: MbValue) -> Vec<MbValue> {
             }
         }
     }
+    // A range handle is a re-iterable sequence, not a one-shot iterator:
+    // materialize it from its (current, stop, step) params WITHOUT consuming,
+    // so the same handle can be extracted more than once. This matters when a
+    // single range object is aliased across pools, e.g.
+    // `product(*[range(n)] * 2)` (which shares one object) or `chain(r, r)`.
+    // The generic mb_iter/mb_next fallback below would drain it on the first
+    // extract and yield an empty list on the second.
+    if let Some((cur, stop, step)) = super::super::iter::mb_iter_range_params(val) {
+        let mut out = Vec::new();
+        let mut c = cur;
+        if step > 0 {
+            while c < stop {
+                out.push(MbValue::from_int(c));
+                c += step;
+            }
+        } else if step < 0 {
+            while c > stop {
+                out.push(MbValue::from_int(c));
+                c += step;
+            }
+        }
+        return out;
+    }
     // Fall back to iterator protocol (generators, iterator handles, custom iter).
     let iter_handle = super::super::iter::mb_iter(val);
     if iter_handle.is_none() {
@@ -717,9 +754,16 @@ fn mb_itertools_zip_longest_n(iters: &[MbValue], fill: MbValue) -> MbValue {
     if iters.is_empty() {
         return MbValue::from_ptr(MbObject::new_list(Vec::new()));
     }
-    let cols: Vec<Vec<MbValue>> = iters.iter().map(|it| extract_list(*it)).collect();
-    if real_exception_pending() {
-        return MbValue::none();
+    // Materialize each source in turn, stopping at the first that raises a
+    // real (non-StopIteration) error so it propagates instead of being padded
+    // over — and so a later source isn't drained after an upstream failure.
+    let mut cols: Vec<Vec<MbValue>> = Vec::with_capacity(iters.len());
+    for it in iters {
+        let col = extract_list(*it);
+        if real_exception_pending() {
+            return MbValue::none();
+        }
+        cols.push(col);
     }
     let len = cols.iter().map(|c| c.len()).max().unwrap_or(0);
     let mut result = Vec::with_capacity(len);

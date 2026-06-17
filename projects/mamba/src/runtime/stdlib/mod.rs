@@ -34,6 +34,7 @@ pub mod traceback_mod;
 pub mod warnings_mod;
 pub mod inspect_mod;
 pub mod enum_mod;
+pub mod enum_class;
 pub mod dataclasses_mod;
 // P3 stdlib modules
 pub mod subprocess_mod;
@@ -74,6 +75,7 @@ pub mod statistics_mod;
 pub mod numbers_mod;
 pub mod unicodedata_mod;
 pub mod zlib_mod;
+pub mod compressed_file;
 pub mod bz2_mod;
 pub mod lzma_mod;
 pub mod queue_mod;

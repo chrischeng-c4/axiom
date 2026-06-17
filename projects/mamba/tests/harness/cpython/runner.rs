@@ -152,6 +152,12 @@ fn apply_child_limits(command: &mut Command) {
 
     unsafe {
         command.pre_exec(move || {
+            // Own process group, so a timeout kill can take down the whole
+            // spawn tree: a fixture's grandchild otherwise survives the
+            // child's SIGKILL holding the stdout/stderr pipe write-ends,
+            // and wait_with_output blocks forever on a pipe that never EOFs
+            // (observed wedging full conformance runs at the very end).
+            let _ = libc::setpgid(0, 0);
             set_limit(libc::RLIMIT_AS, mem_bytes, mem_bytes);
             set_limit(libc::RLIMIT_DATA, mem_bytes, mem_bytes);
             set_limit(libc::RLIMIT_CPU, cpu_secs, cpu_secs);
@@ -310,7 +316,7 @@ fn spawn_mamba(path: &Path) -> Result<Output, String> {
 fn spawn_python(path: &Path) -> Result<Output, String> {
     let fixture = absolute_fixture_path(path);
     let sandbox = temp_sandbox(path)?;
-    let mut command = Command::new("python3");
+    let mut command = Command::new(common::python3_bin());
     command
         .arg(&fixture)
         .current_dir(sandbox.path())
@@ -362,6 +368,80 @@ fn temp_sandbox(path: &Path) -> Result<tempfile::TempDir, String> {
 
 // ── Harness runner ────────────────────────────────────────────────
 
+// ── D5.3 oracle results cache ─────────────────────────────────────
+//
+// The CPython oracle output is deterministic per fixture content, so cache
+// (exit-ok, stdout) keyed by sha256(fixture bytes) + python version. Only
+// successful oracle runs are cached; INVALID fixtures stay live so their
+// diagnostics remain fresh. Disable with MAMBA_ORACLE_CACHE=0.
+// Layout: target/cpython-oracle-cache/<2-hex>/<hash> — outside the fixture
+// tree so the discovery walker never sees it (the .cache lesson).
+
+fn oracle_cache_enabled() -> bool {
+    !matches!(
+        std::env::var("MAMBA_ORACLE_CACHE").as_deref(),
+        Ok("0") | Ok("off") | Ok("false")
+    )
+}
+
+fn python_version_salt() -> &'static str {
+    use std::sync::OnceLock;
+    static SALT: OnceLock<String> = OnceLock::new();
+    SALT.get_or_init(|| {
+        Command::new(common::python3_bin())
+            .arg("-V")
+            .output()
+            .ok()
+            .map(|o| {
+                let mut v = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if v.is_empty() {
+                    v = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                }
+                v
+            })
+            .unwrap_or_default()
+    })
+}
+
+fn oracle_cache_dir() -> &'static Path {
+    use std::sync::OnceLock;
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        // projects/mamba → workspace target/ two levels up (CARGO_TARGET_DIR
+        // wins when set, matching where cargo itself writes).
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| manifest.join("../../target"));
+        target.join("cpython-oracle-cache")
+    })
+}
+
+fn oracle_cache_path(src: &str) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(python_version_salt().as_bytes());
+    h.update(b"\0v1\0");
+    h.update(src.as_bytes());
+    let hex = format!("{:x}", h.finalize());
+    oracle_cache_dir().join(&hex[..2]).join(hex)
+}
+
+fn oracle_cache_get(cache_file: &Path) -> Option<Vec<u8>> {
+    std::fs::read(cache_file).ok()
+}
+
+fn oracle_cache_put(cache_file: &Path, stdout: &[u8]) {
+    if let Some(parent) = cache_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // Write-then-rename so parallel test threads never read a torn entry.
+    let tmp = cache_file.with_extension(format!("tmp{}", std::process::id()));
+    if std::fs::write(&tmp, stdout).is_ok() {
+        let _ = std::fs::rename(&tmp, cache_file);
+    }
+}
+
 fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
     // bench/*.py fixtures are owned by perf-pin Rust tests (shell-outs to
     // python3 + mamba run); they have no `.expected` goldens by design.
@@ -396,17 +476,32 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
     // .expected golden (668/668 cpython-side), so conformance runs the LIVE
     // oracle for every fixture — no golden files, no regen_golden.py. The
     // fixture must exit 0 under CPython, mamba must exit 0, and stdout must match.
-    let expected = spawn_python(path)?;
-    if !expected.status.success() {
-        return Err(format!(
-            "{}: INVALID fixture: CPython ended with {}\nstdout:\n{}\nstderr:\n{}",
-            path.display(),
-            status_detail(expected.status),
-            String::from_utf8_lossy(&expected.stdout),
-            String::from_utf8_lossy(&expected.stderr)
-        )
-        .into());
-    }
+    // D5.3: a content-addressed cache short-circuits the oracle subprocess for
+    // fixtures whose bytes (and python version) haven't changed.
+    let cache_file = oracle_cache_enabled().then(|| oracle_cache_path(&src));
+    let expected_stdout_bytes: Vec<u8> = match cache_file
+        .as_ref()
+        .and_then(|f| oracle_cache_get(f))
+    {
+        Some(cached) => cached,
+        None => {
+            let expected = spawn_python(path)?;
+            if !expected.status.success() {
+                return Err(format!(
+                    "{}: INVALID fixture: CPython ended with {}\nstdout:\n{}\nstderr:\n{}",
+                    path.display(),
+                    status_detail(expected.status),
+                    String::from_utf8_lossy(&expected.stdout),
+                    String::from_utf8_lossy(&expected.stderr)
+                )
+                .into());
+            }
+            if let Some(f) = &cache_file {
+                oracle_cache_put(f, &expected.stdout);
+            }
+            expected.stdout
+        }
+    };
 
     let output = spawn_mamba(path)?;
     if !output.status.success() {
@@ -423,7 +518,7 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
         .into());
     }
 
-    let expected_stdout = String::from_utf8_lossy(&expected.stdout);
+    let expected_stdout = String::from_utf8_lossy(&expected_stdout_bytes);
     let actual_stdout = String::from_utf8_lossy(&output.stdout);
     if actual_stdout != expected_stdout {
         let diff = format_diff(&expected_stdout, &actual_stdout);
@@ -468,4 +563,12 @@ fn format_diff(expected: &str, actual: &str) -> String {
     out
 }
 
-harness!(run_conformance, "tests/cpython", r".*\.py$");
+// Fixture dimensions are allowlisted explicitly: `tests/cpython` also holds
+// non-fixture trees (`.cache/` — notably the materialized oracle-env venv,
+// whose site-packages contain thousands of stdlib/test .py files — and
+// `tools/`), which must never be collected as conformance cases.
+harness!(
+    run_conformance,
+    "tests/cpython",
+    r"tests/cpython/(behavior|type|surface|_regression|real_world|errors|security|security-matrix|perf|concurrency)/.*\.py$"
+);

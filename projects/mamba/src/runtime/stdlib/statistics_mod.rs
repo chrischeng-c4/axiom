@@ -195,6 +195,29 @@ fn materialize_iterable(val: MbValue) -> MbValue {
             return MbValue::from_ptr(MbObject::new_list(items));
         }
     }
+    // Dict-like and instance iterables (Counter, dict, set, namedtuple, any
+    // class with __iter__) — route through the generic iterator protocol so
+    // `mode(Counter(...))` sees the keys rather than an empty sequence. A
+    // non-iterable instance makes mb_iter raise TypeError, matching CPython's
+    // `iter(data)` contract; we pass the original value through unchanged in
+    // that case so the caller's own error path still runs.
+    if let Some(ptr) = val.as_ptr() {
+        let drainable = unsafe {
+            matches!(
+                (*ptr).data,
+                ObjData::Dict(_) | ObjData::Set(_) | ObjData::FrozenSet(_)
+                    | ObjData::Instance { .. }
+            )
+        };
+        if drainable {
+            let handle = super::super::iter::mb_iter(val);
+            if super::super::iter::is_iter_handle(handle) {
+                if let Some(items) = super::super::iter::drain_iter_to_vec(handle) {
+                    return MbValue::from_ptr(MbObject::new_list(items));
+                }
+            }
+        }
+    }
     val
 }
 
@@ -339,13 +362,16 @@ unsafe extern "C" fn dispatch_quantiles(args_ptr: *const MbValue, nargs: usize) 
                 }
             }
         }
-        // Numeric `n`. bool is an int subtype; a real float is a TypeError.
-        if arg.is_bool() {
-            n = if arg.as_bool().unwrap_or(false) { 1 } else { 0 };
-        } else if let Some(i) = arg.as_int() {
-            n = i;
-        } else if arg.as_float().is_some() {
-            return raise_type_error("n must be an integer");
+        // A bare numeric trailing arg is a genuinely-positional cut count:
+        // CPython's signature is `quantiles(data, *, n=4, method=...)` (n is
+        // keyword-only), so `quantiles(data, 4)` is a TypeError. Keyword
+        // call sites reach us as a packed kwargs dict (the lowering tracks
+        // `quantiles` in the kwargs-dict allowlist), handled above.
+        if arg.is_bool() || arg.as_int().is_some() || arg.as_float().is_some() {
+            return raise_type_error(&format!(
+                "quantiles() takes 1 positional argument but {} were given",
+                nargs
+            ));
         }
     }
     mb_statistics_quantiles(data, n, method_inclusive)
@@ -647,6 +673,16 @@ pub fn register() {
         });
     }
 
+    // NormalDist doubles as a class object: resolve_class_name must map the
+    // constructor dispatcher to "NormalDist" so classmethod dispatch
+    // (`NormalDist.from_samples(...)`) and isinstance checks see the class.
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(
+            dispatch_normaldist as *const () as u64,
+            "NormalDist".to_string(),
+        );
+    });
+
     // StatisticsError: a real exception class (re.error pattern). The name is a
     // callable constructor whose addr resolves to "StatisticsError" via
     // NATIVE_TYPE_NAMES (so `except`/`isinstance` match the raised instance,
@@ -945,6 +981,126 @@ pub fn mb_statistics_normaldist(mu: f64, sigma: f64) -> MbValue {
 
 const SQRT2: f64 = std::f64::consts::SQRT_2;
 
+/// NormalDist arithmetic (CPython `__add__`/`__radd__`/`__sub__`/`__rsub__`/
+/// `__mul__`/`__rmul__`/`__truediv__`/`__neg__`): a constant translates or
+/// scales the distribution; adding/subtracting two NormalDists combines
+/// variances (sigma = hypot(s1, s2)). Returns None when neither operand is a
+/// NormalDist (caller falls through to its regular paths) or the shape is
+/// unsupported (e.g. `number / NormalDist`, which CPython leaves as TypeError).
+pub fn normaldist_binop(op: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
+    let pa = normaldist_params(a);
+    let pb = normaldist_params(b);
+    match (pa, pb) {
+        (None, None) => None,
+        (Some((m1, s1)), Some((m2, s2))) => match op {
+            "+" => Some(mb_statistics_normaldist(m1 + m2, s1.hypot(s2))),
+            "-" => Some(mb_statistics_normaldist(m1 - m2, s1.hypot(s2))),
+            _ => None,
+        },
+        (Some((m, s)), None) => {
+            let x = as_f64(b)?;
+            match op {
+                "+" => Some(mb_statistics_normaldist(m + x, s)),
+                "-" => Some(mb_statistics_normaldist(m - x, s)),
+                "*" => Some(mb_statistics_normaldist(m * x, s * x.abs())),
+                "/" => Some(mb_statistics_normaldist(m / x, s / x.abs())),
+                _ => None,
+            }
+        }
+        (None, Some((m, s))) => {
+            let x = as_f64(a)?;
+            match op {
+                // __radd__ / __rmul__ are symmetric; __rsub__ is -(self - x).
+                "+" => Some(mb_statistics_normaldist(x + m, s)),
+                "-" => Some(mb_statistics_normaldist(x - m, s)),
+                "*" => Some(mb_statistics_normaldist(x * m, s * x.abs())),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// -NormalDist — flipped mean, same sigma, fresh object. None for non-NormalDist.
+pub fn normaldist_neg(a: MbValue) -> Option<MbValue> {
+    let (m, s) = normaldist_params(a)?;
+    Some(mb_statistics_normaldist(-m, s))
+}
+
+/// CPython repr: `NormalDist(mu=100.0, sigma=15.0)`. None for non-NormalDist.
+pub fn normaldist_repr(recv: MbValue) -> Option<String> {
+    let (m, s) = normaldist_params(recv)?;
+    Some(format!(
+        "NormalDist(mu={}, sigma={})",
+        super::super::string_ops::python_float_repr(m),
+        super::super::string_ops::python_float_repr(s),
+    ))
+}
+
+/// NormalDist.from_samples(data) — fit (mean, sample stdev) from the data.
+pub fn mb_statistics_normaldist_from_samples(data: MbValue) -> MbValue {
+    let data = materialize_iterable(data);
+    let v = match extract_floats_checked(data) { Ok(v) => v, Err(()) => return MbValue::none() };
+    if v.len() < 2 {
+        return raise_stat_error("stdev requires at least two data points");
+    }
+    let (mean, m2) = welford_m_m2(&v);
+    let sigma = (m2 / (v.len() - 1) as f64).sqrt();
+    mb_statistics_normaldist(mean, sigma)
+}
+
+/// splitmix64 step — the deterministic PRNG behind NormalDist.samples().
+/// Not CPython's Mersenne Twister: the samples() contract under test is
+/// "same seed → identical sequence, different seed → different sequence,
+/// values are N(mu, sigma) floats", not bit-parity with CPython's stream.
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E3779B97F4A7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+    z ^ (z >> 31)
+}
+
+/// Uniform f64 in (0, 1) from one splitmix64 step (never exactly 0).
+fn prng_unit(state: &mut u64) -> f64 {
+    ((splitmix64(state) >> 11) as f64 + 1.0) / ((1u64 << 53) as f64 + 1.0)
+}
+
+thread_local! {
+    /// Entropy counter for seed=None — each unseeded samples() call gets a
+    /// fresh stream without consulting wall-clock time.
+    static SAMPLES_NONCE: std::cell::Cell<u64> = const { std::cell::Cell::new(0x5EED) };
+}
+
+/// Map a samples(seed=...) value to a PRNG state: int seeds use their value,
+/// strings hash via FNV-1a (so "alpha" != "beta"), None draws a fresh nonce.
+fn seed_to_state(seed: Option<MbValue>) -> u64 {
+    match seed {
+        None => SAMPLES_NONCE.with(|c| {
+            let v = c.get().wrapping_add(0x9E3779B97F4A7C15);
+            c.set(v);
+            v
+        }),
+        Some(v) if v.is_none() => seed_to_state(None),
+        Some(v) => {
+            if let Some(i) = v.as_int() { return i as u64; }
+            if let Some(f) = v.as_float() { return f.to_bits(); }
+            if let Some(ptr) = v.as_ptr() {
+                unsafe {
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        let mut h: u64 = 0xcbf29ce484222325;
+                        for b in s.as_bytes() {
+                            h ^= *b as u64;
+                            h = h.wrapping_mul(0x100000001b3);
+                        }
+                        return h;
+                    }
+                }
+            }
+            0xDEFA017
+        }
+    }
+}
+
 /// Read the (mu, sigma) pair off a NormalDist Instance.
 fn normaldist_params(recv: MbValue) -> Option<(f64, f64)> {
     let ptr = recv.as_ptr()?;
@@ -1113,6 +1269,41 @@ pub fn mb_statistics_normaldist_method(
             }
             Some(MbValue::from_ptr(MbObject::new_list(out)))
         }
+        "samples" => {
+            // samples(n, *, seed=None) — n gaussian draws. The seed kwarg
+            // arrives either as a trailing kwargs dict ({"seed": v}, the
+            // method-call convention) or as a flattened positional value.
+            let n = match args.first().and_then(|v| v.as_int()) {
+                Some(n) if n >= 0 => n as usize,
+                _ => return Some(raise_type_error("samples() requires a non-negative integer n")),
+            };
+            let mut seed: Option<MbValue> = None;
+            for &arg in &args[1..] {
+                if let Some(ptr) = arg.as_ptr() {
+                    unsafe {
+                        if let ObjData::Dict(ref lock) = (*ptr).data {
+                            let g = lock.read().unwrap();
+                            let k = super::super::dict_ops::DictKey::Str("seed".to_string());
+                            if let Some(s) = g.get(&k) { seed = Some(*s); }
+                            continue;
+                        }
+                    }
+                }
+                seed = Some(arg);
+            }
+            let mut state = seed_to_state(seed);
+            // Box-Muller: two uniforms → one gaussian (cos branch only, so
+            // each draw consumes a fixed two PRNG steps — keeps same-seed
+            // streams aligned regardless of n).
+            let mut out = Vec::with_capacity(n);
+            for _ in 0..n {
+                let u1 = prng_unit(&mut state);
+                let u2 = prng_unit(&mut state);
+                let z = (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos();
+                out.push(MbValue::from_float(mu + sigma * z));
+            }
+            Some(MbValue::from_ptr(MbObject::new_list(out)))
+        }
         "overlap" => {
             // overlap(other) — overlapping coefficient. Out of scope for the
             // active fixtures; fall through.
@@ -1197,9 +1388,38 @@ fn m_erfc_contfrac(x: f64) -> f64 {
 // ── Helpers ──
 
 fn as_f64(val: MbValue) -> Option<f64> {
-    if let Some(f) = val.as_float() { Some(f) }
-    else if let Some(i) = val.as_int() { Some(i as f64) }
-    else { None }
+    if let Some(f) = val.as_float() { return Some(f); }
+    // Decimal/Fraction are NaN-boxed int HANDLES (ids ≥ 2^40) — intercept
+    // them before the int readback or the handle id leaks as the value
+    // (`fmean([Decimal("3.5")])` returned ~7e13). See #2129 carve-out.
+    if super::super::builtins::is_decimal_handle_value(val) {
+        return super::decimal_mod::mb_decimal_float(val).as_float();
+    }
+    if super::super::builtins::is_fraction_handle_value(val) {
+        return super::fractions_mod::mb_fraction_float(val).as_float();
+    }
+    if let Some(i) = val.as_int() { return Some(i as f64); }
+    if let Some(b) = val.as_bool() { return Some(if b { 1.0 } else { 0.0 }); }
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            // Instances supporting __float__ (user numeric types).
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let method = super::super::class::lookup_method(class_name, "__float__");
+                if !method.is_none() {
+                    let name = MbValue::from_ptr(MbObject::new_str("__float__".to_string()));
+                    let args = MbValue::from_ptr(MbObject::new_list(vec![]));
+                    return super::super::class::mb_call_method(val, name, args).as_float();
+                }
+                return None;
+            }
+            // BigInt → f64 (may saturate to inf, matching float() semantics).
+            if let Some(big) = super::super::bigint_ops::extract_bigint(val) {
+                use num_traits::ToPrimitive;
+                return big.to_f64();
+            }
+        }
+    }
+    None
 }
 
 /// Extract floats from list/tuple. Non-numeric items are skipped.

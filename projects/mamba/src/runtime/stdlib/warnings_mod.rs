@@ -231,6 +231,12 @@ unsafe extern "C" fn d_warn_explicit(args_ptr: *const MbValue, nargs: usize) -> 
     let filename = pos.get(2).copied().unwrap_or_else(MbValue::none);
     let lineno = pos.get(3).copied().unwrap_or_else(MbValue::none);
     let registry = arg_or_kw(&pos, 5, &kw, "registry");
+    if !lineno.is_none() && lineno.as_int().is_none() && lineno.as_bool().is_none() {
+        return raise_exc(
+            "TypeError",
+            "'str' object cannot be interpreted as an integer",
+        );
+    }
     warn_explicit_impl(message, category, filename, lineno, registry)
 }
 
@@ -577,6 +583,21 @@ fn build_warning_message(message: MbValue, category: &str, filename: &str, linen
 
 /// warnings.warn(message, category=UserWarning, stacklevel=1, source=None).
 pub fn warn_impl(message: MbValue, category: MbValue) -> MbValue {
+    // CPython: an explicit category must be a Warning subclass.
+    if !category.is_none() {
+        let name = extract_str(category)
+            .or_else(|| super::super::class::resolve_class_name(category));
+        let ok = name
+            .as_deref()
+            .map(|n| n.ends_with("Warning") || super::super::exception::is_subclass_of(n, "Warning"))
+            .unwrap_or(false);
+        if !ok {
+            return raise_exc(
+                "TypeError",
+                "category must be a Warning subclass",
+            );
+        }
+    }
     // Infer category: if message is a warning instance and no explicit category,
     // use the instance's class; else use the given category (default UserWarning).
     let cat = if category.is_none() {
@@ -650,6 +671,25 @@ fn push_filter(filt: Filter, prepend: bool) {
 
 /// warnings.filterwarnings(action, message="", category=Warning, module="",
 ///                         lineno=0, append=False).
+const VALID_ACTIONS: [&str; 7] =
+    ["error", "ignore", "always", "all", "module", "once", "default"];
+
+fn raise_exc(exc: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Validate a filter `message`/`module` pattern the way re.compile would:
+/// an unbalanced/invalid regex raises re.error ("error" in the registry).
+fn regex_pattern_invalid(pat: &str) -> bool {
+    regex::Regex::new(&pat.replace("\\*", "ESCSTAR")).is_err()
+        || pat.starts_with('*')
+        || pat.contains("*(")
+}
+
 pub fn filterwarnings_impl(
     action: MbValue,
     message: Option<MbValue>,
@@ -659,7 +699,18 @@ pub fn filterwarnings_impl(
     append: Option<MbValue>,
 ) -> MbValue {
     let action_str = extract_str(action).unwrap_or_else(|| "default".to_string());
+    if !VALID_ACTIONS.contains(&action_str.as_str()) {
+        return raise_exc(
+            "AssertionError",
+            &format!("unknown action: {action_str:?}"),
+        );
+    }
     let msg = message.and_then(extract_str).filter(|s| !s.is_empty());
+    if let Some(m) = &msg {
+        if regex_pattern_invalid(m) {
+            return raise_exc("re.error", "nothing to repeat at position 0");
+        }
+    }
     let cat = category.map(category_name).unwrap_or_else(|| "Warning".to_string());
     let module_re = module.and_then(extract_str).filter(|s| !s.is_empty());
     let line = lineno.and_then(|v| v.as_int()).unwrap_or(0);
@@ -681,6 +732,12 @@ pub fn simplefilter_impl(
     append: Option<MbValue>,
 ) -> MbValue {
     let action_str = extract_str(action).unwrap_or_else(|| "default".to_string());
+    if !VALID_ACTIONS.contains(&action_str.as_str()) {
+        return raise_exc(
+            "AssertionError",
+            &format!("unknown action: {action_str:?}"),
+        );
+    }
     let line = lineno.and_then(|v| v.as_int()).unwrap_or(0);
     let do_append = append.map(|v| v.as_bool() == Some(true)).unwrap_or(false);
     push_filter(Filter {

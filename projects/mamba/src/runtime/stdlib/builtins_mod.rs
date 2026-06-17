@@ -631,12 +631,10 @@ pub fn register() {
     attrs.insert("False".to_string(), MbValue::from_bool(false));
     attrs.insert("None".to_string(), MbValue::none());
 
-    // Sentinel / special constants. NotImplemented is a real singleton
-    // (TAG_NOTIMPLEMENTED in the NaN-box tag space); print() / str() /
-    // repr() already render `NotImplemented`. Ellipsis stays as None
-    // pending a real ellipsis runtime entity — `...` literal in source
-    // also lowers to None so user code is internally consistent.
-    attrs.insert("Ellipsis".to_string(), MbValue::none());
+    // Sentinel / special constants. NotImplemented and Ellipsis are real
+    // singletons (TAG_NOTIMPLEMENTED / TAG_ELLIPSIS in the NaN-box tag
+    // space); print() / str() / repr() render them by name.
+    attrs.insert("Ellipsis".to_string(), MbValue::ellipsis());
     attrs.insert("NotImplemented".to_string(), MbValue::not_implemented());
     attrs.insert(
         "__name__".to_string(),

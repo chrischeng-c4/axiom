@@ -297,75 +297,123 @@ fn collapse_known_short_circuits(source: &str) -> String {
 fn scan_short_circuit_chain(b: &[u8], mut i: usize, op: &[u8]) -> Option<usize> {
     let len = b.len();
     loop {
-        // unary prefixes
+        i = scan_short_circuit_atom(b, i)?;
+
+        // Comparisons bind tighter than `&&`/`||`, so they are part of the
+        // RHS skipped by `!1 && rhs` / `!0 || rhs`. Without this,
+        // `"production"!=="production"&&"undefined"!=typeof navigator&&...`
+        // collapsed to the invalid remnant `!1!=typeof navigator&&...`.
         loop {
-            while i < len && matches!(b[i], b' ' | b'\t') {
-                i += 1;
-            }
-            if i < len && matches!(b[i], b'!' | b'+' | b'-' | b'~') {
-                i += 1;
-            } else if i + 6 <= len && &b[i..i + 6] == b"typeof" {
-                i += 6;
-            } else if i + 4 <= len && &b[i..i + 4] == b"void" {
-                i += 4;
+            let j = skip_hspace(b, i);
+            if let Some(op_len) = comparison_operator_len(b, j) {
+                i = scan_short_circuit_atom(b, j + op_len)?;
             } else {
                 break;
             }
         }
-        if i >= len {
-            return None;
-        }
-        // primary
-        match b[i] {
-            b'(' => i = skip_balanced(b, i, b'(', b')')?,
-            b'[' => i = skip_balanced(b, i, b'[', b']')?,
-            b'"' | b'\'' | b'`' => i = skip_string(b, i),
-            c if is_id(c) || c.is_ascii_digit() => {
-                while i < len && is_id(b[i]) {
-                    i += 1;
-                }
-            }
-            _ => return None,
-        }
-        // postfixes
-        loop {
-            let save = i;
-            while i < len && matches!(b[i], b' ' | b'\t') {
-                i += 1;
-            }
-            if i < len && b[i] == b'.' && i + 1 < len && is_id(b[i + 1]) {
-                i += 1;
-                while i < len && is_id(b[i]) {
-                    i += 1;
-                }
-                continue;
-            }
-            if i < len && b[i] == b'(' {
-                i = skip_balanced(b, i, b'(', b')')?;
-                continue;
-            }
-            if i < len && b[i] == b'[' {
-                i = skip_balanced(b, i, b'[', b']')?;
-                continue;
-            }
-            if i < len && b[i] == b'`' {
-                i = skip_string(b, i);
-                continue;
-            }
-            i = save;
-            break;
-        }
-        // continue across the same operator only
-        let mut j = i;
-        while j < len && matches!(b[j], b' ' | b'\t') {
-            j += 1;
-        }
+
+        let j = skip_hspace(b, i);
         if j + 2 <= len && &b[j..j + 2] == op {
             i = j + 2;
             continue;
         }
-        return Some(i);
+        if op == b"||" && j + 2 <= len && &b[j..j + 2] == b"&&" {
+            i = j + 2;
+            continue;
+        }
+        if is_short_circuit_boundary(b, j) {
+            return Some(i);
+        }
+        return None;
     }
+}
+
+fn scan_short_circuit_atom(b: &[u8], mut i: usize) -> Option<usize> {
+    let len = b.len();
+    // unary prefixes
+    loop {
+        i = skip_hspace(b, i);
+        if i < len && matches!(b[i], b'!' | b'+' | b'-' | b'~') {
+            i += 1;
+        } else if i + 6 <= len && &b[i..i + 6] == b"typeof" {
+            i += 6;
+        } else if i + 4 <= len && &b[i..i + 4] == b"void" {
+            i += 4;
+        } else {
+            break;
+        }
+    }
+    if i >= len {
+        return None;
+    }
+    // primary
+    match b[i] {
+        b'(' => i = skip_balanced(b, i, b'(', b')')?,
+        b'[' => i = skip_balanced(b, i, b'[', b']')?,
+        b'"' | b'\'' | b'`' => i = skip_string(b, i),
+        c if is_id(c) || c.is_ascii_digit() => {
+            while i < len && is_id(b[i]) {
+                i += 1;
+            }
+        }
+        _ => return None,
+    }
+    // postfixes
+    loop {
+        let save = i;
+        i = skip_hspace(b, i);
+        if i < len && b[i] == b'.' && i + 1 < len && is_id(b[i + 1]) {
+            i += 1;
+            while i < len && is_id(b[i]) {
+                i += 1;
+            }
+            continue;
+        }
+        if i < len && b[i] == b'(' {
+            i = skip_balanced(b, i, b'(', b')')?;
+            continue;
+        }
+        if i < len && b[i] == b'[' {
+            i = skip_balanced(b, i, b'[', b']')?;
+            continue;
+        }
+        if i < len && b[i] == b'`' {
+            i = skip_string(b, i);
+            continue;
+        }
+        i = save;
+        break;
+    }
+    Some(i)
+}
+
+fn skip_hspace(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && matches!(b[i], b' ' | b'\t') {
+        i += 1;
+    }
+    i
+}
+
+fn comparison_operator_len(b: &[u8], i: usize) -> Option<usize> {
+    if i + 3 <= b.len() && matches!(&b[i..i + 3], b"===" | b"!==") {
+        return Some(3);
+    }
+    if i + 2 <= b.len() && matches!(&b[i..i + 2], b"==" | b"!=" | b"<=" | b">=") {
+        return Some(2);
+    }
+    if i < b.len()
+        && (b[i] == b'<' || b[i] == b'>')
+        && !matches!(b.get(i + 1), Some(b'<' | b'>' | b'='))
+    {
+        return Some(1);
+    }
+    None
+}
+
+fn is_short_circuit_boundary(b: &[u8], i: usize) -> bool {
+    i >= b.len()
+        || matches!(b[i], b';' | b',' | b')' | b']' | b'}' | b':' | b'?')
+        || (i + 2 <= b.len() && &b[i..i + 2] == b"||")
 }
 
 /// Scan exactly ONE operand: optional unary prefixes, a balanced primary
@@ -1103,6 +1151,22 @@ mod tests {
         let src5 = r#"var ok="a"==="b"&&p||q;"#;
         let out5 = fold_define_short_circuits(src5);
         assert_eq!(out5, r#"var ok=q;"#, "{out5}");
+
+        // styled-components browser production guards chain a false literal
+        // compare into a `typeof` comparison. The whole dead guard must fold;
+        // leaving `!1!=typeof navigator` both keeps dev warnings and changes
+        // runtime semantics.
+        let src6 = r#"function f(){"production"!=="production"&&"undefined"!=typeof navigator&&"ReactNative"===navigator.product&&console.warn("dev");return 1;}"#;
+        let out6 = fold_define_short_circuits(src6);
+        assert!(!out6.contains("console.warn"), "{out6}");
+        assert!(!out6.contains("!1!="), "{out6}");
+        assert!(out6.contains("return 1"), "{out6}");
+
+        // `||` has lower precedence than `&&`: `!0 || a && b` is wholly true.
+        // The skipped RHS must include the `&&` chain, not leave `!0&&b`.
+        let src7 = r#"var ok="production"==="production"||probe()&&side();"#;
+        let out7 = fold_define_short_circuits(src7);
+        assert_eq!(out7, r#"var ok=!0;"#, "{out7}");
     }
 
     #[test]
