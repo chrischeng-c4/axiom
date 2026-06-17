@@ -10375,6 +10375,8 @@ Gate Inventory:
 "#;
         let doc = cap_doc(body);
         assert_eq!(doc.format, CapabilityDocumentFormat::MarkdownTables);
+        assert!(doc.requires_format_migration());
+        assert_eq!(doc.format_version(), 1);
         assert_eq!(doc.capabilities.len(), 2);
         assert_eq!(doc.capabilities[0].id, "rust-native-frontend-toolchain");
         assert_eq!(
@@ -10383,6 +10385,46 @@ Gate Inventory:
         );
         assert_eq!(doc.capabilities[1].id, "package-manager");
         assert_eq!(doc.capabilities[1].gaps[0].id, "lockfile-parity");
+    }
+
+    #[test]
+    fn one_row_contract_table_migration_renders_canonical_field_style_h3() {
+        let body = r#"# Jet
+
+Legacy intro.
+
+## Package Manager
+
+| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
+|---|---:|---|---|---|---|
+| package-manager | #3779 | verified | Replace package manager flows. | smoke, conformance | `cargo test -p jet pkg_manager` |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Lockfile parity | epic | #3779 | implemented | verified | conformance | `cargo test -p jet pkg_manager::lockfile` |
+"#;
+        let doc = cap_doc(body);
+
+        assert!(doc.requires_format_migration());
+        assert_eq!(doc.format_version(), 1);
+
+        let migrated = render_capability_markdown_migration(body, &doc, "jet");
+
+        assert!(migrated.contains("## Brief"));
+        assert!(migrated.contains("## Capabilities"));
+        assert!(migrated.contains("\n### Capability Index\n"));
+        assert!(migrated.contains("\n### Package Manager\n"));
+        assert!(migrated.contains("\nID: package-manager\n"));
+        assert!(migrated.contains("\nPromise:\nReplace package manager flows."));
+        assert!(!migrated.contains(
+            "| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |"
+        ));
+        assert!(!migrated.contains("\n## Package Manager\n"));
+
+        let reparsed = cap_doc(&migrated);
+        assert_eq!(reparsed.format_version(), 2);
+        assert!(!reparsed.requires_format_migration());
+        assert_eq!(reparsed.capabilities[0].id, "package-manager");
     }
 
     #[test]
