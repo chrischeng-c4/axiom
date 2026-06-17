@@ -5382,6 +5382,79 @@ impl<'a> AstLowerer<'a> {
                 );
                 let pack_trailing_kwargs = (is_method_call && has_any_kwargs)
                     || (is_native_kwargs_ident && (has_any_kwargs || has_dstar));
+
+                // `f(**d)` / `f(a, **d)` / `f(k=1, **d)` to a bare-Ident callee
+                // with a `**mapping` splat: the static func_param_info reorder
+                // can't bind dynamic keyword keys, and the generic fallback
+                // misreads the mapping as a positional argument (`three(**{a:1})`
+                // → `[{...}, 0, 0]`). Route through mb_call_spread_kwargs, which
+                // binds the kwargs dict to the callee's named params at runtime
+                // (builtins.rs mb_call_spread_kwargs step 4) and falls back to the
+                // native flattened-positional convention for native targets.
+                // Scoped to bare-Ident, non-`*`-splat calls not already covered by
+                // the trailing-kwargs-dict path (methods / native-kwargs idents).
+                if has_dstar && !pack_trailing_kwargs && !has_star
+                    && matches!(func.node, ast::Expr::Ident(_))
+                {
+                    let merge = |acc: HirExpr, next: HirExpr| HirExpr::Call {
+                        func: Box::new(HirExpr::StrLit("mb_dict_merge".to_string(), any_ty)),
+                        args: vec![acc, next],
+                        ty: any_ty,
+                    };
+                    let mut pos_elems: Vec<HirExpr> = Vec::new();
+                    let mut kw_acc: Option<HirExpr> = None;
+                    let mut pend: Vec<(HirExpr, HirExpr)> = Vec::new();
+                    for a in args {
+                        match a {
+                            ast::CallArg::Positional(e) | ast::CallArg::StarArg(e) => {
+                                if let Some(he) = self.lower_expr(e) { pos_elems.push(he); }
+                            }
+                            ast::CallArg::Keyword { name, value } => {
+                                if let Some(he) = self.lower_expr(value) {
+                                    pend.push((
+                                        HirExpr::StrLit(name.clone(), self.checker.tcx.str()),
+                                        he,
+                                    ));
+                                }
+                            }
+                            ast::CallArg::DoubleStarArg(e) => {
+                                if let Some(he) = self.lower_expr(e) {
+                                    if !pend.is_empty() {
+                                        let chunk = HirExpr::Dict {
+                                            entries: std::mem::take(&mut pend), ty: any_ty,
+                                        };
+                                        kw_acc = Some(match kw_acc.take() {
+                                            None => chunk,
+                                            Some(prev) => merge(prev, chunk),
+                                        });
+                                    }
+                                    kw_acc = Some(match kw_acc.take() {
+                                        None => he,
+                                        Some(prev) => merge(prev, he),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if !pend.is_empty() {
+                        let chunk = HirExpr::Dict { entries: pend, ty: any_ty };
+                        kw_acc = Some(match kw_acc.take() {
+                            None => chunk,
+                            Some(prev) => merge(prev, chunk),
+                        });
+                    }
+                    let kwargs_dict =
+                        kw_acc.unwrap_or(HirExpr::Dict { entries: vec![], ty: any_ty });
+                    let pos_list = HirExpr::List { elements: pos_elems, ty: any_ty };
+                    return Some(HirExpr::Call {
+                        func: Box::new(HirExpr::StrLit(
+                            "mb_call_spread_kwargs".to_string(), any_ty,
+                        )),
+                        args: vec![f, pos_list, kwargs_dict],
+                        ty: any_ty,
+                    });
+                }
+
                 let hir_args: Vec<HirExpr> = if pack_trailing_kwargs {
                     let mut out: Vec<HirExpr> = Vec::new();
                     // Trailing kwargs accumulator: runs of explicit keywords
