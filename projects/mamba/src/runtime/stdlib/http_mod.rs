@@ -2462,6 +2462,12 @@ fn register_httpconnection_class(attrs: &mut HashMap<String, MbValue>) {
     });
 }
 
+/// OpenerDirector() / build_opener(*handlers) -> an OpenerDirector instance.
+/// Handlers are accepted and ignored; the surface only checks the type.
+unsafe extern "C" fn d_opener_director_new(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_instance("OpenerDirector".to_string()))
+}
+
 /// Register the Request class + rewire urllib.request.Request.
 pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
     use std::collections::HashMap as Map;
@@ -2497,5 +2503,23 @@ pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         m.borrow_mut()
             .insert(d_request_new as *const () as u64, REQUEST_CLASS.to_string());
+    });
+
+    // OpenerDirector — a real class so `isinstance(build_opener(),
+    // OpenerDirector)` and `type(...).__name__ == "OpenerDirector"` hold.
+    // build_opener() and OpenerDirector() both construct an instance.
+    super::super::class::mb_class_register(
+        "OpenerDirector",
+        vec!["object".to_string()],
+        Map::new(),
+    );
+    let od = d_opener_director_new as *const () as usize;
+    attrs.insert("OpenerDirector".to_string(), MbValue::from_func(od));
+    attrs.insert("build_opener".to_string(), MbValue::from_func(od));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(od as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(od as u64, "OpenerDirector".to_string());
     });
 }
