@@ -136,6 +136,7 @@ scenarios:
       - "init creates only a canonical README shell and does not invent capability promises"
       - "draft emits pending-review field-style capability contracts with placeholders for Type, Surfaces, EC Dimensions, Root WI, Promise, and Gate Inventory"
       - "draft may truncate Candidate Roots summary cells, but Draft Canonical README Promise fields preserve the full source prose"
+      - "draft emits a Review Decisions worksheet with one row per candidate root so HITL review can record confirm, rename, split, merge, defer, type, surface, EC dimension, WI, and gate decisions before README mutation"
       - "draft treats non-contract Markdown tables with a Capability column, such as Required Platform Capabilities, as pending-review candidate roots instead of emitting only a blank worksheet"
       - "draft treats Markdown bullets under explicit Features or Modules sections as pending-review candidate roots, and falls back to Implemented sections only when no clearer candidate list exists"
       - "sweep --write-drafts emits a draft review index that separates inferred candidate review from human definition-needed worksheets"
@@ -576,6 +577,11 @@ requirements:
     text: "aw capability JSON output treats stdout broken-pipe as a successful early reader close"
     risk: medium
     verifymethod: test
+  draft_review_decisions:
+    id: AW-CAP-WI-22
+    text: "aw capability draft emits a Review Decisions worksheet for HITL root/type/surface/EC/WI/gate review before README mutation"
+    risk: medium
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -606,6 +612,7 @@ relations:
   - { from: capability_unit_tests, to: migration_tail_repair_heading_levels, kind: verifies }
   - { from: capability_unit_tests, to: summary_contract_facets, kind: verifies }
   - { from: capability_unit_tests, to: json_stdout_pipe, kind: verifies }
+  - { from: capability_unit_tests, to: draft_review_decisions, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {

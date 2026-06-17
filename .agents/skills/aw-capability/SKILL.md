@@ -34,9 +34,11 @@ promises from inference alone.
    pending-review artifact under `/tmp/aw/{project}/capability-map-drafts/`.
    For README prose roots, the artifact proposes candidate roots. For an
    existing README with no capability roots, the artifact is a definition
-   worksheet with placeholders. In both cases it is inference-only and must not
-   be treated as a confirmed README edit until the human confirms, revises, or
-   defers the roots.
+   worksheet with placeholders. Use its `Review Decisions` table to record
+   confirm/rename/split/merge/defer plus Type, Surfaces, EC Dimensions, Root
+   WI, and gate/inventory decisions before touching README. In all cases it is
+   inference-only and must not be treated as a confirmed README edit until the
+   human confirms, revises, or defers the roots.
 5. If the configured README/capability map is missing and the human has
    confirmed the project should remain in the sweep, run
    `aw capability init --project <project>`, then rerun

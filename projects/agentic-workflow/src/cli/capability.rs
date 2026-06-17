@@ -1728,6 +1728,26 @@ fn render_capability_map_draft(
             ));
         }
     }
+    out.push_str("\n## Review Decisions\n\n");
+    out.push_str(
+        "| Candidate | Decision | Type | Surfaces | EC Dimensions | Root WI | Gate Inventory |\n",
+    );
+    out.push_str("|---|---|---|---|---|---:|---|\n");
+    if candidates.is_empty() {
+        let title = format!("{} Capability", project_display_name(project));
+        out.push_str(&format!(
+            "| {} | define / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | - | (confirm gates or inventory refs) |\n",
+            markdown_cell(&title),
+        ));
+    } else {
+        for candidate in candidates {
+            out.push_str(&format!(
+                "| {} | confirm / rename / split / merge / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | {} | (confirm gates or inventory refs) |\n",
+                markdown_cell(&candidate.title),
+                markdown_cell(candidate.root_wi.as_deref().unwrap_or("-")),
+            ));
+        }
+    }
     out.push_str("\n## Human Review Checklist\n\n");
     if candidates.is_empty() {
         out.push_str("- Define the project capability root(s) before editing README.\n");
@@ -9762,6 +9782,10 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert!(artifact.contains("status: pending_review"));
         assert!(artifact.contains("source: prose_candidates"));
         assert!(artifact.contains("## Draft Canonical README Section"));
+        assert!(artifact.contains("## Review Decisions"));
+        assert!(artifact.contains(
+            "| C1. Py3.12 functional parity - Axis 1 (#3331) | confirm / rename / split / merge / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | #3331 | (confirm gates or inventory refs) |"
+        ));
         assert!(artifact.contains("ID: c1-py3-12-functional-parity-axis-1-3331"));
         assert!(artifact.contains(
             "Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)"
@@ -9815,6 +9839,10 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert!(artifact.contains("source: empty_capability_map"));
         assert!(artifact.contains("candidate_count: 0"));
         assert!(artifact.contains("README has no candidate capability roots"));
+        assert!(artifact.contains("## Review Decisions"));
+        assert!(artifact.contains(
+            "| Cue Capability | define / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | - | (confirm gates or inventory refs) |"
+        ));
         assert!(artifact.contains("### Cue Capability"));
         assert!(artifact.contains("ID: cue-capability"));
         assert!(artifact.contains(
