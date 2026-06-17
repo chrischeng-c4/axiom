@@ -110,6 +110,7 @@ readiness questions.
 ID: rust-native-frontend-toolchain
 Type: DeveloperTool
 Surfaces: CLI: `jet install` + `jet build` + `jet dev` + `jet test` - Aggregate frontend toolchain entrypoints for package, build, dev, and test workflows.
+EC Dimensions: behavior: `projects/jet/scripts/verify-basic-dom-gates.sh --all` - Basic frontend replacement flow across package, build, dev, serve, workspace, test, e2e, and trace gates.
 Root WI: #3778
 Status: verified
 Required Verification: smoke, conformance, corpus, negative, dogfood
@@ -131,6 +132,7 @@ Gate Inventory:
 ID: package-manager
 Type: DeveloperTool
 Surfaces: CLI: `jet install` + `jet add` + `jet remove` + `jet update` - Package lifecycle commands that own dependency and lockfile behavior.
+EC Dimensions: behavior: `cargo test -p jet --lib pkg_manager -- --nocapture` - Package lifecycle, lockfile, workspace, registry, and negative-path conformance.
 Root WI: #3779
 Status: verified
 Required Verification: smoke, conformance, corpus, negative
@@ -153,6 +155,7 @@ Gate Inventory:
 ID: bundler-production-build
 Type: DeveloperTool
 Surfaces: CLI: `jet build` + `jet build --wasm` - Production and WASM build command surface.
+EC Dimensions: behavior: `projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3` - DOM production build corpus, runtime smoke, and Vite/Webpack comparison behavior.
 Root WI: #3782
 Status: verified
 Required Verification: smoke, conformance, corpus, negative
@@ -176,6 +179,7 @@ Gate Inventory:
 ID: dev-server-hmr
 Type: DeveloperTool
 Surfaces: CLI: `jet dev` + `jet dev --proxy PATH=URL` + `jet serve` - Dev server control plane, proxy/HMR entrypoints, and production static serving surface.; UI: `http://localhost:<port>` - Connected browser client for HMR, browser log intake, and local app inspection.
+EC Dimensions: behavior: `cargo test -p jet --lib dev_server -- --nocapture` - Local serving, HMR, proxy, browser-log intake, and production static serving conformance.
 Root WI: #3780
 Status: verified
 Required Verification: smoke, conformance, corpus, negative, dogfood
@@ -213,6 +217,7 @@ Gate Inventory:
 ID: workspace-task-runner
 Type: DeveloperTool
 Surfaces: CLI: `jet run` + `jet exec` - Workspace script and binary execution surface.
+EC Dimensions: behavior: `cargo test -p jet --lib task_runner -- --nocapture` - Workspace script execution, graph cache, package selection, and task-runner parity behavior.
 Root WI: #3781
 Status: verified
 Required Verification: smoke, conformance, corpus, negative
@@ -240,6 +245,7 @@ Gate Inventory:
 ID: native-test-product-flow-e2e
 Type: DeveloperTool
 Surfaces: CLI: `jet test` + `jet e2e` - Native test runner and product-flow e2e surface.; WebAppE2E: `jet e2e` - Browser-driven product-flow verification for frontend behavior across app and API boundaries.
+EC Dimensions: behavior: `jet e2e` - Browser-driven product-flow verification across frontend behavior and app/API boundaries.
 Root WI: #3785
 Status: verified
 Required Verification: smoke, conformance, corpus, negative, dogfood
@@ -271,6 +277,7 @@ Gate Inventory:
 ID: wasm-multi-target
 Type: DeveloperTool
 Surfaces: CLI: `jet build --wasm` - WASM build target surface.
+EC Dimensions: behavior: `projects/jet/scripts/verify-advanced-wasm-gates.sh` - WASM build, runtime subset, renderer target, and DOM/WASM parity behavior gates.
 Root WI: #3783
 Status: auditing
 Required Verification: smoke, conformance, corpus, negative
@@ -303,6 +310,7 @@ Gate Inventory:
 ID: browser-trace-parity
 Type: DeveloperTool
 Surfaces: CLI: `jet bb` + `jet trace` - Browser Bridge and trace diagnostic surface.
+EC Dimensions: behavior: `projects/jet/scripts/verify-browser-bridge-replacement.mjs` - Browser Bridge automation, trace evidence, and DOM/WASM parity corpus behavior.
 Root WI: #3786
 Status: auditing
 Required Verification: smoke, conformance, corpus, negative
