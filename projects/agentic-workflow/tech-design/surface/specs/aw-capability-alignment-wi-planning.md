@@ -52,6 +52,7 @@ command_refs:
   - command: aw capability next
   - command: aw capability report
   - command: aw capability run
+  - command: aw capability sweep
 ---
 
 # AW Capability Alignment WI Planning
@@ -108,12 +109,13 @@ scenarios:
   - id: S6
     title: "capability command emits deterministic next action"
     given: ["project README contains Markdown capability headings and contract/work-root tables"]
-    when: ["aw capability report|next|run|check executes for the project"]
+    when: ["aw capability report|next|run|check executes for the project or aw capability sweep executes across configured projects"]
     then:
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
       - "next emits exactly one next_action"
       - "run executes at most one bounded tick unless --max-ticks raises the bound"
       - "check validates README capability format and TD capability refs without lifecycle execution"
+      - "sweep emits grouped project rows by report status and next_action kind without mutating capability maps"
 
   - id: S7
     title: "confirmed capability carries verification contract"
