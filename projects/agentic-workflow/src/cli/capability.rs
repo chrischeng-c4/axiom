@@ -1168,6 +1168,8 @@ pub struct CapabilityActionQueueEntry {
     pub action_group: String,
     pub target: String,
     pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_evidence_path: Option<PathBuf>,
     pub reason: String,
 }
 
@@ -2846,6 +2848,7 @@ fn capability_sweep_action_queue(
             action_group: project.next_action_group.clone(),
             target: project.next_action.target.clone(),
             command: capability_action_queue_command(project),
+            latest_evidence_path: latest_capability_verify_evidence_path(&project.project),
             reason: project.next_action.reason.clone(),
         })
         .collect()
@@ -2857,6 +2860,25 @@ fn capability_action_queue_command(project: &CapabilitySweepProject) -> String {
     } else {
         project.next_action.command.clone()
     }
+}
+
+fn latest_capability_verify_evidence_path(project: &str) -> Option<PathBuf> {
+    let dir = PathBuf::from("/tmp")
+        .join("aw")
+        .join(project)
+        .join("capability-verify-reports");
+    let mut paths = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("-capability-verify-report.md"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
+    paths.pop()
 }
 
 fn is_capability_executable_action(action: &CapabilityAction) -> bool {
@@ -2899,15 +2921,23 @@ fn render_capability_sweep_action_queue_index(entries: &[CapabilityActionQueueEn
     out.push_str("---\n\n");
     out.push_str("# Capability Action Queue\n\n");
     out.push_str("These commands are non-HITL next actions that are not covered by the draft or WI-plan review queues. Execute one at a time and re-run `aw capability sweep --human` after each material change.\n\n");
-    out.push_str("| Project | Action | Target | Command | Reason |\n");
-    out.push_str("|---|---|---|---|---|\n");
+    out.push_str("| Project | Action | Target | Command | Latest Evidence | Reason |\n");
+    out.push_str("|---|---|---|---|---|---|\n");
     for entry in entries {
         out.push_str(&format!(
-            "| {} | {} | {} | `{}` | {} |\n",
+            "| {} | {} | {} | `{}` | {} | {} |\n",
             markdown_cell(&entry.project),
             markdown_cell(&entry.action_group),
             markdown_cell(&entry.target),
             markdown_cell(&entry.command),
+            markdown_cell(
+                entry
+                    .latest_evidence_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .as_deref()
+                    .unwrap_or("-")
+            ),
             markdown_cell(&entry.reason),
         ));
     }
@@ -11569,6 +11599,7 @@ Gate Inventory:
                 action_group: "run_td".to_string(),
                 target: "WASM And Multi-Target Execution".to_string(),
                 command: "aw td create 3783".to_string(),
+                latest_evidence_path: None,
                 reason: "active WI exists; continue WI -> TD -> CB lifecycle".to_string(),
             },
             CapabilityActionQueueEntry {
@@ -11578,6 +11609,9 @@ Gate Inventory:
                 target: "Runtime Resource Attribution".to_string(),
                 command: "aw capability report --project meter --verify --write-evidence"
                     .to_string(),
+                latest_evidence_path: Some(PathBuf::from(
+                    "/tmp/aw/meter/capability-verify-reports/report.md",
+                )),
                 reason: "runtime verification must be rerun".to_string(),
             },
         ]);
@@ -11586,7 +11620,7 @@ Gate Inventory:
         assert!(index.contains("action_count: 2"));
         assert!(index
             .contains("| jet | run_td | WASM And Multi-Target Execution | `aw td create 3783` |"));
-        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify --write-evidence` |"));
+        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify --write-evidence` | /tmp/aw/meter/capability-verify-reports/report.md |"));
         assert!(index.contains("Execute one command at a time"));
     }
 
