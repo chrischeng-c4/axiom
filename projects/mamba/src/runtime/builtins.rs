@@ -848,6 +848,22 @@ fn print_repr(val: MbValue) {
                             }
                         }
                     }
+                    // Type objects in a container repr as `<class 'name'>`,
+                    // matching mb_repr / the print path (e.g. `[int, str]`).
+                    if class_name == "type" {
+                        let name = fields.read().ok()
+                            .and_then(|f| f.get("__name__").copied())
+                            .and_then(|v| v.as_ptr())
+                            .and_then(|p| if let ObjData::Str(ref s) = (*p).data {
+                                Some(s.clone())
+                            } else {
+                                None
+                            });
+                        if let Some(name) = name {
+                            mb_out!("<class '{name}'>");
+                            return;
+                        }
+                    }
                     // namedtuple instances render as Point(x=1, y=2) in
                     // container context — class_name is the dynamic tuple
                     // name, so dispatch by marker field. (#1648)
@@ -5359,6 +5375,25 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             "<object object at 0x{:x}>",
                             ptr as usize
                         )));
+                    }
+                    // Type objects (make_type_object: a "type"-class instance
+                    // carrying __name__): repr is `<class 'name'>`, matching
+                    // CPython and the print path. Without this, `repr(int)` /
+                    // `repr(defaultdict(int))`'s factory showed `<type instance>`.
+                    if class_name == "type" {
+                        let name = fields.read().ok()
+                            .and_then(|f| f.get("__name__").copied())
+                            .and_then(|v| v.as_ptr())
+                            .and_then(|p| if let ObjData::Str(ref s) = (*p).data {
+                                Some(s.clone())
+                            } else {
+                                None
+                            });
+                        if let Some(name) = name {
+                            return MbValue::from_ptr(MbObject::new_str(
+                                format!("<class '{name}'>"),
+                            ));
+                        }
                     }
                     // Class-body enum member without a user __repr__:
                     // repr(Color.RED) → "<Color.RED: 1>".
