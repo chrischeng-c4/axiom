@@ -136,7 +136,30 @@ unsafe extern "C" fn dispatch_load(args_ptr: *const MbValue, nargs: usize) -> Mb
             }
         }
     } else {
-        MbValue::from_ptr(MbObject::new_dict())
+        // Binary file object: real open(...,'rb') files are FILES-handles read
+        // via mb_file_read; in-memory readables (io.BytesIO) expose read().
+        let mut content = super::super::file_io::mb_file_read(arg);
+        if content.is_none() {
+            let empty = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+            content = super::super::class::mb_call_method(
+                arg,
+                MbValue::from_ptr(MbObject::new_str("read".to_string())),
+                empty,
+            );
+        }
+        // read() yields bytes (binary mode) or str — decode either to source.
+        let src = content.as_ptr().and_then(|p| match &(*p).data {
+            ObjData::Str(s) => Some(s.clone()),
+            ObjData::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
+            ObjData::ByteArray(lock) => {
+                Some(String::from_utf8_lossy(&lock.read().unwrap()).into_owned())
+            }
+            _ => None,
+        });
+        match src {
+            Some(s) => parse_toml_string(&s),
+            None => MbValue::from_ptr(MbObject::new_dict()),
+        }
     }
 }
 
