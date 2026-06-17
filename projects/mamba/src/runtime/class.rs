@@ -3140,6 +3140,15 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             if attr_name == "closed" {
                 return MbValue::from_bool(super::file_io::is_file_closed(obj));
             }
+            if attr_name == "mode" {
+                return super::file_io::mb_file_mode(obj);
+            }
+            if attr_name == "encoding" {
+                return super::file_io::mb_file_encoding(obj);
+            }
+            if attr_name == "errors" {
+                return super::file_io::mb_file_errors(obj);
+            }
         }
     }
 

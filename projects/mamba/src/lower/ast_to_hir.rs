@@ -4866,11 +4866,10 @@ impl<'a> AstLowerer<'a> {
                             }
                         }
                         // open(file, mode='r', buffering=-1, encoding=None, ...) →
-                        // mb_open(path, mode). mb_open only consumes (path, mode);
-                        // text decoding is UTF-8/lossy regardless of `encoding`. The
-                        // generic path flattens keyword values positionally, which
-                        // misroutes `open(p, encoding='utf-8')` as mode='utf-8'.
-                        // Pull `mode` from positional[1] or the `mode=` keyword.
+                        // mb_open_ex(path, mode, encoding, errors). Pull named
+                        // kwargs explicitly so the generic path does not flatten
+                        // keyword values positionally (e.g. misrouting
+                        // `open(p, encoding='utf-8')` as mode='utf-8').
                         if name == "open" {
                             let pos: Vec<HirExpr> = args
                                 .iter()
@@ -4897,9 +4896,29 @@ impl<'a> AstLowerer<'a> {
                                     })
                                 })
                                 .unwrap_or_else(|| HirExpr::StrLit("r".to_string(), str_ty));
+                            drop(pos_iter);
+                            // open(file, mode, buffering, encoding, errors, ...):
+                            // `encoding=` is positional 3, `errors=` positional 4.
+                            // Record both so `f.encoding` / `f.errors` reflect them.
+                            let mut kw = |key: &str, pos_idx: usize| -> HirExpr {
+                                args.iter()
+                                    .enumerate()
+                                    .find_map(|(i, a)| match a {
+                                        ast::CallArg::Positional(e) if i == pos_idx => {
+                                            self.lower_expr(e)
+                                        }
+                                        ast::CallArg::Keyword { name: n, value } if n == key => {
+                                            self.lower_expr(value)
+                                        }
+                                        _ => None,
+                                    })
+                                    .unwrap_or_else(|| none_hir.clone())
+                            };
+                            let encoding = kw("encoding", 3);
+                            let errors = kw("errors", 4);
                             return Some(HirExpr::Call {
-                                func: Box::new(HirExpr::StrLit("mb_open".to_string(), any_ty)),
-                                args: vec![path, mode],
+                                func: Box::new(HirExpr::StrLit("mb_open_ex".to_string(), any_ty)),
+                                args: vec![path, mode, encoding, errors],
                                 ty: any_ty,
                             });
                         }

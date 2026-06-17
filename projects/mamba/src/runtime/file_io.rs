@@ -25,6 +25,10 @@ struct MbFile {
     writable: bool,
     /// Append mode — handle is positioned at end of existing content.
     append: bool,
+    /// Text-mode codec name (`f.encoding`), None in binary mode.
+    encoding: Option<String>,
+    /// Text-mode error handler (`f.errors`), None in binary mode.
+    errors: Option<String>,
 }
 
 /// Parsed open() mode flags. Returns None on a structurally invalid mode.
@@ -244,6 +248,13 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
             } else {
                 (None, Some(f))
             };
+            // CPython text streams default to the locale codec ("UTF-8" here)
+            // with "strict" error handling; binary streams expose neither.
+            let (encoding, errors) = if binary {
+                (None, None)
+            } else {
+                (Some("UTF-8".to_string()), Some("strict".to_string()))
+            };
             let mf = MbFile {
                 reader,
                 writer,
@@ -254,6 +265,8 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
                 readable,
                 writable,
                 append,
+                encoding,
+                errors,
             };
             FILES.with(|files| files.borrow_mut().insert(id, mf));
             MbValue::from_int(id as i64)
@@ -268,6 +281,69 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
             MbValue::none()
         }
     }
+}
+
+/// open(path, mode, encoding, errors) — like `mb_open`, but records the text
+/// codec / error-handler the caller passed so `f.encoding` / `f.errors`
+/// reflect them. None args keep `mb_open`'s text defaults (UTF-8 / strict);
+/// binary streams ignore both (they expose neither attribute).
+pub fn mb_open_ex(path: MbValue, mode: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
+    let handle = mb_open(path, mode);
+    if let Some(id) = handle.as_int() {
+        let enc = extract_str_opt(encoding);
+        let err = extract_str_opt(errors);
+        FILES.with(|files| {
+            if let Some(mf) = files.borrow_mut().get_mut(&(id as u64)) {
+                if !mf.binary {
+                    if let Some(e) = enc {
+                        mf.encoding = Some(e);
+                    }
+                    if let Some(e) = err {
+                        mf.errors = Some(e);
+                    }
+                }
+            }
+        });
+    }
+    handle
+}
+
+/// Extract a String from an MbValue str, or None for non-str / None.
+fn extract_str_opt(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|p| unsafe {
+        if let crate::runtime::rc::ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// `f.mode` — the mode string the file was opened with.
+pub fn mb_file_mode(handle: MbValue) -> MbValue {
+    file_str_field(handle, |mf| Some(mf.mode.clone()))
+}
+
+/// `f.encoding` — text-mode codec name, or None in binary mode.
+pub fn mb_file_encoding(handle: MbValue) -> MbValue {
+    file_str_field(handle, |mf| mf.encoding.clone())
+}
+
+/// `f.errors` — text-mode error handler, or None in binary mode.
+pub fn mb_file_errors(handle: MbValue) -> MbValue {
+    file_str_field(handle, |mf| mf.errors.clone())
+}
+
+/// Read an optional string field off a file handle as an MbValue str (None when
+/// the handle is unknown or the field is None).
+fn file_str_field(handle: MbValue, f: impl Fn(&MbFile) -> Option<String>) -> MbValue {
+    let Some(id) = handle.as_int() else { return MbValue::none() };
+    FILES.with(|files| {
+        match files.borrow().get(&(id as u64)).and_then(|mf| f(mf)) {
+            Some(s) => MbValue::from_ptr(MbObject::new_str(s)),
+            None => MbValue::none(),
+        }
+    })
 }
 
 /// file.read([size]) → str (text mode) or bytes (binary mode), entire contents
