@@ -3494,7 +3494,7 @@ tool_contracts:
             claim_id: Some("indexing-speed".to_string()),
             contract_id: None,
             command: None,
-            tool: vec!["arena".to_string()],
+            tool: vec!["meter".to_string()],
             force: false,
             json: false,
         };
@@ -3528,16 +3528,16 @@ e2e_tests:
         let filled = merge_ec_section(
             &filled,
             "tool-contract",
-            r#"## Arena Contract
+            r#"## Meter Contract
 <!-- type: tool-contract lang: yaml -->
 
 ```yaml
 tool_contracts:
-  - id: indexing speed arena
-    tool: arena
-    manifest: arena.toml
+  - id: indexing speed meter
+    tool: meter
+    manifest: meter.toml
     category: efficiency
-    command: "arena run --spec projects/demo/arena.toml"
+    command: "meter run --target projects/demo/meter.toml"
     native:
       version: 1
       benchmark: indexing-speed
@@ -3567,8 +3567,8 @@ tool_contracts:
             .td_ref
             .ends_with("external-contracts/efficiency/search-indexing.md#indexing-speed"));
         assert_eq!(manifest.tool_manifests.len(), 1);
-        assert_eq!(manifest.tool_manifests[0].tool, "arena");
-        assert_eq!(manifest.tool_manifests[0].path, "projects/demo/arena.toml");
+        assert_eq!(manifest.tool_manifests[0].tool, "meter");
+        assert_eq!(manifest.tool_manifests[0].path, "projects/demo/meter.toml");
     }
 
     #[test]
