@@ -352,6 +352,15 @@ unsafe extern "C" fn dispatch_enum_identity(args: *const MbValue, n: usize) -> M
     a.first().copied().unwrap_or_else(MbValue::none)
 }
 
+/// `@enum.property` — a property defined on an enum class (so it doesn't shadow
+/// a member). Wrap the getter in a real property descriptor so `Member.attr`
+/// invokes it through the descriptor protocol.
+unsafe extern "C" fn dispatch_enum_property(args: *const MbValue, n: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args, n) };
+    let getter = a.first().copied().unwrap_or_else(MbValue::none);
+    super::super::class::mb_property_new(getter)
+}
+
 /// `enum.verify(*checks)` — records the requested checks and returns the
 /// applying decorator. The native-func convention has no closures, so the
 /// checks ride a thread_local between the two immediately-consecutive calls
@@ -795,7 +804,7 @@ pub fn register() {
     );
     attrs.insert(
         "property".to_string(),
-        callable_func(dispatch_enum_identity as *const () as usize),
+        callable_func(dispatch_enum_property as *const () as usize),
     );
     attrs.insert(
         "global_enum".to_string(),
