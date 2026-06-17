@@ -140,7 +140,7 @@ scenarios:
       - "draft treats non-contract Markdown tables with a Capability column, such as Required Platform Capabilities, as pending-review candidate roots instead of emitting only a blank worksheet"
       - "draft treats Markdown bullets under explicit Features or Modules sections as pending-review candidate roots, and falls back to Implemented sections only when no clearer candidate list exists"
       - "sweep --write-drafts emits a draft review index that separates inferred candidate review from human definition-needed worksheets"
-      - "apply-draft refuses unreviewed placeholder drafts and writes only reviewed canonical capability sections"
+      - "apply-draft refuses unreviewed placeholder drafts, including unresolved Review Decisions worksheets, and writes only reviewed canonical capability sections"
       - "format migration repair can strip a previously generated canonical tail that starts at either H2 or H3 Capability Index"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
       - "report/next compact summaries expose capability type, surface, EC dimension, and efficiency backfill coverage so agents can inspect #78 contract facets without reading the full README"
@@ -582,6 +582,11 @@ requirements:
     text: "aw capability draft emits a Review Decisions worksheet for HITL root/type/surface/EC/WI/gate review before README mutation"
     risk: medium
     verifymethod: test
+  draft_review_decisions_apply_gate:
+    id: AW-CAP-WI-23
+    text: "aw capability apply-draft refuses drafts whose Review Decisions worksheet still contains unresolved default decisions or placeholders"
+    risk: high
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -613,6 +618,7 @@ relations:
   - { from: capability_unit_tests, to: summary_contract_facets, kind: verifies }
   - { from: capability_unit_tests, to: json_stdout_pipe, kind: verifies }
   - { from: capability_unit_tests, to: draft_review_decisions, kind: verifies }
+  - { from: capability_unit_tests, to: draft_review_decisions_apply_gate, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {
