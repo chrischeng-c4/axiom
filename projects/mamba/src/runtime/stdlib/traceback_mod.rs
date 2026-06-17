@@ -238,6 +238,12 @@ pub fn mb_traceback_format_exc() -> MbValue {
 /// tb=..., limit=..., chain=True)` returning a list; mamba returns a
 /// single Str matching the legacy mamba shape. Surface-presence callers
 /// only check `callable(...)`.
+/// The CPython sentinel for a None exception: `["NoneType: None\n"]`.
+fn none_exc_sentinel_list() -> MbValue {
+    let line = MbValue::from_ptr(MbObject::new_str("NoneType: None\n".to_string()));
+    MbValue::from_ptr(MbObject::new_list(vec![line]))
+}
+
 pub fn mb_traceback_format_exception(args: &[MbValue]) -> MbValue {
     let pos = positional(args);
     match pos.len() {
@@ -252,6 +258,10 @@ pub fn mb_traceback_format_exception(args: &[MbValue]) -> MbValue {
         }
         1 => {
             let exc = pos[0];
+            // CPython renders a None exception as the sentinel "NoneType: None".
+            if exc.is_none() {
+                return none_exc_sentinel_list();
+            }
             if !is_exception_instance(exc) {
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -277,6 +287,10 @@ pub fn mb_traceback_format_exception(args: &[MbValue]) -> MbValue {
         _ => {
             let value = pos[1];
             let tb = pos[2];
+            // format_exception(None, None, None) → the None-exception sentinel.
+            if pos[0].is_none() && value.is_none() && tb.is_none() {
+                return none_exc_sentinel_list();
+            }
             let mut lines: Vec<MbValue> = Vec::new();
             if !tb.is_none() {
                 lines.push(MbValue::from_ptr(MbObject::new_str(
@@ -322,6 +336,11 @@ pub fn mb_traceback_format_exception_only(args: &[MbValue]) -> MbValue {
         .filter(|v| !v.is_none())
         .unwrap_or_else(|| pos.first().copied().unwrap_or_else(MbValue::none));
     if exc.is_none() {
+        // An explicit None exception renders the sentinel "NoneType: None";
+        // a truly-absent argument keeps the empty list.
+        if !pos.is_empty() {
+            return none_exc_sentinel_list();
+        }
         return MbValue::from_ptr(MbObject::new_list(Vec::new()));
     }
     // SyntaxError with (msg, (file, line, col, text)) args renders 3 lines.
