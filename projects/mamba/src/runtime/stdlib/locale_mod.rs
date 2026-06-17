@@ -363,15 +363,12 @@ pub fn mb_locale_strcoll(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_locale_format_string(fmt: MbValue, val: MbValue) -> MbValue {
+    // locale.format_string(fmt, val) with the default grouping=False is the
+    // same printf-style substitution as `fmt % val` — delegate to the shared
+    // formatter so %%-escapes, tuple args, and %(name)s mappings all work
+    // (the previous stub only handled a single %d/%f).
     let f = extract_str(fmt).unwrap_or_default();
-    let result = if let Some(i) = val.as_int() {
-        f.replacen("%d", &i.to_string(), 1)
-    } else if let Some(fl) = val.as_float() {
-        f.replacen("%f", &format!("{:.6}", fl), 1)
-    } else {
-        f
-    };
-    MbValue::from_ptr(MbObject::new_str(result))
+    super::super::string_ops::mb_str_percent_format(f, val)
 }
 
 pub fn mb_locale_LC_ALL() -> MbValue {
