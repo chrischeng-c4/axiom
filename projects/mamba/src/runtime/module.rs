@@ -1473,6 +1473,30 @@ pub fn is_module_value(v: MbValue) -> bool {
     }
 }
 
+/// Read an attribute from a module's user-visible namespace dict — the cached
+/// module value that user code mutates via `mod.attr = x` (lands in the dict's
+/// `__name__`-tagged stub path, see `class::mb_setattr`). This reflects user
+/// overrides that the registry-backed [`mb_module_getattr`] does not see,
+/// because user assignment writes the cached dict, not `MbModule::attrs`.
+///
+/// Returns `None` when the module is not loaded, has no cached value, or the
+/// attribute is absent. The returned value carries a fresh +1 reference.
+pub fn mb_module_value_getattr(module_name: &str, attr: &str) -> Option<MbValue> {
+    let cached = MODULES.with(|mods| mods.borrow().get(module_name).and_then(|m| m.cached_value))?;
+    let ptr = cached.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let key = super::dict_ops::DictKey::Str(attr.to_string());
+            if let Some(v) = map.get(&key).copied() {
+                super::rc::retain_if_ptr(v);
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
 /// Like `module_to_value` but writes the result back into `module.cached_value`.
 /// Call this whenever a module is fully initialised so subsequent `module_to_value`
 /// calls return the same heap pointer.
