@@ -8019,6 +8019,17 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         func, items,
                     );
                 }
+                // Calling a singledispatch wrapper dispatches on arg[0]'s type.
+                if class_name == "functools.singledispatch" {
+                    let _ = fields;
+                    return super::stdlib::functools_mod::mb_singledispatch_call(func, items);
+                }
+                // `@f.register(type)` decorator instance applied to an impl.
+                if class_name == "functools._sd_register" {
+                    let _ = fields;
+                    let impl_val = items.first().copied().unwrap_or_else(MbValue::none);
+                    return super::stdlib::functools_mod::mb_singledispatch_register_apply(func, impl_val);
+                }
                 // __call__ dunder dispatch for callable instances
                 let call_method = super::class::lookup_method(class_name, "__call__");
                 if !call_method.is_none() {

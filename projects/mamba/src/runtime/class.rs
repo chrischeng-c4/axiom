@@ -10205,6 +10205,7 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                 if class_name == "functools._lru_bound_method"
                     || class_name == "functools.lru_cache_wrapper"
                     || class_name == "functools.lru_cache_factory"
+                    || class_name == "functools.singledispatch"
                     || class_name == "__unbound_method__"
                     || class_name == "__bound_native_method__"
                     || class_name == "collections.namedtuple_factory"
@@ -10337,6 +10338,8 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                     || class_name == "functools.lru_cache_wrapper"
                     || class_name == "functools.lru_cache_factory"
                     || class_name == "functools.cmp_to_key"
+                    || class_name == "functools.singledispatch"
+                    || class_name == "functools._sd_register"
                     || class_name == "collections.namedtuple_factory"
                 {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
@@ -13963,6 +13966,24 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     // (Only the explicit __getattr__ dunder is consulted, not
                     // the lenient mb_getattr path, so a genuinely-absent name on
                     // a class without __getattr__ still raises AttributeError.)
+                    // functools.singledispatch wrapper methods: register / dispatch.
+                    if class_name == "functools.singledispatch" {
+                        let items = super::builtins::extract_items(args);
+                        match name.as_str() {
+                            "register" => {
+                                return super::stdlib::functools_mod::mb_singledispatch_register(
+                                    receiver, &items,
+                                );
+                            }
+                            "dispatch" => {
+                                let t = items.first().copied().unwrap_or_else(MbValue::none);
+                                return super::stdlib::functools_mod::mb_singledispatch_dispatch(
+                                    receiver, t,
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
                     let getattr_dunder = lookup_method(class_name, "__getattr__");
                     if !getattr_dunder.is_none() {
                         let name_val = MbValue::from_ptr(MbObject::new_str(name.clone()));
