@@ -4742,6 +4742,17 @@ fn lifecycle_action_for_work_item(
         );
     }
 
+    if lifecycle_issue_evidence_unresolved(evidence) {
+        return (
+            CapabilityActionKind::CreateWi,
+            format!("aw wi plan --project {}", report.project),
+            wi_plan_reason(
+                report,
+                "active WI reference is not present in project issue inventory; sync or recreate a bounded WI before TD/CB lifecycle",
+            ),
+        );
+    }
+
     match evidence.and_then(|evidence| evidence.phase.as_deref()) {
         Some("td_reviewed") => (
             CapabilityActionKind::RunCb,
@@ -4778,6 +4789,17 @@ fn lifecycle_action_for_work_item(
             format!("aw td create {work_item}"),
             default_reason.to_string(),
         ),
+    }
+}
+
+fn lifecycle_issue_evidence_unresolved(evidence: Option<&CapabilityWiEvidence>) -> bool {
+    match evidence {
+        None => true,
+        Some(evidence) => {
+            evidence.issue_type == "unknown"
+                || evidence.state == "unknown"
+                || evidence.reference.trim().is_empty()
+        }
     }
 }
 
@@ -11854,7 +11876,7 @@ capability_refs:
     }
 
     #[test]
-    fn lifecycle_action_uses_approved_td_ref_when_issue_inventory_is_unavailable() {
+    fn lifecycle_action_routes_missing_issue_evidence_to_wi_plan_before_cb() {
         let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
 
         let (kind, command, reason) = lifecycle_action_for_work_item(
@@ -11866,15 +11888,36 @@ capability_refs:
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
-        assert_eq!(kind, CapabilityActionKind::RunCb);
-        assert_eq!(
-            command,
-            "aw cb gen 57 --spec-path 'projects/agentic-workflow/tech-design/logic/manual.md'"
+        assert_eq!(kind, CapabilityActionKind::CreateWi);
+        assert_eq!(command, "aw wi plan --project jet");
+        assert!(reason.contains("active WI reference is not present"));
+    }
+
+    #[test]
+    fn lifecycle_action_routes_unknown_issue_evidence_to_wi_plan_before_cb() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let evidence = CapabilityWiEvidence {
+            reference: "#3783".to_string(),
+            gap_id: "wasm-multi-target-readiness".to_string(),
+            issue_type: "unknown".to_string(),
+            state: "unknown".to_string(),
+            phase: None,
+            expected_command: None,
+            title: String::new(),
+        };
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "3783",
+            Some(&evidence),
+            Some(".aw/tech-design/projects/jet/specs/3783.md"),
+            Some("approved"),
+            "active WI exists; continue WI -> TD -> CB lifecycle",
         );
-        assert_eq!(
-            reason,
-            "active WI has approved TD evidence; continue CB generation"
-        );
+
+        assert_eq!(kind, CapabilityActionKind::CreateWi);
+        assert_eq!(command, "aw wi plan --project jet");
+        assert!(reason.contains("before TD/CB lifecycle"));
     }
 }
 // CODEGEN-END
