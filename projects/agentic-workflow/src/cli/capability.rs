@@ -39,6 +39,8 @@ pub enum CapabilityCommand {
     Next(CapabilityNextArgs),
     /// Execute one bounded capability tick.
     Run(CapabilityRunArgs),
+    /// Rewrite legacy/YAML capability maps to the canonical Markdown format.
+    Migrate(CapabilityMigrateArgs),
     /// Validate capability README sections and TD capability refs.
     Check(CapabilityCheckArgs),
     /// Assign a capability's type, persisting it to the README contract.
@@ -124,6 +126,23 @@ pub struct CapabilityRunArgs {
     #[arg(long)]
     pub human: bool,
     /// Pretty-print the JSON run report.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilityMigrateArgs {
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+    /// DEPRECATED compatibility no-op. Capability migrate emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit the legacy human-readable migrate report.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON migrate report.
     #[arg(long)]
     pub pretty: bool,
 }
@@ -814,6 +833,18 @@ pub struct CapabilityRunResult {
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityMigrateReport {
+    pub schema_version: &'static str,
+    pub action: &'static str,
+    pub project: String,
+    pub cap_path: PathBuf,
+    pub status: String,
+    pub changed: bool,
+    pub result: CapabilityRunResult,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CapabilityWiEvidence {
     pub reference: String,
     pub gap_id: String,
@@ -949,6 +980,7 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             Ok(())
         }
         CapabilityCommand::Run(args) => run_capability_tick(&project, args).await,
+        CapabilityCommand::Migrate(args) => migrate_capability_format(&project, args),
         CapabilityCommand::Check(args) => {
             let mut report =
                 build_capability_report(&project, args.cap_path.as_deref(), args.verify, false)
@@ -1776,6 +1808,73 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
     Ok(())
 }
 
+fn migrate_capability_format(project: &str, args: CapabilityMigrateArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    let action = CapabilityAction {
+        kind: CapabilityActionKind::FormatMigrationRequired,
+        capability_id: None,
+        gap_id: None,
+        claim_id: None,
+        target: cap_path.display().to_string(),
+        command: format!("aw capability migrate --project {project}"),
+        reason: "rewrite capability map to canonical Markdown format".to_string(),
+        requires_hitl: false,
+        hitl_question: None,
+    };
+    let result = apply_capability_format_migration_tick(
+        1,
+        &project_root,
+        project,
+        args.cap_path.as_deref(),
+        &action,
+    );
+    let changed = result
+        .stdout
+        .as_deref()
+        .is_some_and(|stdout| stdout.starts_with("migrated "));
+    let status = if result.status == "pass" {
+        if changed {
+            "migrated"
+        } else {
+            "unchanged"
+        }
+    } else {
+        "blocked"
+    };
+    let report = CapabilityMigrateReport {
+        schema_version: "aw.cli.v1",
+        action: "capability_migrate",
+        project: project.to_string(),
+        cap_path,
+        status: status.to_string(),
+        changed,
+        result,
+    };
+
+    if args.human {
+        println!(
+            "capability migrate: {} ({}) changed={}",
+            report.project, report.status, report.changed
+        );
+        if let Some(stdout) = &report.result.stdout {
+            println!("{stdout}");
+        }
+        if let Some(stderr) = &report.result.stderr {
+            println!("error: {stderr}");
+        }
+    } else if args.pretty || args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("{}", serde_json::to_string(&report)?);
+    }
+
+    if report.result.status != "pass" {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub async fn build_capability_report(
     project: &str,
@@ -2558,11 +2657,8 @@ fn choose_next_action(
             gap_id: None,
             claim_id: None,
             target: report.cap_path.display().to_string(),
-            command: format!(
-                "aw capability run --project {} --non-interactive --max-ticks 1",
-                report.project
-            ),
-            reason: "README capability map needs Markdown-table migration".to_string(),
+            command: format!("aw capability migrate --project {}", report.project),
+            reason: "README capability map needs canonical Markdown migration".to_string(),
             requires_hitl: false,
             hitl_question: None,
         };
@@ -6281,7 +6377,7 @@ fn apply_capability_format_migration_tick(
         };
         if !document.requires_format_migration() {
             return Ok(format!(
-                "{} already uses Markdown capability tables",
+                "{} already uses canonical Markdown capability format",
                 resolved.display()
             ));
         }
@@ -6824,6 +6920,22 @@ mod tests {
                 .as_deref(),
             Some("define_roots")
         );
+    }
+
+    #[test]
+    fn legacy_format_next_action_uses_explicit_migrate_command() {
+        let document = cap_doc(one_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.format_version = document.format_version();
+        report.capabilities = Vec::new();
+        report.capability_count = document.legacy_rows.len();
+        report.blockers = document.findings.clone();
+
+        let action = choose_next_action(&report, &document, &BTreeMap::new());
+
+        assert_eq!(action.kind, CapabilityActionKind::FormatMigrationRequired);
+        assert!(!action.requires_hitl);
+        assert_eq!(action.command, "aw capability migrate --project jet");
     }
 
     #[test]
