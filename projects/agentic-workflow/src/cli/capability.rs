@@ -686,6 +686,7 @@ impl CapabilityDocument {
     pub fn format_version(&self) -> u8 {
         match self.format {
             CapabilityDocumentFormat::Empty => 0,
+            CapabilityDocumentFormat::MarkdownTables if self.needs_canonicalization => 1,
             CapabilityDocumentFormat::MarkdownTables => 2,
             CapabilityDocumentFormat::YamlSections | CapabilityDocumentFormat::LegacyTable => 1,
         }
@@ -7480,6 +7481,67 @@ mod tests {
         assert_eq!(action.kind, CapabilityActionKind::FormatMigrationRequired);
         assert!(!action.requires_hitl);
         assert_eq!(action.command, "aw capability migrate --project jet");
+    }
+
+    #[test]
+    fn noncanonical_markdown_reports_v1_until_migrated() {
+        let document = cap_doc(one_markdown_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.format_version = document.format_version();
+        report.capability_count = document.capabilities.len();
+
+        let action = choose_next_action(&report, &document, &BTreeMap::new());
+
+        assert_eq!(document.format, CapabilityDocumentFormat::MarkdownTables);
+        assert!(document.requires_format_migration());
+        assert_eq!(document.format_version(), 1);
+        assert_eq!(action.kind, CapabilityActionKind::FormatMigrationRequired);
+        assert_eq!(action.command, "aw capability migrate --project jet");
+    }
+
+    #[test]
+    fn canonical_h3_field_style_markdown_reports_v2() {
+        let body = r#"# demo
+
+## Brief
+
+Demo project.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | partial | planned | conformance | not_ready | install flow |
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Surfaces: CLI: `jet install` - package install surface
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+"#;
+        let document = cap_doc(body);
+
+        assert_eq!(document.format, CapabilityDocumentFormat::MarkdownTables);
+        assert!(!document.requires_format_migration());
+        assert_eq!(document.format_version(), 2);
+        assert_eq!(
+            document.capabilities[0].capability_type,
+            Some(CapabilityType::DeveloperTool)
+        );
+        assert_eq!(document.capabilities[0].surfaces[0].kind, "CLI");
     }
 
     #[test]
