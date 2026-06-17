@@ -10,9 +10,31 @@
 // @command cargo test -p cap hook -- --nocapture
 // AW-EC-END
 
+// Contract: hook payload adapters rewrite Bash commands without making cap a hard dependency
+// Contract: recursive cap invocations and empty commands remain fail-open
 #[test]
-#[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
+#[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn cap_hook_payload_rewrite_adapters() {
-    panic!("AW EC placeholder for cap-hook-payload-rewrite-adapters");
+    let command = "cargo test -p cap hook -- --nocapture";
+    let id = "cap-hook-payload-rewrite-adapters";
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !root.join(".aw").is_dir() {
+        assert!(
+            root.pop(),
+            "AW EC {id}: no .aw/ project root above {}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+    }
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&root)
+        .status()
+        .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    assert!(
+        status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}",
+        status.code()
+    );
 }
 // CODEGEN-END
