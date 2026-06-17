@@ -5925,7 +5925,136 @@ fn parse_capability_prose_candidates(body: &str) -> Vec<CapabilityProseCandidate
         idx = capabilities_end;
     }
     candidates.extend(parse_capability_table_candidates(&lines, &fenced));
+    candidates.extend(parse_capability_list_candidates(&lines, &fenced));
     dedupe_capability_prose_candidates(candidates)
+}
+
+fn parse_capability_list_candidates(
+    lines: &[&str],
+    fenced: &[bool],
+) -> Vec<CapabilityProseCandidate> {
+    let mut primary = Vec::new();
+    let mut fallback = Vec::new();
+    let mut idx = 0;
+    while idx < lines.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[idx]) else {
+            idx += 1;
+            continue;
+        };
+        let Some(section_priority) = capability_list_section_priority(&title) else {
+            idx += 1;
+            continue;
+        };
+        let section_end = next_heading_at_or_above(lines, idx + 1, level).unwrap_or(lines.len());
+        let direct_list_end = next_heading_at_or_above(lines, idx + 1, level + 1)
+            .unwrap_or(section_end)
+            .min(section_end);
+        for line_idx in idx + 1..direct_list_end {
+            if fenced[line_idx] {
+                continue;
+            }
+            let trimmed = lines[line_idx].trim();
+            if !(trimmed.starts_with("- ") || trimmed.starts_with("* ")) {
+                continue;
+            }
+            if let Some(candidate) = capability_list_candidate_from_bullet(trimmed, line_idx + 1) {
+                match section_priority {
+                    CapabilityListSectionPriority::Primary => primary.push(candidate),
+                    CapabilityListSectionPriority::Fallback => fallback.push(candidate),
+                }
+            }
+        }
+        idx = section_end;
+    }
+    if primary.is_empty() {
+        fallback
+    } else {
+        primary
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapabilityListSectionPriority {
+    Primary,
+    Fallback,
+}
+
+fn capability_list_section_priority(title: &str) -> Option<CapabilityListSectionPriority> {
+    match normalize_table_token(title).as_str() {
+        "features" | "modules" => Some(CapabilityListSectionPriority::Primary),
+        "implemented" => Some(CapabilityListSectionPriority::Fallback),
+        _ => None,
+    }
+}
+
+fn capability_list_candidate_from_bullet(
+    raw: &str,
+    line: usize,
+) -> Option<CapabilityProseCandidate> {
+    let text = clean_markdown_inline_links(
+        raw.trim()
+            .trim_start_matches("- ")
+            .trim_start_matches("* ")
+            .trim(),
+    );
+    let text = text.trim();
+    if text.is_empty() || text.starts_with('[') {
+        return None;
+    }
+    let (title, summary) = split_capability_bullet_title_summary(text);
+    let title = strip_markdown_emphasis(&title);
+    let id = slugify(&title);
+    if id.is_empty() || candidate_table_title_is_ignored(&title) {
+        return None;
+    }
+    let summary = candidate_summary_text(&summary);
+    let promise = (!summary.trim().is_empty()).then_some(summary.clone());
+    let summary = promise
+        .as_deref()
+        .map(truncate_candidate_summary)
+        .filter(|summary| !summary.trim().is_empty());
+    Some(CapabilityProseCandidate {
+        id,
+        title,
+        line,
+        root_wi: first_issue_ref(text),
+        summary,
+        promise,
+    })
+}
+
+fn split_capability_bullet_title_summary(text: &str) -> (String, String) {
+    if let Some(rest) = text.strip_prefix("**") {
+        if let Some(end) = rest.find("**") {
+            let title = rest[..end].trim();
+            let summary = rest[end + 2..]
+                .trim()
+                .trim_start_matches(':')
+                .trim_start_matches('-')
+                .trim();
+            if !title.is_empty() {
+                return (
+                    title.to_string(),
+                    if summary.is_empty() { title } else { summary }.to_string(),
+                );
+            }
+        }
+    }
+    if let Some((title, summary)) = text.split_once(':') {
+        let title = title.trim();
+        let summary = summary.trim();
+        if !title.is_empty() && title.chars().count() <= 80 {
+            return (
+                title.to_string(),
+                if summary.is_empty() { title } else { summary }.to_string(),
+            );
+        }
+    }
+    (text.to_string(), text.to_string())
 }
 
 fn parse_capability_table_candidates(
@@ -9261,6 +9390,83 @@ Cue turns business intent into governed internal work.
             .findings
             .iter()
             .any(|finding| finding.contains("candidate prose capability roots detected")));
+    }
+
+    #[test]
+    fn feature_and_module_bullets_are_candidate_input() {
+        let doc = cap_doc(
+            r#"# pgkit
+
+Native PostgreSQL toolkit core for Mamba-facing applications.
+
+## Modules
+
+- **connection**: Connection pooling and management
+- **query**: Type-safe SQL query builder
+
+## Features
+
+- Parameterized queries to prevent SQL injection
+- Transaction support with savepoints
+
+### Implemented
+
+- Basic CRUD operations
+
+## Dependencies
+
+- sqlx
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        let ids = doc
+            .prose_candidates
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                "connection",
+                "query",
+                "parameterized-queries-to-prevent-sql-injection",
+                "transaction-support-with-savepoints"
+            ]
+        );
+        assert_eq!(
+            doc.prose_candidates[0].promise.as_deref(),
+            Some("Connection pooling and management")
+        );
+        assert!(!ids.contains(&"sqlx"));
+        assert!(!ids.contains(&"basic-crud-operations"));
+    }
+
+    #[test]
+    fn implemented_bullets_are_fallback_candidate_input() {
+        let doc = cap_doc(
+            r#"# pgkit
+
+Native PostgreSQL toolkit core.
+
+## Status
+
+### Implemented
+
+- Connection pooling and management
+- Raw SQL execution
+"#,
+        );
+
+        let ids = doc
+            .prose_candidates
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec!["connection-pooling-and-management", "raw-sql-execution"]
+        );
     }
 
     #[test]
