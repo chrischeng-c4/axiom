@@ -432,11 +432,64 @@ fn ast_container_is_all_float(
 /// Each check fires only where CPython unconditionally raises, so a correct
 /// call never trips it. Checked in CPython's surfacing order so a single-fault
 /// call yields the right message: duplicate value, positional-only-as-keyword,
+/// Recursively collect names `f` that have `f.__defaults__` or
+/// `f.__kwdefaults__` assigned anywhere in the statement tree. Such a runtime
+/// mutation changes the effective default arguments, so static arg-count
+/// validation must not fire for those functions.
+fn collect_mutated_defaults(
+    stmts: &[Spanned<ast::Stmt>],
+    out: &mut std::collections::HashSet<String>,
+) {
+    for s in stmts {
+        if let ast::Stmt::Assign { target, .. } = &s.node {
+            if let ast::Expr::Attr { object, attr } = &target.node {
+                if (attr == "__defaults__" || attr == "__kwdefaults__")
+                    && matches!(&object.node, ast::Expr::Ident(_))
+                {
+                    if let ast::Expr::Ident(n) = &object.node {
+                        out.insert(n.clone());
+                    }
+                }
+            }
+        }
+        // Recurse into compound-statement bodies so a mutation nested in a
+        // loop / conditional / function still disables the check.
+        for body in stmt_child_bodies(&s.node) {
+            collect_mutated_defaults(body, out);
+        }
+    }
+}
+
+/// Child statement-bodies of a compound statement, for recursive walks.
+fn stmt_child_bodies(stmt: &ast::Stmt) -> Vec<&[Spanned<ast::Stmt>]> {
+    let mut bodies: Vec<&[Spanned<ast::Stmt>]> = Vec::new();
+    match stmt {
+        ast::Stmt::If { body, else_body, .. }
+        | ast::Stmt::While { body, else_body, .. }
+        | ast::Stmt::For { body, else_body, .. } => {
+            bodies.push(body);
+            if let Some(e) = else_body { bodies.push(e); }
+        }
+        ast::Stmt::FnDef { body, .. } | ast::Stmt::AsyncFnDef { body, .. }
+        | ast::Stmt::ClassDef { body, .. } => bodies.push(body),
+        ast::Stmt::With { body, .. } | ast::Stmt::AsyncWith { body, .. } => bodies.push(body),
+        ast::Stmt::Try { body, handlers, else_body, finally_body } => {
+            bodies.push(body);
+            for h in handlers { bodies.push(&h.body); }
+            if let Some(e) = else_body { bodies.push(e); }
+            if let Some(f) = finally_body { bodies.push(f); }
+        }
+        _ => {}
+    }
+    bodies
+}
+
 /// unexpected keyword, too many positional, missing required keyword-only.
 fn arg_bind_violation(
     fname: &str,
     sig: &[(String, bool, bool, bool, bool, bool)],
     args: &[ast::CallArg],
+    defaults_mutated: bool,
 ) -> Option<String> {
     let has_star = sig.iter().any(|p| p.3);
     let has_dstar = sig.iter().any(|p| p.4);
@@ -502,7 +555,7 @@ fn arg_bind_violation(
     // When keyword-only args are also supplied the count is reported in two
     // segments; otherwise the plain form. Only emit when every supplied keyword
     // binds a keyword-only param, so the two-segment count is exact.
-    if !has_star && n_pos > pos_params.len() && pos_params.iter().all(|p| !p.1) {
+    if !defaults_mutated && !has_star && n_pos > pos_params.len() && pos_params.iter().all(|p| !p.1) {
         let take = pos_params.len();
         let kwonly_supplied = kw_names
             .iter()
@@ -547,6 +600,30 @@ fn arg_bind_violation(
             .join(if n == 2 { " and " } else { ", " });
         return Some(format!(
             "{fname}() missing {n} required keyword-only {word}: {names}"
+        ));
+    }
+
+    // (6) Missing required positional argument(s): a positional param with no
+    // default, not filled by position and not supplied by name. Only fires when
+    // there is no `*args` (which never supplies a *named* param anyway) — a
+    // required positional left unbound is always a TypeError.
+    let missing_pos: Vec<&str> = if defaults_mutated {
+        Vec::new()
+    } else {
+        pos_params.iter().enumerate()
+            .filter(|(i, p)| *i >= n_pos && !p.1 && !kw_names.contains(&p.0.as_str()))
+            .map(|(_, p)| p.0.as_str())
+            .collect()
+    };
+    if !missing_pos.is_empty() {
+        let n = missing_pos.len();
+        let word = if n == 1 { "argument" } else { "arguments" };
+        let names = missing_pos.iter()
+            .map(|m| format!("'{m}'"))
+            .collect::<Vec<_>>()
+            .join(if n == 2 { " and " } else { ", " });
+        return Some(format!(
+            "{fname}() missing {n} required positional {word}: {names}"
         ));
     }
 
@@ -1995,6 +2072,11 @@ struct AstLowerer<'a> {
     /// splat-free calls are checked, so a violation is unambiguous before we
     /// raise.
     arg_bind_sigs: HashMap<String, Vec<(String, bool, bool, bool, bool, bool)>>,
+    /// Function names whose `__defaults__` / `__kwdefaults__` is assigned at
+    /// runtime. Static arg-count validation (missing/too-many positional) is
+    /// skipped for these — the mutation changes the effective defaults in a way
+    /// the source signature can't see (`def f(x): f.__defaults__=(None,); f()`).
+    funcs_with_mutated_defaults: std::collections::HashSet<String>,
     /// PEP 557: per-dataclass synthesized __init__ parameter shapes, kept
     /// separately from `func_param_info` so subclasses can prepend their base
     /// dataclass's params (Derived(Counted) accepts Counted's fields first).
@@ -2069,6 +2151,7 @@ impl<'a> AstLowerer<'a> {
             cell_override_syms: std::collections::HashSet::new(),
             func_param_info: HashMap::new(),
             arg_bind_sigs: HashMap::new(),
+            funcs_with_mutated_defaults: std::collections::HashSet::new(),
             dataclass_init_params: HashMap::new(),
             dataclasses_kwarg_idents: std::collections::HashSet::new(),
             func_return_tys: HashMap::new(),
@@ -2355,6 +2438,7 @@ impl<'a> AstLowerer<'a> {
         // that only ever receive floats are monomorphized as `float` and float
         // returns are typed correctly (the float-return-inference soundness wall).
         self.collect_float_hints(module);
+        collect_mutated_defaults(&module.stmts, &mut self.funcs_with_mutated_defaults);
         for stmt in &module.stmts {
             match &stmt.node {
                 ast::Stmt::FnDef {
@@ -4369,7 +4453,9 @@ impl<'a> AstLowerer<'a> {
                             )
                         });
                         if splat_free {
-                            if let Some(msg) = arg_bind_violation(fname, &sig, args) {
+                            let defaults_mutated =
+                                self.funcs_with_mutated_defaults.contains(fname);
+                            if let Some(msg) = arg_bind_violation(fname, &sig, args, defaults_mutated) {
                                 return Some(HirExpr::Call {
                                     func: Box::new(HirExpr::StrLit(
                                         "mb_arg_bind_error".to_string(),
