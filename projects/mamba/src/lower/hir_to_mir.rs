@@ -769,9 +769,18 @@ pub fn lower_hir_to_mir_with_symbols_src(
                             }
                         }
                         HirExpr::Attr { object, attr, .. } => {
-                            // `@<name>.setter` — combine with existing property of that name.
-                            if let HirExpr::Var(prop_sym, _) = object.as_ref() {
-                                if let Some(prop_name) = sym_name_lookup(*prop_sym) {
+                            if let HirExpr::Var(obj_sym, _) = object.as_ref() {
+                                let obj_name = sym_name_lookup(*obj_sym);
+                                // `@enum.property` — the enum module's property
+                                // descriptor behaves like the builtin property for
+                                // member attribute access. Treat it as Property.
+                                if attr == "property"
+                                    && obj_name.as_deref() == Some("enum")
+                                {
+                                    r.kind = MethodDecorKind::Property;
+                                } else if let Some(prop_name) = obj_name {
+                                    // `@<name>.setter` / `.deleter` — combine with
+                                    // the existing property of that name.
                                     if attr == "setter" {
                                         r.setter_target = Some(prop_name);
                                     } else if attr == "deleter" {
