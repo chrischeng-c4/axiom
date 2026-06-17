@@ -281,6 +281,7 @@ macro_rules! disp_unary {
 disp_unary!(d_isfunction, mb_inspect_isfunction);
 disp_unary!(d_ismodule, mb_inspect_ismodule);
 disp_unary!(d_isroutine, mb_inspect_isroutine);
+disp_unary!(d_isabstract, mb_inspect_isabstract);
 disp_unary!(d_isclass, mb_inspect_isclass);
 disp_unary!(d_ismethod, mb_inspect_ismethod);
 disp_unary!(d_getmembers, mb_inspect_getmembers);
@@ -439,7 +440,6 @@ pub fn register() {
     // ── surface: missing CPython 3.12 public names (auto-added) ──
     // Predicate functions (is*): callable, return False for arbitrary objects.
     let predicate_fns: &[&str] = &[
-        "isabstract",
         "isasyncgen",
         "iscode",
         "iscoroutine",
@@ -455,6 +455,14 @@ pub fn register() {
     for name in predicate_fns {
         let addr = d_false as *const () as usize;
         attrs.insert((*name).to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+    // isabstract: a real check (class with unimplemented abstract methods).
+    {
+        let addr = d_isabstract as *const () as usize;
+        attrs.insert("isabstract".to_string(), MbValue::from_func(addr));
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
@@ -1144,6 +1152,18 @@ pub fn mb_inspect_isroutine(obj: MbValue) -> MbValue {
         }
     }
     MbValue::from_bool(false)
+}
+
+/// inspect.isabstract(obj) -> bool. True only for a class that still has
+/// unimplemented abstract methods (mirrors CPython's TPFLAGS_IS_ABSTRACT).
+/// Instances and concrete classes (incl. builtins) are not abstract.
+pub fn mb_inspect_isabstract(obj: MbValue) -> MbValue {
+    if mb_inspect_isclass(obj).as_bool() != Some(true) {
+        return MbValue::from_bool(false);
+    }
+    let name = super::super::class::resolve_class_name(obj).unwrap_or_default();
+    let abstracts = super::super::class::compute_user_abstractmethods(&name);
+    MbValue::from_bool(!abstracts.is_empty())
 }
 
 /// inspect.isclass(obj) -> bool.
