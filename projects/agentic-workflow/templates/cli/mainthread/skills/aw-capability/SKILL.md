@@ -14,7 +14,7 @@ promises from inference alone.
 ## Contract
 
 - Human API: `/aw:capability <prompt>`.
-- Agent API: use `aw run`, `aw capability report|next|init|migrate|run|check`,
+- Agent API: use `aw run`, `aw capability report|next|draft|apply-draft|init|migrate|run|check`,
   `aw standardize <project>`, `aw wi list/show`, `aw td ...`, and `aw cb ...`
   as needed to gather evidence.
 - Artifact: `cap_path`, defaulting to the project README when configured or
@@ -29,23 +29,54 @@ promises from inference alone.
    sections, WI inventory, TD refs, and evidence.
 3. Run `aw capability next --project <project>` when deciding the next bounded
    action. Follow the single `next_action` unless it requires HITL.
-4. If the configured README/capability map is missing and the human has
+4. If `next_action.kind=define_capability_map` and the next command is
+   `aw capability draft --project <project>`, run the draft command to write a
+   pending-review artifact under `/tmp/aw/{project}/capability-map-drafts/`.
+   For README prose roots, the artifact proposes candidate roots. For an
+   existing README with no capability roots, the artifact is a definition
+   worksheet with placeholders. Use its `Review Decisions` table to record
+   confirm/rename/split/merge/defer plus Type, Surfaces, EC Dimensions, Root
+   WI, and gate/inventory decisions before touching README. In all cases it is
+   inference-only and must not be treated as a confirmed README edit until the
+   human confirms, revises, or defers the roots.
+5. If the configured README/capability map is missing and the human has
    confirmed the project should remain in the sweep, run
    `aw capability init --project <project>`, then rerun
    `aw capability check --project <project>`. This creates only the canonical
    README shell; it must not invent capability promises.
-5. If `next_action.kind=format_migration_required`, run
+6. If `next_action.kind=format_migration_required`, run
    `aw capability migrate --project <project>`, then rerun
    `aw capability check --project <project>`.
-6. For root-driven execution, run `aw run --project <project> --max-ticks 1`
+7. For root-driven execution, run `aw run --project <project> --max-ticks 1`
    and follow `invoke.command` plus `agent_prompt` until
    `completion.workflow_complete=true` or `requires_hitl=true`. Do not stop on
    `action=done` alone; a child root can be done while the parent still needs
    rollup.
-7. Use `aw capability check --project <project> --verify` after README or TD
+8. Use `aw capability check --project <project> --verify` after README or TD
    linkage edits when production proof matters; omit `--verify` only for a
    fast structural check.
-8. Only after explicit confirmation, propose edits that create or materially
+9. For multi-project rollouts, run `aw capability sweep --human` first. When
+   the sweep shows `define_capability_map:draft`, use
+   `aw capability sweep --write-drafts --human` to write pending-review draft
+   artifacts for all draftable projects in one AW-owned pass. These drafts
+   remain local `/tmp` review artifacts and do not edit README. Use the
+   emitted draft index path as the review queue handoff.
+10. After a human has reviewed a draft artifact and replaced all placeholders,
+   use `aw capability apply-draft --project <project> --draft <path>
+   --reviewed` to apply the canonical `## Capabilities` section to README.
+   The command refuses unreviewed placeholder drafts and only proves structure;
+   run `aw capability check --project <project>` afterward, and use
+   `--verify` only when production proof matters.
+11. When the sweep shows `create_wi`, use
+   `aw capability sweep --write-wi-plans --human` to write local
+   pending-review WI planning artifacts for all create-WI projects. These are
+   review queues only; do not publish tracker changes until a human accepts the
+   WI candidates.
+12. When the sweep shows non-HITL executable next actions such as `run_td` or
+   `run_verify`, use `aw capability sweep --write-action-queue --human` to
+   write a local execution queue. Execute one command at a time and refresh the
+   sweep after each material change.
+13. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
 ## README Schema
@@ -115,6 +146,11 @@ Status-gated contract rules:
 - `candidate` capabilities may omit required verification.
 - `confirmed`, `auditing`, `blocked`, and `verified` capabilities must define
   required verification through tables.
+- Capability type defines the production-required EC dimension ceiling; a
+  non-behavior dimension becomes production-required only when the README
+  declares content for it through `EC Dimensions:` or the efficiency backfill
+  slot. Do not materialize empty efficiency/security/stability sections just
+  because the capability type could require them.
 - Required claims default `required_for_verified: true` and must include a
   maturity plus either a gate command or fixture/inventory reference.
 - Gate pass/fail is runtime-only from
