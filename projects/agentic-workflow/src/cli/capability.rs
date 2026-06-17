@@ -10,6 +10,7 @@ use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1215,6 +1216,32 @@ struct CapabilityProjectRow {
     cap_path: Option<String>,
 }
 
+fn write_stdout_line(text: &str) -> Result<()> {
+    write_line_to(io::stdout().lock(), text)
+}
+
+fn write_line_to<W: Write>(mut writer: W, text: &str) -> Result<()> {
+    if let Err(err) = writer
+        .write_all(text.as_bytes())
+        .and_then(|_| writer.write_all(b"\n"))
+    {
+        if err.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+fn print_json_output<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
+    let text = if pretty {
+        serde_json::to_string_pretty(value)?
+    } else {
+        serde_json::to_string(value)?
+    };
+    write_stdout_line(&text)
+}
+
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub async fn run(args: CapabilityArgs) -> Result<()> {
     let selected_project = args.project;
@@ -1255,16 +1282,11 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             .await?;
             if args.human {
                 print_next_action(&report.next_action);
-            } else if args.pretty || args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&capability_summary(&report, false))?
-                );
             } else {
-                println!(
-                    "{}",
-                    serde_json::to_string(&capability_summary(&report, false))?
-                );
+                print_json_output(
+                    &capability_summary(&report, false),
+                    args.pretty || args.json,
+                )?;
             }
             Ok(())
         }
@@ -1403,10 +1425,8 @@ fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()>
     });
     if args.human {
         println!("{}", cap_path.display());
-    } else if args.pretty || args.json {
-        println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
-        println!("{}", serde_json::to_string(&payload)?);
+        print_json_output(&payload, args.pretty || args.json)?;
     }
     Ok(())
 }
@@ -1459,10 +1479,8 @@ fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Resu
             report.project, report.status, report.changed, report.capability_count
         );
         println!("check: {}", report.check_command);
-    } else if args.pretty || args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        println!("{}", serde_json::to_string(&report)?);
+        print_json_output(&report, args.pretty || args.json)?;
     }
     Ok(())
 }
@@ -1554,10 +1572,8 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
     )?;
     if args.human {
         println!("{}", report.path.display());
-    } else if args.pretty || args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        println!("{}", serde_json::to_string(&report)?);
+        print_json_output(&report, args.pretty || args.json)?;
     }
     Ok(())
 }
@@ -1865,10 +1881,8 @@ async fn run_capability_sweep(
     }
     if args.human {
         print_capability_sweep(&sweep);
-    } else if args.pretty || args.json {
-        println!("{}", serde_json::to_string_pretty(&sweep)?);
     } else {
-        println!("{}", serde_json::to_string(&sweep)?);
+        print_json_output(&sweep, args.pretty || args.json)?;
     }
     Ok(())
 }
@@ -2439,9 +2453,9 @@ fn set_capability_type(project: &str, args: CapabilitySetTypeArgs) -> Result<()>
         "cap_path": cap_path.display().to_string(),
     });
     if args.pretty {
-        println!("{}", serde_json::to_string_pretty(&payload)?);
+        print_json_output(&payload, true)?;
     } else {
-        println!("{}", serde_json::to_string(&payload)?);
+        print_json_output(&payload, false)?;
     }
     Ok(())
 }
@@ -2479,9 +2493,9 @@ fn set_capability_status(project: &str, args: CapabilitySetStatusArgs) -> Result
         "cap_path": cap_path.display().to_string(),
     });
     if args.pretty {
-        println!("{}", serde_json::to_string_pretty(&payload)?);
+        print_json_output(&payload, true)?;
     } else {
-        println!("{}", serde_json::to_string(&payload)?);
+        print_json_output(&payload, false)?;
     }
     Ok(())
 }
@@ -2627,9 +2641,9 @@ fn set_capability_surface(project: &str, args: CapabilitySetSurfaceArgs) -> Resu
         "cap_path": cap_path.display().to_string(),
     });
     if args.pretty {
-        println!("{}", serde_json::to_string_pretty(&payload)?);
+        print_json_output(&payload, true)?;
     } else {
-        println!("{}", serde_json::to_string(&payload)?);
+        print_json_output(&payload, false)?;
     }
     Ok(())
 }
@@ -2708,9 +2722,9 @@ fn set_capability_ec_dimension(project: &str, args: CapabilitySetEcDimensionArgs
         "cap_path": cap_path.display().to_string(),
     });
     if args.pretty {
-        println!("{}", serde_json::to_string_pretty(&payload)?);
+        print_json_output(&payload, true)?;
     } else {
-        println!("{}", serde_json::to_string(&payload)?);
+        print_json_output(&payload, false)?;
     }
     Ok(())
 }
@@ -3217,16 +3231,11 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
     last_report.run_results = run_results;
     if args.human {
         print_report(&last_report, true, args.pretty || args.json)?;
-    } else if args.pretty || args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&capability_summary(&last_report, true))?
-        );
     } else {
-        println!(
-            "{}",
-            serde_json::to_string(&capability_summary(&last_report, true))?
-        );
+        print_json_output(
+            &capability_summary(&last_report, true),
+            args.pretty || args.json,
+        )?;
     }
     Ok(())
 }
@@ -3286,10 +3295,8 @@ fn migrate_capability_format(project: &str, args: CapabilityMigrateArgs) -> Resu
         if let Some(stderr) = &report.result.stderr {
             println!("error: {stderr}");
         }
-    } else if args.pretty || args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        println!("{}", serde_json::to_string(&report)?);
+        print_json_output(&report, args.pretty || args.json)?;
     }
 
     if report.result.status != "pass" {
@@ -8889,11 +8896,7 @@ fn output_excerpt(output: &[u8]) -> Option<String> {
 
 fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<()> {
     if !human {
-        if pretty {
-            println!("{}", serde_json::to_string_pretty(report)?);
-        } else {
-            println!("{}", serde_json::to_string(report)?);
-        }
+        print_json_output(report, pretty)?;
         return Ok(());
     }
     println!(
@@ -9358,6 +9361,26 @@ fn summarize_evidence(evidence: &CapabilityEvidence) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct BrokenPipeWriter;
+
+    impl std::io::Write for BrokenPipeWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "downstream closed",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn capability_output_ignores_broken_pipe() {
+        assert!(write_line_to(BrokenPipeWriter, "{}").is_ok());
+    }
 
     fn cap_doc(body: &str) -> CapabilityDocument {
         parse_capability_document(body, Path::new("README.md")).unwrap()
