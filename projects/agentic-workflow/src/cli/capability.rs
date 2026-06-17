@@ -2845,6 +2845,26 @@ fn choose_next_action(
                 hitl_question: None,
             };
         }
+        if item.status == CapabilityStatus::Verified
+            && !item.verified
+            && matches!(
+                report.test_gates.status,
+                ProjectTestGateStatus::NotEvaluated
+            )
+            && claim_inventory_verification_not_evaluated(item)
+        {
+            return CapabilityAction {
+                kind: CapabilityActionKind::RunVerify,
+                capability_id: Some(item.id.clone()),
+                gap_id: None,
+                claim_id: None,
+                target: item.title.clone(),
+                command: format!("aw capability report --project {} --verify", report.project),
+                reason: "capability has fixture/inventory claim evidence that must be verified for the current code".to_string(),
+                requires_hitl: false,
+                hitl_question: None,
+            };
+        }
     }
 
     for item in &report.capabilities {
@@ -2931,6 +2951,15 @@ fn runtime_verification_not_evaluated(item: &CapabilityReportItem) -> bool {
         }
     }
     has_gate
+}
+
+fn claim_inventory_verification_not_evaluated(item: &CapabilityReportItem) -> bool {
+    item.claims.iter().any(|claim| {
+        claim.required_for_verified
+            && !claim.verified
+            && claim.gates.is_empty()
+            && !claim.fixtures.is_empty()
+    })
 }
 
 fn hitl_choice(id: &str, label: &str, description: &str) -> HitlChoice {
@@ -8635,6 +8664,105 @@ capability_refs:
             "aw capability report --project jet --verify"
         );
         assert!(action.reason.contains("runtime verification"));
+    }
+
+    #[test]
+    fn next_action_reruns_verification_for_fixture_inventory_claims() {
+        let body = one_markdown_capability()
+            .replace("| Status | auditing |", "| Status | verified |")
+            .replace(
+                "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
+            );
+        let document = canonical_doc(&body);
+        let report = CapabilityReport {
+            action: "capability",
+            project: "jet".to_string(),
+            cap_path: PathBuf::from("projects/jet/README.md"),
+            format_version: 1,
+            status: "blocked".to_string(),
+            test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            production_ready: false,
+            production_status: ProductionStatus::NotEvaluated,
+            production_scope: Vec::new(),
+            production_blockers: Vec::new(),
+            capability_count: 1,
+            verified_count: 0,
+            percent: 0.0,
+            claim_count: 1,
+            verified_claim_count: 0,
+            claim_percent: 0.0,
+            capabilities: vec![CapabilityReportItem {
+                id: "package-manager".to_string(),
+                title: "Package Manager".to_string(),
+                status: CapabilityStatus::Verified,
+                capability_type: None,
+                surfaces: Vec::new(),
+                ec_dimensions: Vec::new(),
+                promise: "Replace package manager flows.".to_string(),
+                current_state: "Install surface exists.".to_string(),
+                gaps: Vec::new(),
+                td_refs: vec![TdCapabilityEvidence {
+                    spec_path: ".aw/tech-design/projects/jet/specs/3779.md".to_string(),
+                    spec_id: Some("jet-package-manager-readiness-audit".to_string()),
+                    capability_id: "package-manager".to_string(),
+                    role: CapabilityRefRole::Primary,
+                    gap: Some("package-manager-readiness".to_string()),
+                    claim: Some("lockfile-determinism".to_string()),
+                    coverage: CapabilityCoverage::Partial,
+                    rationale: None,
+                }],
+                wi_refs: Vec::new(),
+                wi_evidence: Vec::new(),
+                claims: vec![CapabilityClaimReport {
+                    id: "lockfile-determinism".to_string(),
+                    user_story: "reproducible lockfile".to_string(),
+                    required_for_verified: true,
+                    maturity: CapabilityMaturity::Conformance,
+                    oracle: "projects/jet/validation/pkg-manager.toml".to_string(),
+                    fixtures: vec!["projects/jet/validation/pkg-manager.toml".to_string()],
+                    negative_cases: Vec::new(),
+                    gates: Vec::new(),
+                    verified: false,
+                }],
+                claim_count: 1,
+                verified_claim_count: 0,
+                claim_percent: 0.0,
+                verification: Vec::new(),
+                verified: false,
+                release_scope: true,
+                full_regenerability_required: false,
+                dependencies: Vec::new(),
+                dependency_closure: Vec::new(),
+                production_ready: false,
+                production_blockers: Vec::new(),
+            }],
+            blockers: Vec::new(),
+            warnings: Vec::new(),
+            next_action: CapabilityAction {
+                kind: CapabilityActionKind::None,
+                capability_id: None,
+                gap_id: None,
+                claim_id: None,
+                target: "jet".to_string(),
+                command: String::new(),
+                reason: String::new(),
+                requires_hitl: false,
+                hitl_question: None,
+            },
+            run_results: Vec::new(),
+        };
+
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types);
+
+        assert_eq!(action.kind, CapabilityActionKind::RunVerify);
+        assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
+        assert_eq!(
+            action.command,
+            "aw capability report --project jet --verify"
+        );
+        assert!(action.reason.contains("fixture/inventory"));
     }
 
     #[test]
