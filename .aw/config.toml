@@ -229,74 +229,75 @@ verify_cold = true
 
 [[projects]]
 name = "pg"
-path = "projects/pgkit"
-td_path = ".aw/tech-design/projects/pgkit"
+path = "projects/mamba/mambalibs/pgkit"
+td_path = ".aw/tech-design/projects/pg"
+cap_path = "projects/mamba/mambalibs/pgkit/pg/README.md"
 label = "project:pg"
 
 [[projects.workspaces]]
 name = "pg"
-paths = ["projects/pgkit/pg/**"]
+paths = ["projects/mamba/mambalibs/pgkit/pg/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-pg"
 
 [[projects.workspaces]]
 name = "pg-cli"
-paths = ["projects/pgkit/pg-cli/**"]
+paths = ["projects/mamba/mambalibs/pgkit/pg-cli/**"]
 target = "rust"
 test_cmd = "cargo test -p cclab-pg-cli"
 
 [[projects.workspaces]]
 name = "pg-mamba"
-paths = ["projects/pgkit/pg-mamba/**"]
+paths = ["projects/mamba/mambalibs/pgkit/binding/**"]
 target = "rust"
-test_cmd = "cargo test -p cclab-pg-mamba"
+test_cmd = "cargo test -p pgkit-binding"
 
 
 [[projects]]
 name = "agentkit"
-path = "projects/agentkit"
+path = "projects/mamba/mambalibs/agentkit"
 td_path = ".aw/tech-design/projects/agentkit"
 label = "project:agentkit"
 
 [[projects.workspaces]]
 name = "agentkit-core"
-paths = ["projects/agentkit/core/**"]
+paths = ["projects/mamba/mambalibs/agentkit/core/**"]
 target = "rust"
 test_cmd = "cargo test -p agent"
 
 [[projects.workspaces]]
 name = "agentkit-mamba"
-paths = ["projects/agentkit/mamba/**"]
+paths = ["projects/mamba/mambalibs/agentkit/binding/**"]
 target = "rust"
-test_cmd = "cargo test -p agent-mamba"
+test_cmd = "cargo test -p agentkit-binding"
 
 [[projects.workspaces]]
 name = "agentkit-graph"
-paths = ["projects/agentkit/graph/**"]
+paths = ["projects/mamba/mambalibs/agentkit/graph/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-graph"
 
 [[projects.workspaces]]
 name = "agentkit-llm"
-paths = ["projects/agentkit/llm/**"]
+paths = ["projects/mamba/mambalibs/agentkit/llm/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-llm"
 
 [[projects.workspaces]]
 name = "agentkit-tools"
-paths = ["projects/agentkit/tools/**"]
+paths = ["projects/mamba/mambalibs/agentkit/tools/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-tools"
 
 [[projects.workspaces]]
 name = "agentkit-frontend"
-paths = ["projects/agentkit/frontend/**"]
+paths = ["projects/mamba/mambalibs/agentkit/frontend/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-frontend"
 
 [[projects.workspaces]]
 name = "agentkit-backend"
-paths = ["projects/agentkit/backend/**"]
+paths = ["projects/mamba/mambalibs/agentkit/backend/**"]
 target = "rust"
 test_cmd = "cargo test -p agentkit-backend"
 
