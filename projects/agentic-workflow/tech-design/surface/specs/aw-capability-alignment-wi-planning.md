@@ -140,6 +140,7 @@ scenarios:
       - "draft treats Markdown bullets under explicit Features or Modules sections as pending-review candidate roots, and falls back to Implemented sections only when no clearer candidate list exists"
       - "sweep --write-drafts emits a draft review index that separates inferred candidate review from human definition-needed worksheets"
       - "apply-draft refuses unreviewed placeholder drafts and writes only reviewed canonical capability sections"
+      - "format migration repair can strip a previously generated canonical tail that starts at either H2 or H3 Capability Index"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
       - "next emits exactly one next_action"
       - "report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing instead of treating absent tracker evidence as a recreate-WI instruction"
@@ -558,6 +559,11 @@ requirements:
     text: "aw capability report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing while preserving tracker-backed recreate-WI protection when issue inventory is required"
     risk: medium
     verifymethod: test
+  migration_tail_repair_heading_levels:
+    id: AW-CAP-WI-19
+    text: "aw capability migration duplicate-repair can strip a previously generated canonical tail that starts at either H2 or H3 Capability Index before reparsing"
+    risk: medium
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -585,6 +591,7 @@ relations:
   - { from: capability_unit_tests, to: draft_promise_preservation, kind: verifies }
   - { from: capability_unit_tests, to: draft_index_review_summary, kind: verifies }
   - { from: capability_unit_tests, to: skip_issue_inventory_lifecycle, kind: verifies }
+  - { from: capability_unit_tests, to: migration_tail_repair_heading_levels, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {
