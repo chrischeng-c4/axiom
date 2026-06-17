@@ -73,20 +73,6 @@ command_refs:
   - command: aw capability set-surface
   - command: aw capability set-type
   - command: aw capability sweep
-  - command: aw caps
-  - command: aw caps apply-draft
-  - command: aw caps check
-  - command: aw caps draft
-  - command: aw caps init
-  - command: aw caps migrate
-  - command: aw caps next
-  - command: aw caps report
-  - command: aw caps run
-  - command: aw caps set-ec-dimension
-  - command: aw caps set-status
-  - command: aw caps set-surface
-  - command: aw caps set-type
-  - command: aw caps sweep
 ---
 
 # AW Capability Alignment WI Planning
