@@ -31,6 +31,7 @@ pub mod run;
 pub(crate) mod shell_env;
 pub mod slug_workspace;
 pub mod standardize;
+pub mod sync;
 pub mod td;
 pub mod td_check_section_type;
 pub mod td_lock;

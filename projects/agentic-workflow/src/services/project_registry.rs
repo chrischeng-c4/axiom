@@ -378,17 +378,8 @@ fn discover_project_aw_paths(root: &Path) -> Result<Vec<PathBuf>> {
 
     let mut paths = Vec::new();
     for pattern in patterns {
-        if pattern == "projects/*/aw.toml" {
-            let projects_dir = root.join("projects");
-            let Ok(entries) = std::fs::read_dir(&projects_dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let candidate = entry.path().join(PROJECT_AW_CONFIG_FILE);
-                if candidate.is_file() {
-                    paths.push(candidate);
-                }
-            }
+        if let Some(parent_dir) = aw_toml_single_star_parent(&pattern) {
+            paths.extend(discover_project_aw_paths_under(root, parent_dir));
         } else {
             let candidate = root.join(&pattern);
             if candidate.is_file() {
@@ -399,6 +390,22 @@ fn discover_project_aw_paths(root: &Path) -> Result<Vec<PathBuf>> {
     paths.sort();
     paths.dedup();
     Ok(paths)
+}
+
+fn aw_toml_single_star_parent(pattern: &str) -> Option<&str> {
+    pattern.strip_suffix("/*/aw.toml")
+}
+
+fn discover_project_aw_paths_under(root: &Path, parent_dir: &str) -> Vec<PathBuf> {
+    let dir = root.join(parent_dir);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path().join(PROJECT_AW_CONFIG_FILE))
+        .filter(|candidate| candidate.is_file())
+        .collect()
 }
 
 fn parse_project_aw_project(root: &Path, path: &Path) -> Result<Project> {
@@ -898,6 +905,43 @@ test_cmd = "cargo test -p jet"
             jet.workspaces[0].test_cmd.as_deref(),
             Some("cargo test -p jet")
         );
+    }
+
+    #[test]
+    fn project_aw_discovery_expands_libs_single_star_patterns() {
+        let tmp = make_score_root();
+        fs::write(
+            tmp.path().join(ROOT_AW_CONFIG_FILE),
+            r#"
+[agentic_workflow.projects]
+discover = ["libs/*/aw.toml"]
+"#,
+        )
+        .unwrap();
+        let compass = tmp.path().join("libs").join("compass");
+        fs::create_dir_all(&compass).unwrap();
+        fs::write(
+            compass.join(PROJECT_AW_CONFIG_FILE),
+            r#"
+[project]
+name = "compass"
+aliases = ["cclab-compass"]
+cap_path = "README.md"
+
+[[workspaces]]
+name = "compass"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-compass"
+"#,
+        )
+        .unwrap();
+
+        let row = resolve_project_config_row(tmp.path(), "cclab-compass").unwrap();
+
+        assert_eq!(row.name, "compass");
+        assert_eq!(row.path, "libs/compass");
+        assert_eq!(row.cap_path.as_deref(), Some("libs/compass/README.md"));
     }
 
     // REQ: REQ-005 (R5: check_drift detects changes)

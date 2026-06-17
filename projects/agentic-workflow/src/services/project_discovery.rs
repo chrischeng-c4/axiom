@@ -2,7 +2,7 @@
 // CODEGEN-BEGIN
 //! Auto-discovery of project → workspace hierarchy.
 //!
-//! Walks `{crates,projects,packages}/*` and applies rules A-F in priority order
+//! Walks `{crates,projects,libs,packages}/*` and applies rules A-F in priority order
 //! to infer the workspace layout and tech stack for each directory.
 
 use std::fs;
@@ -15,10 +15,10 @@ use crate::models::tech_stack::Language;
 use crate::services::tech_stack_service::infer_tech_stack;
 
 /// Discovery root directories (relative to repo root).
-const DISCOVERY_ROOTS: &[&str] = &["crates", "projects", "packages"];
+const DISCOVERY_ROOTS: &[&str] = &["crates", "projects", "libs", "packages"];
 
 // @spec projects/agentic-workflow/tech-design/surface/specs/sync-command.md#R1
-/// Auto-discover all project-level dirs under `crates/`, `projects/`, `packages/`
+/// Auto-discover all project-level dirs under `crates/`, `projects/`, `libs/`, `packages/`
 /// and return a `Vec<Project>` with inferred workspace information.
 pub fn discover_projects(root: &Path) -> Result<Vec<Project>> {
     let mut projects = Vec::new();
@@ -133,15 +133,17 @@ fn rule_a(root: &Path, dir: &Path) -> Option<Vec<Workspace>> {
 // @spec projects/agentic-workflow/tech-design/surface/specs/sync-command.md#R2
 /// Rule B: `Cargo.toml` at directory root.
 fn rule_b(root: &Path, dir: &Path, project_name: &str) -> Option<Workspace> {
-    if !dir.join("Cargo.toml").is_file() {
+    let cargo_toml = dir.join("Cargo.toml");
+    if !cargo_toml.is_file() {
         return None;
     }
     let rel = relative(root, dir);
+    let pkg_name = read_cargo_package_name(&cargo_toml).unwrap_or_else(|| project_name.to_string());
     Some(Workspace {
         name: None,
         paths: vec![format!("{}/**", rel)],
         target: Language::Rust,
-        test_cmd: Some(format!("cargo test -p {}", project_name)),
+        test_cmd: Some(format!("cargo test -p {}", pkg_name)),
         codegen: None,
     })
 }
@@ -410,6 +412,29 @@ mod tests {
         let ws = &p.workspaces[0];
         assert_eq!(ws.target, Language::Rust);
         assert_eq!(ws.test_cmd.as_deref(), Some("cargo test -p my-crate"));
+    }
+
+    #[test]
+    fn discovers_libs_root_projects() {
+        let tmp = TempDir::new().unwrap();
+        let compass = tmp.path().join("libs").join("compass");
+        fs::create_dir_all(&compass).unwrap();
+        fs::write(
+            compass.join("Cargo.toml"),
+            "[package]\nname = \"cclab-compass\"\n",
+        )
+        .unwrap();
+
+        let projects = discover_projects(tmp.path()).unwrap();
+
+        assert_eq!(projects.len(), 1);
+        let project = &projects[0];
+        assert_eq!(project.name, "compass");
+        assert_eq!(project.path, PathBuf::from("libs/compass"));
+        assert_eq!(
+            project.workspaces[0].test_cmd.as_deref(),
+            Some("cargo test -p cclab-compass")
+        );
     }
 
     // REQ: REQ-003
