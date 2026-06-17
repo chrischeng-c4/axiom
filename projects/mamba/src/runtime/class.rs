@@ -4255,6 +4255,17 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     if attr_name == "__type_params__" && super::builtins::is_type_name(s) {
                         return MbValue::from_ptr(super::rc::MbObject::new_tuple(vec![]));
                     }
+                    // __name__ / __qualname__ on a builtin class name that is
+                    // not in the user registry — exception/warning classes
+                    // (RuntimeWarning, ValueError, …) and builtin types (int,
+                    // str, …). CPython answers the bare class name. Without
+                    // this, `RuntimeWarning.__name__` returns None.
+                    if (attr_name == "__name__" || attr_name == "__qualname__")
+                        && (super::exception::is_builtin_exception_name(s)
+                            || super::builtins::is_type_name(s))
+                    {
+                        return MbValue::from_ptr(super::rc::MbObject::new_str(s.clone()));
+                    }
                 }
                 _ => {}
             }
