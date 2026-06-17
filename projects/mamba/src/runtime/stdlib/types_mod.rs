@@ -415,12 +415,66 @@ pub fn mb_types_prepare_class(_name: MbValue) -> MbValue {
     ]))
 }
 
-/// types.resolve_bases(bases) -> tuple
-///
-/// Identity passthrough — CPython unwraps `__mro_entries__` but mamba
-/// has no such protocol yet.
+/// True if `v` is a class (a registered class-name string or a `type` object),
+/// as opposed to an instance that may carry __mro_entries__.
+fn rb_is_class(v: MbValue) -> bool {
+    v.as_ptr()
+        .map(|p| unsafe {
+            match &(*p).data {
+                ObjData::Str(s) => super::super::class::class_is_registered(s),
+                ObjData::Instance { class_name, .. } => class_name == "type",
+                _ => false,
+            }
+        })
+        .unwrap_or(false)
+}
+
+/// types.resolve_bases(bases) — PEP 560: replace any non-class base that defines
+/// __mro_entries__ with the tuple it returns. Returns the original tuple
+/// unchanged (same object) when nothing is resolved.
 pub fn mb_types_resolve_bases(bases: MbValue) -> MbValue {
-    bases
+    let items: Vec<MbValue> = bases
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Tuple(ref it) = (*p).data {
+                it.to_vec()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
+    let mut new_bases: Vec<MbValue> = Vec::new();
+    let mut updated = false;
+    for &base in &items {
+        if rb_is_class(base) {
+            new_bases.push(base);
+            continue;
+        }
+        let attr = MbValue::from_ptr(MbObject::new_str("__mro_entries__".to_string()));
+        if super::super::class::mb_hasattr(base, attr).as_bool() == Some(true) {
+            let mname = MbValue::from_ptr(MbObject::new_str("__mro_entries__".to_string()));
+            let args = MbValue::from_ptr(MbObject::new_list(vec![bases]));
+            let result = super::super::class::mb_call_method(base, mname, args);
+            updated = true;
+            let spliced = result.as_ptr().map(|rp| unsafe {
+                if let ObjData::Tuple(ref it) = (*rp).data {
+                    Some(it.to_vec())
+                } else {
+                    None
+                }
+            });
+            match spliced.flatten() {
+                Some(entries) => new_bases.extend(entries),
+                None => new_bases.push(result),
+            }
+        } else {
+            new_bases.push(base);
+        }
+    }
+    if !updated {
+        return bases;
+    }
+    MbValue::from_ptr(MbObject::new_tuple_borrowed(new_bases))
 }
 
 /// types.coroutine(func) -> func
