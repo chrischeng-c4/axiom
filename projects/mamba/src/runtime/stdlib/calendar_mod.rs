@@ -573,7 +573,11 @@ fn zeller_weekday(y: i64, m: i64, d: i64) -> i64 {
     let (ay, am) = if m < 3 { (y - 1, m + 12) } else { (y, m) };
     let k = ay.rem_euclid(100);
     let j = ay.div_euclid(100);
-    let h = (d + (13 * (am + 1)) / 5 + k + k / 4 + j / 4 + 5 * j).rem_euclid(7);
+    // Zeller's congruence assumes floor division; for a negative century `j`
+    // (proleptic years, e.g. monthrange(-1, …)) truncating `j / 4` is wrong, so
+    // use div_euclid. (For non-negative k/j it equals plain integer division.)
+    let h = (d + (13 * (am + 1)) / 5 + k + k.div_euclid(4) + j.div_euclid(4) + 5 * j)
+        .rem_euclid(7);
     (h + 5).rem_euclid(7)
 }
 
