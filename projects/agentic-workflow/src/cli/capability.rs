@@ -1707,7 +1707,7 @@ fn render_empty_candidate_capability_section(project: &str) -> String {
     let title = format!("{} Capability", project_display_name(project));
     let id = slugify(&title);
     format!(
-        "### {title}\n\nID: {id}\nStatus: candidate\nRequired Verification: smoke\nPromise:\n(confirm product promise)\nGate Inventory:\n- (confirm gate inventory)\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {work_root} root | epic | - | planned | planned | smoke | (confirm gate/evidence) |\n\n",
+        "### {title}\n\nID: {id}\nType: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)\nSurfaces:\n- (confirm public surface, e.g. CLI: `command` - short summary)\nEC Dimensions:\n- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)\nRoot WI: -\nStatus: candidate\nRequired Verification: smoke\nPromise:\n(confirm product promise)\nGate Inventory:\n- (confirm gate inventory)\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {work_root} root | epic | - | planned | planned | smoke | (confirm gate/evidence) |\n\n",
         title = markdown_cell(&title),
         id = markdown_cell(&id),
         work_root = markdown_cell(&title),
@@ -1722,7 +1722,7 @@ fn render_candidate_capability_section(candidate: &CapabilityProseCandidate) -> 
         .filter(|summary| !summary.trim().is_empty())
         .unwrap_or("(confirm promise)");
     format!(
-        "### {title}\n\nID: {id}\nRoot WI: {root_wi}\nStatus: candidate\nRequired Verification: smoke\nPromise:\n{promise}\nGate Inventory:\n- (confirm gate inventory)\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {work_root} root | epic | {root_wi} | planned | planned | smoke | (confirm gate/evidence) |\n\n",
+        "### {title}\n\nID: {id}\nType: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)\nSurfaces:\n- (confirm public surface, e.g. CLI: `command` - short summary)\nEC Dimensions:\n- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)\nRoot WI: {root_wi}\nStatus: candidate\nRequired Verification: smoke\nPromise:\n{promise}\nGate Inventory:\n- (confirm gate inventory)\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {work_root} root | epic | {root_wi} | planned | planned | smoke | (confirm gate/evidence) |\n\n",
         title = candidate.title.trim(),
         id = candidate.id.trim(),
         root_wi = markdown_cell(root_wi),
@@ -8895,6 +8895,16 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert!(artifact.contains("source: prose_candidates"));
         assert!(artifact.contains("## Draft Canonical README Section"));
         assert!(artifact.contains("ID: c1-py3-12-functional-parity-axis-1-3331"));
+        assert!(artifact.contains(
+            "Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)"
+        ));
+        assert!(artifact.contains(
+            "Surfaces:\n- (confirm public surface, e.g. CLI: `command` - short summary)"
+        ));
+        assert!(artifact.contains(
+            "EC Dimensions:\n- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)"
+        ));
+        assert!(artifact.contains("Root WI: #3331"));
         assert!(artifact.contains("Status: candidate"));
         assert!(artifact.contains("(confirm gate inventory)"));
         assert!(artifact.contains("This artifact is inference only"));
@@ -8910,6 +8920,13 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert!(artifact.contains("README has no candidate capability roots"));
         assert!(artifact.contains("### Cue Capability"));
         assert!(artifact.contains("ID: cue-capability"));
+        assert!(artifact.contains(
+            "Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)"
+        ));
+        assert!(artifact.contains("Root WI: -"));
+        assert!(artifact.contains(
+            "EC Dimensions:\n- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)"
+        ));
         assert!(artifact.contains("Promise:\n(confirm product promise)"));
         assert!(artifact.contains("This artifact is inference only"));
     }
