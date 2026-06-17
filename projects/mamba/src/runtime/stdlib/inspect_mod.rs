@@ -279,6 +279,7 @@ macro_rules! disp_unary {
 }
 
 disp_unary!(d_isfunction, mb_inspect_isfunction);
+disp_unary!(d_ismodule, mb_inspect_ismodule);
 disp_unary!(d_isclass, mb_inspect_isclass);
 disp_unary!(d_ismethod, mb_inspect_ismethod);
 disp_unary!(d_getmembers, mb_inspect_getmembers);
@@ -294,7 +295,7 @@ pub fn register() {
         ("ismethod", d_ismethod as *const () as usize),
         ("isbuiltin", d_isfunction as *const () as usize),
         ("isroutine", d_isfunction as *const () as usize),
-        ("ismodule", d_isfunction as *const () as usize),
+        ("ismodule", d_ismodule as *const () as usize),
         ("isgeneratorfunction", d_isfunction as *const () as usize),
         ("iscoroutinefunction", d_isfunction as *const () as usize),
         ("isawaitable", d_isfunction as *const () as usize),
@@ -1106,6 +1107,15 @@ pub fn mb_inspect_isfunction(obj: MbValue) -> MbValue {
         }
     }
     MbValue::from_bool(false)
+}
+
+/// inspect.ismodule(obj) -> bool.
+///
+/// mamba models modules as dict-backed values tracked in the module registry.
+/// (ismodule was previously mis-wired to isfunction, so it returned True for
+/// functions and False for modules.)
+pub fn mb_inspect_ismodule(obj: MbValue) -> MbValue {
+    MbValue::from_bool(super::super::module::is_module_value(obj))
 }
 
 /// inspect.isclass(obj) -> bool.
