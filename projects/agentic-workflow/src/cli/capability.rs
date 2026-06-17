@@ -1049,6 +1049,9 @@ pub struct CapabilitySweepReport {
 pub struct CapabilitySweepGroup {
     pub status: String,
     pub next_action_kind: &'static str,
+    pub next_action_group: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_action_detail: Option<&'static str>,
     pub count: usize,
     pub projects: Vec<String>,
 }
@@ -1073,6 +1076,9 @@ pub struct CapabilitySweepProject {
     pub test_gate_passed_count: usize,
     pub test_gate_command_count: usize,
     pub next_action_kind: &'static str,
+    pub next_action_group: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_action_detail: Option<&'static str>,
     pub next_action: CapabilityAction,
 }
 
@@ -1549,6 +1555,9 @@ fn capability_sweep_report(
 }
 
 fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject {
+    let next_action_kind = capability_action_kind_label(report.next_action.kind);
+    let next_action_detail = capability_action_detail_label(&report.next_action);
+    let next_action_group = capability_action_group_label(next_action_kind, next_action_detail);
     CapabilitySweepProject {
         project: report.project.clone(),
         cap_path: report.cap_path.clone(),
@@ -1567,30 +1576,64 @@ fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject
         test_gate_status: report.test_gates.status,
         test_gate_passed_count: report.test_gates.passed_count,
         test_gate_command_count: report.test_gates.command_count,
-        next_action_kind: capability_action_kind_label(report.next_action.kind),
+        next_action_kind,
+        next_action_group,
+        next_action_detail,
         next_action: report.next_action.clone(),
     }
 }
 
 fn capability_sweep_groups(projects: &[CapabilitySweepProject]) -> Vec<CapabilitySweepGroup> {
-    let mut grouped = BTreeMap::<(String, &'static str), Vec<String>>::new();
+    let mut grouped =
+        BTreeMap::<(String, &'static str, String, Option<&'static str>), Vec<String>>::new();
     for project in projects {
         grouped
-            .entry((project.report_status.clone(), project.next_action_kind))
+            .entry((
+                project.report_status.clone(),
+                project.next_action_kind,
+                project.next_action_group.clone(),
+                project.next_action_detail,
+            ))
             .or_default()
             .push(project.project.clone());
     }
     grouped
         .into_iter()
         .map(
-            |((status, next_action_kind), projects)| CapabilitySweepGroup {
-                status,
-                next_action_kind,
-                count: projects.len(),
-                projects,
+            |((status, next_action_kind, next_action_group, next_action_detail), projects)| {
+                CapabilitySweepGroup {
+                    status,
+                    next_action_kind,
+                    next_action_group,
+                    next_action_detail,
+                    count: projects.len(),
+                    projects,
+                }
             },
         )
         .collect()
+}
+
+fn capability_action_group_label(kind: &'static str, detail: Option<&'static str>) -> String {
+    if let Some(detail) = detail {
+        format!("{kind}:{detail}")
+    } else {
+        kind.to_string()
+    }
+}
+
+fn capability_action_detail_label(action: &CapabilityAction) -> Option<&'static str> {
+    if action.kind != CapabilityActionKind::DefineCapabilityMap {
+        return None;
+    }
+    let command = action.command.trim();
+    if command.starts_with("aw capability draft ") || command == "aw capability draft" {
+        Some("draft")
+    } else if command.starts_with("aw capability init ") || command == "aw capability init" {
+        Some("init")
+    } else {
+        Some("report")
+    }
 }
 
 fn capability_action_kind_label(kind: CapabilityActionKind) -> &'static str {
@@ -1622,7 +1665,7 @@ fn print_capability_sweep(sweep: &CapabilitySweepReport) {
         println!(
             "{}:{} [{}] {}",
             group.status,
-            group.next_action_kind,
+            group.next_action_group,
             group.count,
             group.projects.join(", ")
         );
@@ -8310,6 +8353,43 @@ Gate Inventory:
     }
 
     #[test]
+    fn capability_sweep_splits_define_map_draft_from_report() {
+        let mut draftable = sample_report(sample_action(
+            CapabilityActionKind::DefineCapabilityMap,
+            "aw capability draft --project mamba",
+            false,
+        ));
+        draftable.project = "mamba".to_string();
+
+        let mut inspect_only = sample_report(sample_action(
+            CapabilityActionKind::DefineCapabilityMap,
+            "aw capability report --project pg",
+            true,
+        ));
+        inspect_only.project = "pg".to_string();
+
+        let sweep = capability_sweep_report(&[draftable, inspect_only], false, false);
+
+        assert_eq!(
+            sweep
+                .groups
+                .iter()
+                .map(|group| format!(
+                    "{}:{}:{}",
+                    group.status, group.next_action_group, group.count
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                "blocked:define_capability_map:draft:1",
+                "blocked:define_capability_map:report:1"
+            ]
+        );
+        assert_eq!(sweep.groups[0].next_action_kind, "define_capability_map");
+        assert_eq!(sweep.groups[0].next_action_detail, Some("draft"));
+        assert_eq!(sweep.groups[1].next_action_detail, Some("report"));
+    }
+
+    #[test]
     fn capability_sweep_project_exposes_stable_next_action_label() {
         let report = sample_report(sample_action(
             CapabilityActionKind::AssignCapabilityType,
@@ -8321,6 +8401,8 @@ Gate Inventory:
 
         assert_eq!(project.project, "jet");
         assert_eq!(project.next_action_kind, "assign_capability_type");
+        assert_eq!(project.next_action_group, "assign_capability_type");
+        assert_eq!(project.next_action_detail, None);
         assert!(project.requires_hitl);
     }
 
