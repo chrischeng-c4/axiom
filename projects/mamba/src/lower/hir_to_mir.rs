@@ -6663,12 +6663,51 @@ impl<'a> HirToMir<'a> {
             HirExpr::UnaryOp { op, operand, ty } => {
                 let inner = self.lower_expr(operand);
                 let dest = self.fresh_vreg();
-                self.current_stmts.push(MirInst::UnaryOp {
-                    dest,
-                    op: lower_mir_unaryop(*op),
-                    operand: inner,
-                    ty: *ty,
-                });
+                // Negation must be BigInt-aware: a raw MirUnaryOp::Neg negates
+                // the NaN-boxed BigInt pointer bits (yielding garbage, e.g.
+                // `-(2**63)`). The checker already rejects `-x` on non-numeric
+                // operands, so here `operand` is always numeric.
+                //   - statically Int: lower `-x` as the checked subtraction
+                //     `0 - x` (the BigInt-aware path binary `-` already uses).
+                //   - Any/Complex/etc. (a boxed numeric that may be a BigInt or
+                //     complex): route through the runtime `mb_neg`.
+                //   - Float/Bool: a raw MirUnaryOp::Neg is correct and fast.
+                // #99
+                let neg_int = matches!(*op, crate::hir::HirUnaryOp::Neg)
+                    && matches!(self.tcx.get(operand.ty()), crate::types::Ty::Int);
+                let neg_boxed = matches!(*op, crate::hir::HirUnaryOp::Neg)
+                    && !matches!(
+                        self.tcx.get(operand.ty()),
+                        crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
+                    );
+                if neg_int {
+                    let zero = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::LoadConst {
+                        dest: zero,
+                        value: MirConst::Int(0),
+                        ty: self.tcx.int(),
+                    });
+                    self.current_stmts.push(MirInst::CheckedSub {
+                        dest,
+                        lhs: zero,
+                        rhs: inner,
+                        ty: *ty,
+                    });
+                } else if neg_boxed {
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(dest),
+                        name: "mb_neg".to_string(),
+                        args: vec![inner],
+                        ty: *ty,
+                    });
+                } else {
+                    self.current_stmts.push(MirInst::UnaryOp {
+                        dest,
+                        op: lower_mir_unaryop(*op),
+                        operand: inner,
+                        ty: *ty,
+                    });
+                }
                 dest
             }
             HirExpr::Call { func, args, ty } => {
