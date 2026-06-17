@@ -371,7 +371,11 @@ fn rustfmt_snippet(source: &str) -> std::io::Result<Option<String>> {
         std::process::id()
     ));
     std::fs::write(&path, source)?;
-    let output = Command::new("rustfmt")
+    let Some(rustfmt) = crate::git::find_rustfmt_bin() else {
+        std::fs::remove_file(&path).ok();
+        return Ok(None);
+    };
+    let output = Command::new(rustfmt)
         .args(["--edition", "2021", "--"])
         .arg(&path)
         .output()?;

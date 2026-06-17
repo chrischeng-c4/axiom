@@ -19,6 +19,10 @@ pub fn find_git_bin() -> Option<PathBuf> {
     find_bin_on_path("git", std::env::var_os("PATH")).or_else(find_default_git_bin)
 }
 
+pub fn find_rustfmt_bin() -> Option<PathBuf> {
+    find_bin_on_path("rustfmt", std::env::var_os("PATH")).or_else(find_default_rustfmt_bin)
+}
+
 fn find_default_git_bin() -> Option<PathBuf> {
     [
         "/opt/homebrew/bin/git",
@@ -28,6 +32,29 @@ fn find_default_git_bin() -> Option<PathBuf> {
     .iter()
     .map(PathBuf::from)
     .find(|path| path.is_file())
+}
+
+fn find_default_rustfmt_bin() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(cargo_home) = std::env::var_os("CARGO_HOME") {
+        candidates.push(PathBuf::from(cargo_home).join("bin/rustfmt"));
+    }
+    if let Some(rustup_home) = std::env::var_os("RUSTUP_HOME") {
+        let root = PathBuf::from(rustup_home).join("toolchains");
+        candidates.push(root.join("stable-aarch64-apple-darwin/bin/rustfmt"));
+        candidates.push(root.join("stable-x86_64-apple-darwin/bin/rustfmt"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        candidates.push(home.join(".cargo/bin/rustfmt"));
+        candidates.push(home.join(".rustup/toolchains/stable-aarch64-apple-darwin/bin/rustfmt"));
+        candidates.push(home.join(".rustup/toolchains/stable-x86_64-apple-darwin/bin/rustfmt"));
+    }
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/rustfmt"),
+        PathBuf::from("/usr/local/bin/rustfmt"),
+    ]);
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 fn find_bin_on_path(binary: &str, path_env: Option<impl AsRef<OsStr>>) -> Option<PathBuf> {
