@@ -3419,15 +3419,7 @@ pub fn value_to_string(val: MbValue) -> String {
                     format!("bytearray(b{})", format_bytes_inline(&data))
                 }
                 ObjData::BigInt(big) => big.to_string(),
-                ObjData::Complex(re, im) => {
-                    if *re == 0.0 && re.is_sign_positive() {
-                        format!("{}j", im)
-                    } else if *im >= 0.0 {
-                        format!("({}+{}j)", re, im)
-                    } else {
-                        format!("({}{}j)", re, im)
-                    }
-                }
+                ObjData::Complex(re, im) => complex_repr_string(*re, *im),
                 ObjData::CodeObject { filename, mode, .. } => {
                     format!("<code object <module> at {filename} mode={mode}>")
                 }
@@ -3439,6 +3431,22 @@ pub fn value_to_string(val: MbValue) -> String {
 }
 
 // ── Method Dispatch ──
+
+/// repr() of a complex value, matching CPython: `{im}j` when the real part is
+/// +0.0, else `(re±imj)`. NaN components render lowercase `nan` (Rust's `{}`
+/// gives `NaN`); inf/-inf and integer-valued floats already match via `{}`.
+pub fn complex_repr_string(re: f64, im: f64) -> String {
+    fn part(f: f64) -> String {
+        if f.is_nan() { "nan".to_string() } else { format!("{f}") }
+    }
+    if re == 0.0 && re.is_sign_positive() {
+        format!("{}j", part(im))
+    } else if im >= 0.0 {
+        format!("({}+{}j)", part(re), part(im))
+    } else {
+        format!("({}{}j)", part(re), part(im))
+    }
+}
 
 /// Parse a C99 hexadecimal floating-point string (CPython `float.fromhex`):
 /// optional sign, optional `0x`/`0X` prefix, hex mantissa with an optional
