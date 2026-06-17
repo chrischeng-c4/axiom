@@ -532,13 +532,7 @@ pub fn mb_print(val: MbValue) -> MbValue {
                 ObjData::Complex(re, im) => {
                     // CPython: when real component is +0.0, print just `{im}j`
                     // (no parens). Negative-zero real keeps the parenthesized form.
-                    if *re == 0.0 && re.is_sign_positive() {
-                        mb_outln!("{}j", im);
-                    } else if *im >= 0.0 {
-                        mb_outln!("({}+{}j)", re, im);
-                    } else {
-                        mb_outln!("({}{}j)", re, im);
-                    }
+                    mb_outln!("{}", super::string_ops::complex_repr_string(*re, *im));
                 }
                 ObjData::CodeObject { filename, mode, .. } => {
                     mb_outln!("<code object <module> at {filename} mode={mode}>")
@@ -960,13 +954,7 @@ fn print_repr(val: MbValue) {
                     mb_out!("bytearray(b{})", format_bytes_inner(&data));
                 }
                 ObjData::Complex(re, im) => {
-                    if *re == 0.0 && re.is_sign_positive() {
-                        mb_out!("{}j", im);
-                    } else if *im >= 0.0 {
-                        mb_out!("({}+{}j)", re, im);
-                    } else {
-                        mb_out!("({}{}j)", re, im);
-                    }
+                    mb_out!("{}", super::string_ops::complex_repr_string(*re, *im));
                 }
                 ObjData::BigInt(big) => mb_out!("{big}"),
                 _ => mb_out!("..."),
