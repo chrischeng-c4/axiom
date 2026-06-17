@@ -233,6 +233,16 @@ pub struct EcEvidenceArtifact {
     pub label: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub locator: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub format: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub highlights: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<String>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -411,6 +421,16 @@ struct E2eArtifactYaml {
     label: Option<String>,
     #[serde(default)]
     locator: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    screenshots: Option<StringOrList>,
+    #[serde(default)]
+    highlights: Option<StringOrList>,
+    #[serde(default)]
+    steps: Option<StringOrList>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1324,6 +1344,14 @@ fn extract_e2e_cases_from_markdown(
                 let evidence = raw
                     .evidence
                     .map(evidence_artifacts_from_yaml)
+                    .transpose()
+                    .with_context(|| {
+                        format!(
+                            "parse evidence artifacts for case '{}' in {}",
+                            id,
+                            path.display()
+                        )
+                    })?
                     .unwrap_or_default();
                 let evaluators = raw
                     .evaluators
@@ -1770,34 +1798,34 @@ fn evaluator_from_yaml(raw: E2eEvaluatorYaml) -> EcEvaluator {
     }
 }
 
-fn evidence_artifacts_from_yaml(evidence: E2eEvidenceYaml) -> Vec<EcEvidenceArtifact> {
+fn evidence_artifacts_from_yaml(evidence: E2eEvidenceYaml) -> Result<Vec<EcEvidenceArtifact>> {
     let mut artifacts = Vec::new();
     for item in evidence.screenshots {
-        push_evidence_artifact(&mut artifacts, "screenshot", item);
+        push_evidence_artifact(&mut artifacts, "screenshot", item)?;
     }
     for item in evidence.reports {
-        push_evidence_artifact(&mut artifacts, "report", item);
+        push_evidence_artifact(&mut artifacts, "report", item)?;
     }
     for item in evidence.docs {
-        push_evidence_artifact(&mut artifacts, "doc", item);
+        push_evidence_artifact(&mut artifacts, "doc", item)?;
     }
     if let Some(item) = evidence.eval {
-        push_evidence_artifact(&mut artifacts, "eval", item);
+        push_evidence_artifact(&mut artifacts, "eval", item)?;
     }
-    artifacts
+    Ok(artifacts)
 }
 
 fn push_evidence_artifact(
     artifacts: &mut Vec<EcEvidenceArtifact>,
     default_kind: &str,
     item: E2eArtifactYaml,
-) {
+) -> Result<()> {
     let Some(path) = item
         .path
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     else {
-        return;
+        return Ok(());
     };
     let kind = item
         .kind
@@ -1805,6 +1833,27 @@ fn push_evidence_artifact(
         .map(|value| slugify(&value))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default_kind.to_string());
+    let format = item
+        .format
+        .map(|value| normalize_manual_format(&value))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| infer_manual_format_from_path(&path));
+    let command = item
+        .command
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+    let screenshots = item
+        .screenshots
+        .map(StringOrList::into_vec)
+        .unwrap_or_default();
+    let highlights = item
+        .highlights
+        .map(StringOrList::into_vec)
+        .unwrap_or_default();
+    let steps = item.steps.map(StringOrList::into_vec).unwrap_or_default();
+    if kind == "generated-manual" {
+        validate_generated_manual_artifact(&path, &format, &command)?;
+    }
     artifacts.push(EcEvidenceArtifact {
         kind,
         path,
@@ -1816,7 +1865,61 @@ fn push_evidence_artifact(
             .locator
             .map(|value| value.trim().to_string())
             .unwrap_or_default(),
+        format,
+        command,
+        screenshots,
+        highlights,
+        steps,
     });
+    Ok(())
+}
+
+fn validate_generated_manual_artifact(path: &str, format: &str, command: &str) -> Result<()> {
+    if command.trim().is_empty() {
+        anyhow::bail!("generated-manual evidence requires a non-empty command");
+    }
+    if !is_safe_project_relative_path(path) {
+        anyhow::bail!("generated-manual evidence path must be project-local: {path}");
+    }
+    if !matches!(format, "markdown" | "html") {
+        anyhow::bail!(
+            "generated-manual evidence format must be markdown or html: {}",
+            if format.is_empty() {
+                "<missing>"
+            } else {
+                format
+            }
+        );
+    }
+    Ok(())
+}
+
+fn normalize_manual_format(value: &str) -> String {
+    match slugify(value).as_str() {
+        "md" | "markdown" => "markdown".to_string(),
+        "htm" | "html" => "html".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn infer_manual_format_from_path(path: &str) -> String {
+    match Path::new(path).extension().and_then(|ext| ext.to_str()) {
+        Some("md") | Some("markdown") => "markdown".to_string(),
+        Some("htm") | Some("html") => "html".to_string(),
+        _ => String::new(),
+    }
+}
+
+fn is_safe_project_relative_path(path: &str) -> bool {
+    let path = Path::new(path);
+    !path.as_os_str().is_empty()
+        && !path.is_absolute()
+        && path.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
 }
 
 fn markdown_heading_title(line: &str) -> Option<String> {
@@ -2651,6 +2754,29 @@ fn render_artifact_suffix(artifact: &EcEvidenceArtifact) -> String {
     if !artifact.locator.is_empty() {
         parts.push(format!("locator: `{}`", artifact.locator));
     }
+    if !artifact.format.is_empty() {
+        parts.push(format!("format: `{}`", artifact.format));
+    }
+    if !artifact.command.is_empty() {
+        parts.push(format!("command: `{}`", artifact.command));
+    }
+    if !artifact.screenshots.is_empty() {
+        parts.push(format!(
+            "screenshots: {}",
+            artifact
+                .screenshots
+                .iter()
+                .map(|path| format!("`{path}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !artifact.highlights.is_empty() {
+        parts.push(format!("highlights: {}", artifact.highlights.join("; ")));
+    }
+    if !artifact.steps.is_empty() {
+        parts.push(format!("steps: {}", artifact.steps.join("; ")));
+    }
     if parts.is_empty() {
         String::new()
     } else {
@@ -3016,6 +3142,19 @@ e2e_tests:
         - path: e2e-results/demo/report.json
           kind: agent-eval
           label: Agent eval report
+      docs:
+        - path: docs/user-manual/index.md
+          kind: generated-manual
+          label: User manual
+          format: markdown
+          command: "jet e2e manual --output docs/user-manual"
+          screenshots:
+            - docs/user-manual/screenshots/home.png
+          highlights:
+            - main navigation
+          steps:
+            - open dashboard
+            - verify summary
     evaluators:
       - id: Demo agent judge
         tool: codex
@@ -3412,6 +3551,65 @@ tool_contracts:
         assert_eq!(manifest.tool_manifests.len(), 1);
         assert_eq!(manifest.tool_manifests[0].tool, "arena");
         assert_eq!(manifest.tool_manifests[0].path, "projects/demo/arena.toml");
+    }
+
+    #[test]
+    fn ec_generated_manual_artifact_preserves_metadata() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        let artifact = manifest.cases[0]
+            .evidence
+            .iter()
+            .find(|artifact| artifact.kind == "generated-manual")
+            .expect("generated manual evidence is present");
+
+        assert_eq!(artifact.path, "docs/user-manual/index.md");
+        assert_eq!(artifact.label, "User manual");
+        assert_eq!(artifact.format, "markdown");
+        assert_eq!(artifact.command, "jet e2e manual --output docs/user-manual");
+        assert_eq!(
+            artifact.screenshots,
+            vec!["docs/user-manual/screenshots/home.png"]
+        );
+        assert_eq!(artifact.highlights, vec!["main navigation"]);
+        assert_eq!(artifact.steps, vec!["open dashboard", "verify summary"]);
+    }
+
+    #[test]
+    fn ec_generated_manual_artifact_reports_invalid_contracts() {
+        let (_tmp, ctx) = write_demo_repo();
+        let contract_path = ctx.td_root.join("specs/invalid-manual.md");
+        let invalid_contract = r#"
+## Invalid Manual
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: invalid manual
+    evidence:
+      docs:
+        - path: ../manual/index.pdf
+          kind: generated-manual
+          format: pdf
+```
+"#;
+        fs::write(&contract_path, invalid_contract).unwrap();
+
+        let err = build_expected_manifest(&ctx).expect_err("invalid generated manual is rejected");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("generated-manual evidence requires a non-empty command"));
+
+        let unsupported =
+            validate_generated_manual_artifact("docs/user-manual/index.pdf", "pdf", "jet manual")
+                .expect_err("unsupported manual format is rejected");
+        assert!(unsupported
+            .to_string()
+            .contains("format must be markdown or html"));
+
+        let escaped = validate_generated_manual_artifact("../manual.md", "markdown", "jet manual")
+            .expect_err("path escape is rejected");
+        assert!(escaped.to_string().contains("path must be project-local"));
     }
 
     #[test]
