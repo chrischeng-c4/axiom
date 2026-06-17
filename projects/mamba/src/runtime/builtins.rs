@@ -170,10 +170,18 @@ pub fn mb_unbox_float(val: MbValue) -> f64 {
 /// and the JIT entry caller expects a raw i64.
 pub fn mb_unbox_int_if_boxed(val: MbValue) -> i64 {
     if let Some(i) = val.as_int() {
-        i
-    } else {
-        val.to_bits() as i64
+        return i;
     }
+    // A BigInt that fits i64 unboxes to its exact value, so raw integer
+    // comparisons (==, <, …) value-compare correctly across distinct
+    // allocations — without this, `-9223372036854775807 == -9223372036854775807`
+    // compared two BigInt pointers and was False (#99). A BigInt larger than
+    // i64 cannot be a register int, so fall back to the boxed bits.
+    use num_traits::ToPrimitive;
+    if let Some(i) = unsafe { super::bigint_ops::extract_bigint(val) }.and_then(|b| b.to_i64()) {
+        return i;
+    }
+    val.to_bits() as i64
 }
 
 /// Unbox a NaN-boxed bool if tagged; otherwise pass through. See
