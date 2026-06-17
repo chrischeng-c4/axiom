@@ -3,7 +3,7 @@
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::cli::capability::{CapabilityReportItem, CapabilitySection};
+use crate::cli::capability::{CapabilityReportItem, CapabilitySection, CapabilityStatus};
 
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#source
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -68,6 +68,7 @@ pub(crate) fn inputs_from_report_items(
 ) -> Vec<ProductionCapabilityInput> {
     items
         .iter()
+        .filter(|item| item.status != CapabilityStatus::Retired)
         .map(|item| ProductionCapabilityInput {
             id: item.id.clone(),
             release_scope: item.release_scope,
@@ -415,9 +416,16 @@ mod tests {
             title: id.to_string(),
             id: id.to_string(),
             status: crate::cli::capability::CapabilityStatus::Verified,
+            prelude: String::new(),
+            postlude: String::new(),
+            index_summary: None,
+            capability_type: None,
+            surfaces: Vec::new(),
+            ec_dimensions: Vec::new(),
             promise: "promise".to_string(),
             current_state: "state".to_string(),
             gaps: Vec::new(),
+            work_roots: Vec::new(),
             verification_contract: None,
             evidence: crate::cli::capability::CapabilityEvidence::default(),
             done_when: Vec::new(),
@@ -426,6 +434,50 @@ mod tests {
             dependencies: Vec::new(),
             line: 1,
         }
+    }
+
+    fn report_item(
+        id: &str,
+        status: CapabilityStatus,
+        release_scope: bool,
+    ) -> CapabilityReportItem {
+        CapabilityReportItem {
+            id: id.to_string(),
+            title: id.to_string(),
+            status,
+            capability_type: None,
+            surfaces: Vec::new(),
+            ec_dimensions: Vec::new(),
+            promise: "promise".to_string(),
+            current_state: "state".to_string(),
+            gaps: Vec::new(),
+            td_refs: Vec::new(),
+            wi_refs: Vec::new(),
+            wi_evidence: Vec::new(),
+            claims: Vec::new(),
+            claim_count: 0,
+            verified_claim_count: 0,
+            claim_percent: 0.0,
+            verification: Vec::new(),
+            verified: status == CapabilityStatus::Verified,
+            release_scope,
+            full_regenerability_required: false,
+            dependencies: Vec::new(),
+            dependency_closure: Vec::new(),
+            production_ready: false,
+            production_blockers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn report_inputs_ignore_retired_capabilities() {
+        let inputs = inputs_from_report_items(&[
+            report_item("active", CapabilityStatus::Verified, true),
+            report_item("retired", CapabilityStatus::Retired, true),
+        ]);
+
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].id, "active");
     }
 
     #[test]

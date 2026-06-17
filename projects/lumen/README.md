@@ -1,5 +1,7 @@
 # lumen
 
+## Brief
+
 A K8s-native, **log-replicated search specialist**. Five flavors of
 "find":
 
@@ -62,46 +64,12 @@ gate-inventory paths point at the real tests/scripts/manifests that prove them.
 Statuses are deliberately conservative — `auditing` means "built and gated, not
 yet formally `--verify`-proven"; `candidate` means "promised, partially shipped".
 
-## Capability Index
-
 The capability roots group into **three pillars**, each aligned across its CLI
 surface, this capability map, and its EC contract:
 
 - **agent-first** — the offline integration surface (`lumen spec` / `lumen llm`).
 - **serve / search** — the running engine (`lumen serve`): the product core plus its runtime properties.
 - **devops-operation** — the shipped deployment defaults (`lumen k8s` + the Dockerfile / kustomize / operator artifacts; lumen ships them, it does not deploy).
-
-**Pillar — agent-first** (CLI: `lumen spec` / `lumen llm`; EC: behavior + content)
-
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| agentic-integration | 4143 | implemented | passing | conformance | ready | offline spec and llm CLI contract is covered by local spec_cli tests |
-| rest-integration | - | implemented | auditing | conformance | not_ready | runtime API proof remains outside the selected production scope |
-
-**Pillar — serve / search** (CLI: `lumen serve`; EC: functional + efficiency + security + stability)
-
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| search | - | implemented | auditing | conformance | not_ready | broad search evidence still mixes local gates with external perf/service gates |
-| search-lexical | - | partial | auditing | conformance | not_ready | WAND/block-max remains an open follow-up |
-| search-exact | - | implemented | auditing | conformance | not_ready | release proof remains tied to competitive perf evidence |
-| search-vector | 4141 | implemented | auditing | conformance | not_ready | DiskANN-class HNSW-on-disk remains future work |
-| search-hybrid | 4139 | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
-| search-duplicates | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
-| search-nested | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
-| elastic-scale | - | implemented | auditing | conformance | not_ready | scale proof includes heavier/release evidence outside the default gate |
-| resilience | - | implemented | auditing | dogfood | not_ready | live NATS/kind dogfood gates are external-service dependent |
-| security-auth | - | partial | auditing | conformance | not_ready | TLS binding is partial and not e2e-gated |
-| backup-restore | - | implemented | auditing | conformance | not_ready | periodic snapshotter proof remains source-level |
-| schema-ops | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
-
-**Pillar — devops-operation** (CLI: `lumen k8s` + shipped Dockerfile/kustomize; EC: render + manifest validity + deploy survival)
-
-| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
-|---|---:|---|---|---|---|---|
-| k8s-deployment | - | implemented | auditing | conformance | not_ready | live operator e2e recency remains release-run dependent |
-| observability | - | implemented | auditing | conformance | not_ready | OTLP service proof depends on the compose collector stack |
-| ops-operability | - | implemented | auditing | conformance | not_ready | operational proof remains tied to kind/perf/service evidence |
 
 **Honest scope (do not over-claim):**
 
@@ -153,6 +121,28 @@ surface, this capability map, and its EC contract:
   Kubernetes Conditions, TLS/NetworkPolicy/Ingress, observability parity, and
   upgrade/canary policy remain explicit deployment gaps below.
 
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Search | - | implemented | auditing | conformance | not_ready | broad search evidence still mixes local gates with external perf/service gates |
+| Lexical (BM25) | - | partial | auditing | conformance | not_ready | WAND/block-max remains an open follow-up |
+| Exact & Filter (keyword / number / set) | - | implemented | auditing | conformance | not_ready | release proof remains tied to competitive perf evidence |
+| Semantic & Perceptual (vector + hash) | 4141 | implemented | auditing | conformance | not_ready | DiskANN-class HNSW-on-disk remains future work |
+| Hybrid (lexical + semantic fusion) | 4139 | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| Duplicates | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| Nested & Data-Table (group / has_child / collapse) | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| Elastic Scale (columnar mmap disk tier — RAM=hot / disk=all) | - | implemented | auditing | conformance | not_ready | scale proof includes heavier/release evidence outside the default gate |
+| Resilience & Log Replication | - | implemented | auditing | dogfood | not_ready | live NATS/kind dogfood gates are external-service dependent |
+| Kubernetes-Native Deployment | - | implemented | auditing | conformance | not_ready | live operator e2e recency remains release-run dependent |
+| HTTP / REST Integration | - | implemented | auditing | conformance | not_ready | runtime API proof remains outside the selected production scope |
+| LLM / Agentic Integration (offline CLI — `spec` schema + `llm` topics) | 4143 | implemented | passing | conformance | ready | offline spec and llm CLI contract is covered by local spec_cli tests |
+| Security & Auth | - | partial | auditing | conformance | not_ready | TLS binding is partial and not e2e-gated |
+| Backup & Restore | - | implemented | auditing | conformance | not_ready | periodic snapshotter proof remains source-level |
+| Observability | - | implemented | auditing | conformance | not_ready | OTLP service proof depends on the compose collector stack |
+| Schema & Ops Lifecycle | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| Operational characteristics (operability · speed · footprint · stability) | - | implemented | auditing | conformance | not_ready | operational proof remains tied to kind/perf/service evidence |
+
 ### Search
 
 The product core, and the one big capability: lumen is a **pure search index** —
@@ -162,9 +152,18 @@ algorithm across every search flavor below — filter-as-pruning, early
 termination, sort-by-field, selective-match-driver; boolean postings are roaring
 bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| search | - | auditing | Input a query (relevance + filters + sort), output ranked/sorted `external_id`s only — never documents. One query planner dispatches per-shape algorithms (filter-as-pruning, early-termination, sort-by-field, selective-match-driver; roaring-bitmap postings) across all search-flavor sub-capabilities. | smoke, conformance | projects/lumen/tests/planner_diff.rs; projects/lumen/scripts/bench_vs_db.py |
+ID: search
+Type: Service
+EC Dimensions: behavior: `rig` - request/query scenario conformance over the service API; efficiency: `rig + meter` - load pins plus resource attribution for service search workloads; security: `guard` - service API authorization and security findings gate; stability: `rig` - resilience scenarios for partition, packet loss, and recovery behavior
+Efficiency Operating Point: local-vat-lumen-search-service
+Efficiency Cube: projects/lumen/.aw/ec/efficiency/search-service.cube.json
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Input a query (relevance + filters + sort), output ranked/sorted `external_id`s only — never documents. One query planner dispatches per-shape algorithms (filter-as-pruning, early-termination, sort-by-field, selective-match-driver; roaring-bitmap postings) across all search-flavor sub-capabilities.
+Gate Inventory:
+- projects/lumen/tests/planner_diff.rs; projects/lumen/scripts/bench_vs_db.py
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -173,33 +172,56 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 | selective-match-driver (drive cheapest positive incl. match) | epic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs |
 | Wide-range filter index (on-disk sorted-value range) | epic | - | implemented | passing | conformance | projects/lumen/src/storage.rs (segment_number_range_diff_tests); projects/lumen/tests/perf_gate_vs_db.rs (range cell) |
 
-#### Lexical (BM25)
+#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| search-lexical | - | auditing | BM25 ranking over `text`, with tokenization built in (`whitespace_lower` / `ngram` / `jieba`) — the one signal the caller does not pre-compute. | smoke, conformance | projects/lumen/scripts/bench_vs_db.py (text_bm25, text_and) |
+Operating point: local-vat-lumen-search-service
+Cube: projects/lumen/.aw/ec/efficiency/search-service.cube.json
+
+### Lexical (BM25)
+
+ID: search-lexical
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+BM25 ranking over `text`, with tokenization built in (`whitespace_lower` / `ngram` / `jieba`) — the one signal the caller does not pre-compute.
+Gate Inventory:
+- projects/lumen/scripts/bench_vs_db.py (text_bm25, text_and)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | BM25 ranking + analyzers (HashMap-free single-term / AND scoring fast path) | subepic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (text_bm25, text_and); projects/lumen/src/storage.rs (segment_text_diff_tests — byte-identical disk BM25) |
 | WAND / block-max early termination (skip non-competitive docs) | subepic | - | planned | none | none | next lexical lever for skewed tf / cold term corpora; the hot ranked-cache path now clears the 1M BM25 gate vs OpenSearch, but block-max is still the scalable answer for broad unseen ranked terms |
 
-#### Exact & Filter (keyword / number / set)
+### Exact & Filter (keyword / number / set)
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| search-exact | - | auditing | `keyword` term, `number` range, and `set` membership predicates; standalone predicates early-terminate; all compose under boolean and/or/not at roaring-bitmap speed. | smoke, conformance | projects/lumen/scripts/bench_vs_db.py (kw_term, range, bool_filter) |
+ID: search-exact
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+`keyword` term, `number` range, and `set` membership predicates; standalone predicates early-terminate; all compose under boolean and/or/not at roaring-bitmap speed.
+Gate Inventory:
+- projects/lumen/scripts/bench_vs_db.py (kw_term, range, bool_filter)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | term / range / set + early-termination | subepic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (kw_term, range, bool_filter) |
 | On-disk inverted (keyword/set) + sorted-value range (number) indexes — reopen drives from the mmap, RAM-bounded | subepic | - | implemented | passing | conformance | projects/lumen/src/storage.rs (segment_keyword/set_inverted_diff_tests, segment_number_range_diff_tests) |
 
-#### Semantic & Perceptual (vector + hash)
+### Semantic & Perceptual (vector + hash)
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| search-vector | - | auditing | Semantic kNN (`vector`; CPU HNSW + exact flat brute-force) and perceptual/structural `hash` (pHash / SimHash / b-bit MinHash) queried by Hamming distance. The caller owns all embeddings and hashes; lumen indexes the bits. kNN composes with filters **without recall collapse** (filter-correct kNN). | smoke, conformance | projects/lumen/tests/vector_e2e.rs; projects/lumen/tests/hash_hamming.rs; projects/lumen/tests/perf_gate_vs_db.rs (knn, filtered_knn vs pgvector); projects/lumen/scripts/bench_vs_db.py (knn) |
+ID: search-vector
+Type: Service
+Root WI: 4141
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Semantic kNN (`vector`; CPU HNSW + exact flat brute-force) and perceptual/structural `hash` (pHash / SimHash / b-bit MinHash) queried by Hamming distance. The caller owns all embeddings and hashes; lumen indexes the bits. kNN composes with filters **without recall collapse** (filter-correct kNN).
+Gate Inventory:
+- projects/lumen/tests/vector_e2e.rs; projects/lumen/tests/hash_hamming.rs; projects/lumen/tests/perf_gate_vs_db.rs (knn, filtered_knn vs pgvector); projects/lumen/scripts/bench_vs_db.py (knn)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -211,31 +233,49 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 | HNSW graph on disk (DiskANN-class) — vectors stay in RAM in the graph; only flat-cpu is disk-RAM-bounded | subepic | - | planned | none | none | future GPU-native vector chapter (hnsw_rs owns the vectors internally) |
 | Hash / Hamming search (`hash` field + `hamming` query) | subepic | - | implemented | passing | conformance | projects/lumen/tests/hash_hamming.rs |
 
-#### Hybrid (lexical + semantic fusion)
+### Hybrid (lexical + semantic fusion)
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| search-hybrid | 4139 | auditing | Fuse a lexical (BM25) ranking and a semantic (vector kNN) ranking into one result via Reciprocal Rank Fusion (RRF) — rank-based, so BM25 and cosine scales need no normalisation. Put filters inside each leg (`knn AND <filter>`) so the kNN leg stays filter-correct. This is the one retrieval an OLTP store cannot do at all. | conformance | projects/lumen/tests/hybrid_rrf.rs |
+ID: search-hybrid
+Type: Service
+Root WI: 4139
+Status: auditing
+Required Verification: conformance
+Promise:
+Fuse a lexical (BM25) ranking and a semantic (vector kNN) ranking into one result via Reciprocal Rank Fusion (RRF) — rank-based, so BM25 and cosine scales need no normalisation. Put filters inside each leg (`knn AND <filter>`) so the kNN leg stays filter-correct. This is the one retrieval an OLTP store cannot do at all.
+Gate Inventory:
+- projects/lumen/tests/hybrid_rrf.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | RRF fusion node (`rrf`) + planner integration | subepic | 4139 | implemented | passing | conformance | projects/lumen/tests/hybrid_rrf.rs |
 
-#### Duplicates
+### Duplicates
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| search-duplicates | - | auditing | Find which `external_id`s share the same value — a search-flavor of group-by; bounded and posting-list-cheap. The primitive collapse-on-search builds on. | smoke, conformance | projects/lumen/tests/api_e2e.rs (duplicates_finds_groups); projects/lumen/tests/properties.rs (p6) |
+ID: search-duplicates
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Find which `external_id`s share the same value — a search-flavor of group-by; bounded and posting-list-cheap. The primitive collapse-on-search builds on.
+Gate Inventory:
+- projects/lumen/tests/api_e2e.rs (duplicates_finds_groups); projects/lumen/tests/properties.rs (p6)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Duplicates group-by | subepic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs (duplicates_finds_groups) |
 
-#### Nested & Data-Table (group / has_child / collapse)
+### Nested & Data-Table (group / has_child / collapse)
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| search-nested | - | auditing | Search Airtable-style data tables including nested `group` fields: group→child collection, a first-class `has_child` boolean clause, collapse-on-search, enum cascading paths (子母選單), and CJK substring. Correlation-correct (no cross-element false match). Plus `exists` (non-blank) and `duplicated` (collision) leaves that compose arbitrary presence/duplicate filters from the same boolean tree. | smoke, conformance | projects/lumen/tests/collapse_nested.rs; projects/lumen/scripts/bench_vs_db.py (group_nested) |
+ID: search-nested
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Search Airtable-style data tables including nested `group` fields: group→child collection, a first-class `has_child` boolean clause, collapse-on-search, enum cascading paths (子母選單), and CJK substring. Correlation-correct (no cross-element false match). Plus `exists` (non-blank) and `duplicated` (collision) leaves that compose arbitrary presence/duplicate filters from the same boolean tree.
+Gate Inventory:
+- projects/lumen/tests/collapse_nested.rs; projects/lumen/scripts/bench_vs_db.py (group_nested)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -246,9 +286,15 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 ### Elastic Scale (columnar mmap disk tier — RAM=hot / disk=all)
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| elastic-scale | - | auditing | **RAM is the hot working set; disk holds all the data.** Each field's bulk (forward payload + inverted index) is sealed into immutable, `applied_seq`-tagged, **columnar mmap segments**; the in-RAM driver is dropped on seal and queries demand-page off the mmap (a bounded `moka` decoded-posting cache is the inverted-index hot-zone). A collection far larger than RAM stays queryable — measured reopen+query resident growth is ~30-47% of full-in-RAM and **does not grow with N**. Per-field results stay byte-identical to the in-RAM path. | smoke, conformance | projects/lumen/tests/disk_scale_proof.rs; projects/lumen/docs/benchmarks-scale.md |
+ID: elastic-scale
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+**RAM is the hot working set; disk holds all the data.** Each field's bulk (forward payload + inverted index) is sealed into immutable, `applied_seq`-tagged, **columnar mmap segments**; the in-RAM driver is dropped on seal and queries demand-page off the mmap (a bounded `moka` decoded-posting cache is the inverted-index hot-zone). A collection far larger than RAM stays queryable — measured reopen+query resident growth is ~30-47% of full-in-RAM and **does not grow with N**. Per-field results stay byte-identical to the in-RAM path.
+Gate Inventory:
+- projects/lumen/tests/disk_scale_proof.rs; projects/lumen/docs/benchmarks-scale.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -261,9 +307,15 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 ### Resilience & Log Replication
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| resilience | - | auditing | Writes publish to a NATS JetStream log; every serving node tails and folds it into its own index. Serving nodes are stateless and rebuild from the log + the caller. Survives broker kill and pod kill with byte-identical post-recovery results. | conformance, dogfood | projects/lumen/scripts/kind-e2e.sh; projects/lumen/scripts/chaos.sh; projects/lumen/scripts/soak.sh |
+ID: resilience
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Writes publish to a NATS JetStream log; every serving node tails and folds it into its own index. Serving nodes are stateless and rebuild from the log + the caller. Survives broker kill and pod kill with byte-identical post-recovery results.
+Gate Inventory:
+- projects/lumen/scripts/kind-e2e.sh; projects/lumen/scripts/chaos.sh; projects/lumen/scripts/soak.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -272,9 +324,15 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 ### Kubernetes-Native Deployment
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| k8s-deployment | - | auditing | Deploy declaratively two ways: a kustomize base + dev/staging/prod overlays, OR a `Lumen` CRD (`lumen.dev/v1alpha1`) reconciled by a kube-rs operator that renders + owns the serving Deployment/Service/ConfigMap/HPA/PDB/SA and the NATS broker, with `nats.externalUrl` to BYO. Cluster-agnostic base; e2e-gated on kind. | smoke, conformance | projects/lumen/k8s; projects/lumen/tests/operator_render.rs; projects/lumen/scripts/kind-e2e.sh |
+ID: k8s-deployment
+Type: Devops
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Deploy declaratively two ways: a kustomize base + dev/staging/prod overlays, OR a `Lumen` CRD (`lumen.dev/v1alpha1`) reconciled by a kube-rs operator that renders + owns the serving Deployment/Service/ConfigMap/HPA/PDB/SA and the NATS broker, with `nats.externalUrl` to BYO. Cluster-agnostic base; e2e-gated on kind.
+Gate Inventory:
+- projects/lumen/k8s; projects/lumen/tests/operator_render.rs; projects/lumen/scripts/kind-e2e.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -366,9 +424,15 @@ install.
 
 ### HTTP / REST Integration
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| rest-integration | - | auditing | Plain HTTP/1.1 + HTTP/2 cleartext REST on `:7373`. Any REST client works with no driver, no wire protocol, and no connection-pool requirement; surface is described by OpenAPI 3 with a Swagger UI. | smoke, conformance | projects/lumen/src; projects/lumen/README.md (HTTP & clients, OpenAPI) |
+ID: rest-integration
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Plain HTTP/1.1 + HTTP/2 cleartext REST on `:7373`. Any REST client works with no driver, no wire protocol, and no connection-pool requirement; surface is described by OpenAPI 3 with a Swagger UI.
+Gate Inventory:
+- projects/lumen/src; projects/lumen/README.md (HTTP & clients, OpenAPI)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -417,9 +481,15 @@ offline:
 `lumen spec` is the schema; `lumen llm *` is the topic set. Together the binary
 self-onboards an agent with no docs site and no running server.
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| agentic-integration | - | verified | An installed `lumen` binary self-onboards an agent **offline** (no server, no network): `lumen spec` emits the machine schema (OpenAPI JSON/YAML, JSON-schema, query-shape cookbook, field/analyzer catalog), and `lumen llm *` emits focused topics (outline, ingest→search→hydrate workflow, Postgres/AlloyDB integration boundary, quickstart, recipes, non-goals). | smoke, conformance | projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs |
+ID: agentic-integration
+Type: AgentFirst
+Root WI: 4143
+Status: verified
+Required Verification: smoke, conformance
+Promise:
+An installed `lumen` binary self-onboards an agent **offline** (no server, no network): `lumen spec` emits the machine schema (OpenAPI JSON/YAML, JSON-schema, query-shape cookbook, field/analyzer catalog), and `lumen llm *` emits focused topics (outline, ingest→search→hydrate workflow, Postgres/AlloyDB integration boundary, quickstart, recipes, non-goals).
+Gate Inventory:
+- projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -429,9 +499,15 @@ self-onboards an agent with no docs site and no running server.
 
 ### Security & Auth
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| security-auth | - | auditing | Optional bearer-token auth (`LUMEN_AUTH=off` or `LUMEN_AUTH=required`) with per-token role-based authorization enforced on every API route; tokens supplied out-of-band via env/Secret. TLS (rustls) binding available. | smoke, conformance | projects/lumen/tests/auth_e2e.rs; projects/lumen/tests/authz_matrix_e2e.rs |
+ID: security-auth
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Optional bearer-token auth (`LUMEN_AUTH=off` or `LUMEN_AUTH=required`) with per-token role-based authorization enforced on every API route; tokens supplied out-of-band via env/Secret. TLS (rustls) binding available.
+Gate Inventory:
+- projects/lumen/tests/auth_e2e.rs; projects/lumen/tests/authz_matrix_e2e.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -441,9 +517,15 @@ self-onboards an agent with no docs site and no running server.
 
 ### Backup & Restore
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| backup-restore | - | auditing | RDB snapshots to a pluggable sink as a cold-start baseline; a starting node restores the latest snapshot then tails the write log from that sequence — a bounded cold start instead of replaying the full log. | smoke, conformance | projects/lumen/tests/backup_restore_e2e.rs |
+ID: backup-restore
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+RDB snapshots to a pluggable sink as a cold-start baseline; a starting node restores the latest snapshot then tails the write log from that sequence — a bounded cold start instead of replaying the full log.
+Gate Inventory:
+- projects/lumen/tests/backup_restore_e2e.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -452,9 +534,15 @@ self-onboards an agent with no docs site and no running server.
 
 ### Observability
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| observability | - | auditing | Prometheus text-format `/metrics` on the API port, a kustomize ServiceMonitor + PrometheusRule SLO alert bundle, structured json/pretty logs, and **opt-in OTLP export** (traces + metrics PUSHED to an OpenTelemetry collector via `LUMEN_OTLP_ENDPOINT`; the collector fans out to Prometheus/Jaeger, so a stateless replica fleet reports without per-pod scraping). `/metrics` pull stays for direct debug. | smoke, conformance | projects/lumen/tests/api_e2e.rs (/metrics); projects/lumen/k8s/components/observability; projects/lumen/compose.yaml (OTLP stack) |
+ID: observability
+Type: Devops
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Prometheus text-format `/metrics` on the API port, a kustomize ServiceMonitor + PrometheusRule SLO alert bundle, structured json/pretty logs, and **opt-in OTLP export** (traces + metrics PUSHED to an OpenTelemetry collector via `LUMEN_OTLP_ENDPOINT`; the collector fans out to Prometheus/Jaeger, so a stateless replica fleet reports without per-pod scraping). `/metrics` pull stays for direct debug.
+Gate Inventory:
+- projects/lumen/tests/api_e2e.rs (/metrics); projects/lumen/k8s/components/observability; projects/lumen/compose.yaml (OTLP stack)
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -465,9 +553,15 @@ self-onboards an agent with no docs site and no running server.
 
 ### Schema & Ops Lifecycle
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| schema-ops | - | auditing | The operational surface beyond search: collection DDL (create / add-field / drop-field), online drop-field drain, reindex/replay stream, and stats/metadata introspection. | smoke, conformance | projects/lumen/tests/drop_field_e2e.rs; projects/lumen/tests/reindex_stream_e2e.rs; projects/lumen/tests/stats_metadata_e2e.rs |
+ID: schema-ops
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+The operational surface beyond search: collection DDL (create / add-field / drop-field), online drop-field drain, reindex/replay stream, and stats/metadata introspection.
+Gate Inventory:
+- projects/lumen/tests/drop_field_e2e.rs; projects/lumen/tests/reindex_stream_e2e.rs; projects/lumen/tests/stats_metadata_e2e.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -483,11 +577,15 @@ instead of bolting search onto the primary or standing up an ES cluster. They
 are harder to state than a feature, so each is pinned to a concrete gate rather
 than left as an adjective.
 
-| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
-|---|---:|---|---|---|---|
-| ops-operability | - | auditing | Operate it without a DBA. Serving nodes are stateless cattle (`Deployment` + `HPA`, **no PVC**) with the index rebuilt from the log; the NATS broker is the only stateful component; there is **no consensus, leader election, or split-brain to run**; deploy declaratively via kustomize overlays or a `Lumen` CRD + operator. Search load lives on its own nodes — it never contends with the OLTP primary's CPU/RAM. | conformance, dogfood | projects/lumen/scripts/kind-e2e.sh; projects/lumen/k8s; projects/lumen/src/operator |
-| ops-speed | - | auditing | Low-latency search from an early-terminating planner over roaring-bitmap postings, in-memory serving, and HNSW kNN — no GC pauses (Rust). **Standing competitive commitment: lumen beats Postgres and OpenSearch on every *gated* search cell, every release.** Enforced as a **ratcheting regression gate** — per-cell min-latency thresholds in `tests/perf-baseline.json`; a release that loses a gated cell, or drops >20% below its recorded winning margin, fails the gate. Both peers are judged on end-to-end latency where the transport class is comparable: lumen and OpenSearch share HTTP/JSON, while pg cheap btree predicates keep an annotated HTTP exemption but are separately gated through lumen's prepared native binary wire over Unix socket/TCP fallback. Absolute envelope: `term` < 20 ms, BM25 `match` over 10k docs < 50 ms, 5k keyword writes < 1 s. qps and write-path QPS (`PUT` schema and `POST /index`) are reported by default and strict-gated with `LUMEN_PERF_STRICT=1` when NATS/pg/OpenSearch services are available. | conformance | projects/lumen/tests/perf_gate.rs (absolute envelope); projects/lumen/tests/perf_gate_vs_db.rs + projects/lumen/tests/perf-baseline.json (competitive gate vs pg/OS); projects/lumen/tests/write_qps.rs (write-path QPS) |
-| ops-footprint | - | auditing | Lightweight: a single Rust binary, **no JVM**. RAM is the hot working set; **disk holds all the data** via columnar mmap segments — a collection far larger than RAM stays queryable by demand-paging (measured reopen RSS ~30-47% of full-in-RAM, flat in N). The index is also **5-7× smaller on disk than Postgres / OpenSearch** (~28.7 bytes/doc). A single node runs on an embedded in-process log with no broker at all. | conformance | projects/lumen/tests/disk_scale_proof.rs; projects/lumen/docs/benchmarks-scale.md |
+ID: ops-operability
+Type: Devops
+Root WI: -
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Operate it without a DBA. Serving nodes are stateless cattle (`Deployment` + `HPA`, **no PVC**) with the index rebuilt from the log; the NATS broker is the only stateful component; there is **no consensus, leader election, or split-brain to run**; deploy declaratively via kustomize overlays or a `Lumen` CRD + operator. Search load lives on its own nodes — it never contends with the OLTP primary's CPU/RAM.
+Gate Inventory:
+- projects/lumen/scripts/kind-e2e.sh; projects/lumen/k8s; projects/lumen/src/operator
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -501,6 +599,7 @@ deployment survives broker kill and serving-pod kill with byte-identical
 post-recovery results (`scripts/chaos.sh`, `scripts/soak.sh`), memory is bounded
 because the bulk lives on mmap'd segments (RAM=hot/disk=all) demand-paged by the
 kernel, and every node is a deterministic rebuild from the log.
+
 
 ### Non-goals (deliberate scope-out)
 

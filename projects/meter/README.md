@@ -1,5 +1,7 @@
 # meter
 
+## Brief
+
 **Local resource measurement for agent-driven Rust development.**
 
 `meter` is the renamed and narrowed successor to `qc`. Its job is to help an
@@ -87,38 +89,30 @@ workspace:
 These files are local evidence/cache artifacts, not source of truth. The
 machine-readable stdout report is the primary agent contract for each run.
 
-## Capability Index
+
+## Capabilities
+
+Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.
+
+### Capability Index
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| runtime-resource-attribution | - | implemented | verified | smoke | ready | measure/profile, phase boundary cost, benchmark regression |
-| agent-use-first-cli | - | implemented | verified | smoke | ready | JSON-default CLI and offline LLM/spec contract |
-| legacy-carried-internals | - | retired | verified | smoke | retired | Old qc-era modules retained for compatibility, not public meter capability |
-
-## AW Verification Snapshot
-
-| Field | Value |
-|---|---|
-| Last verified | 2026-06-07 |
-| Production readiness | ready for the public meter surface |
-| Tech design root | `projects/meter/tech-design` |
-| TD lock | `projects/meter/tech-design/td.lock` |
-| External-contract inventory | `projects/meter/aw.toml` |
-| Source ownership | generator-managed semantic source snapshots |
-| Test gate | `cargo test -p meter`; `cargo test -p meter-cli` |
-| Health gate | `aw health meter --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
-| Explicit non-goals | long-running process management, env setup, test framework replacement, security scanner |
+| Runtime Resource Attribution | #3 | implemented | verified | smoke | ready | measure/profile, phase boundary cost, benchmark regression |
+| Agent Use First CLI | - | implemented | verified | smoke | ready | JSON-default CLI and offline LLM/spec contract |
+| Legacy Carried Internals | #3 | retired | verified | smoke | retired | Old qc-era modules retained for compatibility, not public meter capability |
 
 ### Runtime Resource Attribution
 
-| Field | Value |
-|---|---|
-| ID | runtime-resource-attribution |
-| Root WI | - |
-| Status | verified |
-| Promise | meter emits ranked runtime/resource findings so an agent can identify where time goes and catch benchmark regressions outside ordinary unit tests. |
-| Required Verification | smoke |
-| Gate Inventory | `cargo run -p meter-cli --bin meter -- measure --exec /bin/ls --compact`; `cargo run -p meter-cli --bin meter -- profile --phases projects/meter/tests/fixtures/profile_phase_breakdown.json`; `cargo test -p meter performance::profiler`; `cargo test -p meter benchmark::` |
+ID: runtime-resource-attribution
+Type: DeveloperTool
+Root WI: #3
+Status: verified
+Required Verification: smoke
+Promise:
+meter emits ranked runtime/resource findings so an agent can identify where time goes and catch benchmark regressions outside ordinary unit tests.
+Gate Inventory:
+- `cargo run -p meter-cli --bin meter -- measure --exec /bin/ls --compact`; `cargo run -p meter-cli --bin meter -- profile --phases projects/meter/tests/fixtures/profile_phase_breakdown.json`; `cargo test -p meter performance::profiler`; `cargo test -p meter benchmark::`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -155,14 +149,15 @@ Known limits:
 
 ### Agent Use First CLI
 
-| Field | Value |
-|---|---|
-| ID | agent-use-first-cli |
-| Root WI | - |
-| Status | verified |
-| Promise | meter's default CLI output is deterministic JSON with machine-readable findings, next actions, environment, completion, and delegated-run exit semantics for agents. |
-| Required Verification | smoke |
-| Gate Inventory | `cargo run -p meter-cli --bin meter -- spec --json-schema --compact`; `cargo run -p meter-cli --bin meter -- spec --catalog --compact`; `cargo test -p meter report::` |
+ID: agent-use-first-cli
+Type: DeveloperTool
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+meter's default CLI output is deterministic JSON with machine-readable findings, next actions, environment, completion, and delegated-run exit semantics for agents.
+Gate Inventory:
+- `cargo run -p meter-cli --bin meter -- spec --json-schema --compact`; `cargo run -p meter-cli --bin meter -- spec --catalog --compact`; `cargo test -p meter report::`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -186,14 +181,14 @@ Shipped behavior:
 
 ### Legacy Carried Internals
 
-| Field | Value |
-|---|---|
-| ID | legacy-carried-internals |
-| Root WI | - |
-| Status | retired |
-| Promise | meter retains old qc-era modules only so dependent crates and tests continue to build while the public meter surface narrows. |
-| Required Verification | smoke |
-| Gate Inventory | `cargo test -p meter` |
+ID: legacy-carried-internals
+Root WI: #3
+Status: retired
+Required Verification: smoke
+Promise:
+meter retains old qc-era modules only so dependent crates and tests continue to build while the public meter surface narrows.
+Gate Inventory:
+- `cargo test -p meter`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -205,6 +200,7 @@ Shipped behavior:
 These modules are intentionally not listed in `meter --help`, `meter spec
 --catalog`, or `meter llm recipes`. They are compatibility code until a later
 prune or separate product decision.
+
 
 ## CLI
 

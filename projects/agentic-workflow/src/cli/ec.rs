@@ -1165,12 +1165,13 @@ fn derive_required_for_production(
     ctx: &EcProjectContext,
     cases: &mut [EcManifestCase],
 ) -> Result<()> {
-    // The README Capability Index pillar grouping is the primary source of a
-    // capability's type; `.aw/capability-types.toml`, if present, overrides it.
+    // The README Capability Index / explicit Type field is the primary source
+    // of a capability's type. The sidecar is only a migration fallback and must
+    // not override README because README is the agent-facing contract.
     let readme_path = ctx.source_root.join("README.md");
     let mut types = crate::cli::capability_type::load_capability_types_from_readme(&readme_path)?;
     for (id, ty) in crate::cli::capability_type::load_capability_types(&ctx.project_root)? {
-        types.insert(id, ty);
+        types.entry(id).or_insert(ty);
     }
     if types.is_empty() {
         return Ok(());

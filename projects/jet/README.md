@@ -36,7 +36,7 @@ Common surfaces:
 |---|---|---|
 | Package management | `jet install`, `jet add`, `jet remove`, `jet update`, `jet audit`, `jet run`, `jet exec` | Dependency lifecycle, lockfile, workspace, registry/cache, bin scripts, lifecycle hooks. |
 | Build | `jet build`, `jet build --wasm` | DOM artifacts, WASM artifacts, static assets, build metadata, target manifest. |
-| Dev and serve | `jet dev`, `jet dev --proxy PATH=URL`, `jet serve --prod`, `jet serve --wasm` | HMR/dev control plane, detached sessions, production static origin serving. |
+| Dev and serve | `jet dev`, `jet dev --proxy PATH=URL`, `jet serve`, `jet serve --wasm` | HMR/dev control plane, detached sessions, production static origin serving. |
 | Browser Bridge | `jet bb ...`, `jet bb mcp`; legacy `jet browser ...` | Browser automation, semantic snapshots, ref-based actions, console/network observability, DOM/WASM capture. |
 | Test/e2e/trace | `jet test`, `jet e2e`, `jet trace` | Native TS tests, product-flow e2e, replayable diagnostics, parity evidence. |
 
@@ -46,7 +46,7 @@ First commands:
 jet install
 jet build
 jet dev -p 3000
-jet serve --prod
+jet serve
 jet bb launch <url>
 jet bb snapshot
 jet test
@@ -91,7 +91,7 @@ Capability claims become meaningful only when their listed gate/evidence is
 runnable in the current environment. Use `aw capability report jet` or
 `aw health jet` for readiness questions.
 
-## Capability Index
+### Capability Index
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
@@ -104,9 +104,11 @@ runnable in the current environment. Use `aw capability report jet` or
 | WASM And Multi-Target Execution | #3783 | implemented | passing | smoke, conformance, corpus, negative | partial | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
 | Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
 
-## Rust-Native Frontend Toolchain Replacement
+### Rust-Native Frontend Toolchain Replacement
 
 ID: rust-native-frontend-toolchain
+Type: DeveloperTool
+Surfaces: CLI: `jet install` + `jet build` + `jet dev` + `jet test` - Aggregate frontend toolchain entrypoints for package, build, dev, and test workflows.
 Root WI: #3778
 Status: verified
 Required Verification: smoke, conformance, corpus, negative, dogfood
@@ -123,9 +125,11 @@ Gate Inventory:
 | Production replacement readiness | epic | #3778 | implemented | verified | corpus | package manager -> Browser Bridge -> build -> serve/workspace/test/e2e/trace are green in `verify-basic-dom-gates.sh --all` |
 | Full Toolchain Dogfood Flow | epic | #3778 | implemented | verified | dogfood | `projects/jet/scripts/verify-basic-dom-gates.sh --all`<br>projects/jet/tests/fixtures/dom-production-build |
 
-## Package Manager
+### Package Manager
 
 ID: package-manager
+Type: DeveloperTool
+Surfaces: CLI: `jet install` + `jet add` + `jet remove` + `jet update` - Package lifecycle commands that own dependency and lockfile behavior.
 Root WI: #3779
 Status: verified
 Required Verification: smoke, conformance, corpus, negative
@@ -143,9 +147,11 @@ Gate Inventory:
 | Package Manager Workspace Parity | epic | #3779 | implemented | verified | conformance | `cargo test -p jet --lib pkg_manager::workspace -- --nocapture`<br>projects/jet/fixtures/pkg-manager/workspace |
 | Package Manager Registry Integrity | epic | #3779 | implemented | verified | negative | `cargo test -p jet --lib pkg_manager -- --nocapture`<br>projects/jet/fixtures/pkg-manager/registry |
 
-## Bundler And Production Build
+### Bundler And Production Build
 
 ID: bundler-production-build
+Type: DeveloperTool
+Surfaces: CLI: `jet build` + `jet build --wasm` - Production and WASM build command surface.
 Root WI: #3782
 Status: verified
 Required Verification: smoke, conformance, corpus, negative
@@ -164,9 +170,11 @@ Gate Inventory:
 | Transform Resolver Parity | epic | #3782 | implemented | verified | corpus | `cargo test -p jet --lib transform -- --nocapture`<br>projects/jet/fixtures/bundler/transform-resolver |
 | Asset Sourcemap Negative Paths | epic | #3782 | implemented | verified | negative | `cargo test -p jet --lib asset -- --nocapture`<br>projects/jet/fixtures/bundler/assets |
 
-## Dev Server And HMR
+### Dev Server And HMR
 
 ID: dev-server-hmr
+Type: DeveloperTool
+Surfaces: CLI: `jet dev` + `jet dev --proxy PATH=URL` + `jet serve` - Dev server control plane, proxy/HMR entrypoints, and production static serving surface.; UI: `http://localhost:<port>` - Connected browser client for HMR, browser log intake, and local app inspection.
 Root WI: #3780
 Status: verified
 Required Verification: smoke, conformance, corpus, negative, dogfood
@@ -174,7 +182,7 @@ Promise:
 `jet dev` can replace Vite-style local development serving and HMR for real
 projects. Dev mode prioritizes a connected browser client, HMR, browser log
 intake, and dev-only reverse proxy rules from `[dev.proxy]` in `jet.toml` or
-repeatable `--proxy PATH=URL` CLI overrides. `jet serve --prod` is a separate
+repeatable `--proxy PATH=URL` CLI overrides. `jet serve` is a separate
 Kubernetes/GKE static frontend data plane behind a load balancer, with
 nginx-class static serving behavior and a hot path tuned for low memory-copy
 overhead and high RPS; it does not own TLS termination, public virtual hosts,
@@ -192,16 +200,18 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Dev server replacement readiness | epic | #3780 | implemented | verified | dogfood | jet dev is the client-connected dev control plane; jet serve --prod is the static data plane |
+| Dev server replacement readiness | epic | #3780 | implemented | verified | dogfood | jet dev is the client-connected dev control plane; jet serve is the static data plane |
 | Dev Server Local Serving Hmr | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib dev_server -- --nocapture`<br>projects/jet/fixtures/dev-server/basic-hmr |
 | Dev Server Proxy Contract | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib dev_server::proxy -- --nocapture` |
 | Dev Server Cli Contract | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib cli::e2e_command_contract_tests -- --nocapture` |
 | React Refresh State Preserved | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib dev_server::hmr -- --nocapture`<br>projects/jet/fixtures/dev-server/react-refresh/state-preserved |
 | Prebundle Importmap Parity | epic | #3780 | implemented | verified | corpus | `cargo test -p jet --lib dev_server::prebundle -- --nocapture`<br>projects/jet/fixtures/dev-server/prebundle-importmap |
 
-## Workspace And Task Runner
+### Workspace And Task Runner
 
 ID: workspace-task-runner
+Type: DeveloperTool
+Surfaces: CLI: `jet run` + `jet exec` - Workspace script and binary execution surface.
 Root WI: #3781
 Status: verified
 Required Verification: smoke, conformance, corpus, negative
@@ -224,9 +234,11 @@ Gate Inventory:
 | Workspace Package Selection | epic | #3781 | implemented | verified | conformance | `cargo test -p jet --lib pkg_manager::workspace -- --nocapture`<br>projects/jet/fixtures/workspace/package-selection |
 | Nx Graph Parity | epic | #3781 | implemented | verified | corpus | `cargo test -p jet --lib pkg_manager::nx -- --nocapture`<br>projects/jet/fixtures/task-runner/nx |
 
-## Native Test And Product-Flow E2E
+### Native Test And Product-Flow E2E
 
 ID: native-test-product-flow-e2e
+Type: DeveloperTool
+Surfaces: CLI: `jet test` + `jet e2e` - Native test runner and product-flow e2e surface.; WebAppE2E: `jet e2e` - Browser-driven product-flow verification for frontend behavior across app and API boundaries.
 Root WI: #3785
 Status: verified
 Required Verification: smoke, conformance, corpus, negative, dogfood
@@ -253,9 +265,11 @@ Gate Inventory:
 | Product Flow E2e Review | epic | #3785 | implemented | verified | dogfood | `cargo test -p jet --lib e2e -- --nocapture`<br>projects/jet/fixtures/e2e/product-flow |
 | Trace Replay Evidence | epic | #3785 | implemented | verified | conformance | `cargo test -p jet --lib trace -- --nocapture`<br>projects/jet/fixtures/e2e/trace-replay |
 
-## WASM And Multi-Target Execution
+### WASM And Multi-Target Execution
 
 ID: wasm-multi-target
+Type: DeveloperTool
+Surfaces: CLI: `jet build --wasm` - WASM build target surface.
 Root WI: #3783
 Status: auditing
 Required Verification: smoke, conformance, corpus, negative
@@ -283,10 +297,11 @@ Gate Inventory:
 | Library DOM/WASM Parity Fixtures | change | #4072 | implemented | verified | conformance | `cargo test -p jet --test react_dom_oracle_conformance library_dom_wasm_parity -- --nocapture`<br>projects/jet/parity/data/fixtures/libraries |
 | MUI Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/mui-visual-demo |
 | AntD Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression antd_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/antd-visual-demo |
-
-## Browser, Trace, And Parity Infrastructure
+### Browser, Trace, And Parity Infrastructure
 
 ID: browser-trace-parity
+Type: DeveloperTool
+Surfaces: CLI: `jet bb` + `jet trace` - Browser Bridge and trace diagnostic surface.
 Root WI: #3786
 Status: auditing
 Required Verification: smoke, conformance, corpus, negative
