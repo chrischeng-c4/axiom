@@ -1483,7 +1483,8 @@ fn capability_action_envelope_with_planning_base(
             ("execute_change", agent_command(&action.command))
         }
         CapabilityActionKind::RunVerify => ("verify", agent_command(&action.command)),
-        CapabilityActionKind::HumanConfirmRequired
+        CapabilityActionKind::DefineCapabilityMap
+        | CapabilityActionKind::HumanConfirmRequired
         | CapabilityActionKind::UpdateCapabilityStatus
         | CapabilityActionKind::EnvBlocked
         | CapabilityActionKind::DefineVerificationContract

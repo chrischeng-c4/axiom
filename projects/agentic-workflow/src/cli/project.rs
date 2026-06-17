@@ -3768,13 +3768,21 @@ mod tests {
         crate::cli::capability::CapabilityDocument {
             cap_path: std::path::PathBuf::from("projects/demo/README.md"),
             format: crate::cli::capability::CapabilityDocumentFormat::MarkdownTables,
+            needs_canonicalization: false,
             capabilities: vec![crate::cli::capability::CapabilitySection {
                 title: "Demo Capability".to_string(),
                 id: "cap".to_string(),
                 status: crate::cli::capability::CapabilityStatus::Verified,
+                prelude: String::new(),
+                postlude: String::new(),
+                index_summary: None,
+                capability_type: None,
+                surfaces: Vec::new(),
+                ec_dimensions: Vec::new(),
                 promise: "promise".to_string(),
                 current_state: "state".to_string(),
                 gaps: Vec::new(),
+                work_roots: Vec::new(),
                 verification_contract: Some(
                     crate::cli::capability::CapabilityVerificationContract {
                         required_maturity: vec![crate::cli::capability::CapabilityMaturity::Smoke],

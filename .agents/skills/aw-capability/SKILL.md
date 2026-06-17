@@ -40,26 +40,53 @@ promises from inference alone.
 
 ## README Schema
 
-Published capability maps are Markdown-first. H1 is the project root. H2-Hn
-headings are capability/sub-capability roots, and each heading maps to an
-epic/subepic work root. Atomic `change` WIs usually come from `aw wi atomize`,
-not README rows.
+Published capability maps are Markdown-first. H1 is the project root,
+`## Brief` is the agent-readable project summary, `## Capabilities` is the
+capability registry, and `### Capability Index` is the compact scan surface.
+Capability roots are H3-Hn headings under `## Capabilities`; each heading maps
+to an epic/subepic work root. Atomic `change` WIs usually come from
+`aw wi atomize`, not README rows.
 
 ```md
-## Package Manager
+# Jet
 
-| Field | Value |
-|---|---|
-| ID | package-manager |
-| Root WI | #3779 |
-| Status | auditing |
-| Promise | Jet can replace npm/pnpm/Bun package-management flows. |
-| Required Verification | smoke, conformance, corpus, negative |
-| Gate Inventory | projects/jet/validation/pkg-manager.toml |
+## Brief
+
+Rust-native frontend toolchain for package, build, dev-server, test, e2e, and
+browser automation workflows.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | implemented | verified | conformance | ready | npm/pnpm-style install and lockfile replacement |
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Root WI: #3779
+Status: auditing
+Surfaces: CLI: `jet install` + `jet add` + `jet remove` - package lifecycle entrypoints
+EC Dimensions: behavior: `jet test` - lockfile and install conformance; efficiency: `meter` - install/cache resource profile
+Efficiency Operating Point: local-vat-jet-install
+Efficiency Cube: projects/jet/.aw/ec/efficiency/install.cube.json
+Required Verification: smoke, conformance, corpus, negative
+Promise:
+Jet can replace npm/pnpm/Bun package-management flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Lockfile parity | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+
+#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)
+
+Operating point: local-vat-jet-install
+Cube: projects/jet/.aw/ec/efficiency/install.cube.json
 ```
 
 Status enums:
@@ -83,9 +110,10 @@ Status-gated contract rules:
 - Gate pass/fail is runtime-only from `aw capability report --verify`; do not
   store pass timestamps in README.
 
-YAML `## Capability:` sections and legacy capability tables are migration input
-only. They must produce `format_migration_required` and cannot count as
-verified until migrated to Markdown tables.
+YAML `## Capability:` sections, Field/Value contract tables, and one-row
+capability contract tables are migration input only. They must produce
+`format_migration_required` and cannot count as verified until migrated to the
+canonical field-style Markdown contract above.
 
 ## TD Linkage
 

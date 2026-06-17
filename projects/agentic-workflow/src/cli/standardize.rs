@@ -2356,41 +2356,58 @@ fn build_traceability_coverage_with_command_inventory(
     inventory: &Inventory,
     command_inventory: &BTreeMap<String, CommandInventoryEntry>,
 ) -> Result<TraceabilityCoverage> {
-    let (cap_path, capability_document) =
-        match crate::cli::capability::resolve_capability_path(project_root, project, None) {
-            Ok(cap_path) => {
-                let cap_body = match fs::read_to_string(&cap_path) {
-                    Ok(body) => body,
-                    Err(err) => {
-                        return Ok(traceability_capability_map_blocked(
-                            project,
-                            inventory,
-                            cap_path.display().to_string(),
-                            format!("capability document read failed: {err}"),
-                        ));
-                    }
-                };
-                match crate::cli::capability::parse_capability_document(&cap_body, &cap_path) {
-                    Ok(document) => (cap_path, document),
-                    Err(err) => {
-                        return Ok(traceability_capability_map_blocked(
-                            project,
-                            inventory,
-                            cap_path.display().to_string(),
-                            format!("capability document parse failed: {err}"),
-                        ));
-                    }
+    let (cap_path, capability_document) = match crate::cli::capability::resolve_capability_path(
+        project_root,
+        project,
+        None,
+    ) {
+        Ok(cap_path) => {
+            let cap_body = match fs::read_to_string(&cap_path) {
+                Ok(body) => body,
+                Err(err) => {
+                    return Ok(traceability_capability_map_blocked(
+                        project,
+                        inventory,
+                        cap_path.display().to_string(),
+                        format!("capability document read failed: {err}"),
+                    ));
+                }
+            };
+            match crate::cli::capability::parse_capability_document(&cap_body, &cap_path) {
+                Ok(document)
+                    if document.capabilities.is_empty() && document.legacy_rows.is_empty() =>
+                {
+                    let reason = document.findings.first().cloned().unwrap_or_else(|| {
+                            "no capability sections found; define README capability roots under ## Capabilities"
+                                .to_string()
+                        });
+                    return Ok(traceability_capability_map_blocked(
+                        project,
+                        inventory,
+                        cap_path.display().to_string(),
+                        format!("capability document has no capability sections: {reason}"),
+                    ));
+                }
+                Ok(document) => (cap_path, document),
+                Err(err) => {
+                    return Ok(traceability_capability_map_blocked(
+                        project,
+                        inventory,
+                        cap_path.display().to_string(),
+                        format!("capability document parse failed: {err}"),
+                    ));
                 }
             }
-            Err(err) => {
-                return Ok(traceability_capability_map_blocked(
-                    project,
-                    inventory,
-                    String::new(),
-                    format!("capability path resolution failed: {err}"),
-                ));
-            }
-        };
+        }
+        Err(err) => {
+            return Ok(traceability_capability_map_blocked(
+                project,
+                inventory,
+                String::new(),
+                format!("capability path resolution failed: {err}"),
+            ));
+        }
+    };
     let td_index = collect_td_index(project_root, &inventory.coverage.scope)?;
     let semantic = build_semantic_coverage(project_root, inventory)?;
     let mut records = BTreeMap::new();
@@ -12376,7 +12393,9 @@ changes:
             blocker.kind,
             TraceabilityBlockerKind::TdInvalidCapabilityRef
         );
-        assert!(blocker.reason.contains("capability document parse failed"));
+        assert!(blocker
+            .reason
+            .contains("capability document has no capability sections"));
         assert!(blocker.reason.contains("no capability sections found"));
     }
 
