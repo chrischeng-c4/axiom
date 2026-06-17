@@ -62920,9 +62920,13 @@ pub const STDLIB_SIGS_GENERATED: &[StdlibSig] = &[
         qualifier: "",
         name: "getline",
         kind: SigKind::ModuleFn,
+        // lineno is not enforced: CPython's getline accepts a non-int lineno and
+        // raises TypeError at runtime (the mamba runtime mirrors this), so a
+        // float lineno must compile and reach that runtime check, not be a
+        // compile-time type error. filename stays enforced (str).
         params: &[
             p("filename", CoreTy::Str, false),
-            p("lineno", CoreTy::Int, false),
+            p("lineno", CoreTy::Unknown, false),
             p("module_globals", CoreTy::Typed, false),
         ],
         enforceable: true,
