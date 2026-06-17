@@ -292,6 +292,14 @@ fn math_attr_returns_float(attr: &str) -> bool {
     )
 }
 
+/// `math.<name>` float-valued module constants (`math.pi`, `math.tau`, …).
+/// Accessed as a bare `Attr` (not a call), so they need their own float hint;
+/// without it `def f(): return math.pi` infers an int return and the caller
+/// reboxes the float's raw bits as an integer.
+fn math_attr_is_float_const(attr: &str) -> bool {
+    matches!(attr, "pi" | "e" | "tau" | "inf" | "nan")
+}
+
 /// Classify an AST expression as float / int / unknown given an environment of
 /// already-known local/param float hints. Conservative: anything not provably a
 /// float stays `Unknown` (or `Int` for integer-only forms), so we never widen an
@@ -363,6 +371,15 @@ fn ast_expr_float_hint(
             // math.sqrt(...) / math.sin(...) → float.
             if let ast::Expr::Attr { attr, .. } = &func.node {
                 if math_attr_returns_float(attr) {
+                    return FloatHint::Float;
+                }
+            }
+            FloatHint::Unknown
+        }
+        // `math.pi` / `math.tau` / `math.inf` — bare float module constants.
+        ast::Expr::Attr { object, attr } => {
+            if let ast::Expr::Ident(m) = &object.node {
+                if m == "math" && math_attr_is_float_const(attr) {
                     return FloatHint::Float;
                 }
             }
