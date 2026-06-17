@@ -931,10 +931,44 @@ pub fn mb_json_loads(val: MbValue) -> MbValue {
         Some(s) => match serde_json::from_str::<serde_json::Value>(&s) {
             Ok(parsed) => json_to_mbvalue(&parsed),
             Err(e) => {
-                super::super::exception::mb_raise(
-                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(format!("json.loads: {e}"))),
-                );
+                // Raise a JSONDecodeError instance carrying CPython's
+                // positional attributes: msg / pos / lineno / colno.
+                let lineno = e.line() as i64;
+                let colno = e.column() as i64;
+                let mut pos: i64 = 0;
+                for (i, l) in s.split('\n').enumerate() {
+                    if (i as i64) + 1 == lineno {
+                        pos += (colno - 1).max(0);
+                        break;
+                    }
+                    pos += l.chars().count() as i64 + 1;
+                }
+                let full = e.to_string();
+                let msg = full.split(" at line ").next().unwrap_or(&full).to_string();
+                let inst_ptr = MbObject::new_instance("JSONDecodeError".to_string());
+                unsafe {
+                    if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+                        let mut m = fields.write().unwrap();
+                        m.insert(
+                            "msg".to_string(),
+                            MbValue::from_ptr(MbObject::new_str(msg.clone())),
+                        );
+                        m.insert("pos".to_string(), MbValue::from_int(pos));
+                        m.insert("lineno".to_string(), MbValue::from_int(lineno));
+                        m.insert("colno".to_string(), MbValue::from_int(colno));
+                        m.insert(
+                            "args".to_string(),
+                            MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+                                MbObject::new_str(msg),
+                            )])),
+                        );
+                        m.insert(
+                            "__class__".to_string(),
+                            MbValue::from_ptr(MbObject::new_str("JSONDecodeError".to_string())),
+                        );
+                    }
+                }
+                super::super::class::mb_raise_instance(MbValue::from_ptr(inst_ptr));
                 MbValue::none()
             }
         },
