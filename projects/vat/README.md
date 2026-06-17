@@ -54,6 +54,8 @@ Markdown capability headings and tables below are machine-readable input for `aw
 
 ID: agent-native-gpu-native-dev-containers
 Type: RuntimeTool
+Surfaces: CLI: `vat run` + `vat run <runner-id>` + `vat run -- <cmd>` + `vat state <id>` + `vat diff <id>` + `vat logs <id> [service-id|runner]` + `vat fork <id>` + `vat snapshot <id>` + `vat gpu` + `vat llm` - Agent-facing local runner, state, diff, logs, fork/snapshot, GPU visibility, and LLM usage entrypoints.; Config: `vat.toml` - Project-local runner protocol edited by agents to define setup, services, readiness, runners, artifacts, and cleanup.
+EC Dimensions: behavior: `vat` - agent-local runner protocol, structured state/diff/log evidence, copy-on-write lifecycle, and host GPU visibility; stability: `vat` - run-scoped service readiness, cleanup policy, retained failure evidence, and fork/snapshot recovery behavior
 Root WI: #4152
 Status: verified
 Required Verification: smoke

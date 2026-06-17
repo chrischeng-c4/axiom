@@ -64,6 +64,8 @@ Markdown capability headings and tables below are machine-readable input for `aw
 
 ID: scenario-engine
 Type: DeveloperTool
+Surfaces: CLI: `rig test [--dir <d>] [--dimension <d>] [--case <id>]` + `rig run --scenario <f>` + `rig run --dir <d>` + `rig lint --dir <d>` + `rig report` - Scenario/case orchestration, deprecated flat scenario execution, record linting, and report reprojection entrypoints.
+EC Dimensions: behavior: `rig` - declarative scenario records, step DSL execution, assertions, verdict bucketing, and rig.report/1 output
 Root WI: axiom#5
 Status: verified
 Required Verification: smoke
@@ -81,6 +83,8 @@ Gate Inventory:
 
 ID: load-pins
 Type: DeveloperTool
+Surfaces: CLI: `rig test --pins <d>` + `rig test --update-baselines` + `rig run --pins <d>` + `rig run --update-baselines` - Open-loop load profile execution and baseline pin gate entrypoints.
+EC Dimensions: efficiency: `rig` - open-loop load profiles, p50/p99/error-rate observations, and floor/ratchet pins against host baselines
 Root WI: axiom#5
 Status: verified
 Required Verification: smoke
@@ -98,6 +102,8 @@ Gate Inventory:
 
 ID: vat-wrapped-runs
 Type: DeveloperTool
+Surfaces: CLI: `rig test --vat` + `rig run --vat` - Delegated scenario execution through vat-managed environments while preserving rig report folding.
+EC Dimensions: behavior: `rig + vat` - rig delegates environment setup to vat, consumes vat JSONL checkpoints, and lifts the inner rig report; stability: `rig + vat` - vat-managed services, readiness, timeout policy, cleanup, and retained report/error folding across scenario runs
 Root WI: axiom#5
 Status: verified
 Required Verification: smoke

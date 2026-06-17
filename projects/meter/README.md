@@ -106,6 +106,8 @@ Markdown capability headings and tables below are machine-readable input for `aw
 
 ID: runtime-resource-attribution
 Type: DeveloperTool
+Surfaces: CLI: `meter measure <target>` + `meter measure --bin/--example/--bench/--exec <target>` + `meter profile --phases <file>` + `meter profile <source-target>` + `meter bench --target <crate> --baseline <file>` - External measurement, embedded profiling, reserved source profiling, and benchmark regression folding entrypoints.
+EC Dimensions: efficiency: `meter` - cpu/wall/RSS vitals, optional stack samples, embedded phase/boundary cost, and benchmark regression findings
 Root WI: #3
 Status: verified
 Required Verification: smoke
@@ -151,6 +153,8 @@ Known limits:
 
 ID: agent-use-first-cli
 Type: DeveloperTool
+Surfaces: CLI: `meter test` + `meter run` + `meter report` + `meter state` + `meter spec --json-schema` + `meter spec --catalog` + `meter llm guide` + `meter llm recipes` - JSON-default delegated run, report/state reprojection, offline spec/catalog, and agent usage documentation entrypoints.
+EC Dimensions: behavior: `meter` - deterministic meter.report/1 JSON, findings/invoke fields, offline schema/catalog, LLM guide, and delegated runner exit semantics
 Root WI: -
 Status: verified
 Required Verification: smoke
