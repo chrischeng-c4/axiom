@@ -4008,6 +4008,15 @@ struct CapabilityCandidate {
     first_gate: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityPlanSummaryRow {
+    capability: String,
+    candidate_count: usize,
+    existing_wi_refs: Vec<String>,
+    next_operator: String,
+    first_action: String,
+}
+
 #[cfg(test)]
 struct CapabilityColumnIndices {
     capability: usize,
@@ -4264,6 +4273,139 @@ fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<Cap
     candidates
 }
 
+fn capability_plan_summary_rows(
+    rows: &[CapabilityRow],
+    issues: &[Issue],
+    candidates: &[CapabilityCandidate],
+) -> Vec<CapabilityPlanSummaryRow> {
+    let mut summaries: Vec<CapabilityPlanSummaryRow> = Vec::new();
+    for row in rows {
+        let matches = matching_issues_for_capability(row, issues);
+        let row_candidates = candidates
+            .iter()
+            .filter(|candidate| {
+                candidate.source_capability == row.capability
+                    && candidate.capability_gap == row.gaps
+            })
+            .collect::<Vec<_>>();
+        if row_candidates.is_empty() && matches.is_empty() && !has_actionable_gap(row) {
+            continue;
+        }
+
+        let position = summaries
+            .iter()
+            .position(|summary| summary.capability == row.capability)
+            .unwrap_or_else(|| {
+                summaries.push(CapabilityPlanSummaryRow {
+                    capability: row.capability.clone(),
+                    candidate_count: 0,
+                    existing_wi_refs: Vec::new(),
+                    next_operator: "monitor".to_string(),
+                    first_action: "monitor".to_string(),
+                });
+                summaries.len() - 1
+            });
+        let summary = &mut summaries[position];
+        summary.candidate_count += row_candidates.len();
+        for reference in active_wi_summary_refs(row) {
+            if !summary.existing_wi_refs.contains(&reference) {
+                summary.existing_wi_refs.push(reference);
+            }
+        }
+        for issue in matches {
+            let reference = issue_ref(issue);
+            if !summary.existing_wi_refs.contains(&reference) {
+                summary.existing_wi_refs.push(reference);
+            }
+        }
+        let operator =
+            suggested_capability_operator(row, &matching_issues_for_capability(row, issues));
+        summary.next_operator = merge_capability_plan_operator(&summary.next_operator, operator);
+        if summary.first_action == "monitor" {
+            if let Some(candidate) = row_candidates.first() {
+                summary.first_action = candidate.title.clone();
+            } else if has_actionable_gap(row) {
+                summary.first_action = row.gaps.clone();
+            } else if !summary.existing_wi_refs.is_empty() {
+                summary.first_action = "review existing WI linkage".to_string();
+            }
+        }
+    }
+    summaries
+}
+
+fn active_wi_summary_refs(row: &CapabilityRow) -> Vec<String> {
+    if is_empty_active_wi(&row.active_wi.to_ascii_lowercase()) {
+        return Vec::new();
+    }
+    let mut numbers = extract_hash_numbers(&row.active_wi)
+        .into_iter()
+        .collect::<Vec<_>>();
+    if numbers.is_empty() {
+        numbers = extract_active_wi_numbers(&row.active_wi);
+    }
+    numbers.sort_unstable();
+    if numbers.is_empty() {
+        vec![review_summary_cell(&row.active_wi)]
+    } else {
+        numbers
+            .into_iter()
+            .map(|number| format!("#{number}"))
+            .collect()
+    }
+}
+
+fn extract_active_wi_numbers(text: &str) -> Vec<u64> {
+    let mut numbers = std::collections::HashSet::new();
+    let mut digits = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            continue;
+        }
+        if !digits.is_empty() {
+            if let Ok(number) = digits.parse::<u64>() {
+                numbers.insert(number);
+            }
+            digits.clear();
+        }
+    }
+    if !digits.is_empty() {
+        if let Ok(number) = digits.parse::<u64>() {
+            numbers.insert(number);
+        }
+    }
+    let mut sorted = numbers.into_iter().collect::<Vec<_>>();
+    sorted.sort_unstable();
+    sorted
+}
+
+fn merge_capability_plan_operator(current: &str, next: &str) -> String {
+    let priority = |operator: &str| match operator {
+        "epicize -> atomize" => 4,
+        "atomize -> prioritize" => 3,
+        "prioritize" => 2,
+        "monitor" => 1,
+        _ => 0,
+    };
+    if priority(next) > priority(current) {
+        next.to_string()
+    } else {
+        current.to_string()
+    }
+}
+
+fn review_summary_cell(text: &str) -> String {
+    const LIMIT: usize = 140;
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= LIMIT {
+        return trimmed.to_string();
+    }
+    let mut truncated = trimmed.chars().take(LIMIT).collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
 fn has_actionable_gap(row: &CapabilityRow) -> bool {
     let gap = row.gaps.trim();
     if gap.is_empty() {
@@ -4518,6 +4660,31 @@ fn render_capability_wi_plan(
         out.push_str(note);
         out.push_str("\n\n");
     } else {
+        out.push('\n');
+    }
+
+    out.push_str("## Review Summary\n\n");
+    out.push_str("| Capability | Candidate WIs | Existing WI | Next operator | First action |\n");
+    out.push_str("|------------|--------------:|-------------|---------------|--------------|\n");
+    let summary_rows = capability_plan_summary_rows(&capability_map.rows, issues, candidates);
+    if summary_rows.is_empty() {
+        out.push_str("| none | 0 | none | monitor | monitor |\n\n");
+    } else {
+        for row in summary_rows {
+            let refs = if row.existing_wi_refs.is_empty() {
+                "none".to_string()
+            } else {
+                row.existing_wi_refs.join(", ")
+            };
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                markdown_table_cell(&row.capability),
+                row.candidate_count,
+                markdown_table_cell(&refs),
+                row.next_operator,
+                markdown_table_cell(&review_summary_cell(&row.first_action))
+            ));
+        }
         out.push('\n');
     }
 
@@ -5872,6 +6039,8 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("kind: capability_plan"));
         assert!(body.contains("capability_count: 2"));
         assert!(body.contains("planning_row_count: 2"));
+        assert!(body.contains("## Review Summary"));
+        assert!(body.contains("| Package manager | 1 | none | epicize -> atomize | Close capability gap: Package manager |"));
         assert!(body.contains("| Capability | Type | Surfaces | EC Dimensions | Claim |"));
         assert!(body.contains("DeveloperTool"));
         assert!(body.contains("CLI: `jet install` - install dependencies"));
@@ -5894,6 +6063,51 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(warned.contains("## Source"));
         assert!(warned.contains("### Planning Warnings"));
         assert!(warned.contains("issue inventory unavailable: gh auth missing"));
+    }
+
+    #[test]
+    fn capability_plan_summary_groups_candidates_by_capability() {
+        let rows = vec![
+            CapabilityRow {
+                capability: "Package Manager".to_string(),
+                capability_type: "DeveloperTool".to_string(),
+                surfaces: "CLI: `jet install`".to_string(),
+                ec_dimensions: "behavior: `jet test`".to_string(),
+                current_state: "Install surface exists".to_string(),
+                gaps: "claim package-manager-readiness: package readiness needs proof".to_string(),
+                active_wi: "#3779".to_string(),
+                evidence: "claim gate: cargo test -p jet --lib pkg_manager".to_string(),
+                claim_id: Some("package-manager-readiness".to_string()),
+                claim_user_story: None,
+            },
+            CapabilityRow {
+                capability: "Package Manager".to_string(),
+                capability_type: "DeveloperTool".to_string(),
+                surfaces: "CLI: `jet install`".to_string(),
+                ec_dimensions: "behavior: `jet test`".to_string(),
+                current_state: "Workspace support exists".to_string(),
+                gaps: "claim package-manager-workspace-parity: workspace parity needs proof"
+                    .to_string(),
+                active_wi: "3780".to_string(),
+                evidence: "claim gate: cargo test -p jet --lib pkg_manager::workspace".to_string(),
+                claim_id: Some("package-manager-workspace-parity".to_string()),
+                claim_user_story: None,
+            },
+        ];
+
+        let candidates = capability_wi_candidates(&rows, &[]);
+        let summary = capability_plan_summary_rows(&rows, &[], &candidates);
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(summary.len(), 1);
+        assert_eq!(summary[0].capability, "Package Manager");
+        assert_eq!(summary[0].candidate_count, 2);
+        assert_eq!(summary[0].existing_wi_refs, vec!["#3779", "#3780"]);
+        assert_eq!(summary[0].next_operator, "epicize -> atomize");
+        assert_eq!(
+            summary[0].first_action,
+            "Close capability claim: Package Manager / package-manager-readiness"
+        );
     }
 
     #[test]
