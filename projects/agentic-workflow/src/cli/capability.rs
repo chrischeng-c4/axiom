@@ -374,6 +374,7 @@ pub struct CapabilitySetEcDimensionArgs {
     #[arg(long = "operating-point")]
     pub operating_point: Option<String>,
     /// Efficiency cube reference to reserve for aw-generated cube backfill.
+    /// Must be supplied together with --operating-point.
     #[arg(long)]
     pub cube: Option<String>,
     /// Pretty-print the JSON result.
@@ -3144,6 +3145,7 @@ fn upsert_capability_ec_dimension_in_readme(
     capability_id: &str,
     dimension: CapabilityEcDimension,
 ) -> Result<String> {
+    validate_ec_dimension_backfill_slot(&dimension)?;
     let document = parse_capability_document(content, Path::new("README.md"))?;
     let mut dimensions = document
         .capabilities
@@ -3198,6 +3200,21 @@ fn upsert_capability_ec_dimension_in_readme(
         )?;
     }
     Ok(updated)
+}
+
+fn validate_ec_dimension_backfill_slot(dimension: &CapabilityEcDimension) -> Result<()> {
+    let Some(slot) = dimension.efficiency_backfill.as_ref() else {
+        return Ok(());
+    };
+    if dimension.dimension != CapabilityEcDimensionKind::Efficiency {
+        anyhow::bail!("efficiency backfill options are only valid for the efficiency EC dimension");
+    }
+    let has_operating_point = !slot.operating_point.trim().is_empty();
+    let has_cube = !slot.cube.trim().is_empty();
+    if !has_operating_point || !has_cube {
+        anyhow::bail!("efficiency backfill slot requires both --operating-point and --cube");
+    }
+    Ok(())
 }
 
 fn upsert_capability_efficiency_backfill_section_in_readme(
@@ -11415,6 +11432,70 @@ Gate Inventory:
             efficiency.efficiency_backfill.as_ref().unwrap().cube,
             "projects/demo/.aw/ec/efficiency/search.cube.json"
         );
+    }
+
+    #[test]
+    fn set_ec_dimension_rejects_partial_efficiency_backfill_slot() {
+        let missing_cube = upsert_capability_ec_dimension_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Efficiency,
+                runner: "meter".to_string(),
+                summary: "resource attribution gate".to_string(),
+                required_for_production: None,
+                efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
+                    operating_point: "local-vat-search-p95".to_string(),
+                    cube: String::new(),
+                }),
+            },
+        )
+        .unwrap_err();
+        assert!(missing_cube
+            .to_string()
+            .contains("requires both --operating-point and --cube"));
+
+        let missing_operating_point = upsert_capability_ec_dimension_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Efficiency,
+                runner: "meter".to_string(),
+                summary: "resource attribution gate".to_string(),
+                required_for_production: None,
+                efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
+                    operating_point: String::new(),
+                    cube: "projects/demo/.aw/ec/efficiency/search.cube.json".to_string(),
+                }),
+            },
+        )
+        .unwrap_err();
+        assert!(missing_operating_point
+            .to_string()
+            .contains("requires both --operating-point and --cube"));
+    }
+
+    #[test]
+    fn set_ec_dimension_rejects_backfill_slot_on_non_efficiency_dimension() {
+        let err = upsert_capability_ec_dimension_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Behavior,
+                runner: "rig".to_string(),
+                summary: "request conformance".to_string(),
+                required_for_production: None,
+                efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
+                    operating_point: "local-vat-search-p95".to_string(),
+                    cube: "projects/demo/.aw/ec/efficiency/search.cube.json".to_string(),
+                }),
+            },
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("only valid for the efficiency EC dimension"));
     }
 
     #[test]
