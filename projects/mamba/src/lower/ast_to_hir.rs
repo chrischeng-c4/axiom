@@ -5565,6 +5565,11 @@ impl<'a> AstLowerer<'a> {
                             | "parse_qs" | "parse_qsl" | "urlencode"
                             // property(fget=, fset=, fdel=, doc=) keyword form
                             | "property"
+                            // urllib.request.Request(url, data=, headers=,
+                            // method=) — its native dispatcher reads a trailing
+                            // kwargs dict, so a bare `Request(...)` (from-import)
+                            // must keep the keyword names instead of flattening.
+                            | "Request"
                     ) || self.dataclasses_kwarg_idents.contains(name.as_str())
                 );
                 let pack_trailing_kwargs = (is_method_call && (has_any_kwargs || has_dstar))
