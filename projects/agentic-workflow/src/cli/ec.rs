@@ -3382,12 +3382,23 @@ edition = "2021"
             "cargo test -p demo-crate demo_happy_path -- --nocapture"
         );
         assert_eq!(case.assertions.len(), 2);
-        assert_eq!(case.evidence.len(), 2);
+        assert_eq!(case.evidence.len(), 3);
         assert_eq!(case.evidence[0].kind, "screenshot");
         assert_eq!(case.evidence[0].path, "e2e-results/demo/happy-path.png");
         assert_eq!(case.evidence[0].label, "Demo happy path");
         assert_eq!(case.evidence[0].locator, "[data-testid=demo-happy-path]");
         assert_eq!(case.evidence[1].kind, "agent-eval");
+        assert_eq!(case.evidence[2].kind, "generated-manual");
+        assert_eq!(case.evidence[2].path, "docs/user-manual/index.md");
+        assert_eq!(case.evidence[2].format, "markdown");
+        assert_eq!(
+            case.evidence[2].command,
+            "jet e2e manual --output docs/user-manual"
+        );
+        assert_eq!(
+            case.evidence[2].screenshots,
+            vec!["docs/user-manual/screenshots/home.png"]
+        );
         assert_eq!(case.evaluators.len(), 1);
         assert_eq!(case.evaluators[0].id, "demo-agent-judge");
         assert_eq!(case.evaluators[0].tool, "codex");
