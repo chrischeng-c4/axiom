@@ -725,6 +725,7 @@ pub struct CapabilityProseCandidate {
     pub line: usize,
     pub root_wi: Option<String>,
     pub summary: Option<String>,
+    pub promise: Option<String>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -1725,8 +1726,9 @@ fn render_empty_candidate_capability_section(project: &str) -> String {
 fn render_candidate_capability_section(candidate: &CapabilityProseCandidate) -> String {
     let root_wi = candidate.root_wi.as_deref().unwrap_or("-");
     let promise = candidate
-        .summary
+        .promise
         .as_deref()
+        .or(candidate.summary.as_deref())
         .filter(|summary| !summary.trim().is_empty())
         .unwrap_or("(confirm promise)");
     format!(
@@ -5805,13 +5807,18 @@ fn parse_capability_prose_candidates(body: &str) -> Vec<CapabilityProseCandidate
             }
             let root_wi = first_issue_ref(&raw_candidate_title)
                 .or_else(|| first_issue_ref(&lines[cursor + 1..block_end].join("\n")));
-            let summary = first_candidate_summary_line(&lines, cursor + 1, block_end);
+            let promise = first_candidate_promise_text(&lines, cursor + 1, block_end);
+            let summary = promise
+                .as_deref()
+                .map(truncate_candidate_summary)
+                .filter(|summary| !summary.trim().is_empty());
             candidates.push(CapabilityProseCandidate {
                 id,
                 title: candidate_title,
                 line: cursor + 1,
                 root_wi,
                 summary,
+                promise,
             });
             cursor = block_end;
         }
@@ -5828,7 +5835,7 @@ fn capability_prose_candidate_title_is_ignored(title: &str) -> bool {
         || title.contains("GENERATED")
 }
 
-fn first_candidate_summary_line(lines: &[&str], start: usize, end: usize) -> Option<String> {
+fn first_candidate_promise_text(lines: &[&str], start: usize, end: usize) -> Option<String> {
     let fenced = markdown_fenced_line_mask(lines);
     let mut parts = Vec::new();
     for idx in start..end {
@@ -5860,7 +5867,7 @@ fn first_candidate_summary_line(lines: &[&str], start: usize, end: usize) -> Opt
     if parts.is_empty() {
         None
     } else {
-        Some(truncate_candidate_summary(&parts.join(" ")))
+        Some(parts.join(" "))
     }
 }
 
@@ -9103,6 +9110,7 @@ Mamba can execute the Python 3.12 language and standard library surface.
             line: 11,
             root_wi: Some("#3331".to_string()),
             summary: Some("Run real Python 3.12 programs without semantic divergence.".to_string()),
+            promise: Some("Run real Python 3.12 programs without semantic divergence.".to_string()),
         }];
 
         let artifact = render_capability_map_draft(
@@ -9129,6 +9137,35 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert!(artifact.contains("Status: candidate"));
         assert!(artifact.contains("(confirm gate inventory)"));
         assert!(artifact.contains("This artifact is inference only"));
+    }
+
+    #[test]
+    fn capability_map_draft_preserves_full_promise_for_prose_candidates() {
+        let long_promise = "This capability keeps CPython-compatible import, runtime, exception, and package semantics available through the mamba command surface while preserving agent-readable evidence for corpus parity, negative behavior, and ecosystem fixtures across repeated standardization passes."
+            .repeat(2);
+        let readme = format!(
+            "# Mamba\n\n## Capabilities\n\n### C2. Runtime parity (#4444)\n\n{}\n",
+            long_promise
+        );
+
+        let candidates = parse_capability_prose_candidates(&readme);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].promise.as_deref(),
+            Some(long_promise.as_str())
+        );
+        assert!(candidates[0]
+            .summary
+            .as_deref()
+            .is_some_and(|summary| summary.ends_with("...")));
+
+        let artifact = render_capability_map_draft(
+            "mamba",
+            Path::new("projects/mamba/README.md"),
+            &candidates,
+        );
+        assert!(artifact.contains(&format!("Promise:\n{}\nGate Inventory:", long_promise)));
     }
 
     #[test]
