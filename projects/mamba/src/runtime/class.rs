@@ -7276,6 +7276,14 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
             return MbValue::from_bool(super::builtins::mb_bool(out).as_bool() == Some(true));
         }
     }
+    // os.PathLike structural __subclasshook__: an instance whose class defines
+    // __fspath__ is a virtual instance (mirrors the issubclass path).
+    if target == "os.PathLike" || target == "PathLike" {
+        if let Some(obj_cls) = abc_runtime_class_name(obj) {
+            return MbValue::from_bool(class_defines_non_none(&obj_cls, "__fspath__"));
+        }
+        return MbValue::from_bool(false);
+    }
     // abc: isinstance(obj, ABC) defers to ABCMeta.__subclasscheck__ semantics —
     // nominal subclass, custom __subclasshook__ (structural), or registered
     // virtual subclass. Handles both instances and builtin objects (e.g.
@@ -7819,6 +7827,11 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
         return MbValue::from_bool(
             class_defines_non_none(&child_name, m1) && class_defines_non_none(&child_name, m2),
         );
+    }
+    // os.PathLike uses a structural __subclasshook__: any class defining
+    // __fspath__ is a virtual subclass.
+    if parent_name == "os.PathLike" || parent_name == "PathLike" {
+        return MbValue::from_bool(class_defines_non_none(&child_name, "__fspath__"));
     }
     if let Some(result) = user_abc_issubclass(&child_name, &parent_name) {
         return MbValue::from_bool(result);
