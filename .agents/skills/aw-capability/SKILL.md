@@ -53,7 +53,12 @@ promises from inference alone.
 8. Use `aw capability check --project <project> --verify` after README or TD
    linkage edits when production proof matters; omit `--verify` only for a
    fast structural check.
-9. Only after explicit confirmation, propose edits that create or materially
+9. For multi-project rollouts, run `aw capability sweep --human` first. When
+   the sweep shows `define_capability_map:draft`, use
+   `aw capability sweep --write-drafts --human` to write pending-review draft
+   artifacts for all draftable projects in one AW-owned pass. These drafts
+   remain local `/tmp` review artifacts and do not edit README.
+10. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
 ## README Schema

@@ -225,6 +225,9 @@ pub struct CapabilitySweepArgs {
     /// Include issue inventory when computing next actions.
     #[arg(long = "include-issue-inventory")]
     pub include_issue_inventory: bool,
+    /// Write pending-review capability-map drafts for define-map projects.
+    #[arg(long = "write-drafts")]
+    pub write_drafts: bool,
     /// DEPRECATED compatibility no-op. Capability sweep emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -1040,8 +1043,11 @@ pub struct CapabilitySweepReport {
     pub verified_project_count: usize,
     pub verify: bool,
     pub include_issue_inventory: bool,
+    pub write_drafts: bool,
     pub groups: Vec<CapabilitySweepGroup>,
     pub projects: Vec<CapabilitySweepProject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drafts: Vec<CapabilityDraftReport>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -1268,9 +1274,25 @@ fn render_empty_capability_readme(title: &str, brief: &str) -> String {
 fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
-    let cap_body = std::fs::read_to_string(&cap_path)
+    let report = build_capability_draft_report(project, &cap_path, args.output.as_deref())?;
+    if args.human {
+        println!("{}", report.path.display());
+    } else if args.pretty || args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("{}", serde_json::to_string(&report)?);
+    }
+    Ok(())
+}
+
+fn build_capability_draft_report(
+    project: &str,
+    cap_path: &Path,
+    output: Option<&Path>,
+) -> Result<CapabilityDraftReport> {
+    let cap_body = std::fs::read_to_string(cap_path)
         .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
-    let document = parse_capability_document(&cap_body, &cap_path)
+    let document = parse_capability_document(&cap_body, cap_path)
         .with_context(|| format!("failed to parse capability map {}", cap_path.display()))?;
     if document.requires_format_migration() || !document.legacy_rows.is_empty() {
         anyhow::bail!(
@@ -1285,13 +1307,13 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
         );
     }
 
-    let body = render_capability_map_draft(project, &cap_path, &document.prose_candidates);
-    let path = write_capability_draft_artifact(project, args.output.as_deref(), &body)?;
-    let report = CapabilityDraftReport {
+    let body = render_capability_map_draft(project, cap_path, &document.prose_candidates);
+    let path = write_capability_draft_artifact(project, output, &body)?;
+    Ok(CapabilityDraftReport {
         schema_version: "aw.cli.v1",
         action: "capability_draft",
         project: project.to_string(),
-        cap_path,
+        cap_path: cap_path.to_path_buf(),
         path,
         status: "pending_review".to_string(),
         source: capability_draft_source(&document.prose_candidates),
@@ -1299,15 +1321,7 @@ fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> 
         agent_review_required: true,
         review_status: "pending",
         check_command: format!("aw capability check --project {project}"),
-    };
-    if args.human {
-        println!("{}", report.path.display());
-    } else if args.pretty || args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        println!("{}", serde_json::to_string(&report)?);
-    }
-    Ok(())
+    })
 }
 
 fn capability_draft_source(candidates: &[CapabilityProseCandidate]) -> &'static str {
@@ -1527,7 +1541,11 @@ async fn run_capability_sweep(
         };
         reports.push(report);
     }
-    let sweep = capability_sweep_report(&reports, args.verify, args.include_issue_inventory);
+    let mut sweep = capability_sweep_report(&reports, args.verify, args.include_issue_inventory);
+    if args.write_drafts {
+        sweep.write_drafts = true;
+        sweep.drafts = write_capability_sweep_drafts(&sweep.projects)?;
+    }
     if args.human {
         print_capability_sweep(&sweep);
     } else if args.pretty || args.json {
@@ -1589,9 +1607,34 @@ fn capability_sweep_report(
         verified_project_count,
         verify,
         include_issue_inventory,
+        write_drafts: false,
         groups: capability_sweep_groups(&projects),
         projects,
+        drafts: Vec::new(),
     }
+}
+
+fn write_capability_sweep_drafts(
+    projects: &[CapabilitySweepProject],
+) -> Result<Vec<CapabilityDraftReport>> {
+    capability_sweep_draft_projects(projects)
+        .into_iter()
+        .map(|project| build_capability_draft_report(&project.project, &project.cap_path, None))
+        .collect()
+}
+
+fn capability_sweep_draft_projects(
+    projects: &[CapabilitySweepProject],
+) -> Vec<&CapabilitySweepProject> {
+    projects
+        .iter()
+        .filter(|project| is_capability_draft_action(&project.next_action))
+        .collect()
+}
+
+fn is_capability_draft_action(action: &CapabilityAction) -> bool {
+    action.kind == CapabilityActionKind::DefineCapabilityMap
+        && action.command.trim().starts_with("aw capability draft")
 }
 
 fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject {
@@ -1709,6 +1752,17 @@ fn print_capability_sweep(sweep: &CapabilitySweepReport) {
             group.count,
             group.projects.join(", ")
         );
+    }
+    if sweep.write_drafts {
+        println!("drafts written [{}]", sweep.drafts.len());
+        for draft in &sweep.drafts {
+            println!(
+                "draft:{} {} {}",
+                draft.project,
+                draft.source,
+                draft.path.display()
+            );
+        }
     }
 }
 
@@ -8511,6 +8565,12 @@ Gate Inventory:
         assert_eq!(sweep.groups[0].next_action_kind, "define_capability_map");
         assert_eq!(sweep.groups[0].next_action_detail, Some("draft"));
         assert_eq!(sweep.groups[1].next_action_detail, Some("report"));
+
+        let draft_projects = capability_sweep_draft_projects(&sweep.projects)
+            .into_iter()
+            .map(|project| project.project.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(draft_projects, vec!["mamba"]);
     }
 
     #[test]
