@@ -9,23 +9,32 @@
 //! `score migrate-worktrees` verb) import this module instead.
 
 use anyhow::{Context, Result};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Locate the `git` binary on `PATH`. Returns `None` if `which git`
 /// fails or returns an empty string.
 /// @spec projects/agentic-workflow/tech-design/core/logic/git.md#source
 pub fn find_git_bin() -> Option<PathBuf> {
-    let output = std::process::Command::new("which")
-        .arg("git")
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path_str.is_empty() {
-            return Some(PathBuf::from(path_str));
-        }
-    }
-    None
+    find_bin_on_path("git", std::env::var_os("PATH")).or_else(find_default_git_bin)
+}
+
+fn find_default_git_bin() -> Option<PathBuf> {
+    [
+        "/opt/homebrew/bin/git",
+        "/usr/local/bin/git",
+        "/usr/bin/git",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .find(|path| path.is_file())
+}
+
+fn find_bin_on_path(binary: &str, path_env: Option<impl AsRef<OsStr>>) -> Option<PathBuf> {
+    let path_env = path_env?;
+    std::env::split_paths(path_env.as_ref())
+        .map(|dir| dir.join(binary))
+        .find(|path| path.is_file())
 }
 
 /// Return true when `project_root` is inside a git worktree.
@@ -189,6 +198,22 @@ fn repo_relative_paths(project_root: &Path, paths: &[PathBuf]) -> Result<Vec<Pat
     rel_paths.sort();
     rel_paths.dedup();
     Ok(rel_paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn find_bin_on_path_scans_path_without_shelling_out_to_which() {
+        let dir = TempDir::new().unwrap();
+        let git_path = dir.path().join("git");
+        std::fs::write(&git_path, "").unwrap();
+        let path_env = std::env::join_paths([dir.path()]).unwrap();
+
+        assert_eq!(find_bin_on_path("git", Some(path_env)), Some(git_path));
+    }
 }
 
 // CODEGEN-END
