@@ -293,7 +293,9 @@ fn upsert_projects(projects: &mut Vec<Project>, incoming: Vec<Project>) {
 
 fn merge_project(mut existing: Project, incoming: Project) -> Project {
     existing.name = incoming.name;
-    existing.path = incoming.path;
+    if existing.path.as_os_str().is_empty() {
+        existing.path = incoming.path;
+    }
     if incoming.tech_design_dir.is_some() {
         existing.tech_design_dir = incoming.tech_design_dir;
     }
@@ -333,7 +335,9 @@ fn merge_project_config_row(
         }
     }
     if !incoming.path.is_empty() {
-        existing.path = incoming.path;
+        if existing.path.is_empty() {
+            existing.path = incoming.path;
+        }
     }
     if incoming.td_path.is_some() {
         existing.td_path = incoming.td_path;
@@ -864,7 +868,7 @@ test_cmd = "cargo test -p jet -p jet-wasm"
 
 [[projects]]
 name = "jet"
-path = "projects/jet"
+path = "projects/stale-jet-sync"
 
 [[projects.workspaces]]
 name = "jet"
@@ -876,6 +880,7 @@ test_cmd = "cargo test -p jet"
 
         let rows = load_project_config_rows(tmp.path()).unwrap();
         let jet = rows.iter().find(|row| row.name == "jet").unwrap();
+        assert_eq!(jet.path, "projects/jet");
         assert_eq!(jet.td_path.as_deref(), Some(".aw/tech-design/projects/jet"));
         assert_eq!(jet.label.as_deref(), Some("project:jet"));
 
@@ -884,6 +889,7 @@ test_cmd = "cargo test -p jet"
             .iter()
             .find(|project| project.name == "jet")
             .unwrap();
+        assert_eq!(jet.path, PathBuf::from("projects/jet"));
         assert_eq!(
             jet.tech_design_dir.as_deref(),
             Some(".aw/tech-design/projects/jet")
