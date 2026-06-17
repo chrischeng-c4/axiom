@@ -79,8 +79,8 @@ Markdown capability headings and tables below are machine-readable input for `aw
 |---|---:|---|---|---|---|---|
 | Static Security Scan | - | implemented | verified | smoke | ready | compass-backed security diagnostics normalized into `guard.report/1` |
 | Security Policy Profile | - | implemented | verified | smoke | ready | `guard-baseline-static/1`, `guard-security-lint/1`, and `guard-strict/1` map security diagnostics/lint into policy findings |
-| Security EC Profile | - | implemented | blocked | smoke | blocked | AW EC/health consumes guard reports as first-class security evidence |
-| Dynamic Security Evidence | - | implemented | blocked | smoke | blocked | vat/rig/meter/arena evidence adapters run and fold into `guard.report/1` |
+| Security EC Profile | - | implemented | verified | smoke | ready | AW EC/health consumes guard reports as first-class security evidence |
+| Dynamic Security Evidence | - | implemented | verified | smoke | ready | vat/rig/meter/arena evidence adapters run and fold into `guard.report/1` |
 
 ### Static Security Scan
 
@@ -128,7 +128,7 @@ Type: SecurityTool
 Surfaces: CLI: `aw ec check --project guard` + `guard scan --profile security-lint --compact --no-persist` - AW EC/health bridge and security-lint scan used as security evidence.
 EC Dimensions: security: `aw ec + guard` - AW EC treats guard reports as first-class security gate evidence
 Root WI: -
-Status: blocked
+Status: verified
 Required Verification: smoke
 Promise:
 AW EC and health treat guard output as first-class security evidence.
@@ -147,7 +147,7 @@ Type: SecurityTool
 Surfaces: CLI: `guard scan --vat-runner <id>` + `guard scan --rig-scenario <path>` + `guard scan --meter-target <path>` + `guard scan --meter-command <cmd>` - Dynamic security evidence adapters for isolated execution, exploit/e2e journeys, and resource-abuse signals.
 EC Dimensions: security: `guard + vat + rig + meter` - dynamic security evidence folded into guard.report/1 from isolated runs, exploit journeys, and resource signals
 Root WI: -
-Status: blocked
+Status: verified
 Required Verification: smoke
 Promise:
 guard will compose static findings with vat-isolated execution, rig attack journeys, meter resource evidence, and arena security-performance budgets.
