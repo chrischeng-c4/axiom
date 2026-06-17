@@ -183,8 +183,8 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Markdown capability schema | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow markdown_capability_tables` |
 | Capability readiness reporting | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow fixture_reference_can_verify_required_claim` |
-| Capability project sweep | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow capability_sweep --lib`; `aw capability sweep --human` |
-| Missing README initialization | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow capability_init --lib`; `aw capability init --project cclab-core` |
+| Capability project sweep | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib capability_sweep`; human sweep queue output reviewed through aw capability sweep |
+| Missing README initialization | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib capability_init`; README shell init behavior only, no runtime project mutation gate |
 
 ### Work Item Planning
 
@@ -230,17 +230,17 @@ Required Verification: smoke
 Promise:
 AW-managed projects keep their README, external contracts, tech designs, source, tests, and generated tool configs under the project tree by default: `td_path` is only an override, EC contracts live under `<project.path>/external-contracts`, and generated EC state does not mutate `aw.toml`.
 Gate Inventory:
-- `cargo test -p agentic-workflow --lib`; `cargo test -p agentic-workflow ec_doc`; `aw td check projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md`; `aw td check projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md`
+- `cargo test -p agentic-workflow --lib falls_back_to_project_tech_design`; `cargo test -p agentic-workflow --lib ec_context_defaults_td_root_to_project_tech_design`; `cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design`; `cargo test -p agentic-workflow --lib semantic_coverage_excludes_aw_ec_generated_wrappers`; `cargo test -p agentic-workflow --lib ec_doc`; `aw td check projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md`; `aw td check projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Project-local TD root resolver | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
-| TD lock and external-contract target resolution | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
-| CB generation and standardize scan defaults | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
-| Project dirty-scope protection | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
-| EC evidence documentation | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow ec_doc` |
-| EC external-contract source | change | #13 | implemented | verified | smoke | `aw ec draft/fill` authors `external-contracts/{behavior,efficiency,security,stability}` markdown; `aw ec gen` generates tests plus rig/meter/arena/guard/vat tool configs without writing `aw.toml` |
-| EC tool binding dispatch | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow ec_binding_command`; `cargo test -p agentic-workflow resolve_ec_command_dispatches_bound_category`; projects/agentic-workflow/tech-design/config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md; projects/agentic-workflow/tech-design/logic/aw-ec-add-vat-binding-command-support.md |
+| Project-local TD root resolver | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib falls_back_to_project_tech_design`; `aw td check projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md` |
+| TD lock and external-contract target resolution | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_context_defaults_td_root_to_project_tech_design`; `aw td check projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md` |
+| CB generation and standardize scan defaults | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md` |
+| Project dirty-scope protection | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib semantic_coverage_excludes_aw_ec_generated_wrappers`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md` |
+| EC evidence documentation | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_doc` |
+| EC external-contract source | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_manifest`; aw ec draft/fill authors project-local external-contract markdown and aw ec gen generates tests plus rig/meter/arena/guard/vat tool configs without writing aw.toml |
+| EC tool binding dispatch | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_binding_command`; `cargo test -p agentic-workflow --lib resolve_ec_command_dispatches_bound_category`; projects/agentic-workflow/tech-design/config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md; projects/agentic-workflow/tech-design/logic/aw-ec-add-vat-binding-command-support.md |
 
 ### Manual Evidence Artifacts
 
