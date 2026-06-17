@@ -126,9 +126,26 @@ pub fn register() {
 
     super::register_module("selectors", attrs);
 
-    // Bind selector instance methods (register/unregister/modify/get_key)
-    // so the errors-dimension raise contracts hold.
+    // Bind selector instance methods (register/unregister/modify/get_key/
+    // get_map/close/__enter__/__exit__) so behavior fixtures pass.
     register_selector_methods();
+
+    // `SelectorKey` is a real class so `isinstance(key, selectors.SelectorKey)`
+    // holds. Register the class and map its constructor func to the class name.
+    super::super::class::mb_class_register("SelectorKey", Vec::new(), HashMap::new());
+    // Map each selector/record constructor func to its class name so
+    // `isinstance(DefaultSelector(), selectors.BaseSelector)` and
+    // `isinstance(key, selectors.SelectorKey)` resolve through the registry.
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        let mut tn = m.borrow_mut();
+        tn.insert(d_selector_key as *const () as u64, "SelectorKey".to_string());
+        tn.insert(d_base_selector as *const () as u64, "BaseSelector".to_string());
+        tn.insert(d_default_selector as *const () as u64, "DefaultSelector".to_string());
+        tn.insert(d_select_selector as *const () as u64, "SelectSelector".to_string());
+        tn.insert(d_poll_selector as *const () as u64, "PollSelector".to_string());
+        tn.insert(d_epoll_selector as *const () as u64, "EpollSelector".to_string());
+        tn.insert(d_kqueue_selector as *const () as u64, "KqueueSelector".to_string());
+    });
 }
 
 // ── Selector class shells ──
@@ -296,6 +313,35 @@ fn method_pos(args: MbValue) -> Vec<MbValue> {
     Vec::new()
 }
 
+/// Split method positional args from a trailing kwargs dict (the method-call
+/// lowering appends inline keywords as a Dict). Returns (positionals, kwargs).
+fn split_method_kwargs(args: MbValue) -> (Vec<MbValue>, Option<MbValue>) {
+    let mut items = method_pos(args);
+    if let Some(&last) = items.last() {
+        if is_dict(last) {
+            items.pop();
+            return (items, Some(last));
+        }
+    }
+    (items, None)
+}
+
+fn is_dict(v: MbValue) -> bool {
+    v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+}
+
+/// `data=` keyword from the trailing kwargs dict, if present.
+fn kw_data(kwargs: Option<MbValue>) -> Option<MbValue> {
+    let dict = kwargs?;
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let v = super::super::dict_ops::mb_dict_get(
+        dict,
+        MbValue::from_ptr(MbObject::new_str("data".to_string())),
+        sentinel,
+    );
+    if v.to_bits() == sentinel.to_bits() { None } else { Some(v) }
+}
+
 /// Stable identity token for a fileobj used as a registration-map key:
 /// an int fileobj keys on its value (the fd); any heap object keys on its
 /// pointer identity. Mirrors CPython using `fileobj.fileno()` / the fd int,
@@ -311,10 +357,19 @@ fn fileobj_key(fileobj: MbValue) -> i64 {
     }
 }
 
-/// The fd of a fileobj for negative-fd validation: an int fileobj is its
-/// own fd; non-int fileobjs (sockets) have no negative-fd failure mode here.
+/// The integer fd of a fileobj: an int fileobj is its own fd; any other
+/// object is asked for its `.fileno()` (sockets/files return an int fd),
+/// matching CPython's `_fileobj_to_fd`.
 fn fileobj_fd(fileobj: MbValue) -> Option<i64> {
-    fileobj.as_int()
+    if let Some(n) = fileobj.as_int() {
+        return Some(n);
+    }
+    let r = super::super::class::mb_call_method(
+        fileobj,
+        MbValue::from_ptr(MbObject::new_str("fileno".to_string())),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
+    r.as_int()
 }
 
 /// Lazily fetch (or create) the instance registration List `_map`.
@@ -361,10 +416,12 @@ fn map_contains(self_v: MbValue, key: i64) -> bool {
 /// Raises `ValueError` on a bad event mask or a negative fd, and `KeyError`
 /// when `fileobj` is already registered.
 unsafe extern "C" fn m_register(self_v: MbValue, args: MbValue) -> MbValue {
-    let pos = method_pos(args);
+    let (pos, kwargs) = split_method_kwargs(args);
     let fileobj = pos.first().copied().unwrap_or_else(MbValue::none);
     let events = pos.get(1).and_then(|v| v.as_int()).unwrap_or(0);
-    let data = pos.get(2).copied().unwrap_or_else(MbValue::none);
+    let data = pos.get(2).copied()
+        .or_else(|| kw_data(kwargs))
+        .unwrap_or_else(MbValue::none);
 
     // Bad event mask: empty, or bits outside EVENT_READ|EVENT_WRITE.
     if events <= 0 || (events & !(1 | 2)) != 0 {
@@ -428,22 +485,111 @@ unsafe extern "C" fn m_unregister(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 /// selector.modify(fileobj, events, data=None) -> SelectorKey.
-/// Raises `KeyError` if `fileobj` is not registered.
+/// Re-builds the stored SelectorKey with the new events/data (CPython
+/// semantics). Raises `KeyError` if `fileobj` is not registered.
 unsafe extern "C" fn m_modify(self_v: MbValue, args: MbValue) -> MbValue {
-    let pos = method_pos(args);
+    let (pos, kwargs) = split_method_kwargs(args);
     let fileobj = pos.first().copied().unwrap_or_else(MbValue::none);
+    let events = pos.get(1).and_then(|v| v.as_int()).unwrap_or(0);
+    let data = pos.get(2).copied()
+        .or_else(|| kw_data(kwargs))
+        .unwrap_or_else(MbValue::none);
     let key = fileobj_key(fileobj);
     if !map_contains(self_v, key) {
         return raise_named("KeyError", &format!("{} is not registered", key));
     }
-    // Surface-level: re-register semantics are not modelled; return the key.
-    for pair in read_map(self_v) {
-        let parts = method_pos(pair);
-        if parts.first().and_then(|k| k.as_int()) == Some(key) {
-            return parts.get(1).copied().unwrap_or_else(MbValue::none);
+    if events <= 0 || (events & !(1 | 2)) != 0 {
+        return raise_named("ValueError", &format!("Invalid events: {}", events));
+    }
+    let fd_val = fileobj_fd(fileobj).unwrap_or(key);
+    let new_key = mb_selectors_selector_key_new(&[
+        fileobj,
+        MbValue::from_int(fd_val),
+        MbValue::from_int(events),
+        data,
+    ]);
+    // Replace the matching pair's SelectorKey in-place.
+    if let Some(ptr) = self_v.as_ptr() {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            if let Some(m) = fields.read().unwrap().get("_map").copied() {
+                if let Some(mptr) = m.as_ptr() {
+                    if let ObjData::List(ref lock) = (*mptr).data {
+                        let mut v = lock.write().unwrap();
+                        for slot in v.iter_mut() {
+                            if method_pos(*slot).first().and_then(|k| k.as_int()) == Some(key) {
+                                let pair = MbValue::from_ptr(MbObject::new_list(vec![
+                                    MbValue::from_int(key),
+                                    new_key,
+                                ]));
+                                super::super::rc::retain_if_ptr(pair);
+                                let old = *slot;
+                                *slot = pair;
+                                super::super::rc::release_if_ptr(old);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    new_key
+}
+
+/// selector.get_map() -> {fd: SelectorKey} for every registered fileobj.
+unsafe extern "C" fn m_get_map(self_v: MbValue, _args: MbValue) -> MbValue {
+    let out = MbObject::new_dict();
+    if let ObjData::Dict(ref lock) = (*out).data {
+        let mut map = lock.write().unwrap();
+        for pair in read_map(self_v) {
+            let parts = method_pos(pair);
+            if let Some(sel_key) = parts.get(1).copied() {
+                if let Some(fd) = get_field(sel_key, "fd").and_then(|v| v.as_int()) {
+                    super::super::rc::retain_if_ptr(sel_key);
+                    map.insert(super::super::dict_ops::DictKey::Int(fd), sel_key);
+                }
+            }
+        }
+    }
+    MbValue::from_ptr(out)
+}
+
+/// selector.close() -> None. Drops the registration map.
+unsafe extern "C" fn m_close(self_v: MbValue, _args: MbValue) -> MbValue {
+    if let Some(ptr) = self_v.as_ptr() {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            if let Some(m) = fields.read().unwrap().get("_map").copied() {
+                if let Some(mptr) = m.as_ptr() {
+                    if let ObjData::List(ref lock) = (*mptr).data {
+                        lock.write().unwrap().clear();
+                    }
+                }
+            }
         }
     }
     MbValue::none()
+}
+
+/// selector.__enter__() -> self (context-manager protocol).
+unsafe extern "C" fn m_enter(self_v: MbValue, _args: MbValue) -> MbValue {
+    super::super::rc::retain_if_ptr(self_v);
+    self_v
+}
+
+/// selector.__exit__(*exc) -> None (closes the selector).
+unsafe extern "C" fn m_exit(self_v: MbValue, args: MbValue) -> MbValue {
+    m_close(self_v, args)
+}
+
+/// Read an instance field off a value (selector key fd lookup).
+fn get_field(v: MbValue, name: &str) -> Option<MbValue> {
+    v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().ok()?.get(name).copied()
+        } else {
+            None
+        }
+    })
 }
 
 /// selector.get_key(fileobj) -> SelectorKey. Raises `KeyError` if unknown.
@@ -469,6 +615,10 @@ fn register_selector_methods() {
         ("unregister", m_unregister as usize),
         ("modify", m_modify as usize),
         ("get_key", m_get_key as usize),
+        ("get_map", m_get_map as usize),
+        ("close", m_close as usize),
+        ("__enter__", m_enter as usize),
+        ("__exit__", m_exit as usize),
     ];
     let mut map: HashMap<String, MbValue> = HashMap::new();
     for (name, addr) in &methods {
@@ -483,7 +633,14 @@ fn register_selector_methods() {
         "EpollSelector",
         "KqueueSelector",
     ] {
-        super::super::class::mb_class_register(class_name, Vec::new(), map.clone());
+        // Concrete selectors derive from BaseSelector so
+        // `isinstance(DefaultSelector(), selectors.BaseSelector)` holds.
+        let bases = if class_name == "BaseSelector" {
+            Vec::new()
+        } else {
+            vec!["BaseSelector".to_string()]
+        };
+        super::super::class::mb_class_register(class_name, bases, map.clone());
     }
 }
 
