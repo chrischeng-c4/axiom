@@ -50,6 +50,10 @@ pub enum EnumKind {
     /// isinstance, but `str(member)` stays the qualified "Class.NAME"
     /// (CPython 3.12 distinction).
     StrMixin,
+    /// `enum.IntEnum` / `class C(int, enum.Enum)`: members ARE their int value
+    /// (equal to it, `isinstance(_, int)`, orderable, support int arithmetic)
+    /// but remain member Instances so repr/name/value work. No Flag composites.
+    IntMixin,
 }
 
 impl EnumKind {
@@ -134,9 +138,15 @@ fn enum_kind_for(class_name: &str) -> Option<EnumKind> {
     let mut rejected = false;
     for ancestor in mro.iter().skip(1) {
         match ancestor.as_str() {
-            // Data-type mixins / metaclass bases whose members stay raw
-            // values (member-IS-its-data-type, e.g. IntEnum arithmetic).
-            "IntEnum" | "ReprEnum" | "EnumType" | "EnumMeta" | "EnumCheck" | "FlagBoundary" => {
+            // IntEnum / ReprEnum mark the int data-type mixin (handled as
+            // EnumKind::IntMixin below, so members stay Instances with
+            // repr/name/value while still behaving as their int value).
+            "IntEnum" | "ReprEnum" => {
+                saw_int = true;
+                saw_enum = true;
+            }
+            // Metaclass bases never become enum-member classes.
+            "EnumType" | "EnumMeta" | "EnumCheck" | "FlagBoundary" => {
                 rejected = true;
             }
             "IntFlag" => saw_int_flag = true,
@@ -156,9 +166,13 @@ fn enum_kind_for(class_name: &str) -> Option<EnumKind> {
         Some(EnumKind::StrEnum)
     } else if saw_str && saw_enum && !saw_flag {
         Some(EnumKind::StrMixin)
+    } else if saw_int && saw_enum && !saw_flag {
+        // IntEnum / class C(int, Enum): int data-type mixin (member Instances
+        // that behave as their int value).
+        Some(EnumKind::IntMixin)
     } else if saw_int || saw_str {
-        // Other data-type mixins (IntEnum-like int+Enum, str+Flag): members
-        // keep the pre-existing raw-value behavior.
+        // Leftover data-type mixins without Enum (e.g. str+Flag): keep the
+        // pre-existing raw-value behavior.
         None
     } else if saw_flag {
         Some(EnumKind::Flag)
@@ -418,7 +432,7 @@ pub fn members_eq_override(a: MbValue, b: MbValue) -> Option<bool> {
     };
     match kind {
         EnumKind::Plain | EnumKind::Flag => Some(false),
-        EnumKind::IntFlag => {
+        EnumKind::IntFlag | EnumKind::IntMixin => {
             let mv = member_value(member);
             Some(super::super::builtins::mb_eq(mv, raw).as_bool() == Some(true))
         }
@@ -448,9 +462,27 @@ pub fn str_mixin_member_value(v: MbValue) -> Option<MbValue> {
 /// mixin members (IntFlag → int, StrEnum/(str, Enum) → str).
 pub fn member_isinstance_builtin(v: MbValue, target: &str) -> bool {
     match member_kind(v) {
-        Some(EnumKind::IntFlag) => target == "int",
+        Some(EnumKind::IntFlag) | Some(EnumKind::IntMixin) => target == "int",
         Some(EnumKind::StrEnum) | Some(EnumKind::StrMixin) => target == "str",
         _ => false,
+    }
+}
+
+/// If `v` is an int data-type-mixin enum member (IntEnum / IntFlag), return its
+/// underlying int value, for unwrapping in arithmetic / comparison / hash so
+/// `Color.RED + 1`, `Day.MON < Day.TUE`, `hash(Color.RED) == hash(1)` work.
+/// Plain Enum / Flag / str-mixin members return None.
+pub fn int_member_value(v: MbValue) -> Option<MbValue> {
+    match member_kind(v) {
+        Some(EnumKind::IntFlag) | Some(EnumKind::IntMixin) => {
+            let mv = member_value(v);
+            if mv.as_int().is_some() {
+                Some(mv)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
