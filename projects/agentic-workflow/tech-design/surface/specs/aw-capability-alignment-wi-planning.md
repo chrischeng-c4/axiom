@@ -149,6 +149,7 @@ scenarios:
     then:
       - "init creates only a canonical README shell and does not invent capability promises"
       - "draft emits pending-review field-style capability contracts with placeholders for Type, Surfaces, EC Dimensions, Root WI, Promise, and Gate Inventory"
+      - "draft may truncate Candidate Roots summary cells, but Draft Canonical README Promise fields preserve the full source prose"
       - "apply-draft refuses unreviewed placeholder drafts and writes only reviewed canonical capability sections"
       - "report emits capability_count, verified_count, percent, claim_count, claim_percent, blockers, capabilities, and next_action"
       - "next emits exactly one next_action"
@@ -373,7 +374,7 @@ commands:
         meaning: "defaults to one bounded tick"
     behavior: "execute the next bounded capability tick"
   - path: [capability, draft]
-    behavior: "write pending-review inferred field-style capability contract drafts under /tmp without editing cap_path"
+    behavior: "write pending-review inferred field-style capability contract drafts under /tmp without editing cap_path; Candidate Roots table summaries may be truncated, while Draft Canonical README Promise fields preserve full source prose"
     mutates_tracker: false
   - path: [capability, apply-draft]
     behavior: "apply a human-reviewed placeholder-free draft to cap_path and refuse unreviewed drafts"
@@ -512,6 +513,11 @@ requirements:
     text: "aw wi plan emits claim-scoped WI candidates from required capability claims"
     risk: high
     verifymethod: test
+  draft_promise_preservation:
+    id: AW-CAP-WI-12
+    text: "aw capability draft preserves full source prose in Draft Canonical README Promise fields even when candidate summaries are truncated"
+    risk: high
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -535,6 +541,7 @@ relations:
   - { from: capability_unit_tests, to: td_capability_refs, kind: verifies }
   - { from: capability_unit_tests, to: capability_contract, kind: verifies }
   - { from: issues_unit_tests, to: claim_scoped_wi_plan, kind: verifies }
+  - { from: capability_unit_tests, to: draft_promise_preservation, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {
@@ -603,6 +610,12 @@ requirementDiagram
         risk: high
         verifymethod: test
     }
+    requirement draft_promise_preservation {
+        id: AW-CAP-WI-12
+        text: "aw capability draft preserves full Promise prose"
+        risk: high
+        verifymethod: test
+    }
     element issues_unit_tests {
         type: "cargo-test"
     }
@@ -629,6 +642,7 @@ requirementDiagram
     capability_unit_tests - verifies -> td_capability_refs
     capability_unit_tests - verifies -> capability_contract
     issues_unit_tests - verifies -> claim_scoped_wi_plan
+    capability_unit_tests - verifies -> draft_promise_preservation
 ```
 
 ## Changes
