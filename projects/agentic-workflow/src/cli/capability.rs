@@ -796,6 +796,7 @@ pub enum CapabilityActionKind {
     RunVerify,
     UpdateCapabilityStatus,
     EnvBlocked,
+    StaleProjectConfig,
     DefineVerificationContract,
     LinkClaimVerification,
     AssignCapabilityType,
@@ -1243,7 +1244,7 @@ async fn run_capability_sweep(
             Err(err) => {
                 let cap_path = capability_path_from_row(&project_root, &row)
                     .unwrap_or_else(|_| project_root.join("README.md"));
-                capability_map_read_blocked_report(
+                capability_map_read_failure_report(
                     &project,
                     cap_path,
                     ProjectTestGateReport::not_evaluated(&project),
@@ -1377,6 +1378,7 @@ fn capability_action_kind_label(kind: CapabilityActionKind) -> &'static str {
         CapabilityActionKind::RunVerify => "run_verify",
         CapabilityActionKind::UpdateCapabilityStatus => "update_capability_status",
         CapabilityActionKind::EnvBlocked => "env_blocked",
+        CapabilityActionKind::StaleProjectConfig => "stale_project_config",
         CapabilityActionKind::DefineVerificationContract => "define_verification_contract",
         CapabilityActionKind::LinkClaimVerification => "link_claim_verification",
         CapabilityActionKind::AssignCapabilityType => "assign_capability_type",
@@ -2310,7 +2312,7 @@ async fn build_capability_report_inner(
     let cap_body = match std::fs::read_to_string(&cap_path) {
         Ok(body) => body,
         Err(err) => {
-            return Ok(capability_map_read_blocked_report(
+            return Ok(capability_map_read_failure_report(
                 project,
                 cap_path,
                 test_gates,
@@ -2520,6 +2522,34 @@ async fn build_capability_report_inner(
     Ok(report)
 }
 
+fn capability_map_read_failure_report(
+    project: &str,
+    cap_path: PathBuf,
+    test_gates: ProjectTestGateReport,
+    reason: String,
+) -> CapabilityReport {
+    if let Some(parent) = missing_capability_map_parent(&cap_path) {
+        return capability_map_stale_project_config_report(
+            project,
+            cap_path,
+            test_gates,
+            format!(
+                "{reason}; configured capability map parent directory does not exist: {}",
+                parent.display()
+            ),
+        );
+    }
+    capability_map_read_blocked_report(project, cap_path, test_gates, reason)
+}
+
+fn missing_capability_map_parent(cap_path: &Path) -> Option<PathBuf> {
+    cap_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.exists())
+        .map(Path::to_path_buf)
+}
+
 fn capability_map_read_blocked_report(
     project: &str,
     cap_path: PathBuf,
@@ -2529,6 +2559,51 @@ fn capability_map_read_blocked_report(
     let target = cap_path.display().to_string();
     let next_action = CapabilityAction {
         kind: CapabilityActionKind::EnvBlocked,
+        capability_id: None,
+        gap_id: None,
+        claim_id: None,
+        target: target.clone(),
+        command: format!("aw capability report --project {project}"),
+        reason: reason.clone(),
+        requires_hitl: true,
+        hitl_question: Some(capability_map_config_hitl_question(
+            project, &target, &reason,
+        )),
+    };
+    CapabilityReport {
+        action: "capability",
+        project: project.to_string(),
+        cap_path,
+        format_version: 0,
+        status: "blocked".to_string(),
+        test_gates,
+        production_ready: false,
+        production_status: ProductionStatus::NotEvaluated,
+        production_scope: Vec::new(),
+        production_blockers: vec![reason.clone()],
+        capability_count: 0,
+        verified_count: 0,
+        percent: 0.0,
+        claim_count: 0,
+        verified_claim_count: 0,
+        claim_percent: 0.0,
+        capabilities: Vec::new(),
+        blockers: vec![reason],
+        warnings: Vec::new(),
+        next_action,
+        run_results: Vec::new(),
+    }
+}
+
+fn capability_map_stale_project_config_report(
+    project: &str,
+    cap_path: PathBuf,
+    test_gates: ProjectTestGateReport,
+    reason: String,
+) -> CapabilityReport {
+    let target = cap_path.display().to_string();
+    let next_action = CapabilityAction {
+        kind: CapabilityActionKind::StaleProjectConfig,
         capability_id: None,
         gap_id: None,
         claim_id: None,
@@ -7429,6 +7504,35 @@ mod tests {
                 .as_deref(),
             Some("fix_config")
         );
+        let summary = capability_summary(&report, false);
+        assert_eq!(summary["status"].as_str(), Some("blocked"));
+        assert_eq!(summary["next"]["kind"].as_str(), Some("hitl"));
+    }
+
+    #[test]
+    fn missing_capability_parent_reports_stale_project_config() {
+        let missing_capability_path = PathBuf::from("__missing_capability_parent__/README.md");
+        let report = capability_map_read_failure_report(
+            "cclab-array",
+            missing_capability_path,
+            ProjectTestGateReport::not_evaluated("cclab-array"),
+            "failed to read capability map: No such file or directory".to_string(),
+        );
+
+        assert_eq!(report.status, "blocked");
+        assert_eq!(
+            report.next_action.kind,
+            CapabilityActionKind::StaleProjectConfig
+        );
+        assert_eq!(
+            capability_action_kind_label(report.next_action.kind),
+            "stale_project_config"
+        );
+        assert!(report.next_action.requires_hitl);
+        assert!(report
+            .next_action
+            .reason
+            .contains("configured capability map parent directory does not exist"));
         let summary = capability_summary(&report, false);
         assert_eq!(summary["status"].as_str(), Some("blocked"));
         assert_eq!(summary["next"]["kind"].as_str(), Some("hitl"));
