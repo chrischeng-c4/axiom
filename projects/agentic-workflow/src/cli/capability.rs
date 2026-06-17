@@ -256,6 +256,9 @@ pub struct CapabilitySweepArgs {
     /// Write pending-review WI planning artifacts for create-WI projects.
     #[arg(long = "write-wi-plans")]
     pub write_wi_plans: bool,
+    /// Write an execution queue for non-HITL next actions not covered by draft/WI-plan queues.
+    #[arg(long = "write-action-queue")]
+    pub write_action_queue: bool,
     /// DEPRECATED compatibility no-op. Capability sweep emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -1088,6 +1091,7 @@ pub struct CapabilitySweepReport {
     pub include_issue_inventory: bool,
     pub write_drafts: bool,
     pub write_wi_plans: bool,
+    pub write_action_queue: bool,
     pub groups: Vec<CapabilitySweepGroup>,
     pub projects: Vec<CapabilitySweepProject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1098,6 +1102,21 @@ pub struct CapabilitySweepReport {
     pub wi_plans: Vec<crate::cli::issues::CapabilityWiPlanReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wi_plan_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub action_queue: Vec<CapabilityActionQueueEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_queue_index_path: Option<PathBuf>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityActionQueueEntry {
+    pub project: String,
+    pub action_kind: &'static str,
+    pub action_group: String,
+    pub target: String,
+    pub command: String,
+    pub reason: String,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -1767,6 +1786,12 @@ async fn run_capability_sweep(
         sweep.wi_plans = write_capability_sweep_wi_plans(&sweep.projects).await?;
         sweep.wi_plan_index_path = write_capability_sweep_wi_plan_index(&sweep.wi_plans)?;
     }
+    if args.write_action_queue {
+        sweep.write_action_queue = true;
+        sweep.action_queue = capability_sweep_action_queue(&sweep.projects);
+        sweep.action_queue_index_path =
+            write_capability_sweep_action_queue_index(&sweep.action_queue)?;
+    }
     if args.human {
         print_capability_sweep(&sweep);
     } else if args.pretty || args.json {
@@ -1830,12 +1855,15 @@ fn capability_sweep_report(
         include_issue_inventory,
         write_drafts: false,
         write_wi_plans: false,
+        write_action_queue: false,
         groups: capability_sweep_groups(&projects),
         projects,
         drafts: Vec::new(),
         draft_index_path: None,
         wi_plans: Vec::new(),
         wi_plan_index_path: None,
+        action_queue: Vec::new(),
+        action_queue_index_path: None,
     }
 }
 
@@ -1962,6 +1990,84 @@ fn render_capability_sweep_wi_plan_index(
     out.push_str("- Treat the capability README as the confirmed anchor.\n");
     out.push_str("- Review candidates before using `aw wi draft init` or `aw wi create`.\n");
     out.push_str("- When the issue backend is unavailable, keep the artifact local/review-only.\n");
+    out
+}
+
+fn capability_sweep_action_queue(
+    projects: &[CapabilitySweepProject],
+) -> Vec<CapabilityActionQueueEntry> {
+    projects
+        .iter()
+        .filter(|project| is_capability_executable_action(&project.next_action))
+        .map(|project| CapabilityActionQueueEntry {
+            project: project.project.clone(),
+            action_kind: project.next_action_kind,
+            action_group: project.next_action_group.clone(),
+            target: project.next_action.target.clone(),
+            command: project.next_action.command.clone(),
+            reason: project.next_action.reason.clone(),
+        })
+        .collect()
+}
+
+fn is_capability_executable_action(action: &CapabilityAction) -> bool {
+    let command = action.command.trim();
+    !action.requires_hitl
+        && !command.is_empty()
+        && !is_capability_draft_action(action)
+        && !is_capability_wi_plan_action(action)
+}
+
+fn write_capability_sweep_action_queue_index(
+    entries: &[CapabilityActionQueueEntry],
+) -> Result<Option<PathBuf>> {
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp")
+        .join("aw")
+        .join("capability-action-queue");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-action-queue.md"));
+    std::fs::write(&path, render_capability_sweep_action_queue_index(entries)).with_context(
+        || {
+            format!(
+                "failed to write capability action queue index {}",
+                path.display()
+            )
+        },
+    )?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_action_queue_index(entries: &[CapabilityActionQueueEntry]) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_action_queue\n");
+    out.push_str("status: pending_execution\n");
+    out.push_str(&format!("action_count: {}\n", entries.len()));
+    out.push_str("---\n\n");
+    out.push_str("# Capability Action Queue\n\n");
+    out.push_str("These commands are non-HITL next actions that are not covered by the draft or WI-plan review queues. Execute one at a time and re-run `aw capability sweep --human` after each material change.\n\n");
+    out.push_str("| Project | Action | Target | Command | Reason |\n");
+    out.push_str("|---|---|---|---|---|\n");
+    for entry in entries {
+        out.push_str(&format!(
+            "| {} | {} | {} | `{}` | {} |\n",
+            markdown_cell(&entry.project),
+            markdown_cell(&entry.action_group),
+            markdown_cell(&entry.target),
+            markdown_cell(&entry.command),
+            markdown_cell(&entry.reason),
+        ));
+    }
+    out.push_str("\n## Execution Guardrails\n\n");
+    out.push_str("- Execute one command at a time; do not batch lifecycle mutations blindly.\n");
+    out.push_str(
+        "- Re-run `aw capability sweep --human` after each command to refresh the queue.\n",
+    );
+    out.push_str("- If a command mutates README, TD, CB, or source, run the relevant capability check before publishing.\n");
     out
 }
 
@@ -2133,6 +2239,18 @@ fn print_capability_sweep(sweep: &CapabilitySweepReport) {
                 plan.project,
                 plan.candidate_count,
                 plan.path.display()
+            );
+        }
+    }
+    if sweep.write_action_queue {
+        println!("action queue [{}]", sweep.action_queue.len());
+        if let Some(path) = &sweep.action_queue_index_path {
+            println!("action queue index {}", path.display());
+        }
+        for entry in &sweep.action_queue {
+            println!(
+                "action:{} {} {}",
+                entry.project, entry.action_group, entry.command
             );
         }
     }
@@ -9067,6 +9185,61 @@ Gate Inventory:
     }
 
     #[test]
+    fn capability_sweep_action_queue_selects_executable_next_actions() {
+        let mut td_ready = sample_report(sample_action(
+            CapabilityActionKind::RunTd,
+            "aw td create 3783",
+            false,
+        ));
+        td_ready.project = "jet".to_string();
+
+        let mut verify_ready = sample_report(sample_action(
+            CapabilityActionKind::RunVerify,
+            "aw capability report --project meter --verify",
+            false,
+        ));
+        verify_ready.project = "meter".to_string();
+
+        let mut planable = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project lumen",
+            false,
+        ));
+        planable.project = "lumen".to_string();
+
+        let mut draftable = sample_report(sample_action(
+            CapabilityActionKind::DefineCapabilityMap,
+            "aw capability draft --project mamba",
+            true,
+        ));
+        draftable.project = "mamba".to_string();
+
+        let sweep =
+            capability_sweep_report(&[td_ready, verify_ready, planable, draftable], false, false);
+
+        let queue = capability_sweep_action_queue(&sweep.projects)
+            .into_iter()
+            .map(|entry| (entry.project, entry.action_group, entry.command))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            queue,
+            vec![
+                (
+                    "jet".to_string(),
+                    "run_td".to_string(),
+                    "aw td create 3783".to_string()
+                ),
+                (
+                    "meter".to_string(),
+                    "run_verify".to_string(),
+                    "aw capability report --project meter --verify".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn capability_sweep_draft_index_lists_review_queue() {
         let index = render_capability_sweep_draft_index(&[CapabilityDraftReport {
             schema_version: "aw.cli.v1",
@@ -9120,6 +9293,35 @@ Gate Inventory:
         assert!(index.contains("/tmp/aw/lumen/capability-plan/plan.md"));
         assert!(index.contains("`aw wi plan --project lumen`"));
         assert!(index.contains("keep the artifact local/review-only"));
+    }
+
+    #[test]
+    fn capability_sweep_action_queue_index_lists_executable_commands() {
+        let index = render_capability_sweep_action_queue_index(&[
+            CapabilityActionQueueEntry {
+                project: "jet".to_string(),
+                action_kind: "run_td",
+                action_group: "run_td".to_string(),
+                target: "WASM And Multi-Target Execution".to_string(),
+                command: "aw td create 3783".to_string(),
+                reason: "active WI exists; continue WI -> TD -> CB lifecycle".to_string(),
+            },
+            CapabilityActionQueueEntry {
+                project: "meter".to_string(),
+                action_kind: "run_verify",
+                action_group: "run_verify".to_string(),
+                target: "Runtime Resource Attribution".to_string(),
+                command: "aw capability report --project meter --verify".to_string(),
+                reason: "runtime verification must be rerun".to_string(),
+            },
+        ]);
+
+        assert!(index.contains("kind: capability_action_queue"));
+        assert!(index.contains("action_count: 2"));
+        assert!(index
+            .contains("| jet | run_td | WASM And Multi-Target Execution | `aw td create 3783` |"));
+        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify` |"));
+        assert!(index.contains("Execute one command at a time"));
     }
 
     #[test]
