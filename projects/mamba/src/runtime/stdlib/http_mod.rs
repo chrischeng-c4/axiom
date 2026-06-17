@@ -2249,6 +2249,13 @@ unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> Mb
                 "selector".into(),
                 MbValue::from_ptr(MbObject::new_str(selector)),
             );
+            // fragment: the part after '#', or None when absent (CPython 3.12+).
+            // Not sent on the wire, but exposed as `req.fragment`.
+            let fragment = match url.split_once('#') {
+                Some((_, frag)) => MbValue::from_ptr(MbObject::new_str(frag.to_string())),
+                None => MbValue::none(),
+            };
+            f.insert("fragment".into(), fragment);
             f.insert("data".into(), data);
             f.insert("method".into(), method);
             f.insert("unverifiable".into(), MbValue::from_bool(false));
@@ -2310,7 +2317,9 @@ unsafe extern "C" fn rm_get_header(self_v: MbValue, args: MbValue) -> MbValue {
     if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
         unsafe {
             if let ObjData::Dict(ref lock) = (*hd).data {
-                if let Some(v) = lock.read().unwrap().get(capitalize_header(&name).as_str()) {
+                // CPython get_header does an EXACT lookup; only add_header
+                // capitalizes (on store). Do not capitalize the query.
+                if let Some(v) = lock.read().unwrap().get(name.as_str()) {
                     let v = *v;
                     super::super::rc::retain_if_ptr(v);
                     return v;
@@ -2328,10 +2337,10 @@ unsafe extern "C" fn rm_has_header(self_v: MbValue, args: MbValue) -> MbValue {
     if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
         unsafe {
             if let ObjData::Dict(ref lock) = (*hd).data {
+                // CPython has_header is an EXACT membership test; only
+                // add_header capitalizes (on store). No query capitalization.
                 return MbValue::from_bool(
-                    lock.read()
-                        .unwrap()
-                        .contains_key(capitalize_header(&name).as_str()),
+                    lock.read().unwrap().contains_key(name.as_str()),
                 );
             }
         }
