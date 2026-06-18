@@ -42,6 +42,36 @@ unsafe extern "C" fn dispatch_mp_stub(_args_ptr: *const MbValue, _nargs: usize) 
     MbValue::from_ptr(MbObject::new_dict())
 }
 
+/// multiprocessing.get_context(method=None) — validates the start method.
+/// An unknown method name is a ValueError (CPython), otherwise return the
+/// identity-stable context stub.
+unsafe extern "C" fn dispatch_get_context(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(method) = a.first().copied() {
+        if !method.is_none() {
+            let name = method.as_ptr().and_then(|p| unsafe {
+                if let super::super::rc::ObjData::Str(ref s) = (*p).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            });
+            if let Some(s) = name {
+                if !matches!(s.as_str(), "fork" | "spawn" | "forkserver") {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "cannot find context for '{s}'"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_dict())
+}
+
 /// Register the multiprocessing module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -125,8 +155,13 @@ pub fn register() {
     for name in MP_SURFACE_NAMES {
         attrs.insert((*name).into(), MbValue::from_func(addr_stub));
     }
+    // get_context validates its start-method argument (override the stub).
+    let addr_get_context = dispatch_get_context as *const () as usize;
+    attrs.insert("get_context".into(), MbValue::from_func(addr_get_context));
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        s.borrow_mut().insert(addr_stub as u64);
+        let mut set = s.borrow_mut();
+        set.insert(addr_stub as u64);
+        set.insert(addr_get_context as u64);
     });
 
     super::register_module("multiprocessing", attrs);
