@@ -3345,6 +3345,7 @@ struct CapabilityRow {
     ec_dimensions: String,
     current_state: String,
     gaps: String,
+    root_wi: String,
     active_wi: String,
     evidence: String,
     claim_id: Option<String>,
@@ -3485,6 +3486,7 @@ pub(crate) async fn build_capability_wi_plan_report(
                 ec_dimensions: row.ec_dimensions,
                 current_state: row.current_state,
                 gaps: row.gaps,
+                root_wi: row.root_wi,
                 active_wi: row.active_wi,
                 evidence: row.evidence,
                 claim_id: row.claim_id,
@@ -4183,6 +4185,7 @@ fn parse_capability_map(body: &str) -> Result<CapabilityMap> {
                     .unwrap_or_else(|| "-".to_string()),
                 current_state: table_cell(&cells, indices.current_state),
                 gaps: table_cell(&cells, indices.gaps),
+                root_wi: "-".to_string(),
                 active_wi: table_cell(&cells, indices.active_wi),
                 evidence: table_cell(&cells, indices.evidence),
                 claim_id: None,
@@ -4307,11 +4310,11 @@ fn extract_project_health_note(body: &str) -> Option<String> {
 }
 
 fn has_active_wi_ref(row: &CapabilityRow) -> bool {
-    !is_empty_active_wi(&row.active_wi.to_ascii_lowercase())
+    !capability_wi_summary_refs(row).is_empty()
 }
 
 fn active_wi_refs_text(row: &CapabilityRow) -> String {
-    let refs = active_wi_summary_refs(row);
+    let refs = capability_wi_summary_refs(row);
     if refs.is_empty() {
         review_summary_cell(&row.active_wi)
     } else {
@@ -4325,25 +4328,26 @@ fn capability_tracker_reconciliations(
     resolved_wi_refs: &BTreeMap<String, CapabilityTrackerRefLookup>,
 ) -> Vec<CapabilityTrackerReconciliation> {
     rows.iter()
-        .filter(|row| {
-            has_actionable_gap(row)
-                && has_active_wi_ref(row)
-                && matching_issues_for_capability(row, issues).is_empty()
-        })
-        .map(|row| CapabilityTrackerReconciliation {
-            capability: row.capability.clone(),
-            claim: row
-                .claim_id
-                .as_deref()
-                .or(row.claim_user_story.as_deref())
-                .unwrap_or("-")
-                .to_string(),
-            active_wi: active_wi_refs_text(row),
-            tracker_lookup: tracker_lookup_summary(row, resolved_wi_refs),
-            capability_gap: row.gaps.clone(),
-            next_action:
-                "resolve whether the README WI ref is closed, moved, mislabeled, or should be replaced after human review"
+        .filter_map(|row| {
+            let missing_refs = missing_wi_refs_for_row(row, issues);
+            if !(has_actionable_gap(row) && !missing_refs.is_empty()) {
+                return None;
+            }
+            Some(CapabilityTrackerReconciliation {
+                capability: row.capability.clone(),
+                claim: row
+                    .claim_id
+                    .as_deref()
+                    .or(row.claim_user_story.as_deref())
+                    .unwrap_or("-")
                     .to_string(),
+                active_wi: missing_refs.join(", "),
+                tracker_lookup: tracker_lookup_summary(&missing_refs, resolved_wi_refs),
+                capability_gap: row.gaps.clone(),
+                next_action:
+                    "resolve whether the README WI ref is closed, moved, mislabeled, or should be replaced after human review"
+                        .to_string(),
+            })
         })
         .collect()
 }
@@ -4355,13 +4359,10 @@ async fn resolve_capability_tracker_ref_lookups(
 ) -> BTreeMap<String, CapabilityTrackerRefLookup> {
     let mut refs = BTreeSet::new();
     for row in rows {
-        if !(has_actionable_gap(row)
-            && has_active_wi_ref(row)
-            && matching_issues_for_capability(row, issues).is_empty())
-        {
+        if !has_actionable_gap(row) {
             continue;
         }
-        for reference in active_wi_summary_refs(row) {
+        for reference in missing_wi_refs_for_row(row, issues) {
             refs.insert(reference);
         }
     }
@@ -4419,12 +4420,12 @@ fn tracker_ref_lookup_id(reference: &str) -> Option<String> {
 }
 
 fn tracker_lookup_summary(
-    row: &CapabilityRow,
+    references: &[String],
     resolved_wi_refs: &BTreeMap<String, CapabilityTrackerRefLookup>,
 ) -> String {
-    let summaries = active_wi_summary_refs(row)
-        .into_iter()
-        .map(|reference| match resolved_wi_refs.get(&reference) {
+    let summaries = references
+        .iter()
+        .map(|reference| match resolved_wi_refs.get(reference) {
             Some(lookup) => {
                 if lookup.title == "-" {
                     format!("{}: {}", reference, lookup.status)
@@ -4509,7 +4510,7 @@ fn capability_plan_summary_rows(
             });
         let summary = &mut summaries[position];
         summary.candidate_count += row_candidates.len();
-        for reference in active_wi_summary_refs(row) {
+        for reference in capability_wi_summary_refs(row) {
             if !summary.existing_wi_refs.contains(&reference) {
                 summary.existing_wi_refs.push(reference);
             }
@@ -4520,38 +4521,72 @@ fn capability_plan_summary_rows(
                 summary.existing_wi_refs.push(reference);
             }
         }
-        let operator =
-            suggested_capability_operator(row, &matching_issues_for_capability(row, issues));
+        let operator = suggested_capability_operator(row, issues);
         summary.next_operator = merge_capability_plan_operator(&summary.next_operator, operator);
         if summary.first_action == "monitor" {
             if let Some(candidate) = row_candidates.first() {
                 summary.first_action = candidate.title.clone();
-            } else if has_actionable_gap(row) && has_active_wi_ref(row) && matches.is_empty() {
-                summary.first_action =
-                    format!("Reconcile WI reference: {}", active_wi_refs_text(row));
-            } else if has_actionable_gap(row) {
-                summary.first_action = row.gaps.clone();
-            } else if !summary.existing_wi_refs.is_empty() {
-                summary.first_action = "review existing WI linkage".to_string();
+            } else {
+                let missing_refs = missing_wi_refs_for_row(row, issues);
+                if has_actionable_gap(row) && !missing_refs.is_empty() {
+                    summary.first_action =
+                        format!("Reconcile WI reference: {}", missing_refs.join(", "));
+                } else if has_actionable_gap(row) {
+                    summary.first_action = row.gaps.clone();
+                } else if !summary.existing_wi_refs.is_empty() {
+                    summary.first_action = "review existing WI linkage".to_string();
+                }
             }
         }
     }
     summaries
 }
 
-fn active_wi_summary_refs(row: &CapabilityRow) -> Vec<String> {
-    if is_empty_active_wi(&row.active_wi.to_ascii_lowercase()) {
+fn capability_wi_summary_refs(row: &CapabilityRow) -> Vec<String> {
+    let mut refs = wi_summary_refs_from_text(&row.root_wi);
+    for reference in wi_summary_refs_from_text(&row.active_wi) {
+        if !refs.contains(&reference) {
+            refs.push(reference);
+        }
+    }
+    refs
+}
+
+fn missing_wi_refs_for_row(row: &CapabilityRow, issues: &[Issue]) -> Vec<String> {
+    capability_wi_summary_refs(row)
+        .into_iter()
+        .filter(|reference| {
+            !issues
+                .iter()
+                .any(|issue| issue_matches_wi_reference(reference, issue))
+        })
+        .collect()
+}
+
+fn issue_matches_wi_reference(reference: &str, issue: &Issue) -> bool {
+    if let Some(id) = tracker_ref_lookup_id(reference).and_then(|id| id.parse::<u64>().ok()) {
+        return issue.github_id.or(issue.gitlab_id) == Some(id);
+    }
+    let reference_lower = reference.to_ascii_lowercase();
+    let issue_ref = issue_ref(issue).to_ascii_lowercase();
+    let issue_slug = issue.slug.to_ascii_lowercase();
+    let title = issue.title.to_ascii_lowercase();
+    reference_lower.contains(&issue_ref)
+        || reference_lower.contains(&issue_slug)
+        || (!title.is_empty() && reference_lower.contains(&title))
+}
+
+fn wi_summary_refs_from_text(text: &str) -> Vec<String> {
+    if is_empty_active_wi(&text.to_ascii_lowercase()) {
         return Vec::new();
     }
-    let mut numbers = extract_hash_numbers(&row.active_wi)
-        .into_iter()
-        .collect::<Vec<_>>();
+    let mut numbers = extract_hash_numbers(text).into_iter().collect::<Vec<_>>();
     if numbers.is_empty() {
-        numbers = extract_active_wi_numbers(&row.active_wi);
+        numbers = extract_active_wi_numbers(text);
     }
     numbers.sort_unstable();
     if numbers.is_empty() {
-        vec![review_summary_cell(&row.active_wi)]
+        vec![review_summary_cell(text)]
     } else {
         numbers
             .into_iter()
@@ -4642,7 +4677,10 @@ fn infer_candidate_issue_type(gap: &str) -> &'static str {
 fn matching_issues_for_capability<'a>(row: &CapabilityRow, issues: &'a [Issue]) -> Vec<&'a Issue> {
     let mut explicit_numbers = extract_hash_numbers(&row.active_wi);
     explicit_numbers.extend(extract_active_wi_numbers(&row.active_wi));
+    explicit_numbers.extend(extract_hash_numbers(&row.root_wi));
+    explicit_numbers.extend(extract_active_wi_numbers(&row.root_wi));
     let active_wi_lower = row.active_wi.to_ascii_lowercase();
+    let root_wi_lower = row.root_wi.to_ascii_lowercase();
     let keywords = capability_keywords(row);
 
     issues
@@ -4656,12 +4694,15 @@ fn matching_issues_for_capability<'a>(row: &CapabilityRow, issues: &'a [Issue]) 
                 return true;
             }
 
-            if !is_empty_active_wi(&active_wi_lower) {
+            if !is_empty_active_wi(&active_wi_lower) || !is_empty_active_wi(&root_wi_lower) {
                 let issue_ref = issue_ref(issue).to_ascii_lowercase();
                 let title = issue.title.to_ascii_lowercase();
                 if active_wi_lower.contains(&issue_ref)
                     || active_wi_lower.contains(&issue.slug.to_ascii_lowercase())
                     || (!title.is_empty() && active_wi_lower.contains(&title))
+                    || root_wi_lower.contains(&issue_ref)
+                    || root_wi_lower.contains(&issue.slug.to_ascii_lowercase())
+                    || (!title.is_empty() && root_wi_lower.contains(&title))
                 {
                     return true;
                 }
@@ -4758,10 +4799,11 @@ fn capability_keywords(row: &CapabilityRow) -> Vec<String> {
     keywords
 }
 
-fn suggested_capability_operator(row: &CapabilityRow, matches: &[&Issue]) -> &'static str {
+fn suggested_capability_operator(row: &CapabilityRow, issues: &[Issue]) -> &'static str {
+    let matches = matching_issues_for_capability(row, issues);
     if !has_actionable_gap(row) {
         "monitor"
-    } else if matches.is_empty() && has_active_wi_ref(row) {
+    } else if !missing_wi_refs_for_row(row, issues).is_empty() {
         "reconcile tracker ref"
     } else if matches.is_empty() {
         "epicize -> atomize"
@@ -4968,9 +5010,9 @@ fn render_capability_wi_plan(
             ),
             markdown_table_cell(&row.current_state),
             markdown_table_cell(&row.gaps),
-            markdown_table_cell(&row.active_wi),
+            markdown_table_cell(&active_wi_refs_text(row)),
             markdown_table_cell(&issue_refs(&matches)),
-            suggested_capability_operator(row, &matches),
+            suggested_capability_operator(row, issues),
             markdown_table_cell(&row.evidence)
         ));
     }
@@ -6394,6 +6436,7 @@ Generator ownership is complete; package-manager roadmap remains open.
                     ec_dimensions: "behavior: `jet test` - package manager conformance<br>efficiency: `meter` - install profile".to_string(),
                     current_state: "Works for lockfile installs".to_string(),
                     gaps: "peer dependency roadmap missing".to_string(),
+                    root_wi: "none".to_string(),
                     active_wi: "none".to_string(),
                     evidence: "README".to_string(),
                     claim_id: None,
@@ -6406,6 +6449,7 @@ Generator ownership is complete; package-manager roadmap remains open.
                     ec_dimensions: "-".to_string(),
                     current_state: "HMR works".to_string(),
                     gaps: "none".to_string(),
+                    root_wi: "none".to_string(),
                     active_wi: "none".to_string(),
                     evidence: "tests".to_string(),
                     claim_id: None,
@@ -6477,6 +6521,7 @@ Generator ownership is complete; package-manager roadmap remains open.
                 ec_dimensions: "behavior: `jet test`".to_string(),
                 current_state: "Install surface exists".to_string(),
                 gaps: "claim package-manager-readiness: package readiness needs proof".to_string(),
+                root_wi: "none".to_string(),
                 active_wi: "#3779".to_string(),
                 evidence: "claim gate: cargo test -p jet --lib pkg_manager".to_string(),
                 claim_id: Some("package-manager-readiness".to_string()),
@@ -6490,6 +6535,7 @@ Generator ownership is complete; package-manager roadmap remains open.
                 current_state: "Workspace support exists".to_string(),
                 gaps: "claim package-manager-workspace-parity: workspace parity needs proof"
                     .to_string(),
+                root_wi: "none".to_string(),
                 active_wi: "3780".to_string(),
                 evidence: "claim gate: cargo test -p jet --lib pkg_manager::workspace".to_string(),
                 claim_id: Some("package-manager-workspace-parity".to_string()),
@@ -6553,6 +6599,64 @@ Generator ownership is complete; package-manager roadmap remains open.
     }
 
     #[test]
+    fn capability_plan_reconciles_stale_root_wi_refs() {
+        let row = CapabilityRow {
+            capability: "C1. Py3.12 functional parity".to_string(),
+            capability_type: "RuntimeTool".to_string(),
+            surfaces: "CLI: `mamba test`".to_string(),
+            ec_dimensions: "behavior: `cargo test -p mamba`".to_string(),
+            current_state: "Root WI: #3331; Gate inventory: cargo test -p mamba".to_string(),
+            gaps: "claim python-3-12-parity-gate: Python 3.12 parity gate".to_string(),
+            root_wi: "#3331".to_string(),
+            active_wi: "#31, #33".to_string(),
+            evidence: "claim gate: cargo test -p mamba".to_string(),
+            claim_id: Some("python-3-12-parity-gate".to_string()),
+            claim_user_story: None,
+        };
+        let issues = vec![
+            planning_issue(
+                IssueType::Enhancement,
+                "mamba: collections.abc mixin 方法合成",
+                Some("p1"),
+                31,
+            ),
+            planning_issue(
+                IssueType::Enhancement,
+                "mamba: 動態 dispatch 的 user-function kwargs binding",
+                Some("p2"),
+                33,
+            ),
+        ];
+        let candidates = capability_wi_candidates(std::slice::from_ref(&row), &issues);
+        let mut resolved_wi_refs = BTreeMap::new();
+        resolved_wi_refs.insert(
+            "#3331".to_string(),
+            CapabilityTrackerRefLookup {
+                reference: "#3331".to_string(),
+                status: "not_found".to_string(),
+                title: "-".to_string(),
+                labels: "-".to_string(),
+                url: "-".to_string(),
+            },
+        );
+        let reconciliations = capability_tracker_reconciliations(
+            std::slice::from_ref(&row),
+            &issues,
+            &resolved_wi_refs,
+        );
+        let summary =
+            capability_plan_summary_rows(std::slice::from_ref(&row), &issues, &candidates);
+
+        assert!(candidates.is_empty());
+        assert_eq!(reconciliations.len(), 1);
+        assert_eq!(reconciliations[0].active_wi, "#3331");
+        assert_eq!(reconciliations[0].tracker_lookup, "#3331: not_found");
+        assert_eq!(summary[0].existing_wi_refs, vec!["#3331", "#31", "#33"]);
+        assert_eq!(summary[0].next_operator, "reconcile tracker ref");
+        assert_eq!(summary[0].first_action, "Reconcile WI reference: #3331");
+    }
+
+    #[test]
     fn capability_wi_plan_command_preserves_cap_path_override() {
         let command =
             capability_wi_plan_command("lumen", Some(Path::new("/tmp/aw plan/lumen README.md")));
@@ -6572,6 +6676,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             ec_dimensions: "behavior: `jet test`".to_string(),
             current_state: "Works for lockfile installs".to_string(),
             gaps: "peer dependency roadmap missing".to_string(),
+            root_wi: "none".to_string(),
             active_wi: "#42".to_string(),
             evidence: "README".to_string(),
             claim_id: None,
@@ -6595,6 +6700,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             ec_dimensions: "behavior: `rig`".to_string(),
             current_state: "Query path exists".to_string(),
             gaps: "deep-page chain needs proof".to_string(),
+            root_wi: "none".to_string(),
             active_wi: "4141".to_string(),
             evidence: "README".to_string(),
             claim_id: None,
@@ -6618,6 +6724,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             ec_dimensions: "behavior: `jet test`".to_string(),
             current_state: "Install surface exists".to_string(),
             gaps: "claim package-manager-workspace-parity: workspace package discovery needs a bounded verification WI".to_string(),
+            root_wi: "none".to_string(),
             active_wi: "#3779".to_string(),
             evidence: "claim gate: cargo test -p jet pkg_manager::workspace".to_string(),
             claim_id: Some("package-manager-workspace-parity".to_string()),

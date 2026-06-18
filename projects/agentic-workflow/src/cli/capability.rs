@@ -10967,6 +10967,7 @@ pub struct CapabilityWiPlanRow {
     pub ec_dimensions: String,
     pub current_state: String,
     pub gaps: String,
+    pub root_wi: String,
     pub active_wi: String,
     pub evidence: String,
     pub claim_id: Option<String>,
@@ -11019,6 +11020,7 @@ pub fn capability_rows_for_wi_plan(
                     } else {
                         format!("claim {}: {}", claim.id, claim.user_story)
                     },
+                    root_wi: active_wi_for_capability(capability),
                     active_wi: active_wi_for_claim(capability, work_root),
                     evidence: claim_wi_plan_evidence(claim),
                     claim_id: Some(claim.id.clone()),
@@ -11058,6 +11060,7 @@ pub fn capability_rows_for_wi_plan(
                 } else {
                     gap_summary
                 },
+                root_wi: active_wi_for_capability(capability),
                 active_wi: if active_wi.is_empty() {
                     "none".to_string()
                 } else {
