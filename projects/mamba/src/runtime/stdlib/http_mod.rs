@@ -24,9 +24,23 @@ unsafe extern "C" fn dispatch_empty_str(_a: *const MbValue, _n: usize) -> MbValu
 
 unsafe extern "C" fn dispatch_quote(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_quote(
-        a.get(0).copied().unwrap_or_else(MbValue::none),
-        a.get(1).copied().unwrap_or_else(MbValue::none),
+    // quote(string, safe='/', encoding=None, errors=None). Keyword args arrive
+    // as a trailing kwargs dict (quote/unquote are in the native-kwargs
+    // allowlist); fall back to positional slots otherwise.
+    let (pos, kw) = split_trailing_kwargs(a);
+    let mut safe = pos.get(1).copied().unwrap_or_else(MbValue::none);
+    let mut encoding = pos.get(2).copied().unwrap_or_else(MbValue::none);
+    let mut errors = pos.get(3).copied().unwrap_or_else(MbValue::none);
+    if let Some(kw) = kw {
+        if let Some(v) = dict_kw_get(kw, "safe") { safe = v; }
+        if let Some(v) = dict_kw_get(kw, "encoding") { encoding = v; }
+        if let Some(v) = dict_kw_get(kw, "errors") { errors = v; }
+    }
+    mb_urllib_quote_full(
+        pos.get(0).copied().unwrap_or_else(MbValue::none),
+        safe,
+        encoding,
+        errors,
     )
 }
 
@@ -48,7 +62,20 @@ unsafe extern "C" fn dispatch_quote_plus(args_ptr: *const MbValue, nargs: usize)
 
 unsafe extern "C" fn dispatch_unquote(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_unquote(a.get(0).copied().unwrap_or_else(MbValue::none))
+    // unquote(string, encoding='utf-8', errors='replace'). Keyword args arrive
+    // as a trailing kwargs dict; fall back to positional slots otherwise.
+    let (pos, kw) = split_trailing_kwargs(a);
+    let mut encoding = pos.get(1).copied().unwrap_or_else(MbValue::none);
+    let mut errors = pos.get(2).copied().unwrap_or_else(MbValue::none);
+    if let Some(kw) = kw {
+        if let Some(v) = dict_kw_get(kw, "encoding") { encoding = v; }
+        if let Some(v) = dict_kw_get(kw, "errors") { errors = v; }
+    }
+    mb_urllib_unquote_full(
+        pos.get(0).copied().unwrap_or_else(MbValue::none),
+        encoding,
+        errors,
+    )
 }
 
 unsafe extern "C" fn dispatch_unquote_plus(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -954,6 +981,71 @@ fn extract_safe_bytes(safe: MbValue, default: &[u8]) -> Vec<u8> {
         .unwrap_or_else(|| default.to_vec())
 }
 
+/// Split a native arg slice into (positional, trailing-kwargs-dict). mamba
+/// folds keyword arguments into one trailing dict positional for callees in
+/// the native-kwargs allowlist; quote/unquote's first positional is never a
+/// dict, so a trailing Dict unambiguously names the kwargs.
+fn split_trailing_kwargs(a: &[MbValue]) -> (&[MbValue], Option<MbValue>) {
+    if let Some(&last) = a.last() {
+        let is_dict = last.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
+        if is_dict {
+            return (&a[..a.len() - 1], Some(last));
+        }
+    }
+    (a, None)
+}
+
+/// Read `name` from a kwargs dict, returning None when absent.
+fn dict_kw_get(kw: MbValue, name: &str) -> Option<MbValue> {
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let v = super::super::dict_ops::mb_dict_get(
+        kw,
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        sentinel,
+    );
+    if v.to_bits() == u64::MAX { None } else { Some(v) }
+}
+
+/// Encode `s` to bytes under `encoding` honoring the `errors` handler, as
+/// CPython's `quote(string, encoding=, errors=)` does. utf-8 (and unknown
+/// encodings) pass through losslessly; latin-1/ascii map a code point to one
+/// byte when it fits, otherwise apply the error handler. Returns None after
+/// raising UnicodeEncodeError on a strict-mode failure.
+fn encode_str_with(s: &str, encoding: &str, errors: &str) -> Option<Vec<u8>> {
+    let enc = encoding.to_ascii_lowercase().replace('_', "-");
+    let limit: u32 = match enc.as_str() {
+        "latin-1" | "iso-8859-1" | "latin1" | "l1" => 0xFF,
+        "ascii" | "us-ascii" | "646" => 0x7F,
+        // utf-8 / unknown: every str code point is representable.
+        _ => return Some(s.as_bytes().to_vec()),
+    };
+    let mut out = Vec::new();
+    for ch in s.chars() {
+        let cp = ch as u32;
+        if cp <= limit {
+            out.push(cp as u8);
+            continue;
+        }
+        match errors {
+            "replace" => out.push(b'?'),
+            "ignore" => {}
+            "xmlcharrefreplace" => out.extend_from_slice(format!("&#{cp};").as_bytes()),
+            _ => {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("UnicodeEncodeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'{enc}' codec can't encode character '\\u{cp:04x}' in position 0"
+                    ))),
+                );
+                return None;
+            }
+        }
+    }
+    Some(out)
+}
+
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -1044,10 +1136,38 @@ fn decode_utf8_with(bytes: &[u8], replacement: Option<char>) -> String {
 ///
 /// Default `safe` is '/' per CPython: slashes in a path are preserved.
 pub fn mb_urllib_quote(val: MbValue, safe: MbValue) -> MbValue {
-    // bytes input is escaped byte-for-byte; str input is UTF-8 encoded first.
+    mb_urllib_quote_full(val, safe, MbValue::none(), MbValue::none())
+}
+
+/// urllib.parse.quote(string, safe='/', encoding=None, errors=None).
+///
+/// str input is encoded with `encoding` (default utf-8) under the `errors`
+/// handler before percent-encoding; bytes input is escaped byte-for-byte and
+/// rejects an explicit `encoding` (CPython raises TypeError).
+pub fn mb_urllib_quote_full(
+    val: MbValue,
+    safe: MbValue,
+    encoding: MbValue,
+    errors: MbValue,
+) -> MbValue {
+    let enc = extract_str(encoding);
     let bytes = match extract_bytes_like(val) {
-        Some(b) => b,
-        None => extract_str(val).unwrap_or_default().into_bytes(),
+        Some(b) => {
+            if enc.is_some() {
+                return raise_type_error(
+                    "quote() doesn't support 'encoding' for bytes",
+                );
+            }
+            b
+        }
+        None => {
+            let s = extract_str(val).unwrap_or_default();
+            let errs = extract_str(errors).unwrap_or_else(|| "strict".to_string());
+            match encode_str_with(&s, enc.as_deref().unwrap_or("utf-8"), &errs) {
+                Some(b) => b,
+                None => return MbValue::none(),
+            }
+        }
     };
     let safe_bytes = if safe.is_none() {
         b"/".to_vec()
@@ -1094,13 +1214,19 @@ pub fn mb_urllib_quote_plus(val: MbValue, safe: MbValue) -> MbValue {
 
 /// urllib.parse.unquote(string) → decode %XX sequences; leave '+' untouched.
 pub fn mb_urllib_unquote(val: MbValue) -> MbValue {
+    mb_urllib_unquote_full(val, MbValue::none(), MbValue::none())
+}
+
+/// urllib.parse.unquote(string, encoding='utf-8', errors='replace') → decode
+/// %XX sequences using the requested codec/error handler.
+pub fn mb_urllib_unquote_full(val: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
     let Some(input) = extract_str_or_bytes(val) else {
         return raise_type_error("unquote() argument must be str or bytes");
     };
+    let enc = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
+    let errs = extract_str(errors).unwrap_or_else(|| "replace".to_string());
     let decoded = percent_decode_to_bytes(&input, false);
-    MbValue::from_ptr(MbObject::new_str(decode_bytes(
-        &decoded, "utf-8", "replace",
-    )))
+    MbValue::from_ptr(MbObject::new_str(decode_bytes(&decoded, &enc, &errs)))
 }
 
 /// urllib.parse.unquote_plus(string) → decode %XX and '+' → ' '.
@@ -2403,15 +2529,29 @@ unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> Mb
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
-    // Trailing kwargs dict appended by the call lowering.
+    // Trailing kwargs dict appended by the call lowering. The data argument is
+    // ALSO a dict (`Request(url, {})` posts an empty form), so a trailing dict
+    // is the kwargs dict only when it is non-empty and every key names a known
+    // Request keyword — otherwise it is the positional `data` mapping.
+    let is_request_kwargs = |v: MbValue| -> bool {
+        let Some(ptr) = v.as_ptr() else { return false };
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let map = lock.read().unwrap();
+                return !map.is_empty()
+                    && map.keys().all(|k| matches!(
+                        k,
+                        super::super::dict_ops::DictKey::Str(s)
+                            if matches!(s.as_str(),
+                                "data" | "headers" | "origin_req_host"
+                                    | "unverifiable" | "method")
+                    ));
+            }
+        }
+        false
+    };
     let (positional, kwargs): (&[MbValue], Option<MbValue>) = match raw.last().copied() {
-        Some(last)
-            if raw.len() > 1
-                && last
-                    .as_ptr()
-                    .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
-                    .unwrap_or(false) =>
-        {
+        Some(last) if raw.len() > 1 && is_request_kwargs(last) => {
             (&raw[..raw.len() - 1], Some(last))
         }
         _ => (raw, None),
