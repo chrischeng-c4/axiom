@@ -126,7 +126,7 @@ surface, this capability map, and its EC contract:
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Search | - | implemented | auditing | conformance | not_ready | broad search evidence still mixes local gates with external perf/service gates |
-| Lexical (BM25) | - | partial | auditing | conformance | not_ready | WAND/block-max remains an open follow-up |
+| Lexical (BM25) | - | implemented | auditing | conformance | not_ready | WAND/block-max is an out-of-current-release future chapter |
 | Exact & Filter (keyword / number / set) | - | implemented | auditing | conformance | not_ready | release proof remains tied to competitive perf evidence |
 | Semantic & Perceptual (vector + hash) | 4141 | implemented | auditing | conformance | not_ready | DiskANN-class HNSW-on-disk remains future work |
 | Hybrid (lexical + semantic fusion) | 4139 | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
@@ -195,7 +195,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | BM25 ranking + analyzers (HashMap-free single-term / AND scoring fast path) | subepic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (text_bm25, text_and); projects/lumen/src/storage.rs (segment_text_diff_tests — byte-identical disk BM25) |
-| WAND / block-max early termination (skip non-competitive docs) | subepic | - | planned | none | none | next lexical lever for skewed tf / cold term corpora; the hot ranked-cache path now clears the 1M BM25 gate vs OpenSearch, but block-max is still the scalable answer for broad unseen ranked terms |
+| WAND / block-max early termination (skip non-competitive docs) | subepic | - | out_of_scope | none | none | future lexical lever for skewed tf / cold term corpora; the hot ranked-cache path now clears the 1M BM25 gate vs OpenSearch, but block-max is outside the current release scope |
 
 ### Exact & Filter (keyword / number / set)
 
@@ -237,7 +237,7 @@ Gate Inventory:
 | Filtered kNN — planner wiring (`knn AND filter`) + recall gate | subepic | 4142 | implemented | passing | conformance | projects/lumen/tests/vector_e2e.rs (filtered_knn_returns_nearest_within_filter_no_recall_collapse) |
 | Competitive perf gate: `knn` + `filtered_knn` vs pgvector (opt-in `LUMEN_GATE_VECTOR=1`; OS host has no k-NN plugin) — `knn` is a TARGET (over-the-wire/real-corpus can lose), `filtered_knn` is a WIN (pgvector post-filters and collapses recall) | subepic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (competitive_perf_gate: knn, filtered_knn); projects/lumen/tests/perf-baseline.json |
 | flat-cpu vectors RAM-bounded on the disk tier (base rows demand-paged off the mmap, not re-materialized on reopen) | subepic | - | implemented | passing | conformance | projects/lumen/src/vector_index.rs (reopen_base_seg_plus_tail_plus_tombstone_equals_inram_oracle); projects/lumen/tests/disk_scale_proof.rs |
-| HNSW graph on disk (DiskANN-class) — vectors stay in RAM in the graph; only flat-cpu is disk-RAM-bounded | subepic | - | planned | none | none | future GPU-native vector chapter (hnsw_rs owns the vectors internally) |
+| HNSW graph on disk (DiskANN-class) — vectors stay in RAM in the graph; only flat-cpu is disk-RAM-bounded | subepic | - | out_of_scope | none | none | future GPU-native vector chapter outside the current release scope (hnsw_rs owns the vectors internally) |
 | Hash / Hamming search (`hash` field + `hamming` query) | subepic | - | implemented | passing | conformance | projects/lumen/tests/hash_hamming.rs |
 
 ### Hybrid (lexical + semantic fusion)
