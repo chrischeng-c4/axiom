@@ -92,17 +92,55 @@ cells:
 ```mermaid
 ---
 id: relay-perf-gate-test-plan
-entry: start
+entry: suite
 nodes:
-  start:
+  suite:
     kind: start
-    label: "pending"
-edges: []
+    label: "perf-gate rule + bench-workload smoke"
+  t_hold:
+    kind: process
+    label: "current ratio >= baseline * ratchet"
+  a_hold:
+    kind: terminal
+    label: "assert the ratchet PASSES (no regression)"
+  t_regress:
+    kind: process
+    label: "current ratio < baseline * ratchet"
+  a_regress:
+    kind: terminal
+    label: "assert the ratchet FAILS the gate"
+  t_mustbeat:
+    kind: process
+    label: "a must-beat cell where relay is slower (ratio < 1)"
+  a_mustbeat:
+    kind: terminal
+    label: "assert the gate FAILS even if the ratchet held"
+  t_bench:
+    kind: process
+    label: "run each benched workload (append, fan-out, lease+ack) at small scale"
+  a_bench:
+    kind: terminal
+    label: "assert each completes and the work-queue cycle is exactly-once (gate workloads are valid)"
+edges:
+  - { from: suite, to: t_hold, label: "case: ratchet holds" }
+  - { from: t_hold, to: a_hold }
+  - { from: suite, to: t_regress, label: "case: ratchet regress" }
+  - { from: t_regress, to: a_regress }
+  - { from: suite, to: t_mustbeat, label: "case: must-beat lost" }
+  - { from: t_mustbeat, to: a_mustbeat }
+  - { from: suite, to: t_bench, label: "case: workload smoke" }
+  - { from: t_bench, to: a_bench }
 ---
 flowchart TD
-    start([pending])
+    suite([perf-gate suite]) --> t_hold[ratio >= baseline*ratchet]
+    t_hold --> a_hold([ratchet passes])
+    suite --> t_regress[ratio < baseline*ratchet]
+    t_regress --> a_regress([gate fails])
+    suite --> t_mustbeat[must-beat cell, relay slower]
+    t_mustbeat --> a_mustbeat([gate fails])
+    suite --> t_bench[run workloads small scale]
+    t_bench --> a_bench([complete, exactly-once])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
