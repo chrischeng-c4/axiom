@@ -2291,17 +2291,53 @@ fn replace_capabilities_section(body: &str, registry: &str) -> Result<String> {
         })
         .unwrap_or(lines.len());
 
-    let mut out = String::new();
+    let mut without_capabilities = String::new();
     if start > 0 {
-        out.push_str(&lines[..start].join("\n"));
-        out.push_str("\n\n");
+        without_capabilities.push_str(&lines[..start].join("\n"));
     }
-    out.push_str(registry.trim_end());
     if end < lines.len() {
-        out.push_str("\n\n");
-        out.push_str(&lines[end..].join("\n"));
+        if !without_capabilities.trim().is_empty() {
+            without_capabilities.push_str("\n\n");
+        }
+        without_capabilities.push_str(&lines[end..].join("\n"));
     }
-    Ok(collapse_markdown_blank_runs_outside_fences(&out))
+    insert_capability_registry_after_brief(
+        &collapse_markdown_blank_runs_outside_fences(&without_capabilities),
+        registry,
+    )
+}
+
+fn insert_capability_registry_after_brief(body: &str, registry: &str) -> Result<String> {
+    let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let Some(brief_idx) = lines.iter().enumerate().find_map(|(idx, line)| {
+        if fenced[idx] {
+            return None;
+        }
+        parse_heading(line)
+            .filter(|(level, title)| *level == 2 && title.eq_ignore_ascii_case("Brief"))
+            .map(|_| idx)
+    }) else {
+        anyhow::bail!("README scaffold is missing `## Brief`");
+    };
+    let insert_idx = (brief_idx + 1..lines.len())
+        .find(|idx| {
+            !fenced[*idx]
+                && parse_heading(lines[*idx])
+                    .map(|(level, _)| level <= 2)
+                    .unwrap_or(false)
+        })
+        .unwrap_or(lines.len());
+
+    let mut out = Vec::new();
+    out.extend(lines[..insert_idx].iter().copied());
+    out.push("");
+    out.push(registry.trim_end());
+    if insert_idx < lines.len() {
+        out.push("");
+        out.extend(lines[insert_idx..].iter().copied());
+    }
+    Ok(collapse_markdown_blank_runs_outside_fences(&out.join("\n")))
 }
 
 fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> {
@@ -6785,11 +6821,48 @@ fn ensure_canonical_readme_scaffold(mut prefix: String, project: &str) -> String
         prefix = insert_brief_heading_or_todo(prefix);
     }
     if !has_markdown_heading(&prefix, 2, Some("Capabilities")) {
-        prefix.push_str(
-            "\n\n## Capabilities\n\nMarkdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.\n",
-        );
+        prefix = insert_capabilities_heading_after_brief(prefix);
     }
     prefix
+}
+
+fn insert_capabilities_heading_after_brief(prefix: String) -> String {
+    let lines = prefix.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let Some(brief_idx) = lines.iter().enumerate().find_map(|(idx, line)| {
+        if fenced[idx] {
+            return None;
+        }
+        parse_heading(line)
+            .filter(|(level, title)| *level == 2 && title.eq_ignore_ascii_case("Brief"))
+            .map(|_| idx)
+    }) else {
+        let mut out = prefix.trim_end().to_string();
+        out.push_str(
+            "\n\n## Capabilities\n\nMarkdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.\n",
+        );
+        return out;
+    };
+    let insert_idx = (brief_idx + 1..lines.len())
+        .find(|idx| {
+            !fenced[*idx]
+                && parse_heading(lines[*idx])
+                    .map(|(level, _)| level <= 2)
+                    .unwrap_or(false)
+        })
+        .unwrap_or(lines.len());
+
+    let mut out = Vec::new();
+    out.extend(lines[..insert_idx].iter().copied());
+    out.push("");
+    out.push("## Capabilities");
+    out.push("");
+    out.push("Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.");
+    if insert_idx < lines.len() {
+        out.push("");
+        out.extend(lines[insert_idx..].iter().copied());
+    }
+    collapse_markdown_blank_runs_outside_fences(&out.join("\n"))
 }
 
 fn insert_brief_heading_or_todo(prefix: String) -> String {
@@ -11750,6 +11823,119 @@ Keep this section.
             doc.capabilities[0].capability_type,
             Some(CapabilityType::DeveloperTool)
         );
+    }
+
+    #[test]
+    fn apply_reviewed_draft_inserts_capabilities_after_brief_when_missing() {
+        let registry = r#"## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Validation Type System | - | implemented | passing | conformance | not_ready | Rust validation API |
+
+### Validation Type System
+
+ID: validation-type-system
+Type: DeveloperTool
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Validate Rust values against schema descriptors.
+Gate Inventory:
+- `cargo test -p cclab-schema`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Validation foundation | epic | - | implemented | passing | conformance | `cargo test -p cclab-schema` |
+"#;
+        let original = r#"# cclab-shield
+
+Unified validation library for the cclab framework.
+
+## Overview
+
+Long project details.
+
+## License
+
+MIT OR Apache-2.0
+"#;
+
+        let applied = apply_capability_registry_to_readme(original, registry, "cclab-schema")
+            .expect("apply registry");
+        let brief_idx = applied.find("## Brief").expect("brief section");
+        let capabilities_idx = applied.find("## Capabilities").expect("capability section");
+        let overview_idx = applied.find("## Overview").expect("overview section");
+        let license_idx = applied.find("## License").expect("license section");
+
+        assert!(brief_idx < capabilities_idx);
+        assert!(capabilities_idx < overview_idx);
+        assert!(overview_idx < license_idx);
+        assert!(applied
+            .contains("Unified validation library for the cclab framework.\n\n## Capabilities"));
+        assert!(!applied.contains("MIT OR Apache-2.0\n\n## Capabilities"));
+    }
+
+    #[test]
+    fn apply_reviewed_draft_relocates_existing_capabilities_after_brief() {
+        let registry = r#"## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Validation Type System | - | implemented | passing | conformance | not_ready | Rust validation API |
+
+### Validation Type System
+
+ID: validation-type-system
+Type: DeveloperTool
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Validate Rust values against schema descriptors.
+Gate Inventory:
+- `cargo test -p cclab-schema`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Validation foundation | epic | - | implemented | passing | conformance | `cargo test -p cclab-schema` |
+"#;
+        let original = r#"# cclab-shield
+
+## Brief
+
+Unified validation library for the cclab framework.
+
+## Overview
+
+Long project details.
+
+## License
+
+MIT OR Apache-2.0
+
+## Capabilities
+
+old tail placeholder
+"#;
+
+        let applied = apply_capability_registry_to_readme(original, registry, "cclab-schema")
+            .expect("apply registry");
+        let brief_idx = applied.find("## Brief").expect("brief section");
+        let capabilities_idx = applied.find("## Capabilities").expect("capability section");
+        let overview_idx = applied.find("## Overview").expect("overview section");
+        let license_idx = applied.find("## License").expect("license section");
+
+        assert!(brief_idx < capabilities_idx);
+        assert!(capabilities_idx < overview_idx);
+        assert!(overview_idx < license_idx);
+        assert!(!applied.contains("old tail placeholder"));
+        assert!(!applied.contains("MIT OR Apache-2.0\n\n## Capabilities"));
     }
 
     #[test]
