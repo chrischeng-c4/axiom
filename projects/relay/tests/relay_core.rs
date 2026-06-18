@@ -155,12 +155,12 @@ fn ack_advances_committed_offset() {
     assert!(r.committed_offset("q").unwrap().is_none());
 
     let l0 = r.lease("q", "c1", now).unwrap().unwrap();
-    assert!(r.ack("q", &l0.lease_id).unwrap());
+    assert!(r.ack("q", &l0.lease_id, None).unwrap());
     assert_eq!(r.committed_offset("q").unwrap().unwrap().committed_seq, 0);
 
     let l1 = r.lease("q", "c1", now).unwrap().unwrap();
     assert_eq!(l1.seq, 1, "acked entry is not re-offered");
-    assert!(r.ack("q", &l1.lease_id).unwrap());
+    assert!(r.ack("q", &l1.lease_id, None).unwrap());
     assert_eq!(r.committed_offset("q").unwrap().unwrap().committed_seq, 1);
 }
 
@@ -191,7 +191,7 @@ fn both_models_over_same_log() {
     // work-queue consumer leases each exactly once over the SAME log
     let mut acked: BTreeSet<u64> = BTreeSet::new();
     while let Some(l) = r.lease("events", "worker", now).unwrap() {
-        assert!(r.ack("events", &l.lease_id).unwrap());
+        assert!(r.ack("events", &l.lease_id, None).unwrap());
         acked.insert(l.seq);
     }
     assert_eq!(acked, BTreeSet::from([0, 1, 2]));

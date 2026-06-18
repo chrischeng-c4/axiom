@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::types::{Lease, Payload, Seq};
@@ -35,10 +36,27 @@ pub struct LeaseResponse {
     pub lease: Option<Lease>,
 }
 
-/// Acknowledge a lease.
+/// Acknowledge a lease. The optional `epoch` fences a stale worker: when given
+/// it must match the live lease or the ack is a no-op.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AckRequest {
     pub lease_id: String,
+    #[serde(default)]
+    pub epoch: Option<u64>,
+}
+
+/// Extend a held lease; proves the worker is alive (work-queue API #113).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatRequest {
+    pub lease_id: String,
+    pub epoch: u64,
+}
+
+/// Heartbeat result: whether the lease was extended, and the new expiry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatResponse {
+    pub extended: bool,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// Ack result plus the resulting committed offset.
