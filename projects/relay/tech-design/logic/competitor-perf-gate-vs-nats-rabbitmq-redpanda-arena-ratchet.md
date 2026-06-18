@@ -145,5 +145,30 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
-(fill)
+changes:
+  - path: projects/relay/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Add criterion dev-dependency and the relay_bench benchmark target."
+  - path: projects/relay/src/perf_gate.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "The ratchet gate rule: evaluate per-cell ratios against the recorded baseline (no-regression) plus must-beat, returning a pass/fail verdict."
+  - path: projects/relay/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Declare and re-export the perf_gate module."
+  - path: projects/relay/benches/relay_bench.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "criterion benchmarks for the three gate cells: append throughput, broadcast fan-out, work-queue lease+ack cycle (the relay-side measurement)."
+  - path: projects/relay/tests/perf_gate.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Tests for the ratchet rule (holds / regresses / must-beat lost) and a small-scale smoke of the benched workloads."
 ```
