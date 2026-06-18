@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:config:7d099e74" tracker="pending-tracker" reason="New relay crate manifest; depends on cclab-queue for the reused message / retry / revocation model."
+// TODO: hand-write content for `projects/relay/Cargo.toml`.
+// HANDWRITE-END
