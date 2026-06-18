@@ -139,6 +139,8 @@ scenarios:
       - "draft emits a Review Decisions worksheet with one row per candidate root so HITL review can record confirm, rename, split, merge, defer, type, surface, EC dimension, WI, and gate decisions before README mutation"
       - "draft treats non-contract Markdown tables with a Capability column, such as Required Platform Capabilities, as pending-review candidate roots instead of emitting only a blank worksheet"
       - "draft treats Markdown bullets under explicit Features or Modules sections as pending-review candidate roots, and falls back to Implemented sections only when no clearer candidate list exists"
+      - "draft keeps candidate review order aligned with README source line order across heading, table, and list inputs"
+      - "draft extracts trailing issue references such as (#3331) into Root WI without baking the issue number into the capability title or proposed ID"
       - "sweep --write-drafts emits a draft review index that separates inferred candidate review from human definition-needed worksheets"
       - "apply-draft refuses unreviewed placeholder drafts, including unresolved Review Decisions worksheets, and writes only reviewed canonical capability sections"
       - "apply-draft materializes completed Review Decisions values into the canonical README section before applying it, so reviewers do not need to duplicate Type, Surfaces, EC Dimensions, Root WI, and gate decisions"
@@ -392,7 +394,7 @@ commands:
         meaning: "run bounded README/TD-only ticks when issue backend access is unavailable"
     behavior: "execute the next bounded capability tick"
   - path: [capability, draft]
-    behavior: "write pending-review inferred field-style capability contract drafts under /tmp without editing cap_path; Candidate Roots table summaries may be truncated, while Draft Canonical README Promise fields preserve full source prose"
+    behavior: "write pending-review inferred field-style capability contract drafts under /tmp without editing cap_path; Candidate Roots table summaries may be truncated, Draft Canonical README Promise fields preserve full source prose, candidate order follows README source lines, and trailing issue refs are separated into Root WI"
     mutates_tracker: false
   - path: [capability, apply-draft]
     behavior: "apply a human-reviewed placeholder-free draft to cap_path and refuse unreviewed drafts"
@@ -620,6 +622,11 @@ requirements:
   wi_plan_tracker_lookup:
     id: AW-CAP-WI-28
     text: "aw wi plan resolves README WI refs missing from open inventory into Tracker WI Ref Lookups with closed, not_found, or lookup_error status"
+    risk: medium
+    verifymethod: test
+  draft_candidate_title_normalization:
+    id: AW-CAP-WI-29
+    text: "aw capability draft preserves README source order and extracts trailing issue refs into Root WI without duplicating them in capability titles or IDs"
     risk: medium
     verifymethod: test
 elements:
