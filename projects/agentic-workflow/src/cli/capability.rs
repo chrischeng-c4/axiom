@@ -10905,14 +10905,20 @@ pub struct CapabilityWiPlanRow {
 pub fn capability_rows_for_wi_plan(
     document: &CapabilityDocument,
     td_refs: &[TdCapabilityEvidence],
+    report_items: &[CapabilityReportItem],
 ) -> Result<Vec<CapabilityWiPlanRow>> {
     if document.is_legacy_only() {
         anyhow::bail!(
             "legacy capability table detected; migrate README to `## Capability:` sections before planning WIs"
         );
     }
+    let report_by_id = report_items
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect::<BTreeMap<_, _>>();
     let mut rows = Vec::new();
     for capability in &document.capabilities {
+        let report_item = report_by_id.get(capability.id.as_str()).copied();
         if let Some(contract) = capability.verification_contract.as_ref() {
             for claim in contract
                 .claims
@@ -10926,9 +10932,9 @@ pub fn capability_rows_for_wi_plan(
                 });
                 rows.push(CapabilityWiPlanRow {
                     capability: capability.title.clone(),
-                    capability_type: capability_wi_plan_type(capability),
-                    surfaces: capability_wi_plan_surfaces(capability),
-                    ec_dimensions: capability_wi_plan_ec_dimensions(capability),
+                    capability_type: capability_wi_plan_type(capability, report_item),
+                    surfaces: capability_wi_plan_surfaces(capability, report_item),
+                    ec_dimensions: capability_wi_plan_ec_dimensions(capability, report_item),
                     current_state: capability.current_state.clone(),
                     gaps: if has_primary_td {
                         "none".to_string()
@@ -10965,9 +10971,9 @@ pub fn capability_rows_for_wi_plan(
             let evidence = summarize_evidence(&capability.evidence);
             CapabilityWiPlanRow {
                 capability: capability.title.clone(),
-                capability_type: capability_wi_plan_type(capability),
-                surfaces: capability_wi_plan_surfaces(capability),
-                ec_dimensions: capability_wi_plan_ec_dimensions(capability),
+                capability_type: capability_wi_plan_type(capability, report_item),
+                surfaces: capability_wi_plan_surfaces(capability, report_item),
+                ec_dimensions: capability_wi_plan_ec_dimensions(capability, report_item),
                 current_state: capability.current_state.clone(),
                 gaps: if gap_summary.is_empty() {
                     "none".to_string()
@@ -11046,15 +11052,26 @@ fn looks_like_verification_inventory_reference(value: &str) -> bool {
         .any(|extension| lower.contains(extension))
 }
 
-fn capability_wi_plan_type(capability: &CapabilitySection) -> String {
-    capability
-        .capability_type
+fn capability_wi_plan_type(
+    capability: &CapabilitySection,
+    report_item: Option<&CapabilityReportItem>,
+) -> String {
+    report_item
+        .and_then(|item| item.capability_type)
+        .or(capability.capability_type)
         .map(|capability_type| capability_type.as_str().to_string())
         .unwrap_or_else(|| "-".to_string())
 }
 
-fn capability_wi_plan_surfaces(capability: &CapabilitySection) -> String {
-    let items = render_surface_field_items(&capability.surfaces);
+fn capability_wi_plan_surfaces(
+    capability: &CapabilitySection,
+    report_item: Option<&CapabilityReportItem>,
+) -> String {
+    let surfaces = report_item
+        .map(|item| item.surfaces.as_slice())
+        .filter(|surfaces| !surfaces.is_empty())
+        .unwrap_or(capability.surfaces.as_slice());
+    let items = render_surface_field_items(surfaces);
     if items.is_empty() {
         "-".to_string()
     } else {
@@ -11062,9 +11079,15 @@ fn capability_wi_plan_surfaces(capability: &CapabilitySection) -> String {
     }
 }
 
-fn capability_wi_plan_ec_dimensions(capability: &CapabilitySection) -> String {
-    let items = capability
-        .ec_dimensions
+fn capability_wi_plan_ec_dimensions(
+    capability: &CapabilitySection,
+    report_item: Option<&CapabilityReportItem>,
+) -> String {
+    let ec_dimensions = report_item
+        .map(|item| item.ec_dimensions.as_slice())
+        .filter(|dimensions| !dimensions.is_empty())
+        .unwrap_or(capability.ec_dimensions.as_slice());
+    let items = ec_dimensions
         .iter()
         .map(|dimension| {
             let mut item = render_ec_dimension_field_items(std::slice::from_ref(dimension))
@@ -13705,7 +13728,7 @@ Cube: projects/lumen/tests/perf-cube.json
         );
         assert_eq!(slot.cube, "projects/lumen/tests/perf-cube.json");
 
-        let wi_rows = capability_rows_for_wi_plan(&doc, &[]).unwrap();
+        let wi_rows = capability_rows_for_wi_plan(&doc, &[], &[]).unwrap();
         let query_planner = wi_rows
             .iter()
             .find(|row| row.claim_id.as_deref() == Some("query-planner"))
@@ -13749,6 +13772,47 @@ Cube: projects/lumen/tests/perf-cube.json
             .evidence
             .contains("claim evidence: future service hardening chapter"));
         assert!(!prose_follow_up.evidence.contains("claim inventory:"));
+    }
+
+    #[test]
+    fn wi_plan_uses_report_derived_ec_dimensions() {
+        let body = r#"# demo
+
+## Search
+
+ID: search
+Root WI: -
+Status: auditing
+Type: Service
+Required Verification: smoke, conformance
+Promise:
+Serve search queries as ranked external ids only.
+Gate Inventory:
+- projects/lumen/tests/planner_diff.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Query planner | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
+"#;
+        let doc = cap_doc(body);
+        let mut report_item = sample_report_item_with_gap(None);
+        report_item.id = "search".to_string();
+        report_item.title = "Search".to_string();
+        report_item.capability_type = Some(CapabilityType::Service);
+        report_item.ec_dimensions =
+            derive_report_ec_dimensions(&doc.capabilities[0], &BTreeMap::new());
+
+        let rows = capability_rows_for_wi_plan(&doc, &[], &[report_item]).unwrap();
+        let query_planner = rows
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("query-planner"))
+            .unwrap();
+
+        assert_eq!(query_planner.capability_type, "Service");
+        assert_eq!(query_planner.surfaces, "-");
+        assert!(query_planner
+            .ec_dimensions
+            .contains("behavior: declared by behavior surfaces or verification contract"));
     }
 
     #[test]
