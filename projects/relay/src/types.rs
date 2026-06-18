@@ -3,9 +3,9 @@
 //! Core data model for the relay broker.
 //!
 //! A durable ordered log per `(subject, shard)` plus the per-model delivery
-//! state that reads from it. The message payload reuses the cclab-queue
-//! message model unchanged; relay owns only the log, sequencing, dedupe,
-//! subscriber cursors, and work-queue leases.
+//! state that reads from it. The message payload is an opaque body stored
+//! verbatim; relay owns only the log, sequencing, dedupe, subscriber cursors,
+//! and work-queue leases.
 
 use std::collections::BTreeMap;
 
@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// The relay core is payload-agnostic (epic #120: the broker "knows nothing
 /// about workflows"): it stores the body verbatim and never reinterprets it. A
-/// producer reusing the cclab-queue message model serializes its `TaskMessage`
-/// into this JSON value; the broker only needs the caller-supplied
-/// [`MessageId`] for sequencing and dedupe.
+/// producer serializes whatever message type it uses into this JSON value; the
+/// broker only needs the caller-supplied [`MessageId`] for sequencing and
+/// dedupe.
 pub type Payload = serde_json::Value;
 
 /// Logical channel a producer publishes to and consumers subscribe on.

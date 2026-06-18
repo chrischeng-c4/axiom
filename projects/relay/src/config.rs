@@ -48,8 +48,8 @@ impl Default for DedupeConfig {
     }
 }
 
-/// Work-queue / competing-consumer delivery settings (reuses the cclab-queue
-/// retry / revocation model).
+/// Work-queue / competing-consumer delivery settings (standard at-least-once
+/// lease / retry semantics).
 ///
 /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#config
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
