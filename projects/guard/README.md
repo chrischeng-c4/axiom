@@ -9,7 +9,8 @@ Security posture gate for the cclab ecosystem.
 turns findings into one agent-readable report (`guard.report/1`). Dynamic
 security evidence composes through the existing execution tools: `vat` for
 isolated runs, `rig` for exploit/e2e journeys, `meter` for resource-abuse
-evidence, and `arena` for budget/benchmark comparison.
+evidence. Legacy `arena` flags remain accepted for compatibility, but arena is
+no longer a required production evidence adapter.
 
 ## Division of labor
 
@@ -19,7 +20,7 @@ guard   — security policy/profile, findings, gate status, AW/EC integration
 vat     — isolated local runner for risky checks
 rig     — dynamic attack/e2e journeys
 meter   — resource and DoS evidence
-arena   — comparative security-performance budgets
+arena   — legacy optional compatibility for older budget/benchmark evidence
 ```
 
 ## Mental model
@@ -52,7 +53,7 @@ guard scan .
 | `--vat-runner <id>` | Run a named `vat.toml` runner as isolated security evidence |
 | `--rig-scenario <path>` / `--rig-dir <dir>` | Run exploit/e2e journey evidence through rig |
 | `--meter-target <path>` / `--meter-command <cmd>` | Run resource/DoS evidence through meter |
-| `--arena-command <cmd>` / `--arena-spec <path>` | Run arena security budget evidence |
+| `--arena-command <cmd>` / `--arena-spec <path>` | Run legacy optional arena security budget evidence |
 
 Guard only owns security/policy lint. General formatting, style, and
 non-security lint remain outside guard.
@@ -64,7 +65,7 @@ Production readiness: ready for static security, security lint, and configured d
 Tech design root: `projects/guard/tech-design`
 Source ownership: TD-first source snapshots
 Test gate: `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -p guard-cli`
-CLI smoke: `target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command "target/debug/arena spec --compact"`
+CLI smoke: `target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard`
 Health gate: `aw health --project guard`
 Explicit non-goals: AST ownership, env isolation, e2e orchestration, profiling, benchmark comparison
 
@@ -80,7 +81,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 | Static Security Scan | - | implemented | verified | smoke | ready | compass-backed security diagnostics normalized into `guard.report/1` |
 | Security Policy Profile | - | implemented | verified | smoke | ready | `guard-baseline-static/1`, `guard-security-lint/1`, and `guard-strict/1` map security diagnostics/lint into policy findings |
 | Security EC Profile | - | implemented | verified | smoke | ready | AW EC/health consumes guard reports as first-class security evidence |
-| Dynamic Security Evidence | - | implemented | verified | smoke | ready | vat/rig/meter/arena evidence adapters run and fold into `guard.report/1` |
+| Dynamic Security Evidence | - | implemented | verified | smoke | ready | vat/rig/meter evidence adapters run and fold into `guard.report/1`; arena is legacy optional |
 
 ### Static Security Scan
 
@@ -133,12 +134,12 @@ Required Verification: smoke
 Promise:
 AW EC and health treat guard output as first-class security evidence.
 Gate Inventory:
-- `target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command "target/debug/arena spec --compact"`
+- `target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | AW health security metric | epic | - | implemented | verified | smoke | `./target/debug/aw ec check --project guard` |
-| EC security evidence command | epic | - | implemented | verified | smoke | `target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command "target/debug/arena spec --compact"` |
+| EC security evidence command | epic | - | implemented | verified | smoke | `target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard` |
 
 ### Dynamic Security Evidence
 
@@ -150,16 +151,15 @@ Root WI: -
 Status: verified
 Required Verification: smoke
 Promise:
-guard will compose static findings with vat-isolated execution, rig attack journeys, meter resource evidence, and arena security-performance budgets.
+guard will compose static findings with vat-isolated execution, rig attack journeys, and meter resource evidence. Legacy arena evidence can still be passed through compatibility flags, but it is not required for production readiness.
 Gate Inventory:
-- `target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command "target/debug/arena spec --compact"`
+- `target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Vat isolated security runner | epic | - | implemented | verified | smoke | `target/debug/guard scan projects/guard --compact --no-persist --vat-runner guard-security-smoke` |
 | Rig exploit journey bridge | epic | - | implemented | verified | smoke | `target/debug/rig run --scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --compact` |
 | Meter DoS/resource evidence bridge | epic | - | implemented | verified | smoke | `target/debug/guard scan projects/guard --compact --no-persist --meter-target projects/guard` |
-| Arena security budget bridge | epic | - | implemented | verified | smoke | `target/debug/guard scan projects/guard --compact --no-persist --arena-command "target/debug/arena spec --compact"` |
 
 
 ## Build & test

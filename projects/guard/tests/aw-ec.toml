@@ -2,22 +2,7 @@
 # CODEGEN-BEGIN
 version = 1
 project = "guard"
-generated_from_td_digest = "sha256:ce42352b8831f1f164b47bc61b63825810b59c68f3ad38f02e5928e8c42e498f"
-
-[[cases]]
-id = "guard-arena-security-budget-bridge"
-capability_id = "dynamic-security-evidence"
-claim_id = "arena-security-budget-bridge"
-contract_id = "arena-security-budget-bridge"
-category = "security"
-td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-arena-security-budget-bridge"
-test_path = "projects/guard/tests/security_guard_arena_security_budget_bridge.rs"
-command = 'target/debug/guard scan projects/guard --compact --no-persist --arena-command "target/debug/arena spec --compact"'
-required_for_production = true
-assertions = [
-    "guard can fold arena budget evidence into its report",
-    "security-performance budget evidence remains visible in guard.report/1",
-]
+generated_from_td_digest = "sha256:f0f91a20895d2b20ba90da19f75ac2178240cb430e94c23581498d33f235417d"
 
 [[cases]]
 id = "guard-aw-health-security-metric"
@@ -87,11 +72,11 @@ contract_id = "ec-security-evidence-command"
 category = "security"
 td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-ec-security-evidence-command"
 test_path = "projects/guard/tests/security_guard_ec_security_evidence_command.rs"
-command = 'target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command "target/debug/arena spec --compact"'
+command = "target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard"
 required_for_production = true
 assertions = [
     "guard scan runs the full configured EC evidence command",
-    "vat, rig, meter, and arena evidence adapters fold into guard.report/1",
+    "vat, rig, and meter evidence adapters fold into guard.report/1",
 ]
 
 [[cases]]

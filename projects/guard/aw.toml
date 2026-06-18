@@ -6,7 +6,7 @@ label = "project:guard"
 [ec.security]
 tool = "guard"
 dir = "projects/guard"
-command = 'target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command "target/debug/arena spec --compact"'
+command = 'target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard'
 
 [[workspaces]]
 name = "guard"

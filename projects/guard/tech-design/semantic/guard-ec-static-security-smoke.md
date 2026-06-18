@@ -62,12 +62,6 @@ capability_refs:
     claim: meter-dos-resource-evidence-bridge
     coverage: full
     rationale: "The EC case proves guard can fold meter resource evidence into its report."
-  - id: dynamic-security-evidence
-    role: primary
-    gap: arena-security-budget-bridge
-    claim: arena-security-budget-bridge
-    coverage: full
-    rationale: "The EC case proves guard can fold arena budget evidence into its report."
 fill_sections: [e2e-test]
 ---
 
@@ -163,10 +157,10 @@ e2e_tests:
     claim_id: ec-security-evidence-command
     contract_id: ec-security-evidence-command
     category: security
-    command: "target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command \"target/debug/arena spec --compact\""
+    command: "target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard"
     assertions:
       - "guard scan runs the full configured EC evidence command"
-      - "vat, rig, meter, and arena evidence adapters fold into guard.report/1"
+      - "vat, rig, and meter evidence adapters fold into guard.report/1"
 ```
 
 ## Dynamic Security Evidence EC
@@ -203,14 +197,4 @@ e2e_tests:
     assertions:
       - "guard can fold meter resource evidence into its report"
       - "resource-abuse evidence remains visible in guard.report/1"
-
-  - id: guard-arena-security-budget-bridge
-    capability_id: dynamic-security-evidence
-    claim_id: arena-security-budget-bridge
-    contract_id: arena-security-budget-bridge
-    category: security
-    command: "target/debug/guard scan projects/guard --compact --no-persist --arena-command \"target/debug/arena spec --compact\""
-    assertions:
-      - "guard can fold arena budget evidence into its report"
-      - "security-performance budget evidence remains visible in guard.report/1"
 ```
