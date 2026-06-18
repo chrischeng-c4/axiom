@@ -520,3 +520,15 @@ changes:
     impl_mode: hand-written
     reason: "In-process h2c integration tests for the unit-test plan: lease/ack acceptance, broadcast tail-from-seq acceptance, CBOR fast path, sharding, OpenAPI."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] crc32 shard → h2c connect → route(publish/lease/ack/subscribe) → encode covers the issue scope; subscribe loops poll→CBOR-frame→tail. Applicable.
+- [schema] Wire DTOs map to endpoints; core types (AppendOutcome/Lease/LogEntry) reused via x-rust-type; ShardKey captures crc32(key)%shards. Applicable.
+- [rest-api] OpenAPI 3.1 with the four endpoints + healthz, JSON contract plus application/cbor on the lease/ack fast path and cbor-seq stream. Applicable.
+- [config] RelayServerConfig scopes bind/h2c/shards and embeds RelayCoreConfig; no other-project coupling. Applicable.
+- [unit-test] Covers the two acceptance cases (lease/ack over h2c; tail broadcast from seq) plus dedupe, empty-lease, replay, CBOR round-trip, sharding, OpenAPI. Applicable.
+- [changes] Server modules (wire/shard/server/server_config/openapi/bin) + Cargo.toml deps + tests; each maps to an existing section. Applicable.
