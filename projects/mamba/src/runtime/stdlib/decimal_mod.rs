@@ -2697,8 +2697,21 @@ fn ctx_method_args(args: MbValue) -> Vec<MbValue> {
 fn ctx_first_decimal(args: MbValue) -> MbValue {
     let pos = ctx_method_args(args);
     let a = pos.first().copied().unwrap_or_else(MbValue::none);
-    let is_dec = a.as_int().map(|i| is_decimal_handle(i as u64)).unwrap_or(false);
-    if is_dec { a } else { mb_decimal_new(a) }
+    if a.as_int().map(|i| is_decimal_handle(i as u64)).unwrap_or(false) {
+        return a; // already a Decimal handle
+    }
+    // CPython Context unary methods accept only int or Decimal; a str/float
+    // operand is a TypeError (not silently coerced).
+    if a.as_int_pyint().is_some() {
+        return mb_decimal_new(a); // int / bool → Decimal
+    }
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "argument must be int or Decimal".to_string(),
+        )),
+    );
+    MbValue::none()
 }
 
 unsafe extern "C" fn ctx_to_eng_string(_self: MbValue, args: MbValue) -> MbValue {
