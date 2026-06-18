@@ -241,6 +241,10 @@ pub fn register() {
     attrs.insert("clear_cache".into(), MbValue::from_func(addr_clear));
     attrs.insert("dircmp".into(), MbValue::from_func(addr_dircmp));
 
+    // filecmp._cache is the module-level shallow-compare cache; clear_cache()
+    // empties it. mamba's cmp does not populate it, so an empty dict suffices.
+    attrs.insert("_cache".into(), MbValue::from_ptr(MbObject::new_dict()));
+
     attrs.insert("BUFSIZE".into(), MbValue::from_int(BUFSIZE as i64));
     let ignores: Vec<MbValue> = DEFAULT_IGNORES
         .iter()
