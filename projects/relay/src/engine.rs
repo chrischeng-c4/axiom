@@ -181,5 +181,19 @@ impl Relay {
     pub fn committed_offset(&mut self, subject: &str) -> io::Result<Option<CommittedOffset>> {
         Ok(self.subject_state(subject)?.workqueue.committed_offset())
     }
+
+    /// Sweep every subject/shard's expired leases (frontier-only — only the
+    /// in-flight leases, never the full log) and return the number reclaimed.
+    /// A reclaimed entry becomes redelivery-eligible; the next lease re-offers
+    /// it with a bumped epoch, fencing the dead worker. This is the unit of
+    /// work the background reconciler runs on a timer.
+    ///
+    /// @spec projects/relay/tech-design/logic/reconciler-lease-reclaim-redeliver-liveness.md#logic
+    pub fn reconcile(&mut self, now: DateTime<Utc>) -> usize {
+        self.subjects
+            .values_mut()
+            .map(|ss| ss.workqueue.reclaim_expired(now).len())
+            .sum()
+    }
 }
 // HANDWRITE-END

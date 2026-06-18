@@ -52,6 +52,11 @@ impl AppState {
     pub fn config(&self) -> &RelayServerConfig {
         &self.config
     }
+
+    /// A handle to the shared relay core, for the background reconciler.
+    pub fn relay_handle(&self) -> Arc<Mutex<Relay>> {
+        Arc::clone(&self.relay)
+    }
 }
 
 /// Build the HTTP/2 router for the relay transport.
