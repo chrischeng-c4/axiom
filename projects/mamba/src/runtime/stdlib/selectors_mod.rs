@@ -606,6 +606,14 @@ unsafe extern "C" fn m_get_key(self_v: MbValue, args: MbValue) -> MbValue {
     raise_named("KeyError", &format!("{} is not registered", key))
 }
 
+/// Selector.select(timeout=None) — without a real OS readiness backend we
+/// report nothing ready, so an empty / timeout=0 selector yields `[]` (the
+/// documented "no events" return). Detecting actual I/O readiness needs a real
+/// select(2) and is tracked separately.
+unsafe extern "C" fn m_select(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_ptr(MbObject::new_list(Vec::new()))
+}
+
 /// Register the shared selector instance-method table for every selector
 /// class name so `DefaultSelector().register(...)` etc. dispatch through the
 /// normal MRO path (mirrors the configparser instance-class pattern).
@@ -616,6 +624,7 @@ fn register_selector_methods() {
         ("modify", m_modify as usize),
         ("get_key", m_get_key as usize),
         ("get_map", m_get_map as usize),
+        ("select", m_select as usize),
         ("close", m_close as usize),
         ("__enter__", m_enter as usize),
         ("__exit__", m_exit as usize),
