@@ -99,6 +99,29 @@ unsafe extern "C" fn dispatch_locale_getencoding(_args_ptr: *const MbValue, _nar
     MbValue::from_ptr(MbObject::new_str("UTF-8".to_string()))
 }
 
+/// locale._parse_localename(localename) -> (language, encoding). Splits a
+/// `lang.ENCODING` name; bare "C" → (None, None), bare "UTF-8" → (None,
+/// "UTF-8"); an otherwise-unrecognized bare name is a ValueError.
+unsafe extern "C" fn dispatch_parse_localename(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = |t: &str| MbValue::from_ptr(MbObject::new_str(t.to_string()));
+    let tup = |lang: MbValue, enc: MbValue| {
+        MbValue::from_ptr(MbObject::new_tuple(vec![lang, enc]))
+    };
+    if let Some((lang, enc)) = name.split_once('.') {
+        let lang_v = if lang.is_empty() { MbValue::none() } else { s(lang) };
+        return tup(lang_v, s(enc));
+    }
+    if name == "C" {
+        return tup(MbValue::none(), MbValue::none());
+    }
+    if name == "UTF-8" {
+        return tup(MbValue::none(), s("UTF-8"));
+    }
+    raise_named("ValueError", &format!("unknown locale: {name}"))
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -111,6 +134,7 @@ pub fn register() {
         ("strxfrm", dispatch_strxfrm as usize),
         ("getencoding", dispatch_locale_getencoding as usize),
         ("getpreferredencoding", dispatch_locale_getencoding as usize),
+        ("_parse_localename", dispatch_parse_localename as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
