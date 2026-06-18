@@ -3763,6 +3763,9 @@ fn capability_action_detail_label(action: &CapabilityAction) -> Option<&'static 
         {
             Some("issue_inventory_skipped")
         }
+        CapabilityActionKind::CreateWi if is_capability_wi_plan_action(action) => {
+            Some("plan_review")
+        }
         CapabilityActionKind::DefineCapabilityMap => {
             let command = action.command.trim();
             if command.starts_with("aw capability draft ") || command == "aw capability draft" {
@@ -12579,7 +12582,7 @@ Gate Inventory:
                 )
             })
             .collect::<Vec<_>>();
-        assert!(groups.contains(&"blocked:create_wi:1".to_string()));
+        assert!(groups.contains(&"blocked:create_wi:plan_review:1".to_string()));
         assert!(groups.contains(&"blocked:reconcile_wi_refs:issue_inventory_skipped:1".to_string()));
     }
 
@@ -13125,6 +13128,22 @@ generated_at: 2026-06-18T00:00:00Z
         assert_eq!(project.next_action_group, "assign_capability_type");
         assert_eq!(project.next_action_detail, None);
         assert!(project.requires_hitl);
+    }
+
+    #[test]
+    fn capability_sweep_project_marks_wi_plan_as_review_lane() {
+        let report = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project lumen",
+            false,
+        ));
+
+        let project = capability_sweep_project(&report);
+
+        assert_eq!(project.next_action_kind, "create_wi");
+        assert_eq!(project.next_action_group, "create_wi:plan_review");
+        assert_eq!(project.next_action_detail, Some("plan_review"));
+        assert!(!project.requires_hitl);
     }
 
     #[test]
