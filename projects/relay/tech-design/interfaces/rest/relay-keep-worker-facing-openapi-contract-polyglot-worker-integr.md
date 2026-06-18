@@ -62,5 +62,10 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
-(fill)
+changes:
+  - path: projects/relay/tests/worker_loop.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Throwaway reference worker (test-only): drives the lease / heartbeat / ack loop over h2c against an in-process relay, validating the worker-facing contract and the served OpenAPI (lease/ack/heartbeat)."
 ```
