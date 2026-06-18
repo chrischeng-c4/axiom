@@ -778,6 +778,12 @@ pub fn lower_hir_to_mir_with_symbols_src(
                                     && obj_name.as_deref() == Some("enum")
                                 {
                                     r.kind = MethodDecorKind::Property;
+                                } else if attr == "cached_property"
+                                    && obj_name.as_deref() == Some("functools")
+                                {
+                                    // `@functools.cached_property` — same descriptor
+                                    // as the bare `cached_property` import.
+                                    r.kind = MethodDecorKind::CachedProperty;
                                 } else if let Some(prop_name) = obj_name {
                                     // `@<name>.setter` / `.deleter` — combine with
                                     // the existing property of that name.
