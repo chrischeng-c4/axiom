@@ -339,6 +339,81 @@ unsafe extern "C" fn dispatch_re_surface_stub(_args_ptr: *const MbValue, _nargs:
 
 /// Register `addr` as a known native function pointer and return it as a
 /// callable `MbValue`. Mirrors the per-dispatcher registration in `register`.
+/// Read an instance field by name.
+fn scanner_field(inst: MbValue, name: &str) -> Option<MbValue> {
+    inst.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().unwrap().get(name).copied()
+        } else {
+            None
+        }
+    })
+}
+
+/// Extract a list/tuple's elements.
+fn scanner_items(v: MbValue) -> Vec<MbValue> {
+    v.as_ptr().map(|p| unsafe {
+        match &(*p).data {
+            ObjData::List(lock) => lock.read().unwrap().to_vec(),
+            ObjData::Tuple(items) => items.clone(),
+            _ => Vec::new(),
+        }
+    }).unwrap_or_default()
+}
+
+/// re.Scanner(lexicon, flags=0) — build a scanner storing the (pattern, action)
+/// lexicon. `lexicon` is a list of 2-tuples.
+unsafe extern "C" fn dispatch_scanner(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let lexicon = a.first().copied().unwrap_or_else(MbValue::none);
+    let inst = MbObject::new_instance("re.Scanner".to_string());
+    if let ObjData::Instance { ref fields, .. } = (*inst).data {
+        super::super::rc::retain_if_ptr(lexicon);
+        fields.write().unwrap().insert("lexicon".to_string(), lexicon);
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// Scanner.scan(string) -> (tokens, remainder). At each position, the first
+/// lexicon pattern that matches there fires its action(self, token); a None
+/// action skips the match (e.g. whitespace). Stops at the first position where
+/// nothing matches, returning the unconsumed tail.
+unsafe extern "C" fn scanner_scan(self_v: MbValue, args: MbValue) -> MbValue {
+    let text = scanner_items(args).first().copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let lexicon = scanner_field(self_v, "lexicon").unwrap_or_else(MbValue::none);
+    let entries = scanner_items(lexicon);
+    let mut pos = 0usize;
+    let mut tokens: Vec<MbValue> = Vec::new();
+    'outer: while pos < text.len() {
+        for entry in &entries {
+            let pair = scanner_items(*entry);
+            let pat = pair.first().copied().unwrap_or_else(MbValue::none);
+            let action = pair.get(1).copied().unwrap_or_else(MbValue::none);
+            let Some(pat_str) = extract_str(pat) else { continue };
+            let Ok(re) = compile_cached(&pat_str) else { continue };
+            if let Some(m) = re.find(&text[pos..]) {
+                if m.start() == 0 && m.end() > 0 {
+                    let matched = &text[pos..pos + m.end()];
+                    if !action.is_none() {
+                        let matched_v = MbValue::from_ptr(MbObject::new_str(matched.to_string()));
+                        let call_args = MbValue::from_ptr(MbObject::new_list(vec![self_v, matched_v]));
+                        let result = super::super::builtins::mb_call_spread(action, call_args);
+                        tokens.push(result);
+                    }
+                    pos += m.end();
+                    continue 'outer;
+                }
+            }
+        }
+        break;
+    }
+    let remainder = MbValue::from_ptr(MbObject::new_str(text[pos..].to_string()));
+    let tokens_list = MbValue::from_ptr(MbObject::new_list(tokens));
+    MbValue::from_ptr(MbObject::new_tuple(vec![tokens_list, remainder]))
+}
+
 fn surface_func(addr: usize) -> MbValue {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(addr as u64);
@@ -485,7 +560,21 @@ pub fn register() {
     // are callable func stubs; the Scanner runtime path is not modeled here.
     let stub_addr = dispatch_re_surface_stub as *const () as usize;
     attrs.insert("template".to_string(), surface_func(stub_addr));
-    attrs.insert("Scanner".to_string(), surface_func(stub_addr));
+    // re.Scanner is a real tokenizer: register its class (scan method) and a
+    // constructor dispatcher.
+    {
+        let scan_addr = scanner_scan as *const () as usize;
+        super::super::module::register_variadic_func(scan_addr as u64);
+        let mut methods: std::collections::HashMap<String, MbValue> =
+            std::collections::HashMap::new();
+        methods.insert("scan".to_string(), MbValue::from_func(scan_addr));
+        super::super::class::mb_class_register("re.Scanner", vec![], methods);
+        let ctor_addr = dispatch_scanner as *const () as usize;
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(ctor_addr as u64);
+        });
+        attrs.insert("Scanner".to_string(), MbValue::from_func(ctor_addr));
+    }
 
     // RegexFlag constants — match CPython's bit values so cross-runtime
     // `re.IGNORECASE == 2` etc. holds. Bits are stable across py3.x.
