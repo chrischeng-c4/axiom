@@ -6626,7 +6626,7 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
     let (format, mut capabilities) = if !markdown_capabilities.is_empty() {
         if !yaml_capabilities.is_empty() {
             findings.push(
-                "YAML capability sections detected but ignored because Markdown capability tables are present"
+                "YAML capability sections detected but ignored because canonical field-style capability contracts are present under ## Capabilities"
                     .to_string(),
             );
         }
@@ -6636,7 +6636,7 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
         )
     } else if !yaml_capabilities.is_empty() {
         findings.push(
-            "YAML capability sections detected; migrate README to Markdown capability tables"
+            "YAML capability sections detected; migrate README to canonical field-style capability contracts under ## Capabilities"
                 .to_string(),
         );
         (CapabilityDocumentFormat::YamlSections, yaml_capabilities)
@@ -6658,7 +6658,7 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
     };
     if capabilities.is_empty() && !legacy_rows.is_empty() {
         findings.push(
-            "legacy capability table detected; migrate rows to Markdown capability sections"
+            "legacy capability table detected; migrate rows to canonical field-style capability contracts under ## Capabilities"
                 .to_string(),
         );
     }
@@ -6756,11 +6756,11 @@ pub(crate) fn render_capability_markdown_migration(
     prefix = prefix
         .replace(
             "Each `## Capability:` section is\nmachine-readable input for `aw capability`; summary tables are non-authoritative.",
-            "Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.",
+            "Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.",
         )
         .replace(
             "Each `## Capability:` section is machine-readable input for `aw capability`; summary tables are non-authoritative.",
-            "Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.",
+            "Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.",
         )
         .replace(
             "Any new Jet product claim starts by updating the relevant\n  `verification_contract` in this README.",
@@ -6839,7 +6839,7 @@ fn insert_capabilities_heading_after_brief(prefix: String) -> String {
     }) else {
         let mut out = prefix.trim_end().to_string();
         out.push_str(
-            "\n\n## Capabilities\n\nMarkdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.\n",
+            "\n\n## Capabilities\n\nCanonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.\n",
         );
         return out;
     };
@@ -6857,7 +6857,7 @@ fn insert_capabilities_heading_after_brief(prefix: String) -> String {
     out.push("");
     out.push("## Capabilities");
     out.push("");
-    out.push("Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.");
+    out.push("Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.");
     if insert_idx < lines.len() {
         out.push("");
         out.extend(lines[insert_idx..].iter().copied());
@@ -10909,7 +10909,7 @@ pub fn capability_rows_for_wi_plan(
 ) -> Result<Vec<CapabilityWiPlanRow>> {
     if document.is_legacy_only() {
         anyhow::bail!(
-            "legacy capability table detected; migrate README to `## Capability:` sections before planning WIs"
+            "legacy capability table detected; migrate README to canonical field-style capability contracts under `## Capabilities` before planning WIs"
         );
     }
     let report_by_id = report_items
@@ -14689,6 +14689,15 @@ evidence:
         assert!(doc.is_legacy_only());
         assert_eq!(doc.legacy_rows.len(), 1);
         assert_eq!(doc.findings.len(), 1);
+        assert!(doc.findings[0].contains("canonical field-style capability contracts"));
+        assert!(doc.findings[0].contains("## Capabilities"));
+        assert!(!doc.findings[0].contains("## Capability:"));
+
+        let err = capability_rows_for_wi_plan(&doc, &[], &[]).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("canonical field-style capability contracts"));
+        assert!(message.contains("## Capabilities"));
+        assert!(!message.contains("## Capability:"));
     }
 
     #[test]
