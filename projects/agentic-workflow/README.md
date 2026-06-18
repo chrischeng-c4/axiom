@@ -274,8 +274,7 @@ ID: manual-evidence-artifacts
 Type: DeveloperTool
 Surfaces:
 - CLI: `aw ec doc` - generated, checked, or previewed EC-derived product documentation evidence.
-EC Dimensions:
-- content: `cargo test -p agentic-workflow ec_doc_gen_writes_manual_from_manifest` - generated manual artifact schema and output convention.
+EC Dimensions: behavior: `cargo test -p agentic-workflow ec_doc_gen_writes_manual_from_manifest` - generated manual artifact schema and output convention
 Root WI: #57
 Status: verified
 Required Verification: smoke
