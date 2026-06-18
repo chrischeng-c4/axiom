@@ -30,6 +30,47 @@ unsafe extern "C" fn dispatch_false(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_bool(false)
 }
 
+/// logging.config.fileConfig(fname) — validates the config file: a missing
+/// path raises FileNotFoundError and a file with no INI sections (e.g. empty)
+/// raises RuntimeError, matching CPython. Full INI-driven logger setup is not
+/// modeled, so a well-formed file is accepted as a no-op.
+unsafe extern "C" fn dispatch_file_config(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let path = a.first().copied().and_then(|v| {
+        v.as_ptr().and_then(|p| unsafe {
+            if let super::super::rc::ObjData::Str(ref s) = (*p).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+    });
+    if let Some(path) = path {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                if !content.contains('[') {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "{path} does not contain configuration information"
+                        ))),
+                    );
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "[Errno 2] No such file or directory: '{path}'"
+                    ))),
+                );
+            }
+            Err(_) => {}
+        }
+    }
+    MbValue::none()
+}
+
 fn register_addrs(addrs: &[usize]) {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
@@ -194,7 +235,7 @@ pub fn register() {
         ],
         &[
             ("dictConfig", dispatch_noop as *const () as usize),
-            ("fileConfig", dispatch_noop as *const () as usize),
+            ("fileConfig", dispatch_file_config as *const () as usize),
             ("listen", dispatch_class_shell as *const () as usize),
             ("stopListening", dispatch_noop as *const () as usize),
             ("valid_ident", dispatch_false as *const () as usize),
