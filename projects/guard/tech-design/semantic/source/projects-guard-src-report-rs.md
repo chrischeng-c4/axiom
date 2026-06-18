@@ -203,7 +203,7 @@ impl Default for IntegrationMap {
             isolated_runner: "vat".to_string(),
             dynamic_journeys: "rig".to_string(),
             resource_evidence: "meter".to_string(),
-            benchmark_budget: "arena".to_string(),
+            benchmark_budget: "legacy arena (optional)".to_string(),
         }
     }
 }
@@ -273,7 +273,8 @@ impl GuardReport {
             criteria: vec![
                 "compass security diagnostics were scanned".to_string(),
                 "findings were normalized into guard.report/1".to_string(),
-                "vat/rig/meter/arena evidence adapters are available".to_string(),
+                "vat/rig/meter evidence adapters are available; arena evidence is legacy optional"
+                    .to_string(),
             ],
             missing,
         };
@@ -386,9 +387,6 @@ fn missing_integrations(evidence: &[ExternalEvidence]) -> Vec<String> {
     }
     if !has_tool("meter") {
         missing.push("meter DoS/resource evidence is not configured".to_string());
-    }
-    if !has_tool("arena") {
-        missing.push("arena security budget evidence is not configured".to_string());
     }
     missing
 }
