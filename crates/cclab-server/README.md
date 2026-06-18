@@ -17,7 +17,7 @@ SDD behavior is now routed through CLI commands instead.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Server CLI And Project Registry | - | implemented | failing | smoke | not_ready | configured full gate currently fails in registry test due home registry write permission |
+| Server CLI And Project Registry | - | implemented | verified | smoke | not_ready | registry and CLI lifecycle smoke gate passes |
 | Dashboard Plan Viewer And Lens Pool | - | implemented | planned | smoke | not_ready | Lens pool integration passes; live HTTP route smoke still needs a direct gate |
 
 ### Server CLI And Project Registry
@@ -27,7 +27,7 @@ Type: Service
 Surfaces: CLI: `cc server start`, `cc server ensure`, `cc server register`, `cc server unregister`, `cc server list`, `cc server view`, `cc server shutdown`; Registry: `~/.cclab/registry.json`
 EC Dimensions: behavior: `cargo test -p cclab-server`
 Root WI: -
-Status: blocked
+Status: verified
 Required Verification: smoke
 Promise:
 Cclab Server provides local CLI lifecycle commands and a persistent project registry for starting or ensuring the server, registering projects, listing status, opening plan-viewer URLs, and shutting down the daemonized server process.
@@ -35,7 +35,7 @@ Gate Inventory: `cargo test -p cclab-server`; crates/cclab-server/src/cli.rs; cr
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Server CLI lifecycle and registry persistence contract | epic | - | implemented | failing | smoke | `cargo test -p cclab-server`; crates/cclab-server/src/cli.rs; crates/cclab-server/src/registry.rs |
+| Server CLI lifecycle and registry persistence contract | epic | - | implemented | verified | smoke | `cargo test -p cclab-server`; crates/cclab-server/src/cli.rs; crates/cclab-server/src/registry.rs |
 
 ### Dashboard Plan Viewer And Lens Pool
 
