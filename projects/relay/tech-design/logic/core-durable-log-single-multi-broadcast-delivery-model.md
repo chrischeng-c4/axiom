@@ -271,9 +271,38 @@ definitions:
 <!-- type: config lang: yaml -->
 
 ```yaml
-(fill)
-```
+# RelayCoreConfig — in-process broker core engine settings.
+# All durability/retention is local to this core; transport, sharding fan-out,
+# and HA live in the server issues (#115 / #109) and are out of scope here.
 
+# Durable ordered log substrate (RAM ring + disk segments).
+data_dir: "./relay-data"        # root directory for durable disk segments
+segment_bytes: 134217728        # roll to a new disk segment at 128 MiB
+ram_ring_entries: 65536         # hot in-memory entries retained per (subject, shard) for low-latency fan-out / replay
+fsync: "interval"               # durability policy: always | interval | os
+fsync_interval_ms: 50           # flush cadence when fsync = interval
+default_shards: 1               # shards per subject unless the subject overrides it
+
+# Idempotent at-least-once append: how long a MessageId is remembered for dedupe.
+dedupe:
+  window_entries: 1048576       # MessageIds retained per shard for duplicate detection
+  ttl_secs: 3600                # also evict dedupe keys older than this
+
+# Work-queue / competing-consumer delivery (reuses the cclab-queue retry / revocation model).
+work_queue:
+  lease_ttl_ms: 30000           # lease duration before an unacked entry is redelivery-eligible
+  max_attempts: 5               # redelivery attempts before revocation / dead-letter
+  redeliver_backoff_ms: 1000    # base backoff between delivery attempts
+
+# Broadcast / fan-out delivery (replayable from any retained seq).
+broadcast:
+  max_replay_entries: 0         # 0 = replay from any retained seq; >0 caps replay depth
+
+# Retention / pruning of the durable log.
+retention:
+  max_age_secs: 604800          # prune fully-acked / aged segments after 7 days
+  max_bytes_per_shard: 0        # 0 = unbounded; else prune oldest segments past this size
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
