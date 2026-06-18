@@ -398,3 +398,13 @@ flowchart TD
     suite --> t_both_models[broadcast + work-queue on same log]
     t_both_models --> a_both_models([subscriber sees all; consumer leases each once])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Publish -> deterministic id -> dedupe -> durable append+seq -> classify into broadcast fan-out vs work-queue lease/ack/redeliver. Captures both delivery models over one log and the idempotent at-least-once path. Applicable.
+- [schema] LogEntry / Seq / MessageId / DeliveryModel / SubscriberCursor / Lease / CommittedOffset cover the durable-log substrate plus per-model delivery state; payload reuses cclab-queue TaskMessage via x-rust-type. Applicable and codegen-ready.
+- [config] RelayCoreConfig scopes durability (segments, ram ring, fsync), dedupe window, work-queue lease/retry, broadcast replay, and retention — all in-process core concerns; transport/HA correctly deferred to #115/#109. Applicable.
+- [unit-test] Cases cover sequencing, idempotency, broadcast fan-out + replay-from-seq, work-queue single-delivery, lease-expiry redelivery, ack/commit, and the #122 acceptance (both models over the same log). Applicable.
