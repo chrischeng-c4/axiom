@@ -172,3 +172,13 @@ changes:
     impl_mode: hand-written
     reason: "Tests for the ratchet rule (holds / regresses / must-beat lost) and a small-scale smoke of the benched workloads."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] compare-N -> measure -> ratio -> ratchet (no-regression) -> must-beat -> pass/fail. Mirrors lumen's perf gate; primary bar NATS. Applicable.
+- [config] base/ratchet/primary_bar + the three cells with competitors, metric direction, and must-beat sets. Applicable.
+- [unit-test] Ratchet holds/regresses/must-beat-lost + a small-scale smoke of the benched workloads. Applicable.
+- [changes] relay-side: criterion benches + ratchet-rule module + tests; the arena spec and EC binding are repo/cross-project infra added alongside. Applicable.
