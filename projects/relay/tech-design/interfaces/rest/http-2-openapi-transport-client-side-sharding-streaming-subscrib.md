@@ -473,5 +473,50 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
-(fill)
+changes:
+  - path: projects/relay/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Add axum/tokio/utoipa/ciborium/crc32fast/tower-http deps and the relay-server binary target."
+  - path: projects/relay/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Wire in the new transport modules (wire, shard, server, server_config, openapi) and re-export them."
+  - path: projects/relay/src/wire.rs
+    action: create
+    section: schema
+    impl_mode: hand-written
+    reason: "Transport DTOs (PublishRequest/Response, LeaseRequest/Response, AckRequest/Response, SubscribeQuery, StreamFrame) and length-prefixed CBOR framing for the fast path and the broadcast stream."
+  - path: projects/relay/src/shard.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Client-side sharding helper: shard_for(key, shards) = crc32(key) % shards."
+  - path: projects/relay/src/server_config.rs
+    action: create
+    section: config
+    impl_mode: hand-written
+    reason: "RelayServerConfig per the Config contract (bind, h2c, shards, embedded RelayCoreConfig)."
+  - path: projects/relay/src/server.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "axum h2c app: shared AppState over the relay core, publish/lease/ack handlers (JSON + CBOR), and the streaming broadcast subscribe handler."
+  - path: projects/relay/src/openapi.rs
+    action: create
+    section: rest-api
+    impl_mode: hand-written
+    reason: "utoipa OpenAPI document for the public endpoints, served at /openapi.json."
+  - path: projects/relay/src/bin/relay_server.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "relay-server binary entrypoint: load config, build the app, serve h2c."
+  - path: projects/relay/tests/http2_transport.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "In-process h2c integration tests for the unit-test plan: lease/ack acceptance, broadcast tail-from-seq acceptance, CBOR fast path, sharding, OpenAPI."
 ```
