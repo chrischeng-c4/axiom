@@ -307,9 +307,10 @@ version = "1.0.0"
     #[tokio::test]
     async fn test_execute_no_manifests() {
         let tool = ReadManifestTool::new();
-        // Use a path that definitely exists but has no manifests
+        let dir = tempfile::tempdir().unwrap();
+
         let result = tool
-            .execute(serde_json::json!({ "path": "/tmp" }))
+            .execute(serde_json::json!({ "path": dir.path() }))
             .await
             .unwrap();
         let manifests = result["manifests"].as_array().unwrap();
