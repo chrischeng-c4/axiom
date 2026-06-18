@@ -270,13 +270,20 @@ pub fn mb_user_abc_reject_abstract_instantiation(class_name: &str) -> Option<MbV
 /// definition and cannot be instantiated (CPython: "Protocols cannot be
 /// instantiated"). A concrete class that merely subclasses a protocol (without
 /// listing Protocol directly) is instantiable, so this checks direct bases only.
-pub fn mb_reject_protocol_instantiation(class_name: &str) -> Option<MbValue> {
-    let is_protocol = CLASS_REGISTRY.with(|reg| {
+/// True iff `class_name` has `Protocol` as a direct base — i.e. it is a
+/// `typing.Protocol` subclass. Used by `typing.runtime_checkable` to reject a
+/// plain (non-protocol) class.
+pub fn is_protocol_class(class_name: &str) -> bool {
+    CLASS_REGISTRY.with(|reg| {
         reg.borrow()
             .get(class_name)
             .map(|c| c.bases.iter().any(|b| b == "Protocol" || b == "typing.Protocol"))
             .unwrap_or(false)
-    });
+    })
+}
+
+pub fn mb_reject_protocol_instantiation(class_name: &str) -> Option<MbValue> {
+    let is_protocol = is_protocol_class(class_name);
     if is_protocol {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
