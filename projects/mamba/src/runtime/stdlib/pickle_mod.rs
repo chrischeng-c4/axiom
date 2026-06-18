@@ -616,6 +616,18 @@ impl Encoder {
             self.out.push(if b { NEWTRUE } else { NEWFALSE });
             return Ok(());
         }
+        // Lambdas / local functions and generators cannot be pickled (their
+        // NaN-boxed handle is an int, which would otherwise serialize as a
+        // bogus integer). CPython raises PicklingError / AttributeError.
+        {
+            let is_lambda = extract_str(super::super::closure::mb_func_get_name(val))
+                .as_deref() == Some("<lambda>");
+            if is_lambda || super::super::generator::is_known_generator(val) {
+                raise_pickling_error("Can't pickle local object or generator");
+                self.failed = true;
+                return Err(());
+            }
+        }
         if let Some(i) = val.as_int() {
             // random.Random handles are NaN-boxed ints; pickling the raw id
             // would alias the ORIGINAL generator on loads. Snapshot the
