@@ -254,17 +254,65 @@ components:
 ```mermaid
 ---
 id: relay-work-queue-api-test-plan
-entry: start
+entry: suite
 nodes:
-  start:
+  suite:
     kind: start
-    label: "pending"
-edges: []
+    label: "work-queue API tests (single shard)"
+  t_pick:
+    kind: process
+    label: "publish 2; lease, let one expire + reclaim, lease again"
+  a_pick:
+    kind: terminal
+    label: "assert the second lease PREFERS the redeliver-eligible seq over the fresh one"
+  t_ack_epoch:
+    kind: process
+    label: "lease (epoch e1), reclaim, re-lease (epoch e2), then ack(lease_id_old, e1)"
+  a_ack_epoch:
+    kind: terminal
+    label: "assert the stale-epoch ack is a no-op (acked=false); ack(lease_id_new, e2) succeeds"
+  t_ack_idem:
+    kind: process
+    label: "ack a lease twice with the right epoch"
+  a_ack_idem:
+    kind: terminal
+    label: "assert first ack acked=true, second acked=false (idempotent)"
+  t_heartbeat:
+    kind: process
+    label: "lease, heartbeat(lease_id, epoch) just before ttl"
+  a_heartbeat:
+    kind: terminal
+    label: "assert extended=true and the entry is NOT reclaimed after the original ttl"
+  t_hb_fenced:
+    kind: process
+    label: "lease, reclaim, heartbeat(old lease_id, old epoch)"
+  a_hb_fenced:
+    kind: terminal
+    label: "assert extended=false (fenced)"
+edges:
+  - { from: suite, to: t_pick, label: "case: prefer redeliver" }
+  - { from: t_pick, to: a_pick }
+  - { from: suite, to: t_ack_epoch, label: "case: epoch fence" }
+  - { from: t_ack_epoch, to: a_ack_epoch }
+  - { from: suite, to: t_ack_idem, label: "case: idempotent ack" }
+  - { from: t_ack_idem, to: a_ack_idem }
+  - { from: suite, to: t_heartbeat, label: "case: heartbeat extend" }
+  - { from: t_heartbeat, to: a_heartbeat }
+  - { from: suite, to: t_hb_fenced, label: "case: heartbeat fenced" }
+  - { from: t_hb_fenced, to: a_hb_fenced }
 ---
 flowchart TD
-    start([pending])
+    suite([work-queue API suite]) --> t_pick[lease, expire one, re-lease]
+    t_pick --> a_pick([prefers redeliver-eligible])
+    suite --> t_ack_epoch[stale-epoch ack after re-lease]
+    t_ack_epoch --> a_ack_epoch([stale ack no-op; new ack ok])
+    suite --> t_ack_idem[ack twice]
+    t_ack_idem --> a_ack_idem([second ack no-op])
+    suite --> t_heartbeat[heartbeat before ttl]
+    t_heartbeat --> a_heartbeat([extended, not reclaimed])
+    suite --> t_hb_fenced[heartbeat after reclaim]
+    t_hb_fenced --> a_hb_fenced([extended=false])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
