@@ -834,15 +834,18 @@ pub fn mb_subprocess_run_all(a: &[MbValue]) -> MbValue {
         return MbValue::none();
     };
 
-    if opts.check && code != 0 {
-        return raise(
-            "CalledProcessError",
-            &format!("Command '{cmd_args:?}' returned non-zero exit status {code}."),
-        );
-    }
-
     let out_captured = opts.capture_output || opts.stdout_sel == -1;
     let err_captured = opts.capture_output || opts.stderr_sel == -1;
+
+    if opts.check && code != 0 {
+        // Raise a CalledProcessError *instance* carrying returncode / cmd /
+        // output / stderr so `except CalledProcessError as exc:` can read
+        // exc.returncode (a bare string exception left it None).
+        let out_v = stream_value(stdout, out_captured, opts.text);
+        let err_v = stream_value(stderr, err_captured, opts.text);
+        return raise_called_process_error(code, &cmd_args, out_v, err_v);
+    }
+
     let mut f = FxHashMap::default();
     f.insert("args".into(), args);
     f.insert("returncode".into(), MbValue::from_int(code as i64));
