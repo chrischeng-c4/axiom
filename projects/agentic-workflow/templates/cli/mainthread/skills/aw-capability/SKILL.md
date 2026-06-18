@@ -86,8 +86,11 @@ promises from inference alone.
    candidates. `reconcile_wi_refs` actions caused by stale, missing, or
    skipped issue inventory are not WI backlog; rerun with
    `--include-issue-inventory` when tracker alignment is intentionally in
-   scope. In sweep output, skipped inventory rows are grouped as
-   `reconcile_wi_refs:issue_inventory_skipped`.
+   scope. The resulting `aw wi plan` artifact includes `Tracker WI Ref
+   Lookups` for README refs missing from open inventory; use those
+   `closed`/`not_found`/`lookup_error` statuses as review evidence before
+   changing README refs or tracker state. In sweep output, skipped inventory
+   rows are grouped as `reconcile_wi_refs:issue_inventory_skipped`.
 13. When the sweep shows non-HITL executable next actions such as `run_td` or
    `run_verify`, use
    `aw capability sweep --write-action-queue --human --skip-issue-inventory`
