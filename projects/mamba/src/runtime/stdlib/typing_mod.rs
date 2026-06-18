@@ -106,6 +106,44 @@ disp_unary!(d_get_origin, mb_typing_get_origin);
 disp_unary!(d_get_args, mb_typing_get_args);
 disp_unary!(d_get_type_hints, mb_typing_get_type_hints);
 disp_nullary!(d_sentinel, mb_typing_sentinel);
+
+/// typing.NamedTuple(name, fields=None, **kwargs). Providing BOTH a positional
+/// fields list and keyword fields is a TypeError; otherwise return the
+/// type-erased sentinel (the functional form is not yet materialized).
+unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let is_seq = |v: MbValue| -> bool {
+        v.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, super::super::rc::ObjData::List(_) | super::super::rc::ObjData::Tuple(_)) })
+            .unwrap_or(false)
+    };
+    let nonempty_dict = |v: MbValue| -> bool {
+        v.as_ptr()
+            .map(|p| unsafe {
+                if let super::super::rc::ObjData::Dict(ref lock) = (*p).data {
+                    !lock.read().unwrap().is_empty()
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
+    };
+    if a.len() >= 3 {
+        let fields = a.get(1).copied().unwrap_or_else(MbValue::none);
+        let last = a.last().copied().unwrap_or_else(MbValue::none);
+        if is_seq(fields) && nonempty_dict(last) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "Either list of fields or keywords can be provided to \
+                     NamedTuple, not both".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
+    MbValue::none()
+}
 disp_unary!(d_identity, mb_typing_identity);
 disp_unary!(d_override, mb_typing_override);
 disp_unary!(d_final, mb_typing_final);
@@ -131,11 +169,17 @@ pub fn register() {
         "AsyncGenerator",
         "AsyncIterator",
         "Awaitable",
-        "NamedTuple",
         "TypedDict",
     ] {
         attrs.insert(name.to_string(), MbValue::from_func(sentinel_addr));
     }
+    // NamedTuple validates the call shape (mixing the list form with keyword
+    // fields is a TypeError) but otherwise behaves like the sentinel.
+    let namedtuple_addr = d_namedtuple as *const () as usize;
+    attrs.insert("NamedTuple".to_string(), MbValue::from_func(namedtuple_addr));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(namedtuple_addr as u64);
+    });
     // Algebra special forms: identity-stable singletons that subscript into
     // normalized alias objects (Union[int, str], Optional[int], Literal[1]).
     for name in &[
