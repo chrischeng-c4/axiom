@@ -12,14 +12,27 @@ description = "relay core — durable ordered log per subject/shard serving broa
 name = "relay"
 path = "src/lib.rs"
 
+[[bin]]
+name = "relay-server"
+path = "src/bin/relay_server.rs"
+
 [dependencies]
 # The broker core is payload-agnostic (epic #120: "knows nothing about
 # workflows"): a message body is carried as opaque JSON. relay stays standalone
-# — no other axiom project as a dependency, only serde/chrono.
+# — it depends on no other axiom project, only third-party crates.
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 
+# HTTP/2 (h2c) + OpenAPI transport (#115).
+tokio = { workspace = true }
+axum = { workspace = true }
+futures = { workspace = true }
+utoipa = { workspace = true, features = ["axum_extras"] }
+ciborium = "0.2"
+crc32fast = "1.4"
+
 [dev-dependencies]
 tempfile = "3"
+reqwest = { workspace = true }
 # HANDWRITE-END
