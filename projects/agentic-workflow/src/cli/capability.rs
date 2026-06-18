@@ -311,6 +311,9 @@ pub struct CapabilitySweepArgs {
     /// Write every rollout artifact plus a top-level review index.
     #[arg(long = "write-rollout")]
     pub write_rollout: bool,
+    /// Write one consolidated HITL review packet for draft, WI-plan, and skipped-inventory queues.
+    #[arg(long = "write-review-packet")]
+    pub write_review_packet: bool,
     /// DEPRECATED compatibility no-op. Capability sweep emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -1152,6 +1155,7 @@ pub struct CapabilitySweepReport {
     pub write_action_queue: bool,
     pub write_check_index: bool,
     pub write_rollout: bool,
+    pub write_review_packet: bool,
     pub groups: Vec<CapabilitySweepGroup>,
     pub projects: Vec<CapabilitySweepProject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1172,6 +1176,8 @@ pub struct CapabilitySweepReport {
     pub check_index_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_packet_path: Option<PathBuf>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -2621,10 +2627,11 @@ async fn run_capability_sweep(
         reports.push(report);
     }
     let mut sweep = capability_sweep_report(&reports, args.verify, include_issue_inventory);
-    let write_drafts = args.write_drafts || args.write_rollout;
-    let write_wi_plans = args.write_wi_plans || args.write_rollout;
-    let write_action_queue = args.write_action_queue || args.write_rollout;
-    let write_check_index = args.write_check_index || args.write_rollout;
+    let write_review_packet = args.write_review_packet || args.write_rollout;
+    let write_drafts = args.write_drafts || args.write_rollout || write_review_packet;
+    let write_wi_plans = args.write_wi_plans || args.write_rollout || write_review_packet;
+    let write_action_queue = args.write_action_queue || args.write_rollout || write_review_packet;
+    let write_check_index = args.write_check_index || args.write_rollout || write_review_packet;
     if args.write_rollout {
         sweep.write_rollout = true;
     }
@@ -2656,6 +2663,10 @@ async fn run_capability_sweep(
     }
     if args.write_rollout {
         sweep.rollout_index_path = write_capability_sweep_rollout_index(&sweep)?;
+    }
+    if write_review_packet {
+        sweep.write_review_packet = true;
+        sweep.review_packet_path = write_capability_sweep_review_packet(&sweep)?;
     }
     if args.human {
         print_capability_sweep(&sweep);
@@ -2721,6 +2732,7 @@ fn capability_sweep_report(
         write_action_queue: false,
         write_check_index: false,
         write_rollout: false,
+        write_review_packet: false,
         groups: capability_sweep_groups(&projects),
         projects,
         drafts: Vec::new(),
@@ -2732,6 +2744,7 @@ fn capability_sweep_report(
         check_index: Vec::new(),
         check_index_path: None,
         rollout_index_path: None,
+        review_packet_path: None,
     }
 }
 
@@ -3146,6 +3159,218 @@ fn rollout_index_path_text(path: &Option<PathBuf>) -> String {
     path.as_ref()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "-".to_string())
+}
+
+fn write_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Result<Option<PathBuf>> {
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp").join("aw").join("capability-review");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-hitl-review-packet.md"));
+    std::fs::write(&path, render_capability_sweep_review_packet(sweep)).with_context(|| {
+        format!(
+            "failed to write capability HITL review packet {}",
+            path.display()
+        )
+    })?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> String {
+    let skipped_inventory = capability_sweep_skipped_inventory_projects(&sweep.projects);
+    let definition_drafts = sweep
+        .drafts
+        .iter()
+        .filter(|draft| draft.candidate_count == 0)
+        .collect::<Vec<_>>();
+    let status = if sweep.action_queue.is_empty()
+        && (!sweep.drafts.is_empty() || !sweep.wi_plans.is_empty() || !skipped_inventory.is_empty())
+    {
+        "pending_human_review"
+    } else if sweep.action_queue.is_empty() {
+        "done"
+    } else {
+        "pending_execution"
+    };
+
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_hitl_review_packet\n");
+    out.push_str(&format!("status: {status}\n"));
+    out.push_str(&format!(
+        "source_rollout: {}\n",
+        rollout_index_path_text(&sweep.rollout_index_path)
+    ));
+    out.push_str("---\n\n");
+    out.push_str("# Capability HITL Review Packet\n\n");
+    out.push_str("This AW-owned packet summarizes the remaining README capability rollout work. It is a review artifact only; do not apply README drafts until every product promise, surface, EC dimension, Root WI, and gate inventory row has human approval.\n\n");
+
+    out.push_str("## Current Rollout State\n\n");
+    out.push_str("| Queue | Count | Artifact |\n");
+    out.push_str("|---|---:|---|\n");
+    out.push_str(&format!(
+        "| Healthy projects | {} | {} |\n",
+        sweep.verified_project_count,
+        markdown_cell(&capability_sweep_healthy_projects(&sweep.projects).join(", "))
+    ));
+    out.push_str(&format!(
+        "| Non-HITL action queue | {} | {} |\n",
+        sweep.action_queue.len(),
+        rollout_index_path_text(&sweep.action_queue_index_path)
+    ));
+    out.push_str(&format!(
+        "| Capability draft review | {} | {} |\n",
+        sweep.drafts.len(),
+        rollout_index_path_text(&sweep.draft_index_path)
+    ));
+    out.push_str(&format!(
+        "| WI plan review | {} | {} |\n",
+        sweep.wi_plans.len(),
+        rollout_index_path_text(&sweep.wi_plan_index_path)
+    ));
+    out.push_str(&format!(
+        "| Skipped issue-inventory review | {} | generated from sweep projects |\n",
+        skipped_inventory.len()
+    ));
+    out.push_str(&format!(
+        "| Structural check index | {} | {} |\n",
+        sweep.check_index.len(),
+        rollout_index_path_text(&sweep.check_index_path)
+    ));
+
+    if !sweep.action_queue.is_empty() {
+        out.push_str("\n## Execute Before Review\n\n");
+        out.push_str("| Project | Action | Command | Reason |\n");
+        out.push_str("|---|---|---|---|\n");
+        for entry in &sweep.action_queue {
+            out.push_str(&format!(
+                "| {} | {} | `{}` | {} |\n",
+                markdown_cell(&entry.project),
+                markdown_cell(&entry.action_group),
+                markdown_cell(&entry.command),
+                markdown_cell(&entry.reason),
+            ));
+        }
+    }
+
+    if !skipped_inventory.is_empty() {
+        out.push_str("\n## Tracker Inventory Review\n\n");
+        out.push_str("These projects were swept with issue inventory skipped. They are tracker-sync review items, not automatic WI candidates.\n\n");
+        out.push_str("| Project | Target | Command | Reason |\n");
+        out.push_str("|---|---|---|---|\n");
+        for project in &skipped_inventory {
+            out.push_str(&format!(
+                "| {} | {} | `{}` | {} |\n",
+                markdown_cell(&project.project),
+                markdown_cell(&project.next_action.target),
+                markdown_cell(&project.next_action.command),
+                markdown_cell(&project.next_action.reason),
+            ));
+        }
+    }
+
+    if !sweep.wi_plans.is_empty() {
+        out.push_str("\n## WI Plan Review\n\n");
+        out.push_str("Review these local WI plans before publishing tracker issues or changing README WI refs.\n\n");
+        out.push_str(
+            "| Project | Candidates | Reconciliations | Open Work Items | Plan | Re-run |\n",
+        );
+        out.push_str("|---|---:|---:|---:|---|---|\n");
+        for plan in &sweep.wi_plans {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | `{}` |\n",
+                markdown_cell(&plan.project),
+                plan.candidate_count,
+                plan.reconciliation_count,
+                plan.issue_count,
+                markdown_cell(&plan.path.display().to_string()),
+                markdown_cell(&plan.plan_command),
+            ));
+        }
+    }
+
+    if !sweep.drafts.is_empty() {
+        out.push_str("\n## Capability Draft Review\n\n");
+        out.push_str("Candidate-review drafts contain inferred roots; definition-needed drafts contain placeholders only.\n\n");
+        out.push_str("| Lane | Projects | Candidate Roots | Action |\n");
+        out.push_str("|---|---:|---:|---|\n");
+        for row in capability_draft_index_summary_rows(&sweep.drafts) {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                markdown_cell(&row.lane),
+                row.project_count,
+                row.candidate_count,
+                markdown_cell(&row.action),
+            ));
+        }
+
+        out.push_str("\n### Candidate Review Order\n\n");
+        out.push_str("| Project | Candidate Roots | Draft | Check |\n");
+        out.push_str("|---|---:|---|---|\n");
+        let review_order = capability_draft_review_order(&sweep.drafts);
+        if review_order.is_empty() {
+            out.push_str("| none | 0 | - | - |\n");
+        } else {
+            for draft in review_order {
+                out.push_str(&format!(
+                    "| {} | {} | {} | `{}` |\n",
+                    markdown_cell(&draft.project),
+                    draft.candidate_count,
+                    markdown_cell(&draft.path.display().to_string()),
+                    markdown_cell(&draft.check_command),
+                ));
+            }
+        }
+
+        if !definition_drafts.is_empty() {
+            out.push_str("\n### Definition Needed\n\n");
+            out.push_str(
+                &definition_drafts
+                    .iter()
+                    .map(|draft| draft.project.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            out.push_str(".\n");
+        }
+    }
+
+    out.push_str("\n## Suggested Review Order\n\n");
+    if !sweep.action_queue.is_empty() {
+        out.push_str(
+            "1. Execute the non-HITL action queue one command at a time, then rerun the sweep.\n",
+        );
+        out.push_str("2. Return to this packet after action queue is empty.\n");
+    } else {
+        out.push_str("1. Reconcile skipped issue-inventory projects by running the listed plan/report commands with live tracker inventory.\n");
+        out.push_str("2. Review WI plans; accept, defer, or downgrade candidates before publishing tracker issues.\n");
+        out.push_str("3. Review candidate capability drafts; resolve every Review Decisions row before apply-draft.\n");
+        out.push_str("4. Define empty capability maps by ecosystem layer.\n");
+    }
+    out.push_str("\n## Commands After Review\n\n");
+    out.push_str("```sh\n");
+    out.push_str("aw capability apply-draft --project <project> --draft <path> --reviewed\n");
+    out.push_str("aw capability check --project <project>\n");
+    out.push_str("aw wi plan --project <project>\n");
+    out.push_str("aw run --project <project> --max-ticks 1\n");
+    out.push_str("```\n");
+    out
+}
+
+fn capability_sweep_skipped_inventory_projects(
+    projects: &[CapabilitySweepProject],
+) -> Vec<&CapabilitySweepProject> {
+    projects
+        .iter()
+        .filter(|project| is_skipped_issue_inventory_action(&project.next_action))
+        .collect()
+}
+
+fn capability_sweep_healthy_projects(projects: &[CapabilitySweepProject]) -> Vec<String> {
+    projects
+        .iter()
+        .filter(|project| project.loop_status == "done")
+        .map(|project| project.project.clone())
+        .collect()
 }
 
 fn capability_sweep_action_queue(
@@ -3592,6 +3817,11 @@ fn print_capability_sweep(sweep: &CapabilitySweepReport) {
     if sweep.write_rollout {
         if let Some(path) = &sweep.rollout_index_path {
             println!("rollout index {}", path.display());
+        }
+    }
+    if sweep.write_review_packet {
+        if let Some(path) = &sweep.review_packet_path {
+            println!("review packet {}", path.display());
         }
     }
 }
@@ -12395,6 +12625,39 @@ Gate Inventory:
         assert!(index.contains("| blocked | define_capability_map:draft | 1 | cue |"));
         assert!(index.contains("Start with the check index"));
         assert!(index.contains("skipped issue inventory alone is not backlog"));
+
+        let mut skipped_inventory = sample_report(CapabilityAction {
+            kind: CapabilityActionKind::CreateWi,
+            capability_id: Some("package-manager".to_string()),
+            gap_id: Some("package-manager-readiness".to_string()),
+            claim_id: None,
+            target: "Package Manager".to_string(),
+            command: "aw wi plan --project jet".to_string(),
+            reason: "issue inventory was skipped; run with --include-issue-inventory to check tracker alignment".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        });
+        skipped_inventory.project = "jet".to_string();
+        sweep
+            .projects
+            .push(capability_sweep_project(&skipped_inventory));
+        sweep.write_review_packet = true;
+        sweep.review_packet_path =
+            Some(PathBuf::from("/tmp/aw/capability-review/review-packet.md"));
+
+        let packet = render_capability_sweep_review_packet(&sweep);
+
+        assert!(packet.contains("kind: capability_hitl_review_packet"));
+        assert!(packet.contains("status: pending_execution"));
+        assert!(packet.contains("| Non-HITL action queue | 1 |"));
+        assert!(packet.contains("## Execute Before Review"));
+        assert!(packet.contains("## Tracker Inventory Review"));
+        assert!(packet.contains("| jet | Package Manager | `aw wi plan --project jet` |"));
+        assert!(packet.contains("## WI Plan Review"));
+        assert!(packet.contains("| lumen | 48 | 3 | 0 |"));
+        assert!(packet.contains("## Capability Draft Review"));
+        assert!(packet.contains("| candidate review | 1 | 3 |"));
+        assert!(packet.contains("do not apply README drafts until every product promise"));
     }
 
     #[test]
