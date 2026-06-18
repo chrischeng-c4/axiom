@@ -47,7 +47,7 @@ pub const V2_HEADER_SIZE: usize = 80;
 
 /// Starting point for WAL replay, derived from a loaded snapshot.
 ///
-/// A v2 snapshot captures the maximum timestamp among already-rotated WAL files
+/// A v2 snapshot captures the maximum token among already-rotated WAL files
 /// at snapshot-time (`wal_file_timestamp`; `0` if none rotated yet) plus the
 /// byte offset within the then-active `wal-current.log` (`wal_position_in_file`).
 ///
@@ -288,7 +288,7 @@ impl SnapshotWriter {
     /// Atomically create a snapshot of the engine state.
     /// Returns the final path of the snapshot file.
     ///
-    /// `wal_file_timestamp` is the maximum unix-second timestamp among
+    /// `wal_file_timestamp` is the maximum timestamp token among
     /// already-rotated WAL files at snapshot-time (`0` if none rotated yet);
     /// `wal_position_in_file` is the byte offset within the currently-active
     /// `wal-current.log`.

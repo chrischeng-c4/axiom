@@ -122,7 +122,7 @@ impl CtxInfEngine {
     ///
     /// The snapshot captures a **rotation-safe** WAL replay starting point:
     /// a pair `(wal_file_timestamp, wal_position_in_file)` where
-    /// `wal_file_timestamp` is the maximum unix-second timestamp among the
+    /// `wal_file_timestamp` is the maximum timestamp token among the
     /// WAL files that have already been rotated-out (`0` if none) and
     /// `wal_position_in_file` is the byte offset within the currently-active
     /// `wal-current.log`.

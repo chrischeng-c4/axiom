@@ -3,7 +3,7 @@
 //! the Strategy-B fix for
 //! `bug-ctx-inf-db-snapshot-wal-position-file-relative-across-rotation`.
 //!
-//! Naming: `wal-current.log` (active) + `wal-<unix-sec>.log` (rotated);
+//! Naming: `wal-current.log` (active) + `wal-<timestamp-token>.log` (rotated);
 //! per `cclab-wal/src/writer.rs`.
 
 use cclab_ctx_inf_db::storage::snapshot::{SnapshotLoader, SNAPSHOT_MAGIC};
@@ -79,8 +79,8 @@ fn test_rotation_fires_at_wal_max_file_size() {
     let dir = config.data_dir.clone();
 
     // 20 × ~4 KiB = ~80 KiB serialised → crosses 64 KiB once. Staying below
-    // two rotations sidesteps the 1-sec timestamp-collision hazard in
-    // `WalWriter::rotate` (rotated filename = `wal-<unix-sec>.log`).
+    // two rotations keeps the assertion focused on the first threshold
+    // crossing; `WalWriter::rotate` now uses a unique timestamp token.
     let (_ids, _names) = write_fat_entities_and_shutdown(config, 20);
 
     let files = wal_files(&dir);
@@ -122,7 +122,7 @@ fn test_recovery_replays_multiple_wal_files_in_order() {
     assert!(count_wal_files(&dir) >= 2, "precondition: rotation fired");
 
     // Reopen — no snapshot → recovery replays every WAL file in
-    // `find_wal_files` sort order (wal-<unix-sec>.log sorts before
+    // `find_wal_files` sort order (wal-<timestamp-token>.log sorts before
     // wal-current.log lexically).
     let (engine, stats) = CtxInfEngine::open_with_stats(config).unwrap();
     assert!(!stats.snapshot_loaded);

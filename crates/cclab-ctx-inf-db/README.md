@@ -19,7 +19,7 @@ README only claims the implemented Rust API surfaces and their current gates.
 |---|---:|---|---|---|---|---|
 | Temporal Knowledge Graph Engine | - | implemented | passing | conformance | not_ready | Rust API for in-memory temporal entity/relation graph operations; ingest baseline is documented but not rerun by default |
 | Graph And Timeline Query API | - | implemented | passing | conformance | not_ready | traversal, shortest path, all paths, centrality, connected components, active range, relation-at, and timeline queries |
-| Write-Behind Persistence And Recovery | - | implemented | passing | conformance | not_ready | WAL, snapshots, recovery, corruption handling, and persistence stats; some stress cases stay ignored for known WAL rotation collision risk |
+| Write-Behind Persistence And Recovery | - | implemented | verified | conformance | not_ready | WAL, snapshots, recovery, corruption handling, persistence stats, and concurrent stress coverage |
 
 ### Temporal Knowledge Graph Engine
 
@@ -61,7 +61,7 @@ Gate Inventory: `cargo test -p cclab-ctx-inf-db`; crates/cclab-ctx-inf-db/tests/
 ID: write-behind-persistence-and-recovery
 Type: RuntimeTool
 Surfaces: Rust API: `cclab_ctx_inf_db::{PersistenceConfig, PersistenceHandle, RecoveryManager, RecoveryStats, GraphOp}` - WAL, snapshot, recovery, and persistence stats surface
-EC Dimensions: behavior: `cargo test -p cclab-ctx-inf-db` - WAL roundtrip, snapshot recovery, WAL delta replay, crash recovery, torn-page/corruption handling, snapshot GC, rotation coherence, and persistence stats; stability: `cargo test -p cclab-ctx-inf-db --test persistence_stress_test` - stress path is partially ignored for the known WAL rotation archive-collision bug
+EC Dimensions: behavior: `cargo test -p cclab-ctx-inf-db` - WAL roundtrip, snapshot recovery, WAL delta replay, crash recovery, torn-page/corruption handling, snapshot GC, rotation coherence, and persistence stats; stability: `cargo test -p cclab-ctx-inf-db --test persistence_stress_test` - concurrent ingest, channel-full, durable reopen, and concurrent log/flush stress coverage
 Root WI: -
 Status: confirmed
 Required Verification: conformance
@@ -72,4 +72,4 @@ Gate Inventory: `cargo test -p cclab-ctx-inf-db`; crates/cclab-ctx-inf-db/tests/
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Persistence and recovery behavior contract | epic | - | implemented | passing | conformance | `cargo test -p cclab-ctx-inf-db`; crates/cclab-ctx-inf-db/tests/persistence_test.rs; crates/cclab-ctx-inf-db/tests/crash_recovery_test.rs; crates/cclab-ctx-inf-db/tests/torn_page_test.rs; crates/cclab-ctx-inf-db/tests/wal_rotation_test.rs; crates/cclab-ctx-inf-db/tests/persistence_stress_test.rs |
-| Persistence stress risk tracking | epic | - | partial | blocked | negative | `cargo test -p cclab-ctx-inf-db --test persistence_stress_test` has ignored tests for BUG-WAL-ROTATE-COLLISION |
+| Persistence stress risk tracking | epic | - | implemented | verified | negative | `cargo test -p cclab-ctx-inf-db --test persistence_stress_test` |
