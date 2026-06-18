@@ -1,5 +1,7 @@
 # cue
 
+## Brief
+
 Web-based Prompt-to-Governed-Artifact control plane for internal work.
 
 Cue is no longer positioned as a terminal SDD runner. It is a browser-based
@@ -13,6 +15,122 @@ web/backend product owns sessions, collaboration, artifact graph review,
 approvals, registry, audit, ownership, runtime governance, and hidden app repo
 orchestration. The CLI remains the repo-local developer and coding-agent
 surface.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Prompt To WorkItem Artifact Graph | - | partial | planned | smoke | not_ready | session prompt, WorkItem, PRD, TD, and runtime artifact dependency flow |
+| Artifact Studio Front Office | - | partial | planned | smoke | not_ready | project-owner browser workspace for intent, graph review, sandbox, and production requests |
+| Admin Governance Back Office | - | partial | planned | smoke | not_ready | platform review queues, grants, release gates, diagnostics, and audit evidence |
+| Hidden App Repo And Registry | - | planned | planned | smoke | not_ready | hidden GitLab app artifacts, App Spec template, registry, and release mapping |
+| Policy Permission And Runtime Tenancy | - | planned | planned | smoke | not_ready | ownership, permissions, policy, risk, connector, and runtime data contracts |
+| Backend Mamba And Agent Team Boundary | - | partial | planned | smoke | not_ready | Mamba-target backend API and temporary bridge around the future agent-team boundary |
+
+### Prompt To WorkItem Artifact Graph
+
+ID: prompt-to-workitem-artifact-graph
+Type: AgentFirst
+Surfaces: Web UI: Artifact Studio - session prompt, WorkItem, PRD, TD, runtime artifact dependency graph; HTTP API: Cue backend workstream routes - durable WorkItem and artifact state
+EC Dimensions: behavior: projects/cue/backend/tests/test_workstream_api.py - WorkItem and artifact API contract
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Cue turns user intent into a durable WorkItem and reviewed artifact graph before PRD, TD, runtime, test, deployment, or approval work can proceed.
+Gate Inventory: projects/cue/backend/tests/test_workstream_api.py; projects/cue/e2e/full-product.e2e.mjs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| WorkItem and artifact graph contract | epic | - | partial | planned | smoke | projects/cue/backend/tests/test_workstream_api.py; projects/cue/e2e/full-product.e2e.mjs |
+
+### Artifact Studio Front Office
+
+ID: artifact-studio-front-office
+Type: AgentFirst
+Surfaces: Web UI: `projects/cue/artifact-studio` - project-owner frontend for intent, graph review, sandbox, and production request flow
+EC Dimensions: behavior: projects/cue/artifact-studio/tsconfig.json - Artifact Studio route/component type contract
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Artifact Studio gives project owners a browser workspace for describing intent, reviewing WorkItem-to-runtime artifacts, trying sandbox output, and requesting production.
+Gate Inventory: projects/cue/artifact-studio/tsconfig.json; projects/cue/artifact-studio/e2e/workitems.e2e.mjs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Artifact Studio frontend contract | epic | - | partial | planned | smoke | projects/cue/artifact-studio/tsconfig.json; projects/cue/artifact-studio/e2e/workitems.e2e.mjs |
+
+### Admin Governance Back Office
+
+ID: admin-governance-back-office
+Type: Service
+Surfaces: Web UI: `projects/cue/admin` - platform review queue, grants, release gates, diagnostics, and audit evidence; HTTP API: Cue backend Admin routes - review ticket and governance data
+EC Dimensions: behavior: projects/cue/admin/tsconfig.json - Admin UI type contract; behavior: projects/cue/backend/tests/test_goal_governance_api.py - governance API contract
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Cue Admin gives platform operators review queues, SaaS/API/resource grant workflows, release gates, diagnostics, and audit evidence for governed app delivery.
+Gate Inventory: projects/cue/admin/tsconfig.json; projects/cue/backend/tests/test_goal_governance_api.py
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Admin UI and governance API | epic | - | partial | planned | smoke | projects/cue/admin/tsconfig.json; projects/cue/backend/tests/test_goal_governance_api.py |
+
+### Hidden App Repo And Registry
+
+ID: hidden-app-repo-and-registry
+Type: Service
+Surfaces: Generated app template: `projects/cue/app-repo-template` - hidden GitLab repo contents; HTTP API: Cue backend registry/template routes - app state and release mapping
+EC Dimensions: behavior: projects/cue/backend/tests/test_template_library_api.py - template and registry API contract
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Cue owns generated app artifacts through hidden GitLab project templates and a registry that maps business app identity to source refs, sandbox refs, and production releases.
+Gate Inventory: projects/cue/app-repo-template; projects/cue/schemas/app-spec.v0.schema.json; projects/cue/backend/tests/test_template_library_api.py
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Hidden repo template and registry mapping | epic | - | planned | planned | smoke | projects/cue/app-repo-template; projects/cue/schemas/app-spec.v0.schema.json; projects/cue/backend/tests/test_template_library_api.py |
+
+### Policy Permission And Runtime Tenancy
+
+ID: policy-permission-and-runtime-tenancy
+Type: SecurityTool
+Surfaces: Schema: Cue governance/runtime JSON schemas - ownership namespace, permissions, runtime tenancy, policy, and review ticket contracts
+EC Dimensions: security: projects/cue/schemas/governance-contract.schema.json - governed approval and policy schema; stability: projects/cue/examples/tracker-runtime-tenant.v0.json - app/env/version runtime tenancy example
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Cue constrains generated apps with ownership namespace, policy, permission, connector, risk-tier, approval, and runtime-tenancy contracts before production access is granted.
+Gate Inventory: projects/cue/schemas/governance-contract.schema.json; projects/cue/schemas/ownership-namespace.v0.schema.json; projects/cue/schemas/runtime-tenant.v0.schema.json; projects/cue/examples/tracker-runtime-tenant.v0.json
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Governance and runtime tenancy schemas | epic | - | planned | planned | smoke | projects/cue/schemas/governance-contract.schema.json; projects/cue/schemas/ownership-namespace.v0.schema.json; projects/cue/schemas/runtime-tenant.v0.schema.json; projects/cue/examples/tracker-runtime-tenant.v0.json |
+
+### Backend Mamba And Agent Team Boundary
+
+ID: backend-mamba-and-agent-team-boundary
+Type: Service
+Surfaces: HTTP API: `projects/cue/backend` - Mamba-target backend API and temporary bridge boundary; Agent API: `mambalibs.agentkit` task/result envelope - governed agent-team execution contract
+EC Dimensions: behavior: projects/cue/backend/tests - backend contract suite; behavior: projects/cue/be/tests/test_agent_team.py - agent-team contract preview
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Cue keeps backend product code behind the future Mamba and AgentKit task/result boundary while using the temporary bridge only as compatible scaffolding for thin product slices.
+Gate Inventory: projects/cue/backend/tests; projects/cue/backend/src/mambalibs; projects/cue/be/tests/test_agent_team.py
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Backend API and bridge contract | epic | - | partial | planned | smoke | projects/cue/backend/tests; projects/cue/backend/src/mambalibs; projects/cue/be/tests/test_agent_team.py |
+| Agent team task/result envelope | epic | - | planned | planned | smoke | projects/cue/be/tests/test_agent_team.py |
 
 ## Product Definition
 
