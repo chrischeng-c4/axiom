@@ -351,9 +351,29 @@ components:
 <!-- type: config lang: yaml -->
 
 ```yaml
-(fill)
-```
+# RelayServerConfig — HTTP/2 transport in front of the relay core.
+# The core engine settings (durability, dedupe, lease, retention) are the
+# RelayCoreConfig from #122, embedded under `core`.
 
+bind: "0.0.0.0:7000"     # h2c listen address for this shard
+h2c: true                # HTTP/2 cleartext (no TLS at this layer; mesh/proxy terminates)
+
+# Client-side sharding (advertised so clients can compute crc32(key) % shards).
+shards: 1                # total shards in the subject space
+shard_index: 0           # which shard this server instance serves
+
+# Wire defaults.
+default_content_type: "application/json"   # lease/ack also accept application/cbor
+stream_content_type: "application/cbor-seq" # broadcast subscribe frame stream
+
+# Embedded relay core config (see #122 RelayCoreConfig).
+core:
+  data_dir: "./relay-data"
+  fsync: "interval"
+  work_queue:
+    lease_ttl_ms: 30000
+    max_attempts: 5
+```
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
