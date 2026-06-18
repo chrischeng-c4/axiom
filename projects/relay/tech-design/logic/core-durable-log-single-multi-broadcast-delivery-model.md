@@ -408,3 +408,13 @@ flowchart TD
 - [schema] LogEntry / Seq / MessageId / DeliveryModel / SubscriberCursor / Lease / CommittedOffset cover the durable-log substrate plus per-model delivery state; payload reuses cclab-queue TaskMessage via x-rust-type. Applicable and codegen-ready.
 - [config] RelayCoreConfig scopes durability (segments, ram ring, fsync), dedupe window, work-queue lease/retry, broadcast replay, and retention — all in-process core concerns; transport/HA correctly deferred to #115/#109. Applicable.
 - [unit-test] Cases cover sequencing, idempotency, broadcast fan-out + replay-from-seq, work-queue single-delivery, lease-expiry redelivery, ack/commit, and the #122 acceptance (both models over the same log). Applicable.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Flow is internally consistent and satisfies #122: deterministic id -> dedupe -> durable append+seq -> single classify gate into broadcast/multicast fan-out vs work-queue/singlecast lease. Singlecast correctly modeled as the one-consumer case of the lease path; multicast as group fan-out. Redeliver loops back to lease (re-offer), ack advances the committed offset — both delivery models terminate cleanly over one log.
+- [schema] Types are codegen-ready and cover the substrate (LogEntry, Seq, MessageId) plus per-model state (SubscriberCursor for broadcast replay, Lease + CommittedOffset for work-queue). Payload reuses cclab_queue::TaskMessage via x-rust-type with no field reinterpretation, honoring "reuse cclab-queue message model". AppendOutcome.deduped expresses the idempotent at-least-once contract. Known bound (accepted, not blocking): dedupe.window_entries / ttl_secs scope idempotency to a finite window — a retry arriving after eviction can double-append; this is the standard at-least-once tradeoff and is configurable.
+- [config] RelayCoreConfig scopes only in-process core concerns (durability, dedupe window, lease/retry, broadcast replay, retention); transport, sharding fan-out, and HA are correctly deferred to #115/#109. Defaults are sane (128 MiB segments, 30s lease, 5 attempts).
+- [unit-test] Cases map 1:1 to the contract: sequencing, idempotency, fan-out + replay-from-seq, work-queue exactly-once-delivery, lease-expiry redelivery with attempt increment, ack/commit, and the #122 acceptance case asserting both models over the same durable log.
