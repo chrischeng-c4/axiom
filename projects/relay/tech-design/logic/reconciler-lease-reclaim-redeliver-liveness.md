@@ -55,9 +55,9 @@ flowchart TD
 <!-- type: config lang: yaml -->
 
 ```yaml
-(fill)
+# Reconciler — relay-side work-queue liveness. Extends RelayServerConfig (#115).
+reconcile_interval_ms: 1000   # how often the background sweep reclaims expired leases per shard
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
