@@ -234,6 +234,11 @@ pub fn register() {
     attrs.insert("tzname".to_string(), MbValue::from_ptr(tzname_tuple));
 
     super::register_module("time", attrs);
+
+    // struct_time models a tuple of its 9 sequence fields: register the shared
+    // struct-seq method table (__iter__ / __getitem__ / slice / ==) so
+    // `tuple(gmtime(0))`, `*unpack`, and value-equality work.
+    super::sys_mod::register_struct_seq_class("struct_time");
 }
 
 // -- Helpers --
@@ -389,11 +394,30 @@ fn struct_time_from_dt<Tz: TimeZone>(dt: &DateTime<Tz>, is_local: bool) -> MbVal
     // chrono weekday(): Monday=0 .. Sunday=6 (matches CPython tm_wday).
     let tm_wday = dt.weekday().num_days_from_monday() as i64;
     let tm_yday = dt.ordinal() as i64;
-    let _ = is_local;
     // tm_isdst left as 0 (no DST modelled); CPython returns -1 for UTC.
     let tm_isdst: i64 = 0;
+    // tm_gmtoff / tm_zone: the UTC offset (seconds) and zone abbreviation.
+    // gmtime is fixed at UTC (+0, "UTC"); localtime reflects the host zone.
+    use chrono::Offset;
+    let fixed = dt.offset().fix();
+    let gmtoff = fixed.local_minus_utc() as i64;
+    let (gmtoff_v, zone_v) = if is_local {
+        // chrono does not surface the host zone abbreviation without the
+        // tz database, so use the fixed-offset form (e.g. "+08:00"): it is
+        // deterministic and round-trips, which is what struct_time needs.
+        (
+            MbValue::from_int(gmtoff),
+            MbValue::from_ptr(MbObject::new_str(fixed.to_string())),
+        )
+    } else {
+        (
+            MbValue::from_int(0),
+            MbValue::from_ptr(MbObject::new_str("UTC".to_string())),
+        )
+    };
     new_struct_time_instance(
-        tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec, tm_wday, tm_yday, tm_isdst,
+        tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec, tm_wday, tm_yday, tm_isdst, gmtoff_v,
+        zone_v,
     )
 }
 
@@ -407,6 +431,7 @@ fn new_struct_time_instance(
     wd: i64,
     yd: i64,
     dst: i64,
+    gmtoff: MbValue, zone: MbValue,
 ) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("tm_year".to_string(), MbValue::from_int(y));
@@ -418,7 +443,24 @@ fn new_struct_time_instance(
     fields.insert("tm_wday".to_string(), MbValue::from_int(wd));
     fields.insert("tm_yday".to_string(), MbValue::from_int(yd));
     fields.insert("tm_isdst".to_string(), MbValue::from_int(dst));
-    fields.insert("n_fields".to_string(), MbValue::from_int(9));
+    // Ordered sequence backing for the shared struct-seq protocol (__iter__,
+    // tuple(), slicing, ==): the 9 sequence fields, in order. tm_gmtoff /
+    // tm_zone are named-only extras, NOT part of the comparison tuple.
+    let entries = vec![
+        MbValue::from_int(y), MbValue::from_int(mo), MbValue::from_int(d),
+        MbValue::from_int(h), MbValue::from_int(mi), MbValue::from_int(s),
+        MbValue::from_int(wd), MbValue::from_int(yd), MbValue::from_int(dst),
+    ];
+    fields.insert("_entries".to_string(), MbValue::from_ptr(MbObject::new_list(entries)));
+    // gmtoff/zone may be borrowed tuple elements (struct_time factory path);
+    // retain before storing so they outlive the source.
+    unsafe {
+        super::super::rc::retain_if_ptr(gmtoff);
+        super::super::rc::retain_if_ptr(zone);
+    }
+    fields.insert("tm_gmtoff".to_string(), gmtoff);
+    fields.insert("tm_zone".to_string(), zone);
+    fields.insert("n_fields".to_string(), MbValue::from_int(11));
     fields.insert("n_sequence_fields".to_string(), MbValue::from_int(9));
     fields.insert("n_unnamed_fields".to_string(), MbValue::from_int(0));
     let obj = Box::new(MbObject {
@@ -724,7 +766,13 @@ pub fn mb_time_clock_settime_ns(_clk_id: MbValue, _value: MbValue) -> MbValue {
 /// object itself is not yet a real type for `isinstance` checks.
 pub fn mb_time_struct_time(seq: MbValue) -> MbValue {
     let items = extract_tuple_items(seq);
-    let get = |i: usize| -> i64 { items.get(i).copied().and_then(extract_int).unwrap_or(0) };
+    let get = |i: usize| -> i64 {
+        items.get(i).copied().and_then(extract_int).unwrap_or(0)
+    };
+    // Constructed from a bare 9-tuple, tm_gmtoff/tm_zone are None (CPython);
+    // an extended 11-tuple supplies them at positions 9 and 10.
+    let gmtoff = items.get(9).copied().unwrap_or_else(MbValue::none);
+    let zone = items.get(10).copied().unwrap_or_else(MbValue::none);
     new_struct_time_instance(
         get(0),
         get(1),
@@ -735,6 +783,8 @@ pub fn mb_time_struct_time(seq: MbValue) -> MbValue {
         get(6),
         get(7),
         get(8),
+        gmtoff,
+        zone,
     )
 }
 
