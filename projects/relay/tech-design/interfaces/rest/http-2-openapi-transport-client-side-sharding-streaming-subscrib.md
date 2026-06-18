@@ -78,9 +78,110 @@ flowchart TD
 <!-- type: schema lang: yaml -->
 
 ```yaml
-(fill)
-```
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: relay-http2-transport#schema
+title: Relay HTTP/2 Transport Wire Types
+description: >
+  Request/response DTOs for the HTTP/2 transport over the relay core, plus the
+  client-side sharding key. JSON shapes are the OpenAPI contract; the hot
+  lease/ack path additionally uses length-prefixed CBOR of the same shapes.
+  Core domain types (LogEntry, Lease, AppendOutcome, CommittedOffset) are reused
+  from the relay crate unchanged.
 
+definitions:
+  PublishRequest:
+    type: object
+    $id: PublishRequest
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [message_id, payload]
+    description: "Publish one message to the path's subject."
+    properties:
+      message_id:
+        type: string
+        description: "Caller-supplied idempotency key (dedupe is on this id)."
+      payload:
+        description: "Opaque message body (any JSON value); stored verbatim."
+      headers:
+        type: object
+        additionalProperties: { type: string }
+
+  PublishResponse:
+    type: object
+    $id: PublishResponse
+    x-rust-type: "relay::AppendOutcome"
+    description: "Reused core AppendOutcome { seq, deduped }."
+
+  LeaseRequest:
+    type: object
+    $id: LeaseRequest
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [consumer_id]
+    properties:
+      consumer_id: { type: string }
+
+  LeaseResponse:
+    type: object
+    $id: LeaseResponse
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    description: "A granted lease, or null when nothing is available."
+    properties:
+      lease:
+        oneOf:
+          - { type: "null" }
+          - { x-rust-type: "relay::Lease" }
+
+  AckRequest:
+    type: object
+    $id: AckRequest
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [lease_id]
+    properties:
+      lease_id: { type: string }
+
+  AckResponse:
+    type: object
+    $id: AckResponse
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [acked]
+    description: "Whether the lease was known, plus the resulting committed offset."
+    properties:
+      acked: { type: boolean }
+      committed_seq:
+        oneOf:
+          - { type: "null" }
+          - { type: integer, minimum: 0 }
+
+  SubscribeQuery:
+    type: object
+    $id: SubscribeQuery
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [from_seq]
+    description: "Broadcast tail query; delivery starts at from_seq."
+    properties:
+      from_seq: { type: integer, minimum: 0 }
+      subscriber_id:
+        oneOf:
+          - { type: "null" }
+          - { type: string }
+
+  StreamFrame:
+    type: object
+    $id: StreamFrame
+    x-rust-type: "relay::LogEntry"
+    description: "One broadcast stream item: a reused core LogEntry, emitted as a length-prefixed CBOR frame (or SSE data line)."
+
+  ShardKey:
+    type: object
+    $id: ShardKey
+    x-rust-derive: ["Debug", "Clone", "Copy", "Serialize", "Deserialize"]
+    required: [shards]
+    description: "Client-side sharding: target shard = crc32(key) % shards; the client resolves the per-shard headless DNS name. No L4 load balancer."
+    properties:
+      shards:
+        type: integer
+        minimum: 1
+        description: "Total shard count for the subject space."
+```
 ## Rest Api
 <!-- type: rest-api lang: yaml -->
 
