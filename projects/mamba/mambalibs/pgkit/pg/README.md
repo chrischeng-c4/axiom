@@ -10,12 +10,12 @@ Native PostgreSQL toolkit core for Mamba-facing applications.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Connection Pooling And Driver Access | - | implemented | planned | smoke | not_ready | async SQLx-backed connection and pooling primitives |
-| Query Row And Type Mapping | - | implemented | planned | smoke | not_ready | parameterized CRUD, row extraction, and Mamba/PostgreSQL value conversion |
-| Transaction And Migration Control | - | implemented | planned | smoke | not_ready | ACID transaction, savepoint, and up/down migration primitives |
-| Schema And ORM Introspection | - | implemented | planned | smoke | not_ready | table metadata, constraints, relations, and ORM model mapping |
-| Blocking Facade For Mamba Bindings | - | implemented | planned | smoke | not_ready | blocking wrappers consumed by the `mambalibs.pg` binding layer |
-| Bulk Operations And Metrics | - | partial | planned | smoke | not_ready | batch execution support, benchmark coverage, and operational metrics |
+| Connection Pooling And Driver Access | - | implemented | verified | smoke | not_ready | async SQLx-backed connection and pooling primitives |
+| Query Row And Type Mapping | - | implemented | verified | smoke | not_ready | parameterized CRUD, row extraction, and Mamba/PostgreSQL value conversion |
+| Transaction And Migration Control | - | implemented | verified | smoke | not_ready | ACID transaction, savepoint, and up/down migration primitives |
+| Schema And ORM Introspection | - | implemented | verified | smoke | not_ready | table metadata, constraints, relations, and ORM model mapping |
+| Blocking Facade For Mamba Bindings | - | implemented | verified | smoke | not_ready | blocking wrappers consumed by the `mambalibs.pg` binding layer |
+| Bulk Operations And Metrics | - | implemented | verified | smoke | not_ready | batch execution support, benchmark coverage, and operational metrics |
 
 ### Connection Pooling And Driver Access
 
@@ -24,7 +24,7 @@ Type: RuntimeTool
 Surfaces: Rust API: `cclab_pg::Connection` + `PoolConfig` - async PostgreSQL connection and pooling primitives
 EC Dimensions: behavior: `cargo test -p cclab-pg test_pool` - pool configuration and connection lifecycle
 Root WI: -
-Status: confirmed
+Status: verified
 Required Verification: smoke
 Promise:
 pgkit provides SQLx-backed PostgreSQL connection and pooling primitives for Mamba-facing applications without moving SQL generation or serialization onto the Mamba heap.
@@ -32,7 +32,7 @@ Gate Inventory: `cargo test -p cclab-pg test_pool`
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Pool configuration and connection lifecycle | epic | - | implemented | planned | smoke | `cargo test -p cclab-pg test_pool` |
+| Pool configuration and connection lifecycle | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_pool` |
 
 ### Query Row And Type Mapping
 
@@ -41,7 +41,7 @@ Type: RuntimeTool
 Surfaces: Rust API: `QueryBuilder` + row/type modules - parameterized CRUD, row extraction, and value conversion
 EC Dimensions: behavior: `cargo test -p cclab-pg test_query_builder` - query builder and CRUD behavior; security: `cargo test -p cclab-pg test_security` - parameterized query safety
 Root WI: -
-Status: confirmed
+Status: verified
 Required Verification: smoke
 Promise:
 pgkit exposes parameterized SQL query construction, CRUD helpers, row representation, and Mamba-to-PostgreSQL type conversion as a Rust-native library surface.
@@ -49,8 +49,8 @@ Gate Inventory: `cargo test -p cclab-pg test_query_builder`; `cargo test -p ccla
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Query builder and CRUD behavior | epic | - | implemented | planned | smoke | `cargo test -p cclab-pg test_query_builder`; `cargo test -p cclab-pg test_row_crud`; `cargo test -p cclab-pg test_types`; `cargo test -p cclab-pg test_security` |
-| Type conversion and SQL injection guardrails | epic | - | implemented | planned | smoke | `cargo test -p cclab-pg test_types`; `cargo test -p cclab-pg test_security` |
+| Query builder and CRUD behavior | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_query_builder`; `cargo test -p cclab-pg test_row_crud`; `cargo test -p cclab-pg test_types`; `cargo test -p cclab-pg test_security` |
+| Type conversion and SQL injection guardrails | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_types`; `cargo test -p cclab-pg test_security` |
 
 ### Transaction And Migration Control
 
@@ -59,7 +59,7 @@ Type: RuntimeTool
 Surfaces: Rust API: transaction and migrate modules - ACID transactions, savepoints, and up/down migrations
 EC Dimensions: behavior: `cargo test -p cclab-pg test_transaction` - transaction lifecycle; stability: `cargo test -p cclab-pg test_migration` - migration ordering and rollback behavior
 Root WI: -
-Status: confirmed
+Status: verified
 Required Verification: smoke
 Promise:
 pgkit manages PostgreSQL transactions and migrations with explicit transaction lifecycle, savepoint, and up/down migration contracts.
@@ -67,8 +67,8 @@ Gate Inventory: `cargo test -p cclab-pg test_transaction`; `cargo test -p cclab-
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Transaction lifecycle and savepoints | epic | - | implemented | planned | smoke | `cargo test -p cclab-pg test_transaction`; `cargo test -p cclab-pg test_migration` |
-| Migration ordering and rollback behavior | epic | - | implemented | planned | smoke | `cargo test -p cclab-pg test_migration` |
+| Transaction lifecycle and savepoints | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_transaction`; `cargo test -p cclab-pg test_migration` |
+| Migration ordering and rollback behavior | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_migration` |
 
 ### Schema And ORM Introspection
 
@@ -77,7 +77,7 @@ Type: RuntimeTool
 Surfaces: Rust API: schema and orm modules - table metadata, constraints, relations, and ORM model mapping
 EC Dimensions: behavior: `cargo test -p cclab-pg test_schema` - schema introspection and ORM metadata contracts
 Root WI: -
-Status: confirmed
+Status: verified
 Required Verification: smoke
 Promise:
 pgkit can inspect PostgreSQL schema metadata and map it into ORM-facing table, constraint, relation, and model contracts.
@@ -85,8 +85,8 @@ Gate Inventory: `cargo test -p cclab-pg test_schema`; `cargo test -p cclab-pg te
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Schema metadata and constraints | epic | - | implemented | planned | smoke | `cargo test -p cclab-pg test_schema`; `cargo test -p cclab-pg test_orm`; `cargo test -p cclab-pg test_relations`; `cargo test -p cclab-pg test_constraints` |
-| ORM relation mapping | epic | - | implemented | planned | smoke | `cargo test -p cclab-pg test_orm`; `cargo test -p cclab-pg test_relations` |
+| Schema metadata and constraints | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_schema`; `cargo test -p cclab-pg test_orm`; `cargo test -p cclab-pg test_relations`; `cargo test -p cclab-pg test_constraints` |
+| ORM relation mapping | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_orm`; `cargo test -p cclab-pg test_relations` |
 
 ### Blocking Facade For Mamba Bindings
 
@@ -95,7 +95,7 @@ Type: RuntimeTool
 Surfaces: Rust API: blocking facade helpers - sync wrappers consumed by `mambalibs.pg` binding code
 EC Dimensions: behavior: `cargo test -p cclab-pg test_blocking_facade_shape` - async/blocking API shape parity
 Root WI: -
-Status: confirmed
+Status: verified
 Required Verification: smoke
 Promise:
 pgkit exposes blocking wrapper shapes that let the sibling `mambalibs.pg` binding reuse the async PostgreSQL core from synchronous Mamba-facing calls.
@@ -103,7 +103,7 @@ Gate Inventory: `cargo test -p cclab-pg test_blocking`; `cargo test -p cclab-pg 
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Async/blocking API shape parity | epic | - | implemented | planned | smoke | `cargo test -p cclab-pg test_blocking`; `cargo test -p cclab-pg test_async_blocking_parity`; `cargo test -p cclab-pg test_blocking_facade_shape` |
+| Async/blocking API shape parity | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_blocking`; `cargo test -p cclab-pg test_async_blocking_parity`; `cargo test -p cclab-pg test_blocking_facade_shape` |
 
 ### Bulk Operations And Metrics
 
@@ -112,7 +112,7 @@ Type: RuntimeTool
 Surfaces: Rust API: bulk driver and metrics modules - batch execution support and operational counters
 EC Dimensions: behavior: `cargo test -p cclab-pg test_bulk_ops` - bulk operation behavior; efficiency: `cargo test -p cclab-pg test_benchmark` - benchmark harness coverage
 Root WI: -
-Status: confirmed
+Status: verified
 Required Verification: smoke
 Promise:
 pgkit includes bulk operation support and metrics hooks for tracking PostgreSQL core behavior and performance-sensitive paths.
@@ -120,8 +120,8 @@ Gate Inventory: `cargo test -p cclab-pg test_bulk_ops`; `cargo test -p cclab-pg 
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Bulk operation behavior | epic | - | implemented | planned | smoke | `cargo test -p cclab-pg test_bulk_ops`; `cargo test -p cclab-pg test_benchmark`; projects/mamba/mambalibs/pgkit/pg/benches/main.rs |
-| Benchmark and metric evidence | epic | - | partial | planned | smoke | `cargo test -p cclab-pg test_benchmark`; projects/mamba/mambalibs/pgkit/pg/benches/main.rs |
+| Bulk operation behavior | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_bulk_ops`; `cargo test -p cclab-pg test_benchmark`; projects/mamba/mambalibs/pgkit/pg/benches/main.rs |
+| Benchmark and metric evidence | epic | - | implemented | verified | smoke | `cargo test -p cclab-pg test_benchmark`; projects/mamba/mambalibs/pgkit/pg/benches/main.rs |
 
 ## Overview
 
