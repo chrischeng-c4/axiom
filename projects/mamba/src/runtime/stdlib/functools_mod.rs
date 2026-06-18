@@ -1787,11 +1787,21 @@ pub fn get_func_wrapped(wrapper: MbValue) -> MbValue {
 /// `wrapper` (both function values): copy `__name__`, `__qualname__`,
 /// `__module__`, `__doc__` and set `__wrapped__ = wrapped`. Returns `wrapper`.
 pub fn mb_functools_wraps_apply(wrapper: MbValue, wrapped: MbValue) -> MbValue {
-    let name = super::super::closure::mb_func_get_name(wrapped);
+    // Read an attribute from a non-function wrapped object (e.g. a builtin type
+    // like `type`/`max`) when the function-registry getter has nothing.
+    let getattr = |attr: &str| -> MbValue {
+        super::super::class::mb_getattr(
+            wrapped,
+            MbValue::from_ptr(MbObject::new_str(attr.to_string())),
+        )
+    };
+    let mut name = super::super::closure::mb_func_get_name(wrapped);
+    if name.is_none() { name = getattr("__name__"); }
     if !name.is_none() {
         super::super::closure::mb_func_set_name(wrapper, name);
     }
-    let doc = super::super::closure::mb_func_get_doc(wrapped);
+    let mut doc = super::super::closure::mb_func_get_doc(wrapped);
+    if doc.is_none() { doc = getattr("__doc__"); }
     if !doc.is_none() {
         super::super::closure::mb_func_set_doc(wrapper, doc);
     }
