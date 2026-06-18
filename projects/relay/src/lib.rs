@@ -13,10 +13,10 @@
 //!
 //! The core is payload-agnostic (epic #120: the broker "knows nothing about
 //! workflows"): a message body is an opaque [`Payload`] (JSON) plus a
-//! caller-supplied [`MessageId`] for sequencing and dedupe. A producer reusing
-//! the cclab-queue message model serializes its `TaskMessage` into the payload.
-//! relay owns the log, sequencing, dedupe, cursors, and leases. This is the new
-//! server core (relay epic #120, issue #122).
+//! caller-supplied [`MessageId`] for sequencing and dedupe. A producer
+//! serializes whatever message type it uses into the payload. relay owns the
+//! log, sequencing, dedupe, cursors, and leases, and depends on no other axiom
+//! project. This is the new server core (relay epic #120, issue #122).
 //!
 //! ```
 //! use std::collections::BTreeMap;

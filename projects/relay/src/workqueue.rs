@@ -1,11 +1,11 @@
 // SPEC-MANAGED: projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
-// HANDWRITE-BEGIN gap="missing-generator:logic:baf16980" tracker="pending-tracker" reason="Work-queue competing-consumer delivery: lease / ack / redeliver and committed offset (reuses cclab-queue retry / revocation)."
+// HANDWRITE-BEGIN gap="missing-generator:logic:baf16980" tracker="pending-tracker" reason="Work-queue competing-consumer delivery: lease / ack / redeliver and committed offset (standard at-least-once lease / retry semantics)."
 //! Work-queue / competing-consumer delivery over a single log.
 //!
 //! Each entry is leased to exactly one consumer until it acks or the lease
 //! expires; an expired lease makes the entry redelivery-eligible (with the
-//! attempt count carried forward, mirroring the cclab-queue retry / revocation
-//! model). The committed offset is the highest contiguous acked seq.
+//! attempt count carried forward — standard at-least-once retry semantics).
+//! The committed offset is the highest contiguous acked seq.
 
 use std::collections::{HashMap, HashSet};
 

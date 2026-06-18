@@ -1,6 +1,6 @@
 ---
 id: relay-core-durable-log
-summary: In-process broker core that serves both broadcast (replay from seq) and work-queue (lease / ack / redeliver) delivery over one durable ordered log per subject/shard, reusing the cclab-queue message / routing / retry / revocation models.
+summary: In-process broker core that serves both broadcast (replay from seq) and work-queue (lease / ack / redeliver) delivery over one durable ordered log per subject/shard. Standalone HTTP/2 queue core with standard at-least-once / replay semantics; depends on no other axiom project.
 fill_sections: [logic, schema, config, unit-test, changes]
 ---
 
@@ -112,8 +112,8 @@ title: Relay Core Durable Log Types
 description: >
   Core in-process data model for the relay broker: a durable ordered log per
   (subject, shard) plus the per-model delivery state that reads from it. The
-  message payload reuses the cclab-queue message model unchanged; relay owns
-  only the log, sequencing, dedupe, subscriber cursors, and work-queue leases.
+  message payload is an opaque body stored unchanged; relay owns only the log,
+  sequencing, dedupe, subscriber cursors, and work-queue leases.
 
 definitions:
   Subject:
@@ -159,11 +159,9 @@ definitions:
     description: >
       Opaque message body. Per epic #120 the broker "knows nothing about
       workflows", so the core stores the payload verbatim as JSON and never
-      reinterprets it. A producer reusing the cclab-queue message model
-      serializes its TaskMessage into this value; relay only needs the
-      caller-supplied MessageId for sequencing and dedupe. (The cclab-queue
-      retry / revocation *semantics* are still reused by the work-queue lease /
-      attempt / redeliver model.)
+      reinterprets it. A producer serializes whatever message type it uses into
+      this value; relay only needs the caller-supplied MessageId for sequencing
+      and dedupe. relay is standalone and depends on no other axiom project.
 
   LogEntry:
     type: object
@@ -294,7 +292,7 @@ dedupe:
   window_entries: 1048576       # MessageIds retained per shard for duplicate detection
   ttl_secs: 3600                # also evict dedupe keys older than this
 
-# Work-queue / competing-consumer delivery (reuses the cclab-queue retry / revocation model).
+# Work-queue / competing-consumer delivery (standard at-least-once lease / retry semantics).
 work_queue:
   lease_ttl_ms: 30000           # lease duration before an unacked entry is redelivery-eligible
   max_attempts: 5               # redelivery attempts before revocation / dead-letter
@@ -414,7 +412,7 @@ changes:
     action: create
     section: config
     impl_mode: hand-written
-    reason: "New relay crate manifest; depends on cclab-queue for the reused message / retry / revocation model."
+    reason: "New relay crate manifest for the standalone HTTP/2 queue core (no external project deps)."
   - path: projects/relay/src/lib.rs
     action: create
     section: logic
@@ -444,7 +442,7 @@ changes:
     action: create
     section: logic
     impl_mode: hand-written
-    reason: "Work-queue competing-consumer delivery: lease / ack / redeliver and committed offset (reuses cclab-queue retry / revocation)."
+    reason: "Work-queue competing-consumer delivery: lease / ack / redeliver and committed offset (standard at-least-once lease / retry semantics)."
   - path: projects/relay/src/engine.rs
     action: create
     section: logic
@@ -463,7 +461,7 @@ changes:
 **Verdict:** approved
 
 - [logic] Publish -> deterministic id -> dedupe -> durable append+seq -> classify into broadcast fan-out vs work-queue lease/ack/redeliver. Captures both delivery models over one log and the idempotent at-least-once path. Applicable.
-- [schema] LogEntry / Seq / MessageId / DeliveryModel / SubscriberCursor / Lease / CommittedOffset cover the durable-log substrate plus per-model delivery state; payload reuses cclab-queue TaskMessage via x-rust-type. Applicable and codegen-ready.
+- [schema] LogEntry / Seq / MessageId / DeliveryModel / SubscriberCursor / Lease / CommittedOffset cover the durable-log substrate plus per-model delivery state; payload is an opaque JSON body (x-rust-type serde_json::Value). Applicable and codegen-ready.
 - [config] RelayCoreConfig scopes durability (segments, ram ring, fsync), dedupe window, work-queue lease/retry, broadcast replay, and retention — all in-process core concerns; transport/HA correctly deferred to #115/#109. Applicable.
 - [unit-test] Cases cover sequencing, idempotency, broadcast fan-out + replay-from-seq, work-queue single-delivery, lease-expiry redelivery, ack/commit, and the #122 acceptance (both models over the same log). Applicable.
 
@@ -473,6 +471,6 @@ changes:
 **Verdict:** approved
 
 - [logic] Flow is internally consistent and satisfies #122: deterministic id -> dedupe -> durable append+seq -> single classify gate into broadcast/multicast fan-out vs work-queue/singlecast lease. Singlecast correctly modeled as the one-consumer case of the lease path; multicast as group fan-out. Redeliver loops back to lease (re-offer), ack advances the committed offset — both delivery models terminate cleanly over one log.
-- [schema] Types are codegen-ready and cover the substrate (LogEntry, Seq, MessageId) plus per-model state (SubscriberCursor for broadcast replay, Lease + CommittedOffset for work-queue). Payload reuses cclab_queue::TaskMessage via x-rust-type with no field reinterpretation, honoring "reuse cclab-queue message model". AppendOutcome.deduped expresses the idempotent at-least-once contract. Known bound (accepted, not blocking): dedupe.window_entries / ttl_secs scope idempotency to a finite window — a retry arriving after eviction can double-append; this is the standard at-least-once tradeoff and is configurable.
+- [schema] Types are codegen-ready and cover the substrate (LogEntry, Seq, MessageId) plus per-model state (SubscriberCursor for broadcast replay, Lease + CommittedOffset for work-queue). Payload is an opaque JSON body (serde_json::Value) stored verbatim with no reinterpretation, keeping the broker standalone (#120 "knows nothing about workflows"). AppendOutcome.deduped expresses the idempotent at-least-once contract. Known bound (accepted, not blocking): dedupe.window_entries / ttl_secs scope idempotency to a finite window — a retry arriving after eviction can double-append; this is the standard at-least-once tradeoff and is configurable.
 - [config] RelayCoreConfig scopes only in-process core concerns (durability, dedupe window, lease/retry, broadcast replay, retention); transport, sharding fan-out, and HA are correctly deferred to #115/#109. Defaults are sane (128 MiB segments, 30s lease, 5 attempts).
 - [unit-test] Cases map 1:1 to the contract: sequencing, idempotency, fan-out + replay-from-seq, work-queue exactly-once-delivery, lease-expiry redelivery with attempt increment, ack/commit, and the #122 acceptance case asserting both models over the same durable log.
