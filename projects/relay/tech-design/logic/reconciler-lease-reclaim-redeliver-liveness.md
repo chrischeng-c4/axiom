@@ -164,3 +164,13 @@ changes:
     impl_mode: hand-written
     reason: "Tests: dead-worker redeliver + complete, late-ack fenced, live-worker kept, frontier-only, background-task auto-reclaim."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] reconcile sweeps each shard's in-flight leases, reclaims the expired ones; redelivery + epoch bump happen on the next lease (prefer-redeliver from #113). Frontier-only — no full log scan. Sound and matches the acceptance.
+- [config] reconcile_interval_ms is the only knob; defaulted.
+- [unit-test] Covers dead-worker redeliver+complete, epoch-fenced late ack, live-worker kept via heartbeat, frontier-only, and a real background-task auto-reclaim.
+- [changes] Bounded to Relay::reconcile + reconciler module + server/bin/config wiring + tests; no new external-project dependency (only tokio, already present).
