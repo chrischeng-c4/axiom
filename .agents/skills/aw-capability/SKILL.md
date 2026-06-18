@@ -14,7 +14,7 @@ promises from inference alone.
 ## Contract
 
 - Human API: `/aw:capability <prompt>`.
-- Agent API: use `aw run`, `aw capability report|next|draft|apply-draft|init|migrate|run|check`,
+- Agent API: use `aw run`, `aw capability report|next|draft|apply-draft|init|migrate|run|check|sweep`,
   `aw standardize <project>`, `aw wi list/show`, `aw td ...`, and `aw cb ...`
   as needed to gather evidence.
 - Artifact: `cap_path`, defaulting to the project README when configured or
@@ -55,13 +55,18 @@ promises from inference alone.
 8. Use `aw capability check --project <project> --verify` after README or TD
    linkage edits when production proof matters; omit `--verify` only for a
    fast structural check.
-9. For multi-project rollouts, run `aw capability sweep --human` first. When
-   the sweep shows `define_capability_map:draft`, use
-   `aw capability sweep --write-drafts --human` to write pending-review draft
-   artifacts for all draftable projects in one AW-owned pass. These drafts
-   remain local `/tmp` review artifacts and do not edit README. Use the
-   emitted draft index path as the review queue handoff.
-10. After a human has reviewed a draft artifact and replaced all placeholders,
+9. For multi-project rollouts, run
+   `aw capability sweep --write-check-index --human --skip-issue-inventory`
+   first. The sweep summary is the raw next-action view; the emitted check
+   index is the `aw capability check` view for each project. Use the check
+   index to distinguish structural README/capability failures from tracker
+   inventory work.
+10. When the sweep shows `define_capability_map:draft`, use
+   `aw capability sweep --write-drafts --human --skip-issue-inventory` to
+   write pending-review draft artifacts for all draftable projects in one
+   AW-owned pass. These drafts remain local `/tmp` review artifacts and do not
+   edit README. Use the emitted draft index path as the review queue handoff.
+11. After a human has reviewed a draft artifact and replaced all placeholders,
    use `aw capability apply-draft --project <project> --draft <path>
    --reviewed` to apply the canonical `## Capabilities` section to README.
    The command refuses unreviewed placeholder drafts, including unresolved
@@ -70,16 +75,19 @@ promises from inference alone.
    Root WI, and gate inventory before README mutation; run
    `aw capability check --project <project>` afterward, and use `--verify`
    only when production proof matters.
-11. When the sweep shows `create_wi`, use
-   `aw capability sweep --write-wi-plans --human` to write local
-   pending-review WI planning artifacts for all create-WI projects. These are
-   review queues only; do not publish tracker changes until a human accepts the
-   WI candidates.
-12. When the sweep shows non-HITL executable next actions such as `run_td` or
-   `run_verify`, use `aw capability sweep --write-action-queue --human` to
-   write a local execution queue. Execute one command at a time and refresh the
-   sweep after each material change.
-13. Only after explicit confirmation, propose edits that create or materially
+12. When the sweep shows real `create_wi` work, use
+   `aw capability sweep --write-wi-plans --human --skip-issue-inventory` to
+   write local pending-review WI planning artifacts. These are review queues
+   only; do not publish tracker changes until a human accepts the WI
+   candidates. `create_wi` actions caused only by skipped issue inventory are
+   not WI backlog; rerun with `--include-issue-inventory` when tracker
+   alignment is intentionally in scope.
+13. When the sweep shows non-HITL executable next actions such as `run_td` or
+   `run_verify`, use
+   `aw capability sweep --write-action-queue --human --skip-issue-inventory`
+   to write a local execution queue. Execute one command at a time and refresh
+   the sweep after each material change.
+14. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
 ## README Schema
