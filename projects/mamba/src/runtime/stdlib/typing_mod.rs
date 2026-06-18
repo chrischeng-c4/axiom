@@ -1221,6 +1221,17 @@ pub fn mb_typing_runtime_checkable(cls: MbValue) -> MbValue {
     if let Some(ptr) = cls.as_ptr() {
         unsafe {
             if let super::super::rc::ObjData::Str(ref name) = (*ptr).data {
+                // CPython: @runtime_checkable applies only to Protocol classes.
+                if !super::super::class::is_protocol_class(name) {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "@runtime_checkable can be only applied to protocol classes, \
+                             got {name}"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
                 super::super::class::mark_runtime_checkable(name);
             }
         }
