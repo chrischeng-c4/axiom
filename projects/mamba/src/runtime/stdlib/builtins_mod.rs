@@ -730,9 +730,24 @@ pub fn register() {
                 func,
                 MbValue::from_ptr(MbObject::new_str("builtins".to_string())),
             );
+            // CPython exposes a signature-style docstring for several builtins
+            // (`max.__doc__` starts with "max("); fall back to the generic form.
+            let doc = match *name {
+                "max" => "max(iterable, *[, default=obj, key=func]) -> value\n\n\
+                    With a single iterable argument, return its biggest item. The\n\
+                    default keyword-only argument specifies an object to return if\n\
+                    the provided iterable is empty.\n\
+                    With two or more arguments, return the largest argument.".to_string(),
+                "min" => "min(iterable, *[, default=obj, key=func]) -> value\n\n\
+                    With a single iterable argument, return its smallest item. The\n\
+                    default keyword-only argument specifies an object to return if\n\
+                    the provided iterable is empty.\n\
+                    With two or more arguments, return the smallest argument.".to_string(),
+                _ => format!("Built-in function {name}."),
+            };
             super::super::closure::mb_func_set_doc(
                 func,
-                MbValue::from_ptr(MbObject::new_str(format!("Built-in function {name}."))),
+                MbValue::from_ptr(MbObject::new_str(doc)),
             );
         }
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
