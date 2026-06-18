@@ -308,6 +308,9 @@ pub struct CapabilitySweepArgs {
     /// Write a local check-result index for every swept project.
     #[arg(long = "write-check-index")]
     pub write_check_index: bool,
+    /// Write every rollout artifact plus a top-level review index.
+    #[arg(long = "write-rollout")]
+    pub write_rollout: bool,
     /// DEPRECATED compatibility no-op. Capability sweep emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -1148,6 +1151,7 @@ pub struct CapabilitySweepReport {
     pub write_wi_plans: bool,
     pub write_action_queue: bool,
     pub write_check_index: bool,
+    pub write_rollout: bool,
     pub groups: Vec<CapabilitySweepGroup>,
     pub projects: Vec<CapabilitySweepProject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1166,6 +1170,8 @@ pub struct CapabilitySweepReport {
     pub check_index: Vec<CapabilityCheckIndexEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_index_path: Option<PathBuf>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -2595,23 +2601,30 @@ async fn run_capability_sweep(
         reports.push(report);
     }
     let mut sweep = capability_sweep_report(&reports, args.verify, include_issue_inventory);
-    if args.write_drafts {
+    let write_drafts = args.write_drafts || args.write_rollout;
+    let write_wi_plans = args.write_wi_plans || args.write_rollout;
+    let write_action_queue = args.write_action_queue || args.write_rollout;
+    let write_check_index = args.write_check_index || args.write_rollout;
+    if args.write_rollout {
+        sweep.write_rollout = true;
+    }
+    if write_drafts {
         sweep.write_drafts = true;
         sweep.drafts = write_capability_sweep_drafts(&sweep.projects)?;
         sweep.draft_index_path = write_capability_sweep_draft_index(&sweep.drafts)?;
     }
-    if args.write_wi_plans {
+    if write_wi_plans {
         sweep.write_wi_plans = true;
         sweep.wi_plans = write_capability_sweep_wi_plans(&sweep.projects).await?;
         sweep.wi_plan_index_path = write_capability_sweep_wi_plan_index(&sweep.wi_plans)?;
     }
-    if args.write_action_queue {
+    if write_action_queue {
         sweep.write_action_queue = true;
         sweep.action_queue = capability_sweep_action_queue(&sweep.projects);
         sweep.action_queue_index_path =
             write_capability_sweep_action_queue_index(&sweep.action_queue)?;
     }
-    if args.write_check_index {
+    if write_check_index {
         sweep.write_check_index = true;
         sweep.check_index =
             capability_sweep_check_index(&reports, args.verify, include_issue_inventory);
@@ -2620,6 +2633,9 @@ async fn run_capability_sweep(
             args.verify,
             include_issue_inventory,
         )?;
+    }
+    if args.write_rollout {
+        sweep.rollout_index_path = write_capability_sweep_rollout_index(&sweep)?;
     }
     if args.human {
         print_capability_sweep(&sweep);
@@ -2684,6 +2700,7 @@ fn capability_sweep_report(
         write_wi_plans: false,
         write_action_queue: false,
         write_check_index: false,
+        write_rollout: false,
         groups: capability_sweep_groups(&projects),
         projects,
         drafts: Vec::new(),
@@ -2694,6 +2711,7 @@ fn capability_sweep_report(
         action_queue_index_path: None,
         check_index: Vec::new(),
         check_index_path: None,
+        rollout_index_path: None,
     }
 }
 
@@ -3024,6 +3042,88 @@ fn render_capability_sweep_check_index(
     out
 }
 
+fn write_capability_sweep_rollout_index(sweep: &CapabilitySweepReport) -> Result<Option<PathBuf>> {
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp").join("aw").join("capability-rollout");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-rollout-index.md"));
+    std::fs::write(&path, render_capability_sweep_rollout_index(sweep)).with_context(|| {
+        format!(
+            "failed to write capability rollout index {}",
+            path.display()
+        )
+    })?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_rollout_index(sweep: &CapabilitySweepReport) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_rollout_index\n");
+    out.push_str(&format!("status: {}\n", sweep.status));
+    out.push_str(&format!("project_count: {}\n", sweep.project_count));
+    out.push_str(&format!(
+        "complete_project_count: {}\n",
+        sweep.verified_project_count
+    ));
+    out.push_str(&format!("verify: {}\n", sweep.verify));
+    out.push_str(&format!(
+        "include_issue_inventory: {}\n",
+        sweep.include_issue_inventory
+    ));
+    out.push_str("---\n\n");
+    out.push_str("# Capability Rollout Index\n\n");
+    out.push_str("This is the top-level AW review bundle for README capability rollout. Start with the check index, then review draft, WI, and action queues in that order.\n\n");
+    out.push_str("| Queue | Count | Index | Use |\n");
+    out.push_str("|---|---:|---|---|\n");
+    out.push_str(&format!(
+        "| Check index | {} | {} | Structural `aw capability check` result for every swept project |\n",
+        sweep.check_index.len(),
+        rollout_index_path_text(&sweep.check_index_path),
+    ));
+    out.push_str(&format!(
+        "| Capability drafts | {} | {} | Pending human review for README capability promises |\n",
+        sweep.drafts.len(),
+        rollout_index_path_text(&sweep.draft_index_path),
+    ));
+    out.push_str(&format!(
+        "| WI plans | {} | {} | Pending human review for real capability gaps needing work items |\n",
+        sweep.wi_plans.len(),
+        rollout_index_path_text(&sweep.wi_plan_index_path),
+    ));
+    out.push_str(&format!(
+        "| Action queue | {} | {} | Non-HITL commands to execute one at a time |\n",
+        sweep.action_queue.len(),
+        rollout_index_path_text(&sweep.action_queue_index_path),
+    ));
+
+    out.push_str("\n## Sweep Groups\n\n");
+    out.push_str("| Status | Next | Count | Projects |\n");
+    out.push_str("|---|---|---:|---|\n");
+    for group in &sweep.groups {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            markdown_cell(&group.status),
+            markdown_cell(&group.next_action_group),
+            group.count,
+            markdown_cell(&group.projects.join(", ")),
+        ));
+    }
+
+    out.push_str("\n## Review Order\n\n");
+    out.push_str("- Review failed rows in the check index before mutating README files.\n");
+    out.push_str("- Apply capability drafts only after human review has resolved every placeholder and Review Decisions row.\n");
+    out.push_str("- Publish WI changes only after reviewing the WI plan candidates; skipped issue inventory alone is not backlog.\n");
+    out.push_str("- Execute action queue commands one at a time, then rerun the rollout sweep.\n");
+    out
+}
+
+fn rollout_index_path_text(path: &Option<PathBuf>) -> String {
+    path.as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
 fn capability_sweep_action_queue(
     projects: &[CapabilitySweepProject],
 ) -> Vec<CapabilityActionQueueEntry> {
@@ -3333,6 +3433,11 @@ fn print_capability_sweep(sweep: &CapabilitySweepReport) {
         println!("check index [{}]", sweep.check_index.len());
         if let Some(path) = &sweep.check_index_path {
             println!("check index {}", path.display());
+        }
+    }
+    if sweep.write_rollout {
+        if let Some(path) = &sweep.rollout_index_path {
+            println!("rollout index {}", path.display());
         }
     }
 }
@@ -12025,6 +12130,103 @@ Gate Inventory:
         assert!(index.contains(
             "Re-run the command in the table after each README, WI, TD, or verification change."
         ));
+    }
+
+    #[test]
+    fn capability_sweep_rollout_index_links_review_artifacts() {
+        let mut draftable = sample_report(sample_action(
+            CapabilityActionKind::DefineCapabilityMap,
+            "aw capability draft --project cue",
+            false,
+        ));
+        draftable.project = "cue".to_string();
+        let mut sweep = capability_sweep_report(
+            &[
+                sample_report(sample_action(CapabilityActionKind::None, "", false)),
+                draftable,
+            ],
+            false,
+            false,
+        );
+        sweep.write_rollout = true;
+        sweep.write_check_index = true;
+        sweep.check_index = vec![CapabilityCheckIndexEntry {
+            project: "jet".to_string(),
+            status: "passed",
+            command: "aw capability check --project jet --skip-issue-inventory".to_string(),
+            cap_path: PathBuf::from("projects/jet/README.md"),
+            next_action_kind: "none",
+            target: "projects/jet/README.md".to_string(),
+            reason: "capability format and TD refs are valid".to_string(),
+        }];
+        sweep.check_index_path = Some(PathBuf::from("/tmp/aw/capability-checks/check-index.md"));
+        sweep.write_drafts = true;
+        sweep.drafts = vec![CapabilityDraftReport {
+            schema_version: "aw.cli.v1",
+            action: "capability_draft",
+            project: "cue".to_string(),
+            cap_path: PathBuf::from("projects/cue/README.md"),
+            path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
+            status: "pending_review".to_string(),
+            source: "prose_candidates",
+            candidate_count: 3,
+            agent_review_required: true,
+            review_status: "pending",
+            apply_command:
+                "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed"
+                    .to_string(),
+            check_command: "aw capability check --project cue".to_string(),
+        }];
+        sweep.draft_index_path = Some(PathBuf::from(
+            "/tmp/aw/capability-map-drafts/draft-index.md",
+        ));
+        sweep.write_wi_plans = true;
+        sweep.wi_plans = vec![crate::cli::issues::CapabilityWiPlanReport {
+            action: "planned",
+            kind: "capability_plan",
+            project: "lumen".to_string(),
+            backend: "unavailable".to_string(),
+            path: PathBuf::from("/tmp/aw/lumen/capability-plan/plan.md"),
+            cap_path: PathBuf::from("projects/lumen/README.md"),
+            capability_count: 17,
+            planning_row_count: 54,
+            issue_count: 0,
+            candidate_count: 48,
+            warnings: Vec::new(),
+            agent_review_required: true,
+            review_status: "pending",
+            plan_command: "aw wi plan --project lumen".to_string(),
+        }];
+        sweep.wi_plan_index_path = Some(PathBuf::from(
+            "/tmp/aw/capability-wi-plans/wi-plan-index.md",
+        ));
+        sweep.write_action_queue = true;
+        sweep.action_queue = vec![CapabilityActionQueueEntry {
+            project: "meter".to_string(),
+            action_kind: "run_verify",
+            action_group: "run_verify".to_string(),
+            target: "Runtime Resource Attribution".to_string(),
+            command: "aw capability report --project meter --verify --write-evidence".to_string(),
+            latest_evidence_path: None,
+            reason: "runtime verification must be rerun".to_string(),
+        }];
+        sweep.action_queue_index_path = Some(PathBuf::from(
+            "/tmp/aw/capability-action-queue/action-queue.md",
+        ));
+
+        let index = render_capability_sweep_rollout_index(&sweep);
+
+        assert!(index.contains("kind: capability_rollout_index"));
+        assert!(index.contains("project_count: 2"));
+        assert!(index.contains("| Check index | 1 | /tmp/aw/capability-checks/check-index.md |"));
+        assert!(index
+            .contains("| Capability drafts | 1 | /tmp/aw/capability-map-drafts/draft-index.md |"));
+        assert!(index.contains("| WI plans | 1 | /tmp/aw/capability-wi-plans/wi-plan-index.md |"));
+        assert!(index
+            .contains("| Action queue | 1 | /tmp/aw/capability-action-queue/action-queue.md |"));
+        assert!(index.contains("| blocked | define_capability_map:draft | 1 | cue |"));
+        assert!(index.contains("Start with the check index"));
+        assert!(index.contains("skipped issue inventory alone is not backlog"));
     }
 
     #[test]

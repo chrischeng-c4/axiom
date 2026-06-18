@@ -56,11 +56,13 @@ promises from inference alone.
    linkage edits when production proof matters; omit `--verify` only for a
    fast structural check.
 9. For multi-project rollouts, run
-   `aw capability sweep --write-check-index --human --skip-issue-inventory`
-   first. The sweep summary is the raw next-action view; the emitted check
-   index is the `aw capability check` view for each project. Use the check
-   index to distinguish structural README/capability failures from tracker
-   inventory work.
+   `aw capability sweep --write-rollout --human --skip-issue-inventory` first.
+   This writes a top-level rollout index plus the check, draft, WI-plan, and
+   action-queue indexes in one AW-owned pass. The sweep summary is the raw
+   next-action view; the emitted check index is the `aw capability check` view
+   for each project. Use the rollout index as the handoff artifact and the
+   check index to distinguish structural README/capability failures from
+   tracker inventory work.
 10. When the sweep shows `define_capability_map:draft`, use
    `aw capability sweep --write-drafts --human --skip-issue-inventory` to
    write pending-review draft artifacts for all draftable projects in one
