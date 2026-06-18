@@ -1,7 +1,7 @@
 ---
 id: relay-core-durable-log
 summary: In-process broker core that serves both broadcast (replay from seq) and work-queue (lease / ack / redeliver) delivery over one durable ordered log per subject/shard, reusing the cclab-queue message / routing / retry / revocation models.
-fill_sections: [logic, schema, config, unit-test]
+fill_sections: [logic, schema, config, unit-test, changes]
 ---
 
 # relay core — durable log + single/multi/broadcast delivery model
@@ -397,6 +397,58 @@ flowchart TD
     t_ack_commit --> a_ack_commit([committed_seq advances, no redelivery])
     suite --> t_both_models[broadcast + work-queue on same log]
     t_both_models --> a_both_models([subscriber sees all; consumer leases each once])
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/relay/Cargo.toml
+    action: create
+    section: config
+    impl_mode: hand-written
+    reason: "New relay crate manifest; depends on cclab-queue for the reused message / retry / revocation model."
+  - path: projects/relay/src/lib.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Crate root: module wiring and public re-exports for the in-process core."
+  - path: projects/relay/src/types.rs
+    action: create
+    section: schema
+    impl_mode: hand-written
+    reason: "Core data model (LogEntry, Seq, MessageId, DeliveryModel, AppendOutcome, SubscriberCursor, Lease, CommittedOffset) per the Schema contract."
+  - path: projects/relay/src/config.rs
+    action: create
+    section: config
+    impl_mode: hand-written
+    reason: "RelayCoreConfig per the Config contract."
+  - path: projects/relay/src/log.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Durable ordered log substrate: append with deterministic-id dedupe, monotonic seq, RAM ring + disk segment persistence, ordered read/replay."
+  - path: projects/relay/src/broadcast.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Broadcast / multicast fan-out and replay-from-seq over the log via per-subscriber cursors."
+  - path: projects/relay/src/workqueue.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Work-queue competing-consumer delivery: lease / ack / redeliver and committed offset (reuses cclab-queue retry / revocation)."
+  - path: projects/relay/src/engine.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Relay core engine tying publish -> classify -> broadcast / work-queue delivery over one durable log."
+  - path: projects/relay/tests/relay_core.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Deterministic tests for the unit-test plan, including the #122 acceptance (both delivery models over the same log)."
 ```
 
 # Reviews
