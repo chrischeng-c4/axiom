@@ -1,4 +1,4 @@
-# cclab-shield
+# Cclab Schema
 
 ## Brief
 
@@ -10,9 +10,9 @@ Unified validation library for the cclab framework - Pydantic-like validation wi
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Validation Type System | - | implemented | passing | conformance | not_ready | Rust validation API for descriptors, constraints, formats, nested structures, and accumulated errors |
-| Mamba Dataclass Schema Surface | - | partial | planned | smoke | not_ready | Mamba-facing schema helpers documented as additive framework surface |
-| Serialization And Storage Features | - | implemented | passing | conformance | not_ready | optional serde, sonic, and BSON feature-backed data formats |
+| Validation Type System | - | implemented | verified | conformance | not_ready | Rust validation API for descriptors, constraints, formats, nested structures, and accumulated errors |
+| Mamba Dataclass Schema Surface | - | implemented | verified | conformance | not_ready | Mamba-facing schema helpers and binding parity are behavior verified through cclab-schema and cclab-schema-mamba |
+| Serialization And Storage Features | - | implemented | verified | conformance | not_ready | optional serde, sonic, and BSON feature-backed data formats |
 
 ### Validation Type System
 
@@ -21,7 +21,7 @@ Type: DeveloperTool
 Surfaces: Rust API: `cclab_schema::{TypeDescriptor, Value, validate}` - type-safe validation entrypoint; Rust API: `constraints::*` - string, numeric, list, and field descriptors; Rust API: `formats` - precompiled email, URL, UUID, date, datetime, and time validators
 EC Dimensions: behavior: `cargo test -p cclab-schema validation_tests error_paths_tests field_validator_tests model_validator_tests` - validation, constraints, formats, nested structures, validators, and error accumulation; efficiency: `cargo test -p cclab-schema` - zero-copy validation remains covered by crate tests until a dedicated meter cube exists
 Root WI: -
-Status: confirmed
+Status: verified
 Required Verification: smoke, conformance
 Promise:
 cclab-schema provides the Rust validation foundation for cclab: descriptors for primitive, collection, special, and format types; string/numeric/list/object constraints; nested structures; and accumulated validation errors.
@@ -34,17 +34,17 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Validation foundation | epic | - | implemented | passing | conformance | `cargo test -p cclab-schema` |
+| Validation foundation | epic | - | implemented | verified | conformance | `cargo test -p cclab-schema` |
 
 ### Mamba Dataclass Schema Surface
 
 ID: mamba-dataclass-schema-surface
 Type: RuntimeTool
 Surfaces: Python module: `mambalibs.dataclasses` - additive schema helpers; Rust API: `dataclass::{DataclassDefinition, FieldInfo, infer_type_from_annotation}` - type inference and field metadata surface
-EC Dimensions: behavior: `cargo test -p cclab-schema` - schema helper behavior in the Rust crate; behavior: `cargo test -p cclab-schema-mamba` - Mamba binding parity when the binding crate is in scope
+EC Dimensions: behavior: `cargo test -p cclab-schema` - schema helper behavior in the Rust crate; behavior: `cargo test -p cclab-schema-mamba` - Mamba binding parity for model definition, validation, dumping, JSON parsing, JSON Schema, aliases, defaults, coercion, nested models, and validation detail helpers
 Root WI: -
-Status: confirmed
-Required Verification: smoke
+Status: verified
+Required Verification: smoke, conformance
 Promise:
 Mamba exposes cclab-schema through additive schema helpers such as `BaseModel`, `Field`, `model_validate`, nullable field options, and nested model field metadata without changing CPython stdlib `dataclasses` behavior.
 Gate Inventory:
@@ -55,7 +55,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Dataclass schema bridge | epic | - | partial | planned | smoke | crates/cclab-schema-mamba/tests/test_binding.rs |
+| Dataclass schema bridge | epic | - | implemented | verified | conformance | `cargo test -p cclab-schema`; `cargo test -p cclab-schema-mamba`; crates/cclab-schema/src/dataclass.rs; crates/cclab-schema-mamba/tests/test_binding.rs |
 
 ### Serialization And Storage Features
 
@@ -64,7 +64,7 @@ Type: DeveloperTool
 Surfaces: Cargo feature: `serde` - JSON serialization through serde_json; Cargo feature: `sonic` / `fast` - high-performance JSON through sonic-rs; Cargo feature: `bson` - MongoDB BSON type support; Rust API: `serializers::*` - field/model serializer and computed field surface
 EC Dimensions: behavior: `cargo test -p cclab-schema serializer_tests` - serializer, computed field, include/exclude, and round-trip behavior; efficiency: `cargo test -p cclab-schema` - sonic-backed JSON path remains declared until a dedicated meter cube exists
 Root WI: -
-Status: confirmed
+Status: verified
 Required Verification: smoke, conformance
 Promise:
 cclab-schema exposes optional feature-backed data formats for JSON and BSON, including serde_json serialization, sonic-rs high-performance JSON, MongoDB BSON types, field/model serializers, and computed values.
@@ -75,7 +75,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Serialization and storage feature surface | epic | - | implemented | passing | conformance | `cargo test -p cclab-schema` |
+| Serialization and storage feature surface | epic | - | implemented | verified | conformance | `cargo test -p cclab-schema` |
 
 ## Overview
 
