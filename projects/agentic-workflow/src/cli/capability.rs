@@ -916,6 +916,7 @@ pub enum CapabilityActionKind {
     FormatMigrationRequired,
     HumanConfirmRequired,
     CreateWi,
+    ReconcileWiRefs,
     AtomizeWi,
     RunTd,
     RunCb,
@@ -1468,10 +1469,7 @@ fn capability_check_blocks_on_next_action(
     include_issue_inventory: bool,
 ) -> bool {
     let kind = action.kind;
-    if kind == CapabilityActionKind::CreateWi
-        && !include_issue_inventory
-        && action.reason.contains("issue inventory was skipped")
-    {
+    if !include_issue_inventory && is_skipped_issue_inventory_action(action) {
         return false;
     }
     matches!(
@@ -1480,6 +1478,7 @@ fn capability_check_blocks_on_next_action(
             | CapabilityActionKind::FormatMigrationRequired
             | CapabilityActionKind::HumanConfirmRequired
             | CapabilityActionKind::CreateWi
+            | CapabilityActionKind::ReconcileWiRefs
             | CapabilityActionKind::AtomizeWi
             | CapabilityActionKind::UpdateCapabilityStatus
             | CapabilityActionKind::EnvBlocked
@@ -3176,14 +3175,16 @@ fn write_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Result
 }
 
 fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> String {
-    let skipped_inventory = capability_sweep_skipped_inventory_projects(&sweep.projects);
+    let tracker_reconciliation = capability_sweep_tracker_reconciliation_projects(&sweep.projects);
     let definition_drafts = sweep
         .drafts
         .iter()
         .filter(|draft| draft.candidate_count == 0)
         .collect::<Vec<_>>();
     let status = if sweep.action_queue.is_empty()
-        && (!sweep.drafts.is_empty() || !sweep.wi_plans.is_empty() || !skipped_inventory.is_empty())
+        && (!sweep.drafts.is_empty()
+            || !sweep.wi_plans.is_empty()
+            || !tracker_reconciliation.is_empty())
     {
         "pending_human_review"
     } else if sweep.action_queue.is_empty() {
@@ -3228,8 +3229,8 @@ fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Strin
         rollout_index_path_text(&sweep.wi_plan_index_path)
     ));
     out.push_str(&format!(
-        "| Skipped issue-inventory review | {} | generated from sweep projects |\n",
-        skipped_inventory.len()
+        "| Tracker WI-ref review | {} | generated from sweep projects |\n",
+        tracker_reconciliation.len()
     ));
     out.push_str(&format!(
         "| Structural check index | {} | {} |\n",
@@ -3252,12 +3253,12 @@ fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Strin
         }
     }
 
-    if !skipped_inventory.is_empty() {
+    if !tracker_reconciliation.is_empty() {
         out.push_str("\n## Tracker Inventory Review\n\n");
-        out.push_str("These projects were swept with issue inventory skipped. They are tracker-sync review items, not automatic WI candidates.\n\n");
+        out.push_str("These projects have README WI references that need tracker synchronization. They are tracker-sync review items, not automatic WI candidates.\n\n");
         out.push_str("| Project | Target | Command | Reason |\n");
         out.push_str("|---|---|---|---|\n");
-        for project in &skipped_inventory {
+        for project in &tracker_reconciliation {
             out.push_str(&format!(
                 "| {} | {} | `{}` | {} |\n",
                 markdown_cell(&project.project),
@@ -3341,7 +3342,7 @@ fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Strin
         );
         out.push_str("2. Return to this packet after action queue is empty.\n");
     } else {
-        out.push_str("1. Reconcile skipped issue-inventory projects by running the listed plan/report commands with live tracker inventory.\n");
+        out.push_str("1. Reconcile tracker WI refs by running the listed plan/report commands with live tracker inventory.\n");
         out.push_str("2. Review WI plans; accept, defer, or downgrade candidates before publishing tracker issues.\n");
         out.push_str("3. Review candidate capability drafts; resolve every Review Decisions row before apply-draft.\n");
         out.push_str("4. Define empty capability maps by ecosystem layer.\n");
@@ -3356,12 +3357,12 @@ fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Strin
     out
 }
 
-fn capability_sweep_skipped_inventory_projects(
+fn capability_sweep_tracker_reconciliation_projects(
     projects: &[CapabilitySweepProject],
 ) -> Vec<&CapabilitySweepProject> {
     projects
         .iter()
-        .filter(|project| is_skipped_issue_inventory_action(&project.next_action))
+        .filter(|project| is_tracker_reconciliation_action(&project.next_action))
         .collect()
 }
 
@@ -3617,8 +3618,14 @@ fn is_capability_wi_plan_action(action: &CapabilityAction) -> bool {
 }
 
 fn is_skipped_issue_inventory_action(action: &CapabilityAction) -> bool {
-    action.kind == CapabilityActionKind::CreateWi
-        && action.reason.contains("issue inventory was skipped")
+    matches!(
+        action.kind,
+        CapabilityActionKind::CreateWi | CapabilityActionKind::ReconcileWiRefs
+    ) && action.reason.contains("issue inventory was skipped")
+}
+
+fn is_tracker_reconciliation_action(action: &CapabilityAction) -> bool {
+    action.kind == CapabilityActionKind::ReconcileWiRefs
 }
 
 fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject {
@@ -3715,7 +3722,9 @@ fn capability_action_group_label(kind: &'static str, detail: Option<&'static str
 
 fn capability_action_detail_label(action: &CapabilityAction) -> Option<&'static str> {
     match action.kind {
-        CapabilityActionKind::CreateWi if is_skipped_issue_inventory_action(action) => {
+        CapabilityActionKind::CreateWi | CapabilityActionKind::ReconcileWiRefs
+            if is_skipped_issue_inventory_action(action) =>
+        {
             Some("issue_inventory_skipped")
         }
         CapabilityActionKind::DefineCapabilityMap => {
@@ -3739,6 +3748,7 @@ fn capability_action_kind_label(kind: CapabilityActionKind) -> &'static str {
         CapabilityActionKind::FormatMigrationRequired => "format_migration_required",
         CapabilityActionKind::HumanConfirmRequired => "human_confirm_required",
         CapabilityActionKind::CreateWi => "create_wi",
+        CapabilityActionKind::ReconcileWiRefs => "reconcile_wi_refs",
         CapabilityActionKind::AtomizeWi => "atomize_wi",
         CapabilityActionKind::RunTd => "run_td",
         CapabilityActionKind::RunCb => "run_cb",
@@ -6410,7 +6420,7 @@ fn lifecycle_action_for_work_item(
             "active WI reference was not resolved because issue inventory was skipped; sync or recreate a bounded WI before TD/CB lifecycle"
         };
         return (
-            CapabilityActionKind::CreateWi,
+            CapabilityActionKind::ReconcileWiRefs,
             format!("aw wi plan --project {}", report.project),
             wi_plan_reason(report, reason),
         );
@@ -11917,9 +11927,9 @@ Gate Inventory:
     }
 
     #[test]
-    fn capability_check_preserves_create_wi_next_action() {
+    fn capability_check_preserves_reconcile_wi_refs_next_action() {
         let mut report = sample_report(sample_action(
-            CapabilityActionKind::CreateWi,
+            CapabilityActionKind::ReconcileWiRefs,
             "aw wi plan --project jet",
             false,
         ));
@@ -11930,7 +11940,10 @@ Gate Inventory:
 
         assert!(failed);
         assert_eq!(report.status, "blocked");
-        assert_eq!(report.next_action.kind, CapabilityActionKind::CreateWi);
+        assert_eq!(
+            report.next_action.kind,
+            CapabilityActionKind::ReconcileWiRefs
+        );
         assert_eq!(report.next_action.command, "aw wi plan --project jet");
         assert!(report.next_action.reason.contains("active WI reference"));
     }
@@ -11938,7 +11951,7 @@ Gate Inventory:
     #[test]
     fn capability_check_ignores_skipped_issue_inventory_for_structural_check() {
         let mut report = sample_report(sample_action(
-            CapabilityActionKind::CreateWi,
+            CapabilityActionKind::ReconcileWiRefs,
             "aw wi plan --project jet",
             false,
         ));
@@ -12202,7 +12215,7 @@ Gate Inventory:
         planable.cap_path = PathBuf::from("projects/lumen/README.md");
 
         let mut skipped_inventory = sample_report(sample_action(
-            CapabilityActionKind::CreateWi,
+            CapabilityActionKind::ReconcileWiRefs,
             "aw wi plan --project jet",
             false,
         ));
@@ -12244,7 +12257,7 @@ Gate Inventory:
             })
             .collect::<Vec<_>>();
         assert!(groups.contains(&"blocked:create_wi:1".to_string()));
-        assert!(groups.contains(&"blocked:create_wi:issue_inventory_skipped:1".to_string()));
+        assert!(groups.contains(&"blocked:reconcile_wi_refs:issue_inventory_skipped:1".to_string()));
     }
 
     #[test]
@@ -12438,7 +12451,7 @@ Gate Inventory:
     #[test]
     fn capability_sweep_check_index_normalizes_structural_results() {
         let mut skipped_inventory = sample_report(CapabilityAction {
-            kind: CapabilityActionKind::CreateWi,
+            kind: CapabilityActionKind::ReconcileWiRefs,
             capability_id: Some("package-manager".to_string()),
             gap_id: Some("package-manager-readiness".to_string()),
             claim_id: None,
@@ -12627,7 +12640,7 @@ Gate Inventory:
         assert!(index.contains("skipped issue inventory alone is not backlog"));
 
         let mut skipped_inventory = sample_report(CapabilityAction {
-            kind: CapabilityActionKind::CreateWi,
+            kind: CapabilityActionKind::ReconcileWiRefs,
             capability_id: Some("package-manager".to_string()),
             gap_id: Some("package-manager-readiness".to_string()),
             claim_id: None,
@@ -15367,7 +15380,7 @@ capability_refs:
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
-        assert_eq!(kind, CapabilityActionKind::CreateWi);
+        assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
         assert_eq!(command, "aw wi plan --project jet");
         assert!(reason.contains("active WI reference is not present"));
     }
@@ -15395,7 +15408,7 @@ capability_refs:
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
-        assert_eq!(kind, CapabilityActionKind::CreateWi);
+        assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
         assert_eq!(command, "aw wi plan --project jet");
         assert!(reason.contains("before TD/CB lifecycle"));
     }
@@ -15423,7 +15436,7 @@ capability_refs:
             "active WI exists; continue WI -> TD -> CB lifecycle",
         );
 
-        assert_eq!(kind, CapabilityActionKind::CreateWi);
+        assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
         assert_eq!(command, "aw wi plan --project jet");
         assert!(reason.contains("issue inventory was skipped"));
     }
