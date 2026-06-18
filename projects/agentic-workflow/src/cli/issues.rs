@@ -18,6 +18,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 // Top-level args for `aw wi`.
@@ -3370,6 +3371,7 @@ pub struct CapabilityWiPlanReport {
     pub issue_count: usize,
     pub candidate_count: usize,
     pub reconciliation_count: usize,
+    pub resolved_wi_ref_count: usize,
     pub warnings: Vec<String>,
     pub agent_review_required: bool,
     pub review_status: &'static str,
@@ -3398,6 +3400,16 @@ pub(crate) async fn load_project_open_issues(
     project: &str,
     repo: Option<String>,
 ) -> Result<(String, String, Vec<Issue>)> {
+    let (backend_name, project, issues, _) =
+        load_project_open_issues_with_backend(project_root, project, repo).await?;
+    Ok((backend_name, project, issues))
+}
+
+async fn load_project_open_issues_with_backend(
+    project_root: &Path,
+    project: &str,
+    repo: Option<String>,
+) -> Result<(String, String, Vec<Issue>, Box<dyn IssueBackend>)> {
     let project_label = resolve_project_label(project_root, project)
         .map_err(|e| anyhow::anyhow!("{}", e.to_envelope_message()))?;
     let (kind, repo, host) = resolve_backend(repo, project_root)?;
@@ -3411,7 +3423,12 @@ pub(crate) async fn load_project_open_issues(
     };
     let mut issues = backend.list(&filter).await?;
     sort_work_items_for_planning(&mut issues);
-    Ok((backend.name().to_string(), project.to_string(), issues))
+    Ok((
+        backend.name().to_string(),
+        project.to_string(),
+        issues,
+        backend,
+    ))
 }
 
 async fn run_plan(args: PlanArgs) -> Result<()> {
@@ -3466,13 +3483,18 @@ pub(crate) async fn build_capability_wi_plan_report(
             .collect(),
         health_note: extract_project_health_note(&cap_body),
     };
-    let (backend_name, project, issues, warnings) =
-        match load_project_open_issues(&project_root, &project, args.repo.clone()).await {
-            Ok((backend_name, project, issues)) => (backend_name, project, issues, Vec::new()),
+    let (backend_name, project, issues, backend, warnings) =
+        match load_project_open_issues_with_backend(&project_root, &project, args.repo.clone())
+            .await
+        {
+            Ok((backend_name, project, issues, backend)) => {
+                (backend_name, project, issues, Some(backend), Vec::new())
+            }
             Err(err) => (
                 "unavailable".to_string(),
                 project.clone(),
                 Vec::new(),
+                None,
                 vec![format!("issue inventory unavailable: {err:#}")],
             ),
         };
@@ -3481,7 +3503,14 @@ pub(crate) async fn build_capability_wi_plan_report(
         .clone()
         .unwrap_or_else(|| format!("{} capability WI plan", project));
     let candidates = capability_wi_candidates(&capability_map.rows, &issues);
-    let reconciliations = capability_tracker_reconciliations(&capability_map.rows, &issues);
+    let resolved_wi_refs = match backend.as_deref() {
+        Some(backend) => {
+            resolve_capability_tracker_ref_lookups(&capability_map.rows, &issues, backend).await
+        }
+        None => BTreeMap::new(),
+    };
+    let reconciliations =
+        capability_tracker_reconciliations(&capability_map.rows, &issues, &resolved_wi_refs);
     let body = render_capability_wi_plan(
         &project,
         &title,
@@ -3490,6 +3519,7 @@ pub(crate) async fn build_capability_wi_plan_report(
         &capability_map,
         &issues,
         &candidates,
+        &resolved_wi_refs,
         &warnings,
     );
     let path = write_planning_artifact(
@@ -3513,6 +3543,7 @@ pub(crate) async fn build_capability_wi_plan_report(
         issue_count: issues.len(),
         candidate_count: candidates.len(),
         reconciliation_count: reconciliations.len(),
+        resolved_wi_ref_count: resolved_wi_refs.len(),
         warnings,
         agent_review_required: true,
         review_status: "pending",
@@ -4016,8 +4047,18 @@ struct CapabilityTrackerReconciliation {
     capability: String,
     claim: String,
     active_wi: String,
+    tracker_lookup: String,
     capability_gap: String,
     next_action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityTrackerRefLookup {
+    reference: String,
+    status: String,
+    title: String,
+    labels: String,
+    url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4271,6 +4312,7 @@ fn active_wi_refs_text(row: &CapabilityRow) -> String {
 fn capability_tracker_reconciliations(
     rows: &[CapabilityRow],
     issues: &[Issue],
+    resolved_wi_refs: &BTreeMap<String, CapabilityTrackerRefLookup>,
 ) -> Vec<CapabilityTrackerReconciliation> {
     rows.iter()
         .filter(|row| {
@@ -4287,12 +4329,107 @@ fn capability_tracker_reconciliations(
                 .unwrap_or("-")
                 .to_string(),
             active_wi: active_wi_refs_text(row),
+            tracker_lookup: tracker_lookup_summary(row, resolved_wi_refs),
             capability_gap: row.gaps.clone(),
             next_action:
                 "resolve whether the README WI ref is closed, moved, mislabeled, or should be replaced after human review"
                     .to_string(),
         })
         .collect()
+}
+
+async fn resolve_capability_tracker_ref_lookups(
+    rows: &[CapabilityRow],
+    issues: &[Issue],
+    backend: &dyn IssueBackend,
+) -> BTreeMap<String, CapabilityTrackerRefLookup> {
+    let mut refs = BTreeSet::new();
+    for row in rows {
+        if !(has_actionable_gap(row)
+            && has_active_wi_ref(row)
+            && matching_issues_for_capability(row, issues).is_empty())
+        {
+            continue;
+        }
+        for reference in active_wi_summary_refs(row) {
+            refs.insert(reference);
+        }
+    }
+
+    let mut lookups = BTreeMap::new();
+    for reference in refs {
+        let lookup = match tracker_ref_lookup_id(&reference) {
+            Some(id) => match backend.get(&id).await {
+                Ok(Some(issue)) => CapabilityTrackerRefLookup {
+                    reference: reference.clone(),
+                    status: issue.state.as_str().to_string(),
+                    title: issue.title,
+                    labels: if issue.labels.is_empty() {
+                        "-".to_string()
+                    } else {
+                        issue.labels.join(", ")
+                    },
+                    url: issue.url.unwrap_or_else(|| "-".to_string()),
+                },
+                Ok(None) => CapabilityTrackerRefLookup {
+                    reference: reference.clone(),
+                    status: "not_found".to_string(),
+                    title: "-".to_string(),
+                    labels: "-".to_string(),
+                    url: "-".to_string(),
+                },
+                Err(err) => CapabilityTrackerRefLookup {
+                    reference: reference.clone(),
+                    status: "lookup_error".to_string(),
+                    title: review_summary_cell(&err.to_string()),
+                    labels: "-".to_string(),
+                    url: "-".to_string(),
+                },
+            },
+            None => CapabilityTrackerRefLookup {
+                reference: reference.clone(),
+                status: "unparsed".to_string(),
+                title: "-".to_string(),
+                labels: "-".to_string(),
+                url: "-".to_string(),
+            },
+        };
+        lookups.insert(reference, lookup);
+    }
+    lookups
+}
+
+fn tracker_ref_lookup_id(reference: &str) -> Option<String> {
+    let trimmed = reference.trim().trim_start_matches('#').trim();
+    if trimmed.chars().all(|ch| ch.is_ascii_digit()) && !trimmed.is_empty() {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+fn tracker_lookup_summary(
+    row: &CapabilityRow,
+    resolved_wi_refs: &BTreeMap<String, CapabilityTrackerRefLookup>,
+) -> String {
+    let summaries = active_wi_summary_refs(row)
+        .into_iter()
+        .map(|reference| match resolved_wi_refs.get(&reference) {
+            Some(lookup) => {
+                if lookup.title == "-" {
+                    format!("{}: {}", reference, lookup.status)
+                } else {
+                    format!("{}: {} - {}", reference, lookup.status, lookup.title)
+                }
+            }
+            None => format!("{}: lookup skipped", reference),
+        })
+        .collect::<Vec<_>>();
+    if summaries.is_empty() {
+        "-".to_string()
+    } else {
+        summaries.join("<br>")
+    }
 }
 
 fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<CapabilityCandidate> {
@@ -4668,10 +4805,12 @@ fn render_capability_wi_plan(
     capability_map: &CapabilityMap,
     issues: &[Issue],
     candidates: &[CapabilityCandidate],
+    resolved_wi_refs: &BTreeMap<String, CapabilityTrackerRefLookup>,
     warnings: &[String],
 ) -> String {
     let mut out = String::new();
-    let reconciliations = capability_tracker_reconciliations(&capability_map.rows, issues);
+    let reconciliations =
+        capability_tracker_reconciliations(&capability_map.rows, issues, resolved_wi_refs);
     out.push_str("---\n");
     out.push_str("draft: true\n");
     out.push_str("kind: capability_plan\n");
@@ -4695,6 +4834,10 @@ fn render_capability_wi_plan(
     out.push_str(&format!(
         "reconciliation_count: {}\n",
         reconciliations.len()
+    ));
+    out.push_str(&format!(
+        "resolved_wi_ref_count: {}\n",
+        resolved_wi_refs.len()
     ));
     if !warnings.is_empty() {
         out.push_str("warnings:\n");
@@ -4758,16 +4901,39 @@ fn render_capability_wi_plan(
     if !reconciliations.is_empty() {
         out.push_str("## Existing WI Refs Not In Open Inventory\n\n");
         out.push_str("These rows already have README WI references, but the current open issue inventory did not contain those IDs. Treat them as tracker reconciliation work, not automatic new WI candidates.\n\n");
-        out.push_str("| Capability | Claim | Active WI | Capability gap | Next action |\n");
-        out.push_str("|------------|-------|-----------|----------------|-------------|\n");
+        out.push_str(
+            "| Capability | Claim | Active WI | Tracker lookup | Capability gap | Next action |\n",
+        );
+        out.push_str(
+            "|------------|-------|-----------|----------------|----------------|-------------|\n",
+        );
         for reconciliation in &reconciliations {
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {} | {} |\n",
                 markdown_table_cell(&reconciliation.capability),
                 markdown_table_cell(&reconciliation.claim),
                 markdown_table_cell(&reconciliation.active_wi),
+                markdown_table_cell(&reconciliation.tracker_lookup),
                 markdown_table_cell(&reconciliation.capability_gap),
                 markdown_table_cell(&reconciliation.next_action)
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !resolved_wi_refs.is_empty() {
+        out.push_str("## Tracker WI Ref Lookups\n\n");
+        out.push_str("These lookups resolve README WI refs that were absent from the current open issue inventory. `not_found` and `lookup_error` entries still need human review before README refs or tracker state are changed.\n\n");
+        out.push_str("| WI | Lookup status | Title | Labels | URL |\n");
+        out.push_str("|----|---------------|-------|--------|-----|\n");
+        for lookup in resolved_wi_refs.values() {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                markdown_table_cell(&lookup.reference),
+                markdown_table_cell(&lookup.status),
+                markdown_table_cell(&lookup.title),
+                markdown_table_cell(&lookup.labels),
+                markdown_table_cell(&lookup.url)
             ));
         }
         out.push('\n');
@@ -6249,6 +6415,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             &map,
             &[],
             &candidates,
+            &BTreeMap::new(),
             &[],
         );
         assert!(body.contains("kind: capability_plan"));
@@ -6281,6 +6448,7 @@ Generator ownership is complete; package-manager roadmap remains open.
             &map,
             &[],
             &candidates,
+            &BTreeMap::new(),
             &["issue inventory unavailable: gh auth missing".to_string()],
         );
         assert!(warned.contains("warnings:"));
@@ -6320,7 +6488,18 @@ Generator ownership is complete; package-manager roadmap remains open.
         ];
 
         let candidates = capability_wi_candidates(&rows, &[]);
-        let reconciliations = capability_tracker_reconciliations(&rows, &[]);
+        let mut resolved_wi_refs = BTreeMap::new();
+        resolved_wi_refs.insert(
+            "#3779".to_string(),
+            CapabilityTrackerRefLookup {
+                reference: "#3779".to_string(),
+                status: "closed".to_string(),
+                title: "jet package manager readiness".to_string(),
+                labels: "project:jet, type:epic".to_string(),
+                url: "https://github.example/issues/3779".to_string(),
+            },
+        );
+        let reconciliations = capability_tracker_reconciliations(&rows, &[], &resolved_wi_refs);
         let summary = capability_plan_summary_rows(&rows, &[], &candidates);
 
         assert!(candidates.is_empty());
@@ -6345,12 +6524,16 @@ Generator ownership is complete; package-manager roadmap remains open.
             &map,
             &[],
             &candidates,
+            &resolved_wi_refs,
             &[],
         );
         assert!(body.contains("candidate_count: 0"));
         assert!(body.contains("reconciliation_count: 2"));
+        assert!(body.contains("resolved_wi_ref_count: 1"));
         assert!(body.contains("## Existing WI Refs Not In Open Inventory"));
-        assert!(body.contains("| Package Manager | package-manager-readiness | #3779 |"));
+        assert!(body.contains("| Package Manager | package-manager-readiness | #3779 | #3779: closed - jet package manager readiness |"));
+        assert!(body.contains("## Tracker WI Ref Lookups"));
+        assert!(body.contains("| #3779 | closed | jet package manager readiness | project:jet, type:epic | https://github.example/issues/3779 |"));
         assert!(!body.contains("## Candidate WI Drafts"));
         assert!(body.contains(
             "Review `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref"
@@ -6444,7 +6627,7 @@ Generator ownership is complete; package-manager roadmap remains open.
 
         assert!(matching_issues_for_capability(&row, &issues).is_empty());
         let candidates = capability_wi_candidates(&[row.clone()], &issues);
-        let reconciliations = capability_tracker_reconciliations(&[row], &issues);
+        let reconciliations = capability_tracker_reconciliations(&[row], &issues, &BTreeMap::new());
 
         assert!(candidates.is_empty());
         assert_eq!(reconciliations.len(), 1);

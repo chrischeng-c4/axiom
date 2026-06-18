@@ -149,6 +149,7 @@ scenarios:
       - "next emits exactly one next_action"
       - "report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing instead of treating absent tracker evidence as a recreate-WI instruction"
       - "active README WI refs that are stale, missing from live inventory, or hidden by --skip-issue-inventory route to ReconcileWiRefs rather than CreateWi"
+      - "aw wi plan resolves README active WI refs that are absent from the open issue inventory through backend get lookups and emits Tracker WI Ref Lookups with closed, not_found, or lookup_error status for HITL reconciliation"
       - "run executes at most one bounded tick unless --max-ticks raises the bound"
       - "check validates README capability format and TD capability refs without lifecycle execution"
       - "sweep emits grouped project rows by report status and next_action kind without mutating capability maps"
@@ -173,6 +174,7 @@ scenarios:
       - "TD primary capability_refs must name a known claim for contracted capabilities"
       - "aw wi plan uses required claims as bounded WI planning inputs"
       - "aw wi plan emits a capability-level Review Summary that groups claim candidates by capability before the detailed planning matrix"
+      - "aw wi plan adds tracker lookup evidence for README WI refs that are missing from the open issue inventory, without creating replacement WI candidates automatically"
   - id: S8
     title: "root runner rolls child completion upward"
     given: ["agent invokes aw run with a project, capability, epic, or change root"]
@@ -614,6 +616,11 @@ requirements:
     text: "aw capability report/sweep routes stale or skipped README WI refs through ReconcileWiRefs and reconcile_wi_refs:issue_inventory_skipped, not CreateWi"
     risk: high
     verifymethod: test
+  wi_plan_tracker_lookup:
+    id: AW-CAP-WI-28
+    text: "aw wi plan resolves README WI refs missing from open inventory into Tracker WI Ref Lookups with closed, not_found, or lookup_error status"
+    risk: medium
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -650,6 +657,7 @@ relations:
   - { from: capability_unit_tests, to: efficiency_backfill_atomic, kind: verifies }
   - { from: capability_unit_tests, to: rollout_review_packet, kind: verifies }
   - { from: capability_unit_tests, to: reconcile_wi_refs_lane, kind: verifies }
+  - { from: issues_unit_tests, to: wi_plan_tracker_lookup, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {
@@ -814,6 +822,12 @@ requirementDiagram
         risk: high
         verifymethod: test
     }
+    requirement wi_plan_tracker_lookup {
+        id: AW-CAP-WI-28
+        text: "wi plan emits tracker lookup statuses"
+        risk: medium
+        verifymethod: test
+    }
     element issues_unit_tests {
         type: "cargo-test"
     }
@@ -855,6 +869,7 @@ requirementDiagram
     capability_unit_tests - verifies -> draft_review_decisions_materialize
     capability_unit_tests - verifies -> efficiency_backfill_atomic
     capability_unit_tests - verifies -> rollout_review_packet
+    issues_unit_tests - verifies -> wi_plan_tracker_lookup
     capability_unit_tests - verifies -> reconcile_wi_refs_lane
 ```
 
