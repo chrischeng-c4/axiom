@@ -76,8 +76,10 @@ requires = ["lumen"]
 cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/scenarios/load", "--pins", "tests/rig/config/pins"]
 timeout_s = 300
 
-# Competitive comparison runners: vat owns the serving lumen process; arena
-# fans the workload across lumen and the external peer named by the spec.
+# Legacy competitive comparison runners: vat owns the serving lumen process;
+# arena fans the workload across lumen and the external peer named by the spec.
+# These remain compatibility helpers during arena retirement and are not the
+# production Lumen efficiency EC dispatch path.
 [[runners]]
 id = "arena-pg"
 requires = ["lumen"]
@@ -170,7 +172,9 @@ requires = ["lumen"]
 cmd = ["../../target/debug/meter", "profile", "--exec", "../../target/release/lumen-bench", "--duration", "25", "--", "run", "--tiers", "s", "--types", "bool_filter", "--queries", "200000"]
 timeout_s = 300
 
-# EC efficiency gate (aw.toml [ec.efficiency] -> `vat run ec-efficiency`).
+# Self-provisioned efficiency helper. The production EC dispatch path is the
+# meter-wrapped perf gate in aw.toml; this runner remains available when the
+# caller wants vat to bring up pg + OpenSearch.
 # vat brings up pg + OpenSearch (empty); perf_gate_vs_db self-hosts lumen,
 # self-seeds both peers from the env DSNs, and asserts the ratcheted floors.
 [[runners]]

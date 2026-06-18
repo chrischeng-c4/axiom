@@ -67,10 +67,10 @@ tool_contracts:
     tool: meter
     manifest: meter-search-security.toml
     category: security
-    command: "meter test -- cargo test -p lumen --test api_e2e -- --ignored"
+    command: "target/debug/meter test -- -p lumen --test api_e2e -- --ignored"
     native:
       version: 1
       project: lumen
       source_contract: lumen-search-security-access-control
-      delegate_command: "meter test -- cargo test -p lumen --test api_e2e -- --ignored"
+      delegate_command: "target/debug/meter test -- -p lumen --test api_e2e -- --ignored"
 ```
