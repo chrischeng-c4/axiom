@@ -7463,14 +7463,16 @@ fn parse_capability_prose_candidates(body: &str) -> Vec<CapabilityProseCandidate
                 cursor = block_end;
                 continue;
             }
+            let root_wi = first_issue_ref(&raw_candidate_title)
+                .or_else(|| first_issue_ref(&lines[cursor + 1..block_end].join("\n")));
             let candidate_title = clean_markdown_inline_links(&raw_candidate_title);
+            let candidate_title =
+                strip_trailing_root_wi_from_candidate_title(&candidate_title, root_wi.as_deref());
             let id = slugify(&candidate_title);
             if id.is_empty() {
                 cursor = block_end;
                 continue;
             }
-            let root_wi = first_issue_ref(&raw_candidate_title)
-                .or_else(|| first_issue_ref(&lines[cursor + 1..block_end].join("\n")));
             let promise = first_candidate_promise_text(&lines, cursor + 1, block_end);
             let summary = promise
                 .as_deref()
@@ -7569,8 +7571,10 @@ fn capability_list_candidate_from_bullet(
     if text.is_empty() || text.starts_with('[') {
         return None;
     }
+    let root_wi = first_issue_ref(text);
     let (title, summary) = split_capability_bullet_title_summary(text);
     let title = strip_markdown_emphasis(&title);
+    let title = strip_trailing_root_wi_from_candidate_title(&title, root_wi.as_deref());
     let id = slugify(&title);
     if id.is_empty() || candidate_table_title_is_ignored(&title) {
         return None;
@@ -7585,7 +7589,7 @@ fn capability_list_candidate_from_bullet(
         id,
         title,
         line,
-        root_wi: first_issue_ref(text),
+        root_wi,
         summary,
         promise,
     })
@@ -7656,8 +7660,11 @@ fn parse_capability_table_candidates(
             ],
         );
         for (row_offset, row) in rows.iter().enumerate() {
+            let row_text = row.join(" ");
+            let root_wi = first_issue_ref(&row_text);
             let title = clean_markdown_inline_links(&table_cell(row, capability_column));
             let title = strip_markdown_emphasis(&title);
+            let title = strip_trailing_root_wi_from_candidate_title(&title, root_wi.as_deref());
             let id = slugify(&title);
             if id.is_empty() || candidate_table_title_is_ignored(&title) {
                 continue;
@@ -7667,12 +7674,11 @@ fn parse_capability_table_candidates(
                 .filter(|summary| !summary.trim().is_empty());
             let promise = summary.clone();
             let summary = summary.map(|summary| truncate_candidate_summary(&summary));
-            let row_text = row.join(" ");
             candidates.push(CapabilityProseCandidate {
                 id,
                 title,
                 line: idx + 3 + row_offset,
-                root_wi: first_issue_ref(&row_text),
+                root_wi,
                 summary,
                 promise,
             });
@@ -7680,6 +7686,27 @@ fn parse_capability_table_candidates(
         idx = next_idx;
     }
     candidates
+}
+
+fn strip_trailing_root_wi_from_candidate_title(title: &str, root_wi: Option<&str>) -> String {
+    let mut cleaned = title.trim().to_string();
+    let Some(root_wi) = root_wi.map(str::trim).filter(|root_wi| !root_wi.is_empty()) else {
+        return cleaned;
+    };
+    for pattern in [
+        format!(" ({root_wi})"),
+        format!(" [{root_wi}]"),
+        format!(" - {root_wi}"),
+        format!(" — {root_wi}"),
+        format!(" – {root_wi}"),
+        format!(" {root_wi}"),
+    ] {
+        if cleaned.ends_with(&pattern) {
+            cleaned.truncate(cleaned.len() - pattern.len());
+            return cleaned.trim().to_string();
+        }
+    }
+    cleaned
 }
 
 fn capability_table_is_contract_or_index(headers: &[String]) -> bool {
@@ -7820,8 +7847,9 @@ fn first_issue_ref(text: &str) -> Option<String> {
 }
 
 fn dedupe_capability_prose_candidates(
-    candidates: Vec<CapabilityProseCandidate>,
+    mut candidates: Vec<CapabilityProseCandidate>,
 ) -> Vec<CapabilityProseCandidate> {
+    candidates.sort_by_key(|candidate| candidate.line);
     let mut seen = BTreeSet::new();
     candidates
         .into_iter()
@@ -10938,8 +10966,8 @@ fn looks_like_verification_inventory_reference(value: &str) -> bool {
         || lower.starts_with("src/")
         || lower.starts_with(".aw/")
         || [
-            ".rs", ".py", ".sh", ".md", ".json", ".toml", ".yaml", ".yml", ".js", ".mjs",
-            ".ts", ".tsx",
+            ".rs", ".py", ".sh", ".md", ".json", ".toml", ".yaml", ".yml", ".js", ".mjs", ".ts",
+            ".tsx",
         ]
         .iter()
         .any(|extension| lower.contains(extension))
@@ -11208,11 +11236,11 @@ Mamba should improve both runtime CPU and memory profile on selected workloads.
         assert_eq!(doc.prose_candidates.len(), 2);
         assert_eq!(
             doc.prose_candidates[0].id,
-            "c1-py3-12-functional-parity-axis-1-3331"
+            "c1-py3-12-functional-parity-axis-1"
         );
         assert_eq!(
             doc.prose_candidates[0].title,
-            "C1. Py3.12 functional parity - Axis 1 (#3331)"
+            "C1. Py3.12 functional parity - Axis 1"
         );
         assert_eq!(doc.prose_candidates[0].root_wi.as_deref(), Some("#3331"));
         assert!(doc.prose_candidates[0]
@@ -11256,6 +11284,44 @@ Cue turns business intent into governed internal work.
             .findings
             .iter()
             .any(|finding| finding.contains("candidate prose capability roots detected")));
+    }
+
+    #[test]
+    fn prose_candidate_titles_strip_trailing_root_wi_refs() {
+        let doc = cap_doc(
+            r#"# demo
+
+## Features
+
+- Runtime Parity (#100): Execute compatible runtime programs
+
+## Candidate Capability Matrix
+
+| Capability | Summary |
+|---|---|
+| Package Manager (#200) | Resolve, lock, and install packages |
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        let titles = doc
+            .prose_candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.title.as_str(),
+                    candidate.id.as_str(),
+                    candidate.root_wi.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            vec![
+                ("Runtime Parity", "runtime-parity", Some("#100")),
+                ("Package Manager", "package-manager", Some("#200")),
+            ]
+        );
     }
 
     #[test]
@@ -11415,8 +11481,8 @@ Mamba can execute the Python 3.12 language and standard library surface.
     #[test]
     fn capability_map_draft_artifact_is_pending_review_not_readme_mutation() {
         let candidates = vec![CapabilityProseCandidate {
-            id: "c1-py3-12-functional-parity-axis-1-3331".to_string(),
-            title: "C1. Py3.12 functional parity - Axis 1 (#3331)".to_string(),
+            id: "c1-py3-12-functional-parity-axis-1".to_string(),
+            title: "C1. Py3.12 functional parity - Axis 1".to_string(),
             line: 11,
             root_wi: Some("#3331".to_string()),
             summary: Some("Run real Python 3.12 programs without semantic divergence.".to_string()),
@@ -11435,9 +11501,9 @@ Mamba can execute the Python 3.12 language and standard library surface.
         assert!(artifact.contains("## Draft Canonical README Section"));
         assert!(artifact.contains("## Review Decisions"));
         assert!(artifact.contains(
-            "| C1. Py3.12 functional parity - Axis 1 (#3331) | confirm / rename / split / merge / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | #3331 | (confirm gates or inventory refs) |"
+            "| C1. Py3.12 functional parity - Axis 1 | confirm / rename / split / merge / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | #3331 | (confirm gates or inventory refs) |"
         ));
-        assert!(artifact.contains("ID: c1-py3-12-functional-parity-axis-1-3331"));
+        assert!(artifact.contains("ID: c1-py3-12-functional-parity-axis-1"));
         assert!(artifact.contains(
             "Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)"
         ));
