@@ -1350,7 +1350,7 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
                 include_issue_inventory,
             )
             .await?;
-            let check_failed = normalize_capability_check_report(&mut report);
+            let check_failed = normalize_capability_check_report(&mut report, args.verify);
             let evidence_path = maybe_write_capability_verify_evidence(
                 &report,
                 args.verify,
@@ -1397,10 +1397,10 @@ fn issue_inventory_enabled(include: bool, skip: bool, default: bool) -> bool {
     include || (default && !skip)
 }
 
-fn normalize_capability_check_report(report: &mut CapabilityReport) -> bool {
+fn normalize_capability_check_report(report: &mut CapabilityReport, verify: bool) -> bool {
     let check_failed = !report.blockers.is_empty()
         || matches!(report.test_gates.status, ProjectTestGateStatus::Failed)
-        || report.next_action.kind == CapabilityActionKind::FormatMigrationRequired;
+        || capability_check_blocks_on_next_action(report.next_action.kind, verify);
     if !check_failed {
         report.status = "healthy".to_string();
         report.next_action = CapabilityAction {
@@ -1416,6 +1416,23 @@ fn normalize_capability_check_report(report: &mut CapabilityReport) -> bool {
         };
     }
     check_failed
+}
+
+fn capability_check_blocks_on_next_action(kind: CapabilityActionKind, verify: bool) -> bool {
+    matches!(
+        kind,
+        CapabilityActionKind::DefineCapabilityMap
+            | CapabilityActionKind::FormatMigrationRequired
+            | CapabilityActionKind::HumanConfirmRequired
+            | CapabilityActionKind::CreateWi
+            | CapabilityActionKind::AtomizeWi
+            | CapabilityActionKind::UpdateCapabilityStatus
+            | CapabilityActionKind::EnvBlocked
+            | CapabilityActionKind::StaleProjectConfig
+            | CapabilityActionKind::DefineVerificationContract
+            | CapabilityActionKind::LinkClaimVerification
+            | CapabilityActionKind::AssignCapabilityType
+    ) || (verify && kind == CapabilityActionKind::RunVerify)
 }
 
 fn maybe_write_capability_verify_evidence(
@@ -11222,6 +11239,63 @@ Gate Inventory:
         assert_eq!(
             capability_human_readiness_line(&report),
             "readiness: loop=continue; production=blocked/not_ready [scope=1, blockers=1]"
+        );
+    }
+
+    #[test]
+    fn capability_check_preserves_create_wi_next_action() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project jet",
+            false,
+        ));
+        report.next_action.reason =
+            "active WI reference is not present in project issue inventory".to_string();
+
+        let failed = normalize_capability_check_report(&mut report, false);
+
+        assert!(failed);
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.next_action.kind, CapabilityActionKind::CreateWi);
+        assert_eq!(report.next_action.command, "aw wi plan --project jet");
+        assert!(report.next_action.reason.contains("active WI reference"));
+    }
+
+    #[test]
+    fn capability_check_keeps_unverified_run_verify_structural_by_default() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::RunVerify,
+            "aw capability report --project jet --verify",
+            false,
+        ));
+
+        let failed = normalize_capability_check_report(&mut report, false);
+
+        assert!(!failed);
+        assert_eq!(report.status, "healthy");
+        assert_eq!(report.next_action.kind, CapabilityActionKind::None);
+        assert_eq!(
+            report.next_action.reason,
+            "capability format and TD refs are valid"
+        );
+    }
+
+    #[test]
+    fn capability_check_preserves_run_verify_after_verify_mode() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::RunVerify,
+            "aw capability report --project jet --verify",
+            false,
+        ));
+
+        let failed = normalize_capability_check_report(&mut report, true);
+
+        assert!(failed);
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.next_action.kind, CapabilityActionKind::RunVerify);
+        assert_eq!(
+            report.next_action.command,
+            "aw capability report --project jet --verify"
         );
     }
 
