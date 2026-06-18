@@ -154,10 +154,16 @@ definitions:
       `singlecast` is the degenerate one-consumer case of work_queue.
 
   Payload:
-    type: object
     $id: Payload
-    x-rust-type: "cclab_queue::TaskMessage"
-    description: "Reused cclab-queue message model. relay stores it verbatim as the durable payload and never reinterprets its fields."
+    x-rust-type: "serde_json::Value"
+    description: >
+      Opaque message body. Per epic #120 the broker "knows nothing about
+      workflows", so the core stores the payload verbatim as JSON and never
+      reinterprets it. A producer reusing the cclab-queue message model
+      serializes its TaskMessage into this value; relay only needs the
+      caller-supplied MessageId for sequencing and dedupe. (The cclab-queue
+      retry / revocation *semantics* are still reused by the work-queue lease /
+      attempt / redeliver model.)
 
   LogEntry:
     type: object
