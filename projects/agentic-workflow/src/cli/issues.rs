@@ -4845,22 +4845,40 @@ fn render_capability_wi_plan(
     }
 
     out.push_str("\n## Recommended CLI Sequence\n\n");
-    out.push_str(&format!(
-        "1. `aw wi epicize --project {} --title \"{} epics\"`\n",
-        project, project
-    ));
-    out.push_str(&format!(
-        "2. `aw wi atomize --project {} --title \"{} bounded WI candidates\"`\n",
-        project, project
-    ));
-    out.push_str(&format!(
-        "3. `aw wi prioritize --project {} --title \"{} priority review\"`\n",
-        project, project
-    ));
-    out.push_str(&format!(
-        "4. `aw run --project {} --max-ticks 1`\n",
-        project
-    ));
+    if candidates.is_empty() && !reconciliations.is_empty() {
+        out.push_str("1. Review `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref is closed, moved, mislabeled, or should be replaced.\n");
+        out.push_str("2. Update README WI refs or tracker state only after HITL reconciliation.\n");
+        out.push_str(&format!("3. `aw wi plan --project {}`\n", project));
+        out.push_str(&format!(
+            "4. `aw run --project {} --max-ticks 1`\n",
+            project
+        ));
+    } else if candidates.is_empty() {
+        out.push_str(
+            "1. Review the capability planning matrix; no new WI candidates were generated.\n",
+        );
+        out.push_str(&format!(
+            "2. `aw run --project {} --max-ticks 1`\n",
+            project
+        ));
+    } else {
+        out.push_str(&format!(
+            "1. `aw wi epicize --project {} --title \"{} epics\"`\n",
+            project, project
+        ));
+        out.push_str(&format!(
+            "2. `aw wi atomize --project {} --title \"{} bounded WI candidates\"`\n",
+            project, project
+        ));
+        out.push_str(&format!(
+            "3. `aw wi prioritize --project {} --title \"{} priority review\"`\n",
+            project, project
+        ));
+        out.push_str(&format!(
+            "4. `aw run --project {} --max-ticks 1`\n",
+            project
+        ));
+    }
 
     out.push_str("\n## Review Guardrails\n\n");
     out.push_str("- Treat README capability rows as the confirmed anchor; if the direction changed, rerun `/aw:capability` before publishing WIs.\n");
@@ -6334,6 +6352,11 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("## Existing WI Refs Not In Open Inventory"));
         assert!(body.contains("| Package Manager | package-manager-readiness | #3779 |"));
         assert!(!body.contains("## Candidate WI Drafts"));
+        assert!(body.contains(
+            "Review `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref"
+        ));
+        assert!(body.contains("`aw wi plan --project jet`"));
+        assert!(!body.contains("`aw wi epicize --project jet"));
     }
 
     #[test]
