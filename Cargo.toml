@@ -70,6 +70,7 @@ members = [
     "crates/cclab-cli-registry",
     "crates/cclab-tqdm",
     "crates/cclab-log",
+    "crates/cclab-aurora",
     "crates/cclab-ctx-inf-db",
     "projects/lumen",
 ]
