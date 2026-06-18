@@ -186,9 +186,167 @@ definitions:
 <!-- type: rest-api lang: yaml -->
 
 ```yaml
-(fill)
+openapi: 3.1.0
+info:
+  title: relay HTTP/2 transport
+  version: 0.1.0
+  description: >
+    All protocols over HTTP/2 (h2c), no gRPC. JSON is the OpenAPI contract; the
+    hot lease/ack path also accepts/returns length-prefixed CBOR of the same
+    shapes (Content-Type application/cbor). Clients shard with crc32(key) %
+    shards and connect to the per-shard headless DNS name.
+servers:
+  - url: http://{shard}/
+    variables:
+      shard:
+        default: relay-0.relay.svc.cluster.local
+paths:
+  /v1/{subject}/publish:
+    post:
+      operationId: publish
+      summary: Append a message to the subject's durable log (idempotent on message_id).
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublishRequest" }
+      responses:
+        "200":
+          description: Append outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublishResponse" }
+  /v1/{subject}/lease:
+    post:
+      operationId: lease
+      summary: Lease the next eligible entry to a competing consumer (CBOR fast path).
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LeaseRequest" }
+          application/cbor:
+            schema: { $ref: "#/components/schemas/LeaseRequest" }
+      responses:
+        "200":
+          description: A lease, or null when nothing is available.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LeaseResponse" }
+            application/cbor:
+              schema: { $ref: "#/components/schemas/LeaseResponse" }
+  /v1/{subject}/ack:
+    post:
+      operationId: ack
+      summary: Acknowledge a lease (CBOR fast path); advances the committed offset.
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AckRequest" }
+          application/cbor:
+            schema: { $ref: "#/components/schemas/AckRequest" }
+      responses:
+        "200":
+          description: Ack result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AckResponse" }
+            application/cbor:
+              schema: { $ref: "#/components/schemas/AckResponse" }
+  /v1/{subject}/subscribe:
+    get:
+      operationId: subscribe
+      summary: Tail the broadcast stream from a seq (HTTP/2 chunked CBOR frames).
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+        - { name: from_seq, in: query, required: true, schema: { type: integer, minimum: 0 } }
+        - { name: subscriber_id, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: >
+            An open stream of length-prefixed CBOR StreamFrame items, one per log
+            entry, starting at from_seq and continuing as new entries arrive.
+          content:
+            application/cbor-seq:
+              schema: { $ref: "#/components/schemas/StreamFrame" }
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe.
+      responses:
+        "200": { description: OK }
+components:
+  schemas:
+    PublishRequest:
+      type: object
+      required: [message_id, payload]
+      properties:
+        message_id: { type: string }
+        payload: {}
+        headers: { type: object, additionalProperties: { type: string } }
+    PublishResponse:
+      type: object
+      required: [seq, deduped]
+      properties:
+        seq: { type: integer, minimum: 0 }
+        deduped: { type: boolean }
+    LeaseRequest:
+      type: object
+      required: [consumer_id]
+      properties:
+        consumer_id: { type: string }
+    LeaseResponse:
+      type: object
+      properties:
+        lease:
+          oneOf:
+            - { type: "null" }
+            - { $ref: "#/components/schemas/Lease" }
+    Lease:
+      type: object
+      required: [lease_id, seq, subject, shard, consumer_id, granted_at, expires_at, attempt]
+      properties:
+        lease_id: { type: string }
+        seq: { type: integer, minimum: 0 }
+        subject: { type: string }
+        shard: { type: integer, minimum: 0 }
+        consumer_id: { type: string }
+        granted_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        attempt: { type: integer, minimum: 1 }
+    AckRequest:
+      type: object
+      required: [lease_id]
+      properties:
+        lease_id: { type: string }
+    AckResponse:
+      type: object
+      required: [acked]
+      properties:
+        acked: { type: boolean }
+        committed_seq:
+          oneOf:
+            - { type: "null" }
+            - { type: integer, minimum: 0 }
+    StreamFrame:
+      type: object
+      required: [seq, message_id, subject, shard, payload, appended_at]
+      properties:
+        seq: { type: integer, minimum: 0 }
+        message_id: { type: string }
+        subject: { type: string }
+        shard: { type: integer, minimum: 0 }
+        payload: {}
+        headers: { type: object, additionalProperties: { type: string } }
+        appended_at: { type: string, format: date-time }
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
