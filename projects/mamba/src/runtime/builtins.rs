@@ -1000,7 +1000,9 @@ pub fn mb_len(val: MbValue) -> MbValue {
     // behavior (non-sequence iterators don't have len() in CPython either).
     if val.is_int() {
         if let Some(n) = super::iter::mb_iter_range_len(val) {
-            return MbValue::from_int(n);
+            // A range length can exceed 2^47 (e.g. `len(range(sys.maxsize))`),
+            // which overflows a NaN-boxed int — promote to BigInt.
+            return super::bigint_ops::int_from_i64(n);
         }
         let id = val.as_int().unwrap_or(0) as u64;
         if super::stdlib::array_mod::is_array_handle(id) {
