@@ -10823,13 +10823,6 @@ pub fn capability_rows_for_wi_plan(
                         && td.role == CapabilityRefRole::Primary
                         && td.claim.as_deref() == Some(&claim.id)
                 });
-                let first_gate = claim
-                    .gates
-                    .first()
-                    .map(|gate| gate.command.clone())
-                    .unwrap_or_else(|| {
-                        "Add at least one concrete verification gate to this claim.".to_string()
-                    });
                 rows.push(CapabilityWiPlanRow {
                     capability: capability.title.clone(),
                     capability_type: capability_wi_plan_type(capability),
@@ -10842,10 +10835,7 @@ pub fn capability_rows_for_wi_plan(
                         format!("claim {}: {}", claim.id, claim.user_story)
                     },
                     active_wi: active_wi_for_capability(capability),
-                    evidence: format!(
-                        "claim gate: {}; oracle: {}; maturity: {:?}",
-                        first_gate, claim.oracle, claim.maturity
-                    ),
+                    evidence: claim_wi_plan_evidence(claim),
                     claim_id: Some(claim.id.clone()),
                     claim_user_story: Some(claim.user_story.clone()),
                 });
@@ -10895,6 +10885,64 @@ pub fn capability_rows_for_wi_plan(
         });
     }
     Ok(rows)
+}
+
+fn claim_wi_plan_evidence(claim: &CapabilityClaim) -> String {
+    let oracle = if claim.oracle.trim().is_empty() || is_empty_table_value(&claim.oracle) {
+        None
+    } else {
+        Some(claim.oracle.trim())
+    };
+    let detail = if !claim.gates.is_empty() {
+        format!(
+            "claim gate: {}",
+            claim
+                .gates
+                .iter()
+                .map(|gate| gate.command.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else if !claim.fixtures.is_empty() {
+        let label = if claim
+            .fixtures
+            .iter()
+            .all(|fixture| looks_like_verification_inventory_reference(fixture))
+        {
+            "claim inventory"
+        } else {
+            "claim evidence"
+        };
+        format!("{label}: {}", claim.fixtures.join(", "))
+    } else {
+        "claim verification: add a concrete gate command or inventory reference".to_string()
+    };
+
+    match oracle {
+        Some(oracle) => format!("{detail}; oracle: {oracle}; maturity: {:?}", claim.maturity),
+        None => format!("{detail}; maturity: {:?}", claim.maturity),
+    }
+}
+
+fn looks_like_verification_inventory_reference(value: &str) -> bool {
+    let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    trimmed.starts_with('/')
+        || trimmed.starts_with("./")
+        || lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("projects/")
+        || lower.starts_with("crates/")
+        || lower.starts_with("examples/")
+        || lower.starts_with("tests/")
+        || lower.starts_with("src/")
+        || lower.starts_with(".aw/")
+        || [
+            ".rs", ".py", ".sh", ".md", ".json", ".toml", ".yaml", ".yml", ".js", ".mjs",
+            ".ts", ".tsx",
+        ]
+        .iter()
+        .any(|extension| lower.contains(extension))
 }
 
 fn capability_wi_plan_type(capability: &CapabilitySection) -> String {
@@ -13370,6 +13418,8 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Query planner | epic | #4141 | implemented | passing | conformance | `cargo test -p lumen planner` |
+| Fixture inventory | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
+| Prose follow-up | epic | - | planned | none | smoke | future service hardening chapter |
 
 ### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)
 
@@ -13427,6 +13477,26 @@ Cube: projects/lumen/tests/perf-cube.json
         assert!(query_planner
             .ec_dimensions
             .contains("security: `guard scan lumen-auth` - validates auth boundaries."));
+
+        let fixture_inventory = wi_rows
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("fixture-inventory"))
+            .unwrap();
+        assert!(fixture_inventory
+            .evidence
+            .contains("claim inventory: projects/lumen/tests/planner_diff.rs"));
+        assert!(!fixture_inventory
+            .evidence
+            .contains("Add at least one concrete verification gate"));
+
+        let prose_follow_up = wi_rows
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("prose-follow-up"))
+            .unwrap();
+        assert!(prose_follow_up
+            .evidence
+            .contains("claim evidence: future service hardening chapter"));
+        assert!(!prose_follow_up.evidence.contains("claim inventory:"));
     }
 
     #[test]

@@ -173,6 +173,7 @@ scenarios:
       - "required claims must include maturity plus either a gate command or a fixture/inventory reference"
       - "TD primary capability_refs must name a known claim for contracted capabilities"
       - "aw wi plan uses required claims as bounded WI planning inputs"
+      - "aw wi plan labels claim planning evidence as gate commands, fixture/inventory references, or prose evidence so agents do not mistake fixture-only claims for missing gate commands"
       - "aw wi plan emits a capability-level Review Summary that groups claim candidates by capability before the detailed planning matrix"
       - "aw wi plan adds tracker lookup evidence for README WI refs that are missing from the open issue inventory, without creating replacement WI candidates automatically"
   - id: S8
