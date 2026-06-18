@@ -69,3 +69,11 @@ changes:
     impl_mode: hand-written
     reason: "Throwaway reference worker (test-only): drives the lease / heartbeat / ack loop over h2c against an in-process relay, validating the worker-facing contract and the served OpenAPI (lease/ack/heartbeat)."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [unit-test] The reference-worker test maps to the contract: full lease/run/heartbeat/ack loop with exactly-once completion, heartbeat-extends, and OpenAPI presence of lease/ack/heartbeat. Faithful to #108 (deliverable = contract + test-only reference worker).
+- [changes] Single test-only file; relay ships no worker in its lib, keeping it standalone. keep's get-input/put-result remain a cross-project contract.
