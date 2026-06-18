@@ -3211,10 +3211,21 @@ fn resolve_project_ec_command(
     case: &crate::cli::ec::EcManifestCase,
     project: Option<&crate::models::project::Project>,
 ) -> Result<String> {
-    match project.and_then(|project| project.ec.get(&case.category)) {
+    match project.and_then(|project| project_ec_binding_for_category(project, &case.category)) {
         Some(binding) => binding.command(),
         None => Ok(case.command.clone()),
     }
+}
+
+fn project_ec_binding_for_category<'a>(
+    project: &'a crate::models::project::Project,
+    category: &str,
+) -> Option<&'a EcBinding> {
+    project.ec.get(category).or_else(|| match category {
+        "efficiency" => project.ec.get("benchmark"),
+        "benchmark" => project.ec.get("efficiency"),
+        _ => None,
+    })
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -4283,6 +4294,47 @@ mod tests {
 
         let unbound = resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
         assert_eq!(unbound, "cargo test -p demo");
+    }
+
+    #[test]
+    fn resolve_ec_command_accepts_legacy_benchmark_binding_for_efficiency() {
+        let mut ec = BTreeMap::new();
+        ec.insert(
+            "benchmark".to_string(),
+            EcBinding {
+                tool: "arena".into(),
+                command: None,
+                spec: Some("projects/arena/examples/lumen-vs-pg.toml".into()),
+                dir: None,
+                meter: None,
+            },
+        );
+        let project = ec_project(ec);
+
+        let command = resolve_project_ec_command(&ec_case("efficiency"), Some(&project)).unwrap();
+        assert_eq!(
+            command,
+            "arena run --spec projects/arena/examples/lumen-vs-pg.toml"
+        );
+    }
+
+    #[test]
+    fn resolve_ec_command_accepts_efficiency_binding_for_legacy_benchmark_case() {
+        let mut ec = BTreeMap::new();
+        ec.insert(
+            "efficiency".to_string(),
+            EcBinding {
+                tool: "meter".into(),
+                command: None,
+                spec: None,
+                dir: None,
+                meter: Some("projects/lumen".into()),
+            },
+        );
+        let project = ec_project(ec);
+
+        let command = resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap();
+        assert_eq!(command, "meter run --target projects/lumen");
     }
 
     /// wi-13 AC4: no `ec` map (or no project model at all) is today's
