@@ -16,6 +16,10 @@ path = "src/lib.rs"
 name = "relay-server"
 path = "src/bin/relay_server.rs"
 
+[[bench]]
+name = "relay_bench"
+harness = false
+
 [dependencies]
 # The broker core is payload-agnostic (epic #120: "knows nothing about
 # workflows"): a message body is carried as opaque JSON. relay stays standalone
@@ -35,4 +39,5 @@ crc32fast = "1.4"
 [dev-dependencies]
 tempfile = "3"
 reqwest = { workspace = true }
+criterion = "0.5"
 # HANDWRITE-END

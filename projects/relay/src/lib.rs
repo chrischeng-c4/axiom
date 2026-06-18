@@ -41,6 +41,7 @@ pub mod config;
 pub mod engine;
 pub mod log;
 pub mod openapi;
+pub mod perf_gate;
 pub mod reconciler;
 pub mod server;
 pub mod server_config;
