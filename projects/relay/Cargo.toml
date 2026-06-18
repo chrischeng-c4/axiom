@@ -1,3 +1,22 @@
-// HANDWRITE-BEGIN gap="missing-generator:config:7d099e74" tracker="pending-tracker" reason="New relay crate manifest; depends on cclab-queue for the reused message / retry / revocation model."
-// TODO: hand-write content for `projects/relay/Cargo.toml`.
-// HANDWRITE-END
+[package]
+name = "relay"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "relay core — durable ordered log per subject/shard serving broadcast (replay) and work-queue (lease/ack/redeliver) delivery."
+
+[lib]
+name = "relay"
+path = "src/lib.rs"
+
+[dependencies]
+cclab-queue = { path = "../queue/queue" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+<!-- marker: missing-generator:config:7d099e74 path: projects/relay/Cargo.toml reason: New relay crate manifest; depends on cclab-queue for the reused message / retry / revocation model. -->
