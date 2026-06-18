@@ -309,13 +309,92 @@ retention:
 ```mermaid
 ---
 id: relay-core-unit-test-plan
-entry: start
+entry: suite
 nodes:
-  start:
+  suite:
     kind: start
-    label: "Unit test plan pending — to be authored in its own applicability section"
-edges: []
+    label: "relay core in-process test suite over one durable (subject, shard) log"
+  t_seq:
+    kind: process
+    label: "append N messages -> AppendOutcome.seq is 0..N-1, monotonic and gap-free"
+  a_seq:
+    kind: terminal
+    label: "assert seqs strictly increasing, entries readable back in order"
+  t_dedupe:
+    kind: process
+    label: "append the same MessageId twice"
+  a_dedupe:
+    kind: terminal
+    label: "assert one LogEntry; second AppendOutcome.deduped=true with the same seq (idempotent at-least-once)"
+  t_broadcast_all:
+    kind: process
+    label: "two broadcast subscribers, publish 3 messages"
+  a_broadcast_all:
+    kind: terminal
+    label: "assert both subscribers receive all 3 in seq order (fan-out, no message dropped)"
+  t_replay:
+    kind: process
+    label: "subscribe broadcast with from_seq=K after M>K entries exist"
+  a_replay:
+    kind: terminal
+    label: "assert delivery starts at K and covers K..M-1 in order (replayable from seq)"
+  t_workqueue_one:
+    kind: process
+    label: "two competing consumers on the same log, publish 3 messages"
+  a_workqueue_one:
+    kind: terminal
+    label: "assert each seq leased to exactly one consumer; union covers all, intersection empty"
+  t_lease_expiry:
+    kind: process
+    label: "consumer leases an entry and does not ack before lease_ttl"
+  a_lease_expiry:
+    kind: terminal
+    label: "assert entry is redelivered to another consumer with attempt incremented (retry/revocation)"
+  t_ack_commit:
+    kind: process
+    label: "consumer acks its leased entry"
+  a_ack_commit:
+    kind: terminal
+    label: "assert CommittedOffset.committed_seq advances and the entry is not redelivered"
+  t_both_models:
+    kind: process
+    label: "ACCEPTANCE: one broadcast subscriber and one work-queue consumer on the same subject/log"
+  a_both_models:
+    kind: terminal
+    label: "assert the broadcast subscriber sees every message AND the work-queue consumer leases each exactly once, over the same durable log"
+edges:
+  - { from: suite, to: t_seq, label: "case: sequencing" }
+  - { from: t_seq, to: a_seq }
+  - { from: suite, to: t_dedupe, label: "case: idempotency" }
+  - { from: t_dedupe, to: a_dedupe }
+  - { from: suite, to: t_broadcast_all, label: "case: fan-out" }
+  - { from: t_broadcast_all, to: a_broadcast_all }
+  - { from: suite, to: t_replay, label: "case: replay" }
+  - { from: t_replay, to: a_replay }
+  - { from: suite, to: t_workqueue_one, label: "case: competing" }
+  - { from: t_workqueue_one, to: a_workqueue_one }
+  - { from: suite, to: t_lease_expiry, label: "case: redelivery" }
+  - { from: t_lease_expiry, to: a_lease_expiry }
+  - { from: suite, to: t_ack_commit, label: "case: ack/commit" }
+  - { from: t_ack_commit, to: a_ack_commit }
+  - { from: suite, to: t_both_models, label: "case: acceptance" }
+  - { from: t_both_models, to: a_both_models }
 ---
 flowchart TD
-    start([unit-test plan pending])
+    suite([relay core test suite]) --> t_seq[append N -> monotonic seq]
+    t_seq --> a_seq([seqs ordered and gap-free])
+    suite --> t_dedupe[append same MessageId twice]
+    t_dedupe --> a_dedupe([one entry, deduped=true, same seq])
+    suite --> t_broadcast_all[2 subscribers, publish 3]
+    t_broadcast_all --> a_broadcast_all([both get all 3 in order])
+    suite --> t_replay[subscribe from_seq=K]
+    t_replay --> a_replay([delivery starts at K, ordered])
+    suite --> t_workqueue_one[2 consumers compete, publish 3]
+    t_workqueue_one --> a_workqueue_one([each seq leased exactly once])
+    suite --> t_lease_expiry[lease, do not ack past ttl]
+    t_lease_expiry --> a_lease_expiry([redelivered, attempt++])
+    suite --> t_ack_commit[ack leased entry]
+    t_ack_commit --> a_ack_commit([committed_seq advances, no redelivery])
+    suite --> t_both_models[broadcast + work-queue on same log]
+    t_both_models --> a_both_models([subscriber sees all; consumer leases each once])
 ```
