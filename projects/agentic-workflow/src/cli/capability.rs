@@ -9105,13 +9105,7 @@ fn parse_capability_surfaces(value: &str) -> Vec<CapabilitySurface> {
 }
 
 fn split_surface_contract_list(value: &str) -> Vec<String> {
-    value
-        .split("<br>")
-        .flat_map(|part| part.split(';'))
-        .flat_map(|part| part.split('\n'))
-        .map(|part| part.trim().to_string())
-        .filter(|part| !part.is_empty())
-        .collect()
+    split_inline_contract_list(value, is_surface_contract_key)
 }
 
 fn clean_surface_summary(summary: &str) -> String {
@@ -9145,13 +9139,80 @@ fn parse_capability_ec_dimensions(value: &str) -> Vec<CapabilityEcDimension> {
 }
 
 fn split_ec_dimension_contract_list(value: &str) -> Vec<String> {
+    split_inline_contract_list(value, is_ec_dimension_contract_key)
+}
+
+fn split_inline_contract_list(value: &str, is_contract_key: fn(&str) -> bool) -> Vec<String> {
     value
         .split("<br>")
-        .flat_map(|part| part.split(';'))
         .flat_map(|part| part.split('\n'))
+        .flat_map(|part| split_inline_contract_line(part, is_contract_key))
         .map(|part| part.trim().to_string())
         .filter(|part| !part.is_empty())
         .collect()
+}
+
+fn split_inline_contract_line(line: &str, is_contract_key: fn(&str) -> bool) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for (idx, ch) in line.char_indices() {
+        if ch == ';'
+            && has_contract_key_after_separator(&line[idx + ch.len_utf8()..], is_contract_key)
+        {
+            let part = line[start..idx].trim();
+            if !part.is_empty() {
+                parts.push(part.to_string());
+            }
+            start = idx + ch.len_utf8();
+        }
+    }
+    let part = line[start..].trim();
+    if !part.is_empty() {
+        parts.push(part.to_string());
+    }
+    parts
+}
+
+fn has_contract_key_after_separator(rest: &str, is_contract_key: fn(&str) -> bool) -> bool {
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix("- ").unwrap_or(rest).trim_start();
+    let Some((key, _summary)) = rest.split_once(':') else {
+        return false;
+    };
+    let key = key.trim().trim_matches(['`', '*', '_', ' ']);
+    !key.is_empty() && key.len() <= 32 && is_contract_key(key)
+}
+
+fn is_surface_contract_key(value: &str) -> bool {
+    matches!(
+        normalize_table_token(value).as_str(),
+        "cli"
+            | "command"
+            | "commands"
+            | "http"
+            | "api"
+            | "rest"
+            | "sdk"
+            | "ui"
+            | "webui"
+            | "web"
+            | "config"
+            | "configuration"
+            | "fileformat"
+            | "file"
+            | "format"
+            | "agent"
+            | "agents"
+            | "browser"
+            | "browsere2e"
+            | "webe2e"
+            | "webappe2e"
+            | "e2e"
+    )
+}
+
+fn is_ec_dimension_contract_key(value: &str) -> bool {
+    parse_ec_dimension_kind(value).is_some()
 }
 
 fn clean_runner_prefixed_summary(summary: &str) -> String {
@@ -13883,6 +13944,65 @@ Gate Inventory:
             clean_runner_prefixed_summary("`rig + meter` - load pins plus resource attribution."),
             "load pins plus resource attribution."
         );
+    }
+
+    #[test]
+    fn inline_surface_and_ec_dimension_semicolons_preserve_summary_text() {
+        let body = r#"# demo
+
+## Brief
+
+Demo project.
+
+## Capabilities
+
+### Dev Server And HMR
+
+ID: dev-server-hmr
+Root WI: #3780
+Status: auditing
+Type: DeveloperTool
+Surfaces: CLI: `jet dev` - starts dev server; keeps browser logs.; UI: `http://localhost:<port>` - connected browser client.
+EC Dimensions: behavior: `jet e2e` - checks frontend flow; includes API call path.; efficiency: `meter collect jet-dev` - profiles dev loop.
+Required Verification: smoke, conformance
+Promise:
+Run local dev server with browser-connected feedback.
+Gate Inventory:
+- `cargo test -p jet dev_server`
+"#;
+        let doc = cap_doc(body);
+        let capability = &doc.capabilities[0];
+
+        assert_eq!(capability.surfaces.len(), 2);
+        assert_eq!(capability.surfaces[0].kind, "CLI");
+        assert_eq!(capability.surfaces[0].commands, vec!["jet dev"]);
+        assert_eq!(
+            capability.surfaces[0].summary,
+            "starts dev server; keeps browser logs."
+        );
+        assert_eq!(capability.surfaces[1].kind, "UI");
+        assert_eq!(
+            capability.surfaces[1].commands,
+            vec!["http://localhost:<port>"]
+        );
+
+        assert_eq!(capability.ec_dimensions.len(), 2);
+        let behavior = capability
+            .ec_dimensions
+            .iter()
+            .find(|dimension| dimension.dimension == CapabilityEcDimensionKind::Behavior)
+            .unwrap();
+        assert_eq!(behavior.runner, "jet e2e");
+        assert_eq!(
+            behavior.summary,
+            "checks frontend flow; includes API call path."
+        );
+        let efficiency = capability
+            .ec_dimensions
+            .iter()
+            .find(|dimension| dimension.dimension == CapabilityEcDimensionKind::Efficiency)
+            .unwrap();
+        assert_eq!(efficiency.runner, "meter collect jet-dev");
     }
 
     #[test]
