@@ -72,6 +72,36 @@ unsafe extern "C" fn dispatch_get_context(args_ptr: *const MbValue, nargs: usize
     MbValue::from_ptr(MbObject::new_dict())
 }
 
+/// multiprocessing.Value(typecode_or_type, ...) — validates the typecode. A
+/// string that is not a single valid array/ctypes typecode is a TypeError
+/// (CPython); a ctypes type object or valid code returns the value stub.
+unsafe extern "C" fn dispatch_value(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    const VALID: &str = "cbBuhHiIlLqQfd";
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(first) = a.first().copied() {
+        let s = first.as_ptr().and_then(|p| unsafe {
+            if let super::super::rc::ObjData::Str(ref s) = (*p).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(s) = s {
+            let valid = s.len() == 1 && VALID.contains(&s);
+            if !valid {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "bad typecode (must be one of '{VALID}'): {s}"
+                    ))),
+                );
+                return MbValue::none();
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_dict())
+}
+
 /// Register the multiprocessing module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -155,13 +185,16 @@ pub fn register() {
     for name in MP_SURFACE_NAMES {
         attrs.insert((*name).into(), MbValue::from_func(addr_stub));
     }
-    // get_context validates its start-method argument (override the stub).
+    // get_context / Value validate their arguments (override the stub).
     let addr_get_context = dispatch_get_context as *const () as usize;
     attrs.insert("get_context".into(), MbValue::from_func(addr_get_context));
+    let addr_value = dispatch_value as *const () as usize;
+    attrs.insert("Value".into(), MbValue::from_func(addr_value));
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
         set.insert(addr_stub as u64);
         set.insert(addr_get_context as u64);
+        set.insert(addr_value as u64);
     });
 
     super::register_module("multiprocessing", attrs);
