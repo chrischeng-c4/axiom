@@ -1,0 +1,79 @@
+# arena comparison spec: relay vs NATS / RabbitMQ / Redpanda (relay perf-gate #125).
+#
+# A permanent regression gate (mirrors lumen's perf_gate_vs_db): every iteration
+# relay must hold its ratio vs competitors (ratchet) and must beat the primary
+# bar (NATS) where claimed, or the gate fails.
+#
+# Flavors: relay is driven over its HTTP/2 service. NATS / RabbitMQ / Redpanda /
+# Redis / Pulsar speak native (non-HTTP) protocols, so they use arena's
+# `command` flavor — a small per-target adapter binary that emits one metric
+# number. The adapters and the brokers run in CI (compose), not in unit tests.
+#
+# Run (with relay on :7000 and the competitor adapters available):
+#   arena run --spec projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml
+# First run records baselines:
+#   arena run --spec ... --update-baselines
+
+spec_version = 1
+name = "relay-vs-nats-rabbitmq-redpanda"
+base = "relay"            # ratios divide BY relay (normalized so >1 = relay wins)
+ratchet = 0.95            # relay may not drop below 95% of its recorded baseline ratio
+baseline = ".arena/relay-baselines.json"
+
+[targets.relay]
+kind = "service"
+[targets.relay.load]
+target_qps = 50000
+workers = 32
+duration_secs = 20
+warmup_secs = 5
+
+# Competitor adapters (command flavor; CI-provisioned). Each emits one metric.
+[targets.nats]
+kind = "command"
+[targets.rabbitmq]
+kind = "command"
+[targets.redpanda]
+kind = "command"
+[targets.redis]
+kind = "command"
+[targets.pulsar]
+kind = "command"
+
+# --- broadcast / pub-sub: fan-out latency. relay must BEAT NATS core. ---
+[[cells]]
+name = "broadcast"
+metric = "p99_ms"        # lower is better
+[cells.targets.relay]
+request = { method = "POST", url = "http://127.0.0.1:7000/v1/bench/publish", body = '{"message_id":"$SEQ","payload":{}}' }
+[cells.targets.nats]
+gate = "win"
+command = "nats-bench pub --subject bench --p99"
+[cells.targets.redis]
+command = "redis-bench publish bench --p99"
+
+# --- work-queue: lease/ack throughput + redeliver correctness. Beat JetStream. ---
+[[cells]]
+name = "work_queue"
+metric = "qps"           # higher is better
+[cells.targets.relay]
+request = { method = "POST", url = "http://127.0.0.1:7000/v1/bench/lease", body = '{"consumer_id":"w"}' }
+[cells.targets.nats-jetstream]
+gate = "win"
+command = "nats-bench jetstream consume --subject bench --qps"
+[cells.targets.rabbitmq]
+command = "rabbitmq-perf-test --quorum --consume --qps"
+[cells.targets.redis-streams]
+command = "redis-bench xreadgroup bench --qps"
+
+# --- durable log / replay: append throughput + subscribe(from_seq) replay.
+#     Report-only vs Kafka-class (Redpanda / Pulsar) for now. ---
+[[cells]]
+name = "durable_log"
+metric = "qps"           # higher is better
+[cells.targets.relay]
+request = { method = "POST", url = "http://127.0.0.1:7000/v1/bench/publish", body = '{"message_id":"$SEQ","payload":{}}' }
+[cells.targets.redpanda]
+command = "rpk-bench produce bench --qps"
+[cells.targets.pulsar]
+command = "pulsar-perf produce bench --qps"

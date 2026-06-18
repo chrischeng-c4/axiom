@@ -9466,6 +9466,7 @@ dependencies = [
  "chrono",
  "ciborium",
  "crc32fast",
+ "criterion",
  "futures",
  "reqwest 0.12.28",
  "serde",
