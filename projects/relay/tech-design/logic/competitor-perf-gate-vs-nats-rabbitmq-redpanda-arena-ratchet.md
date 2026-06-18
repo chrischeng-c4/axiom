@@ -172,3 +172,13 @@ changes:
     impl_mode: hand-written
     reason: "Tests for the ratchet rule (holds / regresses / must-beat lost) and a small-scale smoke of the benched workloads."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] The gate is sound: per-cell ratio vs base, ratchet (no-regression vs recorded baseline), then must-beat on claimed cells; either failing condition fails the build. Mirrors lumen perf_gate_vs_db.
+- [config] base/ratchet/primary_bar + three cells (broadcast / work-queue / durable-log) with competitors, metric direction, and must-beat. Drives the arena compare-N spec.
+- [unit-test] Pure ratchet-rule cases (hold / regress / must-beat lost) are deterministic; the workload smoke keeps the benched cells honest in CI without competitors.
+- [changes] relay-side benches + ratchet rule + tests; criterion is a dev-dependency only. Competitor adapters + the arena spec + EC binding are infra alongside, keeping the crate standalone.
