@@ -4732,6 +4732,14 @@ fn render_capability_wi_plan(
         }
     }
 
+    if !candidates.is_empty() {
+        out.push_str("\n## Candidate WI Drafts\n\n");
+        out.push_str("Review these local draft bodies before publishing tracker issues. They are generated from the capability map and still need human acceptance.\n\n");
+        for (index, candidate) in candidates.iter().enumerate() {
+            render_capability_candidate_wi_draft(&mut out, project, cap_path, index + 1, candidate);
+        }
+    }
+
     out.push_str("\n## Existing WI Follow-up\n\n");
     let mut wrote_follow_up = false;
     for row in &capability_map.rows {
@@ -4774,6 +4782,107 @@ fn render_capability_wi_plan(
     out.push_str("- Convert each accepted candidate through `aw wi draft init` / `aw wi create`; this artifact does not mutate the tracker.\n");
     out.push_str("- Non-epic WIs still need Capability Alignment, Scope, Acceptance Criteria, and Reference Context before `aw td`.\n");
     out
+}
+
+fn render_capability_candidate_wi_draft(
+    out: &mut String,
+    project: &str,
+    cap_path: &Path,
+    index: usize,
+    candidate: &CapabilityCandidate,
+) {
+    out.push_str(&format!(
+        "### Candidate {}: {}\n\n",
+        index,
+        candidate.title.trim()
+    ));
+    out.push_str(&format!("- Type: `{}`\n", candidate.issue_type));
+    out.push_str(&format!(
+        "- Source capability: `{}`\n",
+        candidate.source_capability.trim()
+    ));
+    out.push_str(&format!(
+        "- Capability gap: `{}`\n\n",
+        candidate.capability_gap.trim()
+    ));
+    out.push_str("```md\n");
+    out.push_str(&format!("# {}\n\n", candidate.title.trim()));
+    out.push_str("## Problem\n\n");
+    out.push_str(&format!(
+        "The `{}` capability has a confirmed gap or claim that is not backed by a bounded active work item in the current issue inventory.\n\n",
+        candidate.source_capability.trim()
+    ));
+    out.push_str("## Capability Alignment\n\n");
+    out.push_str(&format!(
+        "Capability: {}\n",
+        candidate.source_capability.trim()
+    ));
+    out.push_str(&format!(
+        "Capability Gap: {}\n",
+        candidate.capability_gap.trim()
+    ));
+    out.push_str(&format!(
+        "Progress Evidence: {}\n\n",
+        candidate.first_gate.trim()
+    ));
+    out.push_str("## Requirements\n\n");
+    out.push_str(
+        "- R1: Close the capability gap with implementation, linkage, or verified evidence.\n",
+    );
+    out.push_str(
+        "- R2: Keep the README capability contract, work item, and TD/CB evidence aligned.\n\n",
+    );
+    out.push_str("## Scope\n\n");
+    out.push_str("### In Scope\n\n");
+    out.push_str("- Resolve this specific capability gap or claim.\n");
+    out.push_str(
+        "- Add, repair, or link the required verification evidence from the capability map.\n\n",
+    );
+    out.push_str("### Out of Scope\n\n");
+    out.push_str("- Unrelated capability promise changes.\n");
+    out.push_str("- Publishing README status changes without passing the declared gates or recording HITL approval.\n\n");
+    out.push_str("## Acceptance Criteria\n\n");
+    out.push_str(&format!(
+        "- AC1: `aw capability check --project {}` no longer reports this candidate as a planning blocker.\n",
+        project
+    ));
+    out.push_str("- AC2: The work item links to TD/CB evidence or a documented verification artifact for the capability gap.\n");
+    out.push_str("- AC3: Required verification passes, or the README claim is downgraded/deferred with HITL approval.\n\n");
+    out.push_str("## Reference Context\n\n");
+    out.push_str("### Related Specs\n\n");
+    out.push_str("| Spec | Relevance |\n");
+    out.push_str("|------|-----------|\n");
+    out.push_str(&format!(
+        "| {} | capability source anchor |\n\n",
+        cap_path.display()
+    ));
+    out.push_str("### Spec Plan\n\n");
+    out.push_str("| Spec ID | Action | Main Spec Ref |\n");
+    out.push_str("|---------|--------|---------------|\n");
+    out.push_str(&format!(
+        "| {} | create | {} |\n",
+        capability_candidate_spec_id(candidate),
+        cap_path.display()
+    ));
+    out.push_str("```\n\n");
+}
+
+fn capability_candidate_spec_id(candidate: &CapabilityCandidate) -> String {
+    let mut slug = candidate
+        .title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while slug.contains("--") {
+        slug = slug.replace("--", "-");
+    }
+    slug.trim_matches('-').to_string()
 }
 
 fn render_epicize_plan(
@@ -6046,6 +6155,14 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("CLI: `jet install` - install dependencies"));
         assert!(body.contains("efficiency: `meter` - install profile"));
         assert!(body.contains("Close capability gap: Package manager"));
+        assert!(body.contains("## Candidate WI Drafts"));
+        assert!(body.contains("### Candidate 1: Close capability gap: Package manager"));
+        assert!(body.contains("## Capability Alignment"));
+        assert!(body.contains("Capability: Package manager"));
+        assert!(body.contains("Capability Gap: peer dependency roadmap missing"));
+        assert!(body.contains("## Acceptance Criteria"));
+        assert!(body.contains("aw capability check --project jet"));
+        assert!(body.contains("## Reference Context"));
         assert!(body.contains("## Recommended CLI Sequence"));
         assert!(body.contains("does not mutate the tracker"));
 
