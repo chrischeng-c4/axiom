@@ -163,6 +163,23 @@ extern "C" fn dispatch_ContentTooShortError(args: *const MbValue, len: usize) ->
 /// Must run BEFORE `http_mod::register()` so that http_mod's umbrella-wiring
 /// for the `urllib` package picks up these entries rather than the legacy
 /// 3-string stub block (which has been removed from http_mod).
+/// HTTPError.read(...) delegates to the stored response file object's read()
+/// (CPython's HTTPError doubles as an http.client.HTTPResponse).
+unsafe extern "C" fn m_httperror_read(self_v: MbValue, args: MbValue) -> MbValue {
+    let fp = self_v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().ok().and_then(|f| f.get("fp").copied())
+        } else {
+            None
+        }
+    }).unwrap_or_else(MbValue::none);
+    super::super::class::mb_call_method(
+        fp,
+        MbValue::from_ptr(MbObject::new_str("read".to_string())),
+        args,
+    )
+}
+
 pub fn register() {
     use super::super::module::NATIVE_FUNC_ADDRS;
 
@@ -230,6 +247,12 @@ pub fn register() {
             "URLError" => vec!["OSError".to_string()],
             _ => vec!["URLError".to_string()],
         };
+        // HTTPError doubles as a readable response — delegate read() to its fp.
+        if name == "HTTPError" {
+            let read_addr = m_httperror_read as *const () as usize;
+            super::super::module::register_variadic_func(read_addr as u64);
+            slots.insert("read".to_string(), MbValue::from_func(read_addr));
+        }
         super::super::class::mb_class_register(name, bases, slots);
     }
 
