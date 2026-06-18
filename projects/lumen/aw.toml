@@ -4,9 +4,9 @@ cap_path = "README.md"
 label = "project:lumen"
 
 [ec.efficiency]
-tool = "arena"
-spec = "projects/arena/examples/lumen-vs-pg-and-opensearch.toml"
-command = "target/debug/arena run --spec projects/arena/examples/lumen-vs-pg-and-opensearch.toml"
+tool = "meter"
+meter = "projects/lumen"
+command = "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
 
 [ec.stability]
 tool = "rig"

@@ -76,10 +76,10 @@ tool_contracts:
     tool: meter
     manifest: meter-search-stability.toml
     category: stability
-    command: "meter test -- cargo test -p lumen --test disk_scale_proof -- --ignored"
+    command: "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"
     native:
       version: 1
       project: lumen
       source_contract: lumen-search-stability-resilience
-      delegate_command: "meter test -- cargo test -p lumen --test disk_scale_proof -- --ignored"
+      delegate_command: "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"
 ```
