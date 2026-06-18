@@ -232,3 +232,69 @@ impl Sink for NetworkSink {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn record(level: LogLevel) -> LogRecord {
+        LogRecord {
+            level,
+            message: "message".to_string(),
+            timestamp: chrono::Utc::now(),
+            context: HashMap::from([("request_id".to_string(), "req-1".to_string())]),
+            module: Some("cclab_log::tests".to_string()),
+            file: Some("sink.rs".to_string()),
+            line: Some(1),
+        }
+    }
+
+    #[test]
+    fn log_level_parses_aliases_and_orders_by_severity() {
+        assert_eq!(LogLevel::from_str("trace"), Some(LogLevel::Trace));
+        assert_eq!(LogLevel::from_str("WARN"), Some(LogLevel::Warning));
+        assert_eq!(LogLevel::from_str("fatal"), Some(LogLevel::Critical));
+        assert_eq!(LogLevel::from_str("verbose"), None);
+
+        assert!(LogLevel::Trace < LogLevel::Debug);
+        assert!(LogLevel::Info < LogLevel::Warning);
+        assert!(LogLevel::Error < LogLevel::Critical);
+        assert_eq!(LogLevel::Warning.as_str(), "WARNING");
+    }
+
+    #[test]
+    fn sink_configs_and_stub_sinks_accept_records() {
+        let file_config = FileConfig {
+            path: PathBuf::from("/tmp/cclab-log-smoke.log"),
+            rotation: Some(Rotation::Size(1024)),
+            retention: Some(3),
+        };
+        let network_config = NetworkConfig {
+            host: "127.0.0.1".to_string(),
+            port: 514,
+            protocol: NetworkProtocol::Udp,
+        };
+
+        let file_sink = FileSink::new(file_config, LogLevel::Info);
+        let network_sink = NetworkSink::new(network_config, LogLevel::Warning);
+        let console_sink = ConsoleSink::new(
+            ConsoleConfig {
+                colorize: false,
+                stderr: false,
+            },
+            LogLevel::Error,
+        );
+
+        file_sink.write(&record(LogLevel::Debug)).unwrap();
+        file_sink.write(&record(LogLevel::Error)).unwrap();
+        file_sink.flush().unwrap();
+
+        network_sink.write(&record(LogLevel::Info)).unwrap();
+        network_sink.write(&record(LogLevel::Critical)).unwrap();
+        network_sink.flush().unwrap();
+
+        console_sink.write(&record(LogLevel::Info)).unwrap();
+        console_sink.flush().unwrap();
+    }
+}
