@@ -69,3 +69,11 @@ changes:
     impl_mode: hand-written
     reason: "Throwaway reference worker (test-only): drives the lease / heartbeat / ack loop over h2c against an in-process relay, validating the worker-facing contract and the served OpenAPI (lease/ack/heartbeat)."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [unit-test] A reference worker drives lease -> run -> heartbeat -> ack over h2c and asserts each entry is processed exactly once, plus the served OpenAPI lists lease/ack/heartbeat. Validates the worker-facing contract end-to-end. Applicable.
+- [changes] One test-only reference worker; the machine contract is the already-served OpenAPI and the human contract is the TD intro / docs. No worker shipped in the lib. Applicable.
