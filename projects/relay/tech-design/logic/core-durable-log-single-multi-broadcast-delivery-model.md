@@ -106,9 +106,167 @@ flowchart TD
 <!-- type: schema lang: yaml -->
 
 ```yaml
-(fill)
-```
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: relay-core-durable-log#schema
+title: Relay Core Durable Log Types
+description: >
+  Core in-process data model for the relay broker: a durable ordered log per
+  (subject, shard) plus the per-model delivery state that reads from it. The
+  message payload reuses the cclab-queue message model unchanged; relay owns
+  only the log, sequencing, dedupe, subscriber cursors, and work-queue leases.
 
+definitions:
+  Subject:
+    type: string
+    $id: Subject
+    description: "Logical channel a producer publishes to and consumers subscribe on."
+
+  ShardId:
+    type: integer
+    $id: ShardId
+    minimum: 0
+    description: "Partition of a subject's log; ordering and sequencing are per (subject, shard)."
+
+  Seq:
+    type: integer
+    $id: Seq
+    minimum: 0
+    description: "Monotonic, gap-free position assigned on append within one (subject, shard). The replay and ack cursors are expressed in this space."
+
+  MessageId:
+    type: string
+    $id: MessageId
+    description: "Deterministic id derived from producer key + content, used as the idempotency/dedupe key so an at-least-once retry maps to the same log entry."
+
+  DeliveryModel:
+    type: string
+    $id: DeliveryModel
+    x-rust-derive: ["Debug", "Clone", "Copy", "PartialEq", "Eq", "Hash", "Serialize", "Deserialize"]
+    enum:
+      - singlecast
+      - multicast
+      - broadcast
+      - work_queue
+    description: >
+      How a subject's appended messages are delivered. `broadcast`/`multicast`
+      fan out every message to every (group) subscriber, replayable from a seq.
+      `work_queue` leases each message to exactly one competing consumer.
+      `singlecast` is the degenerate one-consumer case of work_queue.
+
+  Payload:
+    type: object
+    $id: Payload
+    x-rust-type: "cclab_queue::TaskMessage"
+    description: "Reused cclab-queue message model. relay stores it verbatim as the durable payload and never reinterprets its fields."
+
+  LogEntry:
+    type: object
+    $id: LogEntry
+    x-rust-derive: ["Debug", "Clone", "PartialEq", "Serialize", "Deserialize"]
+    required: [seq, message_id, subject, shard, payload, appended_at]
+    description: "One durable record in the ordered log; the unit of both broadcast replay and work-queue lease."
+    properties:
+      seq:
+        $ref: "#/definitions/Seq"
+        description: "Monotonic position within (subject, shard)."
+      message_id:
+        $ref: "#/definitions/MessageId"
+      subject:
+        $ref: "#/definitions/Subject"
+      shard:
+        $ref: "#/definitions/ShardId"
+      payload:
+        $ref: "#/definitions/Payload"
+      headers:
+        type: object
+        additionalProperties: { type: string }
+        description: "Opaque routing/trace headers carried with the entry."
+      appended_at:
+        type: string
+        format: date-time
+        description: "Server time the entry was durably appended."
+
+  AppendOutcome:
+    type: object
+    $id: AppendOutcome
+    x-rust-derive: ["Debug", "Clone", "Copy", "PartialEq", "Eq", "Serialize", "Deserialize"]
+    required: [seq, deduped]
+    description: "Result of a publish/append; idempotent on MessageId."
+    properties:
+      seq:
+        $ref: "#/definitions/Seq"
+        description: "Seq of the (new or pre-existing) entry."
+      deduped:
+        type: boolean
+        description: "True when the id was already present and no new entry was written."
+
+  SubscriberCursor:
+    type: object
+    $id: SubscriberCursor
+    x-rust-derive: ["Debug", "Clone", "PartialEq", "Eq", "Serialize", "Deserialize"]
+    required: [subscriber_id, subject, shard, from_seq, position]
+    description: "Broadcast/fan-out read position; each subscriber advances independently and may replay from any seq."
+    properties:
+      subscriber_id:
+        type: string
+        description: "Stable id of a broadcast subscriber (or member of a multicast group)."
+      subject:
+        $ref: "#/definitions/Subject"
+      shard:
+        $ref: "#/definitions/ShardId"
+      from_seq:
+        $ref: "#/definitions/Seq"
+        description: "Seq the subscription (re)started replay from."
+      position:
+        $ref: "#/definitions/Seq"
+        description: "Seq of the last entry delivered to this subscriber."
+
+  Lease:
+    type: object
+    $id: Lease
+    x-rust-derive: ["Debug", "Clone", "PartialEq", "Eq", "Serialize", "Deserialize"]
+    required: [lease_id, seq, subject, shard, consumer_id, granted_at, expires_at, attempt]
+    description: "Work-queue grant of one entry to exactly one consumer until it acks or the lease expires."
+    properties:
+      lease_id:
+        type: string
+        description: "Unique id for this grant; required to ack/extend."
+      seq:
+        $ref: "#/definitions/Seq"
+        description: "Leased entry position."
+      subject:
+        $ref: "#/definitions/Subject"
+      shard:
+        $ref: "#/definitions/ShardId"
+      consumer_id:
+        type: string
+        description: "Consumer the entry is currently leased to."
+      granted_at:
+        type: string
+        format: date-time
+      expires_at:
+        type: string
+        format: date-time
+        description: "On expiry the entry becomes eligible for redelivery to another consumer."
+      attempt:
+        type: integer
+        minimum: 1
+        description: "1-based delivery attempt; drives retry / revocation policy."
+
+  CommittedOffset:
+    type: object
+    $id: CommittedOffset
+    x-rust-derive: ["Debug", "Clone", "Copy", "PartialEq", "Eq", "Serialize", "Deserialize"]
+    required: [subject, shard, committed_seq]
+    description: "Work-queue durable progress: every entry at or below committed_seq has been acked."
+    properties:
+      subject:
+        $ref: "#/definitions/Subject"
+      shard:
+        $ref: "#/definitions/ShardId"
+      committed_seq:
+        $ref: "#/definitions/Seq"
+```
 ## Config
 <!-- type: config lang: yaml -->
 
