@@ -121,7 +121,7 @@ fn seq_insert(a: MbValue, pos: usize, x: MbValue) {
         }
     }
     let name = MbValue::from_ptr(MbObject::new_str("insert".to_string()));
-    let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(pos as i64), x]));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![super::super::bigint_ops::int_from_i64(pos as i64), x]));
     super::super::class::mb_call_method(a, name, args);
 }
 
@@ -178,7 +178,13 @@ fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
 /// so e.g. a string `lo` raises "'str' object cannot be interpreted as an
 /// integer". Returns `Err` (after raising) on a bad type.
 fn coerce_index(v: MbValue, fname: &str) -> Result<i64, MbValue> {
-    if let Some(i) = v.as_int() {
+    if let Some(i) = v.as_int_pyint() {
+        return Ok(i);
+    }
+    // A bound above 2^47 (e.g. `bisect(data, x, n - 10, n)` with n =
+    // sys.maxsize) is a NaN-box-promoted BigInt; unbox it when it fits i64.
+    use num_traits::ToPrimitive;
+    if let Some(i) = unsafe { super::super::bigint_ops::extract_bigint(v) }.and_then(|b| b.to_i64()) {
         return Ok(i);
     }
     Err(raise_type_error(&format!(
@@ -260,7 +266,7 @@ unsafe extern "C" fn dispatch_bisect_left(args_ptr: *const MbValue, nargs: usize
         return raise_type_error("bisect_left() argument 1 must be a sequence");
     }
     match bisect_index(p.a, p.x, p.lo, p.hi, p.key, false) {
-        Ok(pos) => MbValue::from_int(pos as i64),
+        Ok(pos) => super::super::bigint_ops::int_from_i64(pos as i64),
         Err(v) => v,
     }
 }
@@ -275,7 +281,7 @@ unsafe extern "C" fn dispatch_bisect_right(args_ptr: *const MbValue, nargs: usiz
         return raise_type_error("bisect_right() argument 1 must be a sequence");
     }
     match bisect_index(p.a, p.x, p.lo, p.hi, p.key, true) {
-        Ok(pos) => MbValue::from_int(pos as i64),
+        Ok(pos) => super::super::bigint_ops::int_from_i64(pos as i64),
         Err(v) => v,
     }
 }
@@ -452,11 +458,16 @@ fn seq_len(a: MbValue) -> usize {
             }
         }
     }
-    // range/array handles and __len__ instances.
-    super::super::builtins::mb_len(a)
-        .as_int()
-        .unwrap_or(0)
-        .max(0) as usize
+    // range/array handles and __len__ instances. A length above 2^47 is
+    // NaN-box-promoted to a BigInt, so `.as_int()` is None; unbox it to its
+    // exact i64 (the value still fits usize on 64-bit) so bisect over a huge
+    // sequence, e.g. `range(sys.maxsize - 1)`, searches the real length
+    // rather than collapsing to 0.
+    let lenv = super::super::builtins::mb_len(a);
+    if lenv.is_none() {
+        return 0;
+    }
+    super::super::builtins::mb_unbox_int_if_boxed(lenv).max(0) as usize
 }
 
 /// `a[idx]` for bisect's binary search. For native list/tuple this clones the
@@ -483,7 +494,7 @@ fn seq_get(a: MbValue, idx: usize) -> MbValue {
             }
         }
     }
-    super::super::class::mb_obj_getitem(a, MbValue::from_int(idx as i64))
+    super::super::class::mb_obj_getitem(a, super::super::bigint_ops::int_from_i64(idx as i64))
 }
 
 /// Apply the optional `key` function to an element. `none` key is identity.
@@ -661,7 +672,7 @@ pub fn mb_bisect_bisect_left(a: MbValue, x: MbValue) -> MbValue {
         }
         lo
     });
-    MbValue::from_int(pos as i64)
+    super::super::bigint_ops::int_from_i64(pos as i64)
 }
 
 pub fn mb_bisect_bisect_right(a: MbValue, x: MbValue) -> MbValue {
@@ -680,7 +691,7 @@ pub fn mb_bisect_bisect_right(a: MbValue, x: MbValue) -> MbValue {
         }
         lo
     });
-    MbValue::from_int(pos as i64)
+    super::super::bigint_ops::int_from_i64(pos as i64)
 }
 
 pub fn mb_bisect_insort_left(a: MbValue, x: MbValue) -> MbValue {
