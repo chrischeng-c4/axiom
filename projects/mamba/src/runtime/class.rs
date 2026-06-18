@@ -8912,9 +8912,16 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
     // Support integer subscript so `range(10, 20)[5]` matches CPython's
     // range.__getitem__ semantics. Out-of-bounds raises IndexError.
     if super::iter::is_iter_handle(obj) {
-        if let Some(idx) = key.as_int_pyint() {
+        // A range index above 2^47 (e.g. `range(sys.maxsize)[i]` during a
+        // bisect over a huge range) is a NaN-box-promoted BigInt; unbox it
+        // when it fits i64, and promote the resulting element back to BigInt.
+        let idx_i64 = key.as_int_pyint().or_else(|| {
+            use num_traits::ToPrimitive;
+            unsafe { super::bigint_ops::extract_bigint(key) }.and_then(|b| b.to_i64())
+        });
+        if let Some(idx) = idx_i64 {
             match super::iter::range_iter_getitem(obj, idx) {
-                Some(v) => return MbValue::from_int(v),
+                Some(v) => return super::bigint_ops::int_from_i64(v),
                 None => {
                     if super::iter::mb_iter_range_params(obj).is_some() {
                         super::exception::mb_raise(

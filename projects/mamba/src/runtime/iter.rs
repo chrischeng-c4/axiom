@@ -948,11 +948,28 @@ pub fn range_iter_slice(
 }
 
 /// Create a range iterator.
+/// Extract a range bound as i64. Accepts register ints and bools directly, and
+/// unboxes a BigInt that fits i64 (range over `sys.maxsize`-scale bounds); any
+/// other value (None, float, or a BigInt beyond i64) falls back to `default`.
+fn range_bound(v: MbValue, default: i64) -> i64 {
+    if let Some(i) = v.as_int_pyint() {
+        return i;
+    }
+    use num_traits::ToPrimitive;
+    if let Some(i) = unsafe { super::bigint_ops::extract_bigint(v) }.and_then(|b| b.to_i64()) {
+        return i;
+    }
+    default
+}
+
 pub fn mb_range_iter(start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
-    // bool ≤ int (#1680).
-    let s = start.as_int_pyint().unwrap_or(0);
-    let e = stop.as_int_pyint().unwrap_or(0);
-    let st = step.as_int_pyint().unwrap_or(1);
+    // bool ≤ int (#1680). A bound above 2^47 is a NaN-box-promoted BigInt, so
+    // `as_int_pyint` is None; unbox it to its exact i64 (range is i64-bounded)
+    // so `range(sys.maxsize - 1)` spans its real length rather than collapsing
+    // to an empty range.
+    let s = range_bound(start, 0);
+    let e = range_bound(stop, 0);
+    let st = range_bound(step, 1);
     if st == 0 {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
