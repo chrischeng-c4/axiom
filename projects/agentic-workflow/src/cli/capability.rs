@@ -8072,6 +8072,30 @@ fn validate_capability_contract(capability: &CapabilitySection) -> Result<Vec<St
             | CapabilityStatus::Verified
     );
     findings.extend(validate_efficiency_backfill_slots(capability));
+    if requires_contract {
+        if capability.capability_type.is_none() {
+            findings.push(format!(
+                "capability `{}` status {:?} requires Type",
+                capability.id, capability.status
+            ));
+        }
+        if capability.surfaces.is_empty() {
+            findings.push(format!(
+                "capability `{}` status {:?} requires at least one Surface",
+                capability.id, capability.status
+            ));
+        }
+        if !capability
+            .ec_dimensions
+            .iter()
+            .any(ec_dimension_has_content)
+        {
+            findings.push(format!(
+                "capability `{}` status {:?} requires at least one EC Dimensions entry",
+                capability.id, capability.status
+            ));
+        }
+    }
     let Some(contract) = capability.verification_contract.as_ref() else {
         if requires_contract {
             findings.push(format!(
@@ -12157,6 +12181,7 @@ Demo project.
 ID: package-manager
 Type: DeveloperTool
 Surfaces: CLI: `jet install` - package install surface
+EC Dimensions: behavior: `cargo test -p jet --lib pkg_manager` - package lifecycle conformance
 Root WI: #3779
 Status: auditing
 Required Verification: smoke, conformance
@@ -12182,6 +12207,53 @@ Gate Inventory:
     }
 
     #[test]
+    fn non_candidate_field_style_requires_type_surface_and_ec_dimensions() {
+        let body = r#"# demo
+
+## Brief
+
+Demo project.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | partial | planned | conformance | not_ready | install flow |
+
+### Package Manager
+
+ID: package-manager
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+"#;
+        let document = cap_doc(body);
+
+        assert!(document
+            .findings
+            .iter()
+            .any(|finding| finding.contains("requires Type")));
+        assert!(document
+            .findings
+            .iter()
+            .any(|finding| finding.contains("requires at least one Surface")));
+        assert!(document
+            .findings
+            .iter()
+            .any(|finding| finding.contains("requires at least one EC Dimensions entry")));
+    }
+
+    #[test]
     fn canonical_field_style_requires_brief_heading() {
         let body = r#"# demo
 
@@ -12198,6 +12270,7 @@ Gate Inventory:
 ID: package-manager
 Type: DeveloperTool
 Surfaces: CLI: `jet install` - package install surface
+EC Dimensions: behavior: `cargo test -p jet --lib pkg_manager` - package lifecycle conformance
 Root WI: #3779
 Status: auditing
 Required Verification: smoke, conformance
