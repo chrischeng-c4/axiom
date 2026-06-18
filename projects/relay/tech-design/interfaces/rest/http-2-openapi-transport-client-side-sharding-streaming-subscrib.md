@@ -520,3 +520,15 @@ changes:
     impl_mode: hand-written
     reason: "In-process h2c integration tests for the unit-test plan: lease/ack acceptance, broadcast tail-from-seq acceptance, CBOR fast path, sharding, OpenAPI."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Transport flow is consistent and self-contained: client-side crc32 shard selection → h2c → route → core call → encode; subscribe opens a chunked stream and tails via repeated poll. Matches the #115 acceptance (lease/ack over h2c; tail broadcast from seq) and adds no other-project dependency.
+- [schema] Wire DTOs are minimal and correct; core domain types (AppendOutcome/Lease/LogEntry) are reused via x-rust-type rather than redefined. ShardKey encodes crc32(key)%shards. Codegen-ready.
+- [rest-api] Valid OpenAPI 3.1; JSON is the documented contract with application/cbor on the lease/ack fast path and a cbor-seq stream for subscribe. The four endpoints + healthz are present.
+- [config] RelayServerConfig scopes only transport concerns (bind/h2c/shards) and embeds RelayCoreConfig; defaults are sane (h2c, 30s lease).
+- [unit-test] Maps 1:1 to behavior including both acceptance cases; CBOR round-trip, replay-from-seq, sharding stability, and OpenAPI presence are covered.
+- [changes] Bounded module set (wire/shard/server/server_config/openapi/bin + tests) over the existing relay crate; Cargo.toml gains only external crates (axum/tokio/utoipa/ciborium/crc32fast), keeping relay standalone.
