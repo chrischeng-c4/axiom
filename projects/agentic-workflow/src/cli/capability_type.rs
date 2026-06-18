@@ -8,14 +8,14 @@
 //! decides only *whether* a given gate is verified/runnable, and must never
 //! flip `required_for_production`.
 //!
-//! The PRIMARY source of a capability's type is the project README's Capability
-//! Index: capabilities grouped under `**Pillar — agent-first**` are AgentFirst,
-//! under `**Pillar — serve…**` are Service, and under `**Pillar — devops…**` are
-//! Devops. Readers (`aw ec`, deriving `required_for_production`) resolve it via
-//! [`load_capability_types`] which parses that pillar grouping
-//! ([`load_capability_types_from_readme`]). Capability sections may also carry
-//! an explicit `Type:` / `Capability Type:` field; that field wins over pillar
-//! inference because it is local to the product promise. An optional
+//! The PRIMARY source of a capability's type is the explicit `Type:` /
+//! `Capability Type:` field in the project README's canonical field-style
+//! capability contract under `## Capabilities`. Readers (`aw ec`, deriving
+//! `required_for_production`) resolve it via [`load_capability_types`] and
+//! [`load_capability_types_from_readme`]. Legacy Capability Index pillar groups
+//! such as `**Pillar — agent-first**` remain readable only as migration
+//! fallback; explicit section-local fields always win because they are local to
+//! the product promise. An optional
 //! `.aw/capability-types.toml` `[capability_types]` table is a migration
 //! fallback for capabilities that do not yet carry an explicit README type:
 //!
@@ -142,15 +142,15 @@ pub fn capability_types_path(project_root: &Path) -> PathBuf {
     project_root.join(CAPABILITY_TYPES_REL)
 }
 
-/// Map of `capability_id -> CapabilityType` derived from the README Capability
-/// Index. Capabilities are grouped under `**Pillar — <name>**` headers; each
-/// capability row's first table cell is its `capability_id`, and the pillar name
-/// maps to a type: `agent-first -> AgentFirst`, `serve… -> Service`,
-/// `devops… -> Devops`. A missing README (or no pillars) yields an empty map.
-///
-/// This is the PRIMARY source of capability types — the README is the single
-/// source of truth. A bold header that is not a pillar (e.g. `**Honest scope**`)
-/// or a markdown heading ends the current pillar's table scope.
+/// Map of `capability_id -> CapabilityType` derived from the README capability
+/// map. Canonical README contracts use explicit field-style `Type:` /
+/// `Capability Type:` lines under each capability heading. Legacy Capability
+/// Index pillar groups (`**Pillar — <name>**`) are still parsed as migration
+/// fallback: each capability row's first table cell is its `capability_id`, and
+/// the pillar name maps to a type (`agent-first -> AgentFirst`,
+/// `serve… -> Service`, `devops… -> Devops`, etc.). Explicit field-style
+/// section values override pillar fallback. A missing README yields an empty
+/// map.
 pub fn load_capability_types_from_readme(
     readme_path: &Path,
 ) -> Result<BTreeMap<String, CapabilityType>> {
@@ -592,6 +592,52 @@ Status: auditing
             Some(&CapabilityType::DeveloperTool)
         );
         assert_eq!(map.get("search"), Some(&CapabilityType::Service));
+    }
+
+    #[test]
+    fn load_from_canonical_field_style_contract_overrides_legacy_pillar() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("README.md"),
+            r#"# Jet
+
+## Brief
+
+Frontend toolchain.
+
+## Capabilities
+
+### Capability Index
+
+**Pillar — serve / legacy fallback** (EC: four)
+
+| Capability | Root WI |
+|---|---:|
+| package-manager | #1 |
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Root WI: #1
+Status: auditing
+Surfaces: CLI: `jet install` - package-management command surface
+EC Dimensions: behavior: `cargo test -p jet --lib pkg_manager` - package lifecycle conformance
+Required Verification: smoke
+Promise:
+Jet can replace package manager flows.
+Gate Inventory:
+- cargo test -p jet --lib pkg_manager
+"#,
+        )
+        .unwrap();
+
+        let map = load_capability_types_from_readme(&dir.path().join("README.md")).unwrap();
+
+        assert_eq!(
+            map.get("package-manager"),
+            Some(&CapabilityType::DeveloperTool)
+        );
     }
 
     #[test]
