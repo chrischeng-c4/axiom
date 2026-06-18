@@ -148,9 +148,12 @@ scenarios:
       - "report/next/run/check JSON output treats stdout broken-pipe as a successful early reader close so agent pipe sampling does not look like a capability failure"
       - "next emits exactly one next_action"
       - "report/next with --skip-issue-inventory keep README active WI refs usable for TD/CB lifecycle routing instead of treating absent tracker evidence as a recreate-WI instruction"
+      - "active README WI refs that are stale, missing from live inventory, or hidden by --skip-issue-inventory route to ReconcileWiRefs rather than CreateWi"
       - "run executes at most one bounded tick unless --max-ticks raises the bound"
       - "check validates README capability format and TD capability refs without lifecycle execution"
       - "sweep emits grouped project rows by report status and next_action kind without mutating capability maps"
+      - "sweep --write-rollout emits one AW-owned rollout handoff plus check, draft, WI-plan, action-queue, and HITL review packet artifacts"
+      - "sweep groups skipped-inventory README WI-ref work as reconcile_wi_refs:issue_inventory_skipped so agents do not treat tracker reconciliation as new WI backlog"
 
   - id: S7
     title: "confirmed capability carries verification contract"
@@ -601,6 +604,16 @@ requirements:
     text: "aw capability set-ec-dimension rejects partial efficiency backfill slots and rejects efficiency slots on non-efficiency dimensions"
     risk: high
     verifymethod: test
+  rollout_review_packet:
+    id: AW-CAP-WI-26
+    text: "aw capability sweep --write-rollout emits one AW-owned rollout handoff plus check, draft, WI-plan, action-queue, and HITL review packet artifacts"
+    risk: medium
+    verifymethod: test
+  reconcile_wi_refs_lane:
+    id: AW-CAP-WI-27
+    text: "aw capability report/sweep routes stale or skipped README WI refs through ReconcileWiRefs and reconcile_wi_refs:issue_inventory_skipped, not CreateWi"
+    risk: high
+    verifymethod: test
 elements:
   issues_unit_tests:
     type: "cargo test -p agentic-workflow issues::tests:: --lib"
@@ -635,6 +648,8 @@ relations:
   - { from: capability_unit_tests, to: draft_review_decisions_apply_gate, kind: verifies }
   - { from: capability_unit_tests, to: draft_review_decisions_materialize, kind: verifies }
   - { from: capability_unit_tests, to: efficiency_backfill_atomic, kind: verifies }
+  - { from: capability_unit_tests, to: rollout_review_packet, kind: verifies }
+  - { from: capability_unit_tests, to: reconcile_wi_refs_lane, kind: verifies }
 ---
 requirementDiagram
     requirement atomize_help {
@@ -787,6 +802,18 @@ requirementDiagram
         risk: high
         verifymethod: test
     }
+    requirement rollout_review_packet {
+        id: AW-CAP-WI-26
+        text: "write-rollout emits rollout and HITL packet"
+        risk: medium
+        verifymethod: test
+    }
+    requirement reconcile_wi_refs_lane {
+        id: AW-CAP-WI-27
+        text: "stale README WI refs route to ReconcileWiRefs"
+        risk: high
+        verifymethod: test
+    }
     element issues_unit_tests {
         type: "cargo-test"
     }
@@ -827,6 +854,8 @@ requirementDiagram
     capability_unit_tests - verifies -> draft_review_decisions_apply_gate
     capability_unit_tests - verifies -> draft_review_decisions_materialize
     capability_unit_tests - verifies -> efficiency_backfill_atomic
+    capability_unit_tests - verifies -> rollout_review_packet
+    capability_unit_tests - verifies -> reconcile_wi_refs_lane
 ```
 
 ## Changes
@@ -838,7 +867,7 @@ changes:
     action: modify
     section: cli
     impl_mode: hand-written
-    description: Document HITL capability anchoring and Markdown capability table rules.
+    description: Document HITL capability anchoring, Markdown capability table rules, rollout queues, and tracker WI-ref reconciliation lanes.
   - path: projects/agentic-workflow/src/cli/capability.rs
     action: modify
     section: cli
@@ -935,10 +964,10 @@ changes:
     impl_mode: hand-written
     description: Update the aw init CLAUDE.md template with atomize, prioritize readiness, and bounded-WI guidance.
   - path: projects/agentic-workflow/templates/cli/mainthread/skills/aw-capability/SKILL.md
-    action: add
+    action: modify
     section: cli
     impl_mode: hand-written
-    description: Add aw-capability to the embedded Claude Code skill templates.
+    description: Keep the embedded aw-capability skill template aligned with rollout queues and tracker WI-ref reconciliation lanes.
   - path: projects/agentic-workflow/templates/cli/mainthread/skills/aw-wi/SKILL.md
     action: modify
     section: cli
