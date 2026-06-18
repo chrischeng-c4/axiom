@@ -6129,6 +6129,8 @@ dependencies = [
  "reqwest 0.12.28",
  "roaring",
  "rustc-hash 2.1.2",
+ "rustls",
+ "rustls-pemfile",
  "schemars",
  "serde",
  "serde_json",
