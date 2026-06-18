@@ -1,3 +1,5 @@
+# SPEC-MANAGED: projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#changes
+# HANDWRITE-BEGIN gap="missing-generator:config:7d099e74" tracker="pending-tracker" reason="New relay crate manifest; depends on cclab-queue for the reused message / retry / revocation model."
 [package]
 name = "relay"
 version.workspace = true
@@ -11,12 +13,13 @@ name = "relay"
 path = "src/lib.rs"
 
 [dependencies]
-cclab-queue = { path = "../queue/queue" }
+# The broker core is payload-agnostic (epic #120: "knows nothing about
+# workflows"): a message body is carried as opaque JSON. A producer reusing the
+# cclab-queue message model serializes its TaskMessage into this payload.
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-
-<!-- marker: missing-generator:config:7d099e74 path: projects/relay/Cargo.toml reason: New relay crate manifest; depends on cclab-queue for the reused message / retry / revocation model. -->
+# HANDWRITE-END

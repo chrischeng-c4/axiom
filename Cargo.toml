@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "projects/relay",
     "projects/mamba/mambalibs/mongokit",
     "projects/mamba/mambalibs/mongokit/binding",
     "projects/mamba/mambalibs/pgkit/pg",
