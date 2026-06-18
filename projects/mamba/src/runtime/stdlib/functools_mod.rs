@@ -1555,13 +1555,14 @@ pub fn mb_functools_lru_cache_clear(wrapper: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// functools.cached_property(func) -> func  (R6)
+/// functools.cached_property(func) -> a `__cached_property__` descriptor.
 ///
-/// MVP: identity passthrough. The descriptor protocol is not yet wired.
-/// Returns the function unchanged so that `from functools import cached_property`
-/// does not crash.
+/// Wrapping the getter in the descriptor (keyed by the function name) makes the
+/// first instance access compute and cache the value on the instance, so later
+/// reads hit the instance __dict__ — standard CPython cached_property.
 pub fn mb_functools_cached_property(func: MbValue) -> MbValue {
-    func
+    let name = super::super::closure::mb_func_get_name(func);
+    super::super::class::mb_cached_property_new(func, name)
 }
 
 /// functools.cmp_to_key(mycmp) -> key-factory Instance  (R7)
