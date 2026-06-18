@@ -20,6 +20,10 @@ pub struct RelayServerConfig {
     pub shards: u32,
     /// Which shard this server instance serves.
     pub shard_index: u32,
+    /// How often the background reconciler reclaims expired leases per shard.
+    ///
+    /// @spec projects/relay/tech-design/logic/reconciler-lease-reclaim-redeliver-liveness.md#config
+    pub reconcile_interval_ms: u64,
     /// Embedded relay core engine settings.
     pub core: RelayCoreConfig,
 }
@@ -31,6 +35,7 @@ impl Default for RelayServerConfig {
             h2c: true,
             shards: 1,
             shard_index: 0,
+            reconcile_interval_ms: 1000,
             core: RelayCoreConfig::default(),
         }
     }
