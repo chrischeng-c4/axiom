@@ -2455,6 +2455,18 @@ unsafe extern "C" fn bh_send_response(self_v: MbValue, args: MbValue) -> MbValue
 
 /// BaseHTTPRequestHandler.send_header(keyword, value) — buffer one header line.
 unsafe extern "C" fn bh_send_header(self_v: MbValue, args: MbValue) -> MbValue {
+    // CPython's send_header reads `self.request_version`; on a handler built via
+    // __new__ (no parse_request / send_response yet) that attribute is absent,
+    // raising AttributeError.
+    if req_field(self_v, "request_version").filter(|v| !v.is_none()).is_none() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "'BaseHTTPRequestHandler' object has no attribute 'request_version'".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     let pos = req_args_vec(args);
     let key = pos.first().copied().and_then(extract_str).unwrap_or_default();
     let val = pos.get(1).copied().and_then(extract_str).unwrap_or_default();
