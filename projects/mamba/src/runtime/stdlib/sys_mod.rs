@@ -1105,6 +1105,9 @@ pub fn register() {
         "platlibdir".into(),
         MbValue::from_ptr(MbObject::new_str("lib".to_string())),
     );
+    // sys._stdlib_dir is the on-disk stdlib path (dirname of os.__file__); the
+    // native os module has no real __file__, so this is None to match.
+    attrs.insert("_stdlib_dir".into(), MbValue::none());
 
     // surface: missing CPython sys data/constants (auto-added, batch 2)
     // copyright — CPython license banner string.
