@@ -3075,6 +3075,7 @@ fn is_capability_executable_action(action: &CapabilityAction) -> bool {
         && !command.is_empty()
         && !is_capability_draft_action(action)
         && !is_capability_wi_plan_action(action)
+        && !is_skipped_issue_inventory_action(action)
 }
 
 fn write_capability_sweep_action_queue_index(
@@ -3162,7 +3163,14 @@ fn capability_sweep_wi_plan_projects(
 }
 
 fn is_capability_wi_plan_action(action: &CapabilityAction) -> bool {
-    action.kind == CapabilityActionKind::CreateWi && action.command.trim().starts_with("aw wi plan")
+    action.kind == CapabilityActionKind::CreateWi
+        && action.command.trim().starts_with("aw wi plan")
+        && !is_skipped_issue_inventory_action(action)
+}
+
+fn is_skipped_issue_inventory_action(action: &CapabilityAction) -> bool {
+    action.kind == CapabilityActionKind::CreateWi
+        && action.reason.contains("issue inventory was skipped")
 }
 
 fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject {
@@ -11704,6 +11712,16 @@ Gate Inventory:
         planable.project = "lumen".to_string();
         planable.cap_path = PathBuf::from("projects/lumen/README.md");
 
+        let mut skipped_inventory = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project jet",
+            false,
+        ));
+        skipped_inventory.project = "jet".to_string();
+        skipped_inventory.next_action.reason =
+            "active WI reference was not resolved because issue inventory was skipped; sync or recreate a bounded WI before TD/CB lifecycle"
+                .to_string();
+
         let mut td_ready = sample_report(sample_action(
             CapabilityActionKind::RunTd,
             "aw td create 3783",
@@ -11711,7 +11729,7 @@ Gate Inventory:
         ));
         td_ready.project = "jet".to_string();
 
-        let sweep = capability_sweep_report(&[planable, td_ready], false, false);
+        let sweep = capability_sweep_report(&[planable, skipped_inventory, td_ready], false, false);
 
         let plan_projects = capability_sweep_wi_plan_projects(&sweep.projects)
             .into_iter()
@@ -11751,6 +11769,16 @@ Gate Inventory:
         ));
         planable.project = "lumen".to_string();
 
+        let mut skipped_inventory = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project jet",
+            false,
+        ));
+        skipped_inventory.project = "jet".to_string();
+        skipped_inventory.next_action.reason =
+            "active WI reference was not resolved because issue inventory was skipped; sync or recreate a bounded WI before TD/CB lifecycle"
+                .to_string();
+
         let mut draftable = sample_report(sample_action(
             CapabilityActionKind::DefineCapabilityMap,
             "aw capability draft --project mamba",
@@ -11758,8 +11786,17 @@ Gate Inventory:
         ));
         draftable.project = "mamba".to_string();
 
-        let sweep =
-            capability_sweep_report(&[td_ready, verify_ready, planable, draftable], false, false);
+        let sweep = capability_sweep_report(
+            &[
+                td_ready,
+                verify_ready,
+                planable,
+                skipped_inventory,
+                draftable,
+            ],
+            false,
+            false,
+        );
 
         let queue = capability_sweep_action_queue(&sweep.projects)
             .into_iter()
