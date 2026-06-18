@@ -1511,14 +1511,23 @@ fn maybe_write_capability_verify_evidence(
         true,
         include_issue_inventory,
     ));
-    std::fs::write(&path, render_capability_verify_evidence(report, &command)).with_context(
-        || {
-            format!(
-                "failed to write capability verify evidence {}",
-                path.display()
-            )
-        },
-    )?;
+    let project_root = crate::find_project_root().ok();
+    let git_head = project_root
+        .as_ref()
+        .and_then(|root| current_git_head(root));
+    let git_dirty = project_root
+        .as_ref()
+        .and_then(|root| current_git_dirty(root));
+    std::fs::write(
+        &path,
+        render_capability_verify_evidence(report, &command, git_head.as_deref(), git_dirty),
+    )
+    .with_context(|| {
+        format!(
+            "failed to write capability verify evidence {}",
+            path.display()
+        )
+    })?;
     Ok(Some(path))
 }
 
@@ -1533,7 +1542,12 @@ fn print_evidence_path(path: Option<&Path>, human: bool) {
     }
 }
 
-fn render_capability_verify_evidence(report: &CapabilityReport, command: &str) -> String {
+fn render_capability_verify_evidence(
+    report: &CapabilityReport,
+    command: &str,
+    git_head: Option<&str>,
+    git_dirty: Option<bool>,
+) -> String {
     let generated_at = chrono::Utc::now().to_rfc3339();
     let mut out = String::new();
     out.push_str("---\n");
@@ -1549,6 +1563,12 @@ fn render_capability_verify_evidence(report: &CapabilityReport, command: &str) -
         production_status_label(report.production_status)
     ));
     out.push_str(&format!("production_ready: {}\n", report.production_ready));
+    if let Some(head) = git_head {
+        out.push_str(&format!("git_head: {head}\n"));
+    }
+    if let Some(dirty) = git_dirty {
+        out.push_str(&format!("git_dirty: {dirty}\n"));
+    }
     out.push_str(&format!("generated_at: {generated_at}\n"));
     out.push_str("---\n\n");
     out.push_str(&format!(
@@ -2674,15 +2694,15 @@ fn capability_sweep_report(
         .iter()
         .map(capability_sweep_project)
         .collect::<Vec<_>>();
-    let verified_project_count = reports
+    let verified_project_count = projects
         .iter()
-        .filter(|report| capability_workflow_complete(report))
+        .filter(|project| project.loop_status == "done")
         .count();
-    let status = if verified_project_count == reports.len() {
+    let status = if verified_project_count == projects.len() {
         "done"
-    } else if reports
+    } else if projects
         .iter()
-        .any(|report| capability_loop_status(report) == "blocked")
+        .any(|project| project.loop_status == "blocked")
     {
         "blocked"
     } else {
@@ -3173,6 +3193,105 @@ fn latest_capability_verify_evidence_path(project: &str) -> Option<PathBuf> {
     paths.pop()
 }
 
+fn current_successful_capability_verify_evidence_path(
+    report: &CapabilityReport,
+) -> Option<PathBuf> {
+    if report.next_action.kind != CapabilityActionKind::RunVerify {
+        return None;
+    }
+    let path = latest_capability_verify_evidence_path(&report.project)?;
+    let project_root = crate::find_project_root().ok()?;
+    let git_head = current_git_head(&project_root)?;
+    if current_git_dirty(&project_root)? {
+        return None;
+    }
+    let fields = capability_verify_evidence_frontmatter(&path)?;
+    if capability_verify_evidence_matches_current_project(
+        &fields,
+        &report.project,
+        git_head.as_str(),
+    ) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn current_git_head(project_root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let head = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if head.is_empty() {
+        None
+    } else {
+        Some(head)
+    }
+}
+
+fn current_git_dirty(project_root: &Path) -> Option<bool> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(!output.stdout.is_empty())
+}
+
+fn capability_verify_evidence_frontmatter(path: &Path) -> Option<BTreeMap<String, String>> {
+    let body = std::fs::read_to_string(path).ok()?;
+    capability_verify_evidence_frontmatter_from_str(&body)
+}
+
+fn capability_verify_evidence_frontmatter_from_str(body: &str) -> Option<BTreeMap<String, String>> {
+    let mut lines = body.lines();
+    if lines.next()? != "---" {
+        return None;
+    }
+    let mut fields = BTreeMap::new();
+    for line in lines {
+        if line == "---" {
+            return Some(fields);
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        fields.insert(key.trim().to_string(), value.trim().to_string());
+    }
+    None
+}
+
+fn capability_verify_evidence_matches_current_project(
+    fields: &BTreeMap<String, String>,
+    project: &str,
+    git_head: &str,
+) -> bool {
+    fields
+        .get("kind")
+        .is_some_and(|value| value == "capability_verify_evidence")
+        && fields.get("project").is_some_and(|value| value == project)
+        && fields.get("status").is_some_and(|value| value == "healthy")
+        && fields
+            .get("loop_status")
+            .is_some_and(|value| value == "done")
+        && fields
+            .get("git_head")
+            .is_some_and(|value| value == git_head)
+        && fields
+            .get("git_dirty")
+            .is_some_and(|value| value == "false")
+}
+
 fn is_capability_executable_action(action: &CapabilityAction) -> bool {
     let command = action.command.trim();
     !action.requires_hitl
@@ -3281,7 +3400,7 @@ fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject
     let next_action_kind = capability_action_kind_label(report.next_action.kind);
     let next_action_detail = capability_action_detail_label(&report.next_action);
     let next_action_group = capability_action_group_label(next_action_kind, next_action_detail);
-    CapabilitySweepProject {
+    let mut project = CapabilitySweepProject {
         project: report.project.clone(),
         cap_path: report.cap_path.clone(),
         report_status: report.status.clone(),
@@ -3303,7 +3422,31 @@ fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject
         next_action_group,
         next_action_detail,
         next_action: report.next_action.clone(),
+    };
+    if let Some(path) = current_successful_capability_verify_evidence_path(report) {
+        project.report_status = "healthy".to_string();
+        project.loop_status = "done";
+        project.verified_count = project.capability_count;
+        project.verified_claim_count = project.claim_count;
+        project.requires_hitl = false;
+        project.test_gate_status = ProjectTestGateStatus::Passed;
+        project.next_action_kind = capability_action_kind_label(CapabilityActionKind::None);
+        project.next_action_group = "none".to_string();
+        project.next_action_detail = None;
+        project.next_action = CapabilityAction {
+            kind: CapabilityActionKind::None,
+            capability_id: None,
+            gap_id: None,
+            claim_id: None,
+            target: path.display().to_string(),
+            command: String::new(),
+            reason: "latest capability verify evidence is healthy for the current git revision"
+                .to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        };
     }
+    project
 }
 
 fn capability_sweep_groups(projects: &[CapabilitySweepProject]) -> Vec<CapabilitySweepGroup> {
@@ -12306,9 +12449,13 @@ Gate Inventory:
         let body = render_capability_verify_evidence(
             &report,
             "aw capability report --project jet --verify --write-evidence",
+            Some("abc123"),
+            Some(false),
         );
 
         assert!(body.contains("kind: capability_verify_evidence"));
+        assert!(body.contains("git_head: abc123"));
+        assert!(body.contains("git_dirty: false"));
         assert!(body.contains("This is a runtime evidence artifact."));
         assert!(body.contains("aw capability report --project jet --verify --write-evidence"));
         assert!(body.contains("| Project test gates | failed [0/1 passed] |"));
@@ -12317,6 +12464,49 @@ Gate Inventory:
         assert!(body.contains("assertion failed"));
         assert!(body.contains("| Package Manager | demo-gate | pass | `cargo test -p demo demo_gate` | demo runtime gate |"));
         assert!(body.contains("- demo: catalog/claim verification is not complete"));
+    }
+
+    #[test]
+    fn capability_verify_evidence_matches_only_current_healthy_loop() {
+        let body = r#"---
+kind: capability_verify_evidence
+project: meter
+status: healthy
+loop_status: done
+production_status: blocked
+production_ready: false
+git_head: abc123
+git_dirty: false
+generated_at: 2026-06-18T00:00:00Z
+---
+
+# Capability Verify Evidence: meter
+"#;
+        let fields = capability_verify_evidence_frontmatter_from_str(body).unwrap();
+
+        assert!(capability_verify_evidence_matches_current_project(
+            &fields, "meter", "abc123"
+        ));
+        assert!(!capability_verify_evidence_matches_current_project(
+            &fields, "meter", "old"
+        ));
+        assert!(!capability_verify_evidence_matches_current_project(
+            &fields, "jet", "abc123"
+        ));
+        let stale = body.replace("loop_status: done", "loop_status: continue");
+        let stale_fields = capability_verify_evidence_frontmatter_from_str(&stale).unwrap();
+        assert!(!capability_verify_evidence_matches_current_project(
+            &stale_fields,
+            "meter",
+            "abc123"
+        ));
+        let dirty = body.replace("git_dirty: false", "git_dirty: true");
+        let dirty_fields = capability_verify_evidence_frontmatter_from_str(&dirty).unwrap();
+        assert!(!capability_verify_evidence_matches_current_project(
+            &dirty_fields,
+            "meter",
+            "abc123"
+        ));
     }
 
     #[test]
