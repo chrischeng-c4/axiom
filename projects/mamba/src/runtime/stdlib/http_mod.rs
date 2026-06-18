@@ -719,6 +719,20 @@ pub fn register() {
             MbValue::from_ptr(MbObject::new_str(name.to_string())),
         );
     }
+    // IncompleteRead(partial, expected=None) carries named partial/expected
+    // attributes (CPython); the generic exception ctor would not. Override its
+    // attr with a dedicated constructor (the class stays registered for the
+    // HTTPException MRO, so isinstance still holds).
+    {
+        let ir_addr = d_incomplete_read as *const () as usize;
+        client_attrs.insert("IncompleteRead".to_string(), MbValue::from_func(ir_addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(ir_addr as u64);
+        });
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(ir_addr as u64, "IncompleteRead".to_string());
+        });
+    }
     // `error` is CPython's module-level alias for the HTTPException class.
     client_attrs.insert(
         "error".to_string(),
@@ -2533,6 +2547,29 @@ fn split_url(url: &str) -> (String, String, String) {
         Some(i) => (scheme, rest[..i].to_string(), rest[i..].to_string()),
         None => (scheme, rest.to_string(), String::new()),
     }
+}
+
+/// http.client.IncompleteRead(partial, expected=None) — an HTTPException
+/// carrying the bytes read so far (`partial`) and the expected length.
+unsafe extern "C" fn d_incomplete_read(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let partial = a.first().copied().unwrap_or_else(MbValue::none);
+    let expected = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let inst = MbObject::new_instance("IncompleteRead".to_string());
+    if let ObjData::Instance { ref fields, .. } = (*inst).data {
+        super::super::rc::retain_if_ptr(partial);
+        super::super::rc::retain_if_ptr(expected);
+        let mut f = fields.write().unwrap();
+        f.insert("partial".into(), partial);
+        f.insert("expected".into(), expected);
+        f.insert("args".into(),
+            MbValue::from_ptr(MbObject::new_tuple(vec![partial, expected])));
+    }
+    MbValue::from_ptr(inst)
 }
 
 unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
