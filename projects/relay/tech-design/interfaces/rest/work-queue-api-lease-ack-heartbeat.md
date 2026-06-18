@@ -317,5 +317,40 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
-(fill)
+changes:
+  - path: projects/relay/src/types.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "Add the epoch fencing token to Lease."
+  - path: projects/relay/src/workqueue.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Prefer redeliver-eligible seqs on lease; carry epoch; epoch-checked ack (idempotent / fenced); heartbeat to extend a lease."
+  - path: projects/relay/src/engine.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Expose heartbeat and epoch-checked ack through the Relay facade."
+  - path: projects/relay/src/wire.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "AckRequest gains an optional epoch; add HeartbeatRequest / HeartbeatResponse DTOs."
+  - path: projects/relay/src/server.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Honor the ack epoch and add the POST heartbeat endpoint (JSON + CBOR)."
+  - path: projects/relay/src/openapi.rs
+    action: modify
+    section: rest-api
+    impl_mode: hand-written
+    reason: "Add the heartbeat path to the served OpenAPI document."
+  - path: projects/relay/tests/work_queue_api.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Tests for prefer-redeliver lease pick, epoch-fenced + idempotent ack, and heartbeat extend / fence."
 ```
