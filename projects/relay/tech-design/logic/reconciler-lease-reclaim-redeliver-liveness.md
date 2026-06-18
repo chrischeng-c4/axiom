@@ -127,5 +127,40 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
-(fill)
+changes:
+  - path: projects/relay/src/engine.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Add Relay::reconcile(now): sweep every subject/shard's expired leases (frontier-only) and return the count reclaimed."
+  - path: projects/relay/src/reconciler.rs
+    action: create
+    section: logic
+    impl_mode: hand-written
+    reason: "Background reconciler: spawn_reconciler(relay, interval) ticks and calls reconcile; ReconcilerHandle to stop it."
+  - path: projects/relay/src/server.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Expose AppState::relay_handle() so the server can hand the shared core to the reconciler."
+  - path: projects/relay/src/server_config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    reason: "Add reconcile_interval_ms."
+  - path: projects/relay/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Declare and re-export the reconciler module."
+  - path: projects/relay/src/bin/relay_server.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Start the background reconciler before serving."
+  - path: projects/relay/tests/reconciler.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Tests: dead-worker redeliver + complete, late-ack fenced, live-worker kept, frontier-only, background-task auto-reclaim."
 ```
