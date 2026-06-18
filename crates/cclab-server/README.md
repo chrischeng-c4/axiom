@@ -18,7 +18,7 @@ SDD behavior is now routed through CLI commands instead.
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | Server CLI And Project Registry | - | implemented | verified | smoke | not_ready | registry and CLI lifecycle smoke gate passes |
-| Dashboard Plan Viewer And Lens Pool | - | implemented | planned | smoke | not_ready | Lens pool integration passes; live HTTP route smoke still needs a direct gate |
+| Dashboard Plan Viewer And Lens Pool | - | implemented | verified | smoke | not_ready | Lens pool integration and HTTP route smoke gates pass |
 
 ### Server CLI And Project Registry
 
@@ -41,10 +41,10 @@ Gate Inventory: `cargo test -p cclab-server`; crates/cclab-server/src/cli.rs; cr
 
 ID: dashboard-plan-viewer-and-lens-pool
 Type: Service
-Surfaces: HTTP UI/API: `/`, `/api/dashboard`, `/view/{project}`, `/view/{project}/{change}`, `/health`; Rust API: `start_server`, `UnifiedAppState`, `LensHandlerPool`
+Surfaces: HTTP UI/API: `/`, `/api/dashboard`, `/view/{project}`, `/view/{project}/{change}`, `/health`; Rust API: `build_router`, `start_server`, `UnifiedAppState`, `LensHandlerPool`
 EC Dimensions: behavior: `cargo test -p cclab-server --test unified_server`
 Root WI: -
-Status: confirmed
+Status: verified
 Required Verification: smoke
 Promise:
 Cclab Server hosts a local Axum dashboard and plan-viewer server for registered projects, with health checks, project/change listing APIs, file viewers, and Lens handler pooling that keeps per-project analysis state isolated and supports unsaved document overrides.
@@ -52,8 +52,8 @@ Gate Inventory: `cargo test -p cclab-server --test unified_server`; crates/cclab
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Lens handler pool and document override contract | epic | - | implemented | passing | conformance | `cargo test -p cclab-server --test unified_server`; crates/cclab-server/src/http_server.rs; crates/cclab-server/src/lens_pool.rs; crates/cclab-server/tests/unified_server.rs |
-| Dashboard and plan-viewer HTTP route smoke | epic | - | implemented | planned | smoke | crates/cclab-server/src/http_server.rs |
+| Lens handler pool and document override contract | epic | - | implemented | verified | conformance | `cargo test -p cclab-server --test unified_server`; crates/cclab-server/src/http_server.rs; crates/cclab-server/src/lens_pool.rs; crates/cclab-server/tests/unified_server.rs |
+| Dashboard and plan-viewer HTTP route smoke | epic | - | implemented | verified | smoke | `cargo test -p cclab-server --test unified_server`; crates/cclab-server/src/http_server.rs; crates/cclab-server/tests/unified_server.rs |
 
 ## Overview
 

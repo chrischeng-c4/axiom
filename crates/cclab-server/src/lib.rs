@@ -54,7 +54,7 @@ pub mod lens_pool;
 pub mod registry;
 
 pub use cli::{ensure_server_running, ServerCommands};
-pub use http_server::{start_server, UnifiedAppState};
+pub use http_server::{build_router, start_server, UnifiedAppState};
 pub use lens_pool::LensHandlerPool;
 pub use registry::Registry;
 
