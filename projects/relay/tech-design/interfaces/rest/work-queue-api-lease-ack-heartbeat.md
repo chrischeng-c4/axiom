@@ -354,3 +354,14 @@ changes:
     impl_mode: hand-written
     reason: "Tests for prefer-redeliver lease pick, epoch-fenced + idempotent ack, and heartbeat extend / fence."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] The verb flow is sound: prefer-redeliver lease pick, epoch granted per (re)lease, ack/heartbeat no-op on unknown lease_id or stale epoch. Fencing follows from both lease_id uniqueness and the epoch check, satisfying exactly-one delivery and worker-death safety.
+- [schema] Epoch is a minimal monotonic token; Heartbeat DTOs and the optional ack epoch keep the #115 wire backward-compatible (absent epoch = lease_id-only fencing).
+- [rest-api] lease/ack/heartbeat are fully specified with epoch in the Lease and ack body and a new heartbeat path; JSON + CBOR on each.
+- [unit-test] Cases map 1:1 to behavior and to the #113 acceptance (lease pick, idempotent ack, redeliver) plus heartbeat extend/fence.
+- [changes] Edits are bounded to the work-queue surface (types/workqueue/engine/wire/server/openapi) + one new test file; no new external-project dependency.
