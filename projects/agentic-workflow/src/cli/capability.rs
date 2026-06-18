@@ -12772,10 +12772,10 @@ Gate Inventory:
 
         let mut verify_ready = sample_report(sample_action(
             CapabilityActionKind::RunVerify,
-            "aw capability report --project meter --verify",
+            "aw capability report --project meter-fixture --verify",
             false,
         ));
-        verify_ready.project = "meter".to_string();
+        verify_ready.project = "meter-fixture".to_string();
 
         let mut planable = sample_report(sample_action(
             CapabilityActionKind::CreateWi,
@@ -12827,9 +12827,10 @@ Gate Inventory:
                     "aw td create 3783".to_string()
                 ),
                 (
-                    "meter".to_string(),
+                    "meter-fixture".to_string(),
                     "run_verify".to_string(),
-                    "aw capability report --project meter --verify --write-evidence".to_string()
+                    "aw capability report --project meter-fixture --verify --write-evidence"
+                        .to_string()
                 ),
             ]
         );
