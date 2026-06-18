@@ -354,3 +354,14 @@ changes:
     impl_mode: hand-written
     reason: "Tests for prefer-redeliver lease pick, epoch-fenced + idempotent ack, and heartbeat extend / fence."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] lease(prefer redeliver) → grant epoch; ack/heartbeat gate on (lease_id + epoch) with no-op on mismatch — captures exactly-one + fencing. Applicable.
+- [schema] Epoch token + Heartbeat DTOs + optional ack epoch are minimal and back-compatible with the #115 wire. Applicable.
+- [rest-api] lease/ack/heartbeat OpenAPI with epoch in Lease and ack; heartbeat path added. Applicable.
+- [unit-test] Covers prefer-redeliver pick, epoch-fenced + idempotent ack, heartbeat extend and fenced. Matches the #113 acceptance. Applicable.
+- [changes] Bounded edits to types/workqueue/engine/wire/server/openapi + a new test file; each maps to a section. Applicable.
