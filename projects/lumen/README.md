@@ -182,6 +182,8 @@ Cube: projects/lumen/.aw/ec/efficiency/search-service.cube.json
 
 ID: search-lexical
 Type: Service
+Surfaces: HTTP: `POST /search` - `text` BM25 query surface over caller-owned `external_id`s.; CLI: `lumen serve` - Hosts the search API and tokenizer/analyzer-backed planner.
+EC Dimensions: behavior: `cargo test -p lumen` - BM25 analyzer/ranking conformance; efficiency: `meter` - BM25 search profile through `projects/lumen/scripts/bench_vs_db.py`
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -199,6 +201,8 @@ Gate Inventory:
 
 ID: search-exact
 Type: Service
+Surfaces: HTTP: `POST /search` - `keyword`, `number`, and `set` predicates under boolean filters.; CLI: `lumen serve` - Hosts exact/filter query execution over the search API.
+EC Dimensions: behavior: `cargo test -p lumen` - term/range/set planner conformance; efficiency: `meter` - filter and range search profile through `projects/lumen/scripts/bench_vs_db.py`
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -216,6 +220,8 @@ Gate Inventory:
 
 ID: search-vector
 Type: Service
+Surfaces: HTTP: `POST /search` - `vector` kNN, filtered kNN, and `hash` Hamming query surface.; CLI: `lumen serve` - Hosts vector/hash search execution over the search API.
+EC Dimensions: behavior: `cargo test -p lumen` - vector/hash conformance; efficiency: `meter` - kNN and filtered-kNN competitive profile through `projects/lumen/scripts/bench_vs_db.py`
 Root WI: 4141
 Status: auditing
 Required Verification: smoke, conformance
@@ -238,6 +244,8 @@ Gate Inventory:
 
 ID: search-hybrid
 Type: Service
+Surfaces: HTTP: `POST /search` - RRF hybrid lexical+semantic query surface.; CLI: `lumen serve` - Hosts hybrid planner execution over the search API.
+EC Dimensions: behavior: `cargo test -p lumen --test hybrid_rrf` - RRF fusion and planner conformance
 Root WI: 4139
 Status: auditing
 Required Verification: conformance
@@ -254,6 +262,8 @@ Gate Inventory:
 
 ID: search-duplicates
 Type: Service
+Surfaces: HTTP: `POST /search` - duplicate/group-by query surface returning matching `external_id`s.; CLI: `lumen serve` - Hosts duplicate search execution over the search API.
+EC Dimensions: behavior: `cargo test -p lumen` - duplicate grouping and property conformance
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -270,6 +280,8 @@ Gate Inventory:
 
 ID: search-nested
 Type: Service
+Surfaces: HTTP: `POST /search` - group, has_child, collapse, exists, duplicated, and CJK substring query surface.; CLI: `lumen serve` - Hosts nested/data-table query execution over the search API.
+EC Dimensions: behavior: `cargo test -p lumen --test collapse_nested` - nested planner and data-table conformance
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -289,6 +301,8 @@ Gate Inventory:
 
 ID: elastic-scale
 Type: Service
+Surfaces: CLI: `lumen serve --persistence=segment` - Runtime-selectable segment persistence mode.; Storage: columnar mmap segment files - RAM-hot/disk-all search tier.
+EC Dimensions: behavior: `cargo test -p lumen` - segment reopen and byte-identical query conformance; efficiency: `meter` - disk-tier RSS and competitive search profile
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -310,6 +324,8 @@ Gate Inventory:
 
 ID: resilience
 Type: Service
+Surfaces: CLI: `lumen serve` - NATS JetStream log tailing and serving-node rebuild path.; K8s: `projects/lumen/scripts/kind-e2e.sh` - broker/pod survival scenario.
+EC Dimensions: stability: `rig` - broker kill, pod kill, and recovery behavior over the service deployment
 Root WI: -
 Status: auditing
 Required Verification: conformance, dogfood
@@ -327,6 +343,8 @@ Gate Inventory:
 
 ID: k8s-deployment
 Type: Devops
+Surfaces: K8s: `projects/lumen/k8s` - kustomize base, overlays, CRD, RBAC, and operator manifests.; Rust API: `lumen::operator` - kube-rs render/reconcile implementation.
+EC Dimensions: behavior: `cargo test -p lumen --test operator_render` - manifest/render conformance; stability: `projects/lumen/scripts/kind-e2e.sh` - operator deploy and recovery dogfood gate
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -427,6 +445,8 @@ install.
 
 ID: rest-integration
 Type: Service
+Surfaces: HTTP: `:7373` REST API - HTTP/1.1 and h2c service endpoint.; HTTP: `/openapi.json` + `/docs` - OpenAPI and Swagger UI surfaces.
+EC Dimensions: behavior: `cargo test -p lumen` - Axum route and OpenAPI conformance
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -485,6 +505,7 @@ self-onboards an agent with no docs site and no running server.
 ID: agentic-integration
 Type: AgentFirst
 Surfaces: CLI: `lumen spec` + `lumen spec --format openapi-yaml` + `lumen llm outline` + `lumen llm workflow` + `lumen llm integration` + `lumen llm quickstart` + `lumen llm recipes` - Offline self-description and agent onboarding commands that require no server, network, or docs site.
+EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline schema and LLM topic conformance
 Root WI: 4143
 Status: verified
 Required Verification: smoke, conformance
@@ -503,6 +524,8 @@ Gate Inventory:
 
 ID: security-auth
 Type: Service
+Surfaces: HTTP: bearer-token auth and per-route RBAC on the REST API.; Peer transport config: `LUMEN_PEER_TLS_CERT` + `LUMEN_PEER_TLS_KEY` + `LUMEN_PEER_TLS_CA` + `LUMEN_PEER_MTLS` - rustls peer TLS material.
+EC Dimensions: security: `cargo test -p lumen` - auth/RBAC denial matrix and rustls config construction
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -521,6 +544,8 @@ Gate Inventory:
 
 ID: backup-restore
 Type: Service
+Surfaces: CLI: `lumen serve` - snapshot restore and periodic snapshot loop.; Rust API: `LocalFsRdbStore` - local snapshot sink implementation.
+EC Dimensions: behavior: `cargo test -p lumen --test backup_restore_e2e` - snapshot/restore conformance
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -538,6 +563,8 @@ Gate Inventory:
 
 ID: observability
 Type: Devops
+Surfaces: HTTP: `/metrics` - Prometheus text-format scrape endpoint.; K8s: ServiceMonitor + PrometheusRule manifests.; Config: `LUMEN_OTLP_ENDPOINT` - opt-in OTLP traces/metrics export.
+EC Dimensions: behavior: `cargo test -p lumen` - metrics endpoint and observability wiring conformance
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -557,6 +584,8 @@ Gate Inventory:
 
 ID: schema-ops
 Type: Service
+Surfaces: HTTP: collection DDL, drop-field, reindex, replay, stats, and metadata API routes.; CLI: `lumen serve` - Hosts schema/ops lifecycle endpoints.
+EC Dimensions: behavior: `cargo test -p lumen` - schema DDL, drain, replay, stats, and metadata conformance
 Root WI: -
 Status: auditing
 Required Verification: smoke, conformance
@@ -581,6 +610,8 @@ than left as an adjective.
 
 ID: ops-operability
 Type: Devops
+Surfaces: K8s: Deployment, HPA, PDB, and NATS manifests.; CLI: `lumen serve` - stateless serving process rebuilt from the log.; Bench harness: perf and disk-scale gates.
+EC Dimensions: behavior: `projects/lumen/scripts/kind-e2e.sh` - operability dogfood gate; efficiency: `meter` - latency, throughput, RSS, and competitive regression profile; stability: `rig` - broker/pod recovery behavior
 Root WI: -
 Status: auditing
 Required Verification: conformance, dogfood
