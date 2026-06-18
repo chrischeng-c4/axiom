@@ -104,6 +104,8 @@ unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) 
         .unwrap_or_else(MbValue::none);
     let mut safe = String::new();
     let mut quote_via = MbValue::none();
+    let mut encoding = MbValue::none();
+    let mut errors = MbValue::none();
     if let Some(kw) = kwargs {
         let get = |name: &str| -> Option<MbValue> {
             let sentinel = MbValue::from_bits(u64::MAX);
@@ -127,12 +129,12 @@ unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) 
         if let Some(v) = get("quote_via") {
             quote_via = v;
         }
+        if let Some(v) = get("encoding") { encoding = v; }
+        if let Some(v) = get("errors") { errors = v; }
     }
-    mb_urllib_urlencode_with(
+    mb_urllib_urlencode_codec(
         a.first().copied().unwrap_or_else(MbValue::none),
-        doseq,
-        &safe,
-        quote_via,
+        doseq, &safe, quote_via, encoding, errors,
     )
 }
 
@@ -1296,17 +1298,32 @@ pub fn mb_urllib_urlencode_with(
     safe: &str,
     quote_via: MbValue,
 ) -> MbValue {
+    mb_urllib_urlencode_codec(params, doseq, safe, quote_via, MbValue::none(), MbValue::none())
+}
+
+/// urlencode honoring doseq / safe= / quote_via= plus encoding= / errors=
+/// (the codec used to %-encode str keys and values; default utf-8/strict).
+pub fn mb_urllib_urlencode_codec(
+    params: MbValue,
+    doseq: MbValue,
+    safe: &str,
+    quote_via: MbValue,
+    encoding: MbValue,
+    errors: MbValue,
+) -> MbValue {
     // A bare str/bytes is not a mapping or pair sequence.
     if extract_str(params).is_some() || extract_bytes_like(params).is_some() {
         return raise_type_error("not a valid non-string sequence or mapping object");
     }
+    let enc_name = extract_str(encoding).unwrap_or_else(|| "utf-8".to_string());
+    let err_name = extract_str(errors).unwrap_or_else(|| "strict".to_string());
     let do_seq = super::super::builtins::mb_bool(doseq).as_bool() == Some(true);
     let pairs = urlencode_pairs(params);
     let mut parts = Vec::new();
     let safe_b = safe.as_bytes();
     let enc = |v: MbValue| -> String {
         if quote_via.is_none() {
-            encode_query_component(v, safe_b)
+            encode_query_component(v, safe_b, &enc_name, &err_name)
         } else {
             // quote_via(str(value), safe) through the supplied callable.
             let s = py_str(v);
@@ -1339,12 +1356,14 @@ pub fn mb_urllib_urlencode_with(
 
 /// Encode one urlencode key or value via `quote_plus` semantics. bytes are
 /// escaped byte-for-byte; everything else is `str()`-coerced first.
-fn encode_query_component(v: MbValue, safe: &[u8]) -> String {
+fn encode_query_component(v: MbValue, safe: &[u8], encoding: &str, errors: &str) -> String {
     if let Some(b) = extract_bytes_like(v) {
         return percent_encode_bytes(&b, safe, true);
     }
     let s = py_str(v);
-    percent_encode_bytes(s.as_bytes(), safe, true)
+    // Encode the str under the requested codec (default utf-8) before %-encoding.
+    let bytes = encode_str_with(&s, encoding, errors).unwrap_or_else(|| s.into_bytes());
+    percent_encode_bytes(&bytes, safe, true)
 }
 
 /// Yield the elements of a list/tuple value, or — for a mapping — its keys
