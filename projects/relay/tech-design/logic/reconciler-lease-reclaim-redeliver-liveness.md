@@ -64,17 +64,65 @@ reconcile_interval_ms: 1000   # how often the background sweep reclaims expired 
 ```mermaid
 ---
 id: relay-reconciler-test-plan
-entry: start
+entry: suite
 nodes:
-  start:
+  suite:
     kind: start
-    label: "pending"
-edges: []
+    label: "reconciler tests"
+  t_dead:
+    kind: process
+    label: "ACCEPTANCE: lease to c1, c1 dies (no ack), advance past ttl, reconcile()"
+  a_dead:
+    kind: terminal
+    label: "assert the seq is reclaimed; c2 leases it (epoch bumped), acks, committed advances"
+  t_fence:
+    kind: process
+    label: "after redeliver, c1 (dead) sends a late ack with its old lease_id/epoch"
+  a_fence:
+    kind: terminal
+    label: "assert the late ack is a no-op (epoch-fenced); no double-completion"
+  t_live:
+    kind: process
+    label: "lease to c1, heartbeat before ttl, then reconcile() before the extended expiry"
+  a_live:
+    kind: terminal
+    label: "assert nothing is reclaimed (live worker kept)"
+  t_frontier:
+    kind: process
+    label: "ack a seq, then reconcile()"
+  a_frontier:
+    kind: terminal
+    label: "assert reconcile touches only in-flight leases — acked entries are not re-offered"
+  t_bg:
+    kind: process
+    label: "spawn the background reconciler with a short interval + short ttl; lease, don't ack, wait"
+  a_bg:
+    kind: terminal
+    label: "assert the entry becomes re-leasable without any manual reclaim call"
+edges:
+  - { from: suite, to: t_dead, label: "case: dead worker redeliver" }
+  - { from: t_dead, to: a_dead }
+  - { from: suite, to: t_fence, label: "case: late-ack fenced" }
+  - { from: t_fence, to: a_fence }
+  - { from: suite, to: t_live, label: "case: live worker kept" }
+  - { from: t_live, to: a_live }
+  - { from: suite, to: t_frontier, label: "case: frontier-only" }
+  - { from: t_frontier, to: a_frontier }
+  - { from: suite, to: t_bg, label: "case: background task" }
+  - { from: t_bg, to: a_bg }
 ---
 flowchart TD
-    start([pending])
+    suite([reconciler suite]) --> t_dead[c1 dies, advance ttl, reconcile]
+    t_dead --> a_dead([reclaimed; c2 completes])
+    suite --> t_fence[c1 late ack]
+    t_fence --> a_fence([no-op, fenced])
+    suite --> t_live[heartbeat then reconcile]
+    t_live --> a_live([kept])
+    suite --> t_frontier[ack then reconcile]
+    t_frontier --> a_frontier([only in-flight swept])
+    suite --> t_bg[spawn reconciler, wait]
+    t_bg --> a_bg([auto re-leasable])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
