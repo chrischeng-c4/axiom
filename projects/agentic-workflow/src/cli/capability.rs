@@ -305,6 +305,9 @@ pub struct CapabilitySweepArgs {
     /// Write an execution queue for non-HITL next actions not covered by draft/WI-plan queues.
     #[arg(long = "write-action-queue")]
     pub write_action_queue: bool,
+    /// Write a local check-result index for every swept project.
+    #[arg(long = "write-check-index")]
+    pub write_check_index: bool,
     /// DEPRECATED compatibility no-op. Capability sweep emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -1144,6 +1147,7 @@ pub struct CapabilitySweepReport {
     pub write_drafts: bool,
     pub write_wi_plans: bool,
     pub write_action_queue: bool,
+    pub write_check_index: bool,
     pub groups: Vec<CapabilitySweepGroup>,
     pub projects: Vec<CapabilitySweepProject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1158,6 +1162,10 @@ pub struct CapabilitySweepReport {
     pub action_queue: Vec<CapabilityActionQueueEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action_queue_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub check_index: Vec<CapabilityCheckIndexEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_index_path: Option<PathBuf>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -1170,6 +1178,18 @@ pub struct CapabilityActionQueueEntry {
     pub command: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_evidence_path: Option<PathBuf>,
+    pub reason: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityCheckIndexEntry {
+    pub project: String,
+    pub status: &'static str,
+    pub command: String,
+    pub cap_path: PathBuf,
+    pub next_action_kind: &'static str,
+    pub target: String,
     pub reason: String,
 }
 
@@ -2591,6 +2611,16 @@ async fn run_capability_sweep(
         sweep.action_queue_index_path =
             write_capability_sweep_action_queue_index(&sweep.action_queue)?;
     }
+    if args.write_check_index {
+        sweep.write_check_index = true;
+        sweep.check_index =
+            capability_sweep_check_index(&reports, args.verify, include_issue_inventory);
+        sweep.check_index_path = write_capability_sweep_check_index(
+            &sweep.check_index,
+            args.verify,
+            include_issue_inventory,
+        )?;
+    }
     if args.human {
         print_capability_sweep(&sweep);
     } else {
@@ -2653,6 +2683,7 @@ fn capability_sweep_report(
         write_drafts: false,
         write_wi_plans: false,
         write_action_queue: false,
+        write_check_index: false,
         groups: capability_sweep_groups(&projects),
         projects,
         drafts: Vec::new(),
@@ -2661,6 +2692,8 @@ fn capability_sweep_report(
         wi_plan_index_path: None,
         action_queue: Vec::new(),
         action_queue_index_path: None,
+        check_index: Vec::new(),
+        check_index_path: None,
     }
 }
 
@@ -2873,6 +2906,121 @@ fn render_capability_sweep_wi_plan_index(
     out.push_str("- Treat the capability README as the confirmed anchor.\n");
     out.push_str("- Review candidates before using `aw wi draft init` or `aw wi create`.\n");
     out.push_str("- When the issue backend is unavailable, keep the artifact local/review-only.\n");
+    out
+}
+
+fn capability_sweep_check_index(
+    reports: &[CapabilityReport],
+    verify: bool,
+    include_issue_inventory: bool,
+) -> Vec<CapabilityCheckIndexEntry> {
+    reports
+        .iter()
+        .map(|report| {
+            let mut normalized = report.clone();
+            let failed =
+                normalize_capability_check_report(&mut normalized, verify, include_issue_inventory);
+            CapabilityCheckIndexEntry {
+                project: normalized.project.clone(),
+                status: if failed { "failed" } else { "passed" },
+                command: capability_check_index_command(
+                    &normalized.project,
+                    verify,
+                    include_issue_inventory,
+                ),
+                cap_path: normalized.cap_path.clone(),
+                next_action_kind: capability_action_kind_label(normalized.next_action.kind),
+                target: normalized.next_action.target.clone(),
+                reason: normalized.next_action.reason.clone(),
+            }
+        })
+        .collect()
+}
+
+fn capability_check_index_command(
+    project: &str,
+    verify: bool,
+    include_issue_inventory: bool,
+) -> String {
+    let mut command = format!("aw capability check --project {project}");
+    if verify {
+        command.push_str(" --verify");
+    }
+    if include_issue_inventory {
+        command.push_str(" --include-issue-inventory");
+    } else {
+        command.push_str(" --skip-issue-inventory");
+    }
+    command
+}
+
+fn write_capability_sweep_check_index(
+    entries: &[CapabilityCheckIndexEntry],
+    verify: bool,
+    include_issue_inventory: bool,
+) -> Result<Option<PathBuf>> {
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp").join("aw").join("capability-checks");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-check-index.md"));
+    std::fs::write(
+        &path,
+        render_capability_sweep_check_index(entries, verify, include_issue_inventory),
+    )
+    .with_context(|| format!("failed to write capability check index {}", path.display()))?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_check_index(
+    entries: &[CapabilityCheckIndexEntry],
+    verify: bool,
+    include_issue_inventory: bool,
+) -> String {
+    let passed = entries
+        .iter()
+        .filter(|entry| entry.status == "passed")
+        .count();
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_check_index\n");
+    out.push_str(if passed == entries.len() {
+        "status: passed\n"
+    } else {
+        "status: failed\n"
+    });
+    out.push_str(&format!("project_count: {}\n", entries.len()));
+    out.push_str(&format!("passed_count: {}\n", passed));
+    out.push_str(&format!("verify: {}\n", verify));
+    out.push_str(&format!(
+        "include_issue_inventory: {}\n",
+        include_issue_inventory
+    ));
+    out.push_str("---\n\n");
+    out.push_str("# Capability Check Index\n\n");
+    out.push_str("This is the AW-owned rollout checkpoint for `aw capability check` across swept projects. Use `--skip-issue-inventory` for structural README checks and `--include-issue-inventory` when tracker alignment is intentionally in scope.\n\n");
+    out.push_str("| Project | Status | Command | Next | Target | Capability Map | Reason |\n");
+    out.push_str("|---|---|---|---|---|---|---|\n");
+    for entry in entries {
+        out.push_str(&format!(
+            "| {} | {} | `{}` | {} | {} | {} | {} |\n",
+            markdown_cell(&entry.project),
+            entry.status,
+            markdown_cell(&entry.command),
+            markdown_cell(entry.next_action_kind),
+            markdown_cell(&entry.target),
+            markdown_cell(&entry.cap_path.display().to_string()),
+            markdown_cell(&entry.reason),
+        ));
+    }
+    out.push_str("\n## Follow-up\n\n");
+    out.push_str("- For failed `define_capability_map` rows, review the generated capability-map draft before applying README changes.\n");
+    out.push_str("- For failed `create_wi` rows, review the generated WI plan before publishing tracker changes.\n");
+    out.push_str(
+        "- Re-run the command in the table after each README, WI, TD, or verification change.\n",
+    );
     out
 }
 
@@ -3171,6 +3319,12 @@ fn print_capability_sweep(sweep: &CapabilitySweepReport) {
                 "action:{} {} {}",
                 entry.project, entry.action_group, entry.command
             );
+        }
+    }
+    if sweep.write_check_index {
+        println!("check index [{}]", sweep.check_index.len());
+        if let Some(path) = &sweep.check_index_path {
+            println!("check index {}", path.display());
         }
     }
 }
@@ -11740,6 +11894,100 @@ Gate Inventory:
             .contains("| jet | run_td | WASM And Multi-Target Execution | `aw td create 3783` |"));
         assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify --write-evidence` | /tmp/aw/meter/capability-verify-reports/report.md |"));
         assert!(index.contains("Execute one command at a time"));
+    }
+
+    #[test]
+    fn capability_sweep_check_index_normalizes_structural_results() {
+        let mut skipped_inventory = sample_report(CapabilityAction {
+            kind: CapabilityActionKind::CreateWi,
+            capability_id: Some("package-manager".to_string()),
+            gap_id: Some("package-manager-readiness".to_string()),
+            claim_id: None,
+            target: "Package Manager".to_string(),
+            command: "aw wi plan --project jet".to_string(),
+            reason: "issue inventory was skipped; run with --include-issue-inventory to check tracker alignment".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        });
+        skipped_inventory.project = "jet".to_string();
+        skipped_inventory.cap_path = PathBuf::from("projects/jet/README.md");
+
+        let mut missing_work = sample_report(CapabilityAction {
+            kind: CapabilityActionKind::CreateWi,
+            capability_id: Some("lexical-bm25".to_string()),
+            gap_id: Some("lexical-bm25-readiness".to_string()),
+            claim_id: None,
+            target: "Lexical (BM25)".to_string(),
+            command: "aw wi plan --project lumen".to_string(),
+            reason: "open capability gap has no active WI in README".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        });
+        missing_work.project = "lumen".to_string();
+        missing_work.cap_path = PathBuf::from("projects/lumen/README.md");
+
+        let index = capability_sweep_check_index(&[skipped_inventory, missing_work], false, false);
+
+        assert_eq!(index.len(), 2);
+        assert_eq!(index[0].project, "jet");
+        assert_eq!(index[0].status, "passed");
+        assert_eq!(
+            index[0].command,
+            "aw capability check --project jet --skip-issue-inventory"
+        );
+        assert_eq!(index[0].next_action_kind, "none");
+        assert_eq!(index[0].target, "projects/jet/README.md");
+        assert_eq!(index[0].reason, "capability format and TD refs are valid");
+        assert_eq!(index[1].project, "lumen");
+        assert_eq!(index[1].status, "failed");
+        assert_eq!(
+            index[1].command,
+            "aw capability check --project lumen --skip-issue-inventory"
+        );
+        assert_eq!(index[1].next_action_kind, "create_wi");
+        assert_eq!(index[1].target, "Lexical (BM25)");
+    }
+
+    #[test]
+    fn capability_sweep_check_index_renders_rollout_checkpoint() {
+        let index = render_capability_sweep_check_index(
+            &[
+                CapabilityCheckIndexEntry {
+                    project: "jet".to_string(),
+                    status: "passed",
+                    command: "aw capability check --project jet --skip-issue-inventory".to_string(),
+                    cap_path: PathBuf::from("projects/jet/README.md"),
+                    next_action_kind: "none",
+                    target: "projects/jet/README.md".to_string(),
+                    reason: "capability format and TD refs are valid".to_string(),
+                },
+                CapabilityCheckIndexEntry {
+                    project: "lumen".to_string(),
+                    status: "failed",
+                    command:
+                        "aw capability check --project lumen --verify --include-issue-inventory"
+                            .to_string(),
+                    cap_path: PathBuf::from("projects/lumen/README.md"),
+                    next_action_kind: "create_wi",
+                    target: "Lexical (BM25)".to_string(),
+                    reason: "open capability gap has no active WI in README".to_string(),
+                },
+            ],
+            true,
+            true,
+        );
+
+        assert!(index.contains("kind: capability_check_index"));
+        assert!(index.contains("status: failed"));
+        assert!(index.contains("project_count: 2"));
+        assert!(index.contains("passed_count: 1"));
+        assert!(index.contains("verify: true"));
+        assert!(index.contains("include_issue_inventory: true"));
+        assert!(index.contains("| jet | passed | `aw capability check --project jet --skip-issue-inventory` | none | projects/jet/README.md | projects/jet/README.md | capability format and TD refs are valid |"));
+        assert!(index.contains("| lumen | failed | `aw capability check --project lumen --verify --include-issue-inventory` | create_wi | Lexical (BM25) | projects/lumen/README.md | open capability gap has no active WI in README |"));
+        assert!(index.contains(
+            "Re-run the command in the table after each README, WI, TD, or verification change."
+        ));
     }
 
     #[test]
