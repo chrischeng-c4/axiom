@@ -1350,7 +1350,11 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
                 include_issue_inventory,
             )
             .await?;
-            let check_failed = normalize_capability_check_report(&mut report, args.verify);
+            let check_failed = normalize_capability_check_report(
+                &mut report,
+                args.verify,
+                include_issue_inventory,
+            );
             let evidence_path = maybe_write_capability_verify_evidence(
                 &report,
                 args.verify,
@@ -1397,10 +1401,18 @@ fn issue_inventory_enabled(include: bool, skip: bool, default: bool) -> bool {
     include || (default && !skip)
 }
 
-fn normalize_capability_check_report(report: &mut CapabilityReport, verify: bool) -> bool {
+fn normalize_capability_check_report(
+    report: &mut CapabilityReport,
+    verify: bool,
+    include_issue_inventory: bool,
+) -> bool {
     let check_failed = !report.blockers.is_empty()
         || matches!(report.test_gates.status, ProjectTestGateStatus::Failed)
-        || capability_check_blocks_on_next_action(report.next_action.kind, verify);
+        || capability_check_blocks_on_next_action(
+            &report.next_action,
+            verify,
+            include_issue_inventory,
+        );
     if !check_failed {
         report.status = "healthy".to_string();
         report.next_action = CapabilityAction {
@@ -1418,7 +1430,18 @@ fn normalize_capability_check_report(report: &mut CapabilityReport, verify: bool
     check_failed
 }
 
-fn capability_check_blocks_on_next_action(kind: CapabilityActionKind, verify: bool) -> bool {
+fn capability_check_blocks_on_next_action(
+    action: &CapabilityAction,
+    verify: bool,
+    include_issue_inventory: bool,
+) -> bool {
+    let kind = action.kind;
+    if kind == CapabilityActionKind::CreateWi
+        && !include_issue_inventory
+        && action.reason.contains("issue inventory was skipped")
+    {
+        return false;
+    }
     matches!(
         kind,
         CapabilityActionKind::DefineCapabilityMap
@@ -11252,13 +11275,34 @@ Gate Inventory:
         report.next_action.reason =
             "active WI reference is not present in project issue inventory".to_string();
 
-        let failed = normalize_capability_check_report(&mut report, false);
+        let failed = normalize_capability_check_report(&mut report, false, true);
 
         assert!(failed);
         assert_eq!(report.status, "blocked");
         assert_eq!(report.next_action.kind, CapabilityActionKind::CreateWi);
         assert_eq!(report.next_action.command, "aw wi plan --project jet");
         assert!(report.next_action.reason.contains("active WI reference"));
+    }
+
+    #[test]
+    fn capability_check_ignores_skipped_issue_inventory_for_structural_check() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project jet",
+            false,
+        ));
+        report.next_action.reason =
+            "active WI reference was not resolved because issue inventory was skipped".to_string();
+
+        let failed = normalize_capability_check_report(&mut report, false, false);
+
+        assert!(!failed);
+        assert_eq!(report.status, "healthy");
+        assert_eq!(report.next_action.kind, CapabilityActionKind::None);
+        assert_eq!(
+            report.next_action.reason,
+            "capability format and TD refs are valid"
+        );
     }
 
     #[test]
@@ -11269,7 +11313,7 @@ Gate Inventory:
             false,
         ));
 
-        let failed = normalize_capability_check_report(&mut report, false);
+        let failed = normalize_capability_check_report(&mut report, false, false);
 
         assert!(!failed);
         assert_eq!(report.status, "healthy");
@@ -11288,7 +11332,7 @@ Gate Inventory:
             false,
         ));
 
-        let failed = normalize_capability_check_report(&mut report, true);
+        let failed = normalize_capability_check_report(&mut report, true, false);
 
         assert!(failed);
         assert_eq!(report.status, "blocked");
