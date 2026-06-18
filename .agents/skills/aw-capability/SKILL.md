@@ -62,7 +62,9 @@ promises from inference alone.
    next-action view; the emitted check index is the `aw capability check` view
    for each project. Use the rollout index as the handoff artifact and the
    check index to distinguish structural README/capability failures from
-   tracker inventory work.
+   tracker inventory work. A `create_wi:issue_inventory_skipped` sweep group is
+   tracker-sync work caused by `--skip-issue-inventory`; it is not a WI backlog
+   candidate.
 10. When the sweep shows `define_capability_map:draft`, use
    `aw capability sweep --write-drafts --human --skip-issue-inventory` to
    write pending-review draft artifacts for all draftable projects in one
@@ -83,7 +85,8 @@ promises from inference alone.
    only; do not publish tracker changes until a human accepts the WI
    candidates. `create_wi` actions caused only by skipped issue inventory are
    not WI backlog; rerun with `--include-issue-inventory` when tracker
-   alignment is intentionally in scope.
+   alignment is intentionally in scope. In sweep output, those rows are grouped
+   as `create_wi:issue_inventory_skipped`.
 13. When the sweep shows non-HITL executable next actions such as `run_td` or
    `run_verify`, use
    `aw capability sweep --write-action-queue --human --skip-issue-inventory`

@@ -3342,16 +3342,22 @@ fn capability_action_group_label(kind: &'static str, detail: Option<&'static str
 }
 
 fn capability_action_detail_label(action: &CapabilityAction) -> Option<&'static str> {
-    if action.kind != CapabilityActionKind::DefineCapabilityMap {
-        return None;
-    }
-    let command = action.command.trim();
-    if command.starts_with("aw capability draft ") || command == "aw capability draft" {
-        Some("draft")
-    } else if command.starts_with("aw capability init ") || command == "aw capability init" {
-        Some("init")
-    } else {
-        Some("report")
+    match action.kind {
+        CapabilityActionKind::CreateWi if is_skipped_issue_inventory_action(action) => {
+            Some("issue_inventory_skipped")
+        }
+        CapabilityActionKind::DefineCapabilityMap => {
+            let command = action.command.trim();
+            if command.starts_with("aw capability draft ") || command == "aw capability draft" {
+                Some("draft")
+            } else if command.starts_with("aw capability init ") || command == "aw capability init"
+            {
+                Some("init")
+            } else {
+                Some("report")
+            }
+        }
+        _ => None,
     }
 }
 
@@ -11849,6 +11855,18 @@ Gate Inventory:
             plan_projects,
             vec![("lumen", "projects/lumen/README.md".to_string())]
         );
+        let groups = sweep
+            .groups
+            .iter()
+            .map(|group| {
+                format!(
+                    "{}:{}:{}",
+                    group.status, group.next_action_group, group.count
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(groups.contains(&"blocked:create_wi:1".to_string()));
+        assert!(groups.contains(&"blocked:create_wi:issue_inventory_skipped:1".to_string()));
     }
 
     #[test]
