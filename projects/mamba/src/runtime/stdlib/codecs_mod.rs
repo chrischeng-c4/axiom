@@ -1932,6 +1932,10 @@ fn incr_encode(self_v: MbValue, args_list: MbValue) -> MbValue {
         .map(|v| v.as_bool() == Some(true))
         .unwrap_or(false);
     let s = extract_str(input).unwrap_or_default();
+    // rot-13 is a str->str transform — it yields a str, not bytes.
+    if is_rot13_codec(&mode) {
+        return MbValue::from_ptr(MbObject::new_str(rot13_transform(&s)));
+    }
     let mut out = codec_encode_bytes(&mode, &s).unwrap_or_default();
     // utf-8-sig emits a BOM before the first chunk.
     if sig {
@@ -2387,11 +2391,35 @@ pub fn mb_codecs_getincrementaldecoder_real(encoding: MbValue) -> MbValue {
     make_factory("codecs._IncrementalDecoderFactory", &enc)
 }
 
+/// True for the rot-13 text-transform codec (under its common spellings).
+fn is_rot13_codec(mode: &str) -> bool {
+    matches!(mode.to_ascii_lowercase().replace('_', "-").as_str(), "rot-13" | "rot13")
+}
+
+/// Apply the ROT-13 cipher to ASCII letters; other characters pass through.
+fn rot13_transform(s: &str) -> String {
+    s.chars().map(|c| match c {
+        'a'..='z' => (((c as u8 - b'a' + 13) % 26) + b'a') as char,
+        'A'..='Z' => (((c as u8 - b'A' + 13) % 26) + b'A') as char,
+        _ => c,
+    }).collect()
+}
+
 pub fn mb_codecs_getincrementalencoder_real(encoding: MbValue) -> MbValue {
     let enc = match extract_str(encoding) {
         Some(e) => e,
         None => return raise_type_error("getincrementalencoder() argument must be str"),
     };
+    // rot-13 is a str->str transform codec (its name does not normalize to a
+    // byte codec): store an explicit "rot-13" mode for the encoder to detect.
+    if is_rot13_codec(&enc) {
+        let inst = MbValue::from_ptr(MbObject::new_instance(
+            "codecs._IncrementalEncoderFactory".to_string(),
+        ));
+        set_inst_field(inst, "mode", new_str("rot-13".to_string()));
+        set_inst_field(inst, "sig", MbValue::from_bool(false));
+        return inst;
+    }
     let (mode, _) = split_sig(&enc);
     if !supported_byte_codec(&mode) {
         return raise_lookup_error(&format!("unknown encoding: {}", enc));
