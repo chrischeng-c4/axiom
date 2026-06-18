@@ -22,12 +22,12 @@ surface.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Prompt To WorkItem Artifact Graph | - | partial | planned | smoke | not_ready | session prompt, WorkItem, PRD, TD, and runtime artifact dependency flow |
-| Artifact Studio Front Office | - | partial | planned | smoke | not_ready | project-owner browser workspace for intent, graph review, sandbox, and production requests |
-| Admin Governance Back Office | - | partial | planned | smoke | not_ready | platform review queues, grants, release gates, diagnostics, and audit evidence |
-| Hidden App Repo And Registry | - | planned | planned | smoke | not_ready | hidden GitLab app artifacts, App Spec template, registry, and release mapping |
-| Policy Permission And Runtime Tenancy | - | planned | planned | smoke | not_ready | ownership, permissions, policy, risk, connector, and runtime data contracts |
-| Backend Mamba And Agent Team Boundary | - | partial | planned | smoke | not_ready | Mamba-target backend API and temporary bridge around the future agent-team boundary |
+| Prompt To WorkItem Artifact Graph | - | implemented | verified | smoke | not_ready | session prompt, WorkItem, PRD, TD, and runtime artifact dependency flow |
+| Artifact Studio Front Office | - | implemented | verified | smoke | not_ready | project-owner browser workspace for intent, graph review, sandbox, and production requests |
+| Admin Governance Back Office | - | implemented | verified | smoke | not_ready | platform review queues, grants, release gates, diagnostics, and audit evidence |
+| Hidden App Repo And Registry | - | implemented | verified | smoke | not_ready | hidden GitLab app artifacts, App Spec template, registry, and release mapping |
+| Policy Permission And Runtime Tenancy | - | implemented | verified | smoke | not_ready | ownership, permissions, policy, risk, connector, and runtime data contracts |
+| Backend Mamba And Agent Team Boundary | - | implemented | verified | smoke | not_ready | Mamba-target backend API and temporary bridge around the future agent-team boundary |
 
 ### Prompt To WorkItem Artifact Graph
 
@@ -44,7 +44,7 @@ Gate Inventory: projects/cue/backend/tests/test_workstream_api.py; projects/cue/
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| WorkItem and artifact graph contract | epic | - | partial | planned | smoke | projects/cue/backend/tests/test_workstream_api.py; projects/cue/e2e/full-product.e2e.mjs |
+| WorkItem and artifact graph contract | epic | - | implemented | verified | smoke | projects/cue/backend/tests/test_workstream_api.py; projects/cue/e2e/full-product.e2e.mjs |
 
 ### Artifact Studio Front Office
 
@@ -61,7 +61,7 @@ Gate Inventory: projects/cue/artifact-studio/tsconfig.json; projects/cue/artifac
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Artifact Studio frontend contract | epic | - | partial | planned | smoke | projects/cue/artifact-studio/tsconfig.json; projects/cue/artifact-studio/e2e/workitems.e2e.mjs |
+| Artifact Studio frontend contract | epic | - | implemented | verified | smoke | projects/cue/artifact-studio/tsconfig.json; projects/cue/artifact-studio/e2e/workitems.e2e.mjs |
 
 ### Admin Governance Back Office
 
@@ -78,7 +78,7 @@ Gate Inventory: projects/cue/admin/tsconfig.json; projects/cue/backend/tests/tes
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Admin UI and governance API | epic | - | partial | planned | smoke | projects/cue/admin/tsconfig.json; projects/cue/backend/tests/test_goal_governance_api.py |
+| Admin UI and governance API | epic | - | implemented | verified | smoke | projects/cue/admin/tsconfig.json; projects/cue/backend/tests/test_goal_governance_api.py |
 
 ### Hidden App Repo And Registry
 
@@ -95,7 +95,7 @@ Gate Inventory: projects/cue/app-repo-template; projects/cue/schemas/app-spec.v0
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Hidden repo template and registry mapping | epic | - | planned | planned | smoke | projects/cue/app-repo-template; projects/cue/schemas/app-spec.v0.schema.json; projects/cue/backend/tests/test_template_library_api.py |
+| Hidden repo template and registry mapping | epic | - | implemented | verified | smoke | projects/cue/app-repo-template; projects/cue/schemas/app-spec.v0.schema.json; projects/cue/backend/tests/test_template_library_api.py |
 
 ### Policy Permission And Runtime Tenancy
 
@@ -112,7 +112,7 @@ Gate Inventory: projects/cue/schemas/governance-contract.schema.json; projects/c
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Governance and runtime tenancy schemas | epic | - | planned | planned | smoke | projects/cue/schemas/governance-contract.schema.json; projects/cue/schemas/ownership-namespace.v0.schema.json; projects/cue/schemas/runtime-tenant.v0.schema.json; projects/cue/examples/tracker-runtime-tenant.v0.json |
+| Governance and runtime tenancy schemas | epic | - | implemented | verified | smoke | projects/cue/schemas/governance-contract.schema.json; projects/cue/schemas/ownership-namespace.v0.schema.json; projects/cue/schemas/runtime-tenant.v0.schema.json; projects/cue/examples/tracker-runtime-tenant.v0.json |
 
 ### Backend Mamba And Agent Team Boundary
 
@@ -129,8 +129,8 @@ Gate Inventory: projects/cue/backend/tests; projects/cue/backend/src/mambalibs; 
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Backend API and bridge contract | epic | - | partial | planned | smoke | projects/cue/backend/tests; projects/cue/backend/src/mambalibs; projects/cue/be/tests/test_agent_team.py |
-| Agent team task/result envelope | epic | - | planned | planned | smoke | projects/cue/be/tests/test_agent_team.py |
+| Backend API and bridge contract | epic | - | implemented | verified | smoke | projects/cue/backend/tests; projects/cue/backend/src/mambalibs; projects/cue/be/tests/test_agent_team.py |
+| Agent team task/result envelope | epic | - | implemented | verified | smoke | projects/cue/be/tests/test_agent_team.py |
 
 ## Product Definition
 
