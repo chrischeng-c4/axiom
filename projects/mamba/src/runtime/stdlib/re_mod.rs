@@ -1100,12 +1100,52 @@ fn expand_py_template(caps: &regex::Captures, template: &str) -> String {
 
 /// Shared sub/subn engine. `repl` is either a template string or a callable
 /// receiving the Match instance; `count <= 0` replaces every match.
+/// True iff `pattern` is a bytes pattern: a raw bytes/bytearray, or a compiled
+/// `re.Pattern` whose `_is_bytes` flag is set.
+fn pattern_is_bytes(pattern: MbValue) -> bool {
+    if let Some(ptr) = pattern.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => return true,
+                ObjData::Instance { class_name, fields } if class_name == "re.Pattern" => {
+                    if let Some(v) = fields.read().unwrap().get("_is_bytes") {
+                        return v.as_bool() == Some(true);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
 fn sub_engine(
     pattern: MbValue,
     repl: MbValue,
     string: MbValue,
     count: MbValue,
 ) -> Option<(String, i64)> {
+    // CPython: a concrete (non-callable) replacement must match the pattern's
+    // str/bytes flavor — `str_pattern.sub(b"x", "c")` is a TypeError.
+    let repl_is_bytes = repl.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+        .unwrap_or(false);
+    let repl_is_str = repl.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+        .unwrap_or(false);
+    if (repl_is_bytes || repl_is_str) && repl_is_bytes != pattern_is_bytes(pattern) {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                if repl_is_bytes {
+                    "expected str instance, bytes found".to_string()
+                } else {
+                    "expected bytes instance, str found".to_string()
+                },
+            )),
+        );
+        return None;
+    }
     let pat = extract_str(pattern)?;
     let text = extract_str(string)?;
     let template = extract_str(repl);
