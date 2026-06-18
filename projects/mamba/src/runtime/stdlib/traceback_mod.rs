@@ -722,6 +722,24 @@ unsafe extern "C" fn dispatch_te_from_exception(args_ptr: *const MbValue, nargs:
     } else {
         (String::new(), String::new())
     };
+    // Carry the exception's chaining attributes (__cause__ / __context__ /
+    // __suppress_context__) onto the TracebackException, so `raise X from None`
+    // surfaces __suppress_context__ == True.
+    let read_field = |name: &str| -> MbValue {
+        e.as_ptr()
+            .and_then(|ptr| unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    fields.read().ok().and_then(|f| f.get(name).copied())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(MbValue::none)
+    };
+    let suppress = match read_field("__suppress_context__").as_bool() {
+        Some(b) => b,
+        None => false,
+    };
     make_instance(
         "TracebackException",
         vec![
@@ -731,9 +749,9 @@ unsafe extern "C" fn dispatch_te_from_exception(args_ptr: *const MbValue, nargs:
             ),
             ("exc_value", e),
             ("_message", MbValue::from_ptr(MbObject::new_str(msg))),
-            ("__cause__", MbValue::none()),
-            ("__context__", MbValue::none()),
-            ("__suppress_context__", MbValue::from_bool(false)),
+            ("__cause__", read_field("__cause__")),
+            ("__context__", read_field("__context__")),
+            ("__suppress_context__", MbValue::from_bool(suppress)),
             ("stack", make_stack_summary(Vec::new())),
         ],
     )
