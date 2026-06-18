@@ -388,7 +388,38 @@ pub fn mb_signal_getsignal(signum: MbValue) -> MbValue {
 }
 
 /// signal.raise_signal(signum) -> None.
-pub fn mb_signal_raise_signal(_signum: MbValue) -> MbValue {
+///
+/// We do not deliver real OS signals, but a synchronous `raise_signal` can
+/// honor the installed Python disposition: a custom handler is invoked as
+/// `handler(signum, None)`; SIG_IGN is a no-op; SIG_DFL for SIGINT raises
+/// KeyboardInterrupt (CPython's default_int_handler). This makes the common
+/// "register a handler, raise_signal, observe the callback" pattern work.
+pub fn mb_signal_raise_signal(signum: MbValue) -> MbValue {
+    let Some(n) = as_signum(signum) else {
+        return raise_value_error("signal number out of range");
+    };
+    if !valid_signal_numbers().contains(&n) {
+        return raise_value_error("signal number out of range");
+    }
+    let handler = HANDLERS
+        .with(|h| h.borrow().get(&n).copied())
+        .unwrap_or_else(|| MbValue::from_int(0));
+    // A callable handler and the SIG_DFL/SIG_IGN int sentinels can share raw
+    // bits (a closure handle is an int too), so test callability FIRST via the
+    // closure registry rather than by the integer value.
+    if super::super::builtins::mb_callable(handler).as_bool() == Some(true) {
+        // Custom handler: call handler(signum, None) synchronously. Pass the
+        // original signum value so `seen == [signal.SIGINT]` holds.
+        let args_list = MbValue::from_ptr(MbObject::new_list(vec![signum, MbValue::none()]));
+        super::super::builtins::mb_call_spread(handler, args_list);
+    } else if handler.as_int_pyint() == Some(0) && n == 2 {
+        // SIG_DFL for SIGINT raises KeyboardInterrupt (default_int_handler);
+        // SIG_IGN (1) and other defaults are a no-op here.
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("KeyboardInterrupt".to_string())),
+            MbValue::from_ptr(MbObject::new_str(String::new())),
+        );
+    }
     MbValue::none()
 }
 
@@ -455,6 +486,11 @@ pub fn mb_signal_valid_signals() -> MbValue {
 /// propagation through native dispatch is out of scope for the surface
 /// ticket.
 pub fn mb_signal_default_int_handler(_signum: MbValue, _frame: MbValue) -> MbValue {
+    // CPython's default SIGINT handler raises KeyboardInterrupt.
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("KeyboardInterrupt".to_string())),
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+    );
     MbValue::none()
 }
 
