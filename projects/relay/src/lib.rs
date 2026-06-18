@@ -40,7 +40,12 @@ pub mod broadcast;
 pub mod config;
 pub mod engine;
 pub mod log;
+pub mod openapi;
+pub mod server;
+pub mod server_config;
+pub mod shard;
 pub mod types;
+pub mod wire;
 pub mod workqueue;
 
 pub use broadcast::BroadcastDelivery;
@@ -49,6 +54,9 @@ pub use config::{
 };
 pub use engine::Relay;
 pub use log::Log;
+pub use server::{router, AppState};
+pub use server_config::RelayServerConfig;
+pub use shard::shard_for;
 pub use types::{
     AppendOutcome, CommittedOffset, DeliveryModel, Lease, LogEntry, MessageId, Payload, Seq,
     ShardId, Subject, SubscriberCursor,
