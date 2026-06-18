@@ -2907,15 +2907,16 @@ fn render_capability_sweep_wi_plan_index(
     out.push_str(&format!("plan_count: {}\n", plans.len()));
     out.push_str("---\n\n");
     out.push_str("# Capability WI Plan Review Index\n\n");
-    out.push_str("These artifacts are local review inputs. Do not publish tracker changes until a human accepts the WI candidates.\n\n");
-    out.push_str("| Project | Backend | Candidates | Plan | Re-run |\n");
-    out.push_str("|---|---|---:|---|---|\n");
+    out.push_str("These artifacts are local review inputs. Do not publish tracker changes until a human accepts the WI candidates or tracker reconciliations.\n\n");
+    out.push_str("| Project | Backend | Candidates | Reconciliations | Plan | Re-run |\n");
+    out.push_str("|---|---|---:|---:|---|---|\n");
     for plan in plans {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | `{}` |\n",
+            "| {} | {} | {} | {} | {} | `{}` |\n",
             markdown_cell(&plan.project),
             markdown_cell(&plan.backend),
             plan.candidate_count,
+            plan.reconciliation_count,
             markdown_cell(&plan.path.display().to_string()),
             markdown_cell(&plan.plan_command),
         ));
@@ -2923,6 +2924,9 @@ fn render_capability_sweep_wi_plan_index(
     out.push_str("\n## Review Guardrails\n\n");
     out.push_str("- Treat the capability README as the confirmed anchor.\n");
     out.push_str("- Review candidates before using `aw wi draft init` or `aw wi create`.\n");
+    out.push_str(
+        "- Review reconciliation rows before replacing README WI refs or reopening tracker work.\n",
+    );
     out.push_str("- When the issue backend is unavailable, keep the artifact local/review-only.\n");
     out
 }
@@ -3416,9 +3420,10 @@ fn print_capability_sweep(sweep: &CapabilitySweepReport) {
         }
         for plan in &sweep.wi_plans {
             println!(
-                "WI plan:{} candidates={} {}",
+                "WI plan:{} candidates={} reconciliations={} {}",
                 plan.project,
                 plan.candidate_count,
+                plan.reconciliation_count,
                 plan.path.display()
             );
         }
@@ -12008,6 +12013,7 @@ Gate Inventory:
                 planning_row_count: 54,
                 issue_count: 0,
                 candidate_count: 48,
+                reconciliation_count: 3,
                 warnings: vec!["issue inventory unavailable: gh auth missing".to_string()],
                 agent_review_required: true,
                 review_status: "pending",
@@ -12016,7 +12022,7 @@ Gate Inventory:
 
         assert!(index.contains("kind: capability_wi_plan_index"));
         assert!(index.contains("plan_count: 1"));
-        assert!(index.contains("| lumen | unavailable | 48 |"));
+        assert!(index.contains("| lumen | unavailable | 48 | 3 |"));
         assert!(index.contains("/tmp/aw/lumen/capability-plan/plan.md"));
         assert!(index.contains("`aw wi plan --project lumen`"));
         assert!(index.contains("keep the artifact local/review-only"));
@@ -12210,6 +12216,7 @@ Gate Inventory:
             planning_row_count: 54,
             issue_count: 0,
             candidate_count: 48,
+            reconciliation_count: 3,
             warnings: Vec::new(),
             agent_review_required: true,
             review_status: "pending",

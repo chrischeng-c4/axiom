@@ -3369,6 +3369,7 @@ pub struct CapabilityWiPlanReport {
     pub planning_row_count: usize,
     pub issue_count: usize,
     pub candidate_count: usize,
+    pub reconciliation_count: usize,
     pub warnings: Vec<String>,
     pub agent_review_required: bool,
     pub review_status: &'static str,
@@ -3480,6 +3481,7 @@ pub(crate) async fn build_capability_wi_plan_report(
         .clone()
         .unwrap_or_else(|| format!("{} capability WI plan", project));
     let candidates = capability_wi_candidates(&capability_map.rows, &issues);
+    let reconciliations = capability_tracker_reconciliations(&capability_map.rows, &issues);
     let body = render_capability_wi_plan(
         &project,
         &title,
@@ -3510,6 +3512,7 @@ pub(crate) async fn build_capability_wi_plan_report(
         planning_row_count: capability_map.rows.len(),
         issue_count: issues.len(),
         candidate_count: candidates.len(),
+        reconciliation_count: reconciliations.len(),
         warnings,
         agent_review_required: true,
         review_status: "pending",
@@ -4009,6 +4012,15 @@ struct CapabilityCandidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityTrackerReconciliation {
+    capability: String,
+    claim: String,
+    active_wi: String,
+    capability_gap: String,
+    next_action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CapabilityPlanSummaryRow {
     capability: String,
     candidate_count: usize,
@@ -4243,10 +4255,53 @@ fn extract_project_health_note(body: &str) -> Option<String> {
     }
 }
 
+fn has_active_wi_ref(row: &CapabilityRow) -> bool {
+    !is_empty_active_wi(&row.active_wi.to_ascii_lowercase())
+}
+
+fn active_wi_refs_text(row: &CapabilityRow) -> String {
+    let refs = active_wi_summary_refs(row);
+    if refs.is_empty() {
+        review_summary_cell(&row.active_wi)
+    } else {
+        refs.join(", ")
+    }
+}
+
+fn capability_tracker_reconciliations(
+    rows: &[CapabilityRow],
+    issues: &[Issue],
+) -> Vec<CapabilityTrackerReconciliation> {
+    rows.iter()
+        .filter(|row| {
+            has_actionable_gap(row)
+                && has_active_wi_ref(row)
+                && matching_issues_for_capability(row, issues).is_empty()
+        })
+        .map(|row| CapabilityTrackerReconciliation {
+            capability: row.capability.clone(),
+            claim: row
+                .claim_id
+                .as_deref()
+                .or(row.claim_user_story.as_deref())
+                .unwrap_or("-")
+                .to_string(),
+            active_wi: active_wi_refs_text(row),
+            capability_gap: row.gaps.clone(),
+            next_action:
+                "resolve whether the README WI ref is closed, moved, mislabeled, or should be replaced after human review"
+                    .to_string(),
+        })
+        .collect()
+}
+
 fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<CapabilityCandidate> {
     let mut candidates = Vec::new();
     for row in rows {
-        if !has_actionable_gap(row) || !matching_issues_for_capability(row, issues).is_empty() {
+        if !has_actionable_gap(row)
+            || has_active_wi_ref(row)
+            || !matching_issues_for_capability(row, issues).is_empty()
+        {
             continue;
         }
         candidates.push(CapabilityCandidate {
@@ -4312,7 +4367,7 @@ fn capability_plan_summary_rows(
                 summary.existing_wi_refs.push(reference);
             }
         }
-        for issue in matches {
+        for issue in &matches {
             let reference = issue_ref(issue);
             if !summary.existing_wi_refs.contains(&reference) {
                 summary.existing_wi_refs.push(reference);
@@ -4324,6 +4379,9 @@ fn capability_plan_summary_rows(
         if summary.first_action == "monitor" {
             if let Some(candidate) = row_candidates.first() {
                 summary.first_action = candidate.title.clone();
+            } else if has_actionable_gap(row) && has_active_wi_ref(row) && matches.is_empty() {
+                summary.first_action =
+                    format!("Reconcile WI reference: {}", active_wi_refs_text(row));
             } else if has_actionable_gap(row) {
                 summary.first_action = row.gaps.clone();
             } else if !summary.existing_wi_refs.is_empty() {
@@ -4385,6 +4443,7 @@ fn merge_capability_plan_operator(current: &str, next: &str) -> String {
         "epicize -> atomize" => 4,
         "atomize -> prioritize" => 3,
         "prioritize" => 2,
+        "reconcile tracker ref" => 2,
         "monitor" => 1,
         _ => 0,
     };
@@ -4434,7 +4493,8 @@ fn infer_candidate_issue_type(gap: &str) -> &'static str {
 }
 
 fn matching_issues_for_capability<'a>(row: &CapabilityRow, issues: &'a [Issue]) -> Vec<&'a Issue> {
-    let explicit_numbers = extract_hash_numbers(&row.active_wi);
+    let mut explicit_numbers = extract_hash_numbers(&row.active_wi);
+    explicit_numbers.extend(extract_active_wi_numbers(&row.active_wi));
     let active_wi_lower = row.active_wi.to_ascii_lowercase();
     let keywords = capability_keywords(row);
 
@@ -4554,6 +4614,8 @@ fn capability_keywords(row: &CapabilityRow) -> Vec<String> {
 fn suggested_capability_operator(row: &CapabilityRow, matches: &[&Issue]) -> &'static str {
     if !has_actionable_gap(row) {
         "monitor"
+    } else if matches.is_empty() && has_active_wi_ref(row) {
+        "reconcile tracker ref"
     } else if matches.is_empty() {
         "epicize -> atomize"
     } else if matches
@@ -4609,6 +4671,7 @@ fn render_capability_wi_plan(
     warnings: &[String],
 ) -> String {
     let mut out = String::new();
+    let reconciliations = capability_tracker_reconciliations(&capability_map.rows, issues);
     out.push_str("---\n");
     out.push_str("draft: true\n");
     out.push_str("kind: capability_plan\n");
@@ -4629,6 +4692,10 @@ fn render_capability_wi_plan(
     ));
     out.push_str(&format!("issue_count: {}\n", issues.len()));
     out.push_str(&format!("candidate_count: {}\n", candidates.len()));
+    out.push_str(&format!(
+        "reconciliation_count: {}\n",
+        reconciliations.len()
+    ));
     if !warnings.is_empty() {
         out.push_str("warnings:\n");
         for warning in warnings {
@@ -4683,6 +4750,24 @@ fn render_capability_wi_plan(
                 markdown_table_cell(&refs),
                 row.next_operator,
                 markdown_table_cell(&review_summary_cell(&row.first_action))
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !reconciliations.is_empty() {
+        out.push_str("## Existing WI Refs Not In Open Inventory\n\n");
+        out.push_str("These rows already have README WI references, but the current open issue inventory did not contain those IDs. Treat them as tracker reconciliation work, not automatic new WI candidates.\n\n");
+        out.push_str("| Capability | Claim | Active WI | Capability gap | Next action |\n");
+        out.push_str("|------------|-------|-----------|----------------|-------------|\n");
+        for reconciliation in &reconciliations {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                markdown_table_cell(&reconciliation.capability),
+                markdown_table_cell(&reconciliation.claim),
+                markdown_table_cell(&reconciliation.active_wi),
+                markdown_table_cell(&reconciliation.capability_gap),
+                markdown_table_cell(&reconciliation.next_action)
             ));
         }
         out.push('\n');
@@ -4780,6 +4865,9 @@ fn render_capability_wi_plan(
     out.push_str("\n## Review Guardrails\n\n");
     out.push_str("- Treat README capability rows as the confirmed anchor; if the direction changed, rerun `/aw:capability` before publishing WIs.\n");
     out.push_str("- Convert each accepted candidate through `aw wi draft init` / `aw wi create`; this artifact does not mutate the tracker.\n");
+    out.push_str(
+        "- Reconcile existing WI refs before replacing README links or reopening tracker work.\n",
+    );
     out.push_str("- Non-epic WIs still need Capability Alignment, Scope, Acceptance Criteria, and Reference Context before `aw td`.\n");
     out
 }
@@ -6148,6 +6236,7 @@ Generator ownership is complete; package-manager roadmap remains open.
         assert!(body.contains("kind: capability_plan"));
         assert!(body.contains("capability_count: 2"));
         assert!(body.contains("planning_row_count: 2"));
+        assert!(body.contains("reconciliation_count: 0"));
         assert!(body.contains("## Review Summary"));
         assert!(body.contains("| Package manager | 1 | none | epicize -> atomize | Close capability gap: Package manager |"));
         assert!(body.contains("| Capability | Type | Surfaces | EC Dimensions | Claim |"));
@@ -6183,7 +6272,7 @@ Generator ownership is complete; package-manager roadmap remains open.
     }
 
     #[test]
-    fn capability_plan_summary_groups_candidates_by_capability() {
+    fn capability_plan_summary_groups_stale_active_wi_refs_as_reconciliations() {
         let rows = vec![
             CapabilityRow {
                 capability: "Package Manager".to_string(),
@@ -6213,18 +6302,38 @@ Generator ownership is complete; package-manager roadmap remains open.
         ];
 
         let candidates = capability_wi_candidates(&rows, &[]);
+        let reconciliations = capability_tracker_reconciliations(&rows, &[]);
         let summary = capability_plan_summary_rows(&rows, &[], &candidates);
 
-        assert_eq!(candidates.len(), 2);
+        assert!(candidates.is_empty());
+        assert_eq!(reconciliations.len(), 2);
         assert_eq!(summary.len(), 1);
         assert_eq!(summary[0].capability, "Package Manager");
-        assert_eq!(summary[0].candidate_count, 2);
+        assert_eq!(summary[0].candidate_count, 0);
         assert_eq!(summary[0].existing_wi_refs, vec!["#3779", "#3780"]);
-        assert_eq!(summary[0].next_operator, "epicize -> atomize");
-        assert_eq!(
-            summary[0].first_action,
-            "Close capability claim: Package Manager / package-manager-readiness"
+        assert_eq!(summary[0].next_operator, "reconcile tracker ref");
+        assert_eq!(summary[0].first_action, "Reconcile WI reference: #3779");
+
+        let map = CapabilityMap {
+            capability_count: 1,
+            rows,
+            health_note: None,
+        };
+        let body = render_capability_wi_plan(
+            "jet",
+            "Jet capability plan",
+            "github",
+            Path::new("/repo/projects/jet/README.md"),
+            &map,
+            &[],
+            &candidates,
+            &[],
         );
+        assert!(body.contains("candidate_count: 0"));
+        assert!(body.contains("reconciliation_count: 2"));
+        assert!(body.contains("## Existing WI Refs Not In Open Inventory"));
+        assert!(body.contains("| Package Manager | package-manager-readiness | #3779 |"));
+        assert!(!body.contains("## Candidate WI Drafts"));
     }
 
     #[test]
@@ -6262,6 +6371,29 @@ Generator ownership is complete; package-manager roadmap remains open.
     }
 
     #[test]
+    fn capability_matching_uses_plain_numeric_active_wi_reference() {
+        let row = CapabilityRow {
+            capability: "Service query path".to_string(),
+            capability_type: "Service".to_string(),
+            surfaces: "API: `/query`".to_string(),
+            ec_dimensions: "behavior: `rig`".to_string(),
+            current_state: "Query path exists".to_string(),
+            gaps: "deep-page chain needs proof".to_string(),
+            active_wi: "4141".to_string(),
+            evidence: "README".to_string(),
+            claim_id: None,
+            claim_user_story: None,
+        };
+        let issue = planning_issue(IssueType::Enhancement, "deep-page proof", None, 4141);
+        let issues = vec![issue];
+
+        let matches = matching_issues_for_capability(&row, &issues);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].github_id, Some(4141));
+        assert!(capability_wi_candidates(&[row], &issues).is_empty());
+    }
+
+    #[test]
     fn capability_claim_rows_do_not_match_broad_epic_by_keywords_only() {
         let row = CapabilityRow {
             capability: "Package Manager".to_string(),
@@ -6288,13 +6420,12 @@ Generator ownership is complete; package-manager roadmap remains open.
         let issues = vec![epic];
 
         assert!(matching_issues_for_capability(&row, &issues).is_empty());
-        let candidates = capability_wi_candidates(&[row], &issues);
+        let candidates = capability_wi_candidates(&[row.clone()], &issues);
+        let reconciliations = capability_tracker_reconciliations(&[row], &issues);
 
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(
-            candidates[0].title,
-            "Close capability claim: Package Manager / package-manager-workspace-parity"
-        );
+        assert!(candidates.is_empty());
+        assert_eq!(reconciliations.len(), 1);
+        assert_eq!(reconciliations[0].active_wi, "#3779");
     }
 
     #[test]
