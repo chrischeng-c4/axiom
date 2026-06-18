@@ -1716,6 +1716,7 @@ dependencies = [
  "once_cell",
  "thiserror 2.0.18",
  "tokio",
+ "tower 0.5.3",
 ]
 
 [[package]]

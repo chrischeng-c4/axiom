@@ -17,3 +17,6 @@ tokio.workspace = true
 axum.workspace = true
 thiserror.workspace = true
 once_cell.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
