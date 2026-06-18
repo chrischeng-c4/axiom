@@ -25,7 +25,8 @@ use chrono::Utc;
 use crate::engine::Relay;
 use crate::server_config::RelayServerConfig;
 use crate::wire::{
-    self, AckRequest, AckResponse, LeaseRequest, LeaseResponse, PublishRequest, SubscribeQuery,
+    self, AckRequest, AckResponse, HeartbeatRequest, HeartbeatResponse, LeaseRequest,
+    LeaseResponse, PublishRequest, SubscribeQuery,
 };
 
 /// Shared application state: the relay core plus this shard's config.
@@ -61,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/{subject}/publish", post(publish))
         .route("/v1/{subject}/lease", post(lease))
         .route("/v1/{subject}/ack", post(ack))
+        .route("/v1/{subject}/heartbeat", post(heartbeat))
         .route("/v1/{subject}/subscribe", get(subscribe))
         .route("/healthz", get(healthz))
         .route("/openapi.json", get(openapi_json))
@@ -177,7 +179,9 @@ pub async fn ack(
     };
     let (acked, committed_seq) = {
         let mut relay = st.relay.lock().expect("relay mutex");
-        let acked = relay.ack(&subject, &req.lease_id).unwrap_or(false);
+        let acked = relay
+            .ack(&subject, &req.lease_id, req.epoch)
+            .unwrap_or(false);
         let committed = relay
             .committed_offset(&subject)
             .ok()
@@ -191,6 +195,41 @@ pub async fn ack(
         &AckResponse {
             acked,
             committed_seq,
+        },
+    )
+}
+
+/// `POST /v1/{subject}/heartbeat` — extend a held lease (CBOR fast path).
+#[utoipa::path(
+    post,
+    path = "/v1/{subject}/heartbeat",
+    params(("subject" = String, Path, description = "Target subject")),
+    responses((status = 200, description = "Heartbeat result { extended, expires_at }"))
+)]
+pub async fn heartbeat(
+    State(st): State<AppState>,
+    Path(subject): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let cbor = wants_cbor(&headers);
+    let req: HeartbeatRequest = match decode_body(cbor, &body) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    let now = Utc::now();
+    let expires_at = {
+        let mut relay = st.relay.lock().expect("relay mutex");
+        relay
+            .heartbeat(&subject, &req.lease_id, req.epoch, now)
+            .unwrap_or(None)
+    };
+    encode_body(
+        cbor,
+        StatusCode::OK,
+        &HeartbeatResponse {
+            extended: expires_at.is_some(),
+            expires_at,
         },
     )
 }

@@ -142,11 +142,29 @@ impl Relay {
         Ok(ss.workqueue.lease(consumer_id, len, now))
     }
 
-    /// Acknowledge a work-queue lease.
+    /// Acknowledge a work-queue lease. Idempotent and epoch-fenced: a `None`
+    /// epoch falls back to lease_id-only fencing.
     ///
-    /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
-    pub fn ack(&mut self, subject: &str, lease_id: &str) -> io::Result<bool> {
-        Ok(self.subject_state(subject)?.workqueue.ack(lease_id))
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn ack(&mut self, subject: &str, lease_id: &str, epoch: Option<u64>) -> io::Result<bool> {
+        Ok(self.subject_state(subject)?.workqueue.ack(lease_id, epoch))
+    }
+
+    /// Extend a held lease (heartbeat). Returns the new expiry, or `None` when
+    /// the lease is unknown or the epoch is stale (fenced).
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn heartbeat(
+        &mut self,
+        subject: &str,
+        lease_id: &str,
+        epoch: u64,
+        now: DateTime<Utc>,
+    ) -> io::Result<Option<DateTime<Utc>>> {
+        Ok(self
+            .subject_state(subject)?
+            .workqueue
+            .heartbeat(lease_id, epoch, now))
     }
 
     /// Reclaim expired leases on `subject`, making their entries redelivery-

@@ -47,27 +47,38 @@ impl WorkQueue {
         self.max_attempts
     }
 
-    /// Lease the next eligible entry (smallest seq that is neither acked nor
-    /// currently leased) to `consumer_id`. Returns `None` when nothing is
-    /// available up to `log_len`.
-    ///
-    /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
-    pub fn lease(&mut self, consumer_id: &str, log_len: Seq, now: DateTime<Utc>) -> Option<Lease> {
+    /// Pick the next entry to offer: the smallest eligible seq, **preferring a
+    /// redeliver-eligible one** (previously attempted) over a fresh one, so
+    /// reclaimed work is retried before new work is started.
+    fn pick(&self, log_len: Seq) -> Option<Seq> {
+        let mut fresh = None;
         let mut seq = 0u64;
         while seq < log_len {
             if !self.acked.contains(&seq) && !self.leases.contains_key(&seq) {
-                break;
+                if self.attempts.get(&seq).copied().unwrap_or(0) > 0 {
+                    return Some(seq); // smallest redeliver-eligible wins
+                } else if fresh.is_none() {
+                    fresh = Some(seq);
+                }
             }
             seq += 1;
         }
-        if seq >= log_len {
-            return None;
-        }
+        fresh
+    }
+
+    /// Lease the next entry to `consumer_id` (preferring redelivery). The grant
+    /// carries a monotonic `epoch` (the attempt number) used to fence stale
+    /// workers on ack / heartbeat. Returns `None` when nothing is ready.
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn lease(&mut self, consumer_id: &str, log_len: Seq, now: DateTime<Utc>) -> Option<Lease> {
+        let seq = self.pick(log_len)?;
 
         let attempt = self.attempts.get(&seq).copied().unwrap_or(0) + 1;
         self.attempts.insert(seq, attempt);
+        let epoch = attempt as u64;
 
-        let lease_id = format!("{}#{}:{}:a{}", self.subject, self.shard, seq, attempt);
+        let lease_id = format!("{}#{}:{}:e{}", self.subject, self.shard, seq, epoch);
         let lease = Lease {
             lease_id: lease_id.clone(),
             seq,
@@ -77,24 +88,51 @@ impl WorkQueue {
             granted_at: now,
             expires_at: now + Duration::milliseconds(self.lease_ttl_ms as i64),
             attempt,
+            epoch,
         };
         self.leases.insert(seq, lease.clone());
         self.lease_index.insert(lease_id, seq);
         Some(lease)
     }
 
-    /// Acknowledge a lease, marking its entry delivered. Returns `false` if the
-    /// lease is unknown (already acked, expired, or never issued).
+    /// Acknowledge a lease, marking its entry delivered. Idempotent and fenced:
+    /// returns `false` (no-op) when the `lease_id` is unknown or, if `epoch` is
+    /// given, when it does not match the live lease. Passing `None` for `epoch`
+    /// falls back to lease_id-only fencing.
     ///
-    /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
-    pub fn ack(&mut self, lease_id: &str) -> bool {
-        if let Some(seq) = self.lease_index.remove(lease_id) {
-            self.leases.remove(&seq);
-            self.acked.insert(seq);
-            true
-        } else {
-            false
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn ack(&mut self, lease_id: &str, epoch: Option<u64>) -> bool {
+        let Some(&seq) = self.lease_index.get(lease_id) else {
+            return false;
+        };
+        if let (Some(want), Some(lease)) = (epoch, self.leases.get(&seq)) {
+            if lease.epoch != want {
+                return false;
+            }
         }
+        self.lease_index.remove(lease_id);
+        self.leases.remove(&seq);
+        self.acked.insert(seq);
+        true
+    }
+
+    /// Extend a held lease if `lease_id` is known and `epoch` matches the live
+    /// lease; returns the new expiry, or `None` when fenced / unknown.
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn heartbeat(
+        &mut self,
+        lease_id: &str,
+        epoch: u64,
+        now: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        let &seq = self.lease_index.get(lease_id)?;
+        let lease = self.leases.get_mut(&seq)?;
+        if lease.epoch != epoch {
+            return None;
+        }
+        lease.expires_at = now + Duration::milliseconds(self.lease_ttl_ms as i64);
+        Some(lease.expires_at)
     }
 
     /// Reclaim every lease whose expiry is at or before `now`, making those

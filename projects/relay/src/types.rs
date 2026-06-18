@@ -123,6 +123,12 @@ pub struct Lease {
     pub expires_at: DateTime<Utc>,
     /// 1-based delivery attempt; drives retry / revocation policy.
     pub attempt: u32,
+    /// Monotonic fencing token for this `(subject, shard, seq)`, bumped on each
+    /// (re)lease. ack / heartbeat with a stale epoch are no-ops — this fences a
+    /// worker whose lease was reclaimed after it stalled.
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#schema
+    pub epoch: u64,
 }
 
 /// Work-queue durable progress: every entry at or below `committed_seq` has
