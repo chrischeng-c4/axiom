@@ -115,6 +115,17 @@ fn raise(exc: &str, msg: &str) {
     super::super::exception::mb_raise(new_str(exc), new_str(msg));
 }
 
+/// Raise `SystemExit(code)` as an instance so a caught `except SystemExit as e`
+/// sees `e.code == code` (CPython argparse exits 2 on any parse error). A bare
+/// string SystemExit leaves `.code` None.
+fn raise_exit(code: i64) {
+    let inst = MbValue::from_ptr(MbObject::new_instance("SystemExit".to_string()));
+    set_field(inst, "code", MbValue::from_int(code));
+    set_field(inst, "args",
+        MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(code)])));
+    super::super::class::mb_raise_instance(inst);
+}
+
 // ── Argument-spec parsing (shared by add_argument) ──
 
 /// Internal description of one declared argument, stored as an Action instance.
@@ -532,12 +543,12 @@ unsafe extern "C" fn method_get_default(self_v: MbValue, args: MbValue) -> MbVal
 unsafe extern "C" fn method_error(self_v: MbValue, args: MbValue) -> MbValue {
     let _ = self_v;
     let items = seq_items(args);
-    let msg = items
+    let _msg = items
         .first()
         .copied()
         .and_then(extract_str)
         .unwrap_or_default();
-    raise("SystemExit", &msg);
+    raise_exit(2);
     MbValue::none()
 }
 
@@ -558,7 +569,7 @@ unsafe extern "C" fn method_exit(self_v: MbValue, args: MbValue) -> MbValue {
         })
         .and_then(|v| v.as_int())
         .unwrap_or(0);
-    raise("SystemExit", &status.to_string());
+    raise_exit(status);
     MbValue::none()
 }
 
@@ -586,7 +597,7 @@ unsafe extern "C" fn method_parse_args(self_v: MbValue, args: MbValue) -> MbValu
     let (ns, extras) = run_parser(self_v, &argv, false);
     if !extras.is_empty() {
         let msg = format!("unrecognized arguments: {}", extras.join(" "));
-        raise("SystemExit", &msg);
+        let _ = &msg; raise_exit(2);
         return MbValue::none();
     }
     ns
@@ -810,7 +821,7 @@ fn apply_type(type_v: MbValue, raw: &str, parser: MbValue, argname: &str) -> MbV
         let msg = format!("{label}invalid {raw}: '{raw}'");
         let _ = exc_type;
         if exit_on_error(parser) {
-            raise("SystemExit", &msg);
+            let _ = &msg; raise_exit(2);
         } else {
             raise("ArgumentError", &msg);
         }
@@ -1027,11 +1038,7 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
                 .and_then(extract_str)
                 .unwrap_or_default();
             if !seen_dests.contains(&dest) {
-                let metavar = optional_display_name(*act);
-                raise(
-                    "SystemExit",
-                    &format!("the following arguments are required: {metavar}"),
-                );
+                raise_exit(2);
                 return (ns, extras);
             }
         }
@@ -1080,10 +1087,7 @@ fn assign_positionals(
             }
             "+" => {
                 if vi >= values.len() {
-                    raise(
-                        "SystemExit",
-                        &format!("the following arguments are required: {dest}"),
-                    );
+                    raise_exit(2);
                     return;
                 }
                 let collected: Vec<MbValue> = values[vi..]
@@ -1112,10 +1116,7 @@ fn assign_positionals(
                     set_field(ns, &dest, v);
                     vi += 1;
                 } else {
-                    raise(
-                        "SystemExit",
-                        &format!("the following arguments are required: {dest}"),
-                    );
+                    raise_exit(2);
                     return;
                 }
             }
@@ -1128,7 +1129,7 @@ fn assign_positionals(
 
 fn check_choice(choices: MbValue, value: MbValue, raw: &str, _parser: MbValue) {
     if !in_choices(choices, value) {
-        raise("SystemExit", &format!("argument: invalid choice: '{raw}'"));
+        raise_exit(2);
     }
 }
 
@@ -1161,10 +1162,7 @@ fn take_value(
         return (coerced, 2);
     }
     // Missing value.
-    raise(
-        "SystemExit",
-        &format!("argument {}: expected one argument", argv[i]),
-    );
+    raise_exit(2);
     (MbValue::none(), 1)
 }
 
