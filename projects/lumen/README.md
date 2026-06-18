@@ -137,7 +137,7 @@ surface, this capability map, and its EC contract:
 | Kubernetes-Native Deployment | - | implemented | auditing | conformance | not_ready | live operator e2e recency remains release-run dependent |
 | HTTP / REST Integration | - | implemented | auditing | conformance | not_ready | runtime API proof remains outside the selected production scope |
 | LLM / Agentic Integration (offline CLI — `spec` schema + `llm` topics) | 4143 | implemented | passing | conformance | ready | offline spec and llm CLI contract is covered by local spec_cli tests |
-| Security & Auth | - | partial | auditing | conformance | not_ready | TLS binding is partial and not e2e-gated |
+| Security & Auth | - | implemented | auditing | conformance | not_ready | bearer/RBAC e2e plus rustls peer config builder gate pass |
 | Backup & Restore | - | implemented | auditing | conformance | not_ready | periodic snapshotter proof remains source-level |
 | Observability | - | implemented | auditing | conformance | not_ready | OTLP service proof depends on the compose collector stack |
 | Schema & Ops Lifecycle | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
@@ -509,13 +509,13 @@ Required Verification: smoke, conformance
 Promise:
 Optional bearer-token auth (`LUMEN_AUTH=off` or `LUMEN_AUTH=required`) with per-token role-based authorization enforced on every API route; tokens supplied out-of-band via env/Secret. TLS (rustls) binding available.
 Gate Inventory:
-- projects/lumen/tests/auth_e2e.rs; projects/lumen/tests/authz_matrix_e2e.rs
+- projects/lumen/tests/auth_e2e.rs; projects/lumen/tests/authz_matrix_e2e.rs; projects/lumen/src/tls.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Bearer-token auth (`LUMEN_AUTH`) | epic | - | implemented | passing | conformance | projects/lumen/tests/auth_e2e.rs |
 | Role-based authz matrix (per-route) | epic | - | implemented | passing | conformance | projects/lumen/tests/authz_matrix_e2e.rs |
-| TLS (rustls) | epic | - | partial | planned | smoke | projects/lumen/src/tls.rs (binding; not e2e-gated) |
+| TLS (rustls) | epic | - | implemented | passing | smoke | `cargo test -p lumen tls`; projects/lumen/src/tls.rs (rustls server/client config builder) |
 
 ### Backup & Restore
 
