@@ -5563,6 +5563,11 @@ impl<'a> AstLowerer<'a> {
                             | "patch" | "mock_open" | "call"
                             // urllib.parse functions with behavioral kwargs
                             | "parse_qs" | "parse_qsl" | "urlencode"
+                            // quote/unquote take safe= / encoding= / errors=;
+                            // their native dispatchers read a trailing kwargs
+                            // dict, so a bare from-import must keep the keyword
+                            // names rather than flattening them to positional.
+                            | "quote" | "unquote"
                             // property(fget=, fset=, fdel=, doc=) keyword form
                             | "property"
                             // urllib.request.Request(url, data=, headers=,
