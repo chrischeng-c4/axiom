@@ -128,9 +128,126 @@ definitions:
 <!-- type: rest-api lang: yaml -->
 
 ```yaml
-(fill)
+openapi: 3.1.0
+info:
+  title: relay work-queue API
+  version: 0.1.0
+  description: >
+    Competing-consumer work-queue verbs over HTTP/2 (h2c). Epoch-fenced:
+    lease grants an epoch; ack/heartbeat carry it so a fenced worker's late
+    call is a no-op. Generic — relay does not know workflows.
+paths:
+  /v1/{subject}/lease:
+    post:
+      operationId: lease
+      summary: Lease the next ready entry (prefers a redeliver-eligible seq), returning a Lease with an epoch.
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/LeaseRequest" } }
+          application/cbor: { schema: { $ref: "#/components/schemas/LeaseRequest" } }
+      responses:
+        "200":
+          description: A lease (with epoch) or null.
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/LeaseResponse" } }
+            application/cbor: { schema: { $ref: "#/components/schemas/LeaseResponse" } }
+  /v1/{subject}/ack:
+    post:
+      operationId: ack
+      summary: Acknowledge a lease; with a matching epoch it deletes the lease and advances the committed offset, otherwise it is a no-op (idempotent / fenced).
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/AckRequest" } }
+          application/cbor: { schema: { $ref: "#/components/schemas/AckRequest" } }
+      responses:
+        "200":
+          description: Ack result.
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/AckResponse" } }
+            application/cbor: { schema: { $ref: "#/components/schemas/AckResponse" } }
+  /v1/{subject}/heartbeat:
+    post:
+      operationId: heartbeat
+      summary: Extend a held lease (epoch must match); no-op if the lease was reclaimed / fenced.
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/HeartbeatRequest" } }
+          application/cbor: { schema: { $ref: "#/components/schemas/HeartbeatRequest" } }
+      responses:
+        "200":
+          description: Heartbeat result.
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/HeartbeatResponse" } }
+            application/cbor: { schema: { $ref: "#/components/schemas/HeartbeatResponse" } }
+components:
+  schemas:
+    LeaseRequest:
+      type: object
+      required: [consumer_id]
+      properties: { consumer_id: { type: string } }
+    LeaseResponse:
+      type: object
+      properties:
+        lease:
+          oneOf:
+            - { type: "null" }
+            - { $ref: "#/components/schemas/Lease" }
+    Lease:
+      type: object
+      required: [lease_id, seq, subject, shard, consumer_id, granted_at, expires_at, attempt, epoch]
+      properties:
+        lease_id: { type: string }
+        seq: { type: integer, minimum: 0 }
+        subject: { type: string }
+        shard: { type: integer, minimum: 0 }
+        consumer_id: { type: string }
+        granted_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        attempt: { type: integer, minimum: 1 }
+        epoch: { type: integer, minimum: 1 }
+    AckRequest:
+      type: object
+      required: [lease_id]
+      properties:
+        lease_id: { type: string }
+        epoch:
+          oneOf:
+            - { type: "null" }
+            - { type: integer, minimum: 1 }
+    AckResponse:
+      type: object
+      required: [acked]
+      properties:
+        acked: { type: boolean }
+        committed_seq:
+          oneOf:
+            - { type: "null" }
+            - { type: integer, minimum: 0 }
+    HeartbeatRequest:
+      type: object
+      required: [lease_id, epoch]
+      properties:
+        lease_id: { type: string }
+        epoch: { type: integer, minimum: 1 }
+    HeartbeatResponse:
+      type: object
+      required: [extended]
+      properties:
+        extended: { type: boolean }
+        expires_at:
+          oneOf:
+            - { type: "null" }
+            - { type: string, format: date-time }
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
