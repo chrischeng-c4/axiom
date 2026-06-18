@@ -164,3 +164,13 @@ changes:
     impl_mode: hand-written
     reason: "Tests: dead-worker redeliver + complete, late-ack fenced, live-worker kept, frontier-only, background-task auto-reclaim."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Periodic per-shard sweep of in-flight leases only (frontier, never a full log scan); expired -> reclaim -> redeliver-with-bumped-epoch -> old worker fenced. Matches #109 acceptance. Applicable.
+- [config] reconcile_interval_ms on the server config; sane default. Applicable.
+- [unit-test] Dead-worker redeliver+complete, late-ack fenced, live-worker kept, frontier-only, and a background-task auto-reclaim case. Applicable.
+- [changes] Bounded: Relay::reconcile + a reconciler module + server/bin wiring + config + a test file. Applicable.
