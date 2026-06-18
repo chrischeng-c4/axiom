@@ -380,17 +380,95 @@ core:
 ```mermaid
 ---
 id: relay-http2-unit-test-plan
-entry: start
+entry: suite
 nodes:
-  start:
+  suite:
     kind: start
-    label: "transport test plan pending — authored in its own section"
-edges: []
+    label: "relay HTTP/2 transport test suite (in-process h2c server over a relay core)"
+  t_publish:
+    kind: process
+    label: "POST publish over h2c, then again with the same message_id"
+  a_publish:
+    kind: terminal
+    label: "assert seq=0 then deduped=true,seq=0 (idempotent over the wire)"
+  t_lease_ack:
+    kind: process
+    label: "ACCEPTANCE: worker POST lease then POST ack over h2c (CBOR fast path)"
+  a_lease_ack:
+    kind: terminal
+    label: "assert a Lease is returned, ack acked=true, committed_seq advances"
+  t_lease_empty:
+    kind: process
+    label: "lease when nothing is available"
+  a_lease_empty:
+    kind: terminal
+    label: "assert LeaseResponse.lease is null"
+  t_subscribe:
+    kind: process
+    label: "ACCEPTANCE: publish 3, GET subscribe?from_seq=0 and read the stream"
+  a_subscribe:
+    kind: terminal
+    label: "assert 3 length-prefixed CBOR StreamFrames decode in seq order 0,1,2"
+  t_replay:
+    kind: process
+    label: "subscribe?from_seq=1 after 3 entries exist"
+  a_replay:
+    kind: terminal
+    label: "assert stream tails from seq 1 (frames 1,2)"
+  t_cbor:
+    kind: process
+    label: "lease/ack with Content-Type application/cbor"
+  a_cbor:
+    kind: terminal
+    label: "assert CBOR request/response round-trips to the same values as JSON"
+  t_shard:
+    kind: process
+    label: "client shard helper crc32(key) % shards over many keys"
+  a_shard:
+    kind: terminal
+    label: "assert every result < shards and the same key is stable"
+  t_openapi:
+    kind: process
+    label: "GET /openapi.json"
+  a_openapi:
+    kind: terminal
+    label: "assert the four endpoints are present in the served OpenAPI document"
+edges:
+  - { from: suite, to: t_publish, label: "case: publish/dedupe" }
+  - { from: t_publish, to: a_publish }
+  - { from: suite, to: t_lease_ack, label: "case: lease/ack acceptance" }
+  - { from: t_lease_ack, to: a_lease_ack }
+  - { from: suite, to: t_lease_empty, label: "case: empty lease" }
+  - { from: t_lease_empty, to: a_lease_empty }
+  - { from: suite, to: t_subscribe, label: "case: subscribe acceptance" }
+  - { from: t_subscribe, to: a_subscribe }
+  - { from: suite, to: t_replay, label: "case: replay from seq" }
+  - { from: t_replay, to: a_replay }
+  - { from: suite, to: t_cbor, label: "case: cbor fast path" }
+  - { from: t_cbor, to: a_cbor }
+  - { from: suite, to: t_shard, label: "case: sharding" }
+  - { from: t_shard, to: a_shard }
+  - { from: suite, to: t_openapi, label: "case: openapi" }
+  - { from: t_openapi, to: a_openapi }
 ---
 flowchart TD
-    start([pending])
+    suite([HTTP/2 transport suite]) --> t_publish[publish twice, same id]
+    t_publish --> a_publish([seq=0 then deduped])
+    suite --> t_lease_ack[lease then ack over h2c]
+    t_lease_ack --> a_lease_ack([lease granted, committed advances])
+    suite --> t_lease_empty[lease with nothing available]
+    t_lease_empty --> a_lease_empty([lease = null])
+    suite --> t_subscribe[publish 3, subscribe from_seq=0]
+    t_subscribe --> a_subscribe([3 CBOR frames in order])
+    suite --> t_replay[subscribe from_seq=1]
+    t_replay --> a_replay([tails from seq 1])
+    suite --> t_cbor[lease/ack as application/cbor]
+    t_cbor --> a_cbor([round-trips == JSON])
+    suite --> t_shard[crc32 key % shards]
+    t_shard --> a_shard([in range, stable])
+    suite --> t_openapi[GET /openapi.json]
+    t_openapi --> a_openapi([four endpoints present])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
