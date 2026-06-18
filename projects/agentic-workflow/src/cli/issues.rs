@@ -3462,8 +3462,18 @@ pub(crate) async fn build_capability_wi_plan_report(
         &capability_document,
     )
     .unwrap_or_default();
-    let capability_rows =
-        crate::cli::capability::capability_rows_for_wi_plan(&capability_document, &td_refs)?;
+    let capability_report = crate::cli::capability::build_capability_report(
+        &project,
+        args.cap_path.as_deref(),
+        false,
+        false,
+    )
+    .await?;
+    let capability_rows = crate::cli::capability::capability_rows_for_wi_plan(
+        &capability_document,
+        &td_refs,
+        &capability_report.capabilities,
+    )?;
     let capability_map = CapabilityMap {
         capability_count: capability_document.capabilities.len(),
         rows: capability_rows
