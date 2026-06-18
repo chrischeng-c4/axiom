@@ -733,6 +733,26 @@ pub fn register() {
             m.borrow_mut().insert(ir_addr as u64, "IncompleteRead".to_string());
         });
     }
+    // HTTPMessage (case-insensitive header container) + parse_headers().
+    {
+        let mut m: HashMap<String, MbValue> = HashMap::new();
+        for (name, addr) in [
+            ("keys", hm_keys as *const () as usize),
+            ("items", hm_items as *const () as usize),
+            ("get", hm_get as *const () as usize),
+            ("__len__", hm_len as *const () as usize),
+            ("__getitem__", hm_getitem as *const () as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            m.insert(name.to_string(), MbValue::from_func(addr));
+        }
+        super::super::class::mb_class_register("HTTPMessage", vec![], m);
+        let ph_addr = dispatch_parse_headers as *const () as usize;
+        client_attrs.insert("parse_headers".to_string(), MbValue::from_func(ph_addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(ph_addr as u64);
+        });
+    }
     // `error` is CPython's module-level alias for the HTTPException class.
     client_attrs.insert(
         "error".to_string(),
@@ -2547,6 +2567,109 @@ fn split_url(url: &str) -> (String, String, String) {
         Some(i) => (scheme, rest[..i].to_string(), rest[i..].to_string()),
         None => (scheme, rest.to_string(), String::new()),
     }
+}
+
+/// Read an HTTPMessage's ordered (key, value) header pairs.
+fn http_message_pairs(self_v: MbValue) -> Vec<(String, String)> {
+    let headers = req_field(self_v, "_headers").unwrap_or_else(MbValue::none);
+    let items: Vec<MbValue> = headers.as_ptr().map(|p| unsafe {
+        if let ObjData::List(ref lock) = (*p).data { lock.read().unwrap().to_vec() } else { Vec::new() }
+    }).unwrap_or_default();
+    items.iter().filter_map(|pair| {
+        let elems: Vec<MbValue> = pair.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Tuple(ref t) = (*p).data { Some(t.clone()) } else { None }
+        })?;
+        Some((extract_str(*elems.first()?)?, extract_str(*elems.get(1)?)?))
+    }).collect()
+}
+
+/// HTTPMessage.keys() — header names in order.
+unsafe extern "C" fn hm_keys(self_v: MbValue, _args: MbValue) -> MbValue {
+    let keys: Vec<MbValue> = http_message_pairs(self_v).into_iter()
+        .map(|(k, _)| MbValue::from_ptr(MbObject::new_str(k))).collect();
+    MbValue::from_ptr(MbObject::new_list(keys))
+}
+
+/// HTTPMessage.items() — (name, value) pairs in order.
+unsafe extern "C" fn hm_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    let items: Vec<MbValue> = http_message_pairs(self_v).into_iter()
+        .map(|(k, v)| MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str(k)),
+            MbValue::from_ptr(MbObject::new_str(v)),
+        ]))).collect();
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+/// HTTPMessage.__len__() — header count.
+unsafe extern "C" fn hm_len(self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_int(http_message_pairs(self_v).len() as i64)
+}
+
+/// Case-insensitive header lookup (RFC 822 field names are case-insensitive).
+fn http_message_lookup(self_v: MbValue, name: &str) -> Option<String> {
+    let lname = name.to_ascii_lowercase();
+    http_message_pairs(self_v).into_iter()
+        .find(|(k, _)| k.to_ascii_lowercase() == lname)
+        .map(|(_, v)| v)
+}
+
+/// HTTPMessage.get(name, default=None).
+unsafe extern "C" fn hm_get(self_v: MbValue, args: MbValue) -> MbValue {
+    let pos = req_args_vec(args);
+    let name = pos.first().copied().and_then(extract_str).unwrap_or_default();
+    match http_message_lookup(self_v, &name) {
+        Some(v) => MbValue::from_ptr(MbObject::new_str(v)),
+        None => pos.get(1).copied().unwrap_or_else(MbValue::none),
+    }
+}
+
+/// HTTPMessage.__getitem__(name) — None for a missing header (email.Message).
+unsafe extern "C" fn hm_getitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let name = req_args_vec(args).first().copied().and_then(extract_str).unwrap_or_default();
+    match http_message_lookup(self_v, &name) {
+        Some(v) => MbValue::from_ptr(MbObject::new_str(v)),
+        None => MbValue::none(),
+    }
+}
+
+/// http.client.parse_headers(fp) -> HTTPMessage. Reads the RFC 822 header block
+/// from `fp` (a readable file object) and parses "Name: value" lines.
+unsafe extern "C" fn dispatch_parse_headers(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let fp = a.first().copied().unwrap_or_else(MbValue::none);
+    let data = super::super::class::mb_call_method(
+        fp,
+        MbValue::from_ptr(MbObject::new_str("read".to_string())),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
+    // Header bytes are latin-1; decode 1:1.
+    let text = extract_bytes_like(data)
+        .map(|b| b.iter().map(|&c| c as char).collect::<String>())
+        .or_else(|| extract_str(data))
+        .unwrap_or_default();
+    let mut pairs: Vec<MbValue> = Vec::new();
+    for line in text.split('\n') {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            break; // blank line ends the header block
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            pairs.push(MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_ptr(MbObject::new_str(k.trim().to_string())),
+                MbValue::from_ptr(MbObject::new_str(v.trim().to_string())),
+            ])));
+        }
+    }
+    let inst = MbObject::new_instance("HTTPMessage".to_string());
+    if let ObjData::Instance { ref fields, .. } = (*inst).data {
+        fields.write().unwrap().insert("_headers".into(),
+            MbValue::from_ptr(MbObject::new_list(pairs)));
+    }
+    MbValue::from_ptr(inst)
 }
 
 /// http.client.IncompleteRead(partial, expected=None) — an HTTPException
