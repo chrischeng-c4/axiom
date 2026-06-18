@@ -10992,11 +10992,17 @@ pub fn capability_rows_for_wi_plan(
     for capability in &document.capabilities {
         let report_item = report_by_id.get(capability.id.as_str()).copied();
         if let Some(contract) = capability.verification_contract.as_ref() {
+            let work_roots_by_id = capability
+                .work_roots
+                .iter()
+                .map(|work_root| (work_root.id.as_str(), work_root))
+                .collect::<BTreeMap<_, _>>();
             for claim in contract
                 .claims
                 .iter()
                 .filter(|claim| claim.required_for_verified)
             {
+                let work_root = work_roots_by_id.get(claim.id.as_str()).copied();
                 let has_primary_td = td_refs.iter().any(|td| {
                     td.capability_id == capability.id
                         && td.role == CapabilityRefRole::Primary
@@ -11008,12 +11014,12 @@ pub fn capability_rows_for_wi_plan(
                     surfaces: capability_wi_plan_surfaces(capability, report_item),
                     ec_dimensions: capability_wi_plan_ec_dimensions(capability, report_item),
                     current_state: capability.current_state.clone(),
-                    gaps: if has_primary_td {
+                    gaps: if has_primary_td || work_root_has_closed_evidence(work_root, claim) {
                         "none".to_string()
                     } else {
                         format!("claim {}: {}", claim.id, claim.user_story)
                     },
-                    active_wi: active_wi_for_capability(capability),
+                    active_wi: active_wi_for_claim(capability, work_root),
                     evidence: claim_wi_plan_evidence(claim),
                     claim_id: Some(claim.id.clone()),
                     claim_user_story: Some(claim.user_story.clone()),
@@ -11064,6 +11070,19 @@ pub fn capability_rows_for_wi_plan(
         });
     }
     Ok(rows)
+}
+
+fn work_root_has_closed_evidence(
+    work_root: Option<&CapabilityWorkRoot>,
+    claim: &CapabilityClaim,
+) -> bool {
+    let Some(work_root) = work_root else {
+        return false;
+    };
+    capability_gap_status_from_table(&work_root.implementation, &work_root.verification)
+        == CapabilityGapStatus::Closed
+        && parse_first_maturity(&work_root.maturity).is_some()
+        && (!claim.gates.is_empty() || !claim.fixtures.is_empty())
 }
 
 fn claim_wi_plan_evidence(claim: &CapabilityClaim) -> String {
@@ -11193,6 +11212,17 @@ fn active_wi_for_capability(capability: &CapabilitySection) -> String {
         "none".to_string()
     } else {
         active_wi
+    }
+}
+
+fn active_wi_for_claim(
+    capability: &CapabilitySection,
+    work_root: Option<&CapabilityWorkRoot>,
+) -> String {
+    match work_root {
+        Some(work_root) if !is_empty_table_value(&work_root.wi) => work_root.wi.clone(),
+        Some(_) => "none".to_string(),
+        None => active_wi_for_capability(capability),
     }
 }
 
@@ -13846,6 +13876,8 @@ Cube: projects/lumen/tests/perf-cube.json
             .iter()
             .find(|row| row.claim_id.as_deref() == Some("query-planner"))
             .unwrap();
+        assert_eq!(query_planner.gaps, "none");
+        assert_eq!(query_planner.active_wi, "#4141");
         assert_eq!(query_planner.capability_type, "Service");
         assert!(query_planner
             .surfaces
@@ -13870,6 +13902,8 @@ Cube: projects/lumen/tests/perf-cube.json
             .iter()
             .find(|row| row.claim_id.as_deref() == Some("fixture-inventory"))
             .unwrap();
+        assert_eq!(fixture_inventory.gaps, "none");
+        assert_eq!(fixture_inventory.active_wi, "none");
         assert!(fixture_inventory
             .evidence
             .contains("claim inventory: projects/lumen/tests/planner_diff.rs"));
@@ -13881,6 +13915,8 @@ Cube: projects/lumen/tests/perf-cube.json
             .iter()
             .find(|row| row.claim_id.as_deref() == Some("prose-follow-up"))
             .unwrap();
+        assert!(prose_follow_up.gaps.contains("claim prose-follow-up"));
+        assert_eq!(prose_follow_up.active_wi, "none");
         assert!(prose_follow_up
             .evidence
             .contains("claim evidence: future service hardening chapter"));
