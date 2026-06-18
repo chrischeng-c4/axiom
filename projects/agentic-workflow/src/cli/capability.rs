@@ -3361,13 +3361,19 @@ fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Strin
         if !definition_drafts.is_empty() {
             out.push_str("\n### Definition Needed\n\n");
             out.push_str(
-                &definition_drafts
-                    .iter()
-                    .map(|draft| draft.project.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                "These projects have no confirmed capability roots yet. Review the definition worksheet before creating any README promise.\n\n",
             );
-            out.push_str(".\n");
+            out.push_str("| Project | Source | Draft | Check |\n");
+            out.push_str("|---|---|---|---|\n");
+            for draft in definition_drafts {
+                out.push_str(&format!(
+                    "| {} | {} | {} | `{}` |\n",
+                    markdown_cell(&draft.project),
+                    markdown_cell(&draft.source),
+                    markdown_cell(&draft.path.display().to_string()),
+                    markdown_cell(&draft.check_command),
+                ));
+            }
         }
     }
 
@@ -12898,22 +12904,40 @@ Gate Inventory:
         }];
         sweep.check_index_path = Some(PathBuf::from("/tmp/aw/capability-checks/check-index.md"));
         sweep.write_drafts = true;
-        sweep.drafts = vec![CapabilityDraftReport {
-            schema_version: "aw.cli.v1",
-            action: "capability_draft",
-            project: "cue".to_string(),
-            cap_path: PathBuf::from("projects/cue/README.md"),
-            path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
-            status: "pending_review".to_string(),
-            source: "prose_candidates",
-            candidate_count: 3,
-            agent_review_required: true,
-            review_status: "pending",
-            apply_command:
-                "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed"
-                    .to_string(),
-            check_command: "aw capability check --project cue".to_string(),
-        }];
+        sweep.drafts = vec![
+            CapabilityDraftReport {
+                schema_version: "aw.cli.v1",
+                action: "capability_draft",
+                project: "cue".to_string(),
+                cap_path: PathBuf::from("projects/cue/README.md"),
+                path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
+                status: "pending_review".to_string(),
+                source: "prose_candidates",
+                candidate_count: 3,
+                agent_review_required: true,
+                review_status: "pending",
+                apply_command:
+                    "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed"
+                        .to_string(),
+                check_command: "aw capability check --project cue".to_string(),
+            },
+            CapabilityDraftReport {
+                schema_version: "aw.cli.v1",
+                action: "capability_draft",
+                project: "pg".to_string(),
+                cap_path: PathBuf::from("projects/pg/README.md"),
+                path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
+                status: "pending_review".to_string(),
+                source: "empty_capability_map",
+                candidate_count: 0,
+                agent_review_required: true,
+                review_status: "pending",
+                apply_command:
+                    "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed"
+                        .to_string(),
+                check_command: "aw capability check --project pg".to_string(),
+            },
+        ];
         sweep.draft_index_path = Some(PathBuf::from(
             "/tmp/aw/capability-map-drafts/draft-index.md",
         ));
@@ -12959,7 +12983,7 @@ Gate Inventory:
         assert!(index.contains("project_count: 2"));
         assert!(index.contains("| Check index | 1 | /tmp/aw/capability-checks/check-index.md |"));
         assert!(index
-            .contains("| Capability drafts | 1 | /tmp/aw/capability-map-drafts/draft-index.md |"));
+            .contains("| Capability drafts | 2 | /tmp/aw/capability-map-drafts/draft-index.md |"));
         assert!(index.contains("| WI plans | 1 | /tmp/aw/capability-wi-plans/wi-plan-index.md |"));
         assert!(index
             .contains("| Action queue | 1 | /tmp/aw/capability-action-queue/action-queue.md |"));
@@ -12998,6 +13022,9 @@ Gate Inventory:
         assert!(packet.contains("| lumen | 48 | 3 | 0 |"));
         assert!(packet.contains("## Capability Draft Review"));
         assert!(packet.contains("| candidate review | 1 | 3 |"));
+        assert!(packet.contains("### Definition Needed"));
+        assert!(packet.contains("These projects have no confirmed capability roots yet."));
+        assert!(packet.contains("| pg | empty_capability_map | /tmp/aw/pg/capability-map-drafts/draft.md | `aw capability check --project pg` |"));
         assert!(packet.contains("do not apply README drafts until every product promise"));
     }
 
