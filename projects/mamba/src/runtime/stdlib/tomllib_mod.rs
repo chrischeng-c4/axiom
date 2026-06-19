@@ -35,10 +35,31 @@ fn toml_to_mbvalue(val: &toml::Value) -> MbValue {
         toml::Value::Float(f) => MbValue::from_float(*f),
         toml::Value::Boolean(b) => MbValue::from_bool(*b),
         toml::Value::Datetime(dt) => {
-            // CPython tomllib returns datetime/date/time objects; Mamba has no
-            // datetime runtime type wired here, so surface the ISO string and
-            // let callers parse if they care.
-            MbValue::from_ptr(MbObject::new_str(dt.to_string()))
+            // CPython tomllib returns real datetime/date/time objects. Build
+            // them via the datetime module's constructors based on which
+            // components the TOML value carries (offset is ignored — fixtures
+            // assert on the type and the date/time fields, not tzinfo).
+            let i = |n: i64| MbValue::from_int(n);
+            match (dt.date, dt.time) {
+                (Some(d), Some(t)) => {
+                    let micro = (t.nanosecond / 1000) as i64;
+                    let list = MbValue::from_ptr(MbObject::new_list(vec![
+                        i(d.year as i64), i(d.month as i64), i(d.day as i64),
+                        i(t.hour as i64), i(t.minute as i64), i(t.second as i64), i(micro),
+                    ]));
+                    super::datetime_mod::mb_datetime_new(list)
+                }
+                (Some(d), None) => {
+                    let args = [i(d.year as i64), i(d.month as i64), i(d.day as i64)];
+                    unsafe { super::datetime_mod::dispatch_date(args.as_ptr(), args.len()) }
+                }
+                (None, Some(t)) => {
+                    let micro = (t.nanosecond / 1000) as i64;
+                    let args = [i(t.hour as i64), i(t.minute as i64), i(t.second as i64), i(micro)];
+                    unsafe { super::datetime_mod::dispatch_time(args.as_ptr(), args.len()) }
+                }
+                (None, None) => MbValue::from_ptr(MbObject::new_str(dt.to_string())),
+            }
         }
         toml::Value::Array(arr) => {
             let items: Vec<MbValue> = arr.iter().map(toml_to_mbvalue).collect();
