@@ -653,6 +653,10 @@ pub fn mb_mimetypes_MimeTypes() -> MbValue {
 
 /// init(files=None) -> None  — no-op; the static table is always live.
 pub fn mb_mimetypes_init(_files: MbValue) -> MbValue {
+    // CPython's init() rebuilds the registry from the system mime files; mamba
+    // has no system files, so reset to the static defaults by clearing the
+    // user-added types (so an add_type() before init() is forgotten).
+    USER_TYPES.with(|t| t.borrow_mut().clear());
     MbValue::none()
 }
 
