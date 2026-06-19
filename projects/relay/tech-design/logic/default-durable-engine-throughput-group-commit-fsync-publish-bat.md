@@ -237,14 +237,3 @@ changes:
     impl_mode: hand-written
     reason: "Tests: default config is durable, publish_batch group commit + dedupe, log recovery on reopen, and committed-offset crash recovery (resume after the committed offset)."
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] open→recover(committed)→ready; publish-batch=append_many+ONE fsync (group commit); ack-batch advances + persists committed. Durable power-safe by default. Applicable.
-- [schema] PublishBatch DTOs reuse AppendOutcome. Applicable.
-- [rest-api] publish-batch OpenAPI (JSON+CBOR). Applicable.
-- [unit-test] default-durable config, batch group commit + dedupe, log recovery, committed-offset crash recovery. Applicable.
-- [changes] log/workqueue/engine/config/wire/server/openapi + a durable test. Applicable.
