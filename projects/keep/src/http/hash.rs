@@ -1,8 +1,5 @@
-//! Hash (field-map) routes under `/v1/hashes/{key}`.
-//!
-//! Note: hash values live in memory only — the WAL covers scalar ops, so hashes
-//! are not restored on recovery (a known engine limitation; the durable result
-//! path is scalar `/v1/kv`).
+//! Hash (field-map) routes under `/v1/hashes/{key}`. WAL-backed and
+//! durable-before-ack, like the scalar path.
 
 use std::collections::HashMap;
 
@@ -15,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::http::error::ApiErr;
-use crate::http::handlers::key_of;
+use crate::http::handlers::{ack_durable, key_of};
 use crate::http::models::{json_to_kv, kv_to_json, CountResponse};
 use crate::http::AppState;
 
@@ -79,6 +76,7 @@ pub async fn hset(
         .map(|(f, v)| (f, json_to_kv(v)))
         .collect();
     let count = st.engine.hset(&k, fields).map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
 
@@ -113,6 +111,7 @@ pub async fn hdel(
     let k = key_of(&key)?;
     let refs: Vec<&str> = req.fields.iter().map(String::as_str).collect();
     let count = st.engine.hdel(&k, &refs).map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
 
@@ -165,6 +164,7 @@ pub async fn hincr(
         .engine
         .hincrby(&k, &req.field, req.delta)
         .map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(IntValueResponse { value }))
 }
 

@@ -1,5 +1,5 @@
-//! Set routes under `/v1/sets/{key}` (string members). In-memory only (see the
-//! hash module note on collection durability).
+//! Set routes under `/v1/sets/{key}` (string members). WAL-backed and
+//! durable-before-ack.
 
 use axum::{
     extract::{Path, State},
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::http::error::ApiErr;
-use crate::http::handlers::key_of;
+use crate::http::handlers::{ack_durable, key_of};
 use crate::http::models::CountResponse;
 use crate::http::AppState;
 
@@ -35,6 +35,7 @@ pub async fn sadd(
 ) -> Result<Json<CountResponse>, ApiErr> {
     let k = key_of(&key)?;
     let count = st.engine.sadd(&k, req.members).map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
 
@@ -63,6 +64,7 @@ pub async fn srem(
 ) -> Result<Json<CountResponse>, ApiErr> {
     let k = key_of(&key)?;
     let count = st.engine.srem(&k, req.members).map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
 

@@ -1,5 +1,5 @@
 //! Sorted-set routes under `/v1/zsets/{key}` (string members, f64 scores).
-//! In-memory only (see the hash module note on collection durability).
+//! WAL-backed and durable-before-ack.
 
 use axum::{
     extract::{Path, Query, State},
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::http::error::ApiErr;
-use crate::http::handlers::key_of;
+use crate::http::handlers::{ack_durable, key_of};
 use crate::http::models::CountResponse;
 use crate::http::AppState;
 
@@ -81,6 +81,7 @@ pub async fn zadd(
     let k = key_of(&key)?;
     let members: Vec<(String, f64)> = req.members.into_iter().map(|m| (m.member, m.score)).collect();
     let count = st.engine.zadd(&k, members).map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
 
@@ -118,6 +119,7 @@ pub async fn zrem(
 ) -> Result<Json<CountResponse>, ApiErr> {
     let k = key_of(&key)?;
     let count = st.engine.zrem(&k, req.members).map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(CountResponse { count }))
 }
 
@@ -149,6 +151,7 @@ pub async fn zincr(
         .engine
         .zincrby(&k, &req.member, req.delta)
         .map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(FloatValueResponse { value }))
 }
 
