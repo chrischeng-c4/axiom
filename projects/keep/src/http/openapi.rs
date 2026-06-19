@@ -6,7 +6,7 @@ use utoipa::OpenApi;
 
 use crate::http::error::ApiError;
 use crate::http::models::*;
-use crate::http::{handlers, hash, meta, sets, zsets};
+use crate::http::{handlers, hash, lists, meta, sets, zsets};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -51,6 +51,8 @@ use crate::http::{handlers, hash, meta, sets, zsets};
         handlers::rpop,
         meta::lrange,
         meta::llen,
+        lists::blpop,
+        lists::brpop,
         meta::expire,
         meta::ttl,
         meta::persist,
@@ -132,6 +134,7 @@ use crate::http::{handlers, hash, meta, sets, zsets};
         meta::GetExResponse,
         meta::ListRangeResponse,
         meta::LenResponse,
+        lists::BlockingPopRequest,
     ))
 )]
 pub struct ApiDoc;

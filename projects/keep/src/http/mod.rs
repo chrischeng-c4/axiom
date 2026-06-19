@@ -7,12 +7,14 @@
 pub mod error;
 pub mod handlers;
 pub mod hash;
+pub mod lists;
 pub mod meta;
 pub mod metrics;
 pub mod models;
 pub mod openapi;
 pub mod routes;
 pub mod sets;
+pub mod waiters;
 pub mod zsets;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,6 +33,8 @@ pub struct AppState {
     pub body_limit: usize,
     /// Per-route HTTP request metrics (counts + latency histograms).
     pub metrics: Arc<metrics::HttpMetrics>,
+    /// Per-key wait registry for blocking list pops (BLPOP/BRPOP).
+    pub waiters: Arc<waiters::ListWaiters>,
     draining: Arc<AtomicBool>,
 }
 
@@ -40,6 +44,7 @@ impl AppState {
             engine,
             body_limit: DEFAULT_BODY_LIMIT,
             metrics: Arc::new(metrics::HttpMetrics::default()),
+            waiters: Arc::new(waiters::ListWaiters::default()),
             draining: Arc::new(AtomicBool::new(false)),
         }
     }

@@ -9,7 +9,7 @@ use axum::{
     Router,
 };
 
-use crate::http::{handlers, hash, meta, metrics, sets, zsets, AppState};
+use crate::http::{handlers, hash, lists, meta, metrics, sets, zsets, AppState};
 
 /// Build the full application router.
 pub fn router(state: AppState) -> Router {
@@ -47,6 +47,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/lists/{key}/rpush", post(handlers::rpush))
         .route("/v1/lists/{key}/lpop", post(handlers::lpop))
         .route("/v1/lists/{key}/rpop", post(handlers::rpop))
+        .route("/v1/lists/{key}/blpop", post(lists::blpop))
+        .route("/v1/lists/{key}/brpop", post(lists::brpop))
         // expiry (any key)
         .route("/v1/kv/{key}/expire", post(meta::expire))
         .route("/v1/kv/{key}/ttl", get(meta::ttl))
