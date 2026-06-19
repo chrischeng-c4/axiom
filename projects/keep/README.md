@@ -28,7 +28,7 @@ client to ship (relay+keep worker contract, #108).
 | POST | `/v1/kv:mget` `:mset` `:mdel` | batch |
 | GET | `/v1/kv?prefix=&limit=` | scan |
 | POST/DELETE/PATCH | `/v1/locks/{key}` | acquire / release / extend lease |
-| POST/GET | `/v1/lists/{key}` + `/{lpush,rpush,lpop,rpop}` `/length` | list push/pop/range/len |
+| POST/GET | `/v1/lists/{key}` + `/{lpush,rpush,lpop,rpop,blpop,brpop}` `/length` | list push/pop/blocking-pop/range/len |
 | POST/GET/DELETE | `/v1/hashes/{key}` + `/length` `/mget` `/incr` `/fields/{field}` | hash ops |
 | POST/GET/DELETE | `/v1/sets/{key}` + `/length` `/members/{m}` | set ops |
 | POST/GET/DELETE | `/v1/zsets/{key}` + `/length` `/incr` `/members/{m}/{score,rank}` | sorted-set ops |
@@ -44,8 +44,10 @@ through JSON — `GET` returns them verbatim as octet-stream.
 (`/v1/kv`, incr/cas/setnx, `:mset`/`:mdel`), collections (hash / set /
 sorted-set / list push+pop), and TTL ops (expire/persist). A write returns 200
 only after its op is fsynced (group-committed); committed state survives a cold
-recovery (see `tests/durability.rs`). Blocking list pops (`BLPOP`/`BRPOP`) are
-still TODO (they need a wait mechanism, not just durability).
+recovery (see `tests/durability.rs`).
+
+**Blocking pops.** `BLPOP`/`BRPOP` long-poll up to `timeout_ms` (capped at 60 s)
+for an element, waking immediately on a concurrent push via a per-key notifier.
 
 ## Run
 

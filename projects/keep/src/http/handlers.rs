@@ -438,6 +438,7 @@ pub async fn lpush(
     let k = key_of(&key)?;
     let values = req.values.into_iter().map(json_to_kv).collect();
     let length = st.engine.lpush(&k, values).map_err(ApiErr::from)?;
+    st.waiters.notify(&key);
     Ok(Json(PushResponse { length }))
 }
 
@@ -458,6 +459,7 @@ pub async fn rpush(
     let k = key_of(&key)?;
     let values = req.values.into_iter().map(json_to_kv).collect();
     let length = st.engine.rpush(&k, values).map_err(ApiErr::from)?;
+    st.waiters.notify(&key);
     Ok(Json(PushResponse { length }))
 }
 

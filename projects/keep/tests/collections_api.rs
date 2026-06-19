@@ -140,6 +140,42 @@ async fn list_range_and_expiry() {
 }
 
 #[tokio::test]
+async fn blpop_returns_present_element() {
+    let app = app();
+    call(&app, "POST", "/v1/lists/q/rpush", json!({"values": ["x", "y"]})).await;
+    let (st, body) = call(&app, "POST", "/v1/lists/q/blpop", json!({"timeout_ms": 1000})).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["value"], json!("x"));
+}
+
+#[tokio::test]
+async fn blpop_times_out_on_empty() {
+    let app = app();
+    let (st, body) = call(&app, "POST", "/v1/lists/empty/blpop", json!({"timeout_ms": 50})).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["value"], Value::Null);
+}
+
+#[tokio::test]
+async fn blpop_wakes_on_concurrent_push() {
+    let app = app();
+    // A popper blocks on an empty list...
+    let popper = {
+        let app = app.clone();
+        tokio::spawn(async move {
+            call(&app, "POST", "/v1/lists/wq/blpop", json!({"timeout_ms": 5000})).await
+        })
+    };
+    // ...then a push from elsewhere must wake it.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    call(&app, "POST", "/v1/lists/wq/rpush", json!({"values": ["job1"]})).await;
+
+    let (st, body) = popper.await.unwrap();
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["value"], json!("job1"));
+}
+
+#[tokio::test]
 async fn getex_reads_and_adjusts_ttl() {
     let app = app();
     call(&app, "PUT", "/v1/kv/g", json!({"value": "hi"})).await;
