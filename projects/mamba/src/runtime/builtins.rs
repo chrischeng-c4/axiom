@@ -8179,7 +8179,26 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 frame.push(MbValue::from_ptr(MbObject::new_list(rest)));
             }
             if has_kwargs {
-                frame.push(MbValue::from_ptr(MbObject::new_dict()));
+                // The slot right after the regular params is the kwargs dict
+                // appended by mb_call_spread_kwargs (`f(a, b, **d)` arrives as
+                // [a, b, {d}]); reuse it so **kw is populated. A pure positional
+                // spread leaves no dict there → empty kwargs.
+                let kw = if !has_star {
+                    items.get(r).copied().filter(|v| {
+                        v.as_ptr()
+                            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+                            .unwrap_or(false)
+                    })
+                } else {
+                    None
+                };
+                match kw {
+                    Some(d) => {
+                        unsafe { super::rc::retain_if_ptr(d); }
+                        frame.push(d);
+                    }
+                    None => frame.push(MbValue::from_ptr(MbObject::new_dict())),
+                }
             }
             items = frame;
         }
