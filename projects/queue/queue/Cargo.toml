@@ -51,8 +51,9 @@ reqwest = { workspace = true, optional = true }
 # JWT for SA key auth and inbound OIDC validation (Cloud Tasks)
 jsonwebtoken = { workspace = true, optional = true }
 
-# Ion backend
-cclab-kv = { path = "../kv", optional = true }
+# Ion backend (the canonical cclab-kv crate; the old projects/queue/kv
+# duplicate was removed — see keep's tech-debt cleanup).
+cclab-kv = { path = "../../../crates/cclab-kv", optional = true }
 
 # Push receiver auth (HMAC-SHA256 for K8s, OIDC JWT for Cloud Scheduler)
 hmac = { version = "0.12", optional = true }
