@@ -294,7 +294,7 @@ unsafe extern "C" fn dispatch_combine(args_ptr: *const MbValue, nargs: usize) ->
 /// CPython validates each component range and raises `ValueError` when any
 /// is out of bounds. Keyword args arrive as a trailing dict positional in
 /// mamba's current call lowering; ranges-only validation is performed here.
-unsafe extern "C" fn dispatch_time(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn dispatch_time(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // Read positional ints, skipping any trailing kwargs dict.
     let pos: Vec<i64> = a.iter().filter_map(|v| v.as_int()).collect();
@@ -1114,7 +1114,7 @@ pub fn register() {
 /// class name (both built by `build_datetime_dict`). To let instance methods
 /// such as `isoformat()` distinguish a pure date from a full datetime, tag the
 /// constructed value with a private `_is_date` marker field.
-unsafe extern "C" fn dispatch_date(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn dispatch_date(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let args_list = MbValue::from_ptr(MbObject::new_list(a.to_vec()));
     let val = mb_datetime_new(args_list);
