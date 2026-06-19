@@ -131,9 +131,92 @@ definitions:
 <!-- type: rest-api lang: yaml -->
 
 ```yaml
-(fill)
+openapi: 3.1.0
+info:
+  title: relay work-queue batch API
+  version: 0.1.0
+  description: >
+    Batch lease / ack over HTTP/2 to amortize round-trips. Same epoch fencing
+    and exactly-once semantics as the single-message verbs (#113).
+paths:
+  /v1/{subject}/lease-batch:
+    post:
+      operationId: leaseBatch
+      summary: Lease up to `max` ready entries in one call (prefers redelivery), each with an epoch.
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/LeaseBatchRequest" } }
+          application/cbor: { schema: { $ref: "#/components/schemas/LeaseBatchRequest" } }
+      responses:
+        "200":
+          description: Up to max leases in seq order (possibly empty).
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/LeaseBatchResponse" } }
+            application/cbor: { schema: { $ref: "#/components/schemas/LeaseBatchResponse" } }
+  /v1/{subject}/ack-batch:
+    post:
+      operationId: ackBatch
+      summary: Acknowledge many leases in one call; advances the committed offset.
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/AckBatchRequest" } }
+          application/cbor: { schema: { $ref: "#/components/schemas/AckBatchRequest" } }
+      responses:
+        "200":
+          description: Count accepted + committed offset.
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/AckBatchResponse" } }
+            application/cbor: { schema: { $ref: "#/components/schemas/AckBatchResponse" } }
+components:
+  schemas:
+    LeaseBatchRequest:
+      type: object
+      required: [consumer_id, max]
+      properties:
+        consumer_id: { type: string }
+        max: { type: integer, minimum: 1 }
+    LeaseBatchResponse:
+      type: object
+      required: [leases]
+      properties:
+        leases: { type: array, items: { $ref: "#/components/schemas/Lease" } }
+    Lease:
+      type: object
+      required: [lease_id, seq, subject, shard, consumer_id, granted_at, expires_at, attempt, epoch]
+      properties:
+        lease_id: { type: string }
+        seq: { type: integer, minimum: 0 }
+        subject: { type: string }
+        shard: { type: integer, minimum: 0 }
+        consumer_id: { type: string }
+        granted_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        attempt: { type: integer, minimum: 1 }
+        epoch: { type: integer, minimum: 1 }
+    AckOne:
+      type: object
+      required: [lease_id]
+      properties:
+        lease_id: { type: string }
+        epoch: { oneOf: [{ type: "null" }, { type: integer, minimum: 1 }] }
+    AckBatchRequest:
+      type: object
+      required: [acks]
+      properties:
+        acks: { type: array, items: { $ref: "#/components/schemas/AckOne" } }
+    AckBatchResponse:
+      type: object
+      required: [acked]
+      properties:
+        acked: { type: integer, minimum: 0 }
+        committed_seq: { oneOf: [{ type: "null" }, { type: integer, minimum: 0 }] }
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
