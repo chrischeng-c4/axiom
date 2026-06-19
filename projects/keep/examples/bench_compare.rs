@@ -174,6 +174,8 @@ async fn bench_keep(args: &Args, val: &str) -> Result<(), Box<dyn std::error::Er
             reqwest::Client::builder()
                 .http2_prior_knowledge()
                 .pool_max_idle_per_host(1)
+                // Bound a single request so a stalled stream can't hang the run.
+                .timeout(Duration::from_secs(10))
                 .build()?,
         );
     }
