@@ -54,6 +54,9 @@ struct Args {
     /// keep backend: number of separate HTTP/2 connections (reqwest Clients).
     #[arg(long)]
     keep_clients: Option<usize>,
+    /// engine backend: enable WAL persistence into this dir (durable path).
+    #[arg(long)]
+    persist: Option<String>,
 }
 
 #[tokio::main]
@@ -109,8 +112,15 @@ fn summarize(phase: &str, ops: usize, batch: usize, elapsed: Duration, mut lat_u
 // engine
 // --------------------------------------------------------------------------
 async fn bench_engine(args: &Args, val: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use keep::persistence::{PersistenceConfig, PersistenceHandle};
     use keep::{KvEngine, KvKey, KvValue};
     let engine = Arc::new(KvEngine::with_shards(args.shards));
+    if let Some(dir) = &args.persist {
+        let cfg = PersistenceConfig::new(dir).with_fsync_interval_ms(100);
+        let p = std::sync::Arc::new(PersistenceHandle::new(cfg, engine.clone())?);
+        engine.enable_persistence(p);
+        println!("  (engine WAL persistence -> {dir})");
+    }
     let (n_req, actual) = plan(args);
     let batch = args.batch.max(1);
 
