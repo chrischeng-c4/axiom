@@ -92,7 +92,6 @@ flowchart TD
     suite --> t_prune[prune + reopen]
     t_prune --> a_prune([rebuilt index reads ok])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
