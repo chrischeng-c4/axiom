@@ -70,6 +70,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.backend.as_str() {
         "engine" => bench_engine(&args, &val).await?,
         "keep" => bench_keep(&args, &val).await?,
+        // Pure HTTP/2 framework floor: hits /healthz (no key, no engine, no
+        // JSON) so the gap vs `keep` GET isolates our app-code cost.
+        "keepnoop" => bench_keep_noop(&args).await?,
         "redis" | "dragonfly" => bench_resp(&args, &val).await?,
         other => return Err(format!("unknown backend: {other}").into()),
     }
@@ -235,6 +238,49 @@ async fn bench_keep(args: &Args, val: &str) -> Result<(), Box<dyn std::error::Er
         }
         summarize(phase, actual, batch, start.elapsed(), all);
     }
+    Ok(())
+}
+
+// --------------------------------------------------------------------------
+// keep framework floor: GET /healthz (no key / engine / JSON)
+// --------------------------------------------------------------------------
+async fn bench_keep_noop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let n_clients = args.keep_clients.unwrap_or(args.concurrency).max(1);
+    let mut clients = Vec::with_capacity(n_clients);
+    for _ in 0..n_clients {
+        clients.push(
+            reqwest::Client::builder()
+                .http2_prior_knowledge()
+                .pool_max_idle_per_host(1)
+                .timeout(Duration::from_secs(10))
+                .build()?,
+        );
+    }
+    let url = format!("{}/healthz", args.keep_url);
+    for c in &clients {
+        let _ = c.get(&url).send().await;
+    }
+    let per = args.ops / args.concurrency;
+    let start = Instant::now();
+    let mut handles = Vec::new();
+    for w in 0..args.concurrency {
+        let client = clients[w % n_clients].clone();
+        let url = url.clone();
+        handles.push(tokio::spawn(async move {
+            let mut lat = Vec::with_capacity(per);
+            for _ in 0..per {
+                let t = Instant::now();
+                let _ = client.get(&url).send().await;
+                lat.push(t.elapsed().as_micros() as u64);
+            }
+            lat
+        }));
+    }
+    let mut all = Vec::new();
+    for h in handles {
+        all.extend(h.await?);
+    }
+    summarize("NOOP", args.concurrency * per, 1, start.elapsed(), all);
     Ok(())
 }
 
