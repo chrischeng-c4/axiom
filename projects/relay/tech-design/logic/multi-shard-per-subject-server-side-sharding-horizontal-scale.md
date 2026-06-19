@@ -110,3 +110,12 @@ changes:
     impl_mode: hand-written
     reason: "Tests: publish spread across shards, whole-subject exactly-once drain across shards, broadcast merge across shards, and default_shards=1 parity with single-shard semantics."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] (subject,shard) keying + crc32(message_id) routing gives independent per-shard logs/locks; lease scans shards, ack/heartbeat route by the lease_id's shard, subscribe/poll merge across shards; reconcile sweeps all (subject,shard). default_shards=1 collapses to shard 0 -> identical. Coherent horizontal-scale model.
+- [unit-test] routing spread, exactly-once drain across shards, broadcast merge, and shards=1 parity.
+- [changes] engine.rs + a new test; reuses default_shards + shard::shard_for.
