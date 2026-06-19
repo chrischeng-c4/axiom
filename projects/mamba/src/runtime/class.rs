@@ -9752,6 +9752,30 @@ pub fn mb_context_enter(obj: MbValue) -> MbValue {
     }
     // Class instances: look up __enter__
     if let Some(method) = try_get_dunder(obj, "__enter__") {
+        // CPython requires BOTH __enter__ and __exit__ on the type; a missing
+        // (e.g. misspelled) __exit__ raises TypeError at `with` entry. Gated to
+        // user classes so native CM stubs whose __exit__ lives off the method
+        // table are unaffected.
+        if try_get_dunder(obj, "__exit__").is_none() {
+            if let Some(ptr) = obj.as_ptr() {
+                let cn = unsafe {
+                    if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                        Some(class_name.clone())
+                    } else { None }
+                };
+                if let Some(cn) = cn {
+                    if USER_CLASSES.with(|u| u.borrow().contains(cn.as_str())) {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "'{cn}' object does not support the context manager protocol (missed __exit__ method)"
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
+                }
+            }
+        }
         let result = mb_call_method1(method, obj);
         // If __enter__ returned self (same pointer), add a retain to compensate:
         // the JIT holds TWO VRegs (ctx_vreg and enter_dest) that both point to
