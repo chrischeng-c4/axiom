@@ -43,6 +43,7 @@ pub mod log;
 pub mod openapi;
 pub mod perf_gate;
 pub mod reconciler;
+pub mod replication;
 pub mod server;
 pub mod server_config;
 pub mod shard;
@@ -57,6 +58,7 @@ pub use config::{
 pub use engine::Relay;
 pub use log::Log;
 pub use reconciler::{spawn_reconciler, ReconcilerHandle};
+pub use replication::{spawn_follower, FollowerHandle};
 pub use server::{router, AppState};
 pub use server_config::RelayServerConfig;
 pub use shard::shard_for;

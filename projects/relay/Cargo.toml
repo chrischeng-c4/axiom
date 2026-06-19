@@ -36,8 +36,10 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 ciborium = "0.2"
 crc32fast = "1.4"
 
+# HA: the follower is an HTTP/2 client tailing the leader (#135).
+reqwest = { workspace = true }
+
 [dev-dependencies]
 tempfile = "3"
-reqwest = { workspace = true }
 criterion = "0.5"
 # HANDWRITE-END
