@@ -590,6 +590,27 @@ extern "C" fn tc_run(self_obj: MbValue, args: MbValue) -> MbValue {
         .and_then(extract_str)
         .unwrap_or_else(|| DEFAULT_TEST_METHOD.to_string());
 
+    // CPython's run() does `getattr(self, self._testMethodName)` — a bare
+    // TestCase() has no `runTest`, so that raises AttributeError (uncaught).
+    let class_name = self_obj.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*p).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    }).unwrap_or_default();
+    let method_missing = super::super::class::lookup_method(&class_name, &method).is_none()
+        && inst_get(self_obj, &method).is_none();
+    if method_missing {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "'{class_name}' object has no attribute '{method}'"
+            ))),
+        );
+        return MbValue::none();
+    }
+
     // Expose the active result so `subTest()` can record sub-test failures
     // and reset the per-run sub-test bookkeeping.
     inst_set(self_obj, "_outcome_result", result);
