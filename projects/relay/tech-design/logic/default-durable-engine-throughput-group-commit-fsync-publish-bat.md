@@ -57,9 +57,48 @@ flowchart TD
 <!-- type: schema lang: yaml -->
 
 ```yaml
-(fill)
-```
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: relay-default-durable#schema
+title: Relay Publish-Batch Types
+description: >
+  Batch-publish DTOs for the group-commit produce path. One request carries many
+  messages; the server appends them all and issues a single fsync (group commit),
+  returning one AppendOutcome per message in order.
 
+definitions:
+  PublishBatchItem:
+    type: object
+    $id: PublishBatchItem
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [message_id, payload]
+    properties:
+      message_id: { type: string, description: "Idempotency / dedupe key." }
+      payload: { description: "Opaque message body (any JSON value)." }
+      headers:
+        type: object
+        additionalProperties: { type: string }
+
+  PublishBatchRequest:
+    type: object
+    $id: PublishBatchRequest
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [messages]
+    properties:
+      messages:
+        type: array
+        items: { $ref: "#/definitions/PublishBatchItem" }
+
+  PublishBatchResponse:
+    type: object
+    $id: PublishBatchResponse
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [outcomes]
+    description: "One AppendOutcome per input message, in order."
+    properties:
+      outcomes:
+        type: array
+        items: { x-rust-type: "crate::types::AppendOutcome" }
+```
 ## Rest Api
 <!-- type: rest-api lang: yaml -->
 
