@@ -27,7 +27,7 @@ use crate::server_config::RelayServerConfig;
 use crate::wire::{
     self, AckBatchRequest, AckBatchResponse, AckRequest, AckResponse, HeartbeatRequest,
     HeartbeatResponse, LeaseBatchRequest, LeaseBatchResponse, LeaseRequest, LeaseResponse,
-    PublishRequest, SubscribeQuery,
+    PublishBatchRequest, PublishBatchResponse, PublishRequest, SubscribeQuery,
 };
 
 /// Shared application state: the relay core plus this shard's config.
@@ -66,6 +66,7 @@ impl AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/{subject}/publish", post(publish))
+        .route("/v1/{subject}/publish-batch", post(publish_batch))
         .route("/v1/{subject}/lease", post(lease))
         .route("/v1/{subject}/ack", post(ack))
         .route("/v1/{subject}/lease-batch", post(lease_batch))
@@ -136,6 +137,36 @@ pub async fn publish(
         .publish(&subject, &req.message_id, req.payload, req.headers, now);
     match result {
         Ok(outcome) => encode_body(false, StatusCode::OK, &outcome),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// `POST /v1/{subject}/publish-batch` — append many messages (group commit).
+#[utoipa::path(
+    post,
+    path = "/v1/{subject}/publish-batch",
+    params(("subject" = String, Path, description = "Target subject")),
+    responses((status = 200, description = "One append outcome per message, in order"))
+)]
+pub async fn publish_batch(
+    State(st): State<AppState>,
+    Path(subject): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let cbor = wants_cbor(&headers);
+    let req: PublishBatchRequest = match decode_body(cbor, &body) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    let now = Utc::now();
+    let messages = req
+        .messages
+        .into_iter()
+        .map(|m| (m.message_id, m.payload, m.headers))
+        .collect();
+    match st.relay.publish_batch(&subject, messages, now) {
+        Ok(outcomes) => encode_body(cbor, StatusCode::OK, &PublishBatchResponse { outcomes }),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

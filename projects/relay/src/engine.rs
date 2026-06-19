@@ -65,12 +65,16 @@ impl Relay {
             return Ok(Arc::clone(s));
         }
         let log = Log::open(&self.config, subject, SHARD)?;
-        let workqueue = WorkQueue::new(
+        let mut workqueue = WorkQueue::new(
             subject,
             SHARD,
             self.config.work_queue.lease_ttl_ms,
             self.config.work_queue.max_attempts,
         );
+        // Crash recovery: resume after the durably committed watermark.
+        if let Some(watermark) = log.load_commit() {
+            workqueue.recover(watermark);
+        }
         let ss = Arc::new(Mutex::new(SubjectState {
             log,
             broadcast: BroadcastDelivery::new(),
@@ -96,6 +100,21 @@ impl Relay {
         let ss = self.subject_state(subject)?;
         let mut g = ss.lock().expect("subject mutex");
         g.log.append(message_id, payload, headers, now)
+    }
+
+    /// Publish a batch of messages with a single group-commit fsync (the
+    /// durable high-throughput produce path).
+    ///
+    /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
+    pub fn publish_batch(
+        &self,
+        subject: &str,
+        messages: Vec<(String, Payload, BTreeMap<String, String>)>,
+        now: DateTime<Utc>,
+    ) -> io::Result<Vec<AppendOutcome>> {
+        let ss = self.subject_state(subject)?;
+        let mut g = ss.lock().expect("subject mutex");
+        g.log.append_many(messages, now)
     }
 
     /// Set the descriptive delivery model for a subject.
@@ -184,7 +203,12 @@ impl Relay {
     pub fn ack(&self, subject: &str, lease_id: &str, epoch: Option<u64>) -> io::Result<bool> {
         let ss = self.subject_state(subject)?;
         let mut g = ss.lock().expect("subject mutex");
-        Ok(g.workqueue.ack(lease_id, epoch))
+        let ok = g.workqueue.ack(lease_id, epoch);
+        if ok {
+            let wm = g.workqueue.committed_watermark();
+            g.log.persist_commit(wm)?;
+        }
+        Ok(ok)
     }
 
     /// Acknowledge many leases in one call; returns (accepted count, committed offset).
@@ -199,6 +223,10 @@ impl Relay {
         let mut g = ss.lock().expect("subject mutex");
         let n = g.workqueue.ack_batch(acks);
         let committed = g.workqueue.committed_offset();
+        if n > 0 {
+            let wm = g.workqueue.committed_watermark();
+            g.log.persist_commit(wm)?;
+        }
         Ok((n, committed))
     }
 
