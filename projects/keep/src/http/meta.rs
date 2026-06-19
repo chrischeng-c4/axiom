@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::http::error::ApiErr;
-use crate::http::handlers::key_of;
+use crate::http::handlers::{ack_durable, key_of};
 use crate::http::models::kv_to_json;
 use crate::http::AppState;
 
@@ -55,6 +55,7 @@ pub async fn expire(
         Some(ms) => st.engine.pexpire(&k, ms),
         None => st.engine.expire(&k, req.seconds.unwrap_or(0)),
     };
+    ack_durable(&st).await;
     Ok(Json(AppliedResponse {
         applied: result == 1,
     }))
@@ -85,6 +86,7 @@ pub async fn persist(
 ) -> Result<Json<AppliedResponse>, ApiErr> {
     let k = key_of(&key)?;
     let applied = st.engine.persist(&k) == 1;
+    ack_durable(&st).await;
     Ok(Json(AppliedResponse { applied }))
 }
 

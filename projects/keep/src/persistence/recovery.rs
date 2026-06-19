@@ -268,6 +268,94 @@ impl RecoveryManager {
                 })?;
                 let _ = engine.extend_lock(&kv_key, owner, *ttl); // Ignore errors during recovery
             }
+
+            // --- collection / expiry / cas ops (errors ignored during replay) ---
+            WalOp::Cas { key, expected, new, ttl } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.cas(&k, expected, new.clone(), *ttl);
+                }
+            }
+            WalOp::Expire { key, seconds } => {
+                if let Ok(k) = KvKey::new(key) {
+                    engine.expire(&k, *seconds);
+                }
+            }
+            WalOp::PExpire { key, milliseconds } => {
+                if let Ok(k) = KvKey::new(key) {
+                    engine.pexpire(&k, *milliseconds);
+                }
+            }
+            WalOp::Persist { key } => {
+                if let Ok(k) = KvKey::new(key) {
+                    engine.persist(&k);
+                }
+            }
+            WalOp::HSet { key, fields } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.hset(&k, fields.clone());
+                }
+            }
+            WalOp::HDel { key, fields } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let refs: Vec<&str> = fields.iter().map(String::as_str).collect();
+                    let _ = engine.hdel(&k, &refs);
+                }
+            }
+            WalOp::HIncrBy { key, field, delta } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.hincrby(&k, field, *delta);
+                }
+            }
+            WalOp::HIncrByFloat { key, field, delta } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.hincrbyfloat(&k, field, *delta);
+                }
+            }
+            WalOp::SAdd { key, members } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.sadd(&k, members.clone());
+                }
+            }
+            WalOp::SRem { key, members } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.srem(&k, members.clone());
+                }
+            }
+            WalOp::ZAdd { key, members } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.zadd(&k, members.clone());
+                }
+            }
+            WalOp::ZRem { key, members } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.zrem(&k, members.clone());
+                }
+            }
+            WalOp::ZIncrBy { key, member, delta } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.zincrby(&k, member, *delta);
+                }
+            }
+            WalOp::LPush { key, values } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.lpush(&k, values.clone());
+                }
+            }
+            WalOp::RPush { key, values } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let _ = engine.rpush(&k, values.clone());
+                }
+            }
+            WalOp::LPop { key } => {
+                if let Ok(k) = KvKey::new(key) {
+                    engine.lpop(&k);
+                }
+            }
+            WalOp::RPop { key } => {
+                if let Ok(k) = KvKey::new(key) {
+                    engine.rpop(&k);
+                }
+            }
         }
 
         Ok(())

@@ -1520,6 +1520,13 @@ impl KvEngine {
         // Check memory limit
         self.check_memory_and_evict()?;
 
+        self.log_wal(crate::persistence::format::WalOp::Cas {
+            key: key.as_str().to_string(),
+            expected: expected.clone(),
+            new: new_value.clone(),
+            ttl,
+        });
+
         self.shard_for_key(key.as_str())
             .cas(key.as_str(), expected, new_value, ttl)
     }
@@ -1759,9 +1766,13 @@ impl KvEngine {
     /// Returns 1 if TTL was set, 0 if key doesn't exist
     pub fn expire(&self, key: &KvKey, seconds: i64) -> i32 {
         if seconds <= 0 {
-            // TTL of 0 or negative = delete immediately
+            // TTL of 0 or negative = delete immediately (delete logs its own WAL)
             return if self.delete(key) { 1 } else { 0 };
         }
+        self.log_wal(crate::persistence::format::WalOp::Expire {
+            key: key.as_str().to_string(),
+            seconds,
+        });
         self.shard_for_key(key.as_str())
             .expire(key.as_str(), Duration::from_secs(seconds as u64))
     }
@@ -1772,6 +1783,10 @@ impl KvEngine {
         if milliseconds <= 0 {
             return if self.delete(key) { 1 } else { 0 };
         }
+        self.log_wal(crate::persistence::format::WalOp::PExpire {
+            key: key.as_str().to_string(),
+            milliseconds,
+        });
         self.shard_for_key(key.as_str())
             .expire(key.as_str(), Duration::from_millis(milliseconds as u64))
     }
@@ -1791,6 +1806,9 @@ impl KvEngine {
     /// Remove TTL from a key (PERSIST)
     /// Returns 1 if TTL was removed, 0 if key doesn't exist or has no TTL
     pub fn persist(&self, key: &KvKey) -> i32 {
+        self.log_wal(crate::persistence::format::WalOp::Persist {
+            key: key.as_str().to_string(),
+        });
         self.shard_for_key(key.as_str()).persist(key.as_str())
     }
 
@@ -1810,6 +1828,10 @@ impl KvEngine {
     /// Returns number of new fields added (not updated)
     pub fn hset(&self, key: &KvKey, fields: Vec<(String, KvValue)>) -> Result<usize, KvError> {
         self.check_memory_and_evict()?;
+        self.log_wal(crate::persistence::format::WalOp::HSet {
+            key: key.as_str().to_string(),
+            fields: fields.clone(),
+        });
         self.shard_for_key(key.as_str()).hset(key.as_str(), fields)
     }
 
@@ -1838,6 +1860,10 @@ impl KvEngine {
     /// Delete fields from a hash (HDEL)
     /// Returns number of fields removed
     pub fn hdel(&self, key: &KvKey, fields: &[&str]) -> Result<usize, KvError> {
+        self.log_wal(crate::persistence::format::WalOp::HDel {
+            key: key.as_str().to_string(),
+            fields: fields.iter().map(|f| f.to_string()).collect(),
+        });
         self.shard_for_key(key.as_str()).hdel(key.as_str(), fields)
     }
 
@@ -1858,6 +1884,11 @@ impl KvEngine {
     /// Creates hash/field if not exists. Returns new value.
     pub fn hincrby(&self, key: &KvKey, field: &str, increment: i64) -> Result<i64, KvError> {
         self.check_memory_and_evict()?;
+        self.log_wal(crate::persistence::format::WalOp::HIncrBy {
+            key: key.as_str().to_string(),
+            field: field.to_string(),
+            delta: increment,
+        });
         self.shard_for_key(key.as_str())
             .hincrby(key.as_str(), field, increment)
     }
@@ -1866,6 +1897,11 @@ impl KvEngine {
     /// Creates hash/field if not exists. Returns new value.
     pub fn hincrbyfloat(&self, key: &KvKey, field: &str, increment: f64) -> Result<f64, KvError> {
         self.check_memory_and_evict()?;
+        self.log_wal(crate::persistence::format::WalOp::HIncrByFloat {
+            key: key.as_str().to_string(),
+            field: field.to_string(),
+            delta: increment,
+        });
         self.shard_for_key(key.as_str())
             .hincrbyfloat(key.as_str(), field, increment)
     }
@@ -1877,6 +1913,10 @@ impl KvEngine {
     /// Returns new length of list
     pub fn lpush(&self, key: &KvKey, values: Vec<KvValue>) -> Result<usize, KvError> {
         self.check_memory_and_evict()?;
+        self.log_wal(crate::persistence::format::WalOp::LPush {
+            key: key.as_str().to_string(),
+            values: values.clone(),
+        });
         self.shard_for_key(key.as_str()).lpush(key.as_str(), values)
     }
 
@@ -1885,16 +1925,26 @@ impl KvEngine {
     /// Returns new length of list
     pub fn rpush(&self, key: &KvKey, values: Vec<KvValue>) -> Result<usize, KvError> {
         self.check_memory_and_evict()?;
+        self.log_wal(crate::persistence::format::WalOp::RPush {
+            key: key.as_str().to_string(),
+            values: values.clone(),
+        });
         self.shard_for_key(key.as_str()).rpush(key.as_str(), values)
     }
 
     /// Pop element from head of list (LPOP)
     pub fn lpop(&self, key: &KvKey) -> Option<KvValue> {
+        self.log_wal(crate::persistence::format::WalOp::LPop {
+            key: key.as_str().to_string(),
+        });
         self.shard_for_key(key.as_str()).lpop(key.as_str())
     }
 
     /// Pop element from tail of list (RPOP)
     pub fn rpop(&self, key: &KvKey) -> Option<KvValue> {
+        self.log_wal(crate::persistence::format::WalOp::RPop {
+            key: key.as_str().to_string(),
+        });
         self.shard_for_key(key.as_str()).rpop(key.as_str())
     }
 
@@ -1919,11 +1969,19 @@ impl KvEngine {
     /// Add members to a set (SADD). Returns the number newly added.
     pub fn sadd(&self, key: &KvKey, members: Vec<String>) -> Result<usize, KvError> {
         self.check_memory_and_evict()?;
+        self.log_wal(crate::persistence::format::WalOp::SAdd {
+            key: key.as_str().to_string(),
+            members: members.clone(),
+        });
         self.shard_for_key(key.as_str()).sadd(key.as_str(), members)
     }
 
     /// Remove members from a set (SREM). Returns the number removed.
     pub fn srem(&self, key: &KvKey, members: Vec<String>) -> Result<usize, KvError> {
+        self.log_wal(crate::persistence::format::WalOp::SRem {
+            key: key.as_str().to_string(),
+            members: members.clone(),
+        });
         self.shard_for_key(key.as_str()).srem(key.as_str(), members)
     }
 
@@ -1948,11 +2006,19 @@ impl KvEngine {
     /// Add scored members to a sorted set (ZADD). Returns the number newly added.
     pub fn zadd(&self, key: &KvKey, members: Vec<(String, f64)>) -> Result<usize, KvError> {
         self.check_memory_and_evict()?;
+        self.log_wal(crate::persistence::format::WalOp::ZAdd {
+            key: key.as_str().to_string(),
+            members: members.clone(),
+        });
         self.shard_for_key(key.as_str()).zadd(key.as_str(), members)
     }
 
     /// Remove members from a sorted set (ZREM). Returns the number removed.
     pub fn zrem(&self, key: &KvKey, members: Vec<String>) -> Result<usize, KvError> {
+        self.log_wal(crate::persistence::format::WalOp::ZRem {
+            key: key.as_str().to_string(),
+            members: members.clone(),
+        });
         self.shard_for_key(key.as_str()).zrem(key.as_str(), members)
     }
 
@@ -1964,6 +2030,11 @@ impl KvEngine {
     /// Increment a member's score (ZINCRBY). Returns the new score.
     pub fn zincrby(&self, key: &KvKey, member: &str, increment: f64) -> Result<f64, KvError> {
         self.check_memory_and_evict()?;
+        self.log_wal(crate::persistence::format::WalOp::ZIncrBy {
+            key: key.as_str().to_string(),
+            member: member.to_string(),
+            delta: increment,
+        });
         self.shard_for_key(key.as_str())
             .zincrby(key.as_str(), member, increment)
     }

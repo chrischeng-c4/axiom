@@ -40,12 +40,12 @@ client to ship (relay+keep worker contract, #108).
 as raw bytes (`application/octet-stream`, TTL via `?ttl_ms=`) and never round-trip
 through JSON — `GET` returns them verbatim as octet-stream.
 
-**Durability.** Scalar ops (`/v1/kv`, incr/cas/setnx, `:mset`/`:mdel`) are
-WAL-backed and durable-before-ack. Collection types (hash / set / sorted-set /
-list) are **in-memory only** — the WAL covers scalar ops, so collections are not
-restored on recovery (a known engine limitation; extending the WAL format to
-cover them is a follow-up). Blocking list pops (`BLPOP`/`BRPOP`) are also still
-TODO.
+**Durability.** All mutations are WAL-backed and durable-before-ack — scalars
+(`/v1/kv`, incr/cas/setnx, `:mset`/`:mdel`), collections (hash / set /
+sorted-set / list push+pop), and TTL ops (expire/persist). A write returns 200
+only after its op is fsynced (group-committed); committed state survives a cold
+recovery (see `tests/durability.rs`). `GETEX`'s TTL side-effect is the one
+mutation not yet WAL-logged; blocking list pops (`BLPOP`/`BRPOP`) are still TODO.
 
 ## Run
 

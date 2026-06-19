@@ -48,6 +48,25 @@ pub enum WalOpType {
     Lock = 8,
     Unlock = 9,
     ExtendLock = 10,
+    // Collection + expiry + cas ops — added to close the durability gap (these
+    // were not WAL-logged before, so they were lost on recovery).
+    Cas = 11,
+    Expire = 12,
+    PExpire = 13,
+    Persist = 14,
+    HSet = 15,
+    HDel = 16,
+    HIncrBy = 17,
+    HIncrByFloat = 18,
+    SAdd = 19,
+    SRem = 20,
+    ZAdd = 21,
+    ZRem = 22,
+    ZIncrBy = 23,
+    LPush = 24,
+    RPush = 25,
+    LPop = 26,
+    RPop = 27,
 }
 
 impl WalOpType {
@@ -63,6 +82,23 @@ impl WalOpType {
             8 => Some(WalOpType::Lock),
             9 => Some(WalOpType::Unlock),
             10 => Some(WalOpType::ExtendLock),
+            11 => Some(WalOpType::Cas),
+            12 => Some(WalOpType::Expire),
+            13 => Some(WalOpType::PExpire),
+            14 => Some(WalOpType::Persist),
+            15 => Some(WalOpType::HSet),
+            16 => Some(WalOpType::HDel),
+            17 => Some(WalOpType::HIncrBy),
+            18 => Some(WalOpType::HIncrByFloat),
+            19 => Some(WalOpType::SAdd),
+            20 => Some(WalOpType::SRem),
+            21 => Some(WalOpType::ZAdd),
+            22 => Some(WalOpType::ZRem),
+            23 => Some(WalOpType::ZIncrBy),
+            24 => Some(WalOpType::LPush),
+            25 => Some(WalOpType::RPush),
+            26 => Some(WalOpType::LPop),
+            27 => Some(WalOpType::RPop),
             _ => None,
         }
     }
@@ -113,6 +149,77 @@ pub enum WalOp {
         owner: String,
         ttl: Duration,
     },
+    // --- appended (keep existing variant order for bincode compatibility) ---
+    Cas {
+        key: String,
+        expected: KvValue,
+        new: KvValue,
+        ttl: Option<Duration>,
+    },
+    Expire {
+        key: String,
+        seconds: i64,
+    },
+    PExpire {
+        key: String,
+        milliseconds: i64,
+    },
+    Persist {
+        key: String,
+    },
+    HSet {
+        key: String,
+        fields: Vec<(String, KvValue)>,
+    },
+    HDel {
+        key: String,
+        fields: Vec<String>,
+    },
+    HIncrBy {
+        key: String,
+        field: String,
+        delta: i64,
+    },
+    HIncrByFloat {
+        key: String,
+        field: String,
+        delta: f64,
+    },
+    SAdd {
+        key: String,
+        members: Vec<String>,
+    },
+    SRem {
+        key: String,
+        members: Vec<String>,
+    },
+    ZAdd {
+        key: String,
+        members: Vec<(String, f64)>,
+    },
+    ZRem {
+        key: String,
+        members: Vec<String>,
+    },
+    ZIncrBy {
+        key: String,
+        member: String,
+        delta: f64,
+    },
+    LPush {
+        key: String,
+        values: Vec<KvValue>,
+    },
+    RPush {
+        key: String,
+        values: Vec<KvValue>,
+    },
+    LPop {
+        key: String,
+    },
+    RPop {
+        key: String,
+    },
 }
 
 impl WalOp {
@@ -128,6 +235,23 @@ impl WalOp {
             WalOp::Lock { .. } => WalOpType::Lock,
             WalOp::Unlock { .. } => WalOpType::Unlock,
             WalOp::ExtendLock { .. } => WalOpType::ExtendLock,
+            WalOp::Cas { .. } => WalOpType::Cas,
+            WalOp::Expire { .. } => WalOpType::Expire,
+            WalOp::PExpire { .. } => WalOpType::PExpire,
+            WalOp::Persist { .. } => WalOpType::Persist,
+            WalOp::HSet { .. } => WalOpType::HSet,
+            WalOp::HDel { .. } => WalOpType::HDel,
+            WalOp::HIncrBy { .. } => WalOpType::HIncrBy,
+            WalOp::HIncrByFloat { .. } => WalOpType::HIncrByFloat,
+            WalOp::SAdd { .. } => WalOpType::SAdd,
+            WalOp::SRem { .. } => WalOpType::SRem,
+            WalOp::ZAdd { .. } => WalOpType::ZAdd,
+            WalOp::ZRem { .. } => WalOpType::ZRem,
+            WalOp::ZIncrBy { .. } => WalOpType::ZIncrBy,
+            WalOp::LPush { .. } => WalOpType::LPush,
+            WalOp::RPush { .. } => WalOpType::RPush,
+            WalOp::LPop { .. } => WalOpType::LPop,
+            WalOp::RPop { .. } => WalOpType::RPop,
         }
     }
 }
