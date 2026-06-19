@@ -109,12 +109,3 @@ changes:
     impl_mode: hand-written
     reason: "Tests: disk-backed entry() for evicted seqs, broadcast range/replay across the evict boundary, bounded dedupe window (in-window dedupes, evicted re-appends), and no-eviction parity when the ring exceeds N."
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] append records a byte offset + ring-evicts beyond ram_ring_entries; reads serve from the ring (hot) or seek the offset index and read from disk (cold); dedupe bounded to a FIFO window. The log scales beyond RAM while replay still works. Applicable.
-- [unit-test] disk-backed entry for evicted seqs, range/replay across the evict boundary, bounded dedupe window, and no-eviction parity. Applicable.
-- [changes] Scoped to log.rs + a new test; config knobs (ram_ring_entries, dedupe.window_entries) already exist. Applicable.
