@@ -35,6 +35,8 @@ pub struct AppState {
     pub metrics: Arc<metrics::HttpMetrics>,
     /// Per-key wait registry for blocking list pops (BLPOP/BRPOP).
     pub waiters: Arc<waiters::ListWaiters>,
+    /// Cluster topology / sharding (single-node by default).
+    pub cluster: crate::cluster::Cluster,
     draining: Arc<AtomicBool>,
 }
 
@@ -45,12 +47,18 @@ impl AppState {
             body_limit: DEFAULT_BODY_LIMIT,
             metrics: Arc::new(metrics::HttpMetrics::default()),
             waiters: Arc::new(waiters::ListWaiters::default()),
+            cluster: Arc::new(crate::cluster::ClusterConfig::default()),
             draining: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn with_body_limit(mut self, body_limit: usize) -> Self {
         self.body_limit = body_limit;
+        self
+    }
+
+    pub fn with_cluster(mut self, cluster: crate::cluster::ClusterConfig) -> Self {
+        self.cluster = Arc::new(cluster);
         self
     }
 

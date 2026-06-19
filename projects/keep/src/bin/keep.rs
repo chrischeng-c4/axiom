@@ -61,6 +61,18 @@ struct Args {
     /// Graceful drain window on SIGTERM (s).
     #[arg(long, env = "KEEP_GRACE_SECS", default_value_t = 30)]
     grace_secs: u64,
+    /// This node's ordinal in the cluster (k8s StatefulSet pod index).
+    #[arg(long, env = "KEEP_NODE_ID", default_value_t = 0)]
+    node_id: usize,
+    /// Total nodes in the cluster.
+    #[arg(long, env = "KEEP_NODE_COUNT", default_value_t = 1)]
+    node_count: usize,
+    /// Virtual shard count for client-side routing (>= node_count).
+    #[arg(long, env = "KEEP_SHARD_COUNT", default_value_t = 1)]
+    shard_count: u32,
+    /// Peer base URLs (comma-separated), index = node ordinal.
+    #[arg(long, env = "KEEP_PEERS", value_delimiter = ',')]
+    peers: Vec<String>,
 }
 
 #[tokio::main]
@@ -98,7 +110,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (engine, Some(persistence))
     };
 
-    let state = AppState::new(engine).with_body_limit(args.body_limit);
+    let cluster =
+        keep::ClusterConfig::new(args.node_id, args.node_count, args.shard_count, args.peers.clone());
+    info!(
+        node_id = cluster.node_id,
+        node_count = cluster.node_count,
+        shard_count = cluster.shard_count,
+        owned_shards = cluster.owned_shards().len(),
+        "cluster topology"
+    );
+    let state = AppState::new(engine)
+        .with_body_limit(args.body_limit)
+        .with_cluster(cluster);
     let app = keep::router(state.clone());
 
     let listener = TcpListener::bind(addr).await?;

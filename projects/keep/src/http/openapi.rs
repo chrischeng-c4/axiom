@@ -81,6 +81,7 @@ use crate::http::{handlers, hash, lists, meta, sets, zsets};
         handlers::readyz,
         handlers::metrics,
         handlers::info,
+        handlers::cluster,
         handlers::openapi_spec,
     ),
     components(schemas(
@@ -135,6 +136,7 @@ use crate::http::{handlers, hash, lists, meta, sets, zsets};
         meta::ListRangeResponse,
         meta::LenResponse,
         lists::BlockingPopRequest,
+        crate::cluster::ClusterState,
     ))
 )]
 pub struct ApiDoc;

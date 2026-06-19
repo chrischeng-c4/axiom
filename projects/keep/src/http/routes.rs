@@ -92,6 +92,7 @@ pub fn router(state: AppState) -> Router {
         .route("/readyz", get(handlers::readyz))
         .route("/metrics", get(handlers::metrics))
         .route("/info", get(handlers::info))
+        .route("/cluster", get(handlers::cluster))
         .route("/openapi.json", get(handlers::openapi_spec))
         .route("/docs", get(handlers::docs))
         .merge(data_plane)
