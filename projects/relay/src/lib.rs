@@ -42,6 +42,7 @@ pub mod engine;
 pub mod log;
 pub mod openapi;
 pub mod perf_gate;
+pub mod raft;
 pub mod reconciler;
 pub mod replication;
 pub mod server;
@@ -57,6 +58,10 @@ pub use config::{
 };
 pub use engine::Relay;
 pub use log::Log;
+pub use raft::{
+    auto_membership, AppendReq, AppendResp, Membership, NodeId, Outgoing, RaftEntry, RaftMsg,
+    RaftNode, RaftTransport, Role, VoteReq, VoteResp,
+};
 pub use reconciler::{spawn_reconciler, ReconcilerHandle};
 pub use replication::{spawn_follower, FollowerHandle};
 pub use server::{router, AppState};
