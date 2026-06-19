@@ -62,15 +62,37 @@ flowchart TD
 ```mermaid
 ---
 id: relay-bounded-ram-log-test-plan
-entry: start
+entry: suite
 nodes:
-  start: { kind: start, label: "pending" }
-edges: []
+  suite: { kind: start, label: "bounded-RAM log tests" }
+  t_evict: { kind: process, label: "tiny ram_ring (e.g. 4); publish 20 to a disk log" }
+  a_evict: { kind: terminal, label: "assert entry(seq) returns the correct payload for evicted AND resident seqs (disk-backed read)" }
+  t_range: { kind: process, label: "broadcast subscribe from_seq=0 over a log with most entries evicted" }
+  a_range: { kind: terminal, label: "assert all entries delivered in order (range reads cold prefix from disk + hot tail from RAM)" }
+  t_dedupe: { kind: process, label: "dedupe window = small; publish more distinct ids than the window, then re-publish a still-in-window id and an evicted id" }
+  a_dedupe: { kind: terminal, label: "assert in-window id dedupes (same seq); evicted id re-appends (new seq) — bounded at-least-once window" }
+  t_unchanged: { kind: process, label: "ram_ring larger than N: publish N, read back" }
+  a_unchanged: { kind: terminal, label: "assert nothing evicted; behavior identical to before (hot path)" }
+edges:
+  - { from: suite, to: t_evict }
+  - { from: t_evict, to: a_evict }
+  - { from: suite, to: t_range }
+  - { from: t_range, to: a_range }
+  - { from: suite, to: t_dedupe }
+  - { from: t_dedupe, to: a_dedupe }
+  - { from: suite, to: t_unchanged }
+  - { from: t_unchanged, to: a_unchanged }
 ---
 flowchart TD
-    start([pending])
+    suite([bounded-RAM log suite]) --> t_evict[tiny ring, publish 20]
+    t_evict --> a_evict([entry reads evicted from disk])
+    suite --> t_range[subscribe from 0, mostly evicted]
+    t_range --> a_range([all in order, cold+hot])
+    suite --> t_dedupe[small dedupe window]
+    t_dedupe --> a_dedupe([in-window dedupes; evicted re-appends])
+    suite --> t_unchanged[ring > N]
+    t_unchanged --> a_unchanged([no eviction, identical])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
