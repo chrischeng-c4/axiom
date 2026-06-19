@@ -84,7 +84,6 @@ flowchart TD
     suite --> t_idem[keep tailing]
     t_idem --> a_idem([no duplicates])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
