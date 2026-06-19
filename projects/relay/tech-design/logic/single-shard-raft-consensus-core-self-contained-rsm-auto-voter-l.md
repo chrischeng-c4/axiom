@@ -136,3 +136,12 @@ changes:
     impl_mode: hand-written
     reason: "Deterministic in-process simulation: a message bus pumps node outboxes to handlers. Tests leader election, replicate+commit ordering, kill-leader -> re-elect with no committed loss, learner replicates/applies but never votes nor counts toward majority, stale higher-term step-down, and a relay-integration scenario (command=publish, apply=relay engine) that converges across a leader failover."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Step-driven RaftNode (tick + handle): election (term bump, self-vote, RequestVote, majority of VOTERS), replication (AppendEntries with prevLog matching + truncate conflicting suffix), commit-by-majority restricted to current-term entries over voters only, step-down on higher term, take_committed apply. auto_membership(N) = largest-odd voters + trailing learner; learners replicate/apply but never vote/start elections/count. RaftTransport trait + in-process bus. RSM model leaves relay's append-only log untouched. Self-contained, sound.
+- [unit-test] Deterministic sim: elect, replicate+commit order, kill-leader no-committed-loss + re-elect, learner non-voting, stale step-down, relay-integration failover convergence.
+- [changes] raft.rs + lib re-export + raft_core.rs. No external dep.
