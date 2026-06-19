@@ -22,18 +22,18 @@ use crate::types::{KvKey, KvValue};
 // helpers
 // ---------------------------------------------------------------------------
 
-fn key_of(s: &str) -> Result<KvKey, ApiErr> {
+pub(crate) fn key_of(s: &str) -> Result<KvKey, ApiErr> {
     KvKey::new(s).map_err(ApiErr::from)
 }
 
-fn ttl(ms: Option<u64>) -> Option<Duration> {
+pub(crate) fn ttl(ms: Option<u64>) -> Option<Duration> {
     ms.map(Duration::from_millis)
 }
 
 /// Await durability of the writes issued so far, then return — the basis for
 /// durable-before-ack. No-op when persistence is disabled. Concurrent writers
 /// share one fsync (group commit), so this is cheap under load.
-async fn ack_durable(st: &AppState) {
+pub(crate) async fn ack_durable(st: &AppState) {
     if let Some(rx) = st.engine.durability_barrier() {
         let _ = rx.await;
     }

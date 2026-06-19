@@ -28,7 +28,11 @@ client to ship (relay+keep worker contract, #108).
 | POST | `/v1/kv:mget` `:mset` `:mdel` | batch |
 | GET | `/v1/kv?prefix=&limit=` | scan |
 | POST/DELETE/PATCH | `/v1/locks/{key}` | acquire / release / extend lease |
-| POST | `/v1/lists/{key}/{lpush,rpush,lpop,rpop}` | list ops |
+| POST/GET | `/v1/lists/{key}` + `/{lpush,rpush,lpop,rpop}` `/length` | list push/pop/range/len |
+| POST/GET/DELETE | `/v1/hashes/{key}` + `/length` `/mget` `/incr` `/fields/{field}` | hash ops |
+| POST/GET/DELETE | `/v1/sets/{key}` + `/length` `/members/{m}` | set ops |
+| POST/GET/DELETE | `/v1/zsets/{key}` + `/length` `/incr` `/members/{m}/{score,rank}` | sorted-set ops |
+| POST/GET | `/v1/kv/{key}/{expire,ttl,persist}` | TTL / expiry on any key |
 | GET | `/healthz` `/readyz` `/metrics` `/info` `/openapi.json` `/docs` | admin / probes |
 
 **Values.** Structured values travel as native JSON (`application/json`, body
@@ -36,8 +40,12 @@ client to ship (relay+keep worker contract, #108).
 as raw bytes (`application/octet-stream`, TTL via `?ttl_ms=`) and never round-trip
 through JSON — `GET` returns them verbatim as octet-stream.
 
-Deferred to follow-ups: blocking list pops (`BLPOP`/`BRPOP` long-poll), and the
-hash / set / sorted-set HTTP routes (the engine already supports them).
+**Durability.** Scalar ops (`/v1/kv`, incr/cas/setnx, `:mset`/`:mdel`) are
+WAL-backed and durable-before-ack. Collection types (hash / set / sorted-set /
+list) are **in-memory only** — the WAL covers scalar ops, so collections are not
+restored on recovery (a known engine limitation; extending the WAL format to
+cover them is a follow-up). Blocking list pops (`BLPOP`/`BRPOP`) are also still
+TODO.
 
 ## Run
 

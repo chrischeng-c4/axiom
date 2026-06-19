@@ -8,7 +8,7 @@ use axum::{
     Router,
 };
 
-use crate::http::{handlers, AppState};
+use crate::http::{handlers, hash, meta, sets, zsets, AppState};
 
 /// Build the full application router.
 pub fn router(state: AppState) -> Router {
@@ -39,10 +39,44 @@ pub fn router(state: AppState) -> Router {
                 .patch(handlers::extend_lock),
         )
         // lists
+        .route("/v1/lists/{key}", get(meta::lrange))
+        .route("/v1/lists/{key}/length", get(meta::llen))
         .route("/v1/lists/{key}/lpush", post(handlers::lpush))
         .route("/v1/lists/{key}/rpush", post(handlers::rpush))
         .route("/v1/lists/{key}/lpop", post(handlers::lpop))
         .route("/v1/lists/{key}/rpop", post(handlers::rpop))
+        // expiry (any key)
+        .route("/v1/kv/{key}/expire", post(meta::expire))
+        .route("/v1/kv/{key}/ttl", get(meta::ttl))
+        .route("/v1/kv/{key}/persist", post(meta::persist))
+        // hashes
+        .route(
+            "/v1/hashes/{key}",
+            post(hash::hset).get(hash::hgetall).delete(hash::hdel),
+        )
+        .route("/v1/hashes/{key}/length", get(hash::hlen))
+        .route("/v1/hashes/{key}/mget", post(hash::hmget))
+        .route("/v1/hashes/{key}/incr", post(hash::hincr))
+        .route(
+            "/v1/hashes/{key}/fields/{field}",
+            get(hash::hget).head(hash::hexists),
+        )
+        // sets
+        .route(
+            "/v1/sets/{key}",
+            post(sets::sadd).get(sets::smembers).delete(sets::srem),
+        )
+        .route("/v1/sets/{key}/length", get(sets::scard))
+        .route("/v1/sets/{key}/members/{member}", axum::routing::head(sets::sismember))
+        // sorted sets
+        .route(
+            "/v1/zsets/{key}",
+            post(zsets::zadd).get(zsets::zrange).delete(zsets::zrem),
+        )
+        .route("/v1/zsets/{key}/length", get(zsets::zcard))
+        .route("/v1/zsets/{key}/incr", post(zsets::zincr))
+        .route("/v1/zsets/{key}/members/{member}/score", get(zsets::zscore))
+        .route("/v1/zsets/{key}/members/{member}/rank", get(zsets::zrank))
         .layer(DefaultBodyLimit::max(body_limit));
 
     Router::new()
