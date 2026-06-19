@@ -115,7 +115,6 @@ flowchart TD
     suite --> t_stale[higher-term msg] --> a_stale([leader steps down])
     suite --> t_relay[command=publish] --> a_relay([engines converge across failover])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
