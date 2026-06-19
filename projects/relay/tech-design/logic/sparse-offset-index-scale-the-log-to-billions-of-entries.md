@@ -108,3 +108,12 @@ changes:
     impl_mode: hand-written
     reason: "Tests: correct reads at/before/after stride boundaries, sparse index size ~ N/stride, cross-segment cold range, and correct reads after prune + reopen."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Sparse sorted (seq, in-segment offset) index sampled per-STRIDE + per-segment anchor; cold reads binary-search the nearest point <= seq in the seq's segment, seek, scan forward; range pays it once per segment run. Prune drops points < start_seq; recovery rebuilds. ~len/STRIDE RAM. Sound.
+- [unit-test] reads around stride boundaries, sparse size, cross-segment, post-prune reopen.
+- [changes] log.rs index + a new test.
