@@ -163,7 +163,7 @@ impl Relay {
         let ss = self.subject_state(subject)?;
         let mut g = ss.lock().expect("subject mutex");
         let g = &mut *g;
-        Ok(g.broadcast.poll(subscriber_id, &g.log))
+        g.broadcast.poll(subscriber_id, &g.log)
     }
 
     /// Lease the next eligible entry of `subject` to a competing consumer.
