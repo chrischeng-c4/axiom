@@ -110,3 +110,12 @@ changes:
     impl_mode: hand-written
     reason: "Real-h2c HA test: a follower replicator converges to a leader's N entries, replicates entries published after connect, serves reads, and does not duplicate on continued tailing."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Follower = per-subject task tailing the leader's subscribe stream, re-applying via local.publish (idempotent on message_id, so reconnect/replay are safe and deterministic routing keeps shard/seq aligned); backoff+reconnect on error; promotable. Async primary-backup, scoped clearly vs synchronous Raft.
+- [unit-test] Convergence to N, live post-connect replication, read serving, and no-duplicate on retail — over a real h2c leader.
+- [changes] reqwest -> normal dep, replication module + handle, lib re-export, a real-h2c test. No axiom-project dep.
