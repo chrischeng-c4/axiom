@@ -465,6 +465,24 @@ extern "C" fn tc_init(self_obj: MbValue, args: MbValue) -> MbValue {
         .copied()
         .and_then(extract_str)
         .unwrap_or_else(|| DEFAULT_TEST_METHOD.to_string());
+    // CPython TestCase.__init__: a methodName that names no attribute is a
+    // ValueError ("no test method named ..."), except the "runTest" default
+    // (which is allowed to be absent).
+    if method != DEFAULT_TEST_METHOD {
+        let class_name =
+            inst_class_name(self_obj).unwrap_or_else(|| "TestCase".to_string());
+        let missing = super::super::class::lookup_method(&class_name, &method).is_none()
+            && inst_get(self_obj, &method).is_none();
+        if missing {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "no test method named {method} on {class_name}"
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
     inst_set(self_obj, "_testMethodName", name_val(&method));
     MbValue::none()
 }
