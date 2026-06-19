@@ -5005,6 +5005,20 @@ fn sum_fold_add(acc: MbValue, item: MbValue) -> MbValue {
     MbValue::none()
 }
 
+/// One Neumaier (improved Kahan–Babuška) compensated-summation step.
+/// CPython 3.12's `sum()` uses this for the float path so that, e.g.,
+/// `sum([1.0, 1e101, 1.0, -1e101]) == 2.0` and `sum([0.1]*10) == 1.0`.
+#[inline]
+fn neumaier_step(ftotal: f64, c: f64, x: f64) -> (f64, f64) {
+    let t = ftotal + x;
+    let c = if ftotal.abs() >= x.abs() {
+        c + ((ftotal - t) + x)
+    } else {
+        c + ((x - t) + ftotal)
+    };
+    (t, c)
+}
+
 fn sum_from(args: MbValue, start: MbValue) -> MbValue {
     if raise_if_not_iterable(args) {
         return MbValue::none();
@@ -5021,10 +5035,14 @@ fn sum_from(args: MbValue, start: MbValue) -> MbValue {
         let mut total: i128 = start.as_int_pyint().unwrap_or(0) as i128;
         let mut is_float = start.is_float();
         let mut ftotal: f64 = start.as_float().unwrap_or(0.0);
+        // Neumaier compensation term — only meaningful once is_float is set.
+        let mut c: f64 = 0.0;
         for item in &items {
             if let Some(i) = item.as_int_pyint() {
                 if is_float {
-                    ftotal += i as f64;
+                    let (nt, nc) = neumaier_step(ftotal, c, i as f64);
+                    ftotal = nt;
+                    c = nc;
                 } else {
                     total += i as i128;
                 }
@@ -5032,12 +5050,15 @@ fn sum_from(args: MbValue, start: MbValue) -> MbValue {
                 if !is_float {
                     ftotal = total as f64;
                     is_float = true;
+                    c = 0.0;
                 }
-                ftotal += f;
+                let (nt, nc) = neumaier_step(ftotal, c, f);
+                ftotal = nt;
+                c = nc;
             }
         }
         if is_float {
-            return MbValue::from_float(ftotal);
+            return MbValue::from_float(ftotal + c);
         }
         if let Ok(small) = i64::try_from(total) {
             return super::bigint_ops::int_from_i64(small);
