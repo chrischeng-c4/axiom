@@ -224,5 +224,23 @@ impl WorkQueue {
             })
         }
     }
+
+    /// The committed watermark: the count of contiguous acked entries from 0
+    /// (so `committed_seq = watermark - 1`). Persisted for crash recovery.
+    ///
+    /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
+    pub fn committed_watermark(&self) -> Seq {
+        self.committed
+    }
+
+    /// Recover on open from a persisted watermark: entries `< watermark` are
+    /// treated as committed and are never re-offered; uncommitted entries
+    /// redeliver (at-least-once).
+    ///
+    /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
+    pub fn recover(&mut self, watermark: Seq) {
+        self.committed = watermark;
+        self.next_offer = watermark;
+    }
 }
 // HANDWRITE-END

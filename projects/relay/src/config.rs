@@ -139,7 +139,9 @@ impl Default for RelayCoreConfig {
             data_dir: "./relay-data".to_string(),
             segment_bytes: 134_217_728,
             ram_ring_entries: 65_536,
-            fsync: FsyncPolicy::Interval,
+            // Durable + power-safe by default. The batch produce / ack paths
+            // group-commit (one fsync per batch), so this stays fast at scale.
+            fsync: FsyncPolicy::Always,
             fsync_interval_ms: 50,
             default_shards: 1,
             dedupe: DedupeConfig::default(),

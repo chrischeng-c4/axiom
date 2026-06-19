@@ -7,7 +7,7 @@
 //! low-latency fan-out / replay, and (when a data directory is configured)
 //! persists them as newline-delimited JSON that is replayed on open.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
@@ -27,6 +27,8 @@ pub struct Log {
     dedupe: HashMap<MessageId, Seq>,
     writer: Option<BufWriter<File>>,
     fsync: FsyncPolicy,
+    /// Sidecar path for the durable committed watermark (None = RAM-only).
+    commit_path: Option<PathBuf>,
 }
 
 fn sanitize(s: &str) -> String {
@@ -55,6 +57,7 @@ impl Log {
             dedupe: HashMap::new(),
             writer: None,
             fsync: config.fsync,
+            commit_path: None,
         };
 
         if config.data_dir.is_empty() {
@@ -64,6 +67,7 @@ impl Log {
         let dir = PathBuf::from(&config.data_dir);
         create_dir_all(&dir)?;
         let path = dir.join(format!("{}__shard{}.ndjson", sanitize(subject), shard));
+        log.commit_path = Some(dir.join(format!("{}__shard{}.commit", sanitize(subject), shard)));
 
         if path.exists() {
             let file = File::open(&path)?;
@@ -152,6 +156,90 @@ impl Log {
             seq,
             deduped: false,
         })
+    }
+
+    /// Append a batch, then issue ONE `sync_all` for the whole batch (group
+    /// commit): every entry becomes durable with a single fsync, so durability
+    /// cost is amortized. Idempotent per `message_id` (against existing entries
+    /// and within the batch). Returns one outcome per input, in order.
+    ///
+    /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
+    pub fn append_many(
+        &mut self,
+        items: Vec<(String, Payload, BTreeMap<String, String>)>,
+        now: DateTime<Utc>,
+    ) -> io::Result<Vec<AppendOutcome>> {
+        let mut outcomes = Vec::with_capacity(items.len());
+        let mut pending: Vec<LogEntry> = Vec::new();
+        let mut seen: HashMap<String, Seq> = HashMap::new();
+        let mut next = self.entries.len() as Seq;
+
+        for (message_id, payload, headers) in items {
+            if let Some(seq) = self
+                .dedupe
+                .get(&message_id)
+                .copied()
+                .or_else(|| seen.get(&message_id).copied())
+            {
+                outcomes.push(AppendOutcome { seq, deduped: true });
+                continue;
+            }
+            let seq = next;
+            next += 1;
+            seen.insert(message_id.clone(), seq);
+            let entry = LogEntry {
+                seq,
+                message_id,
+                subject: self.subject.clone(),
+                shard: self.shard,
+                payload,
+                headers,
+                appended_at: now,
+            };
+            if let Some(writer) = self.writer.as_mut() {
+                let line = serde_json::to_string(&entry)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                writer.write_all(line.as_bytes())?;
+                writer.write_all(b"\n")?;
+            }
+            pending.push(entry);
+            outcomes.push(AppendOutcome {
+                seq,
+                deduped: false,
+            });
+        }
+
+        // Group commit: a single fsync makes the whole batch durable.
+        if let Some(writer) = self.writer.as_mut() {
+            writer.flush()?;
+            writer.get_ref().sync_all()?;
+        }
+        for entry in pending {
+            self.dedupe.insert(entry.message_id.clone(), entry.seq);
+            self.entries.push(entry);
+        }
+        Ok(outcomes)
+    }
+
+    /// Durably record the committed watermark (one write + fsync). No-op when
+    /// RAM-only.
+    ///
+    /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
+    pub fn persist_commit(&self, watermark: Seq) -> io::Result<()> {
+        if let Some(path) = &self.commit_path {
+            let mut f = File::create(path)?;
+            f.write_all(watermark.to_string().as_bytes())?;
+            f.sync_all()?;
+        }
+        Ok(())
+    }
+
+    /// Load the durable committed watermark recorded by a previous run, if any.
+    ///
+    /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
+    pub fn load_commit(&self) -> Option<Seq> {
+        let path = self.commit_path.as_ref()?;
+        std::fs::read_to_string(path).ok()?.trim().parse().ok()
     }
 }
 // HANDWRITE-END

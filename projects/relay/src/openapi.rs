@@ -19,6 +19,7 @@ use utoipa::OpenApi;
     ),
     paths(
         crate::server::publish,
+        crate::server::publish_batch,
         crate::server::lease,
         crate::server::ack,
         crate::server::lease_batch,

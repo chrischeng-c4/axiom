@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::types::{Lease, Payload, Seq};
+use crate::types::{AppendOutcome, Lease, Payload, Seq};
 
 /// Publish one message to the path's subject.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +106,27 @@ pub struct AckBatchRequest {
 pub struct AckBatchResponse {
     pub acked: usize,
     pub committed_seq: Option<Seq>,
+}
+
+/// One message in a publish batch (group-commit produce, #129).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishBatchItem {
+    pub message_id: String,
+    pub payload: Payload,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+}
+
+/// Publish many messages in one durable, group-committed call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishBatchRequest {
+    pub messages: Vec<PublishBatchItem>,
+}
+
+/// One `AppendOutcome` per input message, in order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishBatchResponse {
+    pub outcomes: Vec<AppendOutcome>,
 }
 
 /// Content type for the CBOR fast path / stream.
