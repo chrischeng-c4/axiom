@@ -52,7 +52,7 @@ fn report_only_cell_does_not_fail_when_behind() {
 // Smoke: the three benched workloads execute and remain correct at small scale.
 #[test]
 fn gate_workloads_are_valid() {
-    let mut r = Relay::new(RelayCoreConfig::in_memory());
+    let r = Relay::new(RelayCoreConfig::in_memory());
     let now = Utc::now();
     const M: usize = 200;
 

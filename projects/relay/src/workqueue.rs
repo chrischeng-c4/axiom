@@ -6,8 +6,13 @@
 //! expires; an expired lease makes the entry redelivery-eligible (with the
 //! attempt count carried forward — standard at-least-once retry semantics).
 //! The committed offset is the highest contiguous acked seq.
+//!
+//! Picking the next entry is O(1) (#128): a `next_offer` cursor hands out
+//! never-offered seqs in order, and a redeliver min-heap re-offers reclaimed
+//! seqs first. The committed watermark advances incrementally on ack.
 
-use std::collections::{HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -25,6 +30,12 @@ pub struct WorkQueue {
     lease_index: HashMap<String, Seq>,
     acked: HashSet<Seq>,
     attempts: HashMap<Seq, u32>,
+    /// Next never-offered seq (O(1) fresh pick).
+    next_offer: Seq,
+    /// Reclaimed seqs to re-offer first (smallest-first); preserves prefer-redeliver.
+    redeliver: BinaryHeap<Reverse<Seq>>,
+    /// Contiguous-acked watermark: every seq `< committed` has been acked.
+    committed: Seq,
 }
 
 impl WorkQueue {
@@ -38,6 +49,9 @@ impl WorkQueue {
             lease_index: HashMap::new(),
             acked: HashSet::new(),
             attempts: HashMap::new(),
+            next_offer: 0,
+            redeliver: BinaryHeap::new(),
+            committed: 0,
         }
     }
 
@@ -47,23 +61,24 @@ impl WorkQueue {
         self.max_attempts
     }
 
-    /// Pick the next entry to offer: the smallest eligible seq, **preferring a
-    /// redeliver-eligible one** (previously attempted) over a fresh one, so
-    /// reclaimed work is retried before new work is started.
-    fn pick(&self, log_len: Seq) -> Option<Seq> {
-        let mut fresh = None;
-        let mut seq = 0u64;
-        while seq < log_len {
+    /// O(1) next entry to offer: pop the redeliver min-heap first (prefer
+    /// redeliver), otherwise take `next_offer` if the log has it.
+    ///
+    /// @spec projects/relay/tech-design/logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md#logic
+    fn pick(&mut self, log_len: Seq) -> Option<Seq> {
+        while let Some(&Reverse(seq)) = self.redeliver.peek() {
+            self.redeliver.pop();
+            // Skip a stale heap entry that was meanwhile acked or re-leased.
             if !self.acked.contains(&seq) && !self.leases.contains_key(&seq) {
-                if self.attempts.get(&seq).copied().unwrap_or(0) > 0 {
-                    return Some(seq); // smallest redeliver-eligible wins
-                } else if fresh.is_none() {
-                    fresh = Some(seq);
-                }
+                return Some(seq);
             }
-            seq += 1;
         }
-        fresh
+        if self.next_offer < log_len {
+            let seq = self.next_offer;
+            self.next_offer += 1;
+            return Some(seq);
+        }
+        None
     }
 
     /// Lease the next entry to `consumer_id` (preferring redelivery). The grant
@@ -95,6 +110,26 @@ impl WorkQueue {
         Some(lease)
     }
 
+    /// Lease up to `max` entries in one call (amortizes a worker's round-trips).
+    ///
+    /// @spec projects/relay/tech-design/logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md#logic
+    pub fn lease_batch(
+        &mut self,
+        consumer_id: &str,
+        log_len: Seq,
+        max: usize,
+        now: DateTime<Utc>,
+    ) -> Vec<Lease> {
+        let mut out = Vec::with_capacity(max.min(64));
+        for _ in 0..max {
+            match self.lease(consumer_id, log_len, now) {
+                Some(l) => out.push(l),
+                None => break,
+            }
+        }
+        out
+    }
+
     /// Acknowledge a lease, marking its entry delivered. Idempotent and fenced:
     /// returns `false` (no-op) when the `lease_id` is unknown or, if `epoch` is
     /// given, when it does not match the live lease. Passing `None` for `epoch`
@@ -113,7 +148,24 @@ impl WorkQueue {
         self.lease_index.remove(lease_id);
         self.leases.remove(&seq);
         self.acked.insert(seq);
+        // Advance the contiguous-acked watermark (amortized O(1)).
+        while self.acked.contains(&self.committed) {
+            self.committed += 1;
+        }
         true
+    }
+
+    /// Acknowledge many leases in one call; returns how many were accepted.
+    ///
+    /// @spec projects/relay/tech-design/logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md#logic
+    pub fn ack_batch(&mut self, acks: &[(String, Option<u64>)]) -> usize {
+        let mut n = 0;
+        for (lease_id, epoch) in acks {
+            if self.ack(lease_id, *epoch) {
+                n += 1;
+            }
+        }
+        n
     }
 
     /// Extend a held lease if `lease_id` is known and `epoch` matches the live
@@ -135,10 +187,11 @@ impl WorkQueue {
         Some(lease.expires_at)
     }
 
-    /// Reclaim every lease whose expiry is at or before `now`, making those
-    /// entries redelivery-eligible. Returns the reclaimed seqs in order.
+    /// Reclaim every lease whose expiry is at or before `now`, pushing those
+    /// seqs onto the redeliver heap so the next lease re-offers them first.
+    /// Returns the reclaimed seqs in order.
     ///
-    /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
+    /// @spec projects/relay/tech-design/logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md#logic
     pub fn reclaim_expired(&mut self, now: DateTime<Utc>) -> Vec<Seq> {
         let mut expired: Vec<Seq> = self
             .leases
@@ -150,6 +203,7 @@ impl WorkQueue {
         for seq in &expired {
             if let Some(lease) = self.leases.remove(seq) {
                 self.lease_index.remove(&lease.lease_id);
+                self.redeliver.push(Reverse(*seq));
             }
         }
         expired
@@ -160,17 +214,13 @@ impl WorkQueue {
     ///
     /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
     pub fn committed_offset(&self) -> Option<CommittedOffset> {
-        let mut c = 0u64;
-        while self.acked.contains(&c) {
-            c += 1;
-        }
-        if c == 0 {
+        if self.committed == 0 {
             None
         } else {
             Some(CommittedOffset {
                 subject: self.subject.clone(),
                 shard: self.shard,
-                committed_seq: c - 1,
+                committed_seq: self.committed - 1,
             })
         }
     }

@@ -74,6 +74,40 @@ pub struct SubscribeQuery {
     pub subscriber_id: Option<String>,
 }
 
+/// Lease up to `max` entries in one call (work-queue throughput, #128).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaseBatchRequest {
+    pub consumer_id: String,
+    pub max: usize,
+}
+
+/// Up to `max` granted leases, in seq order (possibly empty).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaseBatchResponse {
+    pub leases: Vec<Lease>,
+}
+
+/// One entry in an ack batch; optional `epoch` fences a stale worker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AckOne {
+    pub lease_id: String,
+    #[serde(default)]
+    pub epoch: Option<u64>,
+}
+
+/// Acknowledge many leases in one call (#128).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AckBatchRequest {
+    pub acks: Vec<AckOne>,
+}
+
+/// How many of the batch were accepted, plus the resulting committed offset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AckBatchResponse {
+    pub acked: usize,
+    pub committed_seq: Option<Seq>,
+}
+
 /// Content type for the CBOR fast path / stream.
 pub const CBOR: &str = "application/cbor";
 /// Content type for the broadcast frame stream.

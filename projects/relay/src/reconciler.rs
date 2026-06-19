@@ -7,7 +7,7 @@
 //! is held only for the (synchronous, frontier-only) sweep, never across the
 //! timer `.await`.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -39,17 +39,14 @@ impl Drop for ReconcilerHandle {
 /// every `interval`.
 ///
 /// @spec projects/relay/tech-design/logic/reconciler-lease-reclaim-redeliver-liveness.md#logic
-pub fn spawn_reconciler(relay: Arc<Mutex<Relay>>, interval: Duration) -> ReconcilerHandle {
+pub fn spawn_reconciler(relay: Arc<Relay>, interval: Duration) -> ReconcilerHandle {
     let task = tokio::spawn(async move {
         let mut tick = tokio::time::interval(interval);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            // Synchronous, frontier-only sweep; guard dropped before the next await.
-            let _reclaimed = {
-                let mut guard = relay.lock().expect("relay mutex");
-                guard.reconcile(Utc::now())
-            };
+            // The engine is internally synchronized (per-shard locking).
+            let _reclaimed = relay.reconcile(Utc::now());
         }
     });
     ReconcilerHandle { task }

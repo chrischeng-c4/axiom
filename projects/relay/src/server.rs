@@ -2,14 +2,14 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:a8062fb3" tracker="pending-tracker" reason="axum h2c app over the relay core: publish/lease/ack handlers (JSON + CBOR) and the streaming broadcast subscribe handler."
 //! axum HTTP/2 (h2c) application over the relay core.
 //!
-//! `publish` / `lease` / `ack` are request/response (JSON, plus an
-//! `application/cbor` fast path for lease/ack); `subscribe` opens a long-lived
-//! HTTP/2 stream of length-prefixed CBOR [`crate::LogEntry`] frames from a seq.
-//! State is the shared relay core behind a mutex — locks are never held across
-//! an `.await`.
+//! `publish` / `lease` / `ack` / `lease-batch` / `ack-batch` are
+//! request/response (JSON, plus an `application/cbor` fast path); `subscribe`
+//! opens a long-lived HTTP/2 stream of length-prefixed CBOR [`crate::LogEntry`]
+//! frames from a seq. The core is internally synchronized (per-shard locking,
+//! #128), so the server holds it as a plain `Arc<Relay>` — no global lock.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
@@ -25,14 +25,15 @@ use chrono::Utc;
 use crate::engine::Relay;
 use crate::server_config::RelayServerConfig;
 use crate::wire::{
-    self, AckRequest, AckResponse, HeartbeatRequest, HeartbeatResponse, LeaseRequest,
-    LeaseResponse, PublishRequest, SubscribeQuery,
+    self, AckBatchRequest, AckBatchResponse, AckRequest, AckResponse, HeartbeatRequest,
+    HeartbeatResponse, LeaseBatchRequest, LeaseBatchResponse, LeaseRequest, LeaseResponse,
+    PublishRequest, SubscribeQuery,
 };
 
 /// Shared application state: the relay core plus this shard's config.
 #[derive(Clone)]
 pub struct AppState {
-    relay: Arc<Mutex<Relay>>,
+    relay: Arc<Relay>,
     config: Arc<RelayServerConfig>,
     next_sub: Arc<AtomicU64>,
 }
@@ -42,7 +43,7 @@ impl AppState {
     pub fn new(config: RelayServerConfig) -> Self {
         let relay = Relay::new(config.core.clone());
         AppState {
-            relay: Arc::new(Mutex::new(relay)),
+            relay: Arc::new(relay),
             config: Arc::new(config),
             next_sub: Arc::new(AtomicU64::new(0)),
         }
@@ -54,7 +55,7 @@ impl AppState {
     }
 
     /// A handle to the shared relay core, for the background reconciler.
-    pub fn relay_handle(&self) -> Arc<Mutex<Relay>> {
+    pub fn relay_handle(&self) -> Arc<Relay> {
         Arc::clone(&self.relay)
     }
 }
@@ -67,6 +68,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/{subject}/publish", post(publish))
         .route("/v1/{subject}/lease", post(lease))
         .route("/v1/{subject}/ack", post(ack))
+        .route("/v1/{subject}/lease-batch", post(lease_batch))
+        .route("/v1/{subject}/ack-batch", post(ack_batch))
         .route("/v1/{subject}/heartbeat", post(heartbeat))
         .route("/v1/{subject}/subscribe", get(subscribe))
         .route("/healthz", get(healthz))
@@ -128,10 +131,9 @@ pub async fn publish(
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
     let now = Utc::now();
-    let result = {
-        let mut relay = st.relay.lock().expect("relay mutex");
-        relay.publish(&subject, &req.message_id, req.payload, req.headers, now)
-    };
+    let result = st
+        .relay
+        .publish(&subject, &req.message_id, req.payload, req.headers, now);
     match result {
         Ok(outcome) => encode_body(false, StatusCode::OK, &outcome),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -157,10 +159,10 @@ pub async fn lease(
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
     let now = Utc::now();
-    let lease = {
-        let mut relay = st.relay.lock().expect("relay mutex");
-        relay.lease(&subject, &req.consumer_id, now).unwrap_or(None)
-    };
+    let lease = st
+        .relay
+        .lease(&subject, &req.consumer_id, now)
+        .unwrap_or(None);
     encode_body(cbor, StatusCode::OK, &LeaseResponse { lease })
 }
 
@@ -182,24 +184,82 @@ pub async fn ack(
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
-    let (acked, committed_seq) = {
-        let mut relay = st.relay.lock().expect("relay mutex");
-        let acked = relay
-            .ack(&subject, &req.lease_id, req.epoch)
-            .unwrap_or(false);
-        let committed = relay
-            .committed_offset(&subject)
-            .ok()
-            .flatten()
-            .map(|c| c.committed_seq);
-        (acked, committed)
-    };
+    let acked = st
+        .relay
+        .ack(&subject, &req.lease_id, req.epoch)
+        .unwrap_or(false);
+    let committed_seq = st
+        .relay
+        .committed_offset(&subject)
+        .ok()
+        .flatten()
+        .map(|c| c.committed_seq);
     encode_body(
         cbor,
         StatusCode::OK,
         &AckResponse {
             acked,
             committed_seq,
+        },
+    )
+}
+
+/// `POST /v1/{subject}/lease-batch` — lease up to `max` entries in one call.
+#[utoipa::path(
+    post,
+    path = "/v1/{subject}/lease-batch",
+    params(("subject" = String, Path, description = "Target subject")),
+    responses((status = 200, description = "Up to max leases in seq order"))
+)]
+pub async fn lease_batch(
+    State(st): State<AppState>,
+    Path(subject): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let cbor = wants_cbor(&headers);
+    let req: LeaseBatchRequest = match decode_body(cbor, &body) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    let now = Utc::now();
+    let leases = st
+        .relay
+        .lease_batch(&subject, &req.consumer_id, req.max, now)
+        .unwrap_or_default();
+    encode_body(cbor, StatusCode::OK, &LeaseBatchResponse { leases })
+}
+
+/// `POST /v1/{subject}/ack-batch` — acknowledge many leases in one call.
+#[utoipa::path(
+    post,
+    path = "/v1/{subject}/ack-batch",
+    params(("subject" = String, Path, description = "Target subject")),
+    responses((status = 200, description = "Count accepted + committed offset"))
+)]
+pub async fn ack_batch(
+    State(st): State<AppState>,
+    Path(subject): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let cbor = wants_cbor(&headers);
+    let req: AckBatchRequest = match decode_body(cbor, &body) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    let acks: Vec<(String, Option<u64>)> = req
+        .acks
+        .into_iter()
+        .map(|a| (a.lease_id, a.epoch))
+        .collect();
+    let (acked, committed) = st.relay.ack_batch(&subject, &acks).unwrap_or((0, None));
+    encode_body(
+        cbor,
+        StatusCode::OK,
+        &AckBatchResponse {
+            acked,
+            committed_seq: committed.map(|c| c.committed_seq),
         },
     )
 }
@@ -223,12 +283,10 @@ pub async fn heartbeat(
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
     let now = Utc::now();
-    let expires_at = {
-        let mut relay = st.relay.lock().expect("relay mutex");
-        relay
-            .heartbeat(&subject, &req.lease_id, req.epoch, now)
-            .unwrap_or(None)
-    };
+    let expires_at = st
+        .relay
+        .heartbeat(&subject, &req.lease_id, req.epoch, now)
+        .unwrap_or(None);
     encode_body(
         cbor,
         StatusCode::OK,
@@ -259,21 +317,15 @@ pub async fn subscribe(
         .clone()
         .unwrap_or_else(|| format!("sub-{}", st.next_sub.fetch_add(1, Ordering::Relaxed)));
 
-    {
-        let mut relay = st.relay.lock().expect("relay mutex");
-        if let Err(e) = relay.subscribe(&subject, &subscriber_id, query.from_seq) {
-            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-        }
+    if let Err(e) = st.relay.subscribe(&subject, &subscriber_id, query.from_seq) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
 
     let stream = futures::stream::unfold(
         (st, subject, subscriber_id),
         |(st, subject, subscriber_id)| async move {
             loop {
-                let frames = {
-                    let mut relay = st.relay.lock().expect("relay mutex");
-                    relay.poll(&subject, &subscriber_id).unwrap_or_default()
-                };
+                let frames = st.relay.poll(&subject, &subscriber_id).unwrap_or_default();
                 if !frames.is_empty() {
                     let mut buf = Vec::new();
                     for entry in &frames {
