@@ -270,5 +270,40 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
-(fill)
+changes:
+  - path: projects/relay/src/workqueue.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "O(1) next-eligible cursor: next_offer + redeliver BinaryHeap (prefer redeliver) replacing the O(n) scan; committed watermark advanced incrementally; add lease_batch and ack_batch."
+  - path: projects/relay/src/engine.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Per-(subject,shard) locking: subjects behind RwLock<HashMap<String, Arc<Mutex<SubjectState>>>>; methods take &self with interior locking; add lease_batch / ack_batch; reconcile locks each shard independently."
+  - path: projects/relay/src/wire.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    reason: "LeaseBatchRequest/Response, AckOne, AckBatchRequest/Response DTOs."
+  - path: projects/relay/src/server.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "AppState holds Arc<Relay> (no global mutex); add POST lease-batch / ack-batch handlers (JSON + CBOR)."
+  - path: projects/relay/src/openapi.rs
+    action: modify
+    section: rest-api
+    impl_mode: hand-written
+    reason: "Add lease-batch and ack-batch paths to the served OpenAPI."
+  - path: projects/relay/src/reconciler.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "spawn_reconciler takes Arc<Relay> (engine is now internally synchronized)."
+  - path: projects/relay/tests/work_queue_throughput.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Tests: O(1) cursor ordering, prefer-redeliver, committed watermark, lease-batch/ack-batch, and per-subject concurrency isolation."
 ```
