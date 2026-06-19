@@ -223,15 +223,49 @@ components:
 ```mermaid
 ---
 id: relay-wqt-test-plan
-entry: start
+entry: suite
 nodes:
-  start: { kind: start, label: "pending" }
-edges: []
+  suite: { kind: start, label: "work-queue throughput rework tests" }
+  t_order: { kind: process, label: "lease repeatedly: O(1) cursor hands out seqs in order 0,1,2,..." }
+  a_order: { kind: terminal, label: "assert ascending seqs, each leased once" }
+  t_prefer: { kind: process, label: "reclaim an earlier seq, then lease" }
+  a_prefer: { kind: terminal, label: "assert redeliver-eligible seq preferred (still) over fresh" }
+  t_commit: { kind: process, label: "ack out of order then in order" }
+  a_commit: { kind: terminal, label: "assert committed watermark only advances over the contiguous prefix" }
+  t_leasebatch: { kind: process, label: "publish 10; lease-batch(max=4)" }
+  a_leasebatch: { kind: terminal, label: "assert 4 distinct leases in seq order; next batch continues" }
+  t_ackbatch: { kind: process, label: "ack-batch the leased ids with epochs" }
+  a_ackbatch: { kind: terminal, label: "assert acked count + committed_seq advances; stale epoch in batch is skipped" }
+  t_concurrency: { kind: process, label: "two subjects driven concurrently from many tasks" }
+  a_concurrency: { kind: terminal, label: "assert each subject's messages each delivered exactly once (per-shard lock isolates subjects)" }
+edges:
+  - { from: suite, to: t_order }
+  - { from: t_order, to: a_order }
+  - { from: suite, to: t_prefer }
+  - { from: t_prefer, to: a_prefer }
+  - { from: suite, to: t_commit }
+  - { from: t_commit, to: a_commit }
+  - { from: suite, to: t_leasebatch }
+  - { from: t_leasebatch, to: a_leasebatch }
+  - { from: suite, to: t_ackbatch }
+  - { from: t_ackbatch, to: a_ackbatch }
+  - { from: suite, to: t_concurrency }
+  - { from: t_concurrency, to: a_concurrency }
 ---
 flowchart TD
-    start([pending])
+    suite([wq throughput suite]) --> t_order[lease in order]
+    t_order --> a_order([O(1) cursor ascending])
+    suite --> t_prefer[reclaim then lease]
+    t_prefer --> a_prefer([prefers redeliver])
+    suite --> t_commit[ack out then in order]
+    t_commit --> a_commit([watermark over prefix])
+    suite --> t_leasebatch[lease-batch max=4]
+    t_leasebatch --> a_leasebatch([4 distinct, ordered])
+    suite --> t_ackbatch[ack-batch]
+    t_ackbatch --> a_ackbatch([count+committed; stale skipped])
+    suite --> t_concurrency[two subjects concurrent]
+    t_concurrency --> a_concurrency([exactly-once per subject])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
