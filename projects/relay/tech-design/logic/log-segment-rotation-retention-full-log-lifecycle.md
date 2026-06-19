@@ -110,5 +110,15 @@ flowchart TD
 <!-- type: changes lang: yaml -->
 
 ```yaml
-(fill)
+changes:
+  - path: projects/relay/src/log.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    reason: "Segment the NDJSON store: an ordered Vec<Segment{base_seq,path,bytes,last_ts}>; the active segment rolls at segment_bytes (base_seq = len). offsets[seq] becomes the byte offset within the seq's segment (segment located by base_seq). Retention prunes the oldest whole segments by max_bytes_per_shard / max_age_secs and advances start_seq. entry/range clamp to start_seq and read across segment runs. Recovery replays all surviving segments in order."
+  - path: projects/relay/tests/segments.rs
+    action: create
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Tests: rotation into multiple segment files + ordered range across them, byte-based pruning advancing start_seq, reads of pruned seqs (None / clamp), multi-segment recovery on reopen, and single-segment parity at default sizes."
 ```
