@@ -21,8 +21,14 @@ unsafe extern "C" fn dispatch_process(_args_ptr: *const MbValue, _nargs: usize) 
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_queue(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_dict())
+unsafe extern "C" fn dispatch_queue(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    // multiprocessing.Queue is, for in-process purposes, the same FIFO as
+    // queue.Queue (which already raises queue.Empty/queue.Full on the *_nowait
+    // paths). Delegate so `mp.Queue(maxsize=N).get_nowait()/put_nowait()` match
+    // CPython instead of returning an inert dict stub.
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let maxsize = a.first().copied().unwrap_or_else(MbValue::none);
+    super::queue_mod::mb_queue_Queue(maxsize)
 }
 
 unsafe extern "C" fn dispatch_cpu_count(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
