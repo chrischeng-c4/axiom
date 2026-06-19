@@ -78,7 +78,35 @@ unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) 
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let name = a.first().copied().unwrap_or_else(MbValue::none);
     let bases = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let kwds = a.get(2).copied().unwrap_or_else(MbValue::none);
     let exec_body = a.get(3).copied().unwrap_or_else(MbValue::none);
+    // CPython: prepare_class pops `metaclass` from kwds and forwards the rest to
+    // `metaclass(name, bases, ns, **kwds)`. An explicit metaclass (any callable,
+    // not necessarily a real type) takes over class creation.
+    let sentinel = MbValue::from_bits(u64::MAX);
+    let meta = super::super::dict_ops::mb_dict_get(
+        kwds,
+        MbValue::from_ptr(MbObject::new_str("metaclass".to_string())),
+        sentinel,
+    );
+    if !kwds.is_none() && meta.to_bits() != sentinel.to_bits() {
+        let ns = MbValue::from_ptr(MbObject::new_dict());
+        if !exec_body.is_none() {
+            let _ = super::super::class::mb_call1_val(exec_body, ns);
+        }
+        let bases_t = if bases.is_none() {
+            MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
+        } else {
+            bases
+        };
+        let remaining = super::super::dict_ops::mb_dict_copy(kwds);
+        super::super::dict_ops::mb_dict_delitem(
+            remaining,
+            MbValue::from_ptr(MbObject::new_str("metaclass".to_string())),
+        );
+        let pos = MbValue::from_ptr(MbObject::new_list(vec![name, bases_t, ns]));
+        return super::super::builtins::mb_call_spread_kwargs(meta, pos, remaining);
+    }
     mb_types_new_class_impl(name, bases, exec_body)
 }
 dispatch_unary!(dispatch_prepare_class, mb_types_prepare_class);
