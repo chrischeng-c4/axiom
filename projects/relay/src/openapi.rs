@@ -21,6 +21,8 @@ use utoipa::OpenApi;
         crate::server::publish,
         crate::server::lease,
         crate::server::ack,
+        crate::server::lease_batch,
+        crate::server::ack_batch,
         crate::server::heartbeat,
         crate::server::subscribe,
     )

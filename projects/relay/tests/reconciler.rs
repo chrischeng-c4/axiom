@@ -5,7 +5,7 @@
 //! and the background task auto-reclaims over time.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
@@ -16,7 +16,7 @@ fn relay() -> Relay {
     Relay::new(RelayCoreConfig::in_memory())
 }
 
-fn publish(r: &mut Relay, subject: &str, id: &str) {
+fn publish(r: &Relay, subject: &str, id: &str) {
     r.publish(
         subject,
         id,
@@ -31,9 +31,9 @@ fn publish(r: &mut Relay, subject: &str, id: &str) {
 // late ack from the dead worker is rejected by epoch.
 #[test]
 fn dead_worker_redelivered_and_late_ack_fenced() {
-    let mut r = relay();
+    let r = relay();
     let now = Utc::now();
-    publish(&mut r, "q", "m0");
+    publish(&r, "q", "m0");
 
     // c1 leases and then "dies" (never acks).
     let dead = r.lease("q", "c1", now).unwrap().unwrap();
@@ -56,9 +56,9 @@ fn dead_worker_redelivered_and_late_ack_fenced() {
 // A worker that heartbeats is kept: reconcile does not reclaim its lease.
 #[test]
 fn live_worker_is_kept() {
-    let mut r = relay();
+    let r = relay();
     let now = Utc::now();
-    publish(&mut r, "q", "m0");
+    publish(&r, "q", "m0");
     let l = r.lease("q", "c1", now).unwrap().unwrap();
 
     // heartbeat just before the ttl extends the lease.
@@ -76,10 +76,10 @@ fn live_worker_is_kept() {
 // re-offered, only the still-leased expired ones are reclaimed.
 #[test]
 fn reconcile_is_frontier_only() {
-    let mut r = relay();
+    let r = relay();
     let now = Utc::now();
-    publish(&mut r, "q", "m0");
-    publish(&mut r, "q", "m1");
+    publish(&r, "q", "m0");
+    publish(&r, "q", "m1");
 
     // seq 0 acked; seq 1 leased and left to expire.
     let l0 = r.lease("q", "c1", now).unwrap().unwrap();
@@ -104,11 +104,10 @@ fn reconcile_is_frontier_only() {
 async fn background_reconciler_auto_reclaims() {
     let mut core = RelayCoreConfig::in_memory();
     core.work_queue.lease_ttl_ms = 50;
-    let relay = Arc::new(Mutex::new(Relay::new(core)));
+    let relay = Arc::new(Relay::new(core));
 
-    {
-        let mut r = relay.lock().unwrap();
-        r.publish(
+    relay
+        .publish(
             "q",
             "m0",
             serde_json::json!({}),
@@ -116,21 +115,17 @@ async fn background_reconciler_auto_reclaims() {
             Utc::now(),
         )
         .unwrap();
-        // lease and "die" (never ack).
-        let _ = r.lease("q", "c1", Utc::now()).unwrap().unwrap();
-        // nothing else is leasable while it is held.
-        assert!(r.lease("q", "c2", Utc::now()).unwrap().is_none());
-    }
+    // lease and "die" (never ack).
+    let _ = relay.lease("q", "c1", Utc::now()).unwrap().unwrap();
+    // nothing else is leasable while it is held.
+    assert!(relay.lease("q", "c2", Utc::now()).unwrap().is_none());
 
     let handle = spawn_reconciler(Arc::clone(&relay), Duration::from_millis(20));
 
     // Give the reconciler several ticks past the 50ms lease ttl.
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let leased = {
-        let mut r = relay.lock().unwrap();
-        r.lease("q", "c2", Utc::now()).unwrap()
-    };
+    let leased = relay.lease("q", "c2", Utc::now()).unwrap();
     handle.stop();
     assert!(
         leased.is_some(),

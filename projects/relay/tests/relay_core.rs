@@ -22,7 +22,7 @@ fn ram() -> Relay {
 // case: sequencing — append assigns monotonic, gap-free seq.
 #[test]
 fn append_assigns_monotonic_seq() {
-    let mut r = ram();
+    let r = ram();
     let now = Utc::now();
     for (i, id) in ["a", "b", "c"].iter().enumerate() {
         let out = r.publish("s", id, msg("t"), BTreeMap::new(), now).unwrap();
@@ -35,7 +35,7 @@ fn append_assigns_monotonic_seq() {
 // case: idempotency — a repeated id appends nothing and returns the same seq.
 #[test]
 fn idempotent_dedupe() {
-    let mut r = ram();
+    let r = ram();
     let now = Utc::now();
     let first = r
         .publish("s", "dup", msg("t"), BTreeMap::new(), now)
@@ -63,7 +63,7 @@ fn idempotent_dedupe() {
 // case: fan-out — every broadcast subscriber receives every message in order.
 #[test]
 fn broadcast_fanout_all_subscribers() {
-    let mut r = ram();
+    let r = ram();
     let now = Utc::now();
     r.subscribe("s", "a", 0).unwrap();
     r.subscribe("s", "b", 0).unwrap();
@@ -80,7 +80,7 @@ fn broadcast_fanout_all_subscribers() {
 // case: replay — subscribing from a seq replays from there in order.
 #[test]
 fn broadcast_replay_from_seq() {
-    let mut r = ram();
+    let r = ram();
     let now = Utc::now();
     for id in ["m0", "m1", "m2", "m3"] {
         r.publish("s", id, msg("t"), BTreeMap::new(), now).unwrap();
@@ -93,7 +93,7 @@ fn broadcast_replay_from_seq() {
 // case: competing — each message is leased to exactly one consumer.
 #[test]
 fn workqueue_single_delivery() {
-    let mut r = ram();
+    let r = ram();
     let now = Utc::now();
     for id in ["m0", "m1", "m2"] {
         r.publish("q", id, msg("t"), BTreeMap::new(), now).unwrap();
@@ -120,7 +120,7 @@ fn workqueue_single_delivery() {
 // case: redelivery — an expired lease becomes redelivery-eligible, attempt++.
 #[test]
 fn lease_expiry_redelivers() {
-    let mut r = ram();
+    let r = ram();
     let now = Utc::now();
     r.publish("q", "m0", msg("t"), BTreeMap::new(), now)
         .unwrap();
@@ -145,7 +145,7 @@ fn lease_expiry_redelivers() {
 // case: ack/commit — acking advances the committed offset and stops redelivery.
 #[test]
 fn ack_advances_committed_offset() {
-    let mut r = ram();
+    let r = ram();
     let now = Utc::now();
     r.publish("q", "m0", msg("t"), BTreeMap::new(), now)
         .unwrap();
@@ -168,7 +168,7 @@ fn ack_advances_committed_offset() {
 // the same subject/log.
 #[test]
 fn both_models_over_same_log() {
-    let mut r = ram();
+    let r = ram();
     let now = Utc::now();
     r.set_delivery_model("events", DeliveryModel::Broadcast)
         .unwrap();
@@ -211,12 +211,12 @@ fn durable_log_recovers_on_reopen() {
     let now = Utc::now();
 
     {
-        let mut r = Relay::new(cfg.clone());
+        let r = Relay::new(cfg.clone());
         r.publish("s", "a", msg("t"), BTreeMap::new(), now).unwrap();
         r.publish("s", "b", msg("t"), BTreeMap::new(), now).unwrap();
     }
 
-    let mut r2 = Relay::new(cfg);
+    let r2 = Relay::new(cfg);
     assert_eq!(r2.log_len("s").unwrap(), 2, "entries recovered from disk");
     let out = r2
         .publish("s", "a", msg("t"), BTreeMap::new(), now)
