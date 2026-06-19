@@ -131,7 +131,16 @@ async fn serve(
     app: axum::Router,
     shutdown: impl std::future::Future<Output = ()>,
 ) {
-    let builder = auto::Builder::new(TokioExecutor::new());
+    let mut builder = auto::Builder::new(TokioExecutor::new());
+    // Clients open ~CPU-core connections and multiplex thousands of streams
+    // over each (that's the HTTP/2 best practice — see examples/bench_compare).
+    // Lift the concurrent-stream ceiling so a high-concurrency client isn't
+    // throttled/starved per connection (the default ~200 caused stream
+    // starvation + hangs at few-connections/high-concurrency). Flow-control
+    // windows are left at hyper defaults: on a low-RTT link the workload is
+    // CPU-bound (frame + JSON), not window-bound, so enlarging them is a WAN-only
+    // tuning with no local benefit.
+    builder.http2().max_concurrent_streams(4096);
     let graceful = GracefulShutdown::new();
     let mut shutdown = std::pin::pin!(shutdown);
 
