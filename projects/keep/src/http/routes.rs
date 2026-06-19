@@ -4,15 +4,17 @@
 
 use axum::{
     extract::DefaultBodyLimit,
+    middleware::from_fn_with_state,
     routing::{get, post},
     Router,
 };
 
-use crate::http::{handlers, hash, meta, sets, zsets, AppState};
+use crate::http::{handlers, hash, meta, metrics, sets, zsets, AppState};
 
 /// Build the full application router.
 pub fn router(state: AppState) -> Router {
     let body_limit = state.body_limit;
+    let req_metrics = state.metrics.clone();
 
     let data_plane = Router::new()
         // single-key
@@ -78,6 +80,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/zsets/{key}/incr", post(zsets::zincr))
         .route("/v1/zsets/{key}/members/{member}/score", get(zsets::zscore))
         .route("/v1/zsets/{key}/members/{member}/rank", get(zsets::zrank))
+        // Per-route request metrics (counts + latency). route_layer => only for
+        // matched data-plane routes, and MatchedPath is populated.
+        .route_layer(from_fn_with_state(req_metrics, metrics::track))
         .layer(DefaultBodyLimit::max(body_limit));
 
     Router::new()

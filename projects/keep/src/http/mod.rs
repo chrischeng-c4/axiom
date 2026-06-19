@@ -8,6 +8,7 @@ pub mod error;
 pub mod handlers;
 pub mod hash;
 pub mod meta;
+pub mod metrics;
 pub mod models;
 pub mod openapi;
 pub mod routes;
@@ -28,6 +29,8 @@ pub struct AppState {
     pub engine: Arc<KvEngine>,
     /// Max request body size, applied as a router layer.
     pub body_limit: usize,
+    /// Per-route HTTP request metrics (counts + latency histograms).
+    pub metrics: Arc<metrics::HttpMetrics>,
     draining: Arc<AtomicBool>,
 }
 
@@ -36,6 +39,7 @@ impl AppState {
         Self {
             engine,
             body_limit: DEFAULT_BODY_LIMIT,
+            metrics: Arc::new(metrics::HttpMetrics::default()),
             draining: Arc::new(AtomicBool::new(false)),
         }
     }

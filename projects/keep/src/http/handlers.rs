@@ -553,7 +553,8 @@ pub async fn metrics(
          keep_shards {shards}\n\
          # HELP keep_memory_bytes Estimated resident bytes of stored data.\n\
          # TYPE keep_memory_bytes gauge\n\
-         keep_memory_bytes {mem}\n"
+         keep_memory_bytes {mem}\n{}",
+        st.metrics.render()
     );
     (
         StatusCode::OK,
