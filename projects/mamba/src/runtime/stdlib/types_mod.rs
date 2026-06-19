@@ -104,6 +104,17 @@ unsafe extern "C" fn dispatch_new_class(args_ptr: *const MbValue, nargs: usize) 
             remaining,
             MbValue::from_ptr(MbObject::new_str("metaclass".to_string())),
         );
+        // CPython calls metaclass(name, bases, ns, **kwds); a non-callable
+        // metaclass (e.g. a bare string) is a TypeError, not a silent build.
+        if super::super::builtins::mb_callable(meta).as_bool() != Some(true) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "metaclass is not callable".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
         let pos = MbValue::from_ptr(MbObject::new_list(vec![name, bases_t, ns]));
         return super::super::builtins::mb_call_spread_kwargs(meta, pos, remaining);
     }
