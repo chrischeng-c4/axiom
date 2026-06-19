@@ -23,6 +23,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 parking_lot.workspace = true
+# Lock-free read of the persistence handle on the write hot path.
+arc-swap = "1"
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 futures.workspace = true

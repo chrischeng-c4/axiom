@@ -5631,6 +5631,7 @@ dependencies = [
 name = "keep"
 version = "0.4.0"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "axum 0.8.9",
  "bincode",

@@ -1227,9 +1227,10 @@ impl Default for EvictionPolicy {
 pub struct KvEngine {
     shards: Vec<Shard>,
     num_shards: usize,
-    /// Optional persistence handle for WAL and snapshots
-    /// Uses RwLock for interior mutability (enables setting after Arc wrapping)
-    persistence: RwLock<Option<std::sync::Arc<crate::persistence::handle::PersistenceHandle>>>,
+    /// Optional persistence handle for WAL and snapshots. ArcSwapOption gives a
+    /// lock-free `load()` (hazard pointers, no refcount RMW) on the write hot
+    /// path — a RwLock read here serialized concurrent SETs across cores.
+    persistence: arc_swap::ArcSwapOption<crate::persistence::handle::PersistenceHandle>,
     /// Lock-free fast-path gate for the write hot path: when false, `log_wal`
     /// skips the `persistence` RwLock entirely (a per-op RwLock read is a shared
     /// atomic RMW that serializes SET across cores — this load shares the
@@ -1254,7 +1255,7 @@ impl KvEngine {
         Self {
             shards,
             num_shards,
-            persistence: RwLock::new(None),
+            persistence: arc_swap::ArcSwapOption::empty(),
             persistence_enabled: AtomicBool::new(false),
             maxmemory: AtomicUsize::new(0),
             eviction_policy: RwLock::new(EvictionPolicy::default()),
@@ -1373,7 +1374,7 @@ impl KvEngine {
     ) {
         // Publish the handle first, then flip the gate with Release so any
         // thread that later observes the flag (Acquire) also sees the handle.
-        *self.persistence.write() = Some(persistence_handle);
+        self.persistence.store(Some(persistence_handle));
         self.persistence_enabled.store(true, Ordering::Release);
     }
 
@@ -1388,7 +1389,7 @@ impl KvEngine {
         if !self.persistence_enabled.load(Ordering::Acquire) {
             return;
         }
-        if let Some(ref persistence) = *self.persistence.read() {
+        if let Some(persistence) = &*self.persistence.load() {
             persistence.log_operation(op);
         }
     }
