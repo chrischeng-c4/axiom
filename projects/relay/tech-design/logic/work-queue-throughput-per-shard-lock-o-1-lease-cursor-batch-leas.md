@@ -307,3 +307,14 @@ changes:
     impl_mode: hand-written
     reason: "Tests: O(1) cursor ordering, prefer-redeliver, committed watermark, lease-batch/ack-batch, and per-subject concurrency isolation."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] per-shard lock → real concurrency; O(1) pick (redeliver heap + next_offer) replacing O(n) scan; incremental committed watermark; batch lease/ack. Preserves epoch fencing + exactly-once. Applicable.
+- [schema] LeaseBatch/AckBatch DTOs reuse the core Lease; minimal. Applicable.
+- [rest-api] lease-batch + ack-batch OpenAPI (JSON + CBOR). Applicable.
+- [unit-test] cursor ordering, prefer-redeliver, watermark, batch lease/ack, per-subject concurrency isolation. Applicable.
+- [changes] bounded to workqueue/engine/wire/server/openapi/reconciler + a new test file; engine API shifts to &self with interior locking (collateral mut/Arc fixes in existing tests are mechanical). Applicable.
