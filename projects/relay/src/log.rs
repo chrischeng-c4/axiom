@@ -42,8 +42,9 @@ pub struct Log {
     /// Resident window: the most recent entries (at most `ram_cap` when disk-backed).
     ring: VecDeque<LogEntry>,
     ram_cap: usize,
-    /// Byte offset of each seq WITHIN its segment (located by base_seq).
-    offsets: Vec<u64>,
+    /// Sparse byte-offset index: sorted (seq, offset-within-segment), sampled
+    /// every INDEX_STRIDE entries plus an anchor at each segment's base_seq.
+    index: Vec<(Seq, u64)>,
     dedupe: HashMap<MessageId, Seq>,
     dedupe_order: VecDeque<MessageId>,
     dedupe_cap: usize,
@@ -79,6 +80,15 @@ fn cap_or_unbounded(n: u64) -> usize {
     }
 }
 
+/// Index one byte offset every this many entries (plus a per-segment anchor),
+/// so the in-RAM index is ~len/INDEX_STRIDE points instead of one per seq.
+const INDEX_STRIDE: Seq = 64;
+
+/// Whether `seq` is sampled into the sparse index for a segment based at `base`.
+fn is_indexed(seq: Seq, base: Seq) -> bool {
+    seq == base || (seq - base) % INDEX_STRIDE == 0
+}
+
 impl Log {
     /// Open (and recover) the log for `(subject, shard)`.
     ///
@@ -96,7 +106,7 @@ impl Log {
             start_seq: 0,
             ring: VecDeque::new(),
             ram_cap: cap_or_unbounded(config.ram_ring_entries),
-            offsets: Vec::new(),
+            index: Vec::new(),
             dedupe: HashMap::new(),
             dedupe_order: VecDeque::new(),
             dedupe_cap: cap_or_unbounded(config.dedupe.window_entries),
@@ -161,7 +171,9 @@ impl Log {
                     let entry: LogEntry = serde_json::from_str(raw)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                     let seq = log.len;
-                    log.offsets.push(pos);
+                    if is_indexed(seq, *base) {
+                        log.index.push((seq, pos));
+                    }
                     seg.last_ts = entry.appended_at;
                     log.dedupe_insert(entry.message_id.clone(), seq);
                     log.ring_push(entry, true);
@@ -224,6 +236,13 @@ impl Log {
     /// Earliest still-available seq (entries below it have been pruned).
     pub fn start_seq(&self) -> Seq {
         self.start_seq
+    }
+
+    /// Number of sparse index points (≈ len / INDEX_STRIDE). For tests / metrics.
+    ///
+    /// @spec projects/relay/tech-design/logic/sparse-offset-index-scale-the-log-to-billions-of-entries.md#logic
+    pub fn index_entries(&self) -> usize {
+        self.index.len()
     }
 
     fn ring_start(&self) -> Seq {
@@ -304,11 +323,20 @@ impl Log {
         while seq < to {
             let si = self.segment_for(seq);
             let run_end = self.segment_end(si).min(to);
+            // Nearest sparse index point with index_seq <= seq. The per-segment
+            // anchor guarantees one exists in this seq's own segment.
+            let ip = self.index.partition_point(|&(s, _)| s <= seq) - 1;
+            let (idx_seq, idx_off) = self.index[ip];
             let mut reader = BufReader::new(File::open(&self.segments[si].path)?);
-            reader.seek(SeekFrom::Start(
-                self.offsets[(seq - self.start_seq) as usize],
-            ))?;
+            reader.seek(SeekFrom::Start(idx_off))?;
             let mut line = String::new();
+            // Scan forward from the indexed point to `seq`.
+            for _ in idx_seq..seq {
+                line.clear();
+                if reader.read_line(&mut line)? == 0 {
+                    break;
+                }
+            }
             for _ in seq..run_end {
                 line.clear();
                 if reader.read_line(&mut line)? == 0 {
@@ -347,7 +375,10 @@ impl Log {
                 seg.last_ts = entry.appended_at;
             }
         }
-        self.offsets.push(offset);
+        let base = self.segments.last().map(|s| s.base_seq).unwrap_or(0);
+        if is_indexed(entry.seq, base) {
+            self.index.push((entry.seq, offset));
+        }
         Ok(())
     }
 
@@ -377,9 +408,9 @@ impl Log {
             let removed = self.segments.remove(0);
             let _ = std::fs::remove_file(&removed.path);
             let new_start = self.segments[0].base_seq;
-            // Offsets are relative to start_seq; drop the pruned prefix.
-            let drop_n = (new_start - self.start_seq) as usize;
-            self.offsets.drain(0..drop_n.min(self.offsets.len()));
+            // Drop sparse index points below the new start.
+            let drop_n = self.index.partition_point(|&(s, _)| s < new_start);
+            self.index.drain(0..drop_n);
             self.start_seq = new_start;
         }
         Ok(())
