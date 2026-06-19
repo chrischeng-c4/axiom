@@ -356,6 +356,12 @@ impl RecoveryManager {
                     engine.rpop(&k);
                 }
             }
+            WalOp::GetEx { key, ttl_ms, persist } => {
+                if let Ok(k) = KvKey::new(key) {
+                    let ttl = ttl_ms.map(std::time::Duration::from_millis);
+                    engine.getex(&k, ttl, *persist);
+                }
+            }
         }
 
         Ok(())

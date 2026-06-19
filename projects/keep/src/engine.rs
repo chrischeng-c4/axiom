@@ -1816,6 +1816,15 @@ impl KvEngine {
     /// Options: EX seconds, PX milliseconds, EXAT unix-time-seconds,
     ///          PXAT unix-time-milliseconds, PERSIST
     pub fn getex(&self, key: &KvKey, ttl: Option<Duration>, persist: bool) -> Option<KvValue> {
+        // Only a TTL-changing GETEX mutates state worth logging; a plain GETEX
+        // (no ttl, no persist) is a pure read.
+        if ttl.is_some() || persist {
+            self.log_wal(crate::persistence::format::WalOp::GetEx {
+                key: key.as_str().to_string(),
+                ttl_ms: ttl.map(|d| d.as_millis() as u64),
+                persist,
+            });
+        }
         self.shard_for_key(key.as_str())
             .getex(key.as_str(), ttl, persist)
             .map(|e| e.value)

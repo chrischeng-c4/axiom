@@ -54,6 +54,7 @@ use crate::http::{handlers, hash, meta, sets, zsets};
         meta::expire,
         meta::ttl,
         meta::persist,
+        meta::getex,
         hash::hset,
         hash::hgetall,
         hash::hdel,
@@ -127,6 +128,8 @@ use crate::http::{handlers, hash, meta, sets, zsets};
         meta::ExpireRequest,
         meta::AppliedResponse,
         meta::TtlResponse,
+        meta::GetExRequest,
+        meta::GetExResponse,
         meta::ListRangeResponse,
         meta::LenResponse,
     ))
