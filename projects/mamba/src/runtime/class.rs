@@ -9770,6 +9770,40 @@ pub fn mb_context_enter(obj: MbValue) -> MbValue {
     obj // fallback: return self
 }
 
+/// True if `obj` supports the context-manager protocol — i.e. `mb_context_enter`
+/// has a real entry path for it (generator from @contextmanager, file handle,
+/// threading Lock/RLock/Condition, tarfile.TarFile stub) or it resolves both
+/// `__enter__` and `__exit__`. Used by `contextlib.ExitStack.enter_context` to
+/// reject a non-context-manager argument with TypeError (CPython behavior).
+/// Mirrors every positive branch above so a valid CM is never rejected.
+pub fn value_supports_context_manager(obj: MbValue) -> bool {
+    if super::generator::is_known_generator(obj) {
+        return true;
+    }
+    if obj.is_int() {
+        let id = obj.as_int().unwrap_or(0) as u64;
+        if super::file_io::is_file_handle(id) {
+            return true;
+        }
+    }
+    if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "Lock" || class_name == "RLock" || class_name == "Condition" {
+                    return true;
+                }
+            }
+        }
+    }
+    if super::dict_ops::dict_stub_class(obj).as_deref() == Some("TarFile") {
+        return true;
+    }
+    // Generic protocol: both dunders must resolve (CPython checks
+    // type(cm).__enter__ and type(cm).__exit__). A stub __enter__/__exit__ in a
+    // registered native class still counts — try_get_dunder finds it.
+    try_get_dunder(obj, "__enter__").is_some() && try_get_dunder(obj, "__exit__").is_some()
+}
+
 /// async with obj as var: → calls __aenter__, awaits the returned coroutine,
 /// returns the resolved value to bind to var. Falls back to mb_context_enter
 /// (sync __enter__) when no async dunder is defined, so user code can use
