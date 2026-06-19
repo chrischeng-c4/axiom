@@ -1024,7 +1024,14 @@ fn fields_tuple_for(class_name: &str) -> MbValue {
                     }
                     None => MbValue::from_ptr(MbObject::new_dict()),
                 };
-                m.insert("metadata".to_string(), metadata);
+                // CPython exposes Field.metadata as a read-only
+                // types.MappingProxyType view over the mapping: reads forward,
+                // item assignment raises TypeError.
+                let proxy = MbObject::new_instance("mappingproxy".to_string());
+                if let ObjData::Instance { fields: ref pf, .. } = (*proxy).data {
+                    pf.write().unwrap().insert("_mapping".to_string(), metadata);
+                }
+                m.insert("metadata".to_string(), MbValue::from_ptr(proxy));
                 m.insert("hash".to_string(), MbValue::from_bool(f.compare));
             }
         }
