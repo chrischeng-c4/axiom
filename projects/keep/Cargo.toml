@@ -47,9 +47,17 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 # one port — axum::serve alone is HTTP/1-only.
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio"] }
+# HTTP client for in-tree Rust consumers (behind the `client` feature).
+reqwest = { workspace = true, optional = true }
 
 # Config
 clap = { workspace = true, features = ["env"] }
+
+[features]
+default = []
+# keep::client — a convenience HTTP/2 client for in-tree Rust callers migrating
+# off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
+client = ["dep:reqwest"]
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -12,6 +12,8 @@
 // WIP: suppress clippy noise during the takeover from cclab-kv.
 #![allow(clippy::all)]
 
+#[cfg(feature = "client")]
+pub mod client;
 pub mod cluster;
 pub mod engine;
 pub mod error;
