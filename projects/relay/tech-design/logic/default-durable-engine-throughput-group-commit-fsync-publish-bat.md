@@ -160,15 +160,37 @@ components:
 ```mermaid
 ---
 id: relay-default-durable-test-plan
-entry: start
+entry: suite
 nodes:
-  start: { kind: start, label: "pending" }
-edges: []
+  suite: { kind: start, label: "default-durable throughput tests" }
+  t_default: { kind: process, label: "inspect RelayCoreConfig::default()" }
+  a_default: { kind: terminal, label: "assert data_dir is non-empty and fsync is power-safe (Always) -> durable by default" }
+  t_batch: { kind: process, label: "publish_batch of N messages on a disk-backed relay" }
+  a_batch: { kind: terminal, label: "assert N outcomes with seqs 0..N-1; a repeated id in the batch is deduped" }
+  t_recover_log: { kind: process, label: "publish_batch N, drop the relay, reopen from the same data_dir" }
+  a_recover_log: { kind: terminal, label: "assert all N entries recovered (durable log)" }
+  t_recover_commit: { kind: process, label: "publish N, lease+ack the first K via ack-batch (persisted), drop, reopen" }
+  a_recover_commit: { kind: terminal, label: "assert committed_seq recovered = K-1 and the next lease resumes at K (committed entries not redelivered)" }
+edges:
+  - { from: suite, to: t_default }
+  - { from: t_default, to: a_default }
+  - { from: suite, to: t_batch }
+  - { from: t_batch, to: a_batch }
+  - { from: suite, to: t_recover_log }
+  - { from: t_recover_log, to: a_recover_log }
+  - { from: suite, to: t_recover_commit }
+  - { from: t_recover_commit, to: a_recover_commit }
 ---
 flowchart TD
-    start([pending])
+    suite([durable suite]) --> t_default[default config]
+    t_default --> a_default([data_dir set + power-safe fsync])
+    suite --> t_batch[publish_batch N]
+    t_batch --> a_batch([N outcomes, dedupe in batch])
+    suite --> t_recover_log[reopen after batch]
+    t_recover_log --> a_recover_log([log recovered])
+    suite --> t_recover_commit[ack K, reopen]
+    t_recover_commit --> a_recover_commit([committed=K-1, resume at K])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
