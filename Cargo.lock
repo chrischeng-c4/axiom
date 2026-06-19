@@ -5637,6 +5637,7 @@ dependencies = [
  "bincode",
  "clap",
  "crc32fast",
+ "criterion",
  "crossbeam-channel",
  "futures",
  "hyper 1.9.0",
