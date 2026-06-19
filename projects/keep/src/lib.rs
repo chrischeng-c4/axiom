@@ -12,6 +12,7 @@
 // WIP: suppress clippy noise during the takeover from cclab-kv.
 #![allow(clippy::all)]
 
+pub mod cluster;
 pub mod engine;
 pub mod error;
 pub mod http;
@@ -19,6 +20,7 @@ pub mod metrics;
 pub mod persistence;
 pub mod types;
 
+pub use cluster::{ClusterConfig, ClusterState};
 pub use engine::{EvictionPolicy, KvEngine};
 pub use error::KvError;
 pub use http::{router, ApiDoc, AppState};

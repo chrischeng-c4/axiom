@@ -236,6 +236,18 @@ async fn metrics_records_per_route_requests() {
 }
 
 #[tokio::test]
+async fn cluster_endpoint_reports_topology() {
+    let (app, _) = app();
+    let req = Request::builder().uri("/cluster").body(Body::empty()).unwrap();
+    let (st, bytes) = send(&app, req).await;
+    assert_eq!(st, StatusCode::OK);
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["node_count"], json!(1));
+    assert_eq!(v["mode"], json!("single"));
+    assert_eq!(v["owned_shards"], json!(1));
+}
+
+#[tokio::test]
 async fn openapi_document_is_served() {
     let (app, _) = app();
     let req = Request::builder().uri("/openapi.json").body(Body::empty()).unwrap();

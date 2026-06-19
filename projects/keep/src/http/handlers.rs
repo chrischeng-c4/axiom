@@ -581,6 +581,18 @@ pub async fn info(State(st): State<AppState>) -> Json<InfoResponse> {
     })
 }
 
+/// Cluster topology + sharding view. Clients route a key with
+/// `crc32(key) % shard_count -> shard -> node` (see HA.md).
+#[utoipa::path(
+    get,
+    path = "/cluster",
+    tag = "Admin",
+    responses((status = 200, description = "Cluster topology", body = crate::cluster::ClusterState))
+)]
+pub async fn cluster(State(st): State<AppState>) -> Json<crate::cluster::ClusterState> {
+    Json(st.cluster.snapshot())
+}
+
 /// The generated OpenAPI document.
 #[utoipa::path(get, path = "/openapi.json", tag = "Admin", responses((status = 200, description = "OpenAPI 3 document")))]
 pub async fn openapi_spec() -> Json<utoipa::openapi::OpenApi> {
