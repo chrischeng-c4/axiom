@@ -7,11 +7,96 @@
 //! structured mapping.
 
 use std::collections::HashMap;
+use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
 use crate::types::KvValue;
+
+// ---------------------------------------------------------------------------
+// Zero-intermediate JSON value
+// ---------------------------------------------------------------------------
+
+/// A value deserialized DIRECTLY from JSON tokens into [`KvValue`], with no
+/// `serde_json::Value` tree built in between — the measured hot cost on the
+/// write path. The mapping matches [`json_to_kv`]. Used by internal fast-parse
+/// request structs (not exposed in the OpenAPI schema; the public DTOs keep
+/// `serde_json::Value` for documentation).
+#[derive(Debug, Clone)]
+pub struct JsonKv(pub KvValue);
+
+impl<'de> Deserialize<'de> for JsonKv {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct KvVisitor;
+        impl<'de> Visitor<'de> for KvVisitor {
+            type Value = KvValue;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a JSON value")
+            }
+            fn visit_bool<E: de::Error>(self, v: bool) -> Result<KvValue, E> {
+                Ok(KvValue::Int(i64::from(v)))
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<KvValue, E> {
+                Ok(KvValue::Int(v))
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<KvValue, E> {
+                Ok(KvValue::Int(v as i64))
+            }
+            fn visit_f64<E: de::Error>(self, v: f64) -> Result<KvValue, E> {
+                Ok(KvValue::Float(v))
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<KvValue, E> {
+                Ok(KvValue::String(v.to_owned()))
+            }
+            fn visit_string<E: de::Error>(self, v: String) -> Result<KvValue, E> {
+                Ok(KvValue::String(v))
+            }
+            fn visit_none<E: de::Error>(self) -> Result<KvValue, E> {
+                Ok(KvValue::Null)
+            }
+            fn visit_unit<E: de::Error>(self) -> Result<KvValue, E> {
+                Ok(KvValue::Null)
+            }
+            fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<KvValue, D::Error> {
+                Ok(JsonKv::deserialize(d)?.0)
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<KvValue, A::Error> {
+                let mut list = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+                while let Some(JsonKv(v)) = seq.next_element()? {
+                    list.push(v);
+                }
+                Ok(KvValue::List(list))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<KvValue, A::Error> {
+                let mut m = HashMap::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some((k, JsonKv(v))) = map.next_entry::<String, JsonKv>()? {
+                    m.insert(k, v);
+                }
+                Ok(KvValue::Map(m))
+            }
+        }
+        deserializer.deserialize_any(KvVisitor).map(JsonKv)
+    }
+}
+
+/// Internal fast-parse form of [`SetRequest`] — parses straight into `KvValue`.
+#[derive(Debug, Deserialize)]
+pub struct SetRequestFast {
+    pub value: JsonKv,
+    #[serde(default)]
+    pub ttl_ms: Option<u64>,
+}
+
+/// Internal fast-parse form of [`MSetRequest`] — values parse straight into
+/// `KvValue` (no serde_json::Value per entry).
+#[derive(Debug, Deserialize)]
+pub struct MSetRequestFast {
+    pub entries: HashMap<String, JsonKv>,
+    #[serde(default)]
+    pub ttl_ms: Option<u64>,
+}
 
 // ---------------------------------------------------------------------------
 // Single-key string / scalar

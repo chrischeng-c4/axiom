@@ -108,10 +108,12 @@ pub async fn put_key(
             .set(&k, KvValue::Bytes(body.to_vec()), ttl(q.ttl_ms))
             .map_err(ApiErr::from)?;
     } else if ct.starts_with("application/json") {
-        let req: SetRequest = serde_json::from_slice(&body)
+        // Fast parse: JSON tokens -> KvValue directly, no serde_json::Value tree
+        // (the measured write-path hot cost). SetRequest stays the OpenAPI schema.
+        let req: SetRequestFast = serde_json::from_slice(&body)
             .map_err(|e| ApiErr::bad_request(format!("invalid JSON body: {e}")))?;
         st.engine
-            .set(&k, json_to_kv(req.value), ttl(req.ttl_ms))
+            .set(&k, req.value.0, ttl(req.ttl_ms))
             .map_err(ApiErr::from)?;
     } else {
         return Err(ApiErr::unsupported_media_type(format!(
@@ -267,13 +269,16 @@ pub async fn mget(
 )]
 pub async fn mset(
     State(st): State<AppState>,
-    Json(req): Json<MSetRequest>,
+    body: Bytes,
 ) -> Result<Json<CountResponse>, ApiErr> {
+    // Fast parse: entry values -> KvValue directly (no serde_json::Value each).
+    let req: MSetRequestFast = serde_json::from_slice(&body)
+        .map_err(|e| ApiErr::bad_request(format!("invalid JSON body: {e}")))?;
     let mut keys = Vec::with_capacity(req.entries.len());
     let mut vals = Vec::with_capacity(req.entries.len());
     for (k, v) in req.entries {
         keys.push(KvKey::new(&k).map_err(ApiErr::from)?);
-        vals.push(json_to_kv(v));
+        vals.push(v.0);
     }
     let pairs: Vec<(&KvKey, KvValue)> = keys.iter().zip(vals).collect();
     st.engine
