@@ -103,9 +103,57 @@ definitions:
 <!-- type: rest-api lang: yaml -->
 
 ```yaml
-(fill)
+openapi: 3.1.0
+info:
+  title: relay publish-batch API
+  version: 0.1.0
+  description: >
+    Group-commit batch produce over HTTP/2. One request carries many messages;
+    the server appends them and issues a single fsync (durable, power-safe).
+paths:
+  /v1/{subject}/publish-batch:
+    post:
+      operationId: publishBatch
+      summary: Append many messages in one durable, group-committed call.
+      parameters:
+        - { name: subject, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: "#/components/schemas/PublishBatchRequest" } }
+          application/cbor: { schema: { $ref: "#/components/schemas/PublishBatchRequest" } }
+      responses:
+        "200":
+          description: One AppendOutcome per message, in order.
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/PublishBatchResponse" } }
+            application/cbor: { schema: { $ref: "#/components/schemas/PublishBatchResponse" } }
+components:
+  schemas:
+    PublishBatchItem:
+      type: object
+      required: [message_id, payload]
+      properties:
+        message_id: { type: string }
+        payload: {}
+        headers: { type: object, additionalProperties: { type: string } }
+    PublishBatchRequest:
+      type: object
+      required: [messages]
+      properties:
+        messages: { type: array, items: { $ref: "#/components/schemas/PublishBatchItem" } }
+    AppendOutcome:
+      type: object
+      required: [seq, deduped]
+      properties:
+        seq: { type: integer, minimum: 0 }
+        deduped: { type: boolean }
+    PublishBatchResponse:
+      type: object
+      required: [outcomes]
+      properties:
+        outcomes: { type: array, items: { $ref: "#/components/schemas/AppendOutcome" } }
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
