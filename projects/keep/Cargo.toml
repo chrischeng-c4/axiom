@@ -57,7 +57,13 @@ tempfile = "3.12"
 # Competitor perf comparison (examples/bench_compare.rs, issue #126).
 redis = { version = "0.27", features = ["tokio-comp"] }
 reqwest = { workspace = true }
+# Engine perf-gate benchmark (meter bench, issue #126).
+criterion = "0.5"
 
 [[example]]
 name = "bench_compare"
 path = "examples/bench_compare.rs"
+
+[[bench]]
+name = "engine_bench"
+harness = false
