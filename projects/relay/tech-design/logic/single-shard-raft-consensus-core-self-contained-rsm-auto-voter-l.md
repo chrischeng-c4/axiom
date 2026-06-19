@@ -1,6 +1,6 @@
 ---
 id: relay-raft-core
-summary: Self-contained single-shard Raft consensus core (no external dep). Step-driven RaftNode (tick + message handlers, deterministic) doing leader election, log replication with log-matching + truncate-conflicting-suffix, commit-by-majority over voters only, and apply of committed command entries. Auto voter/learner membership from (N, ordinal): voters = largest-odd<=N, the trailing even node is a non-voting learner. RSM model: committed entries are surfaced for the relay layer to apply to its engine; relay's append-only durable log is untouched. RaftTransport trait + in-process impl for deterministic tests.
+summary: Self-contained single-shard Raft consensus core (no external dep). Step-driven RaftNode (tick + message handlers, deterministic) doing leader election, log replication with log-matching + truncate-conflicting-suffix, commit-by-majority over voters only, and apply of committed command entries. Auto voter/learner membership from N and ordinal — voters = largest-odd<=N, the trailing even node is a non-voting learner. RSM model — committed entries are surfaced for the relay layer to apply to its engine, while relay's append-only durable log is untouched. RaftTransport trait + in-process impl for deterministic tests.
 fill_sections: [logic, unit-test, changes]
 ---
 
@@ -72,7 +72,6 @@ flowchart TD
     role -->|higher term| stepdown[step down to follower]
     stepdown --> apply
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
