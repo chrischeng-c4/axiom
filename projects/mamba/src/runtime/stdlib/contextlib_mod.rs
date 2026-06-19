@@ -300,6 +300,19 @@ pub fn mb_exitstack_method(self_v: MbValue, name: &str, args: MbValue) -> MbValu
     match name {
         "enter_context" => {
             let cm = items.first().copied().unwrap_or_else(MbValue::none);
+            // CPython rejects a non-context-manager argument up front: it reads
+            // type(cm).__enter__ / __exit__ and raises TypeError if either is
+            // missing. Mirror that so `enter_context(object())` fails cleanly.
+            if !super::super::class::value_supports_context_manager(cm) {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'{}' object does not support the context manager protocol",
+                        super::super::builtins::value_type_name(cm)
+                    ))),
+                );
+                return MbValue::none();
+            }
             let entered = super::super::class::mb_context_enter(cm);
             let entry = make_entry("cm", cm, vec![]);
             super::super::list_ops::mb_list_append(exit_stack_callbacks(self_v), entry);
