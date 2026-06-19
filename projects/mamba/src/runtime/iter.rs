@@ -1258,13 +1258,30 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
                         let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
                         return super::class::mb_call_method(seq, method, args);
                     }
-                    super::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "'{cls}' object is not reversible"
-                        ))),
-                    );
-                    return MbValue::none();
+                    // Sequence-protocol fallback: a class with __len__ AND
+                    // __getitem__ is reversible (yield obj[len-1] .. obj[0]),
+                    // matching CPython's reversed() even without __reversed__.
+                    let has_len = !super::class::lookup_method(&cls, "__len__").is_none();
+                    let has_getitem = !super::class::lookup_method(&cls, "__getitem__").is_none();
+                    if has_len && has_getitem {
+                        let n = super::builtins::mb_len(seq).as_int().unwrap_or(0).max(0);
+                        let mut items: Vec<MbValue> = Vec::with_capacity(n as usize);
+                        for i in (0..n).rev() {
+                            items.push(super::class::mb_obj_getitem(seq, MbValue::from_int(i)));
+                            if super::exception::current_exception_type().is_some() {
+                                return MbValue::none();
+                            }
+                        }
+                        items
+                    } else {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "'{cls}' object is not reversible"
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
                 }
                 _ => return MbValue::none(),
             };
