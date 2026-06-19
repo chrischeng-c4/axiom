@@ -69,15 +69,43 @@ flowchart TD
 ```mermaid
 ---
 id: relay-log-segments-test-plan
-entry: start
+entry: suite
 nodes:
-  start: { kind: start, label: "pending" }
-edges: []
+  suite: { kind: start, label: "segment rotation + retention tests" }
+  t_roll: { kind: process, label: "tiny segment_bytes; append many" }
+  a_roll: { kind: terminal, label: "assert multiple segment files exist; range(0) reads all in order across segments" }
+  t_bytes: { kind: process, label: "small max_bytes_per_shard; keep appending" }
+  a_bytes: { kind: terminal, label: "assert oldest segments deleted, start_seq advances, total bytes bounded" }
+  t_pruned: { kind: process, label: "read a pruned seq and range from before start_seq" }
+  a_pruned: { kind: terminal, label: "assert pruned entry() = None; range clamps to start_seq and returns surviving entries in order" }
+  t_recover: { kind: process, label: "roll into N segments, drop, reopen" }
+  a_recover: { kind: terminal, label: "assert all surviving segments replayed; len + reads correct" }
+  t_unchanged: { kind: process, label: "default segment_bytes (huge), no retention: append N" }
+  a_unchanged: { kind: terminal, label: "assert single segment, no pruning, behavior identical (benchmark unaffected)" }
+edges:
+  - { from: suite, to: t_roll }
+  - { from: t_roll, to: a_roll }
+  - { from: suite, to: t_bytes }
+  - { from: t_bytes, to: a_bytes }
+  - { from: suite, to: t_pruned }
+  - { from: t_pruned, to: a_pruned }
+  - { from: suite, to: t_recover }
+  - { from: t_recover, to: a_recover }
+  - { from: suite, to: t_unchanged }
+  - { from: t_unchanged, to: a_unchanged }
 ---
 flowchart TD
-    start([pending])
+    suite([segment suite]) --> t_roll[tiny segment_bytes]
+    t_roll --> a_roll([many segments; range ordered])
+    suite --> t_bytes[small max_bytes]
+    t_bytes --> a_bytes([oldest deleted; start_seq up])
+    suite --> t_pruned[read pruned]
+    t_pruned --> a_pruned([None; range clamps])
+    suite --> t_recover[reopen N segments]
+    t_recover --> a_recover([replayed correctly])
+    suite --> t_unchanged[default sizes]
+    t_unchanged --> a_unchanged([single segment, identical])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
