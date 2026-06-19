@@ -307,3 +307,14 @@ changes:
     impl_mode: hand-written
     reason: "Tests: O(1) cursor ordering, prefer-redeliver, committed watermark, lease-batch/ack-batch, and per-subject concurrency isolation."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Sound: per-shard Arc<Mutex<SubjectState>> behind an RwLock map gives real cross-subject concurrency; O(1) lease via redeliver min-heap + next_offer; watermark advances amortized O(1); batch verbs loop the O(1) primitives. Fencing/exactly-once unchanged.
+- [schema] Batch DTOs reuse Lease; backward compatible with single lease/ack.
+- [rest-api] lease-batch/ack-batch fully specified, JSON + CBOR.
+- [unit-test] Covers ordering, prefer-redeliver, watermark correctness, batch paths, and concurrency isolation.
+- [changes] Scoped to the work-queue surface + a new test; no new external-project dependency.
