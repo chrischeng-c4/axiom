@@ -276,18 +276,11 @@ pub fn mb_set_pop(receiver: MbValue) -> MbValue {
 
 /// set.update(other) — in-place union; adds all elements from other (set, list, or tuple).
 pub fn mb_set_update(receiver: MbValue, other: MbValue) -> MbValue {
-    let new_items: Vec<MbValue> = if let Some(ptr) = other.as_ptr() {
-        unsafe {
-            match (*ptr).data {
-                ObjData::Set(ref lock) => lock.read().unwrap().to_vec(),
-                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-                ObjData::Tuple(ref items) => items.clone(),
-                _ => vec![],
-            }
-        }
-    } else {
-        vec![]
-    };
+    // CPython `set.update(*others)` accepts ANY iterable (range, dict→keys,
+    // str→chars, generators, …). Delegate to the shared iterable-collection
+    // path instead of an inline Set/List/Tuple-only match (which silently
+    // dropped every other iterable).
+    let new_items: Vec<MbValue> = extract_set_items(other);
 
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
