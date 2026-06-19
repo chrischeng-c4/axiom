@@ -49,6 +49,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/kv/{key}/expire", post(meta::expire))
         .route("/v1/kv/{key}/ttl", get(meta::ttl))
         .route("/v1/kv/{key}/persist", post(meta::persist))
+        .route("/v1/kv/{key}/getex", post(meta::getex))
         // hashes
         .route(
             "/v1/hashes/{key}",

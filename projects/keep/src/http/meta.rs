@@ -1,6 +1,8 @@
 //! Cross-cutting routes: TTL / expiry on any key (`/v1/kv/{key}/...`) and list
 //! read ops (`/v1/lists/{key}`).
 
+use std::time::Duration;
+
 use axum::{
     extract::{Path, Query, State},
     Json,
@@ -88,6 +90,42 @@ pub async fn persist(
     let applied = st.engine.persist(&k) == 1;
     ack_durable(&st).await;
     Ok(Json(AppliedResponse { applied }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct GetExRequest {
+    /// New TTL in milliseconds. Omit (with `persist=false`) for a plain read.
+    #[serde(default)]
+    pub ttl_ms: Option<u64>,
+    /// Remove any existing TTL (ignored if `ttl_ms` is set).
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GetExResponse {
+    /// Current value, or null if the key is absent.
+    pub value: Option<serde_json::Value>,
+}
+
+/// Get a value and atomically adjust its TTL (GETEX). With neither `ttl_ms` nor
+/// `persist` it is a plain read; otherwise the TTL change is durable-before-ack.
+#[utoipa::path(post, path = "/v1/kv/{key}/getex", tag = "Expiry",
+    params(("key" = String, Path, description = "Key")), request_body = GetExRequest,
+    responses((status = 200, description = "Value", body = GetExResponse)))]
+pub async fn getex(
+    State(st): State<AppState>,
+    Path(key): Path<String>,
+    Json(req): Json<GetExRequest>,
+) -> Result<Json<GetExResponse>, ApiErr> {
+    let k = key_of(&key)?;
+    let ttl = req.ttl_ms.map(Duration::from_millis);
+    let mutates = ttl.is_some() || req.persist;
+    let value = st.engine.getex(&k, ttl, req.persist).map(kv_to_json);
+    if mutates {
+        ack_durable(&st).await;
+    }
+    Ok(Json(GetExResponse { value }))
 }
 
 // ---------------------------------------------------------------------------

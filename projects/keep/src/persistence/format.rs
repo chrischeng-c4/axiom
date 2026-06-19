@@ -67,6 +67,7 @@ pub enum WalOpType {
     RPush = 25,
     LPop = 26,
     RPop = 27,
+    GetEx = 28,
 }
 
 impl WalOpType {
@@ -99,6 +100,7 @@ impl WalOpType {
             25 => Some(WalOpType::RPush),
             26 => Some(WalOpType::LPop),
             27 => Some(WalOpType::RPop),
+            28 => Some(WalOpType::GetEx),
             _ => None,
         }
     }
@@ -220,6 +222,11 @@ pub enum WalOp {
     RPop {
         key: String,
     },
+    GetEx {
+        key: String,
+        ttl_ms: Option<u64>,
+        persist: bool,
+    },
 }
 
 impl WalOp {
@@ -252,6 +259,7 @@ impl WalOp {
             WalOp::RPush { .. } => WalOpType::RPush,
             WalOp::LPop { .. } => WalOpType::LPop,
             WalOp::RPop { .. } => WalOpType::RPop,
+            WalOp::GetEx { .. } => WalOpType::GetEx,
         }
     }
 }

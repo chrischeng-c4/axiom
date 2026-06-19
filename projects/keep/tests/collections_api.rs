@@ -140,6 +140,24 @@ async fn list_range_and_expiry() {
 }
 
 #[tokio::test]
+async fn getex_reads_and_adjusts_ttl() {
+    let app = app();
+    call(&app, "PUT", "/v1/kv/g", json!({"value": "hi"})).await;
+
+    // GETEX with a TTL returns the value and arms the expiry.
+    let (st, body) = call(&app, "POST", "/v1/kv/g/getex", json!({"ttl_ms": 100000})).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["value"], json!("hi"));
+    let (_, body) = call(&app, "GET", "/v1/kv/g/ttl", Value::Null).await;
+    assert!(body["ttl_secs"].as_i64().unwrap() > 0, "ttl should be set");
+
+    // GETEX persist clears it.
+    call(&app, "POST", "/v1/kv/g/getex", json!({"persist": true})).await;
+    let (_, body) = call(&app, "GET", "/v1/kv/g/ttl", Value::Null).await;
+    assert_eq!(body["ttl_secs"], json!(-1), "ttl should be cleared");
+}
+
+#[tokio::test]
 async fn openapi_lists_the_new_paths() {
     let app = app();
     let (st, doc) = call(&app, "GET", "/openapi.json", Value::Null).await;
@@ -150,6 +168,7 @@ async fn openapi_lists_the_new_paths() {
         "/v1/zsets/{key}",
         "/v1/lists/{key}",
         "/v1/kv/{key}/ttl",
+        "/v1/kv/{key}/getex",
     ] {
         assert!(doc["paths"][p].is_object(), "openapi missing path {p}");
     }

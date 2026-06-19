@@ -32,7 +32,7 @@ client to ship (relay+keep worker contract, #108).
 | POST/GET/DELETE | `/v1/hashes/{key}` + `/length` `/mget` `/incr` `/fields/{field}` | hash ops |
 | POST/GET/DELETE | `/v1/sets/{key}` + `/length` `/members/{m}` | set ops |
 | POST/GET/DELETE | `/v1/zsets/{key}` + `/length` `/incr` `/members/{m}/{score,rank}` | sorted-set ops |
-| POST/GET | `/v1/kv/{key}/{expire,ttl,persist}` | TTL / expiry on any key |
+| POST/GET | `/v1/kv/{key}/{expire,ttl,persist,getex}` | TTL / expiry on any key |
 | GET | `/healthz` `/readyz` `/metrics` `/info` `/openapi.json` `/docs` | admin / probes |
 
 **Values.** Structured values travel as native JSON (`application/json`, body
@@ -44,8 +44,8 @@ through JSON — `GET` returns them verbatim as octet-stream.
 (`/v1/kv`, incr/cas/setnx, `:mset`/`:mdel`), collections (hash / set /
 sorted-set / list push+pop), and TTL ops (expire/persist). A write returns 200
 only after its op is fsynced (group-committed); committed state survives a cold
-recovery (see `tests/durability.rs`). `GETEX`'s TTL side-effect is the one
-mutation not yet WAL-logged; blocking list pops (`BLPOP`/`BRPOP`) are still TODO.
+recovery (see `tests/durability.rs`). Blocking list pops (`BLPOP`/`BRPOP`) are
+still TODO (they need a wait mechanism, not just durability).
 
 ## Run
 
