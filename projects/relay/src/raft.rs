@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:786bf09f" tracker="pending-tracker" reason="Self-contained step-driven Raft: RaftNode (roles, current_term, voted_for, in-memory log of RaftEntry{term,index,command}, commit_index/last_applied, per-peer next/match_index), tick() + handle(from, RaftMsg) doing election/replication/commit/step-down, propose(command), take_outgoing(), take_committed(); auto_membership(n) -> voters=largest-odd<=N + trailing learner; majority counts voters only; learners replicate+apply but never vote/start elections. RaftTransport trait + an in-process bus impl for tests. No external dependency."
+// TODO: hand-write content for `projects/relay/src/raft.rs`.
+// HANDWRITE-END
