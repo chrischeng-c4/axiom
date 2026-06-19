@@ -256,6 +256,8 @@ e2e_tests:
         - path: "docs/aw-ec-manual.md"
           kind: generated-manual
           label: "Generated product manual"
+          format: markdown
+          command: "aw ec --project agentic-workflow doc gen"
     evaluators:
       - id: capability-agent-eval
         tool: codex

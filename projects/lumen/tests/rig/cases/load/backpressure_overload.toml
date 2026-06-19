@@ -1,0 +1,42 @@
+# Lifecycle case (migrated from scenarios/load/backpressure_overload.toml).
+# 3x steady-state offered load; the launcher's --qps/--workers/--duration-secs
+# (or efficiency-EC config) set the schedule.
+[case]
+id = "backpressure_overload"
+suite = "lumen"
+dimension = "load"
+subject = "search stays up with bounded error_rate/p99 under 3x steady-state offered load"
+expected = "pass"
+required = true
+source_contract = "lumen-search-stability-resilience"
+
+[env]
+upstream = "127.0.0.1:7373"
+collection = "users"
+
+[prepare]
+needs = ["lumen"]
+runner = "rig-load"
+[[prepare.step]]
+type = "http"
+name = "collection_exists"
+method = "PUT"
+url = "http://{{upstream}}/collections/{{collection}}"
+body = '{"fields": {"bio": {"type": "text"}}}'
+expect = { statuses = [200, 201, 400, 409] }
+
+[exercise]
+n = 600
+[exercise.request]
+method = "POST"
+url = "http://{{upstream}}/collections/{{collection}}/search"
+body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
+[exercise.request.expect]
+status = 200
+timeout_ms = 2000
+
+[load]
+metric = "error_rate"
+
+[clean]
+delegate = "vat-cow"

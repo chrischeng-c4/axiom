@@ -89,13 +89,18 @@ pub enum PageRequest {
         req_id: u64,
         page_id: String,
         expression: String,
+        timeout_ms: Option<u64>,
     },
     /// Return the current URL of the page.
     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R6
     Url { req_id: u64, page_id: String },
     /// Close the page (called in the fixture finally block after each test).
     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R4
-    Close { req_id: u64, page_id: String },
+    Close {
+        req_id: u64,
+        page_id: String,
+        timeout_ms: Option<u64>,
+    },
     /// Get text content of the first element matching `selector` (used by locator.textContent).
     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R6
     GetText {
@@ -133,6 +138,8 @@ pub enum PageRequest {
         page_id: String,
         /// Optional path to write the screenshot to (unused by Rust side — JS handles saving).
         path: Option<String>,
+        /// Optional per-call timeout used by visual/failure-artifact capture.
+        timeout_ms: Option<u64>,
     },
 
     /// Navigate back in history via Page.goBack.
@@ -325,6 +332,13 @@ pub enum PageResponse {
     StorageStateResult {
         req_id: u64,
         value: serde_json::Value,
+    },
+
+    /// Asynchronous page event forwarded from CDP to the JS Page instance.
+    Event {
+        page_id: String,
+        event: String,
+        payload: serde_json::Value,
     },
 }
 
@@ -541,12 +555,13 @@ pub async fn dispatch_page_request(req: PageRequest, page: Option<&Page>) -> Pag
         },
 
         // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R4
-        PageRequest::Close { req_id, .. } => {
-            // Page close: the Page struct doesn't have a close() on &self (it
-            // needs ownership). We signal success and let the Rust side drop
-            // the Page handle. JS already marks the page closed.
-            PageResponse::Ok { req_id }
-        }
+        PageRequest::Close { req_id, .. } => match page.close().await {
+            Ok(()) => PageResponse::Ok { req_id },
+            Err(e) => PageResponse::Error {
+                req_id,
+                message: format!("browser close() failed: {e}"),
+            },
+        },
 
         // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R6
         PageRequest::GetText {
@@ -1082,10 +1097,25 @@ async fn do_mouse_event(
     if let Some(cc) = click_count {
         params["clickCount"] = serde_json::Value::Number(cc.into());
     }
+    if let Some(buttons) = mouse_event_buttons(event_type, button) {
+        params["buttons"] = serde_json::Value::Number(buttons.into());
+    }
     page.session()
         .send("Input.dispatchMouseEvent", params)
         .await?;
     Ok(())
+}
+
+fn mouse_event_buttons(event_type: &str, button: Option<&str>) -> Option<u32> {
+    match event_type {
+        "mousePressed" => Some(match button {
+            Some("right") => 2,
+            Some("middle") => 4,
+            _ => 1,
+        }),
+        "mouseReleased" => Some(0),
+        _ => None,
+    }
 }
 
 /// Set page content via Page.setDocumentContent.
@@ -1564,6 +1594,15 @@ mod gh3745_parse_page_request_warn_tests {
         let err = serde_json::from_str::<PageRequest>(&line).err().unwrap();
         let msg = format_unknown_page_request_warn(&preview, &err);
         assert!(msg.contains(&preview));
+    }
+
+    #[test]
+    fn mouse_event_buttons_match_cdp_button_bitfield() {
+        assert_eq!(mouse_event_buttons("mousePressed", Some("left")), Some(1));
+        assert_eq!(mouse_event_buttons("mousePressed", Some("right")), Some(2));
+        assert_eq!(mouse_event_buttons("mousePressed", Some("middle")), Some(4));
+        assert_eq!(mouse_event_buttons("mouseReleased", Some("left")), Some(0));
+        assert_eq!(mouse_event_buttons("mouseMoved", Some("left")), None);
     }
 }
 // CODEGEN-END

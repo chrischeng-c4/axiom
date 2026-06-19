@@ -2356,41 +2356,58 @@ fn build_traceability_coverage_with_command_inventory(
     inventory: &Inventory,
     command_inventory: &BTreeMap<String, CommandInventoryEntry>,
 ) -> Result<TraceabilityCoverage> {
-    let (cap_path, capability_document) =
-        match crate::cli::capability::resolve_capability_path(project_root, project, None) {
-            Ok(cap_path) => {
-                let cap_body = match fs::read_to_string(&cap_path) {
-                    Ok(body) => body,
-                    Err(err) => {
-                        return Ok(traceability_capability_map_blocked(
-                            project,
-                            inventory,
-                            cap_path.display().to_string(),
-                            format!("capability document read failed: {err}"),
-                        ));
-                    }
-                };
-                match crate::cli::capability::parse_capability_document(&cap_body, &cap_path) {
-                    Ok(document) => (cap_path, document),
-                    Err(err) => {
-                        return Ok(traceability_capability_map_blocked(
-                            project,
-                            inventory,
-                            cap_path.display().to_string(),
-                            format!("capability document parse failed: {err}"),
-                        ));
-                    }
+    let (cap_path, capability_document) = match crate::cli::capability::resolve_capability_path(
+        project_root,
+        project,
+        None,
+    ) {
+        Ok(cap_path) => {
+            let cap_body = match fs::read_to_string(&cap_path) {
+                Ok(body) => body,
+                Err(err) => {
+                    return Ok(traceability_capability_map_blocked(
+                        project,
+                        inventory,
+                        cap_path.display().to_string(),
+                        format!("capability document read failed: {err}"),
+                    ));
+                }
+            };
+            match crate::cli::capability::parse_capability_document(&cap_body, &cap_path) {
+                Ok(document)
+                    if document.capabilities.is_empty() && document.legacy_rows.is_empty() =>
+                {
+                    let reason = document.findings.first().cloned().unwrap_or_else(|| {
+                            "no capability sections found; define README capability roots under ## Capabilities"
+                                .to_string()
+                        });
+                    return Ok(traceability_capability_map_blocked(
+                        project,
+                        inventory,
+                        cap_path.display().to_string(),
+                        format!("capability document has no capability sections: {reason}"),
+                    ));
+                }
+                Ok(document) => (cap_path, document),
+                Err(err) => {
+                    return Ok(traceability_capability_map_blocked(
+                        project,
+                        inventory,
+                        cap_path.display().to_string(),
+                        format!("capability document parse failed: {err}"),
+                    ));
                 }
             }
-            Err(err) => {
-                return Ok(traceability_capability_map_blocked(
-                    project,
-                    inventory,
-                    String::new(),
-                    format!("capability path resolution failed: {err}"),
-                ));
-            }
-        };
+        }
+        Err(err) => {
+            return Ok(traceability_capability_map_blocked(
+                project,
+                inventory,
+                String::new(),
+                format!("capability path resolution failed: {err}"),
+            ));
+        }
+    };
     let td_index = collect_td_index(project_root, &inventory.coverage.scope)?;
     let semantic = build_semantic_coverage(project_root, inventory)?;
     let mut records = BTreeMap::new();
@@ -2481,6 +2498,9 @@ fn build_traceability_coverage_with_command_inventory(
         let Ok(content) = fs::read_to_string(&file.abs) else {
             continue;
         };
+        if content.contains(AW_EC_BEGIN_MARKER) {
+            continue;
+        }
         for block in crate::generate::marker::parse_codegen_blocks(&content) {
             let source = format!("{}:{}", file.rel, block.begin_line + 1);
             let Some(td_path) = normalize_spec_ref_path(&block.spec_ref, project_root) else {
@@ -12373,7 +12393,9 @@ changes:
             blocker.kind,
             TraceabilityBlockerKind::TdInvalidCapabilityRef
         );
-        assert!(blocker.reason.contains("capability document parse failed"));
+        assert!(blocker
+            .reason
+            .contains("capability document has no capability sections"));
         assert!(blocker.reason.contains("no capability sections found"));
     }
 
@@ -12842,6 +12864,24 @@ e2e_tests:
         assert!(!coverage.blockers.iter().any(|blocker| {
             blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge
                 && blocker.source.as_deref() == Some("section:e2e-test")
+        }));
+    }
+
+    #[test]
+    fn traceability_excludes_aw_ec_generated_wrapper_cb_edges() {
+        let tmp = TempDir::new().unwrap();
+        write_traceability_config(tmp.path(), "tests/**");
+        write_traceability_readme(tmp.path());
+        write(
+            tmp.path(),
+            "tests/behavior_demo_contract.rs",
+            "// SPEC-MANAGED: external-contracts/behavior/demo.toml#demo-contract\n// CODEGEN-BEGIN\n// AW-EC-BEGIN\n// @ec demo-contract\n#[test]\n#[ignore = \"generated EC wrapper\"]\nfn demo_contract() {}\n// AW-EC-END\n// CODEGEN-END\n",
+        );
+
+        let coverage = traceability_coverage_for(tmp.path());
+
+        assert!(coverage.blockers.iter().all(|blocker| {
+            blocker.source.as_deref() != Some("tests/behavior_demo_contract.rs")
         }));
     }
 

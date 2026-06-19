@@ -8,7 +8,7 @@ from .agentkit import (
     DeterministicAgentRunner,
     get_agent_runner,
 )
-from .api import (
+from .http import (
     App,
     BackgroundTasks,
     Body,

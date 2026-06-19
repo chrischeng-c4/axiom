@@ -3,10 +3,12 @@
 //! Product-flow E2E run/open support.
 //!
 //! `jet e2e run` is the agent/CI surface: it runs cases headlessly and writes
-//! machine-readable evidence. `jet e2e open` is the human review surface: it
-//! launches a desktop-style control shell plus a separate visible controlled
-//! Jet Browser target, executes cases serially, and writes the same evidence to
-//! disk.
+//! machine-readable evidence. `jet e2e open` is the human visual review surface:
+//! it launches one tabbed browser window with the review shell in tab 0 and the
+//! active case in a controlled tab, executes cases serially, and writes the same
+//! evidence to disk. `jet e2e manual` is the human-readable documentation
+//! surface: it runs the same Jet-owned E2E runtime serially and publishes
+//! Markdown/HTML docs.
 
 pub mod actionability;
 pub mod assertion_diff;
@@ -52,7 +54,10 @@ use tokio::sync::Mutex;
 pub const EVIDENCE_SCHEMA_VERSION: &str = "jet.e2e.evidence.v1";
 pub const CONTROL_PROTOCOL_VERSION: &str = "jet.e2e.open-control.v1";
 pub const JET_BROWSER_DRIVER: &str = "cdp-chromium";
-pub const JET_REVIEW_SHELL_DRIVER: &str = "chromium-app-window";
+pub const JET_REVIEW_SHELL_DRIVER: &str = "chromium-window-tabs";
+pub const JET_CHROME_BROWSER_DRIVER: &str = "cdp-chrome";
+pub const JET_CHROME_REVIEW_SHELL_DRIVER: &str = "chrome-window-tabs";
+pub const DEFAULT_OPEN_SLOW_MO_MS: u64 = 500;
 
 /// Deterministic process exit codes for `jet e2e run`.
 ///
@@ -76,6 +81,7 @@ pub const E2E_EXIT_INFRASTRUCTURE: i32 = 4;
 pub enum E2eMode {
     Run,
     Open,
+    Manual,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
@@ -86,6 +92,15 @@ pub enum E2eServeMode {
     Off,
     Dev,
     Prod,
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum E2eOpenBrowserMode {
+    #[default]
+    Chrome,
+    Chromium,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
@@ -113,8 +128,35 @@ pub struct E2eOpenOptions {
     pub grep: Option<String>,
     pub timeout_ms: Option<u64>,
     pub evidence_dir: PathBuf,
+    #[serde(default)]
+    pub serve: E2eServeMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub slow_mo_ms: u64,
+    #[serde(default)]
+    pub browser: E2eOpenBrowserMode,
     pub dry_run: bool,
     pub no_open: bool,
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct E2eManualOptions {
+    pub project_root: PathBuf,
+    pub cases: Vec<PathBuf>,
+    pub grep: Option<String>,
+    pub timeout_ms: Option<u64>,
+    pub trace: WireTraceMode,
+    pub evidence_dir: PathBuf,
+    pub out_dir: PathBuf,
+    #[serde(default)]
+    pub serve: E2eServeMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub print_json: bool,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
@@ -123,6 +165,7 @@ pub struct E2eRunResult {
     pub evidence_path: PathBuf,
     pub jsonl_path: PathBuf,
     pub review_app_path: Option<PathBuf>,
+    pub manual_docs_path: Option<PathBuf>,
     pub bundle: E2eEvidenceBundle,
 }
 
@@ -270,6 +313,7 @@ pub struct E2eOpenReviewShell {
 #[serde(rename_all = "kebab-case")]
 pub enum E2eOpenReviewShellKind {
     DesktopAppWindow,
+    BrowserWindowTabs,
     ExportOnly,
 }
 
@@ -427,6 +471,8 @@ pub async fn run_agent_mode(opts: E2eRunOptions) -> Result<E2eRunResult> {
         true,
         base_url,
         None,
+        None,
+        None,
     )
     .await;
 
@@ -467,9 +513,182 @@ pub async fn run_agent_mode(opts: E2eRunOptions) -> Result<E2eRunResult> {
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+pub async fn run_manual_mode(opts: E2eManualOptions) -> Result<E2eRunResult> {
+    if opts.serve != E2eServeMode::Off && opts.base_url.is_some() {
+        anyhow::bail!("`jet e2e manual --serve` and `--base-url` cannot be used together");
+    }
+
+    let started_at_ms = now_ms();
+    let mut launched_serve = match opts.serve {
+        E2eServeMode::Off => None,
+        E2eServeMode::Dev => Some(
+            crate::dev_server::serve_process::launch_detached(
+                crate::dev_server::serve_process::ServeProcessOptions::dom_dev(
+                    opts.project_root.clone(),
+                ),
+            )
+            .await
+            .context("starting `jet serve` for e2e manual")?,
+        ),
+        E2eServeMode::Prod => Some(
+            crate::dev_server::serve_process::launch_detached(
+                crate::dev_server::serve_process::ServeProcessOptions {
+                    ready_timeout: Duration::from_secs(30),
+                    ..crate::dev_server::serve_process::ServeProcessOptions::dom_prod(
+                        opts.project_root.clone(),
+                    )
+                },
+            )
+            .await
+            .context("starting `jet serve --prod` for e2e manual")?,
+        ),
+    };
+    let base_url = launched_serve
+        .as_ref()
+        .map(|serve| serve.session.url.clone())
+        .or_else(|| opts.base_url.clone());
+    let serve_session = launched_serve.as_ref().map(|serve| serve.session.clone());
+
+    let run_result = run_cases(
+        &opts.project_root,
+        &opts.cases,
+        opts.grep.clone(),
+        opts.timeout_ms,
+        Some(1),
+        opts.trace,
+        true,
+        base_url,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    let shutdown_result = if let Some(serve) = launched_serve.take() {
+        let result = crate::dev_server::serve_process::shutdown_host_port(
+            &serve.session.host,
+            serve.session.port,
+        )
+        .await;
+        crate::dev_server::session::clear(&opts.project_root);
+        Some(result.context("shutting down e2e manual serve session"))
+    } else {
+        None
+    };
+
+    let summary = run_result?;
+    if let Some(shutdown) = shutdown_result {
+        shutdown?;
+    }
+
+    let finished_at_ms = now_ms();
+    let mut bundle = build_evidence_bundle(
+        E2eMode::Manual,
+        summary,
+        started_at_ms,
+        finished_at_ms,
+        serve_session,
+        None,
+    );
+    let out_dir = resolve_project_path(&opts.project_root, &opts.out_dir);
+    let manual_docs = write_manual_docs(
+        &opts.project_root,
+        &out_dir,
+        &bundle,
+        opts.title.as_deref().unwrap_or("Jet E2E Manual"),
+    )?;
+    bundle.artifacts.push(E2eArtifactRef {
+        kind: "manual-markdown".to_string(),
+        path: artifact_path_for_project(&opts.project_root, &manual_docs.markdown_path),
+        label: Some("Manual Markdown".to_string()),
+    });
+    bundle.artifacts.push(E2eArtifactRef {
+        kind: "manual-html".to_string(),
+        path: artifact_path_for_project(&opts.project_root, &manual_docs.html_path),
+        label: Some("Manual HTML".to_string()),
+    });
+
+    let mut written = write_evidence_bundle(&opts.evidence_dir, &bundle)?;
+    written.manual_docs_path = Some(manual_docs.html_path.clone());
+    if opts.print_json {
+        println!("{}", serde_json::to_string_pretty(&written.bundle)?);
+    } else {
+        println!("E2E manual docs: {}", manual_docs.html_path.display());
+        println!(
+            "E2E manual markdown: {}",
+            manual_docs.markdown_path.display()
+        );
+        println!("E2E evidence: {}", written.evidence_path.display());
+        println!("E2E events: {}", written.jsonl_path.display());
+    }
+    Ok(written)
+}
+
+fn open_browser_executable(mode: E2eOpenBrowserMode) -> Result<Option<PathBuf>> {
+    match mode {
+        E2eOpenBrowserMode::Chrome => {
+            let path = crate::browser::launcher::BrowserLauncher::find_system_chrome()
+                .context("finding system Chrome for `jet e2e open --browser chrome`")?;
+            Ok(Some(path))
+        }
+        E2eOpenBrowserMode::Chromium => Ok(None),
+    }
+}
+
+fn open_browser_driver(mode: E2eOpenBrowserMode) -> &'static str {
+    match mode {
+        E2eOpenBrowserMode::Chrome => JET_CHROME_BROWSER_DRIVER,
+        E2eOpenBrowserMode::Chromium => JET_BROWSER_DRIVER,
+    }
+}
+
+fn open_review_shell_driver(mode: E2eOpenBrowserMode) -> &'static str {
+    match mode {
+        E2eOpenBrowserMode::Chrome => JET_CHROME_REVIEW_SHELL_DRIVER,
+        E2eOpenBrowserMode::Chromium => JET_REVIEW_SHELL_DRIVER,
+    }
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
+    if opts.serve != E2eServeMode::Off && opts.base_url.is_some() {
+        anyhow::bail!("`jet e2e open --serve` and `--base-url` cannot be used together");
+    }
+
+    let browser_executable = open_browser_executable(opts.browser)?;
+    let review_shell_driver = open_review_shell_driver(opts.browser);
+    let browser_driver = open_browser_driver(opts.browser);
     let started_at_ms = now_ms();
     let run_id = make_run_id(started_at_ms, E2eMode::Open);
+    let mut launched_serve = match opts.serve {
+        E2eServeMode::Off => None,
+        E2eServeMode::Dev => Some(
+            crate::dev_server::serve_process::launch_detached(
+                crate::dev_server::serve_process::ServeProcessOptions::dom_dev(
+                    opts.project_root.clone(),
+                ),
+            )
+            .await
+            .context("starting `jet serve` for e2e open")?,
+        ),
+        E2eServeMode::Prod => Some(
+            crate::dev_server::serve_process::launch_detached(
+                crate::dev_server::serve_process::ServeProcessOptions {
+                    ready_timeout: Duration::from_secs(30),
+                    ..crate::dev_server::serve_process::ServeProcessOptions::dom_prod(
+                        opts.project_root.clone(),
+                    )
+                },
+            )
+            .await
+            .context("starting `jet serve --prod` for e2e open")?,
+        ),
+    };
+    let base_url = launched_serve
+        .as_ref()
+        .map(|serve| serve.session.url.clone())
+        .or_else(|| opts.base_url.clone());
+    let serve_session = launched_serve.as_ref().map(|serve| serve.session.clone());
     let initial_summary = Summary::default();
     let shell_path = open_runner_shell_path(&opts.evidence_dir);
     let live_files = LiveRunnerFiles::new(&opts.evidence_dir, &run_id);
@@ -493,9 +712,9 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
             kind: if opts.no_open {
                 E2eOpenReviewShellKind::ExportOnly
             } else {
-                E2eOpenReviewShellKind::DesktopAppWindow
+                E2eOpenReviewShellKind::BrowserWindowTabs
             },
-            driver: JET_REVIEW_SHELL_DRIVER.to_string(),
+            driver: review_shell_driver.to_string(),
             runner_shell: shell_path.clone(),
             runner_shell_url: live_server.as_ref().map(|server| server.url.clone()),
             cdp_ws_url: None,
@@ -506,7 +725,7 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
             } else {
                 E2eOpenBrowserKind::ControlledJetBrowser
             },
-            driver: JET_BROWSER_DRIVER.to_string(),
+            driver: browser_driver.to_string(),
             headless: false,
             isolated_profile: true,
             runner_shell: shell_path.clone(),
@@ -520,7 +739,7 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
         initial_summary,
         started_at_ms,
         started_at_ms,
-        None,
+        serve_session.clone(),
         Some(control.clone()),
     );
     initial_bundle.run_id = run_id.clone();
@@ -533,13 +752,22 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
             .as_ref()
             .map(|server| server.url.as_str())
             .context("live runner server missing")?;
-        let session = ReviewShellWindow::launch(&opts.evidence_dir, runner_url).await?;
+        let session =
+            ReviewShellWindow::launch(&opts.evidence_dir, runner_url, browser_executable.clone())
+                .await?;
+        println!("E2E runner URL: {runner_url}");
+        println!(
+            "E2E visual pacing: {}ms between page actions",
+            opts.slow_mo_ms
+        );
         if let Some(shell) = control.review_shell.as_mut() {
             shell.cdp_ws_url = Some(session.ws_url.clone());
         }
+        control.browser.cdp_ws_url = Some(session.ws_url.clone());
         Some(session)
     };
 
+    let shared_browser_ws_url = review_shell.as_ref().map(|shell| shell.ws_url.clone());
     let summary = if opts.dry_run {
         Summary::default()
     } else {
@@ -551,14 +779,20 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
             Some(1),
             WireTraceMode::RetainOnFailure,
             false,
-            None,
+            base_url,
+            if shared_browser_ws_url.is_some() {
+                None
+            } else {
+                browser_executable.clone()
+            },
+            shared_browser_ws_url,
             if opts.no_open {
                 None
             } else {
                 Some(LiveE2eConfig {
                     event_log: live_files.event_log.clone(),
                     control_path: live_files.control_path.clone(),
-                    step_delay_ms: 250,
+                    step_delay_ms: opts.slow_mo_ms,
                 })
             },
         )
@@ -570,7 +804,7 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
         summary,
         started_at_ms,
         finished_at_ms,
-        None,
+        serve_session,
         Some(control),
     );
     bundle.run_id = run_id;
@@ -589,56 +823,81 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
                 "skipped": written.bundle.summary.skipped,
             }),
         );
-        println!("Jet E2E shell: desktop-style app window launched via {JET_REVIEW_SHELL_DRIVER}");
-        println!(
-            "Jet Browser target: visible controlled browser launched via {JET_BROWSER_DRIVER}"
-        );
+        println!("Jet E2E shell: browser tab review shell launched via {review_shell_driver}");
+        println!("Jet Browser target: visible controlled tab launched via {browser_driver}");
     } else {
         println!("Jet E2E shell: export-only (--no-open)");
     }
     println!("E2E runner shell: {}", app_path.display());
-    if let Some(server) = live_server.as_ref() {
-        println!("E2E runner URL: {}", server.url);
-    }
     println!("E2E evidence: {}", written.evidence_path.display());
     written.review_app_path = Some(app_path);
-    if let Some(shell) = &review_shell {
+    if let Some(shell) = review_shell {
         println!("E2E open session is still live. Press Ctrl-C to close the review shell.");
-        keep_open_session_alive(&opts, &live_files, shell, &written.bundle)
+        let keep_result = keep_open_session_alive(&opts, &live_files, &shell, &written.bundle)
             .await
-            .context("keeping e2e open session alive")?;
+            .context("keeping e2e open session alive");
+        let close_result = shell
+            .close()
+            .await
+            .context("closing e2e open review browser");
+        let shutdown_result = if let Some(serve) = launched_serve.take() {
+            let result = crate::dev_server::serve_process::shutdown_host_port(
+                &serve.session.host,
+                serve.session.port,
+            )
+            .await;
+            crate::dev_server::session::clear(&opts.project_root);
+            Some(result.context("shutting down e2e open serve session"))
+        } else {
+            None
+        };
+        keep_result?;
+        close_result?;
+        if let Some(shutdown) = shutdown_result {
+            shutdown?;
+        }
+    } else if let Some(serve) = launched_serve.take() {
+        crate::dev_server::serve_process::shutdown_host_port(
+            &serve.session.host,
+            serve.session.port,
+        )
+        .await
+        .context("shutting down e2e open serve session")?;
+        crate::dev_server::session::clear(&opts.project_root);
     }
     Ok(written)
 }
 
 struct ReviewShellWindow {
-    _browser: Browser,
+    browser: Browser,
     ws_url: String,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 impl ReviewShellWindow {
-    async fn launch(evidence_dir: &Path, runner_url: &str) -> Result<Self> {
+    async fn launch(
+        evidence_dir: &Path,
+        runner_url: &str,
+        executable: Option<PathBuf>,
+    ) -> Result<Self> {
         let profile_dir = evidence_dir.join("jet-e2e-review-shell-profile");
         std::fs::create_dir_all(&profile_dir)
             .with_context(|| format!("Failed to create {}", profile_dir.display()))?;
         let browser = Browser::launch(LaunchOptions {
+            executable,
             headless: false,
             user_data_dir: Some(profile_dir),
-            args: vec![
-                format!("--app={runner_url}"),
-                "--window-size=1500,960".to_string(),
-                "--auto-open-devtools-for-tabs=false".to_string(),
-            ],
+            args: vec!["--window-size=1500,960".to_string(), runner_url.to_string()],
             ..LaunchOptions::default()
         })
         .await
-        .context("launching Jet E2E desktop-style review shell")?;
+        .context("launching Jet E2E tabbed review window")?;
         let ws_url = browser.ws_url().to_string();
-        Ok(Self {
-            _browser: browser,
-            ws_url,
-        })
+        Ok(Self { browser, ws_url })
+    }
+
+    async fn close(self) -> Result<()> {
+        self.browser.close().await
     }
 }
 
@@ -683,6 +942,15 @@ async fn replay_open_case(
     let selected_title = replay_case_title(live_files, control);
     let grep = selected_title.as_ref().map(|title| regex::escape(title));
     let replay_started_at = now_ms();
+    let shared_browser_ws_url = open_control
+        .review_shell
+        .as_ref()
+        .and_then(|shell| shell.cdp_ws_url.clone());
+    let browser_executable = if shared_browser_ws_url.is_some() {
+        None
+    } else {
+        open_browser_executable(opts.browser)?
+    };
     write_live_event(
         &live_files.event_log,
         &json!({
@@ -702,10 +970,12 @@ async fn replay_open_case(
         WireTraceMode::RetainOnFailure,
         false,
         None,
+        browser_executable,
+        shared_browser_ws_url,
         Some(LiveE2eConfig {
             event_log: live_files.event_log.clone(),
             control_path: live_files.control_path.clone(),
-            step_delay_ms: 250,
+            step_delay_ms: opts.slow_mo_ms,
         }),
     )
     .await?;
@@ -815,10 +1085,12 @@ impl LiveRunnerFiles {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LiveControlState {
     #[serde(default)]
     paused: bool,
+    #[serde(default = "default_live_speed_multiplier")]
+    speed_multiplier: u64,
     #[serde(default)]
     next_token: u64,
     #[serde(default)]
@@ -829,6 +1101,32 @@ struct LiveControlState {
     replay_case_id: Option<String>,
     #[serde(default)]
     replay_case_title: Option<String>,
+}
+
+fn default_live_speed_multiplier() -> u64 {
+    1
+}
+
+fn parse_live_speed_multiplier(payload: &serde_json::Value) -> Option<u64> {
+    payload
+        .get("speed_multiplier")
+        .or_else(|| payload.get("speed"))
+        .and_then(|value| value.as_u64())
+        .filter(|value| matches!(value, 1 | 2 | 4))
+}
+
+impl Default for LiveControlState {
+    fn default() -> Self {
+        Self {
+            paused: false,
+            speed_multiplier: default_live_speed_multiplier(),
+            next_token: 0,
+            replay_token: 0,
+            replay_case_index: None,
+            replay_case_id: None,
+            replay_case_title: None,
+        }
+    }
 }
 
 struct LiveRunnerServer {
@@ -982,6 +1280,19 @@ async fn live_runner_control(
             control.paused = true;
             control.next_token = control.next_token.saturating_add(1);
         }
+        "speed" => {
+            let Some(speed_multiplier) = parse_live_speed_multiplier(&payload) else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "ok": false,
+                        "error": "speed control requires speed_multiplier of 1, 2, or 4",
+                    })),
+                )
+                    .into_response();
+            };
+            control.speed_multiplier = speed_multiplier;
+        }
         "replay" => {
             control.replay_token = control.replay_token.saturating_add(1);
             control.replay_case_index = payload
@@ -1012,7 +1323,7 @@ async fn live_runner_control(
                     "ok": false,
                     "error": format!(
                         "unknown control command {other:?}; \
-                         supported: pause | resume | next | replay (GH #3164)"
+                         supported: pause | resume | next | speed | replay (GH #3164)"
                     ),
                 })),
             )
@@ -1197,6 +1508,8 @@ async fn run_cases(
     trace: WireTraceMode,
     headless: bool,
     base_url: Option<String>,
+    browser_executable: Option<PathBuf>,
+    browser_ws_url: Option<String>,
     live_e2e: Option<LiveE2eConfig>,
 ) -> Result<Summary> {
     let mut cfg = RunnerConfig::default_for_root(project_root)?;
@@ -1211,6 +1524,8 @@ async fn run_cases(
     }
     cfg.trace = trace;
     cfg.headless = headless;
+    cfg.browser_executable = browser_executable;
+    cfg.browser_ws_url = browser_ws_url;
     cfg.live_e2e = live_e2e;
     cfg.reporters = Vec::new();
     crate::test_runner::run(cfg).await
@@ -1280,8 +1595,8 @@ pub fn build_evidence_bundle(
 fn case_from_report(idx: usize, report: &TestReport) -> E2eCaseEvidence {
     let title = test_title(report);
     let outcome = outcome_string(report.outcome);
-    let mut context = E2eStepContext::default();
-    context
+    let mut report_context = E2eStepContext::default();
+    report_context
         .screenshots
         .extend(report.artifacts.iter().map(|path| E2eArtifactRef {
             kind: "screenshot".to_string(),
@@ -1289,27 +1604,63 @@ fn case_from_report(idx: usize, report: &TestReport) -> E2eCaseEvidence {
             label: Some("failure artifact".to_string()),
         }));
     if let Some(trace_path) = &report.trace_path {
-        merge_trace_context(trace_path, &mut context);
+        merge_trace_context(trace_path, &mut report_context);
     }
     let assertion = report.error.as_ref().map(|err| E2eAssertionDetail {
         message: err.message.clone(),
         stack: err.stack.clone(),
         diff: err.diff.clone(),
     });
+    let steps = if report.steps.is_empty() {
+        vec![E2eProductStep {
+            id: "step-0001".to_string(),
+            title: title.clone(),
+            status: outcome.clone(),
+            duration_ms: report.duration_ms,
+            assertion,
+            context: report_context,
+        }]
+    } else {
+        let context_step_index = report
+            .steps
+            .iter()
+            .position(|step| !matches!(step.outcome, Outcome::Passed))
+            .unwrap_or_else(|| report.steps.len().saturating_sub(1));
+        report
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(step_index, step)| {
+                let mut context = E2eStepContext::default();
+                if step_index == context_step_index {
+                    context = report_context.clone();
+                }
+                let mut step_assertion = step.error.as_ref().map(|err| E2eAssertionDetail {
+                    message: err.message.clone(),
+                    stack: err.stack.clone(),
+                    diff: err.diff.clone(),
+                });
+                if step_index == context_step_index && step_assertion.is_none() {
+                    step_assertion = assertion.clone();
+                }
+                E2eProductStep {
+                    id: step.id.clone(),
+                    title: step.title.clone(),
+                    status: outcome_string(step.outcome),
+                    duration_ms: step.duration_ms,
+                    assertion: step_assertion,
+                    context,
+                }
+            })
+            .collect()
+    };
     E2eCaseEvidence {
         id: format!("case-{:04}", idx + 1),
         title: title.clone(),
         file: report.file.clone(),
         outcome: outcome.clone(),
         duration_ms: report.duration_ms,
-        steps: vec![E2eProductStep {
-            id: "step-0001".to_string(),
-            title,
-            status: outcome,
-            duration_ms: report.duration_ms,
-            assertion,
-            context,
-        }],
+        steps,
     }
 }
 
@@ -1421,6 +1772,7 @@ pub fn write_evidence_bundle(
         evidence_path,
         jsonl_path,
         review_app_path: None,
+        manual_docs_path: None,
         bundle: bundle.clone(),
     })
 }
@@ -1531,6 +1883,293 @@ pub fn write_open_review_app(evidence_dir: &Path, bundle: &E2eEvidenceBundle) ->
     write_open_runner_shell(evidence_dir, bundle)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct E2eManualDocs {
+    pub markdown_path: PathBuf,
+    pub html_path: PathBuf,
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+pub fn write_manual_docs(
+    project_root: &Path,
+    out_dir: &Path,
+    bundle: &E2eEvidenceBundle,
+    title: &str,
+) -> Result<E2eManualDocs> {
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("Failed to create manual output dir {}", out_dir.display()))?;
+    let images_dir = out_dir.join("images");
+    std::fs::create_dir_all(&images_dir).with_context(|| {
+        format!(
+            "Failed to create manual image output dir {}",
+            images_dir.display()
+        )
+    })?;
+
+    let markdown = render_manual_markdown(project_root, out_dir, bundle, title)?;
+    let markdown_path = out_dir.join("index.md");
+    std::fs::write(&markdown_path, markdown.as_bytes())
+        .with_context(|| format!("Failed to write {}", markdown_path.display()))?;
+
+    let html = render_manual_html(title, &markdown);
+    let html_path = out_dir.join("index.html");
+    std::fs::write(&html_path, html.as_bytes())
+        .with_context(|| format!("Failed to write {}", html_path.display()))?;
+
+    Ok(E2eManualDocs {
+        markdown_path,
+        html_path,
+    })
+}
+
+fn render_manual_markdown(
+    project_root: &Path,
+    out_dir: &Path,
+    bundle: &E2eEvidenceBundle,
+    title: &str,
+) -> Result<String> {
+    let mut out = String::new();
+    out.push_str("# ");
+    out.push_str(title);
+    out.push_str("\n\n");
+    out.push_str("Generated by `jet e2e manual` from Jet-owned product-flow E2E evidence.\n\n");
+    out.push_str("| Field | Value |\n|---|---|\n");
+    out.push_str(&format!(
+        "| Run ID | `{}` |\n",
+        markdown_escape(&bundle.run_id)
+    ));
+    out.push_str(&format!("| Mode | `{:?}` |\n", bundle.mode));
+    out.push_str(&format!("| Passed | {} |\n", bundle.summary.passed));
+    out.push_str(&format!("| Failed | {} |\n", bundle.summary.failed));
+    out.push_str(&format!("| Skipped | {} |\n", bundle.summary.skipped));
+    out.push_str(&format!(
+        "| Duration | {} ms |\n",
+        bundle.summary.duration_ms
+    ));
+    out.push('\n');
+
+    if bundle.cases.is_empty() {
+        out.push_str("No E2E cases were discovered.\n");
+        return Ok(out);
+    }
+
+    for (case_index, case) in bundle.cases.iter().enumerate() {
+        out.push_str(&format!(
+            "## {}. {}\n\n",
+            case_index + 1,
+            markdown_escape(&case.title)
+        ));
+        out.push_str("| Field | Value |\n|---|---|\n");
+        out.push_str(&format!(
+            "| Status | `{}` |\n",
+            markdown_escape(&case.outcome)
+        ));
+        out.push_str(&format!("| File | `{}` |\n", case.file.display()));
+        out.push_str(&format!("| Duration | {} ms |\n\n", case.duration_ms));
+
+        for (step_index, step) in case.steps.iter().enumerate() {
+            out.push_str(&format!(
+                "### Step {}. {}\n\n",
+                step_index + 1,
+                markdown_escape(&step.title)
+            ));
+            out.push_str(&format!("Status: `{}`  \n", markdown_escape(&step.status)));
+            out.push_str(&format!("Duration: {} ms\n\n", step.duration_ms));
+            if let Some(assertion) = &step.assertion {
+                out.push_str("Assertion:\n\n```text\n");
+                out.push_str(&assertion.message);
+                if let Some(diff) = &assertion.diff {
+                    out.push('\n');
+                    out.push_str(diff);
+                }
+                out.push_str("\n```\n\n");
+            }
+
+            let screenshots =
+                copy_manual_screenshots(project_root, out_dir, case_index, step_index, step)?;
+            if screenshots.is_empty() {
+                out.push_str("_No screenshots were captured for this step._\n\n");
+            } else {
+                for screenshot in screenshots {
+                    out.push_str(&format!(
+                        "![{}]({})\n\n",
+                        markdown_escape(&step.title),
+                        screenshot.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    if !bundle.artifacts.is_empty() {
+        out.push_str("## Evidence Artifacts\n\n");
+        for artifact in &bundle.artifacts {
+            let label = artifact.label.as_deref().unwrap_or(&artifact.kind);
+            out.push_str(&format!(
+                "- `{}`: `{}` ({})\n",
+                markdown_escape(&artifact.kind),
+                artifact.path.display(),
+                markdown_escape(label)
+            ));
+        }
+        out.push('\n');
+    }
+
+    Ok(out)
+}
+
+fn copy_manual_screenshots(
+    project_root: &Path,
+    out_dir: &Path,
+    case_index: usize,
+    step_index: usize,
+    step: &E2eProductStep,
+) -> Result<Vec<PathBuf>> {
+    let mut copied = Vec::new();
+    let images_dir = out_dir.join("images");
+    for (shot_index, shot) in step.context.screenshots.iter().enumerate() {
+        let source = resolve_project_path(project_root, &shot.path);
+        if !source.exists() {
+            continue;
+        }
+        let extension = source
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .filter(|ext| !ext.is_empty())
+            .unwrap_or("png");
+        let file_name = format!(
+            "case-{:02}-step-{:02}-{:02}.{}",
+            case_index + 1,
+            step_index + 1,
+            shot_index + 1,
+            extension
+        );
+        let target = images_dir.join(file_name);
+        std::fs::copy(&source, &target).with_context(|| {
+            format!(
+                "Failed to copy manual screenshot {} to {}",
+                source.display(),
+                target.display()
+            )
+        })?;
+        copied.push(PathBuf::from("images").join(target.file_name().unwrap()));
+    }
+    Ok(copied)
+}
+
+fn render_manual_html(title: &str, markdown: &str) -> String {
+    let body = render_manual_html_body(markdown);
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{}</title>
+<style>
+body {{ margin: 0; background: #f7f9fc; color: #172033; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+main {{ max-width: 1040px; margin: 0 auto; padding: 32px 20px 56px; }}
+h1, h2, h3 {{ line-height: 1.2; letter-spacing: 0; }}
+h1 {{ font-size: 30px; margin: 0 0 18px; }}
+h2 {{ font-size: 22px; margin: 34px 0 14px; border-top: 1px solid #d9e1ef; padding-top: 22px; }}
+h3 {{ font-size: 17px; margin: 22px 0 10px; }}
+table {{ width: 100%; border-collapse: collapse; margin: 14px 0 18px; background: #fff; }}
+th, td {{ border: 1px solid #d9e1ef; padding: 8px 10px; text-align: left; vertical-align: top; }}
+code, pre {{ font-family: "SFMono-Regular", Consolas, monospace; }}
+pre {{ overflow: auto; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 6px; }}
+img {{ display: block; max-width: 100%; margin: 10px 0 22px; border: 1px solid #d9e1ef; background: #fff; }}
+li {{ margin: 4px 0; }}
+</style>
+</head>
+<body><main>{}</main></body>
+</html>
+"#,
+        html_escape(title),
+        body
+    )
+}
+
+fn render_manual_html_body(markdown: &str) -> String {
+    let mut body = String::new();
+    let mut in_code = false;
+    for line in markdown.lines() {
+        if line.starts_with("```") {
+            if in_code {
+                body.push_str("</pre>\n");
+                in_code = false;
+            } else {
+                body.push_str("<pre>");
+                in_code = true;
+            }
+            continue;
+        }
+        if in_code {
+            body.push_str(&html_escape(line));
+            body.push('\n');
+            continue;
+        }
+        if let Some(text) = line.strip_prefix("# ") {
+            body.push_str(&format!("<h1>{}</h1>\n", html_escape(text)));
+        } else if let Some(text) = line.strip_prefix("## ") {
+            body.push_str(&format!("<h2>{}</h2>\n", html_escape(text)));
+        } else if let Some(text) = line.strip_prefix("### ") {
+            body.push_str(&format!("<h3>{}</h3>\n", html_escape(text)));
+        } else if let Some((alt, src)) = parse_markdown_image(line) {
+            body.push_str(&format!(
+                r#"<img alt="{}" src="{}">"#,
+                html_escape(alt),
+                html_escape(src)
+            ));
+            body.push('\n');
+        } else if line.trim().is_empty() {
+            body.push('\n');
+        } else if line.starts_with('|') {
+            body.push_str(&format!("<p><code>{}</code></p>\n", html_escape(line)));
+        } else if let Some(text) = line.strip_prefix("- ") {
+            body.push_str(&format!("<p>• {}</p>\n", html_escape(text)));
+        } else {
+            body.push_str(&format!("<p>{}</p>\n", html_escape(line)));
+        }
+    }
+    if in_code {
+        body.push_str("</pre>\n");
+    }
+    body
+}
+
+fn parse_markdown_image(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix("![")?;
+    let (alt, rest) = rest.split_once("](")?;
+    let src = rest.strip_suffix(')')?;
+    Some((alt, src))
+}
+
+fn markdown_escape(value: &str) -> String {
+    value.replace('|', "\\|")
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn resolve_project_path(project_root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project_root.join(path)
+    }
+}
+
+fn artifact_path_for_project(project_root: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(project_root)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn render_runner_shell_html(bundle: &E2eEvidenceBundle) -> Result<String> {
     render_review_ui_html(bundle, ReviewUiMode::Live)
 }
@@ -1619,10 +2258,45 @@ pub fn render_review_ui_html(bundle: &E2eEvidenceBundle, mode: ReviewUiMode) -> 
 }}
 * {{ box-sizing: border-box; }}
 body {{ margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden; }}
+.runner-header {{
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: #0e141c;
+}}
+.runner-title {{ display: grid; gap: 3px; min-width: 0; }}
+.runner-title h1 {{ font: 700 18px/1.2 "Fira Code", "SFMono-Regular", ui-monospace, monospace; }}
+.runner-title .statusline {{ margin-top: 0; }}
+.runner-header-controls {{ display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }}
+.speed-control {{ display: flex; align-items: center; gap: 7px; }}
+.speed-control-label {{ color: var(--muted); font: 700 11px/1 "Fira Code", ui-monospace, monospace; text-transform: uppercase; }}
+.speed-options {{
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(48px, 1fr));
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}}
+.speed-button {{
+  min-height: 36px;
+  border: 0;
+  border-right: 1px solid var(--line-strong);
+  border-radius: 0;
+  padding: 7px 12px;
+  background: #111821;
+  font-weight: 700;
+}}
+.speed-button:last-child {{ border-right: 0; }}
+.speed-button.active {{ color: #bbf7d0; background: rgba(34, 197, 94, .16); }}
 main {{
   display: grid;
   grid-template-columns: 360px minmax(540px, 1fr) 392px;
-  min-height: 100vh;
+  min-height: calc(100vh - 64px);
+  max-height: calc(100vh - 64px);
   background: var(--bg);
 }}
 aside, section, article {{ min-width: 0; }}
@@ -1631,18 +2305,18 @@ aside {{
   background: linear-gradient(180deg, #121821, #0d1117);
   padding: 16px;
   overflow-y: auto;
-  max-height: 100vh;
+  max-height: calc(100vh - 64px);
 }}
 section {{
   padding: 16px;
   border-right: 1px solid var(--line);
-  min-height: 100vh;
+  min-height: calc(100vh - 64px);
 }}
 article {{
   padding: 16px;
   background: rgba(12, 16, 21, .92);
   overflow-y: auto;
-  max-height: 100vh;
+  max-height: calc(100vh - 64px);
 }}
 h1, h2, h3 {{ margin: 0; letter-spacing: 0; }}
 h1 {{ font: 700 18px/1.2 "Fira Code", "SFMono-Regular", ui-monospace, monospace; }}
@@ -1698,6 +2372,35 @@ button:focus-visible {{ outline: 2px solid var(--focus); outline-offset: 2px; }}
   padding: 12px;
 }}
 .panel {{ min-height: 106px; }}
+.panel summary {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--muted);
+  font: 700 12px/1.25 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}}
+.panel summary::-webkit-details-marker {{ display: none; }}
+.panel summary::after {{
+  content: "Open";
+  color: var(--subtle);
+  font: 700 11px/1 "Fira Code", ui-monospace, monospace;
+  text-transform: none;
+}}
+.panel[open] summary {{ margin-bottom: 8px; }}
+.panel[open] summary::after {{ content: "Close"; }}
+.panel h3 {{ margin-bottom: 8px; }}
+.panel details h3,
+details.panel h3 {{ margin: 0; }}
+.panel-count {{
+  margin-left: auto;
+  color: var(--subtle);
+  font: 700 11px/1 "Fira Code", ui-monospace, monospace;
+  text-transform: none;
+}}
 .browser {{ min-height: 178px; margin-bottom: 12px; }}
 .browser + .browser {{ margin-top: 10px; }}
 .browser code {{ display: block; white-space: pre-wrap; overflow-wrap: anywhere; color: #cbd5e1; }}
@@ -1718,6 +2421,19 @@ button:focus-visible {{ outline: 2px solid var(--focus); outline-offset: 2px; }}
 .artifact-link.disabled {{ color: var(--muted); opacity: .72; }}
 .statusline {{ font-size: 12px; line-height: 1.35; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }}
 .command-log {{ display: grid; gap: 6px; margin-top: 10px; }}
+.dev-panel {{
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}}
+.dev-panel summary {{
+  cursor: pointer;
+  color: var(--subtle);
+  font: 700 12px/1.25 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}}
+.dev-panel[open] summary {{ margin-bottom: 8px; }}
 .command {{
   width: 100%;
   min-height: 40px;
@@ -1747,6 +2463,31 @@ button:focus-visible {{ outline: 2px solid var(--focus); outline-offset: 2px; }}
   font: 700 14px/1.35 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   text-transform: none;
 }}
+.case-explanation {{
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  padding: 12px;
+}}
+.case-explanation-grid {{
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr);
+  gap: 12px;
+}}
+.case-explanation h3 {{ margin-bottom: 7px; }}
+.case-explanation ol,
+.case-explanation ul {{
+  margin: 0;
+  padding-left: 20px;
+  color: #d8e4ef;
+  font-size: 12px;
+  line-height: 1.48;
+}}
+.case-explanation li + li {{ margin-top: 6px; }}
+.case-explanation .statusline {{ margin-top: 0; }}
 .target-surface {{
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -1787,7 +2528,7 @@ pre {{ white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font: 12px/1.5
 #runtime, #summary {{ color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 7px; }}
 body[data-mode="pm-report"] .toolbar,
 body[data-mode="pm-report"] #commands,
-body[data-mode="pm-report"] h2.dev-only {{ display: none; }}
+body[data-mode="pm-report"] #command-log-panel {{ display: none; }}
 body[data-mode="pm-report"] #pm-summary {{
   display: block;
   margin: 0 0 14px;
@@ -1815,6 +2556,8 @@ body:not([data-mode="pm-report"]) #pm-failures {{ display: none; }}
   article {{ grid-column: 1 / -1; max-height: none; border-top: 1px solid var(--line); }}
 }}
 @media (max-width: 760px) {{
+  .runner-header {{ align-items: flex-start; flex-direction: column; }}
+  .runner-header-controls {{ width: 100%; justify-content: flex-start; }}
   main {{ grid-template-columns: 1fr; }}
   aside, article {{ max-height: none; }}
   aside, section {{ border-right: 0; border-bottom: 1px solid var(--line); }}
@@ -1822,13 +2565,29 @@ body:not([data-mode="pm-report"]) #pm-failures {{ display: none; }}
   .aut-shell {{ min-height: auto; }}
   .target-surface {{ min-height: 520px; }}
   .target-grid {{ grid-template-columns: 1fr; }}
+  .case-explanation-grid {{ grid-template-columns: 1fr; }}
 }}
 </style>
 </head>
 <body data-mode="{mode_attr}">
+<header class="runner-header">
+<div class="runner-title">
+<h1>Jet E2E</h1>
+<div class="statusline" id="header-status">loaded</div>
+</div>
+<div class="runner-header-controls">
+<div class="speed-control" aria-label="Playback speed">
+<span class="speed-control-label">Speed</span>
+<div class="speed-options">
+<button class="speed-button" data-speed="1"{controls_disabled}>1x</button>
+<button class="speed-button" data-speed="2"{controls_disabled}>2x</button>
+<button class="speed-button" data-speed="4"{controls_disabled}>4x</button>
+</div>
+</div>
+</div>
+</header>
 <main>
 <aside>
-<h1>Jet E2E</h1>
 <div id="runtime"></div>
 <div id="summary"></div>
 <div id="pm-summary"></div>
@@ -1840,14 +2599,25 @@ body:not([data-mode="pm-report"]) #pm-failures {{ display: none; }}
 </div>
 <h2>Cases</h2>
 <div id="cases"></div>
-<h2 class="dev-only">Command Log</h2>
-<div id="commands" class="command-log"></div>
+<details class="dev-panel" id="command-log-panel"><summary>Steps</summary><div id="commands" class="command-log"></div></details>
 </aside>
 <section>
 <div class="aut-shell">
 <div class="aut-toolbar">
 <h2 id="title"></h2>
 <div class="statusline" id="aut-status">ready</div>
+</div>
+<div class="case-explanation" id="case-explanation">
+<div class="case-explanation-grid">
+<div>
+<h3>How This Case Runs</h3>
+<div id="case-runbook" class="statusline"></div>
+</div>
+<div>
+<h3>What This Case Tests</h3>
+<div id="case-checks" class="statusline"></div>
+</div>
+</div>
 </div>
 <div class="target-surface">
 <div class="target-grid">
@@ -1878,7 +2648,7 @@ body:not([data-mode="pm-report"]) #pm-failures {{ display: none; }}
 <div class="panel"><h3>Assertions</h3><pre id="assertions"></pre></div>
 <div class="panel"><h3>Screenshots</h3><pre id="screenshots"></pre></div>
 <div class="panel"><h3>Artifacts</h3><div id="artifacts" class="artifact-list"></div></div>
-<div class="panel"><h3>Console</h3><pre id="console"></pre></div>
+<details class="panel" id="console-panel"><summary><span>Console</span><span class="panel-count" id="console-count">0</span></summary><pre id="console"></pre></details>
 <div class="panel"><h3>Network</h3><pre id="network"></pre></div>
 </div>
 <h3>Live Events</h3>
@@ -1891,6 +2661,7 @@ let active = 0;
 let activeCommandId = null;
 let manualActive = false;
 let paused = false;
+let speedMultiplier = 1;
 let liveStatus = 'loaded';
 let liveEvents = [];
 let control = {{}};
@@ -1898,6 +2669,18 @@ const byId = (id) => document.getElementById(id);
 function statusClass(outcome) {{ return outcome === 'passed' ? 'passed' : outcome === 'failed' ? 'failed' : outcome === 'running' ? 'running' : 'skipped'; }}
 function reviewShell() {{ return (bundle.open_control && bundle.open_control.review_shell) || {{kind: 'export-only', driver: 'none'}}; }}
 function browserTarget() {{ return (bundle.open_control && bundle.open_control.browser) || {{kind: 'export-only', driver: 'none'}}; }}
+function normalizeSpeedMultiplier(value) {{
+  const n = Number(value);
+  return n === 2 || n === 4 ? n : 1;
+}}
+function renderSpeedControl() {{
+  speedMultiplier = normalizeSpeedMultiplier(control && control.speed_multiplier);
+  document.querySelectorAll('.speed-button').forEach((btn) => {{
+    const active = normalizeSpeedMultiplier(btn.dataset.speed) === speedMultiplier;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }});
+}}
 function escapeHtml(value) {{
   return String(value ?? '').replace(/[&<>"']/g, ch => ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}})[ch]);
 }}
@@ -1949,6 +2732,24 @@ function maybeAutoSelectCase() {{
   if (idx >= 0) active = idx;
 }}
 function commandEventsForCase(c) {{
+  const byUserStep = new Map();
+  liveEvents
+    .filter(e => e.kind === 'step_started' || e.kind === 'step_finished')
+    .filter(e => eventMatchesCase(e, c, active))
+    .forEach((event, index) => {{
+      const key = event.step_id || `step-${{index}}`;
+      const previous = byUserStep.get(key) || {{}};
+      byUserStep.set(key, {{
+        ...previous,
+        ...event,
+        step_id: key,
+        action: event.title || previous.action || key,
+        status: event.status || event.outcome || previous.status || (event.kind === 'step_started' ? 'running' : 'passed')
+      }});
+    }});
+  const userSteps = Array.from(byUserStep.values());
+  if (userSteps.length) return userSteps;
+
   const byStep = new Map();
   liveEvents
     .filter(e => e.kind === 'page_action_started' || e.kind === 'page_action_finished')
@@ -1973,6 +2774,43 @@ function commandEventsForCase(c) {{
 function currentCommand(c) {{
   const commands = commandEventsForCase(c);
   return commands.find(command => command.step_id === activeCommandId) || commands[commands.length - 1] || null;
+}}
+function compactText(value, fallback = '') {{
+  return String(value ?? fallback).replace(/\s+/g, ' ').trim();
+}}
+function runItemHtml(item, index) {{
+  const action = compactText(item.action || item.title || item.kind, `Step ${{index + 1}}`);
+  const target = compactText(item.selector || item.url || item.page_id || '');
+  const status = compactText(item.status || item.outcome || '');
+  return `<li><strong>${{escapeHtml(action)}}</strong>${{target ? `<div class="statusline">${{escapeHtml(target)}}</div>` : ''}}${{status ? `<div class="statusline">${{escapeHtml(status)}}</div>` : ''}}</li>`;
+}}
+function assertionMessages(c, commands) {{
+  const messages = [];
+  (c.steps || []).forEach(step => {{
+    const msg = step && step.assertion && step.assertion.message;
+    if (msg) messages.push(msg);
+  }});
+  commands.forEach(command => {{
+    const msg = command && command.assertion && command.assertion.message;
+    if (msg) messages.push(msg);
+  }});
+  return [...new Set(messages.map(message => compactText(message)).filter(Boolean))];
+}}
+function renderCaseExplanation(c, commands) {{
+  const source = commands.length ? commands : (c.steps || []);
+  const runItems = source.length
+    ? source.map(runItemHtml).join('')
+    : '<li>Waiting for the first live action from the controlled Chrome tab.</li>';
+  byId('case-runbook').innerHTML = `<ol>${{runItems}}</ol>`;
+
+  const checks = [];
+  if (c.file) checks.push(`Spec file: ${{c.file}}`);
+  checks.push('Passes when every listed step completes without failed assertions, timeouts, or browser RPC errors.');
+  assertionMessages(c, commands).forEach(message => checks.push(`Assertion: ${{message}}`));
+  if (!assertionMessages(c, commands).length && c.outcome && c.outcome !== 'pending') {{
+    checks.push(`Current result: ${{c.outcome}}`);
+  }}
+  byId('case-checks').innerHTML = `<ul>${{checks.map(check => `<li>${{escapeHtml(check)}}</li>`).join('')}}</ul>`;
 }}
 function renderPmSummary(summary, list) {{
   const total = (summary.passed || 0) + (summary.failed || 0) + (summary.skipped || 0);
@@ -2006,6 +2844,7 @@ function renderCases() {{
   const list = cases();
   byId('summary').innerHTML = `<div>${{summary.passed || 0}} passed / ${{summary.failed || 0}} failed / ${{summary.skipped || 0}} skipped</div><small>${{bundle.run_id || ''}}</small>`;
   byId('runtime').innerHTML = `<strong>${{reviewShell().kind}}</strong><div class="statusline">${{liveStatus}}</div>`;
+  byId('header-status').textContent = `${{liveStatus}} · ${{speedMultiplier}}x`;
   renderPmSummary(summary, list);
   byId('cases').innerHTML = list.map((c, i) => `<button class="case ${{i === active ? 'active' : ''}}" data-i="${{i}}"><span class="status ${{statusClass(c.outcome)}}">${{c.outcome}}</span>${{c.title}}</button>`).join('');
   document.querySelectorAll('.case').forEach(btn => btn.onclick = () => {{
@@ -2049,10 +2888,13 @@ function renderArtifacts() {{
 }}
 function render() {{
   maybeAutoSelectCase();
+  renderSpeedControl();
   const c = currentCase();
   const command = currentCommand(c);
+  const commands = commandEventsForCase(c);
   byId('title').textContent = c.title;
   renderCommands(c);
+  renderCaseExplanation(c, commands);
   const fallbackStep = c.steps && c.steps[0] ? c.steps[0] : {{context: {{}}}};
   const commandContext = command && command.context ? command.context : null;
   const selectors = command && command.selector ? [{{selector: command.selector, action: command.action || 'action', highlighted: true}}] : ((commandContext && commandContext.selectors) || fallbackStep.context.selectors || []);
@@ -2064,6 +2906,7 @@ function render() {{
   byId('assertions').textContent = JSON.stringify(assertion || {{status: command ? (command.status || 'running') : c.outcome}}, null, 2);
   byId('screenshots').textContent = JSON.stringify(screenshots, null, 2);
   renderArtifacts();
+  byId('console-count').textContent = String(consoleRows.length);
   byId('console').textContent = JSON.stringify(consoleRows, null, 2);
   byId('network').textContent = JSON.stringify(networkRows, null, 2);
   const shell = reviewShell();
@@ -2084,14 +2927,14 @@ function render() {{
 }}
 const reviewMode = document.body.dataset.mode || 'live';
 const isReadOnly = reviewMode === 'read-only' || reviewMode === 'pm-report';
-async function sendControl(command) {{
+async function sendControl(command, payload = {{}}) {{
   if (isReadOnly) return;
   const c = currentCase();
   if (location.protocol.startsWith('http')) {{
     await fetch(`/api/control/${{command}}`, {{
       method: 'POST',
       headers: {{'content-type': 'application/json'}},
-      body: JSON.stringify({{case_index: active, case_id: c.id, case_title: c.title}})
+      body: JSON.stringify({{case_index: active, case_id: c.id, case_title: c.title, ...payload}})
     }}).catch(() => null);
     await syncLiveState();
     return;
@@ -2100,11 +2943,15 @@ async function sendControl(command) {{
   if (command === 'resume') paused = false;
   if (command === 'next') active = Math.min(active + 1, Math.max(0, bundle.cases.length - 1));
   if (command === 'replay') activeCommandId = null;
+  if (command === 'speed') control = {{...control, speed_multiplier: normalizeSpeedMultiplier(payload.speed_multiplier)}};
   render();
 }}
 byId('pause').onclick = () => sendControl((control && control.paused) || paused ? 'resume' : 'pause');
 byId('next').onclick = () => sendControl('next');
 byId('replay').onclick = () => sendControl('replay');
+document.querySelectorAll('.speed-button').forEach((btn) => {{
+  btn.onclick = () => sendControl('speed', {{speed_multiplier: normalizeSpeedMultiplier(btn.dataset.speed)}});
+}});
 window.JetE2E = {{
   setStatus(status) {{
     liveStatus = status;
@@ -2167,6 +3014,10 @@ fn open_control_protocol(
                 description: "Advance to the next case or product step.".to_string(),
             },
             E2eOpenCommand {
+                name: "speed".to_string(),
+                description: "Set live case playback speed to 1x, 2x, or 4x.".to_string(),
+            },
+            E2eOpenCommand {
                 name: "replay".to_string(),
                 description: "Replay the selected case against the controlled Jet Browser."
                     .to_string(),
@@ -2227,6 +3078,7 @@ fn make_run_id(started_at_ms: u64, mode: E2eMode) -> String {
     let mode = match mode {
         E2eMode::Run => "run",
         E2eMode::Open => "open",
+        E2eMode::Manual => "manual",
     };
     format!("{mode}-{started_at_ms}")
 }
@@ -2293,6 +3145,7 @@ pub fn default_evidence_dir(project_root: &Path, mode: E2eMode) -> PathBuf {
     let leaf = match mode {
         E2eMode::Run => "run",
         E2eMode::Open => "open",
+        E2eMode::Manual => "manual",
     };
     project_root.join("test-results").join("e2e").join(leaf)
 }
@@ -2325,6 +3178,17 @@ pub fn parse_serve_mode(raw: Option<&String>) -> anyhow::Result<E2eServeMode> {
         Some("prod") => Ok(E2eServeMode::Prod),
         Some(other) => {
             anyhow::bail!("Unknown --serve value '{other}'. Valid values: off, dev, prod")
+        }
+    }
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+pub fn parse_open_browser_mode(raw: Option<&String>) -> anyhow::Result<E2eOpenBrowserMode> {
+    match raw.map(String::as_str) {
+        None | Some("chrome") => Ok(E2eOpenBrowserMode::Chrome),
+        Some("chromium") => Ok(E2eOpenBrowserMode::Chromium),
+        Some(other) => {
+            anyhow::bail!("Unknown --browser value '{other}'. Valid values: chrome, chromium")
         }
     }
 }
@@ -2367,7 +3231,7 @@ pub fn exit_code_for_reports(reports: &[crate::test_runner::reporter::TestReport
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_runner::reporter::{TestError, TestReport};
+    use crate::test_runner::reporter::{TestError, TestReport, TestStepReport};
     use tempfile::TempDir;
 
     fn report(outcome: Outcome) -> TestReport {
@@ -2391,6 +3255,7 @@ mod tests {
             shard_index: None,
             shard_total: None,
             artifacts: vec![PathBuf::from("test-results/artifacts/case/page-1.png")],
+            steps: Vec::new(),
         }
     }
 
@@ -2410,6 +3275,23 @@ mod tests {
             E2eServeMode::Prod
         );
         assert!(parse_serve_mode(Some(&"wasm".to_string())).is_err());
+    }
+
+    #[test]
+    fn parse_open_browser_mode_accepts_chrome_and_chromium() {
+        assert_eq!(
+            parse_open_browser_mode(None).unwrap(),
+            E2eOpenBrowserMode::Chrome
+        );
+        assert_eq!(
+            parse_open_browser_mode(Some(&"chrome".to_string())).unwrap(),
+            E2eOpenBrowserMode::Chrome
+        );
+        assert_eq!(
+            parse_open_browser_mode(Some(&"chromium".to_string())).unwrap(),
+            E2eOpenBrowserMode::Chromium
+        );
+        assert!(parse_open_browser_mode(Some(&"firefox".to_string())).is_err());
     }
 
     #[test]
@@ -2487,6 +3369,64 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn run_manual_mode_rejects_managed_serve_and_base_url_before_launching() {
+        let tmp = TempDir::new().unwrap();
+        let opts = E2eManualOptions {
+            project_root: tmp.path().to_path_buf(),
+            cases: vec![],
+            grep: None,
+            timeout_ms: None,
+            trace: WireTraceMode::Off,
+            evidence_dir: tmp.path().join("evidence"),
+            out_dir: tmp.path().join("docs/manual"),
+            serve: E2eServeMode::Dev,
+            base_url: Some("http://127.0.0.1:43127/".to_string()),
+            title: None,
+            print_json: false,
+        };
+
+        let err = run_manual_mode(opts).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("manual") && msg.contains("--serve") && msg.contains("--base-url"),
+            "manual conflict error should name mode and flags: {msg}"
+        );
+        assert!(
+            !crate::dev_server::session::session_path(tmp.path()).exists(),
+            "manual conflict must be rejected before launching a managed serve session"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_human_mode_rejects_managed_serve_and_base_url_before_launching() {
+        let tmp = TempDir::new().unwrap();
+        let opts = E2eOpenOptions {
+            project_root: tmp.path().to_path_buf(),
+            cases: vec![],
+            grep: None,
+            timeout_ms: None,
+            evidence_dir: tmp.path().join("evidence"),
+            serve: E2eServeMode::Dev,
+            base_url: Some("http://127.0.0.1:43127/".to_string()),
+            slow_mo_ms: DEFAULT_OPEN_SLOW_MO_MS,
+            browser: E2eOpenBrowserMode::Chromium,
+            dry_run: true,
+            no_open: true,
+        };
+
+        let err = open_human_mode(opts).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("open") && msg.contains("--serve") && msg.contains("--base-url"),
+            "open conflict error should name mode and flags: {msg}"
+        );
+        assert!(
+            !crate::dev_server::session::session_path(tmp.path()).exists(),
+            "open conflict must be rejected before launching a managed serve session"
+        );
+    }
+
     #[test]
     fn evidence_bundle_carries_case_step_and_context() {
         let summary = Summary {
@@ -2506,6 +3446,49 @@ mod tests {
         assert_eq!(bundle.cases[0].steps.len(), 1);
         assert!(bundle.cases[0].steps[0].assertion.is_some());
         assert_eq!(bundle.cases[0].steps[0].context.screenshots.len(), 1);
+    }
+
+    #[test]
+    fn evidence_bundle_expands_authored_test_steps() {
+        let mut report = report(Outcome::Passed);
+        report.steps = vec![
+            TestStepReport {
+                id: "step-0001".to_string(),
+                title: "Create project".to_string(),
+                outcome: Outcome::Passed,
+                duration_ms: 7,
+                parent_step_id: None,
+                error: None,
+            },
+            TestStepReport {
+                id: "step-0002".to_string(),
+                title: "Review generated README capability contract".to_string(),
+                outcome: Outcome::Passed,
+                duration_ms: 11,
+                parent_step_id: None,
+                error: None,
+            },
+        ];
+        let summary = Summary {
+            schema_version: crate::test_runner::reporter::SCHEMA_VERSION,
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+            duration_ms: 18,
+            reports: vec![report],
+            coverage: None,
+            browser_sessions: Vec::new(),
+        };
+
+        let bundle = build_evidence_bundle(E2eMode::Manual, summary, 10, 28, None, None);
+
+        assert_eq!(bundle.cases[0].steps.len(), 2);
+        assert_eq!(bundle.cases[0].steps[0].title, "Create project");
+        assert_eq!(
+            bundle.cases[0].steps[1].title,
+            "Review generated README capability contract"
+        );
+        assert_eq!(bundle.cases[0].steps[1].duration_ms, 11);
     }
 
     #[test]
@@ -2532,6 +3515,47 @@ mod tests {
     }
 
     #[test]
+    fn manual_docs_writer_publishes_markdown_html_and_copied_screenshots() {
+        let tmp = TempDir::new().unwrap();
+        let screenshot = tmp.path().join("test-results/artifacts/case/page-1.png");
+        std::fs::create_dir_all(screenshot.parent().unwrap()).unwrap();
+        std::fs::write(&screenshot, b"fake-png").unwrap();
+        let summary = Summary {
+            schema_version: crate::test_runner::reporter::SCHEMA_VERSION,
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+            duration_ms: 12,
+            reports: vec![report(Outcome::Passed)],
+            coverage: None,
+            browser_sessions: Vec::new(),
+        };
+        let bundle = build_evidence_bundle(E2eMode::Manual, summary, 10, 20, None, None);
+        let docs = write_manual_docs(
+            tmp.path(),
+            &tmp.path().join("docs/e2e-manual"),
+            &bundle,
+            "Product Manual",
+        )
+        .unwrap();
+        let markdown = std::fs::read_to_string(&docs.markdown_path).unwrap();
+        let html = std::fs::read_to_string(&docs.html_path).unwrap();
+        assert!(markdown.contains("# Product Manual"), "{markdown}");
+        assert!(
+            markdown.contains("Generated by `jet e2e manual`"),
+            "{markdown}"
+        );
+        assert!(markdown.contains("![Cue Artifact Studio"), "{markdown}");
+        assert!(html.contains("<title>Product Manual</title>"), "{html}");
+        assert!(
+            tmp.path()
+                .join("docs/e2e-manual/images/case-01-step-01-01.png")
+                .exists(),
+            "manual docs should copy screenshot artifacts into a portable images dir"
+        );
+    }
+
+    #[test]
     fn open_runner_shell_contains_controls_panels_and_browser_target() {
         let tmp = TempDir::new().unwrap();
         let summary = Summary {
@@ -2548,7 +3572,7 @@ mod tests {
             protocol_version: CONTROL_PROTOCOL_VERSION.to_string(),
             transport: "local-jsonl+cdp".to_string(),
             review_shell: Some(E2eOpenReviewShell {
-                kind: E2eOpenReviewShellKind::DesktopAppWindow,
+                kind: E2eOpenReviewShellKind::BrowserWindowTabs,
                 driver: JET_REVIEW_SHELL_DRIVER.to_string(),
                 runner_shell: tmp.path().join("open-runner-shell/index.html"),
                 runner_shell_url: Some("http://127.0.0.1:3000/".to_string()),
@@ -2561,7 +3585,7 @@ mod tests {
                 isolated_profile: true,
                 runner_shell: tmp.path().join("open-runner-shell/index.html"),
                 runner_shell_url: Some("http://127.0.0.1:3000/".to_string()),
-                cdp_ws_url: None,
+                cdp_ws_url: Some("ws://127.0.0.1/devtools/browser/shell".to_string()),
             },
             commands: vec![
                 E2eOpenCommand {
@@ -2585,23 +3609,34 @@ mod tests {
         assert!(html.contains("Pause"));
         assert!(html.contains("Next"));
         assert!(html.contains("Replay"));
+        assert!(html.contains("Speed"));
+        assert!(html.contains(r#"data-speed="1""#));
+        assert!(html.contains(r#"data-speed="2""#));
+        assert!(html.contains(r#"data-speed="4""#));
+        assert!(html.contains("How This Case Runs"));
+        assert!(html.contains("What This Case Tests"));
+        assert!(html.contains("renderCaseExplanation"));
         assert!(html.contains("Review Shell"));
         assert!(html.contains("Controlled Target"));
-        assert!(html.contains("Command Log"));
+        assert!(html.contains("Steps"));
+        assert!(html.contains(r#"<details class="dev-panel" id="command-log-panel">"#));
         assert!(html.contains("target-surface"));
         assert!(html.contains("target-command"));
-        assert!(html.contains("desktop-app-window"));
+        assert!(html.contains("browser-window-tabs"));
+        assert!(html.contains("ws://127.0.0.1/devtools/browser/shell"));
         assert!(html.contains("controlled-jet-browser"));
         assert!(html.contains("Selectors"));
         assert!(html.contains("Console"));
+        assert!(html.contains(r#"<details class="panel" id="console-panel">"#));
         assert!(html.contains("Network"));
+        assert!(!html.contains("auto-open-devtools-for-tabs"));
     }
 
     #[test]
     fn control_protocol_names_expected_human_commands_and_browser_contract() {
         let protocol = open_control_protocol(
             Some(E2eOpenReviewShell {
-                kind: E2eOpenReviewShellKind::DesktopAppWindow,
+                kind: E2eOpenReviewShellKind::BrowserWindowTabs,
                 driver: JET_REVIEW_SHELL_DRIVER.to_string(),
                 runner_shell: PathBuf::from("test-results/e2e/open/open-runner-shell/index.html"),
                 runner_shell_url: Some("http://127.0.0.1:3000/".to_string()),
@@ -2619,7 +3654,10 @@ mod tests {
             Path::new("test-results/e2e/open/open-10.live.events.jsonl"),
         );
         let names: Vec<&str> = protocol.commands.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, vec!["pause", "next", "replay", "highlight_selector"]);
+        assert_eq!(
+            names,
+            vec!["pause", "next", "speed", "replay", "highlight_selector"]
+        );
         assert_eq!(protocol.transport, "local-jsonl+cdp");
         assert_eq!(
             protocol.browser.kind,
@@ -2628,7 +3666,7 @@ mod tests {
         assert_eq!(protocol.browser.driver, JET_BROWSER_DRIVER);
         assert!(!protocol.browser.headless);
         let shell = protocol.review_shell.as_ref().expect("review shell");
-        assert_eq!(shell.kind, E2eOpenReviewShellKind::DesktopAppWindow);
+        assert_eq!(shell.kind, E2eOpenReviewShellKind::BrowserWindowTabs);
         assert_eq!(shell.driver, JET_REVIEW_SHELL_DRIVER);
     }
 
@@ -2669,14 +3707,16 @@ mod tests {
 
         // Live mode keeps the buttons enabled; read-only disables them.
         assert!(live.contains(r#"<button id="pause">Pause</button>"#));
+        assert!(live.contains(r#"class="speed-button" data-speed="1">1x</button>"#));
         assert!(ro.contains(r#"<button id="pause" disabled>Pause</button>"#));
         assert!(ro.contains(r#"<button id="next" disabled>Next</button>"#));
         assert!(ro.contains(r#"<button id="replay" disabled>Replay</button>"#));
+        assert!(ro.contains(r#"class="speed-button" data-speed="1" disabled>1x</button>"#));
 
-        // Both modes embed the same case grid + command log + inspector
+        // Both modes embed the same case grid + step log + inspector
         // shell. Drift here would mean the component split regressed.
         for html in [&live, &ro] {
-            assert!(html.contains("Command Log"));
+            assert!(html.contains("Steps"));
             assert!(html.contains("target-surface"));
             assert!(html.contains("Review Shell"));
             assert!(html.contains("Controlled Target"));
@@ -2784,6 +3824,7 @@ mod tests {
         files
             .write_control(LiveControlState {
                 paused: true,
+                speed_multiplier: 4,
                 next_token: 3,
                 replay_token: 5,
                 replay_case_index: Some(2),
@@ -2794,6 +3835,7 @@ mod tests {
 
         let back = files.read_control();
         assert!(back.paused);
+        assert_eq!(back.speed_multiplier, 4);
         assert_eq!(back.next_token, 3);
         assert_eq!(back.replay_token, 5);
         assert_eq!(back.replay_case_index, Some(2));
@@ -3217,6 +4259,7 @@ mod tests {
             shard_index: None,
             shard_total: None,
             artifacts: vec![],
+            steps: Vec::new(),
         }
     }
 
@@ -3483,6 +4526,7 @@ mod tests {
             body_str.contains("pause")
                 && body_str.contains("resume")
                 && body_str.contains("next")
+                && body_str.contains("speed")
                 && body_str.contains("replay"),
             "error must enumerate supported commands, got: {body_str}"
         );
@@ -3524,6 +4568,37 @@ mod tests {
         assert_eq!(
             persisted.replay_token, 1,
             "replay_token must increment on each replay command"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_runner_control_speed_persists_multiplier() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let files = LiveRunnerFiles::new(dir.path(), "run-speed");
+        let state = LiveRunnerServerState {
+            files: files.clone(),
+            touched_at_ms: Arc::new(Mutex::new(now_ms())),
+        };
+        let app = Router::new()
+            .route("/api/control/{command}", post(live_runner_control))
+            .with_state(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/control/speed")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"speed_multiplier": 4}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let persisted = files.read_control();
+        assert_eq!(
+            persisted.speed_multiplier, 4,
+            "speed control must affect live step pacing, not just UI state"
         );
     }
 
@@ -3577,6 +4652,7 @@ mod tests {
 
         let written = LiveControlState {
             paused: true,
+            speed_multiplier: 2,
             next_token: 7,
             replay_token: 3,
             replay_case_index: Some(2),
@@ -3587,6 +4663,7 @@ mod tests {
 
         let read = files.read_control();
         assert!(read.paused);
+        assert_eq!(read.speed_multiplier, 2);
         assert_eq!(read.next_token, 7);
         assert_eq!(read.replay_token, 3);
         assert_eq!(read.replay_case_index, Some(2));

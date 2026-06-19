@@ -232,6 +232,25 @@ pub enum WorkerEvent {
         suite: Vec<String>,
         name: String,
     },
+    /// A user-authored `test.step(...)` is about to run.
+    StepStart {
+        test_id: String,
+        step_id: String,
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_step_id: Option<String>,
+    },
+    /// A user-authored `test.step(...)` finished.
+    StepEnd {
+        test_id: String,
+        step_id: String,
+        title: String,
+        outcome: TestOutcome,
+        duration_ms: u64,
+        error: Option<TestError>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_step_id: Option<String>,
+    },
     /// A test finished (pass, fail, or skipped).
     TestEnd {
         id: String,

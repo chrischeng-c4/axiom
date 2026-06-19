@@ -18,7 +18,7 @@
 //! # Integration with the daemon
 //!
 //! ```no_run
-//! use sdd::server::incremental::{IncrementalUpdateManager, FileChangeKind};
+//! use cclab_compass::server::incremental::{FileChangeKind, IncrementalUpdateManager};
 //! use std::path::PathBuf;
 //!
 //! let mut manager = IncrementalUpdateManager::new();

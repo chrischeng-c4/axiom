@@ -23,10 +23,10 @@ Public API manifest for `projects/meter/src/report/persist.rs` generated from AS
 |------|--------|------|------------|------|-----------|
 | `LAST_REPORT_REL` | projects/meter/src/report/persist.rs | constant | pub | 15 |  |
 | `last_report_path` | projects/meter/src/report/persist.rs | function | pub | 19 | last_report_path(base: impl AsRef<Path>) -> PathBuf |
-| `read_last_report` | projects/meter/src/report/persist.rs | function | pub | 48 | read_last_report() -> Option<MeterReport> |
-| `read_last_report_in` | projects/meter/src/report/persist.rs | function | pub | 55 | read_last_report_in(base: impl AsRef<Path>) -> Option<MeterReport> |
+| `read_last_report` | projects/meter/src/report/persist.rs | function | pub | 51 | read_last_report() -> Option<MeterReport> |
+| `read_last_report_in` | projects/meter/src/report/persist.rs | function | pub | 58 | read_last_report_in(base: impl AsRef<Path>) -> Option<MeterReport> |
 | `write_last_report` | projects/meter/src/report/persist.rs | function | pub | 28 | write_last_report(report: &MeterReport) -> std::io::Result<PathBuf> |
-| `write_last_report_in` | projects/meter/src/report/persist.rs | function | pub | 35 | write_last_report_in(base: impl AsRef<Path>, report: &MeterReport) -> std::io::Result<PathBuf> |
+| `write_last_report_in` | projects/meter/src/report/persist.rs | function | pub | 35 | write_last_report_in(     base: impl AsRef<Path>,     report: &MeterReport, ) -> std::io::Result<PathBuf> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

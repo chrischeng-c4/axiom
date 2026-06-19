@@ -49,11 +49,15 @@ const __jet = {
   reqId: 0,
   pending: new Map(), // req_id -> { resolve, reject }
   currentTestTitle: null, // for toMatchSnapshot default name
+  currentTestId: null,
+  currentStepSeq: 0,
+  currentStepStack: [],
   // P3.4: Active pages registered by the page fixture or browser.newContext.
   // On test failure, the runner snaps a PNG of every entry in this set so
   // the developer doesn't have to reproduce the failure to see UI state.
   // @spec .aw/tech-design/projects/jet/logic/auto-artifacts.md#A4
   activePages: new Set(),
+  pagesById: new Map(),
 };
 __jet.stack.push(__jet.root);
 
@@ -72,6 +76,7 @@ import {
   toBeVisibleLocator,
   toBeHidden,
   toHaveTextLocator,
+  toContainTextLocator,
   toHaveValue,
   toHaveCount,
   toHaveClass,
@@ -195,12 +200,14 @@ async function __createPage(baseURL) {
   const pageId = res.page_id;
   // Wrap in a Page proxy that routes all method calls via __sendPageRequest.
   const pg = new Page(pageId, __sendPageRequest, baseURL);
+  __jet.pagesById.set(pageId, pg);
   // Track for auto-artifact capture on test failure.
   // @spec .aw/tech-design/projects/jet/logic/auto-artifacts.md#A4
   __jet.activePages.add(pg);
   const origClose = pg.close.bind(pg);
   pg.close = async () => {
     __jet.activePages.delete(pg);
+    __jet.pagesById.delete(pageId);
     return origClose();
   };
   return pg;
@@ -239,11 +246,13 @@ class __JetBrowserContext {
       throw new Error(`context.newPage: ${res.message}`);
     }
     const pg = new Page(res.page_id, __sendPageRequest, this.__baseURL);
+    __jet.pagesById.set(res.page_id, pg);
     // @spec .aw/tech-design/projects/jet/logic/auto-artifacts.md#A4
     __jet.activePages.add(pg);
     const origClose = pg.close.bind(pg);
     pg.close = async () => {
       __jet.activePages.delete(pg);
+      __jet.pagesById.delete(res.page_id);
       return origClose();
     };
     return pg;
@@ -370,6 +379,13 @@ process.stdin.on("data", (chunk) => {
     } catch {
       continue;
     }
+    if (msg.kind === "event") {
+      const page = __jet.pagesById.get(msg.page_id);
+      if (page) {
+        page._dispatchEvent(msg.event, msg.payload);
+      }
+      continue;
+    }
     const pending = __jet.pending.get(msg.req_id);
     if (!pending) continue;
     __jet.pending.delete(msg.req_id);
@@ -402,6 +418,8 @@ function __sleep(ms) {
 // absolute paths. Best-effort — the caller swallows any throw.
 //
 // @spec .aw/tech-design/projects/jet/logic/auto-artifacts.md#A4 A5
+const DEFAULT_FAILURE_SCREENSHOT_TIMEOUT_MS = 5000;
+
 async function __captureFailureArtifacts(testName, artifactsDir) {
   if (!artifactsDir) return [];
   const fs = await import("node:fs/promises");
@@ -419,7 +437,7 @@ async function __captureFailureArtifacts(testName, artifactsDir) {
     i += 1;
     const file = path.join(dir, `page-${i}.png`);
     try {
-      await pg.screenshot({ path: file });
+      await pg.screenshot({ path: file, timeout: DEFAULT_FAILURE_SCREENSHOT_TIMEOUT_MS });
       out.push(file);
     } catch {
       // Page may have already been torn down — skip silently.
@@ -452,6 +470,53 @@ test.skip = (name, body) => {
 test.only = (name, body) => {
   current().tests.push({ name, body, skip: false, only: true, fixtures: null });
   __jet.hasOnly = true;
+};
+test.step = async (name, body) => {
+  const title = String(name ?? "step");
+  if (!__jet.currentTestId) {
+    return await body();
+  }
+  __jet.currentStepSeq += 1;
+  const step_id = `step-${String(__jet.currentStepSeq).padStart(4, "0")}`;
+  const parent_step_id =
+    __jet.currentStepStack[__jet.currentStepStack.length - 1] ?? null;
+  const started = Date.now();
+  __emit({
+    kind: "step_start",
+    test_id: __jet.currentTestId,
+    step_id,
+    title,
+    parent_step_id,
+  });
+  __jet.currentStepStack.push(step_id);
+  try {
+    const result = await body();
+    __emit({
+      kind: "step_end",
+      test_id: __jet.currentTestId,
+      step_id,
+      title,
+      parent_step_id,
+      outcome: "passed",
+      duration_ms: Date.now() - started,
+      error: null,
+    });
+    return result;
+  } catch (err) {
+    __emit({
+      kind: "step_end",
+      test_id: __jet.currentTestId,
+      step_id,
+      title,
+      parent_step_id,
+      outcome: "failed",
+      duration_ms: Date.now() - started,
+      error: toWireError(err, "step"),
+    });
+    throw err;
+  } finally {
+    __jet.currentStepStack.pop();
+  }
 };
 
 // ── test.extend(fixtures) — flat + DI-graph fixture API ──────────────────
@@ -495,6 +560,7 @@ test.extend = (fixtures) => {
     __jet.hasOnly = true;
   };
   boundTest.extend = (extra) => test.extend({ ...fixtures, ...extra });
+  boundTest.step = test.step;
   return boundTest;
 };
 
@@ -899,6 +965,14 @@ function __expectBase(actual) {
         await __sleep(100);
       }
     },
+
+    async toContainText(expected, opts) {
+      if (!(actual instanceof Locator)) {
+        throw new Error("toContainText: expected a Locator object");
+      }
+      return toContainTextLocator(actual, expected, opts);
+    },
+
     // ── Phase 5 matchers: element-state + CSS + a11y + value ────────────
 
     // @spec matchers-state-value-a11y#M1
@@ -1238,6 +1312,9 @@ async function runSuite(suite, parentPath, opts, grep, nextId) {
 
     if (outcome === "passed") {
       __jet.currentTestTitle = t.name;
+      __jet.currentTestId = id;
+      __jet.currentStepSeq = 0;
+      __jet.currentStepStack = [];
       try {
         // Build fixture argument. Merge default fixtures (page) with user
         // test.extend fixtures (user fixtures take precedence). Only resolve
@@ -1378,6 +1455,9 @@ async function runSuite(suite, parentPath, opts, grep, nextId) {
           }
         }
         __jet.currentTestTitle = null;
+        __jet.currentTestId = null;
+        __jet.currentStepSeq = 0;
+        __jet.currentStepStack = [];
       }
     }
 

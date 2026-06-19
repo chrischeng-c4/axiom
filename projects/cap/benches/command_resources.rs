@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#e2e-test
+// SPEC-MANAGED: projects/cap/tech-design/semantic/source/projects-cap-benches-command_resources-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Resource benchmarks for same-name `cap <command>` replacements.
 //!

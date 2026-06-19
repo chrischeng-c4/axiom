@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-cap-tests-behavior-cap-command-replacement-parity-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/cap/tech-design/semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 use std::{
     fs,
     io::Write,
@@ -505,6 +506,7 @@ struct Fixture {
     grep_root: String,
 }
 
+/// @spec projects/cap/tech-design/semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md#source
 impl Fixture {
     fn create(root: &Path) -> Result<Self> {
         let data = root.join("data");
@@ -583,5 +585,4 @@ impl Fixture {
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
-
-// </HANDWRITE>
+// CODEGEN-END
