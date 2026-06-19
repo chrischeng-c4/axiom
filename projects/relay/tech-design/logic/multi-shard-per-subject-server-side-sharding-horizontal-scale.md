@@ -110,3 +110,12 @@ changes:
     impl_mode: hand-written
     reason: "Tests: publish spread across shards, whole-subject exactly-once drain across shards, broadcast merge across shards, and default_shards=1 parity with single-shard semantics."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] (subject,shard) keying + crc32(message_id) routing + lease-scan + ack-route-by-lease_id + subscribe/poll merge; default_shards=1 identical. Horizontal scale via per-shard locks. Applicable.
+- [unit-test] routing spread, exactly-once drain across shards, broadcast merge, shards=1 parity. Applicable.
+- [changes] engine.rs + a new test; reuses default_shards config + shard::shard_for. Applicable.
