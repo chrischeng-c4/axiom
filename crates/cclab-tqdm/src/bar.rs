@@ -149,3 +149,65 @@ impl Default for MultiProgress {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TqdmError;
+
+    #[test]
+    fn progress_bar_tracks_position_length_rate_and_reset() {
+        let mut bar = ProgressBar::new(10);
+        assert_eq!(bar.position(), 0);
+        assert_eq!(bar.length(), Some(10));
+
+        bar.update(3);
+        assert_eq!(bar.position(), 3);
+        assert!(bar.elapsed_secs() >= 0.0);
+        assert!(bar.rate() >= 0.0);
+
+        bar.set_description("loading");
+        bar.set_postfix("phase=read");
+        bar.reset();
+        assert_eq!(bar.position(), 0);
+        assert_eq!(bar.length(), Some(10));
+        bar.finish();
+    }
+
+    #[test]
+    fn spinner_supports_unknown_total_progress() {
+        let bar = ProgressBar::spinner();
+        assert_eq!(bar.length(), None);
+        bar.update(1);
+        assert_eq!(bar.position(), 1);
+        bar.finish_with_message("done");
+    }
+
+    #[test]
+    fn style_template_and_typed_error_contracts_are_stable() {
+        let bar = ProgressBar::new(3);
+        bar.set_style("{wide_bar} {pos}/{len}")
+            .expect("valid style template should apply");
+
+        let err = TqdmError::InvalidTemplate("missing bar".to_string());
+        assert_eq!(err.to_string(), "Invalid style template: missing bar");
+    }
+
+    #[test]
+    fn multi_progress_manages_bars_and_spinners() {
+        let multi = MultiProgress::new();
+
+        let bar = multi.add(5);
+        bar.update(2);
+        assert_eq!(bar.position(), 2);
+        assert_eq!(bar.length(), Some(5));
+
+        let spinner = multi.add_spinner();
+        spinner.update(1);
+        assert_eq!(spinner.length(), None);
+        assert_eq!(spinner.position(), 1);
+
+        bar.clear();
+        spinner.clear();
+    }
+}

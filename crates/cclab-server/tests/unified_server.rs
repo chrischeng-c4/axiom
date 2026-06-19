@@ -3,7 +3,47 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use cclab_server::LensHandlerPool;
+use axum::body::{to_bytes, Body};
+use axum::http::{Request, StatusCode};
+use cclab_server::registry::ProjectInfo;
+use cclab_server::{build_router, LensHandlerPool, Registry};
+use tower::ServiceExt;
+
+fn demo_registry(project_path: PathBuf) -> Registry {
+    let mut registry = Registry::new(12345, 3456);
+    registry.projects.insert(
+        "demo".to_string(),
+        ProjectInfo {
+            path: project_path,
+            registered_at: chrono::Utc::now(),
+        },
+    );
+    registry
+}
+
+async fn response_text(response: axum::response::Response) -> String {
+    let bytes = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("response body should be readable");
+    String::from_utf8(bytes.to_vec()).expect("response body should be utf-8")
+}
+
+fn fixture_project_dir(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "cclab-server-route-smoke-{}-{}",
+        std::process::id(),
+        name
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join(".aw/changes/change-1"))
+        .expect("fixture change dir should be created");
+    std::fs::write(
+        root.join(".aw/changes/change-1/STATE.yaml"),
+        "phase: review\n",
+    )
+    .expect("fixture state should be written");
+    root
+}
 
 #[tokio::test]
 async fn test_lens_pool_creation() {
@@ -165,4 +205,79 @@ async fn test_document_override_integration() {
         result.is_err(),
         "Document should not be found after removal"
     );
+}
+
+#[tokio::test]
+async fn test_http_routes_use_in_memory_registry() {
+    let project_path = fixture_project_dir("demo");
+    let registry = demo_registry(project_path.clone());
+    let app = build_router(registry, LensHandlerPool::new());
+
+    let health_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .expect("health request should build"),
+        )
+        .await
+        .expect("health route should respond");
+    assert_eq!(health_response.status(), StatusCode::OK);
+    assert_eq!(response_text(health_response).await, "OK");
+
+    let dashboard_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .body(Body::empty())
+                .expect("dashboard request should build"),
+        )
+        .await
+        .expect("dashboard route should respond");
+    assert_eq!(dashboard_response.status(), StatusCode::OK);
+
+    let project_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/view/demo")
+                .body(Body::empty())
+                .expect("project request should build"),
+        )
+        .await
+        .expect("project route should respond");
+    assert_eq!(project_response.status(), StatusCode::OK);
+    let project_html = response_text(project_response).await;
+    assert!(project_html.contains("demo"));
+    assert!(project_html.contains("change-1"));
+
+    let changes_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/view/demo/api/changes")
+                .body(Body::empty())
+                .expect("changes request should build"),
+        )
+        .await
+        .expect("changes API should respond");
+    assert_eq!(changes_response.status(), StatusCode::OK);
+    let changes_json = response_text(changes_response).await;
+    assert!(changes_json.contains("change-1"));
+    assert!(changes_json.contains("review"));
+
+    let missing_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/view/missing")
+                .body(Body::empty())
+                .expect("missing project request should build"),
+        )
+        .await
+        .expect("missing project route should respond");
+    assert_eq!(missing_response.status(), StatusCode::NOT_FOUND);
+
+    let _ = std::fs::remove_dir_all(project_path);
 }

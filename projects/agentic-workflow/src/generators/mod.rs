@@ -194,9 +194,9 @@ mod tests {
     }
 
     /// Section types that do not (yet) have dedicated generators in this
-    /// generators module. `Manifest` and `E2eTest` are handled by the TD v2
-    /// Rust-codegen path (`projects/agentic-workflow/src/generate/gen/rust/*`) not the
-    /// legacy prose generators here.
+    /// generators module. `Manifest`, `ToolContract`, `E2eTest`, and source-unit
+    /// sections are handled by EC/TD v2 codegen paths, not the legacy prose
+    /// generators here.
     const NO_GENERATOR: &[SectionType] = &[
         SectionType::Cli,
         SectionType::Schema,
@@ -206,6 +206,9 @@ mod tests {
         SectionType::RuntimeImage,
         SectionType::Deployment,
         SectionType::Manifest,
+        SectionType::ToolContract,
+        SectionType::RustSourceUnit,
+        SectionType::TextSourceUnit,
         SectionType::E2eTest,
     ];
 

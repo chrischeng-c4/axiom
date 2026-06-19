@@ -143,3 +143,86 @@ impl<'a> BoundLogger<'a> {
         self.log(LogLevel::Critical, msg);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Result;
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    #[derive(Clone, Default)]
+    struct RecordingSink {
+        records: Arc<Mutex<Vec<LogRecord>>>,
+    }
+
+    impl Sink for RecordingSink {
+        fn write(&self, record: &LogRecord) -> Result<()> {
+            self.records.lock().push(record.clone());
+            Ok(())
+        }
+
+        fn flush(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn recording_sink() -> (Box<dyn Sink>, Arc<Mutex<Vec<LogRecord>>>) {
+        let sink = RecordingSink::default();
+        let records = sink.records.clone();
+        (Box::new(sink), records)
+    }
+
+    #[test]
+    fn logger_filters_by_level_and_fans_out_context_to_sinks() {
+        let logger = Logger::new();
+        let (sink_a, records_a) = recording_sink();
+        let (sink_b, records_b) = recording_sink();
+
+        logger.add_sink(sink_a);
+        logger.add_sink(sink_b);
+        logger.bind("request_id", "req-42");
+        logger.set_level(LogLevel::Info);
+
+        logger.debug("hidden");
+        logger.info("visible");
+
+        for records in [records_a, records_b] {
+            let records = records.lock();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].level, LogLevel::Info);
+            assert_eq!(records[0].message, "visible");
+            assert_eq!(
+                records[0].context.get("request_id"),
+                Some(&"req-42".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn bound_logger_merges_context_and_reuses_parent_sinks() {
+        let logger = Logger::new();
+        let (sink, records) = recording_sink();
+        logger.add_sink(sink);
+        logger.bind("service", "checkout");
+
+        let extra = HashMap::from([
+            ("request_id".to_string(), "req-7".to_string()),
+            ("user_id".to_string(), "user-1".to_string()),
+        ]);
+        let bound = logger.with_context(extra);
+
+        logger.bind("late_key", "not-in-bound-snapshot");
+        bound.warning("bound message");
+
+        let records = records.lock();
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.level, LogLevel::Warning);
+        assert_eq!(record.message, "bound message");
+        assert_eq!(record.context.get("service"), Some(&"checkout".to_string()));
+        assert_eq!(record.context.get("request_id"), Some(&"req-7".to_string()));
+        assert_eq!(record.context.get("user_id"), Some(&"user-1".to_string()));
+        assert!(!record.context.contains_key("late_key"));
+    }
+}

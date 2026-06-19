@@ -173,6 +173,14 @@ impl Page {
         Ok(())
     }
 
+    /// Close this page's tab without closing the browser process.
+    pub async fn close(&self) -> Result<()> {
+        self.session
+            .send("Page.close", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
     /// Get the page title.
     pub async fn title(&self) -> Result<String> {
         let val = self.evaluate("document.title").await?;
@@ -219,6 +227,14 @@ impl Page {
     /// Access the underlying CDP session for low-level commands.
     pub fn session(&self) -> &CdpSession {
         &self.session
+    }
+
+    /// Enable CDP Network events for Playwright-compatible response APIs.
+    pub async fn enable_network_events(&self) -> Result<()> {
+        self.session
+            .send("Network.enable", serde_json::json!({}))
+            .await?;
+        Ok(())
     }
 
     /// Create a [`Locator`] rooted at this page's document.

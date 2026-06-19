@@ -76,6 +76,21 @@ impl Browser {
         })
     }
 
+    /// Connect to an already-running browser and open future pages in
+    /// Chrome's real default context. This is used by human visual review so
+    /// the runner shell and the active test case stay in one browser window
+    /// as tabs instead of separate incognito windows/processes.
+    pub async fn connect_to_default_context(ws_url: &str) -> Result<Self> {
+        let client = CdpClient::connect(ws_url).await?;
+        let default_context = BrowserContext::browser_default(client.root_session());
+        Ok(Self {
+            client,
+            process: None,
+            ws_url: ws_url.to_string(),
+            default_context: Some(default_context),
+        })
+    }
+
     /// Open a new page (tab) in the default context.
     ///
     /// Backward-compatible entry point — delegates to the implicit default
@@ -107,15 +122,20 @@ impl Browser {
 
     /// Close the browser. Kills the child process if we launched it.
     pub async fn close(mut self) -> Result<()> {
-        // Drop the default context handle first; the actual `browserContextId`
-        // is disposed by `Browser.close` below alongside the process exit.
-        self.default_context.take();
-        self.client
-            .send("Browser.close", serde_json::json!({}))
-            .await
-            .ok();
         if let Some(mut proc) = self.process.take() {
+            // Drop the default context handle first; the actual
+            // `browserContextId` is disposed by `Browser.close` below
+            // alongside the process exit.
+            self.default_context.take();
+            self.client
+                .send("Browser.close", serde_json::json!({}))
+                .await
+                .ok();
             let _ = try_kill_browser_process(&mut proc).await;
+        } else if let Some(ctx) = self.default_context.take() {
+            // A connected browser is owned by another handle/window. Closing
+            // this wrapper must not close the whole visual review session.
+            ctx.dispose_if_owned().await.ok();
         }
         Ok(())
     }
@@ -140,6 +160,18 @@ impl Browser {
     /// The WebSocket URL this browser is connected on.
     pub fn ws_url(&self) -> &str {
         &self.ws_url
+    }
+
+    /// Clone the root CDP session for worker-owned event helpers.
+    pub(crate) fn root_session(&self) -> cdp::CdpSession {
+        self.client.root_session()
+    }
+
+    /// Transfer the CDP event stream to the test worker.
+    pub(crate) fn take_event_receiver(
+        &mut self,
+    ) -> Option<tokio::sync::mpsc::Receiver<cdp::CdpEvent>> {
+        self.client.take_event_receiver()
     }
 }
 

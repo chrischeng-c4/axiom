@@ -185,6 +185,89 @@ fn project_option_propagates_to_nested_project_commands() {
     }
 }
 
+#[test]
+fn capability_issue_inventory_flags_parse_for_report_next_run_and_check() {
+    let command = parse_cli([
+        "aw",
+        "capability",
+        "--project",
+        "demo",
+        "report",
+        "--skip-issue-inventory",
+    ]);
+    match command {
+        Commands::Capability(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            match args.command {
+                agentic_workflow::cli::capability::CapabilityCommand::Report(report) => {
+                    assert!(report.skip_issue_inventory);
+                    assert!(!report.include_issue_inventory);
+                }
+                _ => panic!("expected capability report"),
+            }
+        }
+        _ => panic!("expected capability command"),
+    }
+
+    let command = parse_cli([
+        "aw",
+        "capability",
+        "--project",
+        "demo",
+        "next",
+        "--skip-issue-inventory",
+    ]);
+    match command {
+        Commands::Capability(args) => match args.command {
+            agentic_workflow::cli::capability::CapabilityCommand::Next(next) => {
+                assert!(next.skip_issue_inventory);
+                assert!(!next.include_issue_inventory);
+            }
+            _ => panic!("expected capability next"),
+        },
+        _ => panic!("expected capability command"),
+    }
+
+    let command = parse_cli([
+        "aw",
+        "capability",
+        "--project",
+        "demo",
+        "run",
+        "--non-interactive",
+        "--skip-issue-inventory",
+    ]);
+    match command {
+        Commands::Capability(args) => match args.command {
+            agentic_workflow::cli::capability::CapabilityCommand::Run(run) => {
+                assert!(run.skip_issue_inventory);
+                assert!(!run.include_issue_inventory);
+            }
+            _ => panic!("expected capability run"),
+        },
+        _ => panic!("expected capability command"),
+    }
+
+    let command = parse_cli([
+        "aw",
+        "capability",
+        "--project",
+        "demo",
+        "check",
+        "--include-issue-inventory",
+    ]);
+    match command {
+        Commands::Capability(args) => match args.command {
+            agentic_workflow::cli::capability::CapabilityCommand::Check(check) => {
+                assert!(check.include_issue_inventory);
+                assert!(!check.skip_issue_inventory);
+            }
+            _ => panic!("expected capability check"),
+        },
+        _ => panic!("expected capability command"),
+    }
+}
+
 fn managed(percent: f64, uncovered_files: Vec<String>) -> StandardizationCoverage {
     StandardizationCoverage {
         scope: vec!["projects/demo/**".to_string()],
@@ -670,7 +753,7 @@ fn project_health_summary_points_to_full_verify_when_gates_are_missing() {
     assert_eq!(summary["next"]["kind"].as_str(), Some("run_command"));
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw health --project demo")
+        Some("aw health --project demo full")
     );
 }
 
@@ -698,7 +781,7 @@ fn project_health_summary_routes_managed_blockers_to_standardize() {
 }
 
 #[test]
-fn no_cold_rebuild_workspace_routes_back_to_health() {
+fn no_cold_rebuild_workspace_keeps_specific_repair_route() {
     let mut report = ProjectHealthReport::from_components(
         "demo",
         managed(50.0, vec!["projects/demo/src/lib.rs".to_string()]),
@@ -721,7 +804,7 @@ fn no_cold_rebuild_workspace_routes_back_to_health() {
 
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw health --project demo")
+        Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
     );
     let missing = summary["completion"]["missing"].as_array().unwrap();
     assert!(missing

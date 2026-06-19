@@ -1,0 +1,11 @@
+[project]
+name = "cap"
+cap_path = "README.md"
+label = "project:cap"
+
+[[workspaces]]
+name = "cap"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p cap"
+codegen.profile = "rust/score-crate"

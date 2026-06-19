@@ -1,0 +1,7 @@
+Total messages: 4 (Errors: 1, Warnings: 0)
+
+[INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://127.0.0.1:5187/node_modules/.jet/react-dom.mjs:30262
+[LOG] [Jet] Connecting to HMR server... @ http://127.0.0.1:5187/:2446
+[LOG] [Jet] HMR connected @ http://127.0.0.1:5187/:2390
+TypeError: Cannot read properties of undefined (reading 'VITE_API_BASE_URL')
+    at http://127.0.0.1:5187/src/projects/api:6:19

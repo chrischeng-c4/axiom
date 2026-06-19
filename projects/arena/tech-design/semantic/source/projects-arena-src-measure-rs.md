@@ -1,5 +1,11 @@
 ---
 id: projects-arena-src-measure-rs
+capability_refs:
+  - id: n-target-comparison-runner
+    role: primary
+    claim: sequential-target-fanout-and-measurement
+    coverage: partial
+    rationale: "This source unit implements arena CLI, spec parsing, measurement, or runner orchestration for N-target comparisons."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,15 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/arena/src/measure.rs`, captured as a rust-source-unit (td_ast) item-tree
-during arena standardization onto the codegen ladder.
+Public API manifest for `projects/arena/src/measure.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `fully_failed` | projects/arena/src/measure.rs | function | pub | 81 | fully_failed(stats: &LoadStats) -> bool |
+| `load_is_honest` | projects/arena/src/measure.rs | function | pub | 73 | load_is_honest(load: &LoadShape, stats: &LoadStats) -> bool |
+| `measure` | projects/arena/src/measure.rs | function | pub | 23 | measure(     target: &TargetSpec,     cell: &CellTarget,     load: &LoadShape, ) -> Result<LoadStats, String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

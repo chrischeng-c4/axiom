@@ -349,9 +349,13 @@ mod tests {
     fn test_has_project_path() {
         let mut registry = Registry::new(12345, 3456);
         let path = PathBuf::from("/tmp/test-project");
-        registry
-            .register_project("test".to_string(), path.clone())
-            .unwrap();
+        registry.projects.insert(
+            "test".to_string(),
+            ProjectInfo {
+                path: path.clone(),
+                registered_at: chrono::Utc::now(),
+            },
+        );
 
         assert!(registry.has_project_path(&path));
         assert!(!registry.has_project_path(&PathBuf::from("/tmp/other")));

@@ -463,9 +463,9 @@ static int grep_file(const char *path, const char *pat, size_t pat_len, int *mat
       if (buf[idx] == '\n' || used == sizeof(line)) {
         if (contains_bytes(line, (ssize_t)used, pat, pat_len)) {
           *matched = 1;
-          write(1, path, strlen(path));
-          write(1, ":", 1);
-          write(1, line, used);
+          write_cstr(path);
+          write_bytes(":", 1);
+          write_bytes(line, used);
         }
         used = 0;
       }
@@ -473,10 +473,10 @@ static int grep_file(const char *path, const char *pat, size_t pat_len, int *mat
   }
   if (used && contains_bytes(line, (ssize_t)used, pat, pat_len)) {
     *matched = 1;
-    write(1, path, strlen(path));
-    write(1, ":", 1);
-    write(1, line, used);
-    write(1, "\n", 1);
+    write_cstr(path);
+    write_bytes(":", 1);
+    write_bytes(line, used);
+    write_bytes("\n", 1);
   }
   close(fd);
   return 0;
@@ -504,7 +504,13 @@ static int grep_walk(char *path, size_t cap, const char *pat, size_t pat_len, in
     if (len + 1 + entry_len + 1 > cap) continue;
     path[len] = '/';
     memcpy(path + len + 1, entry->d_name, entry_len + 1);
-    rc |= grep_walk(path, cap, pat, pat_len, matched);
+    if (entry->d_type == DT_DIR) {
+      rc |= grep_walk(path, cap, pat, pat_len, matched);
+    } else if (entry->d_type == DT_REG) {
+      rc |= grep_file(path, pat, pat_len, matched);
+    } else if (entry->d_type == DT_UNKNOWN) {
+      rc |= grep_walk(path, cap, pat, pat_len, matched);
+    }
     path[len] = 0;
   }
   closedir(dir);

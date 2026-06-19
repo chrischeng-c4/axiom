@@ -35,7 +35,7 @@ pub fn json_schema() -> Value {
             "tool_version": { "type": "string" },
             "verb": {
                 "type": "string",
-                "enum": ["report", "profile", "bench", "test", "run", "spec", "llm"]
+                "enum": ["report", "measure", "profile", "bench", "test", "run", "spec", "llm"]
             },
             "target": { "type": "string" },
             "status": { "$ref": "#/$defs/OverallStatus" },
@@ -177,11 +177,11 @@ fn kind_enum() -> Vec<&'static str> {
 /// Per-kind entries: producing verb + evidence field names.
 fn kind_catalog() -> Value {
     json!([
-        { "kind": "hotspot", "verb": "profile", "evidence": ["symbol", "self_ns", "total_ns", "pct", "samples", "rank"] },
+        { "kind": "hotspot", "verb": "measure", "evidence": ["symbol", "self_ns", "total_ns", "pct", "samples", "rank"] },
         { "kind": "boundary_cost", "verb": "profile", "evidence": ["phase", "self_ns", "total_ns", "pct", "samples"] },
         { "kind": "regression", "verb": "bench", "evidence": ["bench", "baseline_ms", "current_ms", "percent_change", "severity", "ci_overlap"] },
         { "kind": "test_failure", "verb": "test", "evidence": ["name", "stdout_tail"] },
-        { "kind": "vital", "verb": "profile", "evidence": ["cpu_time_ms", "wall_time_ms", "peak_rss_bytes"] }
+        { "kind": "vital", "verb": "measure", "evidence": ["cpu_time_ms", "wall_time_ms", "peak_rss_bytes"] }
     ])
 }
 

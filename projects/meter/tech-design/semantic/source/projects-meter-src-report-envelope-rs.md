@@ -24,8 +24,8 @@ Public API manifest for `projects/meter/src/report/envelope.rs` generated from A
 | `Completion` | projects/meter/src/report/envelope.rs | struct | pub | 112 |  |
 | `EnvBlock` | projects/meter/src/report/envelope.rs | struct | pub | 141 |  |
 | `FindingsSummary` | projects/meter/src/report/envelope.rs | struct | pub | 93 |  |
-| `OverallStatus` | projects/meter/src/report/envelope.rs | enum | pub | 60 |  |
 | `MeterReport` | projects/meter/src/report/envelope.rs | struct | pub | 21 |  |
+| `OverallStatus` | projects/meter/src/report/envelope.rs | enum | pub | 60 |  |
 | `RunnerRecord` | projects/meter/src/report/envelope.rs | struct | pub | 121 |  |
 | `SCHEMA_VERSION` | projects/meter/src/report/envelope.rs | constant | pub | 16 |  |
 | `exit_code` | projects/meter/src/report/envelope.rs | function | pub | 74 | exit_code(&self) -> i32 |

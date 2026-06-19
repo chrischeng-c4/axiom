@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec vat-host-process-gpu-visibility
 // @capability agent-native-gpu-native-dev-containers
+// @claim host-process-execution-and-gpu-visibility
 // @contract host-process-execution-and-gpu-visibility
 // @category behavior
+// @required_for_production true
 // @command rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal projects/vat/README.md projects/vat/src/gpu.rs
 // AW-EC-END
 

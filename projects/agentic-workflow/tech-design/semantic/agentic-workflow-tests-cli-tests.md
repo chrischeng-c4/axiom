@@ -595,6 +595,15 @@ semantic_domain:
           - name: "workflow_protocol_commands_remain_registered"
             kind: "function"
             public: false
+          - name: "deprecated_capability_alias_is_rejected_by_parser"
+            kind: "function"
+            public: false
+          - name: "deleted_top_level_commands_fail_as_unknown_commands"
+            kind: "function"
+            public: false
+          - name: "active_docs_and_templates_do_not_reference_deleted_commands"
+            kind: "function"
+            public: false
           - name: "deprecated_td_aliases_are_removed"
             kind: "function"
             public: false

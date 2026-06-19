@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-pins-baseline-rs
+capability_refs:
+  - id: load-pins
+    role: primary
+    claim: floor-and-ratchet-pin-gates
+    coverage: partial
+    rationale: "This source unit implements rig floor and ratchet pin gate behavior."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,20 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/pins/baseline.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/pins/baseline.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `BaselineEntry` | projects/rig/src/pins/baseline.rs | struct | pub | 16 |  |
+| `BaselineStore` | projects/rig/src/pins/baseline.rs | struct | pub | 25 |  |
+| `get` | projects/rig/src/pins/baseline.rs | function | pub | 61 | get(&self, scenario_id: &str, metric: &str) -> Option<&BaselineEntry> |
+| `host_fingerprint` | projects/rig/src/pins/baseline.rs | function | pub | 33 | host_fingerprint() -> String |
+| `load` | projects/rig/src/pins/baseline.rs | function | pub | 44 | load(dir: &Path) -> Self |
+| `load_at` | projects/rig/src/pins/baseline.rs | function | pub | 51 | load_at(path: impl Into<PathBuf>) -> Self |
+| `record` | projects/rig/src/pins/baseline.rs | function | pub | 65 | record(&mut self, scenario_id: &str, metric: &str, value: f64) |
+| `save` | projects/rig/src/pins/baseline.rs | function | pub | 81 | save(&self) -> std::io::Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

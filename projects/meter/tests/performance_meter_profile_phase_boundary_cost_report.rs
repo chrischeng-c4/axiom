@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec meter-profile-phase-boundary-cost-report
 // @capability runtime-resource-attribution
+// @claim profile-phase-boundary-cost-report
 // @contract profile-phase-boundary-cost-report
 // @category performance
+// @required_for_production true
 // @command cargo run -p meter-cli --bin meter -- profile --phases projects/meter/tests/fixtures/profile_phase_breakdown.json
 // AW-EC-END
 

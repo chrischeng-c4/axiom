@@ -66,11 +66,11 @@ fn legacy_top_level_commands_are_removed() {
         "issues",
         "handoff",
         "takeoff",
-        "sync",
         "platform",
         "hook",
         "scaffold-spec",
         "project",
+        "caps",
     ] {
         assert!(
             cmd.find_subcommand(name).is_none(),
@@ -85,11 +85,13 @@ fn workflow_protocol_commands_remain_registered() {
     for name in [
         "init",
         "health",
+        "capability",
         "wi",
         "td",
         "cb",
         "standardize",
         "generator",
+        "sync",
         "chat",
     ] {
         assert!(
@@ -97,6 +99,18 @@ fn workflow_protocol_commands_remain_registered() {
             "{name} should remain registered"
         );
     }
+}
+
+#[test]
+fn deprecated_capability_alias_is_rejected_by_parser() {
+    let Err(err) = Cli::try_parse_from(["aw", "caps", "report"]) else {
+        panic!("caps alias should not parse");
+    };
+    let stderr = err.to_string();
+    assert!(
+        stderr.contains("unrecognized subcommand"),
+        "caps alias should be rejected, stderr:\n{stderr}"
+    );
 }
 
 #[test]
@@ -117,11 +131,11 @@ fn deleted_top_level_commands_fail_as_unknown_commands() {
         "issues",
         "handoff",
         "takeoff",
-        "sync",
         "platform",
         "hook",
         "scaffold-spec",
         "project",
+        "caps",
     ] {
         let out = Command::new(&aw)
             .arg(command)
@@ -163,11 +177,11 @@ fn active_docs_and_templates_do_not_reference_deleted_commands() {
         "aw chat agents",
         "aw handoff",
         "aw takeoff",
-        "aw sync",
         "aw platform",
         "aw hook",
         "aw scaffold-spec",
         "aw project health",
+        "aw caps",
     ];
     for doc in docs {
         let Ok(content) = std::fs::read_to_string(&doc) else {

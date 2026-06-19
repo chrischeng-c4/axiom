@@ -30,7 +30,7 @@ pub struct CdpSession {
 pub struct CdpClient {
     session: CdpSession,
     /// Receiver for CDP events (method notifications without an id).
-    events_rx: mpsc::Receiver<CdpEvent>,
+    events_rx: Option<mpsc::Receiver<CdpEvent>>,
     /// Handle to the background reader task.
     _reader_handle: tokio::task::JoinHandle<()>,
 }
@@ -150,7 +150,7 @@ impl CdpClient {
 
         Ok(Self {
             session,
-            events_rx,
+            events_rx: Some(events_rx),
             _reader_handle: reader_handle,
         })
     }
@@ -197,7 +197,15 @@ impl CdpClient {
 
     /// Receive the next CDP event. Returns `None` if the connection is closed.
     pub async fn next_event(&mut self) -> Option<CdpEvent> {
-        self.events_rx.recv().await
+        match self.events_rx.as_mut() {
+            Some(rx) => rx.recv().await,
+            None => None,
+        }
+    }
+
+    /// Transfer the CDP event stream to a worker-owned pump.
+    pub(crate) fn take_event_receiver(&mut self) -> Option<mpsc::Receiver<CdpEvent>> {
+        self.events_rx.take()
     }
 
     /// Clone of the root (browser-level) CDP session for Target / Storage

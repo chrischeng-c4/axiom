@@ -24,7 +24,7 @@ Public API manifest for `projects/meter/src/capture/fold.rs` generated from AST 
 | `Hotspot` | projects/meter/src/capture/fold.rs | struct | pub | 30 |  |
 | `aggregate` | projects/meter/src/capture/fold.rs | function | pub | 54 | aggregate(stacks: &[FoldedStack], effective_hz: f64) -> Vec<Hotspot> |
 | `fold_hotspots` | projects/meter/src/capture/fold.rs | function | pub | 129 | fold_hotspots(     stacks: &[FoldedStack],     effective_hz: f64,     fail_hot: Option<f64>, ) -> Vec<Finding> |
-| `to_flamegraph` | projects/meter/src/capture/fold.rs | function | pub | 193 | to_flamegraph(stacks: &[FoldedStack]) -> FlamegraphData |
+| `to_flamegraph` | projects/meter/src/capture/fold.rs | function | pub | 249 | to_flamegraph(stacks: &[FoldedStack]) -> FlamegraphData |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

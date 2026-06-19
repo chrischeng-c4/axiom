@@ -1,38 +1,26 @@
 ---
 id: semantic-agentic-workflow-cli
 summary: Semantic coverage for "projects/agentic-workflow/src/cli"
-fill_sections: [schema, unit-test, changes]
 capability_refs:
-  - id: workflow-root-runner
+  - id: "aw-core-client-model-workitem-first-artifact-lifecycle"
     role: primary
-    gap: cli-workflow-chain
-    claim: cli-workflow-chain
-    coverage: full
-    rationale: "The CLI semantic domain covers root command dispatch and workflow-chain entrypoints."
-  - id: work-item-planning
-    role: primary
-    gap: capability-to-epic-planning
-    claim: capability-to-epic-planning
-    coverage: full
-    rationale: "The CLI semantic domain includes work-item planning, draft, issue projection, and review subcommands."
-  - id: td-cb-lifecycle-automation
-    role: primary
-    gap: td-lifecycle-dispatch
-    claim: td-lifecycle-dispatch
-    coverage: full
-    rationale: "The CLI semantic domain includes TD, CB, EC, generator, and lifecycle dispatch subcommands."
-  - id: existing-project-standardization
-    role: primary
-    gap: managed-and-semantic-production-gates
-    claim: managed-and-semantic-production-gates
-    coverage: full
-    rationale: "The CLI semantic domain includes standardize and health command surfaces used for brownfield takeover."
+    gap: "core-concept-model-and-invariants"
+    claim: "core-concept-model-and-invariants"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/agentic-workflow/src/cli`."
   - id: project-local-td-and-ec-gates
     role: primary
     gap: ec-evidence-documentation
     claim: ec-evidence-documentation
-    coverage: full
-    rationale: "The CLI semantic domain includes aw ec doc commands that turn project-local EC evidence into generated product documentation."
+    coverage: partial
+    rationale: "The CLI semantic domain covers `aw ec doc` rendering, check, preview, and EC evidence documentation behavior in src/cli/ec.rs."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: ec-external-contract-source
+    claim: ec-external-contract-source
+    coverage: partial
+    rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated manifest behavior in src/cli/ec.rs."
+fill_sections: [schema, changes]
 ---
 
 # Semantic TD: agentic-workflow/cli
@@ -120,6 +108,35 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/agentic-workflow/src/cli"
+      - path: "projects/agentic-workflow/src/cli/shell_env.rs"
+        language: "rust"
+        ownership_state: "unmanaged"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "apply_default_shell_env"
+            kind: "function"
+            public: true
+          - name: "default_path"
+            kind: "function"
+            public: false
+          - name: "default_home"
+            kind: "function"
+            public: false
+          - name: "default_home_from"
+            kind: "function"
+            public: false
+          - name: "default_path_for"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/agentic-workflow/src/cli"
       - path: "projects/agentic-workflow/src/cli/sdd.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -158,6 +175,9 @@ semantic_domain:
           - name: "enumerate_worktree_markers"
             kind: "function"
             public: true
+          - name: "marker_body_is_unfilled"
+            kind: "function"
+            public: false
           - name: "count_worktree_handwrite_markers"
             kind: "function"
             public: true
@@ -242,6 +262,15 @@ semantic_domain:
           - name: "replace_block_body"
             kind: "function"
             public: false
+          - name: "replace_block_body_for_path"
+            kind: "function"
+            public: false
+          - name: "should_preserve_handwrite_markers"
+            kind: "function"
+            public: false
+          - name: "replace_block_and_markers"
+            kind: "function"
+            public: false
           - name: "resolve_base_branch"
             kind: "function"
             public: false
@@ -260,15 +289,6 @@ semantic_domain:
           - name: "stage_and_commit_cb_marker"
             kind: "function"
             public: false
-          - name: "stage_and_commit_cb_queue_start"
-            kind: "function"
-            public: false
-          - name: "emit_error"
-            kind: "function"
-            public: false
-          - name: "tests"
-            kind: "module"
-            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -277,7 +297,7 @@ semantic_domain:
           domain: "projects/agentic-workflow/src/cli"
       - path: "projects/agentic-workflow/src/cli/ec.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "EC_MANIFEST_VERSION"
@@ -286,17 +306,56 @@ semantic_domain:
           - name: "EC_MANIFEST_REL"
             kind: "constant"
             public: false
+          - name: "EC_DOC_REL"
+            kind: "constant"
+            public: false
+          - name: "EC_SOURCE_REL"
+            kind: "constant"
+            public: false
+          - name: "PROJECT_AW_REL"
+            kind: "constant"
+            public: false
+          - name: "EC_AW_BEGIN_MARKER"
+            kind: "constant"
+            public: false
+          - name: "EC_AW_END_MARKER"
+            kind: "constant"
+            public: false
           - name: "EC_BEGIN_MARKER"
             kind: "constant"
             public: false
           - name: "EC_END_MARKER"
             kind: "constant"
             public: false
+          - name: "EC_TOOL_BEGIN_MARKER"
+            kind: "constant"
+            public: false
+          - name: "EC_TOOL_END_MARKER"
+            kind: "constant"
+            public: false
+          - name: "EC_DOC_BEGIN_MARKER"
+            kind: "constant"
+            public: false
+          - name: "EC_DOC_END_MARKER"
+            kind: "constant"
+            public: false
+          - name: "EC_CATEGORIES"
+            kind: "constant"
+            public: false
+          - name: "ec_categories"
+            kind: "function"
+            public: true
           - name: "EcArgs"
             kind: "struct"
             public: true
           - name: "EcCommand"
             kind: "enum"
+            public: true
+          - name: "EcDraftArgs"
+            kind: "struct"
+            public: true
+          - name: "EcFillArgs"
+            kind: "struct"
             public: true
           - name: "EcGenArgs"
             kind: "struct"
@@ -307,13 +366,43 @@ semantic_domain:
           - name: "EcVerifyArgs"
             kind: "struct"
             public: true
+          - name: "EcDocArgs"
+            kind: "struct"
+            public: true
+          - name: "EcDocCommand"
+            kind: "enum"
+            public: true
+          - name: "EcDocGenArgs"
+            kind: "struct"
+            public: true
+          - name: "EcDocCheckArgs"
+            kind: "struct"
+            public: true
+          - name: "EcDocPreviewArgs"
+            kind: "struct"
+            public: true
           - name: "EcManifest"
             kind: "struct"
             public: true
           - name: "EcManifestCase"
             kind: "struct"
             public: true
+          - name: "EcEvidenceArtifact"
+            kind: "struct"
+            public: true
+          - name: "EcEvaluator"
+            kind: "struct"
+            public: true
+          - name: "EcToolManifest"
+            kind: "struct"
+            public: true
           - name: "EcCheckSummary"
+            kind: "struct"
+            public: true
+          - name: "EcDocCheckSummary"
+            kind: "struct"
+            public: true
+          - name: "EcDocPreviewSummary"
             kind: "struct"
             public: true
           - name: "EcVerifySummary"
@@ -325,89 +414,11 @@ semantic_domain:
           - name: "EcProjectContext"
             kind: "struct"
             public: true
-          - name: "ExternalContractDocument"
-            kind: "struct"
-            public: false
-          - name: "ExternalContractToml"
-            kind: "struct"
-            public: false
-          - name: "ExternalToolManifestToml"
-            kind: "struct"
-            public: false
           - name: "E2eYaml"
             kind: "struct"
             public: false
           - name: "E2eYamlCase"
             kind: "struct"
-            public: false
-          - name: "StringOrList"
-            kind: "enum"
-            public: false
-          - name: "into_vec"
-            kind: "function"
-            public: false
-          - name: "run"
-            kind: "function"
-            public: true
-          - name: "project_ec_check_summary"
-            kind: "function"
-            public: true
-          - name: "load_project_ec_manifest"
-            kind: "function"
-            public: true
-          - name: "run_gen"
-            kind: "function"
-            public: false
-          - name: "run_check"
-            kind: "function"
-            public: false
-          - name: "print_ec_findings"
-            kind: "function"
-            public: false
-          - name: "resolve_ec_project_context"
-            kind: "function"
-            public: false
-          - name: "package_name_for"
-            kind: "function"
-            public: false
-          - name: "build_expected_manifest"
-            kind: "function"
-            public: false
-          - name: "extract_td_e2e_cases"
-            kind: "function"
-            public: false
-          - name: "extract_e2e_cases_from_markdown"
-            kind: "function"
-            public: false
-          - name: "markdown_heading_title"
-            kind: "function"
-            public: false
-          - name: "fenced_yaml_after"
-            kind: "function"
-            public: false
-          - name: "ec_test_path"
-            kind: "function"
-            public: false
-          - name: "default_ec_command"
-            kind: "function"
-            public: false
-          - name: "digest_cases"
-            kind: "function"
-            public: false
-          - name: "hash_field"
-            kind: "function"
-            public: false
-          - name: "load_ec_manifest"
-            kind: "function"
-            public: false
-          - name: "check_ec_context"
-            kind: "function"
-            public: false
-          - name: "check_manifest_against_expected"
-            kind: "function"
-            public: false
-          - name: "compare_case_field"
-            kind: "function"
             public: false
         source_evidence_node:
           layer: "backend"
@@ -478,6 +489,12 @@ semantic_domain:
           - name: "run"
             kind: "function"
             public: true
+          - name: "CbGenSourceArgs"
+            kind: "struct"
+            public: true
+          - name: "run_gen_source"
+            kind: "function"
+            public: false
           - name: "run_gen"
             kind: "function"
             public: true
@@ -491,6 +508,18 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "force_regen_verify_cold_summary_at"
+            kind: "function"
+            public: false
+          - name: "CbCodegenOriginClass"
+            kind: "enum"
+            public: false
+          - name: "codegen_origin_for_cold_targets"
+            kind: "function"
+            public: false
+          - name: "classify_codegen_origin_spec"
+            kind: "function"
+            public: false
+          - name: "source_section_has_type_marker"
             kind: "function"
             public: false
           - name: "CbVerifySummary"
@@ -518,6 +547,12 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "run_force_regen_specs"
+            kind: "function"
+            public: false
+          - name: "write_project_root_llms_targets"
+            kind: "function"
+            public: false
+          - name: "extract_project_root_llms_target_paths"
             kind: "function"
             public: false
           - name: "format_rust_files"
@@ -548,30 +583,6 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "workspace_source_roots"
-            kind: "function"
-            public: false
-          - name: "project_cold_verify_workspaces"
-            kind: "function"
-            public: false
-          - name: "scope_root_from_pattern"
-            kind: "function"
-            public: false
-          - name: "collect_force_regen_specs"
-            kind: "function"
-            public: false
-          - name: "collect_spec_managed_refs"
-            kind: "function"
-            public: false
-          - name: "collect_spec_managed_refs_from_file"
-            kind: "function"
-            public: false
-          - name: "collect_force_regen_specs_from_td_changes"
-            kind: "function"
-            public: false
-          - name: "collect_force_regen_specs_from_td_changes_inner"
-            kind: "function"
-            public: false
-          - name: "force_regen_cold_expected_targets"
             kind: "function"
             public: false
         source_evidence_node:
@@ -661,6 +672,86 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "run_members_register"
+            kind: "function"
+            public: true
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/agentic-workflow/src/cli"
+      - path: "projects/agentic-workflow/src/cli/capability_type.rs"
+        language: "rust"
+        ownership_state: "unmanaged"
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "CAPABILITY_TYPES_REL"
+            kind: "constant"
+            public: true
+          - name: "CapabilityType"
+            kind: "enum"
+            public: true
+          - name: "as_str"
+            kind: "function"
+            public: true
+          - name: "from_cli_str"
+            kind: "function"
+            public: true
+          - name: "required_ec_dimensions"
+            kind: "function"
+            public: true
+          - name: "category_is_required_for_type"
+            kind: "function"
+            public: true
+          - name: "CapabilityTypesFile"
+            kind: "struct"
+            public: false
+          - name: "capability_types_path"
+            kind: "function"
+            public: true
+          - name: "load_capability_types_from_readme"
+            kind: "function"
+            public: true
+          - name: "explicit_capability_types_from_readme"
+            kind: "function"
+            public: false
+          - name: "explicit_capability_type_from_block"
+            kind: "function"
+            public: false
+          - name: "split_markdown_field"
+            kind: "function"
+            public: false
+          - name: "is_markdown_heading"
+            kind: "function"
+            public: false
+          - name: "next_markdown_heading"
+            kind: "function"
+            public: false
+          - name: "parse_markdown_table_at"
+            kind: "function"
+            public: false
+          - name: "parse_markdown_table_row"
+            kind: "function"
+            public: false
+          - name: "is_markdown_separator_row"
+            kind: "function"
+            public: false
+          - name: "table_cell"
+            kind: "function"
+            public: false
+          - name: "find_table_column"
+            kind: "function"
+            public: false
+          - name: "normalize_key"
+            kind: "function"
+            public: false
+          - name: "load_capability_types"
+            kind: "function"
+            public: true
+          - name: "upsert_capability_type"
             kind: "function"
             public: true
           - name: "tests"
@@ -796,6 +887,32 @@ semantic_domain:
             public: false
           - name: "normalize_known_draft_sections"
             kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/agentic-workflow/src/cli"
+      - path: "projects/agentic-workflow/src/cli/sync.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "SyncArgs"
+            kind: "struct"
+            public: true
+          - name: "run"
+            kind: "function"
+            public: true
+          - name: "run_at_root"
+            kind: "function"
+            public: false
+          - name: "run_drift_check"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
             public: false
         source_evidence_node:
           layer: "backend"
@@ -1314,6 +1431,9 @@ semantic_domain:
           - name: "capability"
             kind: "module"
             public: true
+          - name: "capability_type"
+            kind: "module"
+            public: true
           - name: "cb"
             kind: "module"
             public: true
@@ -1371,10 +1491,16 @@ semantic_domain:
           - name: "run"
             kind: "module"
             public: true
+          - name: "shell_env"
+            kind: "module"
+            public: true
           - name: "slug_workspace"
             kind: "module"
             public: true
           - name: "standardize"
+            kind: "module"
+            public: true
+          - name: "sync"
             kind: "module"
             public: true
           - name: "td"
@@ -1508,6 +1634,9 @@ semantic_domain:
           - name: "td_activate_inplace_if_present"
             kind: "function"
             public: true
+          - name: "td_activate_inplace_allowing_dirty_lifecycle_paths"
+            kind: "function"
+            public: true
           - name: "td_activate_inplace_allowing_dirty_spec_path"
             kind: "function"
             public: true
@@ -1544,9 +1673,6 @@ semantic_domain:
           - name: "should_stage_lifecycle_path"
             kind: "function"
             public: false
-          - name: "has_staged_changes"
-            kind: "function"
-            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1556,12 +1682,18 @@ semantic_domain:
       - path: "projects/agentic-workflow/src/cli/project.rs"
         language: "rust"
         ownership_state: "codegen"
-        generator_primitives: ["data_model", "enum_model", "service_method"]
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "ProjectHealthArgs"
             kind: "struct"
             public: true
+          - name: "ProjectHealthSection"
+            kind: "enum"
+            public: true
           - name: "ProjectHealthReport"
+            kind: "struct"
+            public: true
+          - name: "CbOwnershipSummary"
             kind: "struct"
             public: true
           - name: "CapabilityHealthReport"
@@ -1600,6 +1732,21 @@ semantic_domain:
           - name: "ProjectEcCommandReport"
             kind: "struct"
             public: true
+          - name: "ProjectClaimClosureReport"
+            kind: "struct"
+            public: true
+          - name: "ProjectClaimClosureItem"
+            kind: "struct"
+            public: true
+          - name: "ProjectClaimClosureStatus"
+            kind: "enum"
+            public: true
+          - name: "not_evaluated"
+            kind: "function"
+            public: true
+          - name: "from_blocker"
+            kind: "function"
+            public: false
           - name: "not_evaluated"
             kind: "function"
             public: true
@@ -1625,15 +1772,6 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "resolve_health_project_name"
-            kind: "function"
-            public: false
-          - name: "HealthProjectConfig"
-            kind: "struct"
-            public: false
-          - name: "HealthProjectRow"
-            kind: "struct"
-            public: false
-          - name: "matches"
             kind: "function"
             public: false
           - name: "cb_verify_not_evaluated"
@@ -1666,18 +1804,6 @@ semantic_domain:
           - name: "new"
             kind: "function"
             public: false
-          - name: "disabled"
-            kind: "function"
-            public: false
-          - name: "emit"
-            kind: "function"
-            public: false
-          - name: "not_evaluated"
-            kind: "function"
-            public: true
-          - name: "passed_fixture"
-            kind: "function"
-            public: true
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1686,7 +1812,7 @@ semantic_domain:
           domain: "projects/agentic-workflow/src/cli"
       - path: "projects/agentic-workflow/src/cli/td_lock.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "enum_model", "service_method"]
         symbols:
           - name: "TdLockArgs"
@@ -1888,7 +2014,7 @@ semantic_domain:
       - path: "projects/agentic-workflow/src/cli/init.rs"
         language: "rust"
         ownership_state: "codegen"
-        generator_primitives: ["config_surface", "enum_model", "service_method"]
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "SDD_VERSION"
             kind: "constant"
@@ -1938,6 +2064,9 @@ semantic_domain:
           - name: "SKILL_CHAT_LISTEN"
             kind: "constant"
             public: false
+          - name: "SKILL_HEALTH"
+            kind: "constant"
+            public: false
           - name: "SCRIPT_BUILD_RELEASE"
             kind: "constant"
             public: false
@@ -1959,6 +2088,30 @@ semantic_domain:
           - name: "run"
             kind: "function"
             public: true
+          - name: "NewArgs"
+            kind: "struct"
+            public: true
+          - name: "run_new"
+            kind: "function"
+            public: true
+          - name: "NewProjectOutcome"
+            kind: "struct"
+            public: false
+          - name: "run_new_with_current_dir"
+            kind: "function"
+            public: false
+          - name: "resolve_new_target"
+            kind: "function"
+            public: false
+          - name: "prepare_new_target"
+            kind: "function"
+            public: false
+          - name: "is_directory_empty"
+            kind: "function"
+            public: false
+          - name: "run_at_project_root"
+            kind: "function"
+            public: false
           - name: "Platform"
             kind: "enum"
             public: false
@@ -1981,33 +2134,6 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "refresh_existing_config_content"
-            kind: "function"
-            public: false
-          - name: "detect_repo_from_git"
-            kind: "function"
-            public: false
-          - name: "ensure_gitignore_entry"
-            kind: "function"
-            public: false
-          - name: "WorkspaceType"
-            kind: "enum"
-            public: true
-          - name: "detect_workspace_type"
-            kind: "function"
-            public: true
-          - name: "populate_rust_scopes"
-            kind: "function"
-            public: false
-          - name: "build_scopes_comment_hint"
-            kind: "function"
-            public: false
-          - name: "run_fresh_install"
-            kind: "function"
-            public: false
-          - name: "run_update"
-            kind: "function"
-            public: false
-          - name: "install_system_files"
             kind: "function"
             public: false
         source_evidence_node:
@@ -2220,6 +2346,12 @@ semantic_domain:
           - name: "SOURCE_EXTS"
             kind: "constant"
             public: false
+          - name: "PROJECT_CONTEXT_ARTIFACTS"
+            kind: "constant"
+            public: false
+          - name: "RUST_BINARY_ARTIFACTS"
+            kind: "constant"
+            public: false
           - name: "EXCLUDED_DIRS"
             kind: "constant"
             public: false
@@ -2326,12 +2458,6 @@ semantic_domain:
             kind: "struct"
             public: true
           - name: "DeploymentFacetFinding"
-            kind: "struct"
-            public: true
-          - name: "SourceUnit"
-            kind: "struct"
-            public: true
-          - name: "SourceEvidenceGraph"
             kind: "struct"
             public: true
         source_evidence_node:
@@ -2649,8 +2775,17 @@ semantic_domain:
       - path: "projects/agentic-workflow/src/cli/capability.rs"
         language: "rust"
         ownership_state: "codegen"
-        generator_primitives: ["data_model", "enum_model", "service_method"]
+        generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
+          - name: "CAPABILITY_MIGRATION_INSERT_MARKER"
+            kind: "constant"
+            public: false
+          - name: "CAPABILITY_GATE_TIMEOUT_ENV"
+            kind: "constant"
+            public: false
+          - name: "DEFAULT_CAPABILITY_GATE_TIMEOUT_SECS"
+            kind: "constant"
+            public: false
           - name: "CapabilityArgs"
             kind: "struct"
             public: true
@@ -2663,10 +2798,37 @@ semantic_domain:
           - name: "CapabilityNextArgs"
             kind: "struct"
             public: true
+          - name: "CapabilityDraftArgs"
+            kind: "struct"
+            public: true
+          - name: "CapabilityApplyDraftArgs"
+            kind: "struct"
+            public: true
           - name: "CapabilityRunArgs"
             kind: "struct"
             public: true
+          - name: "CapabilityMigrateArgs"
+            kind: "struct"
+            public: true
           - name: "CapabilityCheckArgs"
+            kind: "struct"
+            public: true
+          - name: "CapabilityInitArgs"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySweepArgs"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySetTypeArgs"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySetStatusArgs"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySetSurfaceArgs"
+            kind: "struct"
+            public: true
+          - name: "CapabilitySetEcDimensionArgs"
             kind: "struct"
             public: true
           - name: "CapabilityStatus"
@@ -2696,6 +2858,12 @@ semantic_domain:
           - name: "CapabilityGap"
             kind: "struct"
             public: true
+          - name: "CapabilityIndexSummary"
+            kind: "struct"
+            public: true
+          - name: "CapabilityWorkRoot"
+            kind: "struct"
+            public: true
           - name: "CapabilityVerification"
             kind: "struct"
             public: true
@@ -2714,62 +2882,20 @@ semantic_domain:
           - name: "CapabilityVerificationContract"
             kind: "struct"
             public: true
-          - name: "CapabilityEvidence"
+          - name: "CapabilitySurface"
             kind: "struct"
             public: true
-          - name: "CapabilityYaml"
-            kind: "struct"
-            public: false
-          - name: "CapabilitySection"
-            kind: "struct"
-            public: true
-          - name: "from_yaml"
-            kind: "function"
-            public: false
-          - name: "LegacyCapabilityRow"
-            kind: "struct"
-            public: true
-          - name: "CapabilityDocument"
-            kind: "struct"
-            public: true
-          - name: "CapabilityDocumentFormat"
+          - name: "CapabilityEcDimensionKind"
             kind: "enum"
-            public: true
-          - name: "is_legacy_only"
-            kind: "function"
-            public: true
-          - name: "requires_format_migration"
-            kind: "function"
-            public: true
-          - name: "format_version"
-            kind: "function"
-            public: true
-          - name: "capability_ids"
-            kind: "function"
-            public: true
-          - name: "gap_ids_for"
-            kind: "function"
-            public: true
-          - name: "claim_ids_for"
-            kind: "function"
-            public: true
-          - name: "capability_has_contract"
-            kind: "function"
             public: true
           - name: "as_str"
             kind: "function"
             public: true
-          - name: "TdCapabilityRef"
+          - name: "CapabilityEfficiencyBackfillSlot"
             kind: "struct"
             public: true
-          - name: "TdFrontmatter"
+          - name: "CapabilityEcDimension"
             kind: "struct"
-            public: false
-          - name: "TdCapabilityEvidence"
-            kind: "struct"
-            public: true
-          - name: "CapabilityActionKind"
-            kind: "enum"
             public: true
         source_evidence_node:
           layer: "backend"
@@ -2777,24 +2903,6 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/agentic-workflow/src/cli"
-```
-
-## Unit Test
-<!-- type: unit-test lang: mermaid -->
-
-```mermaid
----
-id: unit-test
-coverage_kind: semantic
-strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
-evidence:
-  source_tests: []
----
-requirementDiagram
-
-element UT_SOURCE_TESTS {
-  type: "TestEvidence"
-}
 ```
 
 ## Changes
@@ -2810,6 +2918,12 @@ changes:
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/proposal.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/shell_env.rs"
     action: modify
     section: schema
     description: |
@@ -2838,9 +2952,6 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-      EC now treats `external-contracts/{behavior,efficiency,security,stability}`
-      as the primary External Contracts source, generates tests and tool
-      manifests for rig/meter/arena/guard/vat, and exposes `aw ec verify`.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/tasks.rs"
     action: modify
@@ -2866,7 +2977,19 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/capability_type.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/issues.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/agentic-workflow/src/cli/sync.rs"
     action: modify
     section: schema
     description: |
@@ -2956,8 +3079,6 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:td-lock-snapshot>"
   - path: "projects/agentic-workflow/src/cli/validate_proposal.rs"
     action: modify
     section: schema
@@ -3035,11 +3156,5 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-      Capability subcommands inherit the global `--project` selector and long-running
-      verification emits stderr progress before each configured gate command.
     impl_mode: hand-written
-  - action: annotate
-    section: unit-test
-    impl_mode: hand-written
-    description: "Traceability metadata edge for the unit-test section."
 ```

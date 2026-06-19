@@ -34,7 +34,7 @@ Public API manifest for `projects/meter/src/reporter.rs` generated from AST duri
 | `failed_results` | projects/meter/src/reporter.rs | function | pub | 234 | failed_results(&self) -> Vec<&AgentEvalResult> |
 | `from_summary` | projects/meter/src/reporter.rs | function | pub | 130 | from_summary(suite_name: impl Into<String>, summary: TestSummary) -> Self |
 | `generate` | projects/meter/src/reporter.rs | function | pub | 289 | generate(&self, report: &TestReport) -> String |
-| `generate_agent_eval` | projects/meter/src/reporter.rs | function | pub | 1207 | generate_agent_eval(&self, report: &AgentEvalReport) -> String |
+| `generate_agent_eval` | projects/meter/src/reporter.rs | function | pub | 1163 | generate_agent_eval(&self, report: &AgentEvalReport) -> String |
 | `html` | projects/meter/src/reporter.rs | function | pub | 269 | html() -> Self |
 | `json` | projects/meter/src/reporter.rs | function | pub | 264 | json() -> Self |
 | `junit` | projects/meter/src/reporter.rs | function | pub | 274 | junit() -> Self |

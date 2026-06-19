@@ -9,13 +9,29 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
+use super::capability_type::CapabilityType;
 use super::production::{
     evaluate_capability_scope, inputs_from_report_items, ProductionReadinessReport,
     ProductionStatus,
 };
-use super::project::{project_test_gate_report, ProjectTestGateReport, ProjectTestGateStatus};
+use super::project::{
+    project_test_gate_report, ProjectTestCommandReport, ProjectTestCommandStatus,
+    ProjectTestGateReport, ProjectTestGateStatus,
+};
+use super::workflow_guard;
+
+const CAPABILITY_MIGRATION_INSERT_MARKER: &str = "<!-- aw:capability-migration-insert -->";
+const CAPABILITY_GATE_TIMEOUT_ENV: &str = "AW_CAPABILITY_GATE_TIMEOUT_SECS";
+const DEFAULT_CAPABILITY_GATE_TIMEOUT_SECS: u64 = 30 * 60;
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args)]
@@ -34,10 +50,28 @@ pub enum CapabilityCommand {
     Report(CapabilityReportArgs),
     /// Print the next deterministic capability action.
     Next(CapabilityNextArgs),
+    /// Render inferred README capability roots as a pending-review local draft.
+    Draft(CapabilityDraftArgs),
+    /// Apply a human-reviewed capability draft to the project README.
+    ApplyDraft(CapabilityApplyDraftArgs),
     /// Execute one bounded capability tick.
     Run(CapabilityRunArgs),
+    /// Rewrite legacy/YAML capability maps to the canonical Markdown format.
+    Migrate(CapabilityMigrateArgs),
     /// Validate capability README sections and TD capability refs.
     Check(CapabilityCheckArgs),
+    /// Create an empty canonical capability README when the configured map is missing.
+    Init(CapabilityInitArgs),
+    /// Sweep all configured projects and summarize capability next actions.
+    Sweep(CapabilitySweepArgs),
+    /// Assign a capability's type, persisting it to the README contract.
+    SetType(CapabilitySetTypeArgs),
+    /// Assign a capability's status, persisting it to the README contract.
+    SetStatus(CapabilitySetStatusArgs),
+    /// Upsert an exposed capability surface into the README contract.
+    SetSurface(CapabilitySetSurfaceArgs),
+    /// Upsert an EC dimension into the README contract.
+    SetEcDimension(CapabilitySetEcDimensionArgs),
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -49,6 +83,15 @@ pub struct CapabilityReportArgs {
     /// Run verification commands declared in README capability sections.
     #[arg(long)]
     pub verify: bool,
+    /// Include issue inventory when computing WI evidence and next actions.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// Skip issue inventory for a README/TD-only report.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
+    /// Write a local /tmp verification evidence artifact when --verify is used.
+    #[arg(long = "write-evidence")]
+    pub write_evidence: bool,
     /// DEPRECATED compatibility no-op. Capability reports emit JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -79,6 +122,12 @@ pub struct CapabilityNextArgs {
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
+    /// Include issue inventory when computing next action routing.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// Skip issue inventory for README/TD-only next-action routing.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
     /// DEPRECATED compatibility no-op. Capability next emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -86,6 +135,49 @@ pub struct CapabilityNextArgs {
     #[arg(long)]
     pub human: bool,
     /// Pretty-print the JSON next action.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilityDraftArgs {
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+    /// Write draft to this path instead of /tmp/aw/{project}/capability-map-drafts/.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+    /// DEPRECATED compatibility no-op. Capability draft emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit the generated draft path only.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON result.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilityApplyDraftArgs {
+    /// Pending-review draft artifact path from `aw capability draft` or sweep.
+    #[arg(long)]
+    pub draft: PathBuf,
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+    /// Required assertion that a human has reviewed and accepted this draft.
+    #[arg(long)]
+    pub reviewed: bool,
+    /// DEPRECATED compatibility no-op. Capability apply-draft emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit a compact human-readable report.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON result.
     #[arg(long)]
     pub pretty: bool,
 }
@@ -106,6 +198,12 @@ pub struct CapabilityRunArgs {
     /// Maximum bounded ticks to run.
     #[arg(long, default_value_t = 1)]
     pub max_ticks: usize,
+    /// Include issue inventory when computing next action routing.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// Skip issue inventory for README/TD-only bounded ticks.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
     /// DEPRECATED compatibility no-op. Capability run emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -119,6 +217,23 @@ pub struct CapabilityRunArgs {
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args, Clone)]
+pub struct CapabilityMigrateArgs {
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+    /// DEPRECATED compatibility no-op. Capability migrate emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit the legacy human-readable migrate report.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON migrate report.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
 pub struct CapabilityCheckArgs {
     /// Capability map path override.
     #[arg(long = "cap-path")]
@@ -126,6 +241,15 @@ pub struct CapabilityCheckArgs {
     /// Run capability verification commands and configured project test gates.
     #[arg(long)]
     pub verify: bool,
+    /// Include issue inventory when computing WI evidence and next actions.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// Skip issue inventory for a README/TD-only check.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
+    /// Write a local /tmp verification evidence artifact when --verify is used.
+    #[arg(long = "write-evidence")]
+    pub write_evidence: bool,
     /// DEPRECATED compatibility no-op. Capability check emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -133,6 +257,145 @@ pub struct CapabilityCheckArgs {
     #[arg(long)]
     pub human: bool,
     /// Pretty-print the JSON check report.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilityInitArgs {
+    /// Capability map path override.
+    #[arg(long = "cap-path")]
+    pub cap_path: Option<PathBuf>,
+    /// H1 title for the generated README shell.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Brief text for the generated README shell. Defaults to an unconfirmed placeholder.
+    #[arg(long)]
+    pub brief: Option<String>,
+    /// DEPRECATED compatibility no-op. Capability init emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit the generated README path only.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON result.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilitySweepArgs {
+    /// Run capability verification commands and configured project test gates.
+    #[arg(long)]
+    pub verify: bool,
+    /// Include issue inventory when computing next actions.
+    #[arg(long = "include-issue-inventory")]
+    pub include_issue_inventory: bool,
+    /// Skip issue inventory for a fast structural sweep.
+    #[arg(long = "skip-issue-inventory")]
+    pub skip_issue_inventory: bool,
+    /// Write pending-review capability-map drafts for define-map projects.
+    #[arg(long = "write-drafts")]
+    pub write_drafts: bool,
+    /// Write pending-review WI planning artifacts for create-WI projects.
+    #[arg(long = "write-wi-plans")]
+    pub write_wi_plans: bool,
+    /// Write an execution queue for non-HITL next actions not covered by draft/WI-plan queues.
+    #[arg(long = "write-action-queue")]
+    pub write_action_queue: bool,
+    /// Write a local check-result index for every swept project.
+    #[arg(long = "write-check-index")]
+    pub write_check_index: bool,
+    /// Write every rollout artifact plus a top-level review index.
+    #[arg(long = "write-rollout")]
+    pub write_rollout: bool,
+    /// Write one consolidated HITL review packet for draft, WI-plan, and skipped-inventory queues.
+    #[arg(long = "write-review-packet")]
+    pub write_review_packet: bool,
+    /// DEPRECATED compatibility no-op. Capability sweep emits JSON by default.
+    #[arg(long, hide = true)]
+    pub json: bool,
+    /// Emit a compact human-readable sweep.
+    #[arg(long)]
+    pub human: bool,
+    /// Pretty-print the JSON sweep.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilitySetTypeArgs {
+    /// Capability id to assign a type to (the README capability heading id).
+    #[arg(long)]
+    pub capability: String,
+    /// Capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool.
+    #[arg(long = "type")]
+    pub r#type: String,
+    /// Pretty-print the JSON result.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilitySetStatusArgs {
+    /// Capability id to assign a status to (the README capability heading id).
+    #[arg(long)]
+    pub capability: String,
+    /// Capability status: candidate, confirmed, auditing, blocked, verified, or retired.
+    #[arg(long)]
+    pub status: String,
+    /// Pretty-print the JSON result.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilitySetSurfaceArgs {
+    /// Capability id whose README contract should receive the surface.
+    #[arg(long)]
+    pub capability: String,
+    /// Surface kind, for example CLI, HTTP, UI, WebAppE2E, or Agent.
+    #[arg(long)]
+    pub kind: String,
+    /// Public command/route/entrypoint for this surface. Repeatable.
+    #[arg(long = "command")]
+    pub commands: Vec<String>,
+    /// Short purpose statement for this surface.
+    #[arg(long)]
+    pub summary: String,
+    /// Pretty-print the JSON result.
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args, Clone)]
+pub struct CapabilitySetEcDimensionArgs {
+    /// Capability id whose README contract should receive the EC dimension.
+    #[arg(long)]
+    pub capability: String,
+    /// EC dimension: behavior, efficiency, security, or stability.
+    #[arg(long)]
+    pub dimension: String,
+    /// Tool/runner that verifies this dimension, for example rig, meter, guard, or jet e2e.
+    #[arg(long)]
+    pub runner: Option<String>,
+    /// Short contract summary for this dimension.
+    #[arg(long)]
+    pub summary: Option<String>,
+    /// Efficiency operating point to reserve for aw-generated cube backfill.
+    #[arg(long = "operating-point")]
+    pub operating_point: Option<String>,
+    /// Efficiency cube reference to reserve for aw-generated cube backfill.
+    /// Must be supplied together with --operating-point.
+    #[arg(long)]
+    pub cube: Option<String>,
+    /// Pretty-print the JSON result.
     #[arg(long)]
     pub pretty: bool,
 }
@@ -242,6 +505,33 @@ pub struct CapabilityGap {
     pub summary: String,
 }
 
+/// Original capability-index row summary. Keep this during README format
+/// migration so AW does not rewrite human-confirmed readiness language.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilityIndexSummary {
+    pub implementation: String,
+    pub verification: String,
+    pub maturity: String,
+    pub production: String,
+    pub notes: String,
+}
+
+/// Original Work Root table row. Keep this as the stable TD/WI anchor during
+/// README format migration; derived claim labels are not authoritative.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilityWorkRoot {
+    pub id: String,
+    pub work_root: String,
+    pub kind: String,
+    pub wi: String,
+    pub implementation: String,
+    pub verification: String,
+    pub maturity: String,
+    pub gate_evidence: String,
+}
+
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CapabilityVerification {
@@ -296,6 +586,67 @@ pub struct CapabilityVerificationContract {
     pub full_regenerability_required: bool,
 }
 
+/// Exposed product interface for a capability. CLI is a surface, not a
+/// capability type; surfaces usually feed the behavior EC dimension.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilitySurface {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub verification: String,
+}
+
+/// EC dimension key as declared by a capability contract.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityEcDimensionKind {
+    Behavior,
+    Efficiency,
+    Security,
+    Stability,
+}
+
+impl CapabilityEcDimensionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CapabilityEcDimensionKind::Behavior => "behavior",
+            CapabilityEcDimensionKind::Efficiency => "efficiency",
+            CapabilityEcDimensionKind::Security => "security",
+            CapabilityEcDimensionKind::Stability => "stability",
+        }
+    }
+}
+
+/// Hand-authored slot for an aw-generated efficiency section. The measured
+/// pivot/cube data is backfilled by `aw ec`; README authors only declare which
+/// slice to render and where the cube record lives.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilityEfficiencyBackfillSlot {
+    pub operating_point: String,
+    pub cube: String,
+}
+
+/// Declared EC dimension content for a capability.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilityEcDimension {
+    pub dimension: CapabilityEcDimensionKind,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub runner: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_for_production: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub efficiency_backfill: Option<CapabilityEfficiencyBackfillSlot>,
+}
+
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CapabilityEvidence {
@@ -313,6 +664,12 @@ pub struct CapabilityEvidence {
 struct CapabilityYaml {
     pub id: String,
     pub status: CapabilityStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_type: Option<CapabilityType>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub surfaces: Vec<CapabilitySurface>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ec_dimensions: Vec<CapabilityEcDimension>,
     pub promise: String,
     pub current_state: String,
     #[serde(default)]
@@ -335,9 +692,23 @@ pub struct CapabilitySection {
     pub title: String,
     pub id: String,
     pub status: CapabilityStatus,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub prelude: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub postlude: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_summary: Option<CapabilityIndexSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_type: Option<CapabilityType>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub surfaces: Vec<CapabilitySurface>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ec_dimensions: Vec<CapabilityEcDimension>,
     pub promise: String,
     pub current_state: String,
     pub gaps: Vec<CapabilityGap>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub work_roots: Vec<CapabilityWorkRoot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_contract: Option<CapabilityVerificationContract>,
     pub evidence: CapabilityEvidence,
@@ -357,9 +728,16 @@ impl CapabilitySection {
             title,
             id: yaml.id,
             status: yaml.status,
+            prelude: String::new(),
+            postlude: String::new(),
+            index_summary: None,
+            capability_type: yaml.capability_type,
+            surfaces: yaml.surfaces,
+            ec_dimensions: yaml.ec_dimensions,
             promise: yaml.promise,
             current_state: yaml.current_state,
             gaps: yaml.gaps,
+            work_roots: Vec::new(),
             verification_contract: yaml.verification_contract,
             evidence: yaml.evidence,
             done_when: yaml.done_when,
@@ -382,12 +760,26 @@ pub struct LegacyCapabilityRow {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityProseCandidate {
+    pub id: String,
+    pub title: String,
+    pub line: usize,
+    pub root_wi: Option<String>,
+    pub summary: Option<String>,
+    pub promise: Option<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CapabilityDocument {
     pub cap_path: PathBuf,
     pub format: CapabilityDocumentFormat,
+    pub needs_canonicalization: bool,
     pub capabilities: Vec<CapabilitySection>,
     pub legacy_rows: Vec<LegacyCapabilityRow>,
+    #[serde(skip)]
+    pub prose_candidates: Vec<CapabilityProseCandidate>,
     pub findings: Vec<String>,
 }
 
@@ -395,6 +787,7 @@ pub struct CapabilityDocument {
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityDocumentFormat {
+    Empty,
     MarkdownTables,
     YamlSections,
     LegacyTable,
@@ -410,11 +803,13 @@ impl CapabilityDocument {
         matches!(
             self.format,
             CapabilityDocumentFormat::YamlSections | CapabilityDocumentFormat::LegacyTable
-        )
+        ) || self.needs_canonicalization
     }
 
     pub fn format_version(&self) -> u8 {
         match self.format {
+            CapabilityDocumentFormat::Empty => 0,
+            CapabilityDocumentFormat::MarkdownTables if self.needs_canonicalization => 1,
             CapabilityDocumentFormat::MarkdownTables => 2,
             CapabilityDocumentFormat::YamlSections | CapabilityDocumentFormat::LegacyTable => 1,
         }
@@ -463,6 +858,7 @@ impl CapabilityDocument {
 impl CapabilityDocumentFormat {
     pub fn as_str(self) -> &'static str {
         match self {
+            CapabilityDocumentFormat::Empty => "empty",
             CapabilityDocumentFormat::MarkdownTables => "markdown_tables",
             CapabilityDocumentFormat::YamlSections => "yaml_sections",
             CapabilityDocumentFormat::LegacyTable => "legacy_table",
@@ -499,6 +895,8 @@ struct TdFrontmatter {
 pub struct TdCapabilityEvidence {
     pub spec_path: String,
     pub spec_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_status: Option<String>,
     pub capability_id: String,
     pub role: CapabilityRefRole,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -514,17 +912,21 @@ pub struct TdCapabilityEvidence {
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityActionKind {
+    DefineCapabilityMap,
     FormatMigrationRequired,
     HumanConfirmRequired,
     CreateWi,
+    ReconcileWiRefs,
     AtomizeWi,
     RunTd,
     RunCb,
     RunVerify,
     UpdateCapabilityStatus,
     EnvBlocked,
+    StaleProjectConfig,
     DefineVerificationContract,
     LinkClaimVerification,
+    AssignCapabilityType,
     None,
 }
 
@@ -606,11 +1008,58 @@ pub struct CapabilityRunResult {
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityMigrateReport {
+    pub schema_version: &'static str,
+    pub action: &'static str,
+    pub project: String,
+    pub cap_path: PathBuf,
+    pub status: String,
+    pub changed: bool,
+    pub result: CapabilityRunResult,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityDraftReport {
+    pub schema_version: &'static str,
+    pub action: &'static str,
+    pub project: String,
+    pub cap_path: PathBuf,
+    pub path: PathBuf,
+    pub status: String,
+    pub source: &'static str,
+    pub candidate_count: usize,
+    pub agent_review_required: bool,
+    pub review_status: &'static str,
+    pub apply_command: String,
+    pub check_command: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityApplyDraftReport {
+    pub schema_version: &'static str,
+    pub action: &'static str,
+    pub project: String,
+    pub cap_path: PathBuf,
+    pub draft_path: PathBuf,
+    pub status: String,
+    pub changed: bool,
+    pub capability_count: usize,
+    pub check_command: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CapabilityWiEvidence {
     pub reference: String,
     pub gap_id: String,
     pub issue_type: String,
     pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_command: Option<String>,
     pub title: String,
 }
 
@@ -636,6 +1085,12 @@ pub struct CapabilityReportItem {
     pub id: String,
     pub title: String,
     pub status: CapabilityStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_type: Option<CapabilityType>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub surfaces: Vec<CapabilitySurface>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ec_dimensions: Vec<CapabilityEcDimension>,
     pub promise: String,
     pub current_state: String,
     pub gaps: Vec<CapabilityGap>,
@@ -679,9 +1134,114 @@ pub struct CapabilityReport {
     pub claim_percent: f64,
     pub capabilities: Vec<CapabilityReportItem>,
     pub blockers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     pub next_action: CapabilityAction,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub run_results: Vec<CapabilityRunResult>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilitySweepReport {
+    pub schema_version: &'static str,
+    pub action: &'static str,
+    pub status: &'static str,
+    pub project_count: usize,
+    pub verified_project_count: usize,
+    pub verify: bool,
+    pub include_issue_inventory: bool,
+    pub write_drafts: bool,
+    pub write_wi_plans: bool,
+    pub write_action_queue: bool,
+    pub write_check_index: bool,
+    pub write_rollout: bool,
+    pub write_review_packet: bool,
+    pub groups: Vec<CapabilitySweepGroup>,
+    pub projects: Vec<CapabilitySweepProject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drafts: Vec<CapabilityDraftReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wi_plans: Vec<crate::cli::issues::CapabilityWiPlanReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wi_plan_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub action_queue: Vec<CapabilityActionQueueEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_queue_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub check_index: Vec<CapabilityCheckIndexEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_index_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_packet_path: Option<PathBuf>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityActionQueueEntry {
+    pub project: String,
+    pub action_kind: &'static str,
+    pub action_group: String,
+    pub target: String,
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_evidence_path: Option<PathBuf>,
+    pub reason: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityCheckIndexEntry {
+    pub project: String,
+    pub status: &'static str,
+    pub command: String,
+    pub cap_path: PathBuf,
+    pub next_action_kind: &'static str,
+    pub target: String,
+    pub reason: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilitySweepGroup {
+    pub status: String,
+    pub next_action_kind: &'static str,
+    pub next_action_group: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_action_detail: Option<&'static str>,
+    pub count: usize,
+    pub projects: Vec<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilitySweepProject {
+    pub project: String,
+    pub cap_path: PathBuf,
+    pub report_status: String,
+    pub loop_status: &'static str,
+    pub format_version: u8,
+    pub capability_count: usize,
+    pub verified_count: usize,
+    pub claim_count: usize,
+    pub verified_claim_count: usize,
+    pub production_ready: bool,
+    pub requires_hitl: bool,
+    pub blocker_count: usize,
+    pub warning_count: usize,
+    pub test_gate_status: ProjectTestGateStatus,
+    pub test_gate_passed_count: usize,
+    pub test_gate_command_count: usize,
+    pub next_action_kind: &'static str,
+    pub next_action_group: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_action_detail: Option<&'static str>,
+    pub next_action: CapabilityAction,
 }
 
 #[derive(Deserialize, Default)]
@@ -701,66 +1261,3349 @@ struct CapabilityProjectRow {
     cap_path: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityReviewDecision {
+    candidate: String,
+    decision: String,
+    capability_type: String,
+    surfaces: String,
+    ec_dimensions: String,
+    root_wi: String,
+    gate_inventory: String,
+}
+
+fn write_stdout_line(text: &str) -> Result<()> {
+    write_line_to(io::stdout().lock(), text)
+}
+
+fn write_line_to<W: Write>(mut writer: W, text: &str) -> Result<()> {
+    if let Err(err) = writer
+        .write_all(text.as_bytes())
+        .and_then(|_| writer.write_all(b"\n"))
+    {
+        if err.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+fn print_json_output<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
+    let text = if pretty {
+        serde_json::to_string_pretty(value)?
+    } else {
+        serde_json::to_string(value)?
+    };
+    write_stdout_line(&text)
+}
+
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub async fn run(args: CapabilityArgs) -> Result<()> {
-    let project = args
-        .project
-        .ok_or_else(|| anyhow::anyhow!("capability requires --project <project>"))?;
+    let selected_project = args.project;
     match args.command {
+        CapabilityCommand::Sweep(sweep_args) => {
+            run_capability_sweep(selected_project.as_deref(), sweep_args).await
+        }
         CapabilityCommand::Report(args) => {
-            let report =
-                build_capability_report(&project, args.cap_path.as_deref(), args.verify, true)
-                    .await?;
+            let project = required_capability_project(selected_project.as_deref())?;
+            let include_issue_inventory = issue_inventory_enabled(
+                args.include_issue_inventory,
+                args.skip_issue_inventory,
+                true,
+            );
+            let report = build_capability_report(
+                &project,
+                args.cap_path.as_deref(),
+                args.verify,
+                include_issue_inventory,
+            )
+            .await?;
+            let evidence_path = maybe_write_capability_verify_evidence(
+                &report,
+                args.verify,
+                args.write_evidence,
+                include_issue_inventory,
+            )?;
             print_report(&report, args.human, args.pretty || args.json)?;
+            print_evidence_path(evidence_path.as_deref(), args.human);
             Ok(())
         }
         CapabilityCommand::Next(args) => {
-            let report =
-                build_capability_report(&project, args.cap_path.as_deref(), false, true).await?;
+            let project = required_capability_project(selected_project.as_deref())?;
+            let include_issue_inventory = issue_inventory_enabled(
+                args.include_issue_inventory,
+                args.skip_issue_inventory,
+                true,
+            );
+            let report = build_capability_report(
+                &project,
+                args.cap_path.as_deref(),
+                false,
+                include_issue_inventory,
+            )
+            .await?;
             if args.human {
                 print_next_action(&report.next_action);
-            } else if args.pretty || args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&capability_summary(&report, false))?
-                );
             } else {
-                println!(
-                    "{}",
-                    serde_json::to_string(&capability_summary(&report, false))?
-                );
+                print_json_output(
+                    &capability_summary(&report, false),
+                    args.pretty || args.json,
+                )?;
             }
             Ok(())
         }
-        CapabilityCommand::Run(args) => run_capability_tick(&project, args).await,
+        CapabilityCommand::Draft(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            draft_capability_map(&project, args)
+        }
+        CapabilityCommand::ApplyDraft(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            apply_capability_draft(&project, args)
+        }
+        CapabilityCommand::Run(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            run_capability_tick(&project, args).await
+        }
+        CapabilityCommand::Migrate(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            migrate_capability_format(&project, args)
+        }
         CapabilityCommand::Check(args) => {
-            let mut report =
-                build_capability_report(&project, args.cap_path.as_deref(), args.verify, false)
-                    .await?;
-            let check_failed = !report.blockers.is_empty()
-                || matches!(report.test_gates.status, ProjectTestGateStatus::Failed)
-                || report.next_action.kind == CapabilityActionKind::FormatMigrationRequired;
-            if !check_failed {
-                report.status = "healthy".to_string();
-                report.next_action = CapabilityAction {
-                    kind: CapabilityActionKind::None,
-                    capability_id: None,
-                    gap_id: None,
-                    claim_id: None,
-                    target: report.cap_path.display().to_string(),
-                    command: String::new(),
-                    reason: "capability format and TD refs are valid".to_string(),
-                    requires_hitl: false,
-                    hitl_question: None,
-                };
-            }
+            let project = required_capability_project(selected_project.as_deref())?;
+            let include_issue_inventory = issue_inventory_enabled(
+                args.include_issue_inventory,
+                args.skip_issue_inventory,
+                false,
+            );
+            let mut report = build_capability_report(
+                &project,
+                args.cap_path.as_deref(),
+                args.verify,
+                include_issue_inventory,
+            )
+            .await?;
+            let check_failed = normalize_capability_check_report(
+                &mut report,
+                args.verify,
+                include_issue_inventory,
+            );
+            let evidence_path = maybe_write_capability_verify_evidence(
+                &report,
+                args.verify,
+                args.write_evidence,
+                include_issue_inventory,
+            )?;
             print_report(&report, args.human, args.pretty || args.json)?;
+            print_evidence_path(evidence_path.as_deref(), args.human);
             if check_failed {
                 std::process::exit(1);
             }
             Ok(())
         }
+        CapabilityCommand::Init(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            init_capability_readme(&project, args)
+        }
+        CapabilityCommand::SetType(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_type(&project, args)
+        }
+        CapabilityCommand::SetStatus(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_status(&project, args)
+        }
+        CapabilityCommand::SetSurface(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_surface(&project, args)
+        }
+        CapabilityCommand::SetEcDimension(args) => {
+            let project = required_capability_project(selected_project.as_deref())?;
+            set_capability_ec_dimension(&project, args)
+        }
     }
+}
+
+fn required_capability_project(project: Option<&str>) -> Result<String> {
+    project
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("capability requires --project <project>"))
+}
+
+fn issue_inventory_enabled(include: bool, skip: bool, default: bool) -> bool {
+    include || (default && !skip)
+}
+
+fn normalize_capability_check_report(
+    report: &mut CapabilityReport,
+    verify: bool,
+    include_issue_inventory: bool,
+) -> bool {
+    let check_failed = !report.blockers.is_empty()
+        || matches!(report.test_gates.status, ProjectTestGateStatus::Failed)
+        || capability_check_blocks_on_next_action(
+            &report.next_action,
+            verify,
+            include_issue_inventory,
+        );
+    if !check_failed {
+        report.status = "healthy".to_string();
+        report.next_action = CapabilityAction {
+            kind: CapabilityActionKind::None,
+            capability_id: None,
+            gap_id: None,
+            claim_id: None,
+            target: report.cap_path.display().to_string(),
+            command: String::new(),
+            reason: "capability format and TD refs are valid".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        };
+    }
+    check_failed
+}
+
+fn capability_check_blocks_on_next_action(
+    action: &CapabilityAction,
+    verify: bool,
+    include_issue_inventory: bool,
+) -> bool {
+    let kind = action.kind;
+    if !include_issue_inventory && is_skipped_issue_inventory_action(action) {
+        return false;
+    }
+    matches!(
+        kind,
+        CapabilityActionKind::DefineCapabilityMap
+            | CapabilityActionKind::FormatMigrationRequired
+            | CapabilityActionKind::HumanConfirmRequired
+            | CapabilityActionKind::CreateWi
+            | CapabilityActionKind::ReconcileWiRefs
+            | CapabilityActionKind::AtomizeWi
+            | CapabilityActionKind::UpdateCapabilityStatus
+            | CapabilityActionKind::EnvBlocked
+            | CapabilityActionKind::StaleProjectConfig
+            | CapabilityActionKind::DefineVerificationContract
+            | CapabilityActionKind::LinkClaimVerification
+            | CapabilityActionKind::AssignCapabilityType
+    ) || (verify && kind == CapabilityActionKind::RunVerify)
+}
+
+fn maybe_write_capability_verify_evidence(
+    report: &CapabilityReport,
+    verify: bool,
+    write_evidence: bool,
+    include_issue_inventory: bool,
+) -> Result<Option<PathBuf>> {
+    if !write_evidence {
+        return Ok(None);
+    }
+    if !verify {
+        anyhow::bail!("--write-evidence requires --verify");
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp")
+        .join("aw")
+        .join(&report.project)
+        .join("capability-verify-reports");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!(
+        "{stamp}-{}-capability-verify-report.md",
+        report.project
+    ));
+    let command = append_write_evidence_flag(&capability_report_command(
+        &report.project,
+        true,
+        include_issue_inventory,
+    ));
+    let project_root = crate::find_project_root().ok();
+    let git_head = project_root
+        .as_ref()
+        .and_then(|root| current_git_head(root));
+    let git_dirty = project_root
+        .as_ref()
+        .and_then(|root| current_git_dirty(root));
+    std::fs::write(
+        &path,
+        render_capability_verify_evidence(report, &command, git_head.as_deref(), git_dirty),
+    )
+    .with_context(|| {
+        format!(
+            "failed to write capability verify evidence {}",
+            path.display()
+        )
+    })?;
+    Ok(Some(path))
+}
+
+fn print_evidence_path(path: Option<&Path>, human: bool) {
+    let Some(path) = path else {
+        return;
+    };
+    if human {
+        println!("evidence: {}", path.display());
+    } else {
+        eprintln!("capability evidence: {}", path.display());
+    }
+}
+
+fn render_capability_verify_evidence(
+    report: &CapabilityReport,
+    command: &str,
+    git_head: Option<&str>,
+    git_dirty: Option<bool>,
+) -> String {
+    let generated_at = chrono::Utc::now().to_rfc3339();
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_verify_evidence\n");
+    out.push_str(&format!("project: {}\n", report.project));
+    out.push_str(&format!("status: {}\n", report.status));
+    out.push_str(&format!(
+        "loop_status: {}\n",
+        capability_loop_status(report)
+    ));
+    out.push_str(&format!(
+        "production_status: {}\n",
+        production_status_label(report.production_status)
+    ));
+    out.push_str(&format!("production_ready: {}\n", report.production_ready));
+    if let Some(head) = git_head {
+        out.push_str(&format!("git_head: {head}\n"));
+    }
+    if let Some(dirty) = git_dirty {
+        out.push_str(&format!("git_dirty: {dirty}\n"));
+    }
+    out.push_str(&format!("generated_at: {generated_at}\n"));
+    out.push_str("---\n\n");
+    out.push_str(&format!(
+        "# Capability Verify Evidence: {}\n\n",
+        report.project
+    ));
+    out.push_str("This is a runtime evidence artifact. It does not mutate README capability claims or store pass timestamps in source.\n\n");
+    out.push_str("## Invocation\n\n");
+    out.push_str("```sh\n");
+    out.push_str(command);
+    out.push_str("\n```\n\n");
+    out.push_str("## Summary\n\n");
+    out.push_str("| Metric | Value |\n");
+    out.push_str("|---|---|\n");
+    out.push_str(&format!(
+        "| Capability status | {} |\n",
+        markdown_cell(&report.status)
+    ));
+    out.push_str(&format!(
+        "| Capability verified | {}/{} ({:.1}%) |\n",
+        report.verified_count, report.capability_count, report.percent
+    ));
+    out.push_str(&format!(
+        "| Required claims verified | {}/{} ({:.1}%) |\n",
+        report.verified_claim_count, report.claim_count, report.claim_percent
+    ));
+    out.push_str(&format!(
+        "| Project test gates | {} [{}/{} passed] |\n",
+        project_test_gate_status_label(report.test_gates.status),
+        report.test_gates.passed_count,
+        report.test_gates.command_count
+    ));
+    out.push_str(&format!(
+        "| Production | {}/{} [scope={}, blockers={}] |\n",
+        production_status_label(report.production_status),
+        if report.production_ready {
+            "ready"
+        } else {
+            "not_ready"
+        },
+        report.production_scope.len(),
+        report.production_blockers.len()
+    ));
+    out.push('\n');
+
+    render_project_test_gate_evidence(&mut out, report);
+    render_runtime_gate_evidence(&mut out, report);
+    render_production_blocker_evidence(&mut out, report);
+    out
+}
+
+fn project_test_gate_status_label(status: ProjectTestGateStatus) -> &'static str {
+    match status {
+        ProjectTestGateStatus::NotEvaluated => "not_evaluated",
+        ProjectTestGateStatus::NotConfigured => "not_configured",
+        ProjectTestGateStatus::Passed => "passed",
+        ProjectTestGateStatus::Failed => "failed",
+    }
+}
+
+fn render_project_test_gate_evidence(out: &mut String, report: &CapabilityReport) {
+    out.push_str("## Project Test Gates\n\n");
+    if report.test_gates.commands.is_empty() {
+        out.push_str("- No project test gate commands were evaluated.\n\n");
+        return;
+    }
+    out.push_str("| Status | Command | Exit | Duration Ms |\n");
+    out.push_str("|---|---|---:|---:|\n");
+    for command in &report.test_gates.commands {
+        out.push_str(&format!(
+            "| {} | `{}` | {} | {} |\n",
+            project_test_command_status_label(command.status),
+            markdown_cell(&command.command),
+            command
+                .exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            command.duration_ms
+        ));
+    }
+    out.push('\n');
+    render_project_test_output_tails(out, &report.test_gates.commands);
+}
+
+fn project_test_command_status_label(status: ProjectTestCommandStatus) -> &'static str {
+    match status {
+        ProjectTestCommandStatus::Passed => "passed",
+        ProjectTestCommandStatus::Failed => "failed",
+        ProjectTestCommandStatus::TimedOut => "timed_out",
+    }
+}
+
+fn render_project_test_output_tails(out: &mut String, commands: &[ProjectTestCommandReport]) {
+    let commands_with_output = commands
+        .iter()
+        .filter(|command| {
+            command.status != ProjectTestCommandStatus::Passed
+                && (!command.stdout_tail.trim().is_empty()
+                    || !command.stderr_tail.trim().is_empty())
+        })
+        .collect::<Vec<_>>();
+    if commands_with_output.is_empty() {
+        return;
+    }
+    out.push_str("### Project Test Output Tails\n\n");
+    for command in commands_with_output {
+        out.push_str(&format!("#### `{}`\n\n", command.command));
+        if !command.stdout_tail.trim().is_empty() {
+            out.push_str("stdout:\n\n```text\n");
+            out.push_str(&markdown_fence_body(&command.stdout_tail));
+            out.push_str("\n```\n\n");
+        }
+        if !command.stderr_tail.trim().is_empty() {
+            out.push_str("stderr:\n\n```text\n");
+            out.push_str(&markdown_fence_body(&command.stderr_tail));
+            out.push_str("\n```\n\n");
+        }
+    }
+}
+
+fn markdown_fence_body(value: &str) -> String {
+    value.replace("```", "` ` `")
+}
+
+fn render_runtime_gate_evidence(out: &mut String, report: &CapabilityReport) {
+    out.push_str("## Runtime Gates\n\n");
+    let mut row_count = 0usize;
+    out.push_str("| Capability | Gate | Status | Command | Proves |\n");
+    out.push_str("|---|---|---|---|---|\n");
+    for capability in &report.capabilities {
+        for gate in &capability.verification {
+            row_count += 1;
+            render_runtime_gate_row(out, &capability.title, gate);
+        }
+        for claim in &capability.claims {
+            for gate in &claim.gates {
+                row_count += 1;
+                render_runtime_gate_row(out, &format!("{} / {}", capability.title, claim.id), gate);
+            }
+        }
+    }
+    if row_count == 0 {
+        out.push_str("| - | - | not_evaluated | - | - |\n");
+    }
+    out.push('\n');
+}
+
+fn render_runtime_gate_row(out: &mut String, capability: &str, gate: &VerificationRuntimeResult) {
+    out.push_str(&format!(
+        "| {} | {} | {} | `{}` | {} |\n",
+        markdown_cell(capability),
+        markdown_cell(&gate.id),
+        markdown_cell(&gate.status),
+        markdown_cell(&gate.command),
+        markdown_cell(gate.proves.as_deref().unwrap_or("-")),
+    ));
+}
+
+fn render_production_blocker_evidence(out: &mut String, report: &CapabilityReport) {
+    out.push_str("## Production Blockers\n\n");
+    if report.production_blockers.is_empty() {
+        out.push_str("- None.\n");
+        return;
+    }
+    for blocker in &report.production_blockers {
+        out.push_str("- ");
+        out.push_str(blocker);
+        out.push('\n');
+    }
+}
+
+fn init_capability_readme(project: &str, args: CapabilityInitArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    if cap_path.exists() {
+        anyhow::bail!(
+            "capability map already exists at {}; use `aw capability migrate/check` instead",
+            cap_path.display()
+        );
+    }
+    let Some(parent) = cap_path.parent() else {
+        anyhow::bail!(
+            "capability map path {} has no parent directory",
+            cap_path.display()
+        );
+    };
+    if !parent.exists() {
+        anyhow::bail!(
+            "capability map parent directory does not exist: {}",
+            parent.display()
+        );
+    }
+    let title = args
+        .title
+        .clone()
+        .unwrap_or_else(|| humanize_project_title(project));
+    let brief = args.brief.clone().unwrap_or_else(|| {
+        format!(
+            "Capability map placeholder for `{project}`. Define project-specific product promises after human confirmation."
+        )
+    });
+    let body = render_empty_capability_readme(&title, &brief);
+    std::fs::write(&cap_path, body)
+        .with_context(|| format!("write capability map {}", cap_path.display()))?;
+    let payload = serde_json::json!({
+        "action": "capability_init",
+        "status": "created",
+        "project": project,
+        "cap_path": cap_path.display().to_string(),
+        "title": title,
+        "brief_confirmed": args.brief.is_some(),
+        "check_command": format!("aw capability check --project {project}"),
+    });
+    if args.human {
+        println!("{}", cap_path.display());
+    } else {
+        print_json_output(&payload, args.pretty || args.json)?;
+    }
+    Ok(())
+}
+
+fn render_empty_capability_readme(title: &str, brief: &str) -> String {
+    format!(
+        "# {title}\n\n## Brief\n\n{brief}\n\n## Capabilities\n\n### Capability Index\n\n| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n|---|---:|---|---|---|---|---|\n"
+    )
+}
+
+fn apply_capability_draft(project: &str, args: CapabilityApplyDraftArgs) -> Result<()> {
+    if !args.reviewed {
+        anyhow::bail!("refusing to apply draft without --reviewed; human confirmation is required before README mutation");
+    }
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    let check_command =
+        capability_check_command(project, args.cap_path.as_ref().map(|_| cap_path.as_path()));
+    let draft_body = std::fs::read_to_string(&args.draft)
+        .with_context(|| format!("failed to read capability draft {}", args.draft.display()))?;
+    let registry = extract_reviewed_draft_registry(&draft_body)?;
+    let body = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
+    let next_body = apply_capability_registry_to_readme(&body, &registry, project)?;
+    let document = parse_capability_document(&next_body, &cap_path)
+        .with_context(|| "applied draft does not parse as a capability map")?;
+    if document.capabilities.is_empty() {
+        anyhow::bail!("applied draft produced no capability contracts");
+    }
+    let changed = next_body != body;
+    if changed {
+        std::fs::write(&cap_path, next_body)
+            .with_context(|| format!("failed to write capability map {}", cap_path.display()))?;
+    }
+    let report = CapabilityApplyDraftReport {
+        schema_version: "aw.cli.v1",
+        action: "capability_apply_draft",
+        project: project.to_string(),
+        cap_path,
+        draft_path: args.draft,
+        status: if changed { "applied" } else { "unchanged" }.to_string(),
+        changed,
+        capability_count: document.capabilities.len(),
+        check_command,
+    };
+
+    if args.human {
+        println!(
+            "capability apply-draft: {} ({}) changed={} capabilities={}",
+            report.project, report.status, report.changed, report.capability_count
+        );
+        println!("check: {}", report.check_command);
+    } else {
+        print_json_output(&report, args.pretty || args.json)?;
+    }
+    Ok(())
+}
+
+fn extract_reviewed_draft_registry(draft_body: &str) -> Result<String> {
+    validate_review_decisions_are_resolved(draft_body)?;
+    let decisions = parse_review_decisions(draft_body)?;
+    let mut registry = extract_draft_registry(draft_body)?;
+    if !decisions.is_empty() {
+        registry = materialize_review_decisions_in_registry(&registry, &decisions)?;
+    }
+    if registry.contains("(confirm") {
+        anyhow::bail!(
+            "draft still contains `(confirm ...)` placeholders; review it before applying"
+        );
+    }
+    Ok(registry)
+}
+
+fn parse_review_decisions(draft_body: &str) -> Result<Vec<CapabilityReviewDecision>> {
+    let Some(section) = extract_review_decisions_section(draft_body) else {
+        return Ok(Vec::new());
+    };
+    let lines = section.lines().collect::<Vec<_>>();
+    let mut cursor = 0;
+    while cursor < lines.len() {
+        let Some((headers, rows, _next_cursor)) = parse_markdown_table_at(&lines, cursor) else {
+            cursor += 1;
+            continue;
+        };
+        let Some(candidate_idx) = find_table_column(&headers, &["candidate", "capability"]) else {
+            cursor += 1;
+            continue;
+        };
+        let Some(decision_idx) = find_table_column(&headers, &["decision", "action"]) else {
+            anyhow::bail!("Review Decisions table is missing a Decision column");
+        };
+        let Some(type_idx) = find_table_column(&headers, &["type", "capabilitytype"]) else {
+            anyhow::bail!("Review Decisions table is missing a Type column");
+        };
+        let Some(surfaces_idx) = find_table_column(&headers, &["surfaces", "surface"]) else {
+            anyhow::bail!("Review Decisions table is missing a Surfaces column");
+        };
+        let Some(ec_dimensions_idx) =
+            find_table_column(&headers, &["ecdimensions", "dimensions", "ec"])
+        else {
+            anyhow::bail!("Review Decisions table is missing an EC Dimensions column");
+        };
+        let Some(root_wi_idx) = find_table_column(&headers, &["rootwi", "wi"]) else {
+            anyhow::bail!("Review Decisions table is missing a Root WI column");
+        };
+        let Some(gate_inventory_idx) =
+            find_table_column(&headers, &["gateinventory", "gateevidence", "inventory"])
+        else {
+            anyhow::bail!("Review Decisions table is missing a Gate Inventory column");
+        };
+        return rows
+            .iter()
+            .map(|row| {
+                Ok(CapabilityReviewDecision {
+                    candidate: table_cell(row, candidate_idx),
+                    decision: table_cell(row, decision_idx),
+                    capability_type: table_cell(row, type_idx),
+                    surfaces: table_cell(row, surfaces_idx),
+                    ec_dimensions: table_cell(row, ec_dimensions_idx),
+                    root_wi: table_cell(row, root_wi_idx),
+                    gate_inventory: table_cell(row, gate_inventory_idx),
+                })
+            })
+            .collect();
+    }
+    anyhow::bail!("Review Decisions section is missing a Markdown decision table")
+}
+
+fn materialize_review_decisions_in_registry(
+    registry: &str,
+    decisions: &[CapabilityReviewDecision],
+) -> Result<String> {
+    let mut updated = registry.to_string();
+    for decision in decisions {
+        if !review_decision_should_apply(decision)? {
+            continue;
+        }
+        validate_review_decision_required_value(decision, "Type", &decision.capability_type)?;
+        validate_review_decision_required_value(decision, "Surfaces", &decision.surfaces)?;
+        validate_review_decision_required_value(
+            decision,
+            "EC Dimensions",
+            &decision.ec_dimensions,
+        )?;
+        validate_review_decision_required_value(
+            decision,
+            "Gate Inventory",
+            &decision.gate_inventory,
+        )?;
+        let capability_id = capability_id_for_review_candidate(&updated, &decision.candidate)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Review Decisions candidate `{}` does not match a canonical draft capability",
+                    decision.candidate
+                )
+            })?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "Type",
+            "type",
+            &decision.capability_type,
+            &["id"],
+        )?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "Surfaces",
+            "surfaces",
+            &decision.surfaces,
+            &["type", "id"],
+        )?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "EC Dimensions",
+            "ecdimensions",
+            &decision.ec_dimensions,
+            &["surfaces", "type", "id"],
+        )?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "Root WI",
+            "rootwi",
+            &decision.root_wi,
+            &["ecdimensions", "surfaces", "type", "id"],
+        )?;
+        updated = upsert_capability_contract_field_in_readme(
+            &updated,
+            &capability_id,
+            "Gate Inventory",
+            "gateinventory",
+            &decision.gate_inventory,
+            &["promise", "requiredverification"],
+        )?;
+        updated = update_capability_index_root_wi_for_title(
+            &updated,
+            &decision.candidate,
+            &decision.root_wi,
+        );
+        updated = update_capability_work_root_evidence(
+            &updated,
+            &capability_id,
+            &decision.root_wi,
+            &decision.gate_inventory,
+        );
+    }
+    Ok(updated)
+}
+
+fn review_decision_should_apply(decision: &CapabilityReviewDecision) -> Result<bool> {
+    let normalized = normalize_table_token(&decision.decision);
+    if normalized.starts_with("confirm") || normalized.starts_with("define") {
+        return Ok(true);
+    }
+    if normalized.starts_with("defer") {
+        return Ok(false);
+    }
+    anyhow::bail!(
+        "Review Decisions candidate `{}` uses non-apply decision `{}`; revise the canonical draft before applying",
+        decision.candidate,
+        decision.decision
+    )
+}
+
+fn validate_review_decision_required_value(
+    decision: &CapabilityReviewDecision,
+    field: &str,
+    value: &str,
+) -> Result<()> {
+    if is_empty_table_value(value) {
+        anyhow::bail!(
+            "Review Decisions candidate `{}` is missing {}",
+            decision.candidate,
+            field
+        );
+    }
+    Ok(())
+}
+
+fn capability_id_for_review_candidate(registry: &str, candidate_title: &str) -> Option<String> {
+    let lines = registry.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let target = normalize_table_token(candidate_title);
+    let mut cursor = 0;
+    while cursor < lines.len() {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[cursor]) else {
+            cursor += 1;
+            continue;
+        };
+        if level < 3 || normalize_table_token(&title) != target {
+            cursor += 1;
+            continue;
+        }
+        let end = next_heading(&lines, cursor + 1).unwrap_or(lines.len());
+        let values = parse_markdown_field_values(&lines, cursor + 1, end);
+        return values.get("id").cloned();
+    }
+    None
+}
+
+fn update_capability_index_root_wi_for_title(
+    content: &str,
+    capability_title: &str,
+    root_wi: &str,
+) -> String {
+    if is_empty_table_value(root_wi) {
+        return content.to_string();
+    }
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let borrowed = lines.iter().map(String::as_str).collect::<Vec<_>>();
+    let target = normalize_table_token(capability_title);
+    let mut cursor = 0;
+    let mut replacement = None;
+    while cursor < borrowed.len() {
+        let Some((headers, rows, next_cursor)) = parse_markdown_table_at(&borrowed, cursor) else {
+            cursor += 1;
+            continue;
+        };
+        let Some(capability_idx) = find_table_column(&headers, &["capability"]) else {
+            cursor = next_cursor;
+            continue;
+        };
+        let Some(root_wi_idx) = find_table_column(&headers, &["rootwi", "wi"]) else {
+            cursor = next_cursor;
+            continue;
+        };
+        for (row_offset, row) in rows.iter().enumerate() {
+            if normalize_table_token(&table_cell(row, capability_idx)) == target {
+                let mut updated_row = row.clone();
+                while updated_row.len() < headers.len() {
+                    updated_row.push(String::new());
+                }
+                updated_row[root_wi_idx] = root_wi.to_string();
+                replacement = Some((
+                    cursor + 2 + row_offset,
+                    render_markdown_table_row(&updated_row),
+                ));
+                break;
+            }
+        }
+        if replacement.is_some() {
+            break;
+        }
+        cursor = next_cursor;
+    }
+    drop(borrowed);
+    if let Some((line_idx, row)) = replacement {
+        lines[line_idx] = row;
+        let mut out = lines.join("\n");
+        if content.ends_with('\n') {
+            out.push('\n');
+        }
+        return out;
+    }
+    content.to_string()
+}
+
+fn update_capability_work_root_evidence(
+    content: &str,
+    capability_id: &str,
+    root_wi: &str,
+    gate_inventory: &str,
+) -> String {
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let borrowed = lines.iter().map(String::as_str).collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&borrowed);
+    let mut cursor = 0;
+    let mut replacement = None;
+    while cursor < borrowed.len() {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((level, _title)) = parse_heading(borrowed[cursor]) else {
+            cursor += 1;
+            continue;
+        };
+        if level < 3 {
+            cursor += 1;
+            continue;
+        }
+        let block_end = next_heading(&borrowed, cursor + 1).unwrap_or(lines.len());
+        if !markdown_block_has_capability_id(
+            &borrowed,
+            &fenced,
+            cursor + 1,
+            block_end,
+            capability_id,
+        ) {
+            cursor = block_end;
+            continue;
+        }
+        let mut table_cursor = cursor + 1;
+        while table_cursor < block_end {
+            let Some((headers, rows, next_cursor)) =
+                parse_markdown_table_at(&borrowed, table_cursor)
+            else {
+                table_cursor += 1;
+                continue;
+            };
+            if let (Some(wi_idx), Some(gate_idx)) = (
+                find_table_column(&headers, &["wi", "workitem"]),
+                find_table_column(&headers, &["gateevidence", "gate", "evidence"]),
+            ) {
+                if let Some(first_row) = rows.first() {
+                    let mut updated_row = first_row.clone();
+                    while updated_row.len() < headers.len() {
+                        updated_row.push(String::new());
+                    }
+                    if !is_empty_table_value(root_wi) {
+                        updated_row[wi_idx] = root_wi.to_string();
+                    }
+                    updated_row[gate_idx] = gate_inventory.to_string();
+                    replacement = Some((table_cursor + 2, render_markdown_table_row(&updated_row)));
+                    break;
+                }
+            }
+            if replacement.is_some() {
+                break;
+            }
+            table_cursor = next_cursor;
+        }
+        if replacement.is_some() {
+            break;
+        }
+        cursor = block_end;
+    }
+    drop(borrowed);
+    if let Some((line_idx, row)) = replacement {
+        lines[line_idx] = row;
+        let mut out = lines.join("\n");
+        if content.ends_with('\n') {
+            out.push('\n');
+        }
+        return out;
+    }
+    content.to_string()
+}
+
+fn render_markdown_table_row(cells: &[String]) -> String {
+    format!(
+        "| {} |",
+        cells
+            .iter()
+            .map(|cell| markdown_cell(cell))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    )
+}
+
+fn validate_review_decisions_are_resolved(draft_body: &str) -> Result<()> {
+    let Some(section) = extract_review_decisions_section(draft_body) else {
+        return Ok(());
+    };
+    let unresolved_tokens = [
+        "confirm / rename / split / merge / defer",
+        "define / defer",
+        "(confirm type)",
+        "(confirm public surfaces)",
+        "(confirm EC dimensions and runners)",
+        "(confirm gates or inventory refs)",
+    ];
+    if unresolved_tokens
+        .iter()
+        .any(|token| section.contains(token))
+    {
+        anyhow::bail!(
+            "draft Review Decisions still contain unresolved placeholders; complete the worksheet before applying"
+        );
+    }
+    Ok(())
+}
+
+fn extract_review_decisions_section(draft_body: &str) -> Option<&str> {
+    let marker = "## Review Decisions";
+    let start = draft_body.find(marker)?;
+    let after_marker = &draft_body[start + marker.len()..];
+    let end = after_marker.find("\n## ").unwrap_or(after_marker.len());
+    Some(after_marker[..end].trim())
+}
+
+fn extract_draft_registry(draft_body: &str) -> Result<String> {
+    let marker = "## Draft Canonical README Section";
+    let Some(after_marker) = draft_body.split_once(marker).map(|(_, tail)| tail) else {
+        anyhow::bail!("draft is missing `## Draft Canonical README Section`");
+    };
+    let Some((_, after_open)) = after_marker.split_once("```md") else {
+        anyhow::bail!("draft canonical section must be fenced as ```md");
+    };
+    let Some((registry, _)) = after_open.split_once("```") else {
+        anyhow::bail!("draft canonical section fence is not closed");
+    };
+    let registry = registry.trim();
+    if !registry.starts_with("## Capabilities") {
+        anyhow::bail!("draft canonical section must start with `## Capabilities`");
+    }
+    Ok(format!("{registry}\n"))
+}
+
+fn apply_capability_registry_to_readme(
+    original_body: &str,
+    registry: &str,
+    project: &str,
+) -> Result<String> {
+    let mut body = ensure_canonical_readme_scaffold(original_body.to_string(), project);
+    body = replace_capabilities_section(&body, registry)?;
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    Ok(body)
+}
+
+fn replace_capabilities_section(body: &str, registry: &str) -> Result<String> {
+    let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let Some(start) = lines.iter().enumerate().find_map(|(idx, line)| {
+        if fenced[idx] {
+            return None;
+        }
+        parse_heading(line)
+            .filter(|(level, title)| *level == 2 && title.eq_ignore_ascii_case("Capabilities"))
+            .map(|_| idx)
+    }) else {
+        anyhow::bail!("README scaffold is missing `## Capabilities`");
+    };
+    let end = (start + 1..lines.len())
+        .find(|idx| {
+            !fenced[*idx]
+                && parse_heading(lines[*idx])
+                    .map(|(level, _)| level <= 2)
+                    .unwrap_or(false)
+        })
+        .unwrap_or(lines.len());
+
+    let mut without_capabilities = String::new();
+    if start > 0 {
+        without_capabilities.push_str(&lines[..start].join("\n"));
+    }
+    if end < lines.len() {
+        if !without_capabilities.trim().is_empty() {
+            without_capabilities.push_str("\n\n");
+        }
+        without_capabilities.push_str(&lines[end..].join("\n"));
+    }
+    insert_capability_registry_after_brief(
+        &collapse_markdown_blank_runs_outside_fences(&without_capabilities),
+        registry,
+    )
+}
+
+fn insert_capability_registry_after_brief(body: &str, registry: &str) -> Result<String> {
+    let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let Some(brief_idx) = lines.iter().enumerate().find_map(|(idx, line)| {
+        if fenced[idx] {
+            return None;
+        }
+        parse_heading(line)
+            .filter(|(level, title)| *level == 2 && title.eq_ignore_ascii_case("Brief"))
+            .map(|_| idx)
+    }) else {
+        anyhow::bail!("README scaffold is missing `## Brief`");
+    };
+    let insert_idx = (brief_idx + 1..lines.len())
+        .find(|idx| {
+            !fenced[*idx]
+                && parse_heading(lines[*idx])
+                    .map(|(level, _)| level <= 2)
+                    .unwrap_or(false)
+        })
+        .unwrap_or(lines.len());
+
+    let mut out = Vec::new();
+    out.extend(lines[..insert_idx].iter().copied());
+    out.push("");
+    out.push(registry.trim_end());
+    if insert_idx < lines.len() {
+        out.push("");
+        out.extend(lines[insert_idx..].iter().copied());
+    }
+    Ok(collapse_markdown_blank_runs_outside_fences(&out.join("\n")))
+}
+
+fn draft_capability_map(project: &str, args: CapabilityDraftArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    let report = build_capability_draft_report(
+        project,
+        &cap_path,
+        args.output.as_deref(),
+        args.cap_path.as_ref().map(|_| cap_path.as_path()),
+    )?;
+    if args.human {
+        println!("{}", report.path.display());
+    } else {
+        print_json_output(&report, args.pretty || args.json)?;
+    }
+    Ok(())
+}
+
+fn build_capability_draft_report(
+    project: &str,
+    cap_path: &Path,
+    output: Option<&Path>,
+    cap_path_override: Option<&Path>,
+) -> Result<CapabilityDraftReport> {
+    let cap_body = std::fs::read_to_string(cap_path)
+        .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
+    let document = parse_capability_document(&cap_body, cap_path)
+        .with_context(|| format!("failed to parse capability map {}", cap_path.display()))?;
+    if document.requires_format_migration() || !document.legacy_rows.is_empty() {
+        anyhow::bail!(
+            "legacy capability content found in {}; use `aw capability migrate` before drafting new roots",
+            cap_path.display()
+        );
+    }
+    if !document.capabilities.is_empty() {
+        anyhow::bail!(
+            "canonical capability contracts already found in {}; use `aw capability report/check` instead",
+            cap_path.display()
+        );
+    }
+
+    let body = render_capability_map_draft(project, cap_path, &document.prose_candidates);
+    let path = write_capability_draft_artifact(project, output, &body)?;
+    let apply_command = capability_apply_draft_command(project, &path, cap_path_override);
+    let check_command = capability_check_command(project, cap_path_override);
+    Ok(CapabilityDraftReport {
+        schema_version: "aw.cli.v1",
+        action: "capability_draft",
+        project: project.to_string(),
+        cap_path: cap_path.to_path_buf(),
+        path,
+        status: "pending_review".to_string(),
+        source: capability_draft_source(&document.prose_candidates),
+        candidate_count: document.prose_candidates.len(),
+        agent_review_required: true,
+        review_status: "pending",
+        apply_command,
+        check_command,
+    })
+}
+
+fn capability_check_command(project: &str, cap_path_override: Option<&Path>) -> String {
+    let mut command = format!("aw capability check --project {project}");
+    if let Some(path) = cap_path_override {
+        command.push_str(" --cap-path ");
+        command.push_str(&shell_quote(&path.display().to_string()));
+    }
+    command
+}
+
+fn capability_apply_draft_command(
+    project: &str,
+    draft_path: &Path,
+    cap_path_override: Option<&Path>,
+) -> String {
+    let mut command = format!(
+        "aw capability apply-draft --project {project} --draft {}",
+        shell_quote(&draft_path.display().to_string())
+    );
+    if let Some(path) = cap_path_override {
+        command.push_str(" --cap-path ");
+        command.push_str(&shell_quote(&path.display().to_string()));
+    }
+    command.push_str(" --reviewed");
+    command
+}
+
+fn capability_draft_source(candidates: &[CapabilityProseCandidate]) -> &'static str {
+    if candidates.is_empty() {
+        "empty_capability_map"
+    } else {
+        "prose_candidates"
+    }
+}
+
+fn write_capability_draft_artifact(
+    project: &str,
+    output: Option<&Path>,
+    body: &str,
+) -> Result<PathBuf> {
+    let path = if let Some(path) = output {
+        path.to_path_buf()
+    } else {
+        let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let dir = PathBuf::from("/tmp")
+            .join("aw")
+            .join(project)
+            .join("capability-map-drafts");
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create {}", dir.display()))?;
+        dir.join(format!(
+            "{stamp}-{}-capability-map-draft.md",
+            slugify(project)
+        ))
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(&path, body)
+        .with_context(|| format!("failed to write capability draft {}", path.display()))?;
+    Ok(path)
+}
+
+fn render_capability_map_draft(
+    project: &str,
+    cap_path: &Path,
+    candidates: &[CapabilityProseCandidate],
+) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_map_draft\n");
+    out.push_str(&format!("project: {}\n", markdown_yaml_string(project)));
+    out.push_str(&format!(
+        "cap_path: {}\n",
+        markdown_yaml_string(&cap_path.display().to_string())
+    ));
+    out.push_str("status: pending_review\n");
+    out.push_str(&format!(
+        "source: {}\n",
+        capability_draft_source(candidates)
+    ));
+    out.push_str(&format!("candidate_count: {}\n", candidates.len()));
+    out.push_str("---\n\n");
+    out.push_str(&format!(
+        "# {} Capability Map Draft\n\n",
+        project_display_name(project)
+    ));
+    out.push_str(
+        "This artifact is inference only. Review, revise, or defer these roots before copying any canonical contract into README.\n\n",
+    );
+    out.push_str("## Candidate Roots\n\n");
+    out.push_str("| Candidate | Proposed ID | Root WI | Source Line | Summary |\n");
+    out.push_str("|---|---|---:|---:|---|\n");
+    if candidates.is_empty() {
+        out.push_str("| (define capability root) | `(confirm-id)` | - | - | README has no candidate capability roots; human must define product promises. |\n");
+    } else {
+        for candidate in candidates {
+            out.push_str(&format!(
+                "| {} | `{}` | {} | {} | {} |\n",
+                markdown_cell(&candidate.title),
+                markdown_cell(&candidate.id),
+                markdown_cell(candidate.root_wi.as_deref().unwrap_or("-")),
+                candidate.line,
+                markdown_cell(candidate.summary.as_deref().unwrap_or("-")),
+            ));
+        }
+    }
+    out.push_str("\n## Review Decisions\n\n");
+    out.push_str(
+        "| Candidate | Decision | Type | Surfaces | EC Dimensions | Root WI | Gate Inventory |\n",
+    );
+    out.push_str("|---|---|---|---|---|---:|---|\n");
+    if candidates.is_empty() {
+        let title = format!("{} Capability", project_display_name(project));
+        out.push_str(&format!(
+            "| {} | define / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | - | (confirm gates or inventory refs) |\n",
+            markdown_cell(&title),
+        ));
+    } else {
+        for candidate in candidates {
+            out.push_str(&format!(
+                "| {} | confirm / rename / split / merge / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | {} | (confirm gates or inventory refs) |\n",
+                markdown_cell(&candidate.title),
+                markdown_cell(candidate.root_wi.as_deref().unwrap_or("-")),
+            ));
+        }
+    }
+    out.push_str("\n## Human Review Checklist\n\n");
+    if candidates.is_empty() {
+        out.push_str("- Define the project capability root(s) before editing README.\n");
+    } else {
+        out.push_str("- Confirm, rename, split, merge, or defer each candidate root.\n");
+    }
+    out.push_str("- Fill capability Type, public Surfaces, and EC Dimensions only after the product promise is confirmed.\n");
+    out.push_str("- Replace `(confirm ...)` placeholders before writing to README.\n");
+    out.push_str("- Run `aw capability check --project ");
+    out.push_str(project);
+    out.push_str("` after updating README.\n\n");
+    out.push_str("## Draft Canonical README Section\n\n");
+    out.push_str("```md\n");
+    out.push_str(&render_candidate_capability_registry(project, candidates));
+    out.push_str("```\n");
+    out
+}
+
+fn render_candidate_capability_registry(
+    project: &str,
+    candidates: &[CapabilityProseCandidate],
+) -> String {
+    let mut out = String::new();
+    out.push_str("## Capabilities\n\n");
+    out.push_str("### Capability Index\n\n");
+    out.push_str(
+        "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n",
+    );
+    out.push_str("|---|---:|---|---|---|---|---|\n");
+    if candidates.is_empty() {
+        out.push_str(&format!(
+            "| {} Capability | - | planned | planned | smoke | not_ready | candidate |\n",
+            markdown_cell(&project_display_name(project))
+        ));
+    } else {
+        for candidate in candidates {
+            out.push_str(&format!(
+                "| {} | {} | planned | planned | smoke | not_ready | candidate from README prose; confirm promise |\n",
+                markdown_cell(&candidate.title),
+                markdown_cell(candidate.root_wi.as_deref().unwrap_or("-")),
+            ));
+        }
+    }
+    out.push('\n');
+    if candidates.is_empty() {
+        out.push_str(&render_empty_candidate_capability_section(project));
+    } else {
+        for candidate in candidates {
+            out.push_str(&render_candidate_capability_section(candidate));
+        }
+    }
+    out
+}
+
+fn render_empty_candidate_capability_section(project: &str) -> String {
+    let title = format!("{} Capability", project_display_name(project));
+    let id = slugify(&title);
+    format!(
+        "### {title}\n\nID: {id}\nType: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)\nSurfaces:\n- (confirm public surface, e.g. CLI: `command` - short summary)\nEC Dimensions:\n- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)\nRoot WI: -\nStatus: candidate\nRequired Verification: smoke\nPromise:\n(confirm product promise)\nGate Inventory:\n- (confirm gate inventory)\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {work_root} root | epic | - | planned | planned | smoke | (confirm gate/evidence) |\n\n",
+        title = markdown_cell(&title),
+        id = markdown_cell(&id),
+        work_root = markdown_cell(&title),
+    )
+}
+
+fn render_candidate_capability_section(candidate: &CapabilityProseCandidate) -> String {
+    let root_wi = candidate.root_wi.as_deref().unwrap_or("-");
+    let promise = candidate
+        .promise
+        .as_deref()
+        .or(candidate.summary.as_deref())
+        .filter(|summary| !summary.trim().is_empty())
+        .unwrap_or("(confirm promise)");
+    format!(
+        "### {title}\n\nID: {id}\nType: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)\nSurfaces:\n- (confirm public surface, e.g. CLI: `command` - short summary)\nEC Dimensions:\n- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)\nRoot WI: {root_wi}\nStatus: candidate\nRequired Verification: smoke\nPromise:\n{promise}\nGate Inventory:\n- (confirm gate inventory)\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {work_root} root | epic | {root_wi} | planned | planned | smoke | (confirm gate/evidence) |\n\n",
+        title = candidate.title.trim(),
+        id = candidate.id.trim(),
+        root_wi = markdown_cell(root_wi),
+        promise = promise.trim(),
+        work_root = markdown_cell(&candidate.title),
+    )
+}
+
+fn markdown_yaml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn humanize_project_title(project: &str) -> String {
+    project
+        .split(['-', '_'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            let Some(first) = chars.next() else {
+                return String::new();
+            };
+            format!(
+                "{}{}",
+                first.to_uppercase().collect::<String>(),
+                chars.as_str()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+async fn run_capability_sweep(
+    selected_project: Option<&str>,
+    args: CapabilitySweepArgs,
+) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let rows = capability_sweep_project_rows(&project_root, selected_project)?;
+    let include_issue_inventory = args.include_issue_inventory || !args.skip_issue_inventory;
+    let mut reports = Vec::new();
+    for row in rows {
+        let project = row.name.clone();
+        let report =
+            match build_capability_report(&project, None, args.verify, include_issue_inventory)
+                .await
+            {
+                Ok(report) => report,
+                Err(err) => {
+                    let cap_path = capability_path_from_row(&project_root, &row)
+                        .unwrap_or_else(|_| project_root.join("README.md"));
+                    capability_map_read_failure_report(
+                        &project,
+                        cap_path,
+                        ProjectTestGateReport::not_evaluated(&project),
+                        format!("failed to build capability report: {err:#}"),
+                    )
+                }
+            };
+        reports.push(report);
+    }
+    let mut sweep = capability_sweep_report(&reports, args.verify, include_issue_inventory);
+    let write_review_packet = args.write_review_packet || args.write_rollout;
+    let write_drafts = args.write_drafts || args.write_rollout || write_review_packet;
+    let write_wi_plans = args.write_wi_plans || args.write_rollout || write_review_packet;
+    let write_action_queue = args.write_action_queue || args.write_rollout || write_review_packet;
+    let write_check_index = args.write_check_index || args.write_rollout || write_review_packet;
+    if args.write_rollout {
+        sweep.write_rollout = true;
+    }
+    if write_drafts {
+        sweep.write_drafts = true;
+        sweep.drafts = write_capability_sweep_drafts(&sweep.projects)?;
+        sweep.draft_index_path = write_capability_sweep_draft_index(&sweep.drafts)?;
+    }
+    if write_wi_plans {
+        sweep.write_wi_plans = true;
+        sweep.wi_plans = write_capability_sweep_wi_plans(&sweep.projects).await?;
+        sweep.wi_plan_index_path = write_capability_sweep_wi_plan_index(&sweep.wi_plans)?;
+    }
+    if write_action_queue {
+        sweep.write_action_queue = true;
+        sweep.action_queue = capability_sweep_action_queue(&sweep.projects);
+        sweep.action_queue_index_path =
+            write_capability_sweep_action_queue_index(&sweep.action_queue)?;
+    }
+    if write_check_index {
+        sweep.write_check_index = true;
+        sweep.check_index =
+            capability_sweep_check_index(&reports, args.verify, include_issue_inventory);
+        sweep.check_index_path = write_capability_sweep_check_index(
+            &sweep.check_index,
+            args.verify,
+            include_issue_inventory,
+        )?;
+    }
+    if args.write_rollout {
+        sweep.rollout_index_path = write_capability_sweep_rollout_index(&sweep)?;
+    }
+    if write_review_packet {
+        sweep.write_review_packet = true;
+        sweep.review_packet_path = write_capability_sweep_review_packet(&sweep)?;
+    }
+    if args.human {
+        print_capability_sweep(&sweep);
+    } else {
+        print_json_output(&sweep, args.pretty || args.json)?;
+    }
+    Ok(())
+}
+
+fn capability_sweep_project_rows(
+    project_root: &Path,
+    selected_project: Option<&str>,
+) -> Result<Vec<CapabilityProjectRow>> {
+    if let Some(project) = selected_project {
+        return resolve_project_row(project_root, project).map(|row| vec![row]);
+    }
+    Ok(
+        crate::services::project_registry::load_project_config_rows(project_root)?
+            .into_iter()
+            .map(|row| CapabilityProjectRow {
+                name: row.name,
+                path: Some(row.path),
+                td_path: row.td_path,
+                cap_path: row.cap_path,
+            })
+            .collect(),
+    )
+}
+
+fn capability_sweep_report(
+    reports: &[CapabilityReport],
+    verify: bool,
+    include_issue_inventory: bool,
+) -> CapabilitySweepReport {
+    let projects = reports
+        .iter()
+        .map(capability_sweep_project)
+        .collect::<Vec<_>>();
+    let verified_project_count = projects
+        .iter()
+        .filter(|project| project.loop_status == "done")
+        .count();
+    let status = if verified_project_count == projects.len() {
+        "done"
+    } else if projects
+        .iter()
+        .any(|project| project.loop_status == "blocked")
+    {
+        "blocked"
+    } else {
+        "continue"
+    };
+    CapabilitySweepReport {
+        schema_version: "aw.capability.sweep.v1",
+        action: "capability_sweep",
+        status,
+        project_count: reports.len(),
+        verified_project_count,
+        verify,
+        include_issue_inventory,
+        write_drafts: false,
+        write_wi_plans: false,
+        write_action_queue: false,
+        write_check_index: false,
+        write_rollout: false,
+        write_review_packet: false,
+        groups: capability_sweep_groups(&projects),
+        projects,
+        drafts: Vec::new(),
+        draft_index_path: None,
+        wi_plans: Vec::new(),
+        wi_plan_index_path: None,
+        action_queue: Vec::new(),
+        action_queue_index_path: None,
+        check_index: Vec::new(),
+        check_index_path: None,
+        rollout_index_path: None,
+        review_packet_path: None,
+    }
+}
+
+fn write_capability_sweep_drafts(
+    projects: &[CapabilitySweepProject],
+) -> Result<Vec<CapabilityDraftReport>> {
+    capability_sweep_draft_projects(projects)
+        .into_iter()
+        .map(|project| {
+            build_capability_draft_report(&project.project, &project.cap_path, None, None)
+        })
+        .collect()
+}
+
+fn write_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> Result<Option<PathBuf>> {
+    if drafts.is_empty() {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp")
+        .join("aw")
+        .join("capability-map-drafts");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-map-draft-index.md"));
+    std::fs::write(&path, render_capability_sweep_draft_index(drafts))
+        .with_context(|| format!("failed to write capability draft index {}", path.display()))?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_draft_index(drafts: &[CapabilityDraftReport]) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_map_draft_index\n");
+    out.push_str("status: pending_review\n");
+    out.push_str(&format!("draft_count: {}\n", drafts.len()));
+    out.push_str("---\n\n");
+    out.push_str("# Capability Map Draft Review Index\n\n");
+    out.push_str("These artifacts are inference only. Review, revise, or defer each root before copying any canonical contract into README.\n\n");
+    out.push_str("## Review Summary\n\n");
+    out.push_str("| Lane | Projects | Candidate Roots | Action |\n");
+    out.push_str("|---|---:|---:|---|\n");
+    for row in capability_draft_index_summary_rows(drafts) {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            markdown_cell(&row.lane),
+            row.project_count,
+            row.candidate_count,
+            markdown_cell(&row.action),
+        ));
+    }
+    out.push_str("\n## Suggested Review Order\n\n");
+    out.push_str("| Project | Candidates | Draft | Check |\n");
+    out.push_str("|---|---:|---|---|\n");
+    let review_order = capability_draft_review_order(drafts);
+    if review_order.is_empty() {
+        out.push_str("| none | 0 | - | - |\n");
+    } else {
+        for draft in review_order {
+            out.push_str(&format!(
+                "| {} | {} | {} | `{}` |\n",
+                markdown_cell(&draft.project),
+                draft.candidate_count,
+                markdown_cell(&draft.path.display().to_string()),
+                markdown_cell(&draft.check_command),
+            ));
+        }
+    }
+    out.push('\n');
+    out.push_str("| Project | Source | Candidates | Draft | Apply After Review | Check |\n");
+    out.push_str("|---|---|---:|---|---|---|\n");
+    for draft in drafts {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | `{}` | `{}` |\n",
+            markdown_cell(&draft.project),
+            draft.source,
+            draft.candidate_count,
+            markdown_cell(&draft.path.display().to_string()),
+            markdown_cell(&draft.apply_command),
+            markdown_cell(&draft.check_command),
+        ));
+    }
+    out.push_str("\n## Review Guardrails\n\n");
+    out.push_str("- Do not edit README until the capability promise is confirmed.\n");
+    out.push_str(
+        "- Replace `(confirm ...)` placeholders before publishing a capability contract.\n",
+    );
+    out.push_str("- Run each listed check command after README edits.\n");
+    out
+}
+
+struct CapabilityDraftIndexSummaryRow {
+    lane: String,
+    project_count: usize,
+    candidate_count: usize,
+    action: String,
+}
+
+fn capability_draft_index_summary_rows(
+    drafts: &[CapabilityDraftReport],
+) -> Vec<CapabilityDraftIndexSummaryRow> {
+    let candidate_projects = drafts
+        .iter()
+        .filter(|draft| draft.candidate_count > 0)
+        .collect::<Vec<_>>();
+    let definition_projects = drafts
+        .iter()
+        .filter(|draft| draft.candidate_count == 0)
+        .collect::<Vec<_>>();
+    let mut rows = Vec::new();
+    if !candidate_projects.is_empty() {
+        rows.push(CapabilityDraftIndexSummaryRow {
+            lane: "candidate review".to_string(),
+            project_count: candidate_projects.len(),
+            candidate_count: candidate_projects
+                .iter()
+                .map(|draft| draft.candidate_count)
+                .sum(),
+            action: "confirm, merge, split, rename, or defer inferred roots".to_string(),
+        });
+    }
+    if !definition_projects.is_empty() {
+        rows.push(CapabilityDraftIndexSummaryRow {
+            lane: "definition needed".to_string(),
+            project_count: definition_projects.len(),
+            candidate_count: 0,
+            action: "define product promises before applying a README capability section"
+                .to_string(),
+        });
+    }
+    rows
+}
+
+fn capability_draft_review_order(drafts: &[CapabilityDraftReport]) -> Vec<&CapabilityDraftReport> {
+    let mut ordered = drafts
+        .iter()
+        .filter(|draft| draft.candidate_count > 0)
+        .collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        right
+            .candidate_count
+            .cmp(&left.candidate_count)
+            .then_with(|| left.project.cmp(&right.project))
+    });
+    ordered
+}
+
+async fn write_capability_sweep_wi_plans(
+    projects: &[CapabilitySweepProject],
+) -> Result<Vec<crate::cli::issues::CapabilityWiPlanReport>> {
+    let mut plans = Vec::new();
+    for project in capability_sweep_wi_plan_projects(projects) {
+        let report =
+            crate::cli::issues::build_capability_wi_plan_report(crate::cli::issues::PlanArgs {
+                project: Some(project.project.clone()),
+                title: None,
+                cap_path: Some(project.cap_path.clone()),
+                output: None,
+                json: false,
+                repo: None,
+            })
+            .await?;
+        plans.push(report);
+    }
+    Ok(plans)
+}
+
+fn write_capability_sweep_wi_plan_index(
+    plans: &[crate::cli::issues::CapabilityWiPlanReport],
+) -> Result<Option<PathBuf>> {
+    if plans.is_empty() {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp").join("aw").join("capability-wi-plans");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-wi-plan-index.md"));
+    std::fs::write(&path, render_capability_sweep_wi_plan_index(plans)).with_context(|| {
+        format!(
+            "failed to write capability WI plan index {}",
+            path.display()
+        )
+    })?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_wi_plan_index(
+    plans: &[crate::cli::issues::CapabilityWiPlanReport],
+) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_wi_plan_index\n");
+    out.push_str("status: pending_review\n");
+    out.push_str(&format!("plan_count: {}\n", plans.len()));
+    out.push_str("---\n\n");
+    out.push_str("# Capability WI Plan Review Index\n\n");
+    out.push_str("These artifacts are local review inputs. Do not publish tracker changes until a human accepts the WI candidates or tracker reconciliations.\n\n");
+    out.push_str("| Project | Backend | Candidates | Reconciliations | Plan | Re-run |\n");
+    out.push_str("|---|---|---:|---:|---|---|\n");
+    for plan in plans {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | `{}` |\n",
+            markdown_cell(&plan.project),
+            markdown_cell(&plan.backend),
+            plan.candidate_count,
+            plan.reconciliation_count,
+            markdown_cell(&plan.path.display().to_string()),
+            markdown_cell(&plan.plan_command),
+        ));
+    }
+    out.push_str("\n## Review Guardrails\n\n");
+    out.push_str("- Treat the capability README as the confirmed anchor.\n");
+    out.push_str("- Review candidates before using `aw wi draft init` or `aw wi create`.\n");
+    out.push_str(
+        "- Review reconciliation rows before replacing README WI refs or reopening tracker work.\n",
+    );
+    out.push_str("- When the issue backend is unavailable, keep the artifact local/review-only.\n");
+    out
+}
+
+fn capability_sweep_check_index(
+    reports: &[CapabilityReport],
+    verify: bool,
+    include_issue_inventory: bool,
+) -> Vec<CapabilityCheckIndexEntry> {
+    reports
+        .iter()
+        .map(|report| {
+            let mut normalized = report.clone();
+            let failed =
+                normalize_capability_check_report(&mut normalized, verify, include_issue_inventory);
+            CapabilityCheckIndexEntry {
+                project: normalized.project.clone(),
+                status: if failed { "failed" } else { "passed" },
+                command: capability_check_index_command(
+                    &normalized.project,
+                    verify,
+                    include_issue_inventory,
+                ),
+                cap_path: normalized.cap_path.clone(),
+                next_action_kind: capability_action_kind_label(normalized.next_action.kind),
+                target: normalized.next_action.target.clone(),
+                reason: normalized.next_action.reason.clone(),
+            }
+        })
+        .collect()
+}
+
+fn capability_check_index_command(
+    project: &str,
+    verify: bool,
+    include_issue_inventory: bool,
+) -> String {
+    let mut command = format!("aw capability check --project {project}");
+    if verify {
+        command.push_str(" --verify");
+    }
+    if include_issue_inventory {
+        command.push_str(" --include-issue-inventory");
+    } else {
+        command.push_str(" --skip-issue-inventory");
+    }
+    command
+}
+
+fn write_capability_sweep_check_index(
+    entries: &[CapabilityCheckIndexEntry],
+    verify: bool,
+    include_issue_inventory: bool,
+) -> Result<Option<PathBuf>> {
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp").join("aw").join("capability-checks");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-check-index.md"));
+    std::fs::write(
+        &path,
+        render_capability_sweep_check_index(entries, verify, include_issue_inventory),
+    )
+    .with_context(|| format!("failed to write capability check index {}", path.display()))?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_check_index(
+    entries: &[CapabilityCheckIndexEntry],
+    verify: bool,
+    include_issue_inventory: bool,
+) -> String {
+    let passed = entries
+        .iter()
+        .filter(|entry| entry.status == "passed")
+        .count();
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_check_index\n");
+    out.push_str(if passed == entries.len() {
+        "status: passed\n"
+    } else {
+        "status: failed\n"
+    });
+    out.push_str(&format!("project_count: {}\n", entries.len()));
+    out.push_str(&format!("passed_count: {}\n", passed));
+    out.push_str(&format!("verify: {}\n", verify));
+    out.push_str(&format!(
+        "include_issue_inventory: {}\n",
+        include_issue_inventory
+    ));
+    out.push_str("---\n\n");
+    out.push_str("# Capability Check Index\n\n");
+    out.push_str("This is the AW-owned rollout checkpoint for `aw capability check` across swept projects. Use `--skip-issue-inventory` for structural README checks and `--include-issue-inventory` when tracker alignment is intentionally in scope.\n\n");
+    out.push_str("| Project | Status | Command | Next | Target | Capability Map | Reason |\n");
+    out.push_str("|---|---|---|---|---|---|---|\n");
+    for entry in entries {
+        out.push_str(&format!(
+            "| {} | {} | `{}` | {} | {} | {} | {} |\n",
+            markdown_cell(&entry.project),
+            entry.status,
+            markdown_cell(&entry.command),
+            markdown_cell(entry.next_action_kind),
+            markdown_cell(&entry.target),
+            markdown_cell(&entry.cap_path.display().to_string()),
+            markdown_cell(&entry.reason),
+        ));
+    }
+    out.push_str("\n## Follow-up\n\n");
+    out.push_str("- For failed `define_capability_map` rows, review the generated capability-map draft before applying README changes.\n");
+    out.push_str("- For failed `create_wi` rows, review the generated WI plan before publishing tracker changes.\n");
+    out.push_str(
+        "- Re-run the command in the table after each README, WI, TD, or verification change.\n",
+    );
+    out
+}
+
+fn write_capability_sweep_rollout_index(sweep: &CapabilitySweepReport) -> Result<Option<PathBuf>> {
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp").join("aw").join("capability-rollout");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-rollout-index.md"));
+    std::fs::write(&path, render_capability_sweep_rollout_index(sweep)).with_context(|| {
+        format!(
+            "failed to write capability rollout index {}",
+            path.display()
+        )
+    })?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_rollout_index(sweep: &CapabilitySweepReport) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_rollout_index\n");
+    out.push_str(&format!("status: {}\n", sweep.status));
+    out.push_str(&format!("project_count: {}\n", sweep.project_count));
+    out.push_str(&format!(
+        "complete_project_count: {}\n",
+        sweep.verified_project_count
+    ));
+    out.push_str(&format!("verify: {}\n", sweep.verify));
+    out.push_str(&format!(
+        "include_issue_inventory: {}\n",
+        sweep.include_issue_inventory
+    ));
+    out.push_str("---\n\n");
+    out.push_str("# Capability Rollout Index\n\n");
+    out.push_str("This is the top-level AW review bundle for README capability rollout. Start with the check index, then review draft, WI, and action queues in that order.\n\n");
+    out.push_str("| Queue | Count | Index | Use |\n");
+    out.push_str("|---|---:|---|---|\n");
+    out.push_str(&format!(
+        "| Check index | {} | {} | Structural `aw capability check` result for every swept project |\n",
+        sweep.check_index.len(),
+        rollout_index_path_text(&sweep.check_index_path),
+    ));
+    out.push_str(&format!(
+        "| Capability drafts | {} | {} | Pending human review for README capability promises |\n",
+        sweep.drafts.len(),
+        rollout_index_path_text(&sweep.draft_index_path),
+    ));
+    out.push_str(&format!(
+        "| WI plans | {} | {} | Pending human review for real capability gaps needing work items |\n",
+        sweep.wi_plans.len(),
+        rollout_index_path_text(&sweep.wi_plan_index_path),
+    ));
+    out.push_str(&format!(
+        "| Action queue | {} | {} | Non-HITL commands to execute one at a time |\n",
+        sweep.action_queue.len(),
+        rollout_index_path_text(&sweep.action_queue_index_path),
+    ));
+
+    out.push_str("\n## Sweep Groups\n\n");
+    out.push_str("| Status | Next | Count | Projects |\n");
+    out.push_str("|---|---|---:|---|\n");
+    for group in &sweep.groups {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            markdown_cell(&group.status),
+            markdown_cell(&group.next_action_group),
+            group.count,
+            markdown_cell(&group.projects.join(", ")),
+        ));
+    }
+
+    out.push_str("\n## Review Order\n\n");
+    out.push_str("- Review failed rows in the check index before mutating README files.\n");
+    out.push_str("- Apply capability drafts only after human review has resolved every placeholder and Review Decisions row.\n");
+    out.push_str("- Publish WI changes only after reviewing the WI plan candidates; skipped issue inventory alone is not backlog.\n");
+    out.push_str("- Execute action queue commands one at a time, then rerun the rollout sweep.\n");
+    out
+}
+
+fn rollout_index_path_text(path: &Option<PathBuf>) -> String {
+    path.as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn write_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> Result<Option<PathBuf>> {
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp").join("aw").join("capability-review");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-hitl-review-packet.md"));
+    std::fs::write(&path, render_capability_sweep_review_packet(sweep)).with_context(|| {
+        format!(
+            "failed to write capability HITL review packet {}",
+            path.display()
+        )
+    })?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_review_packet(sweep: &CapabilitySweepReport) -> String {
+    let tracker_reconciliation = capability_sweep_tracker_reconciliation_projects(&sweep.projects);
+    let definition_drafts = sweep
+        .drafts
+        .iter()
+        .filter(|draft| draft.candidate_count == 0)
+        .collect::<Vec<_>>();
+    let status = if sweep.action_queue.is_empty()
+        && (!sweep.drafts.is_empty()
+            || !sweep.wi_plans.is_empty()
+            || !tracker_reconciliation.is_empty())
+    {
+        "pending_human_review"
+    } else if sweep.action_queue.is_empty() {
+        "done"
+    } else {
+        "pending_execution"
+    };
+
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_hitl_review_packet\n");
+    out.push_str(&format!("status: {status}\n"));
+    out.push_str(&format!(
+        "source_rollout: {}\n",
+        rollout_index_path_text(&sweep.rollout_index_path)
+    ));
+    out.push_str("---\n\n");
+    out.push_str("# Capability HITL Review Packet\n\n");
+    out.push_str("This AW-owned packet summarizes the remaining README capability rollout work. It is a review artifact only; do not apply README drafts until every product promise, surface, EC dimension, Root WI, and gate inventory row has human approval.\n\n");
+
+    out.push_str("## Current Rollout State\n\n");
+    out.push_str("| Queue | Count | Artifact |\n");
+    out.push_str("|---|---:|---|\n");
+    out.push_str(&format!(
+        "| Healthy projects | {} | {} |\n",
+        sweep.verified_project_count,
+        markdown_cell(&capability_sweep_healthy_projects(&sweep.projects).join(", "))
+    ));
+    out.push_str(&format!(
+        "| Non-HITL action queue | {} | {} |\n",
+        sweep.action_queue.len(),
+        rollout_index_path_text(&sweep.action_queue_index_path)
+    ));
+    out.push_str(&format!(
+        "| Capability draft review | {} | {} |\n",
+        sweep.drafts.len(),
+        rollout_index_path_text(&sweep.draft_index_path)
+    ));
+    out.push_str(&format!(
+        "| WI plan review | {} | {} |\n",
+        sweep.wi_plans.len(),
+        rollout_index_path_text(&sweep.wi_plan_index_path)
+    ));
+    out.push_str(&format!(
+        "| Tracker WI-ref review | {} | generated from sweep projects |\n",
+        tracker_reconciliation.len()
+    ));
+    out.push_str(&format!(
+        "| Structural check index | {} | {} |\n",
+        sweep.check_index.len(),
+        rollout_index_path_text(&sweep.check_index_path)
+    ));
+
+    if !sweep.action_queue.is_empty() {
+        out.push_str("\n## Execute Before Review\n\n");
+        out.push_str("| Project | Action | Command | Reason |\n");
+        out.push_str("|---|---|---|---|\n");
+        for entry in &sweep.action_queue {
+            out.push_str(&format!(
+                "| {} | {} | `{}` | {} |\n",
+                markdown_cell(&entry.project),
+                markdown_cell(&entry.action_group),
+                markdown_cell(&entry.command),
+                markdown_cell(&entry.reason),
+            ));
+        }
+    }
+
+    if !tracker_reconciliation.is_empty() {
+        out.push_str("\n## Tracker Inventory Review\n\n");
+        out.push_str("These projects have README WI references that need tracker synchronization. They are tracker-sync review items, not automatic WI candidates.\n\n");
+        out.push_str("| Project | Target | Command | Reason |\n");
+        out.push_str("|---|---|---|---|\n");
+        for project in &tracker_reconciliation {
+            out.push_str(&format!(
+                "| {} | {} | `{}` | {} |\n",
+                markdown_cell(&project.project),
+                markdown_cell(&project.next_action.target),
+                markdown_cell(&project.next_action.command),
+                markdown_cell(&project.next_action.reason),
+            ));
+        }
+    }
+
+    if !sweep.wi_plans.is_empty() {
+        out.push_str("\n## WI Plan Review\n\n");
+        out.push_str("Review these local WI plans before publishing tracker issues or changing README WI refs.\n\n");
+        out.push_str(
+            "| Project | Candidates | Reconciliations | Open Work Items | Plan | Re-run |\n",
+        );
+        out.push_str("|---|---:|---:|---:|---|---|\n");
+        for plan in &sweep.wi_plans {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | `{}` |\n",
+                markdown_cell(&plan.project),
+                plan.candidate_count,
+                plan.reconciliation_count,
+                plan.issue_count,
+                markdown_cell(&plan.path.display().to_string()),
+                markdown_cell(&plan.plan_command),
+            ));
+        }
+    }
+
+    if !sweep.drafts.is_empty() {
+        out.push_str("\n## Capability Draft Review\n\n");
+        out.push_str("Candidate-review drafts contain inferred roots; definition-needed drafts contain placeholders only.\n\n");
+        out.push_str("| Lane | Projects | Candidate Roots | Action |\n");
+        out.push_str("|---|---:|---:|---|\n");
+        for row in capability_draft_index_summary_rows(&sweep.drafts) {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                markdown_cell(&row.lane),
+                row.project_count,
+                row.candidate_count,
+                markdown_cell(&row.action),
+            ));
+        }
+
+        out.push_str("\n### Candidate Review Order\n\n");
+        out.push_str("| Project | Candidate Roots | Draft | Apply After Review | Check |\n");
+        out.push_str("|---|---:|---|---|---|\n");
+        let review_order = capability_draft_review_order(&sweep.drafts);
+        if review_order.is_empty() {
+            out.push_str("| none | 0 | - | - | - |\n");
+        } else {
+            for draft in review_order {
+                out.push_str(&format!(
+                    "| {} | {} | {} | `{}` | `{}` |\n",
+                    markdown_cell(&draft.project),
+                    draft.candidate_count,
+                    markdown_cell(&draft.path.display().to_string()),
+                    markdown_cell(&draft.apply_command),
+                    markdown_cell(&draft.check_command),
+                ));
+            }
+        }
+
+        if !definition_drafts.is_empty() {
+            out.push_str("\n### Definition Needed\n\n");
+            out.push_str(
+                "These projects have no confirmed capability roots yet. Review the definition worksheet before creating any README promise.\n\n",
+            );
+            out.push_str("| Project | Source | Draft | Apply After Review | Check |\n");
+            out.push_str("|---|---|---|---|---|\n");
+            for draft in definition_drafts {
+                out.push_str(&format!(
+                    "| {} | {} | {} | `{}` | `{}` |\n",
+                    markdown_cell(&draft.project),
+                    markdown_cell(&draft.source),
+                    markdown_cell(&draft.path.display().to_string()),
+                    markdown_cell(&draft.apply_command),
+                    markdown_cell(&draft.check_command),
+                ));
+            }
+        }
+    }
+
+    out.push_str("\n## Suggested Review Order\n\n");
+    if !sweep.action_queue.is_empty() {
+        out.push_str(
+            "1. Execute the non-HITL action queue one command at a time, then rerun the sweep.\n",
+        );
+        out.push_str("2. Return to this packet after action queue is empty.\n");
+    } else {
+        out.push_str("1. Reconcile tracker WI refs by running the listed plan/report commands with live tracker inventory.\n");
+        out.push_str("2. Review WI plans; accept, defer, or downgrade candidates before publishing tracker issues.\n");
+        out.push_str("3. Review candidate capability drafts; resolve every Review Decisions row before apply-draft.\n");
+        out.push_str("4. Define empty capability maps by ecosystem layer.\n");
+    }
+    out.push_str("\n## Commands After Review\n\n");
+    out.push_str("```sh\n");
+    out.push_str("aw capability apply-draft --project <project> --draft <path> --reviewed\n");
+    out.push_str("aw capability check --project <project>\n");
+    out.push_str("aw wi plan --project <project>\n");
+    out.push_str("aw run --project <project> --max-ticks 1\n");
+    out.push_str("```\n");
+    out
+}
+
+fn capability_sweep_tracker_reconciliation_projects(
+    projects: &[CapabilitySweepProject],
+) -> Vec<&CapabilitySweepProject> {
+    projects
+        .iter()
+        .filter(|project| is_tracker_reconciliation_action(&project.next_action))
+        .collect()
+}
+
+fn capability_sweep_healthy_projects(projects: &[CapabilitySweepProject]) -> Vec<String> {
+    projects
+        .iter()
+        .filter(|project| project.loop_status == "done")
+        .map(|project| project.project.clone())
+        .collect()
+}
+
+fn capability_sweep_action_queue(
+    projects: &[CapabilitySweepProject],
+) -> Vec<CapabilityActionQueueEntry> {
+    projects
+        .iter()
+        .filter(|project| is_capability_executable_action(&project.next_action))
+        .map(|project| CapabilityActionQueueEntry {
+            project: project.project.clone(),
+            action_kind: project.next_action_kind,
+            action_group: project.next_action_group.clone(),
+            target: project.next_action.target.clone(),
+            command: capability_action_queue_command(project),
+            latest_evidence_path: latest_capability_verify_evidence_path(&project.project),
+            reason: project.next_action.reason.clone(),
+        })
+        .collect()
+}
+
+fn capability_action_queue_command(project: &CapabilitySweepProject) -> String {
+    if project.next_action_kind == "run_verify" {
+        append_write_evidence_flag(&project.next_action.command)
+    } else {
+        project.next_action.command.clone()
+    }
+}
+
+fn latest_capability_verify_evidence_path(project: &str) -> Option<PathBuf> {
+    let dir = PathBuf::from("/tmp")
+        .join("aw")
+        .join(project)
+        .join("capability-verify-reports");
+    let mut paths = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("-capability-verify-report.md"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
+    paths.pop()
+}
+
+fn current_successful_capability_verify_evidence_path(
+    report: &CapabilityReport,
+) -> Option<PathBuf> {
+    if report.next_action.kind != CapabilityActionKind::RunVerify {
+        return None;
+    }
+    let path = latest_capability_verify_evidence_path(&report.project)?;
+    let project_root = crate::find_project_root().ok()?;
+    let git_head = current_git_head(&project_root)?;
+    if current_git_dirty(&project_root)? {
+        return None;
+    }
+    let fields = capability_verify_evidence_frontmatter(&path)?;
+    if capability_verify_evidence_matches_current_project(
+        &fields,
+        &report.project,
+        git_head.as_str(),
+    ) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn current_git_head(project_root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let head = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if head.is_empty() {
+        None
+    } else {
+        Some(head)
+    }
+}
+
+fn current_git_dirty(project_root: &Path) -> Option<bool> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(!output.stdout.is_empty())
+}
+
+fn capability_verify_evidence_frontmatter(path: &Path) -> Option<BTreeMap<String, String>> {
+    let body = std::fs::read_to_string(path).ok()?;
+    capability_verify_evidence_frontmatter_from_str(&body)
+}
+
+fn capability_verify_evidence_frontmatter_from_str(body: &str) -> Option<BTreeMap<String, String>> {
+    let mut lines = body.lines();
+    if lines.next()? != "---" {
+        return None;
+    }
+    let mut fields = BTreeMap::new();
+    for line in lines {
+        if line == "---" {
+            return Some(fields);
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        fields.insert(key.trim().to_string(), value.trim().to_string());
+    }
+    None
+}
+
+fn capability_verify_evidence_matches_current_project(
+    fields: &BTreeMap<String, String>,
+    project: &str,
+    git_head: &str,
+) -> bool {
+    fields
+        .get("kind")
+        .is_some_and(|value| value == "capability_verify_evidence")
+        && fields.get("project").is_some_and(|value| value == project)
+        && fields.get("status").is_some_and(|value| value == "healthy")
+        && fields
+            .get("loop_status")
+            .is_some_and(|value| value == "done")
+        && fields
+            .get("git_head")
+            .is_some_and(|value| value == git_head)
+        && fields
+            .get("git_dirty")
+            .is_some_and(|value| value == "false")
+}
+
+fn is_capability_executable_action(action: &CapabilityAction) -> bool {
+    let command = action.command.trim();
+    !action.requires_hitl
+        && !command.is_empty()
+        && !is_capability_draft_action(action)
+        && !is_capability_wi_plan_action(action)
+        && !is_skipped_issue_inventory_action(action)
+}
+
+fn write_capability_sweep_action_queue_index(
+    entries: &[CapabilityActionQueueEntry],
+) -> Result<Option<PathBuf>> {
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    let dir = PathBuf::from("/tmp")
+        .join("aw")
+        .join("capability-action-queue");
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{stamp}-capability-action-queue.md"));
+    std::fs::write(&path, render_capability_sweep_action_queue_index(entries)).with_context(
+        || {
+            format!(
+                "failed to write capability action queue index {}",
+                path.display()
+            )
+        },
+    )?;
+    Ok(Some(path))
+}
+
+fn render_capability_sweep_action_queue_index(entries: &[CapabilityActionQueueEntry]) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("kind: capability_action_queue\n");
+    out.push_str("status: pending_execution\n");
+    out.push_str(&format!("action_count: {}\n", entries.len()));
+    out.push_str("---\n\n");
+    out.push_str("# Capability Action Queue\n\n");
+    out.push_str("These commands are non-HITL next actions that are not covered by the draft or WI-plan review queues. Execute one at a time and re-run `aw capability sweep --human` after each material change.\n\n");
+    out.push_str("| Project | Action | Target | Command | Latest Evidence | Reason |\n");
+    out.push_str("|---|---|---|---|---|---|\n");
+    for entry in entries {
+        out.push_str(&format!(
+            "| {} | {} | {} | `{}` | {} | {} |\n",
+            markdown_cell(&entry.project),
+            markdown_cell(&entry.action_group),
+            markdown_cell(&entry.target),
+            markdown_cell(&entry.command),
+            markdown_cell(
+                entry
+                    .latest_evidence_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .as_deref()
+                    .unwrap_or("-")
+            ),
+            markdown_cell(&entry.reason),
+        ));
+    }
+    out.push_str("\n## Execution Guardrails\n\n");
+    out.push_str("- Execute one command at a time; do not batch lifecycle mutations blindly.\n");
+    out.push_str(
+        "- Re-run `aw capability sweep --human` after each command to refresh the queue.\n",
+    );
+    out.push_str("- If a command mutates README, TD, CB, or source, run the relevant capability check before publishing.\n");
+    out
+}
+
+fn capability_sweep_draft_projects(
+    projects: &[CapabilitySweepProject],
+) -> Vec<&CapabilitySweepProject> {
+    projects
+        .iter()
+        .filter(|project| is_capability_draft_action(&project.next_action))
+        .collect()
+}
+
+fn is_capability_draft_action(action: &CapabilityAction) -> bool {
+    action.kind == CapabilityActionKind::DefineCapabilityMap
+        && action.command.trim().starts_with("aw capability draft")
+}
+
+fn capability_sweep_wi_plan_projects(
+    projects: &[CapabilitySweepProject],
+) -> Vec<&CapabilitySweepProject> {
+    projects
+        .iter()
+        .filter(|project| is_capability_wi_plan_action(&project.next_action))
+        .collect()
+}
+
+fn is_capability_wi_plan_action(action: &CapabilityAction) -> bool {
+    action.kind == CapabilityActionKind::CreateWi
+        && action.command.trim().starts_with("aw wi plan")
+        && !is_skipped_issue_inventory_action(action)
+}
+
+fn is_skipped_issue_inventory_action(action: &CapabilityAction) -> bool {
+    matches!(
+        action.kind,
+        CapabilityActionKind::CreateWi | CapabilityActionKind::ReconcileWiRefs
+    ) && action.reason.contains("issue inventory was skipped")
+}
+
+fn is_tracker_reconciliation_action(action: &CapabilityAction) -> bool {
+    action.kind == CapabilityActionKind::ReconcileWiRefs
+}
+
+fn capability_sweep_project(report: &CapabilityReport) -> CapabilitySweepProject {
+    let next_action_kind = capability_action_kind_label(report.next_action.kind);
+    let next_action_detail = capability_action_detail_label(&report.next_action);
+    let next_action_group = capability_action_group_label(next_action_kind, next_action_detail);
+    let mut project = CapabilitySweepProject {
+        project: report.project.clone(),
+        cap_path: report.cap_path.clone(),
+        report_status: report.status.clone(),
+        loop_status: capability_loop_status(report),
+        format_version: report.format_version,
+        capability_count: report.capability_count,
+        verified_count: report.verified_count,
+        claim_count: report.claim_count,
+        verified_claim_count: report.verified_claim_count,
+        production_ready: report.production_ready,
+        requires_hitl: report.next_action.requires_hitl
+            || report.next_action.kind == CapabilityActionKind::EnvBlocked,
+        blocker_count: report.blockers.len(),
+        warning_count: report.warnings.len(),
+        test_gate_status: report.test_gates.status,
+        test_gate_passed_count: report.test_gates.passed_count,
+        test_gate_command_count: report.test_gates.command_count,
+        next_action_kind,
+        next_action_group,
+        next_action_detail,
+        next_action: report.next_action.clone(),
+    };
+    if let Some(path) = current_successful_capability_verify_evidence_path(report) {
+        project.report_status = "healthy".to_string();
+        project.loop_status = "done";
+        project.verified_count = project.capability_count;
+        project.verified_claim_count = project.claim_count;
+        project.requires_hitl = false;
+        project.test_gate_status = ProjectTestGateStatus::Passed;
+        project.next_action_kind = capability_action_kind_label(CapabilityActionKind::None);
+        project.next_action_group = "none".to_string();
+        project.next_action_detail = None;
+        project.next_action = CapabilityAction {
+            kind: CapabilityActionKind::None,
+            capability_id: None,
+            gap_id: None,
+            claim_id: None,
+            target: path.display().to_string(),
+            command: String::new(),
+            reason: "latest capability verify evidence is healthy for the current git revision"
+                .to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        };
+    }
+    project
+}
+
+fn capability_sweep_groups(projects: &[CapabilitySweepProject]) -> Vec<CapabilitySweepGroup> {
+    let mut grouped =
+        BTreeMap::<(String, &'static str, String, Option<&'static str>), Vec<String>>::new();
+    for project in projects {
+        grouped
+            .entry((
+                project.report_status.clone(),
+                project.next_action_kind,
+                project.next_action_group.clone(),
+                project.next_action_detail,
+            ))
+            .or_default()
+            .push(project.project.clone());
+    }
+    grouped
+        .into_iter()
+        .map(
+            |((status, next_action_kind, next_action_group, next_action_detail), projects)| {
+                CapabilitySweepGroup {
+                    status,
+                    next_action_kind,
+                    next_action_group,
+                    next_action_detail,
+                    count: projects.len(),
+                    projects,
+                }
+            },
+        )
+        .collect()
+}
+
+fn capability_action_group_label(kind: &'static str, detail: Option<&'static str>) -> String {
+    if let Some(detail) = detail {
+        format!("{kind}:{detail}")
+    } else {
+        kind.to_string()
+    }
+}
+
+fn capability_action_detail_label(action: &CapabilityAction) -> Option<&'static str> {
+    match action.kind {
+        CapabilityActionKind::CreateWi | CapabilityActionKind::ReconcileWiRefs
+            if is_skipped_issue_inventory_action(action) =>
+        {
+            Some("issue_inventory_skipped")
+        }
+        CapabilityActionKind::CreateWi if is_capability_wi_plan_action(action) => {
+            Some("plan_review")
+        }
+        CapabilityActionKind::DefineCapabilityMap => {
+            let command = action.command.trim();
+            if command.starts_with("aw capability draft ") || command == "aw capability draft" {
+                Some("draft")
+            } else if command.starts_with("aw capability init ") || command == "aw capability init"
+            {
+                Some("init")
+            } else {
+                Some("report")
+            }
+        }
+        _ => None,
+    }
+}
+
+fn capability_action_kind_label(kind: CapabilityActionKind) -> &'static str {
+    match kind {
+        CapabilityActionKind::DefineCapabilityMap => "define_capability_map",
+        CapabilityActionKind::FormatMigrationRequired => "format_migration_required",
+        CapabilityActionKind::HumanConfirmRequired => "human_confirm_required",
+        CapabilityActionKind::CreateWi => "create_wi",
+        CapabilityActionKind::ReconcileWiRefs => "reconcile_wi_refs",
+        CapabilityActionKind::AtomizeWi => "atomize_wi",
+        CapabilityActionKind::RunTd => "run_td",
+        CapabilityActionKind::RunCb => "run_cb",
+        CapabilityActionKind::RunVerify => "run_verify",
+        CapabilityActionKind::UpdateCapabilityStatus => "update_capability_status",
+        CapabilityActionKind::EnvBlocked => "env_blocked",
+        CapabilityActionKind::StaleProjectConfig => "stale_project_config",
+        CapabilityActionKind::DefineVerificationContract => "define_verification_contract",
+        CapabilityActionKind::LinkClaimVerification => "link_claim_verification",
+        CapabilityActionKind::AssignCapabilityType => "assign_capability_type",
+        CapabilityActionKind::None => "none",
+    }
+}
+
+fn print_capability_sweep(sweep: &CapabilitySweepReport) {
+    println!(
+        "capability sweep: {} [{}/{} projects complete]",
+        sweep.status, sweep.verified_project_count, sweep.project_count
+    );
+    for group in &sweep.groups {
+        println!(
+            "{}:{} [{}] {}",
+            group.status,
+            group.next_action_group,
+            group.count,
+            group.projects.join(", ")
+        );
+    }
+    if sweep.write_drafts {
+        println!("drafts written [{}]", sweep.drafts.len());
+        if let Some(path) = &sweep.draft_index_path {
+            println!("draft index {}", path.display());
+        }
+        for draft in &sweep.drafts {
+            println!(
+                "draft:{} {} {}",
+                draft.project,
+                draft.source,
+                draft.path.display()
+            );
+        }
+    }
+    if sweep.write_wi_plans {
+        println!("WI plans written [{}]", sweep.wi_plans.len());
+        if let Some(path) = &sweep.wi_plan_index_path {
+            println!("WI plan index {}", path.display());
+        }
+        for plan in &sweep.wi_plans {
+            println!(
+                "WI plan:{} candidates={} reconciliations={} {}",
+                plan.project,
+                plan.candidate_count,
+                plan.reconciliation_count,
+                plan.path.display()
+            );
+        }
+    }
+    if sweep.write_action_queue {
+        println!("action queue [{}]", sweep.action_queue.len());
+        if let Some(path) = &sweep.action_queue_index_path {
+            println!("action queue index {}", path.display());
+        }
+        for entry in &sweep.action_queue {
+            println!(
+                "action:{} {} {}",
+                entry.project, entry.action_group, entry.command
+            );
+        }
+    }
+    if sweep.write_check_index {
+        println!("check index [{}]", sweep.check_index.len());
+        if let Some(path) = &sweep.check_index_path {
+            println!("check index {}", path.display());
+        }
+    }
+    if sweep.write_rollout {
+        if let Some(path) = &sweep.rollout_index_path {
+            println!("rollout index {}", path.display());
+        }
+    }
+    if sweep.write_review_packet {
+        if let Some(path) = &sweep.review_packet_path {
+            println!("review packet {}", path.display());
+        }
+    }
+}
+
+/// Persist a capability's type into the README capability contract. This is the
+/// direct (non-interactive) resume path for the `assign_capability_type` HITL
+/// question: an agent answers by running `aw capability set-type` with the
+/// chosen type, which updates the README `Type:` field. The sidecar type file
+/// remains readable as migration fallback, but new answers are written to the
+/// README because it is the primary source an agent reads first.
+fn set_capability_type(project: &str, args: CapabilitySetTypeArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let capability_type = crate::cli::capability_type::CapabilityType::from_cli_str(&args.r#type)?;
+    let cap_path = resolve_capability_path(&project_root, project, None)?;
+    let content = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("read capability map {}", cap_path.display()))?;
+    let updated = upsert_capability_type_in_readme(&content, &args.capability, capability_type)
+        .with_context(|| format!("update capability type in {}", cap_path.display()))?;
+    std::fs::write(&cap_path, updated)
+        .with_context(|| format!("write capability map {}", cap_path.display()))?;
+    let payload = serde_json::json!({
+        "action": "set_capability_type",
+        "project": project,
+        "capability_id": args.capability,
+        "capability_type": capability_type.as_str(),
+        "required_ec_dimensions":
+            crate::cli::capability_type::required_ec_dimensions(&capability_type),
+        "cap_path": cap_path.display().to_string(),
+    });
+    if args.pretty {
+        print_json_output(&payload, true)?;
+    } else {
+        print_json_output(&payload, false)?;
+    }
+    Ok(())
+}
+
+fn upsert_capability_type_in_readme(
+    content: &str,
+    capability_id: &str,
+    capability_type: CapabilityType,
+) -> Result<String> {
+    upsert_capability_contract_field_in_readme(
+        content,
+        capability_id,
+        "Type",
+        "type",
+        capability_type.as_str(),
+        &["id"],
+    )
+}
+
+fn set_capability_status(project: &str, args: CapabilitySetStatusArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let status = parse_capability_status_arg(&args.status)?;
+    let cap_path = resolve_capability_path(&project_root, project, None)?;
+    let content = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("read capability map {}", cap_path.display()))?;
+    let updated = upsert_capability_status_in_readme(&content, &args.capability, status)
+        .with_context(|| format!("update capability status in {}", cap_path.display()))?;
+    std::fs::write(&cap_path, updated)
+        .with_context(|| format!("write capability map {}", cap_path.display()))?;
+    let payload = serde_json::json!({
+        "action": "set_capability_status",
+        "project": project,
+        "capability_id": args.capability,
+        "status": status.as_str(),
+        "cap_path": cap_path.display().to_string(),
+    });
+    if args.pretty {
+        print_json_output(&payload, true)?;
+    } else {
+        print_json_output(&payload, false)?;
+    }
+    Ok(())
+}
+
+fn upsert_capability_status_in_readme(
+    content: &str,
+    capability_id: &str,
+    status: CapabilityStatus,
+) -> Result<String> {
+    let updated = upsert_capability_contract_field_in_readme(
+        content,
+        capability_id,
+        "Status",
+        "status",
+        status.as_str(),
+        &["rootwi", "type", "id"],
+    )?;
+    Ok(update_capability_index_for_status(
+        &updated,
+        capability_id,
+        status,
+    ))
+}
+
+fn update_capability_index_for_status(
+    content: &str,
+    capability_id: &str,
+    status: CapabilityStatus,
+) -> String {
+    let verification_update = capability_index_verification_for_status(status);
+    let production_update = capability_index_production_for_status(status);
+    if verification_update.is_none() && production_update.is_none() {
+        return content.to_string();
+    }
+    let mut lines = content
+        .lines()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let borrowed = lines.iter().map(|line| line.as_str()).collect::<Vec<_>>();
+    let mut cursor = 0;
+    let mut replacements = Vec::<(usize, String)>::new();
+    while cursor < borrowed.len() {
+        let Some((headers, rows, next_cursor)) = parse_markdown_table_at(&borrowed, cursor) else {
+            cursor += 1;
+            continue;
+        };
+        let capability_idx = find_table_column(&headers, &["capability", "id"]);
+        let verification_idx = find_table_column(&headers, &["verification"]);
+        let production_idx = find_table_column(&headers, &["production"]);
+        if let Some(capability_idx) = capability_idx {
+            for (row_offset, row) in rows.iter().enumerate() {
+                let row_id = slugify(&table_cell(row, capability_idx));
+                if row_id != capability_id {
+                    continue;
+                }
+                let mut updated_row = row.clone();
+                while updated_row.len() < headers.len() {
+                    updated_row.push(String::new());
+                }
+                if let (Some(idx), Some(value)) = (verification_idx, verification_update) {
+                    updated_row[idx] = value.to_string();
+                }
+                if let (Some(idx), Some(value)) = (production_idx, production_update) {
+                    updated_row[idx] = value.to_string();
+                }
+                replacements.push((
+                    cursor + 2 + row_offset,
+                    format!(
+                        "| {} |",
+                        updated_row
+                            .iter()
+                            .map(|cell| markdown_cell(cell))
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    ),
+                ));
+            }
+        }
+        cursor = next_cursor;
+    }
+    drop(borrowed);
+    for (line_idx, replacement) in replacements {
+        if let Some(line) = lines.get_mut(line_idx) {
+            *line = replacement;
+        }
+    }
+    let mut out = lines.join("\n");
+    if content.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+fn capability_index_verification_for_status(status: CapabilityStatus) -> Option<&'static str> {
+    match status {
+        CapabilityStatus::Candidate | CapabilityStatus::Confirmed | CapabilityStatus::Auditing => {
+            Some("planned")
+        }
+        CapabilityStatus::Blocked => Some("blocked"),
+        CapabilityStatus::Verified => Some("verified"),
+        CapabilityStatus::Retired => None,
+    }
+}
+
+fn capability_index_production_for_status(status: CapabilityStatus) -> Option<&'static str> {
+    match status {
+        CapabilityStatus::Candidate | CapabilityStatus::Confirmed | CapabilityStatus::Auditing => {
+            Some("not_ready")
+        }
+        CapabilityStatus::Blocked => Some("blocked"),
+        CapabilityStatus::Verified => Some("ready"),
+        CapabilityStatus::Retired => Some("retired"),
+    }
+}
+
+fn set_capability_surface(project: &str, args: CapabilitySetSurfaceArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, None)?;
+    let content = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("read capability map {}", cap_path.display()))?;
+    let updated = upsert_capability_surface_in_readme(
+        &content,
+        &args.capability,
+        CapabilitySurface {
+            kind: normalize_surface_kind(&args.kind),
+            commands: args.commands.clone(),
+            summary: args.summary.clone(),
+            verification: String::new(),
+        },
+    )
+    .with_context(|| format!("update capability surface in {}", cap_path.display()))?;
+    std::fs::write(&cap_path, updated)
+        .with_context(|| format!("write capability map {}", cap_path.display()))?;
+    let payload = serde_json::json!({
+        "action": "set_capability_surface",
+        "project": project,
+        "capability_id": args.capability,
+        "surface": {
+            "kind": normalize_surface_kind(&args.kind),
+            "commands": args.commands,
+            "summary": args.summary,
+        },
+        "cap_path": cap_path.display().to_string(),
+    });
+    if args.pretty {
+        print_json_output(&payload, true)?;
+    } else {
+        print_json_output(&payload, false)?;
+    }
+    Ok(())
+}
+
+fn upsert_capability_surface_in_readme(
+    content: &str,
+    capability_id: &str,
+    surface: CapabilitySurface,
+) -> Result<String> {
+    let document = parse_capability_document(content, Path::new("README.md"))?;
+    let mut surfaces = document
+        .capabilities
+        .iter()
+        .find(|capability| capability.id == capability_id)
+        .map(|capability| capability.surfaces.clone())
+        .ok_or_else(|| anyhow::anyhow!("capability `{capability_id}` not found"))?;
+    let normalized_kind = normalize_table_token(&surface.kind);
+    match surfaces
+        .iter_mut()
+        .find(|existing| normalize_table_token(&existing.kind) == normalized_kind)
+    {
+        Some(existing) => *existing = surface,
+        None => surfaces.push(surface),
+    }
+    let value = render_surface_field_items(&surfaces).join("; ");
+    upsert_capability_contract_field_in_readme(
+        content,
+        capability_id,
+        "Surfaces",
+        "surfaces",
+        &value,
+        &["type", "id"],
+    )
+}
+
+fn set_capability_ec_dimension(project: &str, args: CapabilitySetEcDimensionArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, None)?;
+    let dimension = parse_ec_dimension_kind(&args.dimension)
+        .ok_or_else(|| anyhow::anyhow!("unknown EC dimension `{}`", args.dimension))?;
+    let content = std::fs::read_to_string(&cap_path)
+        .with_context(|| format!("read capability map {}", cap_path.display()))?;
+    let updated = upsert_capability_ec_dimension_in_readme(
+        &content,
+        &args.capability,
+        CapabilityEcDimension {
+            dimension,
+            runner: args.runner.clone().unwrap_or_default(),
+            summary: args.summary.clone().unwrap_or_default(),
+            required_for_production: None,
+            efficiency_backfill: if dimension == CapabilityEcDimensionKind::Efficiency {
+                match (args.operating_point.as_ref(), args.cube.as_ref()) {
+                    (None, None) => None,
+                    _ => Some(CapabilityEfficiencyBackfillSlot {
+                        operating_point: args.operating_point.clone().unwrap_or_default(),
+                        cube: args.cube.clone().unwrap_or_default(),
+                    }),
+                }
+            } else {
+                None
+            },
+        },
+    )
+    .with_context(|| format!("update capability EC dimension in {}", cap_path.display()))?;
+    std::fs::write(&cap_path, updated)
+        .with_context(|| format!("write capability map {}", cap_path.display()))?;
+    let payload = serde_json::json!({
+        "action": "set_capability_ec_dimension",
+        "project": project,
+        "capability_id": args.capability,
+        "dimension": dimension.as_str(),
+        "runner": args.runner,
+        "summary": args.summary,
+        "operating_point": args.operating_point,
+        "cube": args.cube,
+        "cap_path": cap_path.display().to_string(),
+    });
+    if args.pretty {
+        print_json_output(&payload, true)?;
+    } else {
+        print_json_output(&payload, false)?;
+    }
+    Ok(())
+}
+
+fn upsert_capability_ec_dimension_in_readme(
+    content: &str,
+    capability_id: &str,
+    dimension: CapabilityEcDimension,
+) -> Result<String> {
+    validate_ec_dimension_backfill_slot(&dimension)?;
+    let document = parse_capability_document(content, Path::new("README.md"))?;
+    let mut dimensions = document
+        .capabilities
+        .iter()
+        .find(|capability| capability.id == capability_id)
+        .map(|capability| capability.ec_dimensions.clone())
+        .ok_or_else(|| anyhow::anyhow!("capability `{capability_id}` not found"))?;
+    dimensions.retain(|existing| existing.dimension != dimension.dimension);
+    let efficiency_backfill = dimension.efficiency_backfill.clone();
+    dimensions.push(dimension);
+    dimensions.sort_by_key(|dimension| dimension.dimension);
+    let value = render_ec_dimension_field_items(&dimensions).join("; ");
+    let mut updated = upsert_capability_contract_field_in_readme(
+        content,
+        capability_id,
+        "EC Dimensions",
+        "ecdimensions",
+        &value,
+        &["surfaces", "type", "id"],
+    )?;
+    if let Some(slot) = efficiency_backfill {
+        if !slot.operating_point.trim().is_empty() {
+            updated = upsert_capability_contract_field_in_readme(
+                &updated,
+                capability_id,
+                "Efficiency Operating Point",
+                "efficiencyoperatingpoint",
+                &slot.operating_point,
+                &["ecdimensions", "surfaces", "type", "id"],
+            )?;
+        }
+        if !slot.cube.trim().is_empty() {
+            updated = upsert_capability_contract_field_in_readme(
+                &updated,
+                capability_id,
+                "Efficiency Cube",
+                "efficiencycube",
+                &slot.cube,
+                &[
+                    "efficiencyoperatingpoint",
+                    "ecdimensions",
+                    "surfaces",
+                    "type",
+                    "id",
+                ],
+            )?;
+        }
+        updated = upsert_capability_efficiency_backfill_section_in_readme(
+            &updated,
+            capability_id,
+            &slot,
+        )?;
+    }
+    Ok(updated)
+}
+
+fn validate_ec_dimension_backfill_slot(dimension: &CapabilityEcDimension) -> Result<()> {
+    let Some(slot) = dimension.efficiency_backfill.as_ref() else {
+        return Ok(());
+    };
+    if dimension.dimension != CapabilityEcDimensionKind::Efficiency {
+        anyhow::bail!("efficiency backfill options are only valid for the efficiency EC dimension");
+    }
+    let has_operating_point = !slot.operating_point.trim().is_empty();
+    let has_cube = !slot.cube.trim().is_empty();
+    if !has_operating_point || !has_cube {
+        anyhow::bail!("efficiency backfill slot requires both --operating-point and --cube");
+    }
+    Ok(())
+}
+
+fn upsert_capability_efficiency_backfill_section_in_readme(
+    content: &str,
+    capability_id: &str,
+    slot: &CapabilityEfficiencyBackfillSlot,
+) -> Result<String> {
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let block_range = {
+        let line_refs = lines.iter().map(String::as_str).collect::<Vec<_>>();
+        let fenced = markdown_fenced_line_mask(&line_refs);
+        let mut idx = 0;
+        let mut found = None;
+        while idx < line_refs.len() {
+            if fenced[idx] {
+                idx += 1;
+                continue;
+            }
+            let Some((level, _title)) = parse_heading(line_refs[idx]) else {
+                idx += 1;
+                continue;
+            };
+            if level < 2 {
+                idx += 1;
+                continue;
+            }
+            let block_end =
+                next_capability_heading(&line_refs, idx + 1, level).unwrap_or(lines.len());
+            if markdown_block_has_capability_id(
+                &line_refs,
+                &fenced,
+                idx + 1,
+                block_end,
+                capability_id,
+            ) {
+                found = Some((idx + 1, block_end));
+                break;
+            }
+            idx = block_end;
+        }
+        found
+    };
+    let Some((start, end)) = block_range else {
+        anyhow::bail!("capability `{capability_id}` not found in README capability map")
+    };
+    upsert_efficiency_backfill_section_in_markdown_block(&mut lines, start, end, slot);
+    let mut out = lines.join("\n");
+    if content.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn upsert_efficiency_backfill_section_in_markdown_block(
+    lines: &mut Vec<String>,
+    start: usize,
+    end: usize,
+    slot: &CapabilityEfficiencyBackfillSlot,
+) {
+    let section_range = {
+        let line_refs = lines.iter().map(String::as_str).collect::<Vec<_>>();
+        let fenced = markdown_fenced_line_mask(&line_refs);
+        let mut cursor = start;
+        let mut found = None;
+        while cursor < end {
+            if fenced[cursor] {
+                cursor += 1;
+                continue;
+            }
+            let Some((_level, title)) = parse_heading(line_refs[cursor]) else {
+                cursor += 1;
+                continue;
+            };
+            let normalized = normalize_table_token(&title);
+            if normalized != "efficiency" && !normalized.starts_with("efficiencygenerated") {
+                cursor += 1;
+                continue;
+            }
+            let section_end = next_heading(&line_refs, cursor + 1)
+                .filter(|idx| *idx < end)
+                .unwrap_or(end);
+            found = Some((cursor, section_end));
+            break;
+        }
+        found
+    };
+    if let Some((section_start, section_end)) = section_range {
+        lines.splice(
+            section_start..section_end,
+            render_efficiency_backfill_section(slot),
+        );
+        return;
+    }
+
+    let mut section = render_efficiency_backfill_section(slot);
+    if end > 0
+        && lines
+            .get(end.saturating_sub(1))
+            .is_some_and(|line| !line.trim().is_empty())
+    {
+        section.insert(0, String::new());
+    }
+    lines.splice(end..end, section);
+}
+
+fn render_efficiency_backfill_section(slot: &CapabilityEfficiencyBackfillSlot) -> Vec<String> {
+    vec![
+        "#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)".to_string(),
+        String::new(),
+        format!("Operating point: {}", slot.operating_point),
+        format!("Cube: {}", slot.cube),
+        String::new(),
+    ]
+}
+
+fn upsert_capability_contract_field_in_readme(
+    content: &str,
+    capability_id: &str,
+    field_label: &str,
+    canonical_key: &str,
+    value: &str,
+    preferred_after: &[&str],
+) -> Result<String> {
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let line_refs = lines.iter().map(String::as_str).collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&line_refs);
+    let mut idx = 0;
+    while idx < line_refs.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
+        let Some((level, _title)) = parse_heading(line_refs[idx]) else {
+            idx += 1;
+            continue;
+        };
+        if level < 2 {
+            idx += 1;
+            continue;
+        }
+        let block_end = next_capability_heading(&line_refs, idx + 1, level).unwrap_or(lines.len());
+        if markdown_block_has_capability_id(&line_refs, &fenced, idx + 1, block_end, capability_id)
+        {
+            upsert_capability_field_in_markdown_block(
+                &mut lines,
+                &fenced,
+                idx + 1,
+                block_end,
+                field_label,
+                canonical_key,
+                value,
+                preferred_after,
+            )?;
+            let mut out = lines.join("\n");
+            if content.ends_with('\n') {
+                out.push('\n');
+            }
+            return Ok(out);
+        }
+        idx = block_end;
+    }
+    anyhow::bail!("capability `{capability_id}` not found in README capability map")
+}
+
+fn markdown_block_has_capability_id(
+    lines: &[&str],
+    fenced: &[bool],
+    start: usize,
+    end: usize,
+    capability_id: &str,
+) -> bool {
+    let mut cursor = start;
+    while cursor < end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        if parse_markdown_contract_field_line(lines[cursor].trim())
+            .map(|(key, value)| key == "id" && value.trim() == capability_id)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if let Some((headers, rows, next_cursor)) = parse_markdown_table_at(lines, cursor) {
+            if markdown_table_has_capability_id(&headers, &rows, capability_id) {
+                return true;
+            }
+            cursor = next_cursor;
+            continue;
+        }
+        cursor += 1;
+    }
+    false
+}
+
+fn markdown_table_has_capability_id(
+    headers: &[String],
+    rows: &[Vec<String>],
+    capability_id: &str,
+) -> bool {
+    if let Some(indices) = markdown_contract_indices(headers) {
+        return rows
+            .iter()
+            .any(|row| table_cell(row, indices.id).trim() == capability_id);
+    }
+    let Some(field_column) = find_table_column(headers, &["field", "property", "key"]) else {
+        return false;
+    };
+    let Some(value_column) = find_table_column(headers, &["value"]) else {
+        return false;
+    };
+    rows.iter().any(|row| {
+        matches!(
+            normalize_table_token(&table_cell(row, field_column)).as_str(),
+            "id" | "capabilityid"
+        ) && table_cell(row, value_column).trim() == capability_id
+    })
+}
+
+fn upsert_capability_field_in_markdown_block(
+    lines: &mut Vec<String>,
+    fenced: &[bool],
+    start: usize,
+    end: usize,
+    field_label: &str,
+    canonical_key: &str,
+    value: &str,
+    preferred_after: &[&str],
+) -> Result<()> {
+    let field_line = format!("{field_label}: {value}");
+    let mut insert_after = None;
+    let mut cursor = start;
+    while cursor < end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        if let Some((key, _value)) = parse_markdown_contract_field_line(lines[cursor].trim()) {
+            if key == canonical_key {
+                lines[cursor] = field_line;
+                let continuation_end =
+                    markdown_contract_field_continuation_end(lines, fenced, cursor + 1, end);
+                if continuation_end > cursor + 1 {
+                    lines.drain(cursor + 1..continuation_end);
+                }
+                return Ok(());
+            }
+            if preferred_after.contains(&key.as_str()) {
+                insert_after = Some(cursor);
+            }
+        }
+        if let Some((headers, rows, next_cursor)) = parse_markdown_table_at(
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+            cursor,
+        ) {
+            if let Some(inserted) = upsert_capability_field_in_contract_table(
+                lines,
+                cursor,
+                &headers,
+                &rows,
+                field_label,
+                canonical_key,
+                value,
+                preferred_after,
+            ) {
+                if inserted {
+                    return Ok(());
+                }
+            }
+            cursor = next_cursor;
+            continue;
+        }
+        cursor += 1;
+    }
+    let insert_at = insert_after.map(|line| line + 1).unwrap_or(start);
+    lines.insert(insert_at, field_line);
+    Ok(())
+}
+
+fn markdown_contract_field_continuation_end(
+    lines: &[String],
+    fenced: &[bool],
+    start: usize,
+    end: usize,
+) -> usize {
+    let mut cursor = start;
+    while cursor < end {
+        if fenced.get(cursor).copied().unwrap_or(false) {
+            break;
+        }
+        let trimmed = lines[cursor].trim();
+        if trimmed.is_empty()
+            || parse_heading(trimmed).is_some()
+            || parse_markdown_table_row(trimmed).is_some()
+            || parse_markdown_contract_field_line(trimmed).is_some()
+        {
+            break;
+        }
+        cursor += 1;
+    }
+    cursor
+}
+
+fn upsert_capability_field_in_contract_table(
+    lines: &mut Vec<String>,
+    table_start: usize,
+    headers: &[String],
+    rows: &[Vec<String>],
+    field_label: &str,
+    canonical_key: &str,
+    value: &str,
+    preferred_after: &[&str],
+) -> Option<bool> {
+    if let (Some(field_column), Some(_value_column)) = (
+        find_table_column(headers, &["field", "property", "key"]),
+        find_table_column(headers, &["value"]),
+    ) {
+        let mut insert_after = None;
+        for (row_offset, row) in rows.iter().enumerate() {
+            let field = normalize_table_token(&table_cell(row, field_column));
+            if field == canonical_key {
+                let line_idx = table_start + 2 + row_offset;
+                lines[line_idx] = format!("| {field_label} | {value} |");
+                return Some(true);
+            }
+            if preferred_after.contains(&field.as_str()) {
+                insert_after = Some(row_offset);
+            }
+        }
+        if let Some(row_offset) = insert_after {
+            lines.insert(
+                table_start + 3 + row_offset,
+                format!("| {field_label} | {value} |"),
+            );
+            return Some(true);
+        }
+        return Some(false);
+    }
+    if markdown_contract_indices(headers).is_some() {
+        let insert_at = table_start + 2 + rows.len();
+        lines.insert(insert_at, format!("{field_label}: {value}"));
+        return Some(true);
+    }
+    None
 }
 
 async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<()> {
@@ -772,8 +4615,18 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
     }
 
     let project_root = crate::find_project_root()?;
-    let mut last_report =
-        build_capability_report(project, args.cap_path.as_deref(), false, true).await?;
+    let include_issue_inventory = issue_inventory_enabled(
+        args.include_issue_inventory,
+        args.skip_issue_inventory,
+        true,
+    );
+    let mut last_report = build_capability_report(
+        project,
+        args.cap_path.as_deref(),
+        false,
+        include_issue_inventory,
+    )
+    .await?;
     let mut run_results = Vec::new();
     for tick in 1..=args.max_ticks {
         let action = last_report.next_action.clone();
@@ -794,8 +4647,13 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
                     stderr: result.stderr.clone(),
                     hitl_question: None,
                 });
-                last_report =
-                    build_capability_report(project, args.cap_path.as_deref(), true, true).await?;
+                last_report = build_capability_report(
+                    project,
+                    args.cap_path.as_deref(),
+                    true,
+                    include_issue_inventory,
+                )
+                .await?;
                 if result.status != "pass" {
                     break;
                 }
@@ -816,8 +4674,13 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
                 }
                 let status = result.status.clone();
                 run_results.push(result);
-                last_report =
-                    build_capability_report(project, args.cap_path.as_deref(), false, true).await?;
+                last_report = build_capability_report(
+                    project,
+                    args.cap_path.as_deref(),
+                    false,
+                    include_issue_inventory,
+                )
+                .await?;
                 if status != "pass" {
                     break;
                 }
@@ -849,8 +4712,13 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
                 let prior_kind = action.kind;
                 let status = result.status.clone();
                 run_results.push(result);
-                last_report =
-                    build_capability_report(project, args.cap_path.as_deref(), false, true).await?;
+                last_report = build_capability_report(
+                    project,
+                    args.cap_path.as_deref(),
+                    false,
+                    include_issue_inventory,
+                )
+                .await?;
                 if status != "pass"
                     || last_report.next_action.kind == prior_kind
                         && last_report.next_action.command == prior_command
@@ -864,16 +4732,76 @@ async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<(
     last_report.run_results = run_results;
     if args.human {
         print_report(&last_report, true, args.pretty || args.json)?;
-    } else if args.pretty || args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&capability_summary(&last_report, true))?
-        );
     } else {
+        print_json_output(
+            &capability_summary(&last_report, true),
+            args.pretty || args.json,
+        )?;
+    }
+    Ok(())
+}
+
+fn migrate_capability_format(project: &str, args: CapabilityMigrateArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let cap_path = resolve_capability_path(&project_root, project, args.cap_path.as_deref())?;
+    let action = CapabilityAction {
+        kind: CapabilityActionKind::FormatMigrationRequired,
+        capability_id: None,
+        gap_id: None,
+        claim_id: None,
+        target: cap_path.display().to_string(),
+        command: format!("aw capability migrate --project {project}"),
+        reason: "rewrite capability map to canonical Markdown format".to_string(),
+        requires_hitl: false,
+        hitl_question: None,
+    };
+    let result = apply_capability_format_migration_tick(
+        1,
+        &project_root,
+        project,
+        args.cap_path.as_deref(),
+        &action,
+    );
+    let changed = result
+        .stdout
+        .as_deref()
+        .is_some_and(|stdout| stdout.starts_with("migrated "));
+    let status = if result.status == "pass" {
+        if changed {
+            "migrated"
+        } else {
+            "unchanged"
+        }
+    } else {
+        "blocked"
+    };
+    let report = CapabilityMigrateReport {
+        schema_version: "aw.cli.v1",
+        action: "capability_migrate",
+        project: project.to_string(),
+        cap_path,
+        status: status.to_string(),
+        changed,
+        result,
+    };
+
+    if args.human {
         println!(
-            "{}",
-            serde_json::to_string(&capability_summary(&last_report, true))?
+            "capability migrate: {} ({}) changed={}",
+            report.project, report.status, report.changed
         );
+        if let Some(stdout) = &report.result.stdout {
+            println!("{stdout}");
+        }
+        if let Some(stderr) = &report.result.stderr {
+            println!("error: {stderr}");
+        }
+    } else {
+        print_json_output(&report, args.pretty || args.json)?;
+    }
+
+    if report.result.status != "pass" {
+        std::process::exit(1);
     }
     Ok(())
 }
@@ -925,17 +4853,40 @@ async fn build_capability_report_inner(
     }
     let test_gates = project_test_gate_report(project, &project_root, verify)?;
     let cap_path = resolve_capability_path(&project_root, project, cap_path_override)?;
-    let cap_body = std::fs::read_to_string(&cap_path)
-        .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
-    let document = parse_capability_document(&cap_body, &cap_path)
+    let cap_body = match std::fs::read_to_string(&cap_path) {
+        Ok(body) => body,
+        Err(err) => {
+            return Ok(capability_map_read_failure_report(
+                project,
+                cap_path,
+                test_gates,
+                format!("failed to read capability map: {err}"),
+            ));
+        }
+    };
+    let document = parse_capability_document_repairing_previous_migration(&cap_body, &cap_path)
         .with_context(|| format!("failed to parse capability map from {}", cap_path.display()))?;
     let mut blockers = document.findings.clone();
+    let mut warnings = Vec::new();
+    let capability_types = {
+        // README pillar grouping / explicit Type fields are primary. The
+        // sidecar exists only as migration fallback and must not override
+        // README because the README is what an agent reads first.
+        let mut t = crate::cli::capability_type::load_capability_types_from_readme(&cap_path)
+            .unwrap_or_default();
+        for (id, ty) in
+            crate::cli::capability_type::load_capability_types(&project_root).unwrap_or_default()
+        {
+            t.entry(id).or_insert(ty);
+        }
+        t
+    };
 
     let mut issues = Vec::new();
     if include_issue_inventory && !document.is_legacy_only() {
         match load_project_issues(&project_root, project).await {
             Ok(found) => issues = found,
-            Err(err) => blockers.push(format!("issue inventory unavailable: {err}")),
+            Err(err) => warnings.push(format!("issue inventory unavailable: {err}")),
         }
     }
 
@@ -997,6 +4948,11 @@ async fn build_capability_report_inner(
             id: capability.id.clone(),
             title: capability.title.clone(),
             status: capability.status,
+            capability_type: capability
+                .capability_type
+                .or_else(|| capability_types.get(&capability.id).copied()),
+            surfaces: capability.surfaces.clone(),
+            ec_dimensions: derive_report_ec_dimensions(capability, &capability_types),
             promise: capability.promise.clone(),
             current_state: capability.current_state.clone(),
             gaps: capability.gaps.clone(),
@@ -1048,10 +5004,12 @@ async fn build_capability_report_inner(
     let capability_percent = percent(verified_count, capability_count);
     let claim_count = report_items
         .iter()
+        .filter(|item| item.status != CapabilityStatus::Retired)
         .map(|item| item.claim_count)
         .sum::<usize>();
     let verified_claim_count = report_items
         .iter()
+        .filter(|item| item.status != CapabilityStatus::Retired)
         .map(|item| item.verified_claim_count)
         .sum::<usize>();
     let claim_percent = percent(verified_claim_count, claim_count);
@@ -1083,6 +5041,7 @@ async fn build_capability_report_inner(
         claim_percent,
         capabilities: report_items,
         blockers,
+        warnings,
         next_action: CapabilityAction {
             kind: CapabilityActionKind::None,
             capability_id: None,
@@ -1097,7 +5056,12 @@ async fn build_capability_report_inner(
         run_results: Vec::new(),
     };
     apply_production_readiness_to_items(&mut report.capabilities, &production_readiness);
-    report.next_action = choose_next_action(&report, &document);
+    report.next_action = choose_next_action(
+        &report,
+        &document,
+        &capability_types,
+        include_issue_inventory,
+    );
     if !report.blockers.is_empty()
         || report.next_action.kind != CapabilityActionKind::None
         || verified_count < capability_count
@@ -1105,6 +5069,124 @@ async fn build_capability_report_inner(
         report.status = "blocked".to_string();
     }
     Ok(report)
+}
+
+fn capability_map_read_failure_report(
+    project: &str,
+    cap_path: PathBuf,
+    test_gates: ProjectTestGateReport,
+    reason: String,
+) -> CapabilityReport {
+    if let Some(parent) = missing_capability_map_parent(&cap_path) {
+        return capability_map_stale_project_config_report(
+            project,
+            cap_path,
+            test_gates,
+            format!(
+                "{reason}; configured capability map parent directory does not exist: {}",
+                parent.display()
+            ),
+        );
+    }
+    capability_map_read_blocked_report(project, cap_path, test_gates, reason)
+}
+
+fn missing_capability_map_parent(cap_path: &Path) -> Option<PathBuf> {
+    cap_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.exists())
+        .map(Path::to_path_buf)
+}
+
+fn capability_map_read_blocked_report(
+    project: &str,
+    cap_path: PathBuf,
+    test_gates: ProjectTestGateReport,
+    reason: String,
+) -> CapabilityReport {
+    let target = cap_path.display().to_string();
+    let next_action = CapabilityAction {
+        kind: CapabilityActionKind::EnvBlocked,
+        capability_id: None,
+        gap_id: None,
+        claim_id: None,
+        target: target.clone(),
+        command: format!("aw capability report --project {project}"),
+        reason: reason.clone(),
+        requires_hitl: true,
+        hitl_question: Some(capability_map_config_hitl_question(
+            project, &target, &reason,
+        )),
+    };
+    CapabilityReport {
+        action: "capability",
+        project: project.to_string(),
+        cap_path,
+        format_version: 0,
+        status: "blocked".to_string(),
+        test_gates,
+        production_ready: false,
+        production_status: ProductionStatus::NotEvaluated,
+        production_scope: Vec::new(),
+        production_blockers: vec![reason.clone()],
+        capability_count: 0,
+        verified_count: 0,
+        percent: 0.0,
+        claim_count: 0,
+        verified_claim_count: 0,
+        claim_percent: 0.0,
+        capabilities: Vec::new(),
+        blockers: vec![reason],
+        warnings: Vec::new(),
+        next_action,
+        run_results: Vec::new(),
+    }
+}
+
+fn capability_map_stale_project_config_report(
+    project: &str,
+    cap_path: PathBuf,
+    test_gates: ProjectTestGateReport,
+    reason: String,
+) -> CapabilityReport {
+    let target = cap_path.display().to_string();
+    let next_action = CapabilityAction {
+        kind: CapabilityActionKind::StaleProjectConfig,
+        capability_id: None,
+        gap_id: None,
+        claim_id: None,
+        target: target.clone(),
+        command: format!("aw capability report --project {project}"),
+        reason: reason.clone(),
+        requires_hitl: true,
+        hitl_question: Some(capability_map_config_hitl_question(
+            project, &target, &reason,
+        )),
+    };
+    CapabilityReport {
+        action: "capability",
+        project: project.to_string(),
+        cap_path,
+        format_version: 0,
+        status: "blocked".to_string(),
+        test_gates,
+        production_ready: false,
+        production_status: ProductionStatus::NotEvaluated,
+        production_scope: Vec::new(),
+        production_blockers: vec![reason.clone()],
+        capability_count: 0,
+        verified_count: 0,
+        percent: 0.0,
+        claim_count: 0,
+        verified_claim_count: 0,
+        claim_percent: 0.0,
+        capabilities: Vec::new(),
+        blockers: vec![reason],
+        warnings: Vec::new(),
+        next_action,
+        run_results: Vec::new(),
+    }
 }
 
 fn capability_verified(
@@ -1267,6 +5349,7 @@ fn apply_production_readiness_to_items(
     }
 }
 
+#[cfg(test)]
 fn capability_claim_reports(
     capability: &CapabilitySection,
     project_root: &Path,
@@ -1338,6 +5421,7 @@ fn capability_claim_reports_with_cache(
         .collect()
 }
 
+#[cfg(test)]
 fn capability_verification_results(
     capability: &CapabilitySection,
     project_root: &Path,
@@ -1455,11 +5539,20 @@ fn capability_wi_evidence(
                 .iter()
                 .find(|issue| issue.github_id.or(issue.gitlab_id) == Some(number))
             {
+                let projection = workflow_guard::parse_projection(&issue.body);
                 evidence.push(CapabilityWiEvidence {
                     reference: issue_ref(issue),
                     gap_id: gap.id.clone(),
                     issue_type: issue.issue_type.as_str().to_string(),
                     state: issue.state.as_str().to_string(),
+                    phase: issue.phase.clone().or_else(|| {
+                        projection
+                            .as_ref()
+                            .and_then(|projection| projection.active_phase.clone())
+                    }),
+                    expected_command: projection
+                        .as_ref()
+                        .and_then(|projection| projection.expected_command.clone()),
                     title: issue.title.clone(),
                 });
             } else {
@@ -1468,6 +5561,8 @@ fn capability_wi_evidence(
                     gap_id: gap.id.clone(),
                     issue_type: "unknown".to_string(),
                     state: "unknown".to_string(),
+                    phase: None,
+                    expected_command: None,
                     title: String::new(),
                 });
             }
@@ -1476,10 +5571,114 @@ fn capability_wi_evidence(
     evidence
 }
 
+fn derive_report_ec_dimensions(
+    capability: &CapabilitySection,
+    capability_types: &BTreeMap<String, crate::cli::capability_type::CapabilityType>,
+) -> Vec<CapabilityEcDimension> {
+    let capability_type = capability
+        .capability_type
+        .or_else(|| capability_types.get(&capability.id).copied());
+    let mut dimensions = capability
+        .ec_dimensions
+        .iter()
+        .cloned()
+        .map(|mut dimension| {
+            dimension.required_for_production = capability_type.map(|ty| {
+                crate::cli::capability_type::category_is_required_for_type(
+                    &ty,
+                    dimension.dimension.as_str(),
+                ) && capability_declares_ec_dimension_content(capability, dimension.dimension)
+            });
+            dimension
+        })
+        .collect::<Vec<_>>();
+    if let Some(capability_type) = capability_type {
+        if !dimensions
+            .iter()
+            .any(|dimension| dimension.dimension == CapabilityEcDimensionKind::Behavior)
+            && capability_declares_ec_dimension_content(
+                capability,
+                CapabilityEcDimensionKind::Behavior,
+            )
+        {
+            dimensions.push(CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Behavior,
+                runner: String::new(),
+                summary: "declared by behavior surfaces or verification contract".to_string(),
+                required_for_production: Some(
+                    crate::cli::capability_type::category_is_required_for_type(
+                        &capability_type,
+                        CapabilityEcDimensionKind::Behavior.as_str(),
+                    ),
+                ),
+                efficiency_backfill: None,
+            });
+        }
+    }
+    dimensions
+}
+
+fn capability_declares_ec_dimension_content(
+    capability: &CapabilitySection,
+    dimension: CapabilityEcDimensionKind,
+) -> bool {
+    if capability
+        .ec_dimensions
+        .iter()
+        .any(|declared| declared.dimension == dimension && ec_dimension_has_content(declared))
+    {
+        return true;
+    }
+    matches!(dimension, CapabilityEcDimensionKind::Behavior)
+        && (!capability.surfaces.is_empty()
+            || capability
+                .verification_contract
+                .as_ref()
+                .is_some_and(verification_contract_has_content)
+            || !capability.evidence.verification.is_empty())
+}
+
+fn ec_dimension_has_content(dimension: &CapabilityEcDimension) -> bool {
+    !dimension.runner.trim().is_empty()
+        || !dimension.summary.trim().is_empty()
+        || dimension.efficiency_backfill.is_some()
+}
+
+fn verification_contract_has_content(contract: &CapabilityVerificationContract) -> bool {
+    !contract.required_maturity.is_empty() || !contract.claims.is_empty()
+}
+
 fn choose_next_action(
     report: &CapabilityReport,
     document: &CapabilityDocument,
+    capability_types: &BTreeMap<String, crate::cli::capability_type::CapabilityType>,
+    include_issue_inventory: bool,
 ) -> CapabilityAction {
+    if document.capabilities.is_empty() && document.legacy_rows.is_empty() {
+        let reason = if document.prose_candidates.is_empty() {
+            "README has no capability roots; human must define product promises before AW can migrate/check"
+                .to_string()
+        } else {
+            "README has prose capability roots but no canonical capability contracts; human must confirm product promises before AW can migrate/check"
+                .to_string()
+        };
+        return CapabilityAction {
+            kind: CapabilityActionKind::DefineCapabilityMap,
+            capability_id: None,
+            gap_id: None,
+            claim_id: None,
+            target: report.cap_path.display().to_string(),
+            command: format!("aw capability draft --project {}", report.project),
+            reason: reason.clone(),
+            requires_hitl: true,
+            hitl_question: Some(capability_map_hitl_question(
+                report,
+                &reason,
+                &document.prose_candidates,
+            )),
+        };
+    }
+
     if document.requires_format_migration() {
         return CapabilityAction {
             kind: CapabilityActionKind::FormatMigrationRequired,
@@ -1487,11 +5686,8 @@ fn choose_next_action(
             gap_id: None,
             claim_id: None,
             target: report.cap_path.display().to_string(),
-            command: format!(
-                "aw capability run --project {} --non-interactive --max-ticks 1",
-                report.project
-            ),
-            reason: "README capability map needs Markdown-table migration".to_string(),
+            command: format!("aw capability migrate --project {}", report.project),
+            reason: "README capability map needs canonical Markdown migration".to_string(),
             requires_hitl: false,
             hitl_question: None,
         };
@@ -1507,7 +5703,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: report.cap_path.display().to_string(),
-                command: format!("aw capability report --project {}", report.project),
+                command: capability_report_command(&report.project, false, include_issue_inventory),
                 reason: reason.clone(),
                 requires_hitl: true,
                 hitl_question: Some(candidate_capability_hitl_question(report, item, &reason)),
@@ -1538,6 +5734,38 @@ fn choose_next_action(
         }
     }
 
+    // A capability's TYPE decides the ceiling for production-required EC
+    // dimensions; README-declared dimension content opts into that ceiling.
+    // If a real (non-candidate, non-retired) capability has no type assigned in
+    // .aw/capability-types.toml, prompt for one so `aw ec` can derive the
+    // production requirement for declared dimensions instead of falling back to
+    // the YAML flag.
+    for item in &report.capabilities {
+        if matches!(
+            item.status,
+            CapabilityStatus::Candidate | CapabilityStatus::Retired
+        ) {
+            continue;
+        }
+        if !capability_types.contains_key(&item.id) {
+            return CapabilityAction {
+                kind: CapabilityActionKind::AssignCapabilityType,
+                capability_id: Some(item.id.clone()),
+                gap_id: None,
+                claim_id: None,
+                target: item.title.clone(),
+                command: format!(
+                    "aw capability set-type --project {} --capability {} --type <AgentFirst|Service|Devops|DeveloperTool|RuntimeTool|SecurityTool>",
+                    report.project, item.id
+                ),
+                reason: "capability has no type assigned; required EC dimension ceiling cannot be derived"
+                    .to_string(),
+                requires_hitl: true,
+                hitl_question: Some(capability_type_hitl_question(report, item)),
+            };
+        }
+    }
+
     for item in &report.capabilities {
         for gap in &item.gaps {
             if matches!(
@@ -1550,18 +5778,20 @@ fn choose_next_action(
                     .wi_evidence
                     .iter()
                     .find(|evidence| evidence.gap_id == gap.id);
+                let active_issue_is_epic =
+                    active_issue.is_some_and(|issue| issue.issue_type == IssueType::Epic.as_str());
+                let td_ref = td_ref_for_gap(item, &gap.id);
+                let td_spec_path = td_ref.map(|td_ref| td_ref.spec_path.as_str());
+                let td_review_status = td_ref.and_then(|td_ref| td_ref.review_status.as_deref());
                 let (kind, command, reason) = match gap.active_wi.as_deref() {
-                    Some(_active)
-                        if active_issue
-                            .is_some_and(|issue| issue.issue_type == IssueType::Epic.as_str()) =>
-                    {
+                    Some(_active) if active_issue_is_epic => {
                         if let Some(action) = first_child_wi_action(report) {
                             return action;
                         }
                         if has_non_epic_wi_evidence(report) {
                             (
                                 CapabilityActionKind::HumanConfirmRequired,
-                                format!("aw capability report --project {} --verify", report.project),
+                                capability_report_command(&report.project, true, include_issue_inventory),
                                 "active WI is an epic and all known bounded child WIs are closed; aggregate readiness requires verification review before closing the top-level gap".to_string(),
                             )
                         } else {
@@ -1573,15 +5803,19 @@ fn choose_next_action(
                             )
                         }
                     }
-                    Some(active) if !active.trim().is_empty() => (
-                        CapabilityActionKind::RunTd,
-                        format!("aw td create {}", active.trim().trim_start_matches('#')),
-                        "active WI exists; continue WI -> TD -> CB lifecycle".to_string(),
+                    Some(active) if !active.trim().is_empty() => lifecycle_action_for_work_item(
+                        report,
+                        active.trim().trim_start_matches('#'),
+                        active_issue,
+                        td_spec_path,
+                        td_review_status,
+                        include_issue_inventory,
+                        "active WI exists; continue WI -> TD -> CB lifecycle",
                     ),
                     _ => (
                         CapabilityActionKind::CreateWi,
                         format!("aw wi plan --project {}", report.project),
-                        "open capability gap has no active WI".to_string(),
+                        wi_plan_reason(report, "open capability gap has no active WI in README"),
                     ),
                 };
                 return CapabilityAction {
@@ -1620,8 +5854,10 @@ fn choose_next_action(
                     claim_id: Some(claim.id.clone()),
                     target: item.title.clone(),
                     command: format!("aw wi plan --project {}", report.project),
-                    reason: "required capability claim has no primary TD verification linkage"
-                        .to_string(),
+                    reason: wi_plan_reason(
+                        report,
+                        "required capability claim has no primary TD verification linkage",
+                    ),
                     requires_hitl: false,
                     hitl_question: None,
                 };
@@ -1630,6 +5866,34 @@ fn choose_next_action(
     }
 
     for item in &report.capabilities {
+        if item.status == CapabilityStatus::Verified && !item.verified {
+            if let Some((claim, gate)) = failing_claim_verification_gate(item) {
+                return CapabilityAction {
+                    kind: CapabilityActionKind::RunVerify,
+                    capability_id: Some(item.id.clone()),
+                    gap_id: None,
+                    claim_id: Some(claim.id.clone()),
+                    target: item.title.clone(),
+                    command: gate.command.clone(),
+                    reason: "required capability claim has a failing verification gate".to_string(),
+                    requires_hitl: false,
+                    hitl_question: None,
+                };
+            }
+            if let Some(gate) = failing_capability_verification_gate(item) {
+                return CapabilityAction {
+                    kind: CapabilityActionKind::RunVerify,
+                    capability_id: Some(item.id.clone()),
+                    gap_id: None,
+                    claim_id: None,
+                    target: item.title.clone(),
+                    command: gate.command.clone(),
+                    reason: "capability has a failing verification gate".to_string(),
+                    requires_hitl: false,
+                    hitl_question: None,
+                };
+            }
+        }
         if item.status == CapabilityStatus::Verified
             && !item.verified
             && runtime_verification_not_evaluated(item)
@@ -1640,8 +5904,28 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: item.title.clone(),
-                command: format!("aw capability report --project {} --verify", report.project),
+                command: capability_report_command(&report.project, true, include_issue_inventory),
                 reason: "capability status is a catalog claim; runtime verification must be rerun for the current code".to_string(),
+                requires_hitl: false,
+                hitl_question: None,
+            };
+        }
+        if item.status == CapabilityStatus::Verified
+            && !item.verified
+            && matches!(
+                report.test_gates.status,
+                ProjectTestGateStatus::NotEvaluated
+            )
+            && claim_inventory_verification_not_evaluated(item)
+        {
+            return CapabilityAction {
+                kind: CapabilityActionKind::RunVerify,
+                capability_id: Some(item.id.clone()),
+                gap_id: None,
+                claim_id: None,
+                target: item.title.clone(),
+                command: capability_report_command(&report.project, true, include_issue_inventory),
+                reason: "capability has fixture/inventory claim evidence that must be verified for the current code".to_string(),
                 requires_hitl: false,
                 hitl_question: None,
             };
@@ -1665,7 +5949,11 @@ fn choose_next_action(
                     gap_id: Some(gate.id.clone()),
                     claim_id: None,
                     target: item.title.clone(),
-                    command: format!("aw capability report --project {}", report.project),
+                    command: capability_report_command(
+                        &report.project,
+                        false,
+                        include_issue_inventory,
+                    ),
                     reason: "capability still has open gaps".to_string(),
                     requires_hitl: false,
                     hitl_question: None,
@@ -1695,7 +5983,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: report.cap_path.display().to_string(),
-                command: format!("aw capability report --project {} --verify", report.project),
+                command: capability_report_command(&report.project, true, include_issue_inventory),
                 reason: reason.clone(),
                 requires_hitl: true,
                 hitl_question: Some(update_capability_status_hitl_question(
@@ -1718,6 +6006,46 @@ fn choose_next_action(
     }
 }
 
+fn capability_report_command(project: &str, verify: bool, include_issue_inventory: bool) -> String {
+    let mut command = format!("aw capability report --project {project}");
+    if verify {
+        command.push_str(" --verify");
+    }
+    if !include_issue_inventory {
+        command.push_str(" --skip-issue-inventory");
+    }
+    command
+}
+
+fn append_write_evidence_flag(command: &str) -> String {
+    let trimmed = command.trim();
+    if trimmed
+        .split_whitespace()
+        .any(|part| part == "--write-evidence")
+    {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed} --write-evidence")
+    }
+}
+
+fn wi_plan_reason(report: &CapabilityReport, base_reason: &str) -> String {
+    if issue_inventory_unavailable(report) {
+        format!(
+            "{base_reason}; issue inventory unavailable, so `aw wi plan` must stay local/review-only before publishing tracker changes"
+        )
+    } else {
+        base_reason.to_string()
+    }
+}
+
+fn issue_inventory_unavailable(report: &CapabilityReport) -> bool {
+    report
+        .warnings
+        .iter()
+        .any(|warning| warning.starts_with("issue inventory unavailable:"))
+}
+
 fn runtime_verification_not_evaluated(item: &CapabilityReportItem) -> bool {
     let mut has_gate = false;
     for gate in item
@@ -1732,6 +6060,42 @@ fn runtime_verification_not_evaluated(item: &CapabilityReportItem) -> bool {
         }
     }
     has_gate
+}
+
+fn failing_claim_verification_gate(
+    item: &CapabilityReportItem,
+) -> Option<(&CapabilityClaimReport, &VerificationRuntimeResult)> {
+    item.claims
+        .iter()
+        .filter(|claim| claim.required_for_verified)
+        .find_map(|claim| {
+            claim
+                .gates
+                .iter()
+                .find(|gate| verification_gate_failed(gate))
+                .map(|gate| (claim, gate))
+        })
+}
+
+fn failing_capability_verification_gate(
+    item: &CapabilityReportItem,
+) -> Option<&VerificationRuntimeResult> {
+    item.verification
+        .iter()
+        .find(|gate| verification_gate_failed(gate))
+}
+
+fn verification_gate_failed(gate: &VerificationRuntimeResult) -> bool {
+    !matches!(gate.status.as_str(), "pass" | "not_run")
+}
+
+fn claim_inventory_verification_not_evaluated(item: &CapabilityReportItem) -> bool {
+    item.claims.iter().any(|claim| {
+        claim.required_for_verified
+            && !claim.verified
+            && claim.gates.is_empty()
+            && !claim.fixtures.is_empty()
+    })
 }
 
 fn hitl_choice(id: &str, label: &str, description: &str) -> HitlChoice {
@@ -1797,6 +6161,109 @@ fn candidate_capability_hitl_question(
             ),
         ],
         "confirm_direction",
+    )
+}
+
+fn capability_map_hitl_question(
+    report: &CapabilityReport,
+    reason: &str,
+    candidates: &[CapabilityProseCandidate],
+) -> HitlQuestion {
+    let freeform_prompt = capability_map_freeform_prompt(reason, candidates);
+    capability_hitl_question(
+        "capability_map:define_roots".to_string(),
+        format!(
+            "What product capabilities should `{}` expose in its README capability map?",
+            report.project
+        ),
+        report.cap_path.display().to_string(),
+        reason,
+        &report.project,
+        vec![
+            hitl_choice(
+                "define_roots",
+                "Define roots",
+                "Provide the human-confirmed capability roots, promises, and external surfaces.",
+            ),
+            hitl_choice(
+                "defer_project",
+                "Defer project",
+                "Do not add this project's capability map in the current completion loop.",
+            ),
+            hitl_choice(
+                "fix_config",
+                "Fix config",
+                "Adjust project routing or cap_path before defining capabilities.",
+            ),
+        ],
+        "define_roots",
+    )
+    .with_freeform_prompt(freeform_prompt)
+}
+
+impl HitlQuestion {
+    fn with_freeform_prompt(mut self, prompt: String) -> Self {
+        self.freeform_prompt = Some(prompt);
+        self
+    }
+}
+
+fn capability_map_freeform_prompt(reason: &str, candidates: &[CapabilityProseCandidate]) -> String {
+    if candidates.is_empty() {
+        return reason.to_string();
+    }
+    let mut prompt = String::from(reason);
+    prompt.push_str("\n\nCandidate README capability roots detected for human confirmation:");
+    for candidate in candidates.iter().take(8) {
+        prompt.push_str("\n- ");
+        prompt.push_str(&candidate.title);
+        prompt.push_str(&format!(" (id: {}, line: {}", candidate.id, candidate.line));
+        if let Some(root_wi) = candidate.root_wi.as_deref() {
+            prompt.push_str(&format!(", WI: {}", root_wi));
+        }
+        prompt.push(')');
+        if let Some(summary) = candidate.summary.as_deref() {
+            prompt.push_str(": ");
+            prompt.push_str(summary);
+        }
+    }
+    if candidates.len() > 8 {
+        prompt.push_str(&format!(
+            "\n- ... {} additional candidate roots omitted",
+            candidates.len() - 8
+        ));
+    }
+    prompt.push_str(
+        "\nThese candidates are inference only; confirm/revise/defer before writing canonical contracts.",
+    );
+    prompt
+}
+
+fn capability_map_config_hitl_question(project: &str, target: &str, reason: &str) -> HitlQuestion {
+    capability_hitl_question(
+        "capability_map:fix_config".to_string(),
+        format!("How should `{project}` capability map routing be repaired?"),
+        target.to_string(),
+        reason,
+        project,
+        vec![
+            hitl_choice(
+                "fix_config",
+                "Fix config",
+                "Correct project path or cap_path before running capability checks.",
+            ),
+            hitl_choice(
+                "create_readme",
+                "Create README",
+                "Create a README/capability map at the configured path after confirming the project exists.",
+            ),
+            hitl_choice(
+                "defer_project",
+                "Defer project",
+                "Leave this configured project out of the current capability sweep.",
+            ),
+        ],
+        "fix_config",
     )
 }
 
@@ -1908,6 +6375,60 @@ fn update_capability_status_hitl_question(
     )
 }
 
+fn capability_type_hitl_question(
+    report: &CapabilityReport,
+    item: &CapabilityReportItem,
+) -> HitlQuestion {
+    let mut question = capability_hitl_question(
+        format!("capability:{}:assign_type", item.id),
+        format!(
+            "What capability type is `{}`? The type decides the production-required ceiling for declared EC dimensions (AgentFirst -> behavior; Service -> behavior+efficiency+security+stability; Devops -> behavior+stability; DeveloperTool/RuntimeTool -> behavior+efficiency+stability; SecurityTool -> behavior+security+stability).",
+            item.title
+        ),
+        item.title.clone(),
+        "capability has no type assigned in .aw/capability-types.toml; required EC dimension ceiling cannot be derived",
+        &report.project,
+        vec![
+            hitl_choice(
+                "agent_first",
+                "AgentFirst",
+                "Agent-facing capability. Only behavioral correctness is production-required.",
+            ),
+            hitl_choice(
+                "service",
+                "Service",
+                "Externally-served capability. Behavior, efficiency, security, and stability are all production-required.",
+            ),
+            hitl_choice(
+                "devops",
+                "Devops",
+                "Operational/devops capability. Behavior and stability are production-required.",
+            ),
+            hitl_choice(
+                "developer_tool",
+                "DeveloperTool",
+                "Developer-facing toolchain capability. Behavior, efficiency, and stability are production-required.",
+            ),
+            hitl_choice(
+                "runtime_tool",
+                "RuntimeTool",
+                "Runtime/tool execution capability. Behavior, efficiency, and stability are production-required.",
+            ),
+            hitl_choice(
+                "security_tool",
+                "SecurityTool",
+                "Security evidence capability. Behavior, security, and stability are production-required.",
+            ),
+        ],
+        "service",
+    );
+    question.resume_command = format!(
+        "aw capability set-type --project {} --capability {} --type <AgentFirst|Service|Devops|DeveloperTool|RuntimeTool|SecurityTool> && aw capability run --project {} --non-interactive --max-ticks 1",
+        report.project, item.id, report.project
+    );
+    question
+}
+
 fn has_non_epic_wi_evidence(report: &CapabilityReport) -> bool {
     report.capabilities.iter().any(|item| {
         item.wi_evidence.iter().any(|evidence| {
@@ -1916,6 +6437,141 @@ fn has_non_epic_wi_evidence(report: &CapabilityReport) -> bool {
                 && !evidence.reference.trim().is_empty()
         })
     })
+}
+
+fn lifecycle_action_for_work_item(
+    report: &CapabilityReport,
+    work_item: &str,
+    evidence: Option<&CapabilityWiEvidence>,
+    td_spec_path: Option<&str>,
+    td_review_status: Option<&str>,
+    require_issue_inventory: bool,
+    default_reason: &str,
+) -> (CapabilityActionKind, String, String) {
+    if let Some(command) = evidence
+        .and_then(|evidence| evidence.expected_command.as_deref())
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+    {
+        return (
+            action_kind_for_lifecycle_command(command),
+            command.to_string(),
+            "active WI has a workflow expected_command; follow lifecycle lock".to_string(),
+        );
+    }
+
+    if lifecycle_issue_evidence_unresolved(evidence) {
+        let reason = if require_issue_inventory {
+            "active WI reference is not present in project issue inventory; sync or recreate a bounded WI before TD/CB lifecycle"
+        } else {
+            "active WI reference was not resolved because issue inventory was skipped; sync or recreate a bounded WI before TD/CB lifecycle"
+        };
+        return (
+            CapabilityActionKind::ReconcileWiRefs,
+            format!("aw wi plan --project {}", report.project),
+            wi_plan_reason(report, reason),
+        );
+    }
+
+    match evidence.and_then(|evidence| evidence.phase.as_deref()) {
+        Some("td_reviewed") => (
+            CapabilityActionKind::RunCb,
+            cb_gen_command(work_item, td_spec_path),
+            "active WI has reviewed TD; continue CB generation".to_string(),
+        ),
+        Some("cb_genned") | Some("cb_fill_in_progress") => (
+            CapabilityActionKind::RunCb,
+            format!("aw cb fill {work_item}"),
+            "active WI has generated CB output; continue handwrite fill".to_string(),
+        ),
+        Some("cb_filled") => (
+            CapabilityActionKind::RunCb,
+            format!("aw cb review {work_item}"),
+            "active WI has filled CB output; continue CB review".to_string(),
+        ),
+        Some("cb_reviewed") => (
+            CapabilityActionKind::RunTd,
+            format!("aw td merge {work_item}"),
+            "active WI has reviewed CB output; merge TD/CB lifecycle".to_string(),
+        ),
+        Some("td_merged") => (
+            CapabilityActionKind::RunVerify,
+            format!("aw capability report --project {} --verify", report.project),
+            "active WI has merged TD/CB lifecycle; verify capability readiness".to_string(),
+        ),
+        _ if td_review_status == Some("approved") && td_spec_path.is_some() => (
+            CapabilityActionKind::RunCb,
+            cb_gen_command(work_item, td_spec_path),
+            "active WI has approved TD evidence; continue CB generation".to_string(),
+        ),
+        _ => (
+            CapabilityActionKind::RunTd,
+            format!("aw td create {work_item}"),
+            default_reason.to_string(),
+        ),
+    }
+}
+
+fn lifecycle_issue_evidence_unresolved(evidence: Option<&CapabilityWiEvidence>) -> bool {
+    match evidence {
+        None => true,
+        Some(evidence) => {
+            evidence.issue_type == "unknown"
+                || evidence.state == "unknown"
+                || evidence.reference.trim().is_empty()
+        }
+    }
+}
+
+fn action_kind_for_lifecycle_command(command: &str) -> CapabilityActionKind {
+    let command = command.trim();
+    if command.starts_with("aw cb ") {
+        CapabilityActionKind::RunCb
+    } else if command.starts_with("aw capability report")
+        || command.starts_with("aw capability check")
+    {
+        CapabilityActionKind::RunVerify
+    } else if command.starts_with("aw td ") {
+        CapabilityActionKind::RunTd
+    } else {
+        CapabilityActionKind::RunTd
+    }
+}
+
+fn cb_gen_command(work_item: &str, td_spec_path: Option<&str>) -> String {
+    match td_spec_path.map(str::trim).filter(|path| !path.is_empty()) {
+        Some(path) => format!("aw cb gen {work_item} --spec-path {}", shell_quote(path)),
+        None => format!("aw cb gen {work_item}"),
+    }
+}
+
+fn td_ref_for_gap<'a>(
+    item: &'a CapabilityReportItem,
+    gap_id: &str,
+) -> Option<&'a TdCapabilityEvidence> {
+    item.td_refs
+        .iter()
+        .find(|td_ref| {
+            td_ref.gap.as_deref() == Some(gap_id) && td_ref.role == CapabilityRefRole::Primary
+        })
+        .or_else(|| {
+            item.td_refs
+                .iter()
+                .find(|td_ref| td_ref.gap.as_deref() == Some(gap_id))
+        })
+}
+
+fn td_review_status_from_content(content: &str) -> Option<String> {
+    let reviews = content.split_once("# Reviews")?.1;
+    if reviews.contains("**Verdict:** approved") || reviews.contains("Verdict: approved") {
+        Some("approved".to_string())
+    } else if reviews.contains("**Verdict:** needs-revision")
+        || reviews.contains("Verdict: needs-revision")
+    {
+        Some("needs_revision".to_string())
+    } else {
+        None
+    }
 }
 
 fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> {
@@ -1940,8 +6596,18 @@ fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> 
             if work_item.is_empty() {
                 continue;
             }
+            let td_ref = td_ref_for_gap(item, &gap.id);
+            let (kind, command, reason) = lifecycle_action_for_work_item(
+                report,
+                work_item,
+                Some(evidence),
+                td_ref.map(|td_ref| td_ref.spec_path.as_str()),
+                td_ref.and_then(|td_ref| td_ref.review_status.as_deref()),
+                true,
+                "bounded child WI exists; continue WI -> TD -> CB lifecycle",
+            );
             return Some(CapabilityAction {
-                kind: CapabilityActionKind::RunTd,
+                kind,
                 capability_id: Some(item.id.clone()),
                 gap_id: Some(gap.id.clone()),
                 claim_id: None,
@@ -1950,8 +6616,8 @@ fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> 
                 } else {
                     evidence.title.clone()
                 },
-                command: format!("aw td create {work_item}"),
-                reason: "bounded child WI exists; continue WI -> TD -> CB lifecycle".to_string(),
+                command,
+                reason,
                 requires_hitl: false,
                 hitl_question: None,
             });
@@ -1964,12 +6630,14 @@ fn first_child_wi_action(report: &CapabilityReport) -> Option<CapabilityAction> 
 pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<CapabilityDocument> {
     let mut findings = Vec::new();
     let markdown_capabilities = parse_markdown_table_capability_sections(body)?;
+    let needs_canonicalization = markdown_capability_document_needs_canonicalization(body);
     let yaml_capabilities = parse_h2_capability_sections(body)?;
     let legacy_rows = parse_legacy_capability_table(body);
+    let prose_candidates = parse_capability_prose_candidates(body);
     let (format, mut capabilities) = if !markdown_capabilities.is_empty() {
         if !yaml_capabilities.is_empty() {
             findings.push(
-                "YAML capability sections detected but ignored because Markdown capability tables are present"
+                "YAML capability sections detected but ignored because canonical field-style capability contracts are present under ## Capabilities"
                     .to_string(),
             );
         }
@@ -1979,32 +6647,67 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
         )
     } else if !yaml_capabilities.is_empty() {
         findings.push(
-            "YAML capability sections detected; migrate README to Markdown capability tables"
+            "YAML capability sections detected; migrate README to canonical field-style capability contracts under ## Capabilities"
                 .to_string(),
         );
         (CapabilityDocumentFormat::YamlSections, yaml_capabilities)
-    } else {
+    } else if !legacy_rows.is_empty() {
         (CapabilityDocumentFormat::LegacyTable, Vec::new())
+    } else {
+        if prose_candidates.is_empty() {
+            findings.push(
+                "no capability sections found; define README capability roots under ## Capabilities"
+                    .to_string(),
+            );
+        } else {
+            findings.push(
+                "no canonical capability contracts found; confirm candidate README roots before migration/check"
+                    .to_string(),
+            );
+        }
+        (CapabilityDocumentFormat::Empty, Vec::new())
     };
-    if capabilities.is_empty() && legacy_rows.is_empty() {
-        anyhow::bail!(
-            "no capability sections found; expected H2-Hn capability headings with contract tables"
-        );
-    }
     if capabilities.is_empty() && !legacy_rows.is_empty() {
         findings.push(
-            "legacy capability table detected; migrate rows to Markdown capability sections"
+            "legacy capability table detected; migrate rows to canonical field-style capability contracts under ## Capabilities"
                 .to_string(),
         );
     }
+    if capabilities.is_empty() && legacy_rows.is_empty() && !prose_candidates.is_empty() {
+        let candidates = prose_candidates
+            .iter()
+            .take(8)
+            .map(|candidate| {
+                if let Some(root_wi) = candidate
+                    .root_wi
+                    .as_deref()
+                    .filter(|root_wi| !candidate.title.contains(*root_wi))
+                {
+                    format!("{} ({})", candidate.title, root_wi)
+                } else {
+                    candidate.title.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        findings.push(format!(
+            "candidate prose capability roots detected for HITL confirmation: {}",
+            candidates
+        ));
+    }
 
-    let release_scope = parse_capability_index_release_scope(body);
+    let index_summaries = parse_capability_index_summaries(body);
     for capability in &mut capabilities {
-        capability.release_scope = release_scope
+        if let Some(summary) = index_summaries
             .get(&capability.id)
-            .or_else(|| release_scope.get(&slugify(&capability.title)))
-            .copied()
-            .unwrap_or(false);
+            .or_else(|| index_summaries.get(&slugify(&capability.title)))
+        {
+            capability.release_scope =
+                normalize_table_token(&summary.production).starts_with("ready");
+            capability.index_summary = Some(summary.clone());
+        } else {
+            capability.release_scope = false;
+        }
     }
 
     let mut ids = BTreeSet::new();
@@ -2028,10 +6731,28 @@ pub fn parse_capability_document(body: &str, cap_path: &Path) -> Result<Capabili
     Ok(CapabilityDocument {
         cap_path: cap_path.to_path_buf(),
         format,
+        needs_canonicalization,
         capabilities,
         legacy_rows,
+        prose_candidates,
         findings,
     })
+}
+
+fn parse_capability_document_repairing_previous_migration(
+    body: &str,
+    cap_path: &Path,
+) -> Result<CapabilityDocument> {
+    match parse_capability_document(body, cap_path) {
+        Ok(document) => Ok(document),
+        Err(err) if err.to_string().contains("duplicate capability id") => {
+            let Some(repaired) = strip_previous_canonical_capability_tail(body) else {
+                return Err(err);
+            };
+            parse_capability_document(&repaired, cap_path)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -2040,15 +6761,17 @@ pub(crate) fn render_capability_markdown_migration(
     document: &CapabilityDocument,
     project: &str,
 ) -> String {
-    let mut prefix = strip_migrated_capability_sources(original_body);
+    let mut prefix = collapse_markdown_blank_runs_outside_fences(
+        &strip_migrated_capability_sources(original_body),
+    );
     prefix = prefix
         .replace(
             "Each `## Capability:` section is\nmachine-readable input for `aw capability`; summary tables are non-authoritative.",
-            "Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.",
+            "Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.",
         )
         .replace(
             "Each `## Capability:` section is machine-readable input for `aw capability`; summary tables are non-authoritative.",
-            "Markdown capability headings and tables below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.",
+            "Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.",
         )
         .replace(
             "Any new Jet product claim starts by updating the relevant\n  `verification_contract` in this README.",
@@ -2057,9 +6780,34 @@ pub(crate) fn render_capability_markdown_migration(
     if prefix.trim().is_empty() {
         prefix = format!("# {}\n", project_display_name(project));
     }
+    let (mut prefix, suffix) =
+        if let Some((before, after)) = prefix.split_once(CAPABILITY_MIGRATION_INSERT_MARKER) {
+            (before.to_string(), Some(after.to_string()))
+        } else {
+            (prefix, None)
+        };
+    prefix = ensure_canonical_readme_scaffold(prefix, project);
     let mut out = prefix.trim_end().to_string();
     out.push_str("\n\n");
-    out.push_str(&render_capability_index(document, project));
+    out.push_str(&render_capability_registry(document, project));
+    if let Some(suffix) = suffix {
+        let suffix = suffix.trim_start_matches('\n');
+        if !suffix.trim().is_empty() {
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push('\n');
+            out.push_str(suffix);
+        }
+    }
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+fn render_capability_registry(document: &CapabilityDocument, project: &str) -> String {
+    let mut out = render_capability_index(document, project);
     if document.capabilities.is_empty() {
         for row in &document.legacy_rows {
             out.push_str(&render_legacy_capability_section(row));
@@ -2069,36 +6817,166 @@ pub(crate) fn render_capability_markdown_migration(
             out.push_str(&render_markdown_capability_section(capability));
         }
     }
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
     out
+}
+
+fn ensure_canonical_readme_scaffold(mut prefix: String, project: &str) -> String {
+    if !has_markdown_heading(&prefix, 1, None) {
+        prefix = format!(
+            "# {}\n\n{}",
+            project_display_name(project),
+            prefix.trim_start()
+        );
+    }
+    if !has_markdown_heading(&prefix, 2, Some("Brief")) {
+        prefix = insert_brief_heading_or_todo(prefix);
+    }
+    if !has_markdown_heading(&prefix, 2, Some("Capabilities")) {
+        prefix = insert_capabilities_heading_after_brief(prefix);
+    }
+    prefix
+}
+
+fn insert_capabilities_heading_after_brief(prefix: String) -> String {
+    let lines = prefix.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let Some(brief_idx) = lines.iter().enumerate().find_map(|(idx, line)| {
+        if fenced[idx] {
+            return None;
+        }
+        parse_heading(line)
+            .filter(|(level, title)| *level == 2 && title.eq_ignore_ascii_case("Brief"))
+            .map(|_| idx)
+    }) else {
+        let mut out = prefix.trim_end().to_string();
+        out.push_str(
+            "\n\n## Capabilities\n\nCanonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.\n",
+        );
+        return out;
+    };
+    let insert_idx = (brief_idx + 1..lines.len())
+        .find(|idx| {
+            !fenced[*idx]
+                && parse_heading(lines[*idx])
+                    .map(|(level, _)| level <= 2)
+                    .unwrap_or(false)
+        })
+        .unwrap_or(lines.len());
+
+    let mut out = Vec::new();
+    out.extend(lines[..insert_idx].iter().copied());
+    out.push("");
+    out.push("## Capabilities");
+    out.push("");
+    out.push("Canonical field-style capability contracts below are machine-readable input for `aw capability`; YAML and legacy tables are migration input only.");
+    if insert_idx < lines.len() {
+        out.push("");
+        out.extend(lines[insert_idx..].iter().copied());
+    }
+    collapse_markdown_blank_runs_outside_fences(&out.join("\n"))
+}
+
+fn insert_brief_heading_or_todo(prefix: String) -> String {
+    let lines = prefix.lines().collect::<Vec<_>>();
+    let Some(h1_idx) = lines.iter().position(|line| {
+        parse_heading(line)
+            .map(|(level, _)| level == 1)
+            .unwrap_or(false)
+    }) else {
+        let mut out = prefix.trim_end().to_string();
+        out.push_str(
+            "\n\n## Brief\n\n<!-- TODO: Add the human-confirmed project brief before publishing. -->\n",
+        );
+        return out;
+    };
+    let first_h2_idx = lines
+        .iter()
+        .enumerate()
+        .skip(h1_idx + 1)
+        .find_map(|(idx, line)| {
+            parse_heading(line)
+                .map(|(level, _)| level == 2)
+                .unwrap_or(false)
+                .then_some(idx)
+        })
+        .unwrap_or(lines.len());
+    let mut lead_start = h1_idx + 1;
+    while lead_start < first_h2_idx && lines[lead_start].trim().is_empty() {
+        lead_start += 1;
+    }
+    let mut lead_end = first_h2_idx;
+    while lead_end > lead_start && lines[lead_end - 1].trim().is_empty() {
+        lead_end -= 1;
+    }
+    let lead = lines[lead_start..lead_end].join("\n");
+    if lead.trim().is_empty() {
+        let mut out = prefix.trim_end().to_string();
+        out.push_str(
+            "\n\n## Brief\n\n<!-- TODO: Add the human-confirmed project brief before publishing. -->\n",
+        );
+        return out;
+    }
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&lines[..=h1_idx]);
+    out.push("");
+    out.push("## Brief");
+    out.push("");
+    out.extend(lines[lead_start..lead_end].iter().copied());
+    out.push("");
+    out.extend(lines[first_h2_idx..].iter().copied());
+    out.join("\n")
+}
+
+fn has_markdown_heading(body: &str, expected_level: usize, expected_title: Option<&str>) -> bool {
+    body.lines().any(|line| {
+        let Some((level, title)) = parse_heading(line) else {
+            return false;
+        };
+        if level != expected_level {
+            return false;
+        }
+        expected_title
+            .map(|expected| title.eq_ignore_ascii_case(expected))
+            .unwrap_or(true)
+    })
 }
 
 fn strip_migrated_capability_sources(body: &str) -> String {
     let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
     let mut out = Vec::new();
+    let mut inserted_marker = false;
     let mut idx = 0;
     while idx < lines.len() {
         let line = lines[idx];
-        if line.trim_start().starts_with("## Capability:") {
+        if fenced[idx] {
+            out.push(line);
             idx += 1;
-            while idx < lines.len() {
-                if parse_heading(lines[idx])
-                    .map(|(level, _)| level <= 2)
-                    .unwrap_or(false)
-                {
-                    break;
-                }
-                idx += 1;
-            }
             continue;
         }
-
+        if is_capability_index_pillar_label(line) {
+            if let Some(next_idx) = next_nonblank_markdown_line(&lines, idx + 1) {
+                if !fenced[next_idx] {
+                    if let Some((headers, _rows, _next_table_idx)) =
+                        parse_markdown_table_at(&lines, next_idx)
+                    {
+                        if is_capability_index_table(&headers) {
+                            idx += 1;
+                            while idx < lines.len() && lines[idx].trim().is_empty() {
+                                idx += 1;
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
         if parse_markdown_table_row(line)
             .and_then(|cells| legacy_capability_column_indices(&cells))
             .is_some()
         {
+            push_capability_insert_marker(&mut out, &mut inserted_marker);
             idx += 1;
             while idx < lines.len() {
                 let Some(cells) = parse_markdown_table_row(lines[idx]) else {
@@ -2115,21 +6993,30 @@ fn strip_migrated_capability_sources(body: &str) -> String {
             continue;
         }
 
-        if parse_heading(line)
-            .map(|(level, title)| level == 2 && title.eq_ignore_ascii_case("Capability Index"))
-            .unwrap_or(false)
-        {
-            idx += 1;
-            while idx < lines.len() {
-                if parse_heading(lines[idx])
-                    .map(|(level, _)| level <= 2)
-                    .unwrap_or(false)
-                {
-                    break;
-                }
-                idx += 1;
+        if let Some((headers, _rows, next_idx)) = parse_markdown_table_at(&lines, idx) {
+            if is_capability_index_table(&headers) {
+                idx = next_idx;
+                continue;
             }
-            continue;
+        }
+
+        if let Some((heading_level, title)) = parse_heading(line) {
+            if (heading_level == 2 || heading_level == 3)
+                && title.eq_ignore_ascii_case("Capability Index")
+            {
+                idx += 1;
+                continue;
+            }
+            let block_end =
+                next_heading_at_or_above(&lines, idx + 1, heading_level).unwrap_or(lines.len());
+            let is_migrated_source = title.starts_with("Capability:")
+                || (heading_level >= 2
+                    && markdown_block_has_capability_contract(&lines, idx + 1, block_end));
+            if is_migrated_source {
+                push_capability_insert_marker(&mut out, &mut inserted_marker);
+                idx = block_end;
+                continue;
+            }
         }
 
         out.push(line);
@@ -2138,9 +7025,64 @@ fn strip_migrated_capability_sources(body: &str) -> String {
     out.join("\n")
 }
 
+fn collapse_markdown_blank_runs_outside_fences(body: &str) -> String {
+    let mut out = Vec::new();
+    let mut in_fence = false;
+    let mut blank_run = 0usize;
+    for line in body.lines() {
+        let is_fence = is_markdown_fence_line(line);
+        if is_fence {
+            in_fence = !in_fence;
+        }
+        if !in_fence && line.trim().is_empty() {
+            blank_run += 1;
+            if blank_run <= 1 {
+                out.push(line);
+            }
+            continue;
+        }
+        blank_run = 0;
+        out.push(line);
+    }
+    out.join("\n")
+}
+
+fn push_capability_insert_marker<'a>(out: &mut Vec<&'a str>, inserted_marker: &mut bool) {
+    if !*inserted_marker {
+        out.push(CAPABILITY_MIGRATION_INSERT_MARKER);
+        *inserted_marker = true;
+    }
+}
+
+fn is_capability_index_table(headers: &[String]) -> bool {
+    find_table_column(headers, &["capability"]).is_some()
+        && find_table_column(headers, &["rootwi", "wi"]).is_some()
+        && (find_table_column(headers, &["impl", "implementation"]).is_some()
+            || find_table_column(headers, &["production"]).is_some())
+}
+
+fn is_capability_index_pillar_label(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("**Pillar")
+}
+
+fn next_nonblank_markdown_line(lines: &[&str], start: usize) -> Option<usize> {
+    (start..lines.len()).find(|idx| !lines[*idx].trim().is_empty())
+}
+
+fn next_heading_at_or_above(lines: &[&str], start: usize, level: usize) -> Option<usize> {
+    let fenced = markdown_fenced_line_mask(lines);
+    (start..lines.len()).find(|idx| {
+        !fenced[*idx]
+            && parse_heading(lines[*idx])
+                .map(|(candidate_level, _)| candidate_level <= level)
+                .unwrap_or(false)
+    })
+}
+
 fn render_capability_index(document: &CapabilityDocument, project: &str) -> String {
     let mut out = String::new();
-    out.push_str("## Capability Index\n\n");
+    out.push_str("### Capability Index\n\n");
     out.push_str(
         "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |\n",
     );
@@ -2155,15 +7097,42 @@ fn render_capability_index(document: &CapabilityDocument, project: &str) -> Stri
         }
     } else {
         for capability in &document.capabilities {
+            let fallback_maturity = capability_maturity_summary(capability);
+            let implementation = capability
+                .index_summary
+                .as_ref()
+                .map(|summary| summary.implementation.as_str())
+                .unwrap_or_else(|| capability_impl_summary(capability));
+            let verification = capability
+                .index_summary
+                .as_ref()
+                .map(|summary| summary.verification.as_str())
+                .unwrap_or_else(|| capability_verification_summary(capability));
+            let maturity = capability
+                .index_summary
+                .as_ref()
+                .map(|summary| summary.maturity.as_str())
+                .unwrap_or(fallback_maturity.as_str());
+            let production = capability
+                .index_summary
+                .as_ref()
+                .map(|summary| summary.production.as_str())
+                .unwrap_or_else(|| capability_production_summary(capability));
+            let notes = capability
+                .index_summary
+                .as_ref()
+                .map(|summary| summary.notes.as_str())
+                .filter(|notes| !notes.trim().is_empty())
+                .unwrap_or(&capability.promise);
             out.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} | {} |\n",
                 markdown_cell(&capability.title),
                 markdown_cell(&root_wi_for_capability(capability)),
-                markdown_cell(capability_impl_summary(capability)),
-                markdown_cell(capability_verification_summary(capability)),
-                markdown_cell(&capability_maturity_summary(capability)),
-                markdown_cell(capability_production_summary(capability)),
-                markdown_cell(&capability.promise),
+                markdown_cell(implementation),
+                markdown_cell(verification),
+                markdown_cell(maturity),
+                markdown_cell(production),
+                markdown_cell(notes),
             ));
         }
     }
@@ -2179,28 +7148,66 @@ fn render_capability_index(document: &CapabilityDocument, project: &str) -> Stri
 
 fn render_markdown_capability_section(capability: &CapabilitySection) -> String {
     let mut out = String::new();
-    out.push_str(&format!("## {}\n\n", capability.title.trim()));
-    out.push_str("| Field | Value |\n");
-    out.push_str("|---|---|\n");
+    out.push_str(&format!("### {}\n\n", capability.title.trim()));
+    if !capability.prelude.trim().is_empty() {
+        out.push_str(capability.prelude.trim());
+        out.push_str("\n\n");
+    }
     out.push_str(&format!(
-        "| ID | {} |\n| Root WI | {} |\n| Status | {} |\n| Promise | {} |\n| Required Verification | {} |\n| Gate Inventory | {} |\n",
-        markdown_cell(&capability.id),
-        markdown_cell(&root_wi_for_capability(capability)),
-        markdown_cell(capability.status.as_str()),
-        markdown_cell(&capability.promise),
-        markdown_cell(&capability_maturity_summary(capability)),
-        markdown_cell(&capability_gate_inventory(capability)),
+        "ID: {}\nRoot WI: {}\nStatus: {}\n",
+        capability.id.trim(),
+        root_wi_for_capability(capability),
+        capability.status.as_str(),
     ));
+    if let Some(capability_type) = capability.capability_type {
+        out.push_str(&format!("Type: {}\n", capability_type.as_str()));
+    }
+    out.push_str(&format!(
+        "Required Verification: {}\n",
+        capability_maturity_summary(capability)
+    ));
+    out.push_str("Promise:\n");
+    out.push_str(capability.promise.trim());
+    out.push_str("\n");
+    out.push_str("Gate Inventory:\n");
+    for item in markdown_field_list_items(&capability_gate_inventory(capability)) {
+        out.push_str(&format!("- {}\n", item));
+    }
+    if !capability.surfaces.is_empty() {
+        out.push_str("Surfaces:\n");
+        for item in render_surface_field_items(&capability.surfaces) {
+            out.push_str(&format!("- {}\n", item));
+        }
+    }
+    if !capability.ec_dimensions.is_empty() {
+        out.push_str("EC Dimensions:\n");
+        for item in render_ec_dimension_field_items(&capability.ec_dimensions) {
+            out.push_str(&format!("- {}\n", item));
+        }
+    }
     if !capability.dependencies.is_empty() {
-        out.push_str(&format!(
-            "| Dependencies | {} |\n",
-            markdown_cell(&capability.dependencies.join(", "))
-        ));
+        out.push_str("Dependencies:\n");
+        for dependency in &capability.dependencies {
+            out.push_str(&format!("- {}\n", dependency));
+        }
     }
     out.push('\n');
     out.push_str("| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n");
     out.push_str("|---|---|---:|---|---|---|---|\n");
-    if let Some(contract) = capability.verification_contract.as_ref() {
+    if !capability.work_roots.is_empty() {
+        for row in &capability.work_roots {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} |\n",
+                markdown_cell(&row.work_root),
+                markdown_cell(&row.kind),
+                markdown_cell(&row.wi),
+                markdown_cell(&row.implementation),
+                markdown_cell(&row.verification),
+                markdown_cell(&row.maturity),
+                markdown_cell(&row.gate_evidence),
+            ));
+        }
+    } else if let Some(contract) = capability.verification_contract.as_ref() {
         for claim in &contract.claims {
             out.push_str(&format!(
                 "| {} | epic | {} | {} | {} | {} | {} |\n",
@@ -2213,11 +7220,12 @@ fn render_markdown_capability_section(capability: &CapabilitySection) -> String 
             ));
         }
     }
-    if capability
-        .verification_contract
-        .as_ref()
-        .map(|contract| contract.claims.is_empty())
-        .unwrap_or(true)
+    if capability.work_roots.is_empty()
+        && capability
+            .verification_contract
+            .as_ref()
+            .map(|contract| contract.claims.is_empty())
+            .unwrap_or(true)
     {
         for gap in &capability.gaps {
             out.push_str(&format!(
@@ -2245,13 +7253,95 @@ fn render_markdown_capability_section(capability: &CapabilitySection) -> String 
         ));
     }
     out.push('\n');
+    if !capability.postlude.trim().is_empty() {
+        out.push_str(capability.postlude.trim());
+        out.push_str("\n\n");
+    }
+    if let Some(slot) = capability_efficiency_slot(capability) {
+        out.push_str("#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n\n");
+        out.push_str(&format!(
+            "Operating point: {}\n",
+            markdown_cell(&slot.operating_point)
+        ));
+        out.push_str(&format!("Cube: {}\n\n", markdown_cell(&slot.cube)));
+    }
     out
+}
+
+fn markdown_field_list_items(value: &str) -> Vec<String> {
+    let items = value
+        .split("<br>")
+        .flat_map(|part| part.lines())
+        .map(|part| part.trim().trim_start_matches("- ").trim().to_string())
+        .filter(|part| !is_empty_table_value(part))
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        vec!["-".to_string()]
+    } else {
+        items
+    }
+}
+
+fn render_surface_field_items(surfaces: &[CapabilitySurface]) -> Vec<String> {
+    surfaces
+        .iter()
+        .map(|surface| {
+            let command_text = surface
+                .commands
+                .iter()
+                .map(|command| format!("`{}`", command.trim()))
+                .collect::<Vec<_>>()
+                .join(" + ");
+            let summary = surface.summary.trim();
+            match (command_text.is_empty(), summary.is_empty()) {
+                (true, true) => surface.kind.trim().to_string(),
+                (false, true) => format!("{}: {}", surface.kind.trim(), command_text),
+                (true, false) => format!("{}: {}", surface.kind.trim(), summary),
+                (false, false) => {
+                    format!("{}: {} - {}", surface.kind.trim(), command_text, summary)
+                }
+            }
+        })
+        .collect()
+}
+
+fn render_ec_dimension_field_items(dimensions: &[CapabilityEcDimension]) -> Vec<String> {
+    dimensions
+        .iter()
+        .map(|dimension| {
+            let runner = dimension.runner.trim();
+            let summary = dimension.summary.trim();
+            match (runner.is_empty(), summary.is_empty()) {
+                (true, true) => dimension.dimension.as_str().to_string(),
+                (false, true) => format!("{}: `{}`", dimension.dimension.as_str(), runner),
+                (true, false) => format!("{}: {}", dimension.dimension.as_str(), summary),
+                (false, false) => {
+                    format!(
+                        "{}: `{}` - {}",
+                        dimension.dimension.as_str(),
+                        runner,
+                        summary
+                    )
+                }
+            }
+        })
+        .collect()
+}
+
+fn capability_efficiency_slot(
+    capability: &CapabilitySection,
+) -> Option<&CapabilityEfficiencyBackfillSlot> {
+    capability
+        .ec_dimensions
+        .iter()
+        .find(|dimension| dimension.dimension == CapabilityEcDimensionKind::Efficiency)
+        .and_then(|dimension| dimension.efficiency_backfill.as_ref())
 }
 
 fn render_legacy_capability_section(row: &LegacyCapabilityRow) -> String {
     let id = slugify(&row.capability);
     format!(
-        "## {title}\n\n| Field | Value |\n|---|---|\n| ID | {id} |\n| Root WI | {wi} |\n| Status | candidate |\n| Promise | {promise} |\n| Required Verification | smoke |\n| Gate Inventory | {evidence} |\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {gap} | epic | {wi} | planned | planned | smoke | {evidence} |\n\n",
+        "### {title}\n\nID: {id}\nRoot WI: {wi}\nStatus: candidate\nRequired Verification: smoke\nPromise:\n{promise}\nGate Inventory:\n- {evidence}\n\n| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |\n|---|---|---:|---|---|---|---|\n| {gap} | epic | {wi} | planned | planned | smoke | {evidence} |\n\n",
         title = markdown_cell(&row.capability),
         wi = markdown_cell(&row.active_wi),
         promise = markdown_cell(&row.current_state),
@@ -2341,50 +7431,514 @@ fn capability_production_summary(capability: &CapabilitySection) -> &'static str
     }
 }
 
-fn parse_capability_index_release_scope(body: &str) -> BTreeMap<String, bool> {
+fn parse_capability_index_summaries(body: &str) -> BTreeMap<String, CapabilityIndexSummary> {
     let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
     let mut idx = 0;
     while idx < lines.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
         let Some((level, title)) = parse_heading(lines[idx]) else {
             idx += 1;
             continue;
         };
-        if level != 2 || !title.eq_ignore_ascii_case("Capability Index") {
+        if !(level == 2 || level == 3) || !title.eq_ignore_ascii_case("Capability Index") {
             idx += 1;
             continue;
         }
         let mut cursor = idx + 1;
+        let mut summaries = BTreeMap::new();
         while cursor < lines.len() {
+            if fenced[cursor] {
+                cursor += 1;
+                continue;
+            }
             if let Some((heading_level, _)) = parse_heading(lines[cursor]) {
-                if heading_level <= 2 {
+                if heading_level <= level {
                     break;
                 }
             }
-            let Some((headers, rows, _next_idx)) = parse_markdown_table_at(&lines, cursor) else {
+            let Some((headers, rows, next_idx)) = parse_markdown_table_at(&lines, cursor) else {
                 cursor += 1;
                 continue;
             };
             let Some(capability_idx) = find_table_column(&headers, &["capability"]) else {
-                return BTreeMap::new();
+                cursor = next_idx;
+                continue;
             };
-            let Some(production_idx) = find_table_column(&headers, &["production"]) else {
-                return BTreeMap::new();
-            };
-            let mut scope = BTreeMap::new();
+            let implementation_idx = find_table_column(&headers, &["impl", "implementation"]);
+            let verification_idx = find_table_column(&headers, &["verification"]);
+            let maturity_idx = find_table_column(&headers, &["maturity"]);
+            let production_idx = find_table_column(&headers, &["production"]);
+            let notes_idx = find_table_column(&headers, &["notes", "note"]);
             for row in rows {
                 let name = table_cell(&row, capability_idx);
                 if is_empty_table_value(&name) {
                     continue;
                 }
-                let ready = normalize_table_token(&table_cell(&row, production_idx)) == "ready";
-                scope.insert(slugify(&name), ready);
-                scope.insert(normalize_table_token(&name), ready);
+                let summary = CapabilityIndexSummary {
+                    implementation: implementation_idx
+                        .map(|idx| table_cell(&row, idx))
+                        .unwrap_or_else(|| "-".to_string()),
+                    verification: verification_idx
+                        .map(|idx| table_cell(&row, idx))
+                        .unwrap_or_else(|| "-".to_string()),
+                    maturity: maturity_idx
+                        .map(|idx| table_cell(&row, idx))
+                        .unwrap_or_else(|| "-".to_string()),
+                    production: production_idx
+                        .map(|idx| table_cell(&row, idx))
+                        .unwrap_or_else(|| "-".to_string()),
+                    notes: notes_idx
+                        .map(|idx| table_cell(&row, idx))
+                        .unwrap_or_default(),
+                };
+                summaries.insert(slugify(&name), summary.clone());
+                summaries.insert(normalize_table_token(&name), summary);
             }
-            return scope;
+            cursor = next_idx;
+        }
+        return summaries;
+    }
+    BTreeMap::new()
+}
+
+fn parse_capability_prose_candidates(body: &str) -> Vec<CapabilityProseCandidate> {
+    let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
+    let mut candidates = Vec::new();
+    let mut idx = 0;
+    while idx < lines.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[idx]) else {
+            idx += 1;
+            continue;
+        };
+        if level != 2 || !title.eq_ignore_ascii_case("Capabilities") {
+            idx += 1;
+            continue;
+        }
+        let capabilities_end = next_heading_at_or_above(&lines, idx + 1, 2).unwrap_or(lines.len());
+        let mut cursor = idx + 1;
+        while cursor < capabilities_end {
+            if fenced[cursor] {
+                cursor += 1;
+                continue;
+            }
+            let Some((candidate_level, raw_candidate_title)) = parse_heading(lines[cursor]) else {
+                cursor += 1;
+                continue;
+            };
+            if candidate_level < 3 {
+                cursor += 1;
+                continue;
+            }
+            let block_end = next_heading_at_or_above(&lines, cursor + 1, candidate_level)
+                .unwrap_or(capabilities_end)
+                .min(capabilities_end);
+            if capability_prose_candidate_title_is_ignored(&raw_candidate_title)
+                || markdown_block_has_capability_contract(&lines, cursor + 1, block_end)
+            {
+                cursor = block_end;
+                continue;
+            }
+            let root_wi = first_issue_ref(&raw_candidate_title)
+                .or_else(|| first_issue_ref(&lines[cursor + 1..block_end].join("\n")));
+            let candidate_title = clean_markdown_inline_links(&raw_candidate_title);
+            let candidate_title =
+                strip_trailing_root_wi_from_candidate_title(&candidate_title, root_wi.as_deref());
+            let id = slugify(&candidate_title);
+            if id.is_empty() {
+                cursor = block_end;
+                continue;
+            }
+            let promise = first_candidate_promise_text(&lines, cursor + 1, block_end);
+            let summary = promise
+                .as_deref()
+                .map(truncate_candidate_summary)
+                .filter(|summary| !summary.trim().is_empty());
+            candidates.push(CapabilityProseCandidate {
+                id,
+                title: candidate_title,
+                line: cursor + 1,
+                root_wi,
+                summary,
+                promise,
+            });
+            cursor = block_end;
+        }
+        idx = capabilities_end;
+    }
+    candidates.extend(parse_capability_table_candidates(&lines, &fenced));
+    candidates.extend(parse_capability_list_candidates(&lines, &fenced));
+    dedupe_capability_prose_candidates(candidates)
+}
+
+fn parse_capability_list_candidates(
+    lines: &[&str],
+    fenced: &[bool],
+) -> Vec<CapabilityProseCandidate> {
+    let mut primary = Vec::new();
+    let mut fallback = Vec::new();
+    let mut idx = 0;
+    while idx < lines.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[idx]) else {
+            idx += 1;
+            continue;
+        };
+        let Some(section_priority) = capability_list_section_priority(&title) else {
+            idx += 1;
+            continue;
+        };
+        let section_end = next_heading_at_or_above(lines, idx + 1, level).unwrap_or(lines.len());
+        let direct_list_end = next_heading_at_or_above(lines, idx + 1, level + 1)
+            .unwrap_or(section_end)
+            .min(section_end);
+        for line_idx in idx + 1..direct_list_end {
+            if fenced[line_idx] {
+                continue;
+            }
+            let trimmed = lines[line_idx].trim();
+            if !(trimmed.starts_with("- ") || trimmed.starts_with("* ")) {
+                continue;
+            }
+            if let Some(candidate) = capability_list_candidate_from_bullet(trimmed, line_idx + 1) {
+                match section_priority {
+                    CapabilityListSectionPriority::Primary => primary.push(candidate),
+                    CapabilityListSectionPriority::Fallback => fallback.push(candidate),
+                }
+            }
+        }
+        idx = section_end;
+    }
+    if primary.is_empty() {
+        fallback
+    } else {
+        primary
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapabilityListSectionPriority {
+    Primary,
+    Fallback,
+}
+
+fn capability_list_section_priority(title: &str) -> Option<CapabilityListSectionPriority> {
+    match normalize_table_token(title).as_str() {
+        "features" | "modules" => Some(CapabilityListSectionPriority::Primary),
+        "implemented" => Some(CapabilityListSectionPriority::Fallback),
+        _ => None,
+    }
+}
+
+fn capability_list_candidate_from_bullet(
+    raw: &str,
+    line: usize,
+) -> Option<CapabilityProseCandidate> {
+    let text = clean_markdown_inline_links(
+        raw.trim()
+            .trim_start_matches("- ")
+            .trim_start_matches("* ")
+            .trim(),
+    );
+    let text = text.trim();
+    if text.is_empty() || text.starts_with('[') {
+        return None;
+    }
+    let root_wi = first_issue_ref(text);
+    let (title, summary) = split_capability_bullet_title_summary(text);
+    let title = strip_markdown_emphasis(&title);
+    let title = strip_trailing_root_wi_from_candidate_title(&title, root_wi.as_deref());
+    let id = slugify(&title);
+    if id.is_empty() || candidate_table_title_is_ignored(&title) {
+        return None;
+    }
+    let summary = candidate_summary_text(&summary);
+    let promise = (!summary.trim().is_empty()).then_some(summary.clone());
+    let summary = promise
+        .as_deref()
+        .map(truncate_candidate_summary)
+        .filter(|summary| !summary.trim().is_empty());
+    Some(CapabilityProseCandidate {
+        id,
+        title,
+        line,
+        root_wi,
+        summary,
+        promise,
+    })
+}
+
+fn split_capability_bullet_title_summary(text: &str) -> (String, String) {
+    if let Some(rest) = text.strip_prefix("**") {
+        if let Some(end) = rest.find("**") {
+            let title = rest[..end].trim();
+            let summary = rest[end + 2..]
+                .trim()
+                .trim_start_matches(':')
+                .trim_start_matches('-')
+                .trim();
+            if !title.is_empty() {
+                return (
+                    title.to_string(),
+                    if summary.is_empty() { title } else { summary }.to_string(),
+                );
+            }
+        }
+    }
+    if let Some((title, summary)) = text.split_once(':') {
+        let title = title.trim();
+        let summary = summary.trim();
+        if !title.is_empty() && title.chars().count() <= 80 {
+            return (
+                title.to_string(),
+                if summary.is_empty() { title } else { summary }.to_string(),
+            );
+        }
+    }
+    (text.to_string(), text.to_string())
+}
+
+fn parse_capability_table_candidates(
+    lines: &[&str],
+    fenced: &[bool],
+) -> Vec<CapabilityProseCandidate> {
+    let mut candidates = Vec::new();
+    let mut idx = 0;
+    while idx < lines.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
+        let Some((headers, rows, next_idx)) = parse_markdown_table_at(lines, idx) else {
+            idx += 1;
+            continue;
+        };
+        let Some(capability_column) = find_table_column(&headers, &["capability"]) else {
+            idx = next_idx;
+            continue;
+        };
+        if capability_table_is_contract_or_index(&headers) {
+            idx = next_idx;
+            continue;
+        }
+        let summary_column = find_table_column(
+            &headers,
+            &[
+                "whyitmatters",
+                "purpose",
+                "summary",
+                "description",
+                "behavior",
+                "notes",
+            ],
+        );
+        for (row_offset, row) in rows.iter().enumerate() {
+            let row_text = row.join(" ");
+            let root_wi = first_issue_ref(&row_text);
+            let title = clean_markdown_inline_links(&table_cell(row, capability_column));
+            let title = strip_markdown_emphasis(&title);
+            let title = strip_trailing_root_wi_from_candidate_title(&title, root_wi.as_deref());
+            let id = slugify(&title);
+            if id.is_empty() || candidate_table_title_is_ignored(&title) {
+                continue;
+            }
+            let summary = summary_column
+                .map(|column| candidate_summary_text(&table_cell(row, column)))
+                .filter(|summary| !summary.trim().is_empty());
+            let promise = summary.clone();
+            let summary = summary.map(|summary| truncate_candidate_summary(&summary));
+            candidates.push(CapabilityProseCandidate {
+                id,
+                title,
+                line: idx + 3 + row_offset,
+                root_wi,
+                summary,
+                promise,
+            });
+        }
+        idx = next_idx;
+    }
+    candidates
+}
+
+fn strip_trailing_root_wi_from_candidate_title(title: &str, root_wi: Option<&str>) -> String {
+    let mut cleaned = title.trim().to_string();
+    let Some(root_wi) = root_wi.map(str::trim).filter(|root_wi| !root_wi.is_empty()) else {
+        return cleaned;
+    };
+    for pattern in [
+        format!(" ({root_wi})"),
+        format!(" [{root_wi}]"),
+        format!(" - {root_wi}"),
+        format!(" — {root_wi}"),
+        format!(" – {root_wi}"),
+        format!(" {root_wi}"),
+    ] {
+        if cleaned.ends_with(&pattern) {
+            cleaned.truncate(cleaned.len() - pattern.len());
+            return cleaned.trim().to_string();
+        }
+    }
+    cleaned
+}
+
+fn capability_table_is_contract_or_index(headers: &[String]) -> bool {
+    markdown_contract_indices(headers).is_some()
+        || legacy_capability_column_indices(headers).is_some()
+        || (find_table_column(headers, &["rootwi"]).is_some()
+            && find_table_column(headers, &["impl", "implementation"]).is_some()
+            && find_table_column(headers, &["verification"]).is_some()
+            && find_table_column(headers, &["production"]).is_some())
+}
+
+fn candidate_table_title_is_ignored(title: &str) -> bool {
+    let normalized = normalize_table_token(title);
+    normalized.is_empty()
+        || normalized == "capability"
+        || normalized == "capabilityindex"
+        || normalized == "definecapabilityroot"
+        || title.contains("(confirm")
+}
+
+fn capability_prose_candidate_title_is_ignored(title: &str) -> bool {
+    let normalized = normalize_table_token(title);
+    normalized == "capabilityindex"
+        || normalized == "efficiency"
+        || normalized.ends_with("generated")
+        || title.contains("GENERATED")
+}
+
+fn first_candidate_promise_text(lines: &[&str], start: usize, end: usize) -> Option<String> {
+    let fenced = markdown_fenced_line_mask(lines);
+    let mut parts = Vec::new();
+    for idx in start..end {
+        if fenced[idx] {
+            continue;
+        }
+        let trimmed = lines[idx].trim();
+        if trimmed.is_empty() {
+            if !parts.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if trimmed.starts_with('|')
+            || trimmed.starts_with("<!--")
+            || parse_heading(trimmed).is_some()
+            || parse_markdown_contract_field_line(trimmed).is_some()
+        {
+            if !parts.is_empty() {
+                break;
+            }
+            continue;
+        }
+        let summary = candidate_summary_text(trimmed);
+        if !summary.is_empty() {
+            parts.push(summary);
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+fn candidate_summary_text(line: &str) -> String {
+    strip_markdown_emphasis(&clean_markdown_inline_links(
+        line.trim()
+            .trim_start_matches("- ")
+            .trim_start_matches("* ")
+            .trim(),
+    ))
+}
+
+fn strip_markdown_emphasis(text: &str) -> String {
+    text.trim()
+        .trim_matches('*')
+        .trim_matches('_')
+        .trim()
+        .to_string()
+}
+
+fn truncate_candidate_summary(text: &str) -> String {
+    let text = text.trim();
+    let max_chars = 280;
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out = text.chars().take(max_chars).collect::<String>();
+    out = out.trim_end().to_string();
+    out.push_str("...");
+    out
+}
+
+fn clean_markdown_inline_links(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let Some(close_rel) = rest[open + 1..].find(']') else {
+            break;
+        };
+        let close = open + 1 + close_rel;
+        if !rest[close + 1..].starts_with('(') {
+            out.push_str(&rest[..=close]);
+            rest = &rest[close + 1..];
+            continue;
+        }
+        let Some(paren_close_rel) = rest[close + 2..].find(')') else {
+            break;
+        };
+        let paren_close = close + 2 + paren_close_rel;
+        out.push_str(&rest[..open]);
+        out.push_str(&rest[open + 1..close]);
+        rest = &rest[paren_close + 1..];
+    }
+    out.push_str(rest);
+    out.trim().to_string()
+}
+
+fn first_issue_ref(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        if bytes[idx] != b'#' {
+            idx += 1;
+            continue;
+        }
+        let start = idx + 1;
+        let mut end = start;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end > start {
+            return Some(format!("#{}", &text[start..end]));
         }
         idx += 1;
     }
-    BTreeMap::new()
+    None
+}
+
+fn dedupe_capability_prose_candidates(
+    mut candidates: Vec<CapabilityProseCandidate>,
+) -> Vec<CapabilityProseCandidate> {
+    candidates.sort_by_key(|candidate| candidate.line);
+    let mut seen = BTreeSet::new();
+    candidates
+        .into_iter()
+        .filter(|candidate| seen.insert(candidate.id.clone()))
+        .collect()
 }
 
 fn capability_maturity_summary(capability: &CapabilitySection) -> String {
@@ -2404,6 +7958,9 @@ fn capability_maturity_summary(capability: &CapabilitySection) -> String {
 }
 
 fn capability_gate_inventory(capability: &CapabilitySection) -> String {
+    if let Some(raw) = capability_raw_gate_inventory(capability) {
+        return raw;
+    }
     let mut refs = Vec::new();
     if let Some(contract) = capability.verification_contract.as_ref() {
         for claim in &contract.claims {
@@ -2421,6 +7978,17 @@ fn capability_gate_inventory(capability: &CapabilitySection) -> String {
         "-".to_string()
     } else {
         refs.join("<br>")
+    }
+}
+
+fn capability_raw_gate_inventory(capability: &CapabilitySection) -> Option<String> {
+    let marker = "Gate inventory:";
+    let (_before, after) = capability.current_state.split_once(marker)?;
+    let raw = after.trim();
+    if raw.is_empty() || is_empty_table_value(raw) {
+        None
+    } else {
+        Some(raw.to_string())
     }
 }
 
@@ -2503,6 +8071,31 @@ fn validate_capability_contract(capability: &CapabilitySection) -> Result<Vec<St
             | CapabilityStatus::Blocked
             | CapabilityStatus::Verified
     );
+    findings.extend(validate_efficiency_backfill_slots(capability));
+    if requires_contract {
+        if capability.capability_type.is_none() {
+            findings.push(format!(
+                "capability `{}` status {:?} requires Type",
+                capability.id, capability.status
+            ));
+        }
+        if capability.surfaces.is_empty() {
+            findings.push(format!(
+                "capability `{}` status {:?} requires at least one Surface",
+                capability.id, capability.status
+            ));
+        }
+        if !capability
+            .ec_dimensions
+            .iter()
+            .any(ec_dimension_has_content)
+        {
+            findings.push(format!(
+                "capability `{}` status {:?} requires at least one EC Dimensions entry",
+                capability.id, capability.status
+            ));
+        }
+    }
     let Some(contract) = capability.verification_contract.as_ref() else {
         if requires_contract {
             findings.push(format!(
@@ -2592,21 +8185,284 @@ fn validate_capability_contract(capability: &CapabilitySection) -> Result<Vec<St
     Ok(findings)
 }
 
+fn validate_efficiency_backfill_slots(capability: &CapabilitySection) -> Vec<String> {
+    let mut findings = Vec::new();
+    for dimension in &capability.ec_dimensions {
+        if let Some(slot) = &dimension.efficiency_backfill {
+            if slot.operating_point.trim().is_empty() {
+                findings.push(format!(
+                    "capability `{}` efficiency backfill slot requires operating_point",
+                    capability.id
+                ));
+            }
+            if slot.cube.trim().is_empty() {
+                findings.push(format!(
+                    "capability `{}` efficiency backfill slot requires cube",
+                    capability.id
+                ));
+            }
+        }
+    }
+    findings
+}
+
+fn markdown_capability_document_needs_canonicalization(body: &str) -> bool {
+    let lines = body.lines().collect::<Vec<_>>();
+    if markdown_capability_document_missing_canonical_scaffold(&lines) {
+        return true;
+    }
+    let fenced = markdown_fenced_line_mask(&lines);
+    let mut idx = 0;
+    while idx < lines.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
+        if let Some((level, title)) = parse_heading(lines[idx]) {
+            if markdown_heading_is_noncanonical_efficiency_backfill(&lines, idx, &title) {
+                return true;
+            }
+            if level == 2 && title.eq_ignore_ascii_case("Capability Index") {
+                return true;
+            }
+            if level == 2 && title.starts_with("Capability:") {
+                idx += 1;
+                continue;
+            }
+            if level == 2 {
+                let block_end =
+                    next_capability_heading(&lines, idx + 1, level).unwrap_or(lines.len());
+                if markdown_block_has_capability_contract(&lines, idx + 1, block_end) {
+                    return true;
+                }
+            }
+        }
+        if let Some((headers, rows, next_idx)) = parse_markdown_table_at(&lines, idx) {
+            if markdown_contract_indices(&headers).is_some()
+                || markdown_field_value_contract_has_id(&headers, &rows)
+            {
+                return true;
+            }
+            idx = next_idx;
+            continue;
+        }
+        idx += 1;
+    }
+    false
+}
+
+fn markdown_capability_document_missing_canonical_scaffold(lines: &[&str]) -> bool {
+    let fenced = markdown_fenced_line_mask(lines);
+    let has_contract = markdown_has_capability_contract_heading(lines, &fenced);
+    if !has_contract {
+        return false;
+    }
+    let has_h1 = lines.iter().enumerate().any(|(idx, line)| {
+        !fenced[idx]
+            && parse_heading(line)
+                .map(|(level, _)| level == 1)
+                .unwrap_or(false)
+    });
+    if !has_h1 {
+        return true;
+    }
+    let has_brief = lines.iter().enumerate().any(|(idx, line)| {
+        !fenced[idx]
+            && parse_heading(line)
+                .map(|(level, title)| level == 2 && title.eq_ignore_ascii_case("Brief"))
+                .unwrap_or(false)
+    });
+    if !has_brief {
+        return true;
+    }
+    let Some((capabilities_start, capabilities_end)) =
+        markdown_capabilities_section_span(lines, &fenced)
+    else {
+        return true;
+    };
+    let has_h3_index = (capabilities_start + 1..capabilities_end).any(|idx| {
+        !fenced[idx]
+            && parse_heading(lines[idx])
+                .map(|(level, title)| level == 3 && title.eq_ignore_ascii_case("Capability Index"))
+                .unwrap_or(false)
+    });
+    if !has_h3_index {
+        return true;
+    }
+    markdown_has_capability_contract_outside_section(
+        lines,
+        &fenced,
+        capabilities_start + 1,
+        capabilities_end,
+    )
+}
+
+fn markdown_capabilities_section_span(lines: &[&str], fenced: &[bool]) -> Option<(usize, usize)> {
+    lines.iter().enumerate().find_map(|(idx, line)| {
+        if fenced[idx] {
+            return None;
+        }
+        parse_heading(line)
+            .filter(|(level, title)| *level == 2 && title.eq_ignore_ascii_case("Capabilities"))
+            .map(|_| {
+                let end = (idx + 1..lines.len())
+                    .find(|next| {
+                        !fenced[*next]
+                            && parse_heading(lines[*next])
+                                .map(|(level, _)| level <= 2)
+                                .unwrap_or(false)
+                    })
+                    .unwrap_or(lines.len());
+                (idx, end)
+            })
+    })
+}
+
+fn markdown_has_capability_contract_heading(lines: &[&str], fenced: &[bool]) -> bool {
+    let mut cursor = 0;
+    while cursor < lines.len() {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[cursor]) else {
+            cursor += 1;
+            continue;
+        };
+        if level < 2
+            || title.eq_ignore_ascii_case("Capability Index")
+            || title.starts_with("Capability:")
+        {
+            cursor += 1;
+            continue;
+        }
+        let block_end = next_heading(lines, cursor + 1).unwrap_or(lines.len());
+        if markdown_block_has_capability_contract(lines, cursor + 1, block_end) {
+            return true;
+        }
+        cursor = block_end;
+    }
+    false
+}
+
+fn markdown_has_capability_contract_outside_section(
+    lines: &[&str],
+    fenced: &[bool],
+    section_start: usize,
+    section_end: usize,
+) -> bool {
+    let mut cursor = 0;
+    while cursor < lines.len() {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((level, title)) = parse_heading(lines[cursor]) else {
+            cursor += 1;
+            continue;
+        };
+        if level < 2
+            || title.eq_ignore_ascii_case("Capability Index")
+            || title.starts_with("Capability:")
+        {
+            cursor += 1;
+            continue;
+        }
+        let block_end = next_heading(lines, cursor + 1).unwrap_or(lines.len());
+        if markdown_block_has_capability_contract(lines, cursor + 1, block_end)
+            && (cursor < section_start || cursor >= section_end || level < 3)
+        {
+            return true;
+        }
+        cursor = block_end;
+    }
+    false
+}
+
+fn markdown_heading_is_noncanonical_efficiency_backfill(
+    lines: &[&str],
+    heading_idx: usize,
+    title: &str,
+) -> bool {
+    let normalized = normalize_table_token(title);
+    if normalized != "efficiency" {
+        return false;
+    }
+    let section_end = next_heading(lines, heading_idx + 1).unwrap_or(lines.len());
+    let values = parse_markdown_field_values(lines, heading_idx + 1, section_end);
+    values.contains_key("operatingpoint")
+        || values.contains_key("efficiencyoperatingpoint")
+        || values.contains_key("cube")
+        || values.contains_key("cuberef")
+        || values.contains_key("efficiencycube")
+}
+
+fn markdown_block_has_capability_contract(lines: &[&str], start: usize, end: usize) -> bool {
+    let fenced = markdown_fenced_line_mask(lines);
+    let mut cursor = start;
+    while cursor < end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        if parse_markdown_contract_field_line(lines[cursor].trim())
+            .map(|(key, _)| key == "id")
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if let Some((headers, rows, next_idx)) = parse_markdown_table_at(lines, cursor) {
+            if markdown_contract_indices(&headers).is_some()
+                || markdown_field_value_contract_has_id(&headers, &rows)
+            {
+                return true;
+            }
+            cursor = next_idx;
+            continue;
+        }
+        cursor += 1;
+    }
+    false
+}
+
+fn markdown_field_value_contract_has_id(headers: &[String], rows: &[Vec<String>]) -> bool {
+    let Some(field_column) = find_table_column(headers, &["field", "property", "key"]) else {
+        return false;
+    };
+    let Some(_value_column) = find_table_column(headers, &["value"]) else {
+        return false;
+    };
+    rows.iter().any(|row| {
+        matches!(
+            normalize_table_token(&table_cell(row, field_column)).as_str(),
+            "id" | "capabilityid"
+        )
+    })
+}
+
 fn parse_markdown_table_capability_sections(body: &str) -> Result<Vec<CapabilitySection>> {
     let lines = body.lines().collect::<Vec<_>>();
+    let fenced = markdown_fenced_line_mask(&lines);
     let mut sections = Vec::new();
     let mut idx = 0;
     while idx < lines.len() {
+        if fenced[idx] {
+            idx += 1;
+            continue;
+        }
         let Some((level, title)) = parse_heading(lines[idx]) else {
             idx += 1;
             continue;
         };
-        if level < 2 || title.eq_ignore_ascii_case("Capability Index") {
+        if level < 2
+            || title.eq_ignore_ascii_case("Capability Index")
+            || title.starts_with("Capability:")
+        {
             idx += 1;
             continue;
         }
 
-        let block_end = next_heading(&lines, idx + 1).unwrap_or(lines.len());
+        let block_end = next_capability_heading(&lines, idx + 1, level).unwrap_or(lines.len());
         if let Some(section) =
             parse_markdown_capability_block(&lines, idx, block_end, title.clone())?
         {
@@ -2625,10 +8481,18 @@ fn parse_markdown_capability_block(
     block_end: usize,
     title: String,
 ) -> Result<Option<CapabilitySection>> {
-    let mut contract = None;
+    let mut contract = parse_markdown_field_capability_contract(lines, heading_idx, block_end);
     let mut work_roots = Vec::new();
+    let mut surfaces = Vec::new();
+    let mut ec_dimensions = Vec::new();
+    let mut machine_table_spans = Vec::<(usize, usize)>::new();
+    let fenced = markdown_fenced_line_mask(lines);
     let mut cursor = heading_idx + 1;
     while cursor < block_end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
         let Some((headers, rows, next_idx)) = parse_markdown_table_at(lines, cursor) else {
             cursor += 1;
             continue;
@@ -2637,8 +8501,16 @@ fn parse_markdown_capability_block(
             parse_markdown_capability_contract(&title, heading_idx, &headers, &rows)?
         {
             contract = Some(parsed_contract);
+            machine_table_spans.push((cursor, next_idx));
         } else if markdown_work_root_indices(&headers).is_some() {
             work_roots.push((headers, rows));
+            machine_table_spans.push((cursor, next_idx));
+        } else if let Some(parsed_surfaces) = parse_markdown_surface_table(&headers, &rows) {
+            surfaces.extend(parsed_surfaces);
+            machine_table_spans.push((cursor, next_idx));
+        } else if let Some(parsed_dimensions) = parse_markdown_ec_dimension_table(&headers, &rows) {
+            ec_dimensions.extend(parsed_dimensions);
+            machine_table_spans.push((cursor, next_idx));
         }
         cursor = next_idx;
     }
@@ -2655,8 +8527,32 @@ fn parse_markdown_capability_block(
         parse_full_regenerability_required(&contract.required_verification);
     let gate_inventory = contract.gate_inventory;
     let dependencies = parse_dependency_list(&contract.dependencies);
+    let capability_type = parse_capability_type_cell(&contract.capability_type)?;
+    surfaces.extend(parse_capability_surfaces(&contract.surfaces));
+    ec_dimensions.extend(parse_capability_ec_dimensions(&contract.ec_dimensions));
+    if let Some(slot) = parse_efficiency_slot_from_contract(
+        &contract.efficiency_operating_point,
+        &contract.efficiency_cube,
+    ) {
+        merge_efficiency_backfill_slot(&mut ec_dimensions, slot);
+    }
+    if let Some((slot, section_span)) =
+        parse_efficiency_backfill_section(lines, heading_idx + 1, block_end)
+    {
+        merge_efficiency_backfill_slot(&mut ec_dimensions, slot);
+        machine_table_spans.push(section_span);
+    }
+    ec_dimensions = dedupe_ec_dimensions(ec_dimensions);
+    surfaces = dedupe_surfaces(surfaces);
+    let (prelude, postlude) = markdown_capability_prose_around_machine_tables(
+        lines,
+        heading_idx,
+        block_end,
+        &machine_table_spans,
+    );
 
     let mut gaps = Vec::new();
+    let mut work_root_rows = Vec::new();
     let mut claims = Vec::new();
     let mut verification = Vec::new();
     for (headers, rows) in work_roots {
@@ -2689,6 +8585,16 @@ fn parse_markdown_capability_block(
                 status: capability_gap_status_from_table(&implementation, &verification_state),
                 active_wi,
                 summary: work_root.clone(),
+            });
+            work_root_rows.push(CapabilityWorkRoot {
+                id: gap_id.clone(),
+                work_root: work_root.clone(),
+                kind: kind.clone(),
+                wi: wi.clone(),
+                implementation: implementation.clone(),
+                verification: verification_state.clone(),
+                maturity: maturity_cell.clone(),
+                gate_evidence: gate_evidence.clone(),
             });
 
             let maturity = parse_first_maturity(&maturity_cell)
@@ -2744,6 +8650,12 @@ fn parse_markdown_capability_block(
         title,
         id,
         status,
+        prelude,
+        postlude,
+        index_summary: None,
+        capability_type,
+        surfaces,
+        ec_dimensions,
         promise,
         current_state: if is_empty_table_value(&gate_inventory) {
             format!("Root WI: {root_wi}")
@@ -2751,6 +8663,7 @@ fn parse_markdown_capability_block(
             format!("Root WI: {root_wi}; Gate inventory: {gate_inventory}")
         },
         gaps,
+        work_roots: work_root_rows,
         verification_contract,
         evidence: CapabilityEvidence {
             source: Vec::new(),
@@ -2770,10 +8683,164 @@ struct MarkdownCapabilityContract {
     id: String,
     root_wi: String,
     status: String,
+    capability_type: String,
+    surfaces: String,
+    ec_dimensions: String,
     promise: String,
     required_verification: String,
     gate_inventory: String,
     dependencies: String,
+    efficiency_operating_point: String,
+    efficiency_cube: String,
+}
+
+fn parse_markdown_field_capability_contract(
+    lines: &[&str],
+    heading_idx: usize,
+    block_end: usize,
+) -> Option<MarkdownCapabilityContract> {
+    let mut values = BTreeMap::<String, String>::new();
+    let mut current_key: Option<String> = None;
+    let fenced = markdown_fenced_line_mask(lines);
+    let mut cursor = heading_idx + 1;
+
+    while cursor < block_end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        if parse_markdown_table_at(lines, cursor).is_some() {
+            break;
+        }
+        let trimmed = lines[cursor].trim();
+        if trimmed.is_empty() {
+            cursor += 1;
+            continue;
+        }
+
+        if let Some((key, value)) = parse_markdown_contract_field_line(trimmed) {
+            current_key = Some(key.clone());
+            append_markdown_contract_field_value(&mut values, &key, &value);
+        } else if let Some(key) = current_key.as_deref() {
+            let value = clean_markdown_contract_continuation(trimmed);
+            append_markdown_contract_field_value(&mut values, key, &value);
+        }
+        cursor += 1;
+    }
+
+    let id = values.remove("id")?;
+    Some(MarkdownCapabilityContract {
+        id,
+        root_wi: values.remove("rootwi").unwrap_or_else(|| "-".to_string()),
+        status: values
+            .remove("status")
+            .unwrap_or_else(|| "candidate".to_string()),
+        capability_type: values.remove("type").unwrap_or_else(|| "-".to_string()),
+        surfaces: values.remove("surfaces").unwrap_or_else(|| "-".to_string()),
+        ec_dimensions: values
+            .remove("ecdimensions")
+            .unwrap_or_else(|| "-".to_string()),
+        promise: values.remove("promise").unwrap_or_default(),
+        required_verification: values
+            .remove("requiredverification")
+            .unwrap_or_else(|| "-".to_string()),
+        gate_inventory: values
+            .remove("gateinventory")
+            .unwrap_or_else(|| "-".to_string()),
+        dependencies: values
+            .remove("dependencies")
+            .unwrap_or_else(|| "-".to_string()),
+        efficiency_operating_point: values
+            .remove("efficiencyoperatingpoint")
+            .unwrap_or_else(|| "-".to_string()),
+        efficiency_cube: values
+            .remove("efficiencycube")
+            .unwrap_or_else(|| "-".to_string()),
+    })
+}
+
+fn parse_markdown_contract_field_line(line: &str) -> Option<(String, String)> {
+    let line = line.strip_prefix("- ").unwrap_or(line).trim();
+    let (raw_key, raw_value) = line.split_once(':')?;
+    let key = normalize_table_token(raw_key.trim().trim_matches('*'));
+    let canonical_key = match key.as_str() {
+        "id" | "capabilityid" => "id",
+        "rootwi" | "wi" => "rootwi",
+        "status" => "status",
+        "type" | "capabilitytype" => "type",
+        "surface" | "surfaces" | "capabilitysurface" | "capabilitysurfaces" => "surfaces",
+        "clisurface" | "commands" | "command" => "surfaces",
+        "ecdimensions" | "dimension" | "dimensions" | "requireddimensions" => "ecdimensions",
+        "promise" => "promise",
+        "requiredverification" | "maturity" => "requiredverification",
+        "gateinventory" | "gateevidence" | "inventory" => "gateinventory",
+        "dependencies" | "dependency" | "depends" | "dependson" => "dependencies",
+        "efficiencyoperatingpoint" | "operatingpoint" => "efficiencyoperatingpoint",
+        "efficiencycube" | "cuberef" | "cube" => "efficiencycube",
+        _ => return None,
+    };
+    Some((
+        canonical_key.to_string(),
+        clean_markdown_contract_continuation(raw_value),
+    ))
+}
+
+fn clean_markdown_contract_continuation(value: &str) -> String {
+    value
+        .trim()
+        .strip_prefix("- ")
+        .unwrap_or(value.trim())
+        .trim()
+        .to_string()
+}
+
+fn append_markdown_contract_field_value(
+    values: &mut BTreeMap<String, String>,
+    key: &str,
+    value: &str,
+) {
+    if value.is_empty() {
+        values.entry(key.to_string()).or_default();
+        return;
+    }
+    let entry = values.entry(key.to_string()).or_default();
+    if entry.is_empty() {
+        entry.push_str(value);
+    } else if key == "promise" {
+        entry.push('\n');
+        entry.push_str(value);
+    } else {
+        entry.push_str("<br>");
+        entry.push_str(value);
+    }
+}
+
+fn markdown_capability_prose_around_machine_tables(
+    lines: &[&str],
+    heading_idx: usize,
+    block_end: usize,
+    machine_table_spans: &[(usize, usize)],
+) -> (String, String) {
+    if machine_table_spans.is_empty() {
+        return (String::new(), String::new());
+    }
+    let first_table_start = machine_table_spans
+        .iter()
+        .map(|(start, _)| *start)
+        .min()
+        .unwrap_or(block_end);
+    let last_table_end = machine_table_spans
+        .iter()
+        .map(|(_, end)| *end)
+        .max()
+        .unwrap_or(heading_idx + 1);
+    let prelude = join_markdown_prose_lines(&lines[heading_idx + 1..first_table_start]);
+    let postlude = join_markdown_prose_lines(&lines[last_table_end..block_end]);
+    (prelude, postlude)
+}
+
+fn join_markdown_prose_lines(lines: &[&str]) -> String {
+    lines.join("\n").trim().to_string()
 }
 
 fn parse_markdown_capability_contract(
@@ -2794,11 +8861,31 @@ fn parse_markdown_capability_contract(
             id: table_cell(row, indices.id),
             root_wi: table_cell(row, indices.root_wi),
             status: table_cell(row, indices.status),
+            capability_type: indices
+                .capability_type
+                .map(|idx| table_cell(row, idx))
+                .unwrap_or_else(|| "-".to_string()),
+            surfaces: indices
+                .surfaces
+                .map(|idx| table_cell(row, idx))
+                .unwrap_or_else(|| "-".to_string()),
+            ec_dimensions: indices
+                .ec_dimensions
+                .map(|idx| table_cell(row, idx))
+                .unwrap_or_else(|| "-".to_string()),
             promise: table_cell(row, indices.promise),
             required_verification: table_cell(row, indices.required_verification),
             gate_inventory: table_cell(row, indices.gate_inventory),
             dependencies: indices
                 .dependencies
+                .map(|idx| table_cell(row, idx))
+                .unwrap_or_else(|| "-".to_string()),
+            efficiency_operating_point: indices
+                .efficiency_operating_point
+                .map(|idx| table_cell(row, idx))
+                .unwrap_or_else(|| "-".to_string()),
+            efficiency_cube: indices
+                .efficiency_cube
                 .map(|idx| table_cell(row, idx))
                 .unwrap_or_else(|| "-".to_string()),
         }));
@@ -2827,12 +8914,34 @@ fn parse_markdown_capability_contract(
         id,
         root_wi: value_for(&["rootwi", "wi"]).unwrap_or_else(|| "-".to_string()),
         status: value_for(&["status"]).unwrap_or_else(|| "candidate".to_string()),
+        capability_type: value_for(&["type", "capabilitytype"]).unwrap_or_else(|| "-".to_string()),
+        surfaces: value_for(&[
+            "surface",
+            "surfaces",
+            "capabilitysurface",
+            "capabilitysurfaces",
+            "clisurface",
+            "commands",
+            "command",
+        ])
+        .unwrap_or_else(|| "-".to_string()),
+        ec_dimensions: value_for(&[
+            "ecdimensions",
+            "dimension",
+            "dimensions",
+            "requireddimensions",
+        ])
+        .unwrap_or_else(|| "-".to_string()),
         promise: value_for(&["promise"]).unwrap_or_default(),
         required_verification: value_for(&["requiredverification", "maturity"])
             .unwrap_or_else(|| "-".to_string()),
         gate_inventory: value_for(&["gateinventory", "gateevidence", "inventory"])
             .unwrap_or_else(|| "-".to_string()),
         dependencies: value_for(&["dependencies", "dependency", "depends", "dependson"])
+            .unwrap_or_else(|| "-".to_string()),
+        efficiency_operating_point: value_for(&["efficiencyoperatingpoint", "operatingpoint"])
+            .unwrap_or_else(|| "-".to_string()),
+        efficiency_cube: value_for(&["efficiencycube", "cuberef", "cube"])
             .unwrap_or_else(|| "-".to_string()),
     }))
 }
@@ -2847,8 +8956,67 @@ fn parse_heading(line: &str) -> Option<(usize, String)> {
     Some((level, title))
 }
 
+fn markdown_fenced_line_mask(lines: &[&str]) -> Vec<bool> {
+    let mut in_fence = false;
+    let mut mask = Vec::with_capacity(lines.len());
+    for line in lines {
+        mask.push(in_fence);
+        if is_markdown_fence_line(line) {
+            in_fence = !in_fence;
+        }
+    }
+    mask
+}
+
+fn is_markdown_fence_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+}
+
 fn next_heading(lines: &[&str], start: usize) -> Option<usize> {
-    (start..lines.len()).find(|idx| parse_heading(lines[*idx]).is_some())
+    let fenced = markdown_fenced_line_mask(lines);
+    (start..lines.len()).find(|idx| !fenced[*idx] && parse_heading(lines[*idx]).is_some())
+}
+
+fn next_capability_heading(lines: &[&str], start: usize, current_level: usize) -> Option<usize> {
+    let fenced = markdown_fenced_line_mask(lines);
+    (start..lines.len()).find(|idx| {
+        if fenced[*idx] {
+            return false;
+        }
+        let Some((level, _title)) = parse_heading(lines[*idx]) else {
+            return false;
+        };
+        level <= current_level || heading_has_capability_contract(lines, *idx)
+    })
+}
+
+fn heading_has_capability_contract(lines: &[&str], heading_idx: usize) -> bool {
+    let fenced = markdown_fenced_line_mask(lines);
+    let block_end = next_heading(lines, heading_idx + 1).unwrap_or(lines.len());
+    parse_markdown_field_capability_contract(lines, heading_idx, block_end).is_some() || {
+        let mut cursor = heading_idx + 1;
+        while cursor < block_end {
+            if fenced[cursor] {
+                cursor += 1;
+                continue;
+            }
+            let Some((headers, _rows, next_idx)) = parse_markdown_table_at(lines, cursor) else {
+                cursor += 1;
+                continue;
+            };
+            if markdown_contract_indices(&headers).is_some() {
+                return true;
+            }
+            if find_table_column(&headers, &["field", "property", "key"]).is_some()
+                && find_table_column(&headers, &["value"]).is_some()
+            {
+                return true;
+            }
+            cursor = next_idx;
+        }
+        false
+    }
 }
 
 fn parse_markdown_table_at(
@@ -2880,10 +9048,15 @@ struct MarkdownContractIndices {
     id: usize,
     root_wi: usize,
     status: usize,
+    capability_type: Option<usize>,
+    surfaces: Option<usize>,
+    ec_dimensions: Option<usize>,
     promise: usize,
     required_verification: usize,
     gate_inventory: usize,
     dependencies: Option<usize>,
+    efficiency_operating_point: Option<usize>,
+    efficiency_cube: Option<usize>,
 }
 
 fn markdown_contract_indices(cells: &[String]) -> Option<MarkdownContractIndices> {
@@ -2891,11 +9064,487 @@ fn markdown_contract_indices(cells: &[String]) -> Option<MarkdownContractIndices
         id: find_table_column(cells, &["id"])?,
         root_wi: find_table_column(cells, &["rootwi", "wi"])?,
         status: find_table_column(cells, &["status"])?,
+        capability_type: find_table_column(cells, &["type", "capabilitytype"]),
+        surfaces: find_table_column(
+            cells,
+            &[
+                "surface",
+                "surfaces",
+                "capabilitysurface",
+                "capabilitysurfaces",
+                "clisurface",
+                "commands",
+            ],
+        ),
+        ec_dimensions: find_table_column(
+            cells,
+            &[
+                "ecdimensions",
+                "dimension",
+                "dimensions",
+                "requireddimensions",
+            ],
+        ),
         promise: find_table_column(cells, &["promise"])?,
         required_verification: find_table_column(cells, &["requiredverification", "maturity"])?,
         gate_inventory: find_table_column(cells, &["gateinventory", "gateevidence", "inventory"])?,
         dependencies: find_table_column(cells, &["dependencies", "dependency", "depends"]),
+        efficiency_operating_point: find_table_column(
+            cells,
+            &["efficiencyoperatingpoint", "operatingpoint"],
+        ),
+        efficiency_cube: find_table_column(cells, &["efficiencycube", "cuberef", "cube"]),
     })
+}
+
+fn parse_capability_type_cell(value: &str) -> Result<Option<CapabilityType>> {
+    if is_empty_table_value(value) {
+        return Ok(None);
+    }
+    CapabilityType::from_cli_str(value).map(Some)
+}
+
+fn parse_capability_surfaces(value: &str) -> Vec<CapabilitySurface> {
+    split_surface_contract_list(value)
+        .into_iter()
+        .filter_map(|piece| {
+            let piece = piece.trim().trim_start_matches("- ").trim();
+            if is_empty_table_value(piece) {
+                return None;
+            }
+            let (kind, summary) = piece
+                .split_once(':')
+                .map(|(kind, summary)| (kind.trim(), summary.trim()))
+                .unwrap_or(("CLI", piece));
+            let commands = extract_backtick_values(summary);
+            let summary = clean_surface_summary(summary);
+            Some(CapabilitySurface {
+                kind: normalize_surface_kind(kind),
+                commands,
+                summary,
+                verification: String::new(),
+            })
+        })
+        .collect()
+}
+
+fn split_surface_contract_list(value: &str) -> Vec<String> {
+    split_inline_contract_list(value, is_surface_contract_key)
+}
+
+fn clean_surface_summary(summary: &str) -> String {
+    clean_leading_code_summary(summary)
+}
+
+fn parse_capability_ec_dimensions(value: &str) -> Vec<CapabilityEcDimension> {
+    split_ec_dimension_contract_list(value)
+        .into_iter()
+        .filter_map(|piece| {
+            let piece = piece.trim().trim_start_matches("- ").trim();
+            if is_empty_table_value(piece) {
+                return None;
+            }
+            let (raw_dimension, summary) = piece
+                .split_once(':')
+                .map(|(dimension, summary)| (dimension.trim(), summary.trim()))
+                .unwrap_or((piece, ""));
+            let dimension = parse_ec_dimension_kind(raw_dimension)?;
+            let runner = first_backtick_value(summary).unwrap_or_default();
+            let summary = clean_runner_prefixed_summary(summary);
+            Some(CapabilityEcDimension {
+                dimension,
+                runner,
+                summary,
+                required_for_production: None,
+                efficiency_backfill: None,
+            })
+        })
+        .collect()
+}
+
+fn split_ec_dimension_contract_list(value: &str) -> Vec<String> {
+    split_inline_contract_list(value, is_ec_dimension_contract_key)
+}
+
+fn split_inline_contract_list(value: &str, is_contract_key: fn(&str) -> bool) -> Vec<String> {
+    value
+        .split("<br>")
+        .flat_map(|part| part.split('\n'))
+        .flat_map(|part| split_inline_contract_line(part, is_contract_key))
+        .map(|part| part.trim().to_string())
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
+fn split_inline_contract_line(line: &str, is_contract_key: fn(&str) -> bool) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for (idx, ch) in line.char_indices() {
+        if ch == ';'
+            && has_contract_key_after_separator(&line[idx + ch.len_utf8()..], is_contract_key)
+        {
+            let part = line[start..idx].trim();
+            if !part.is_empty() {
+                parts.push(part.to_string());
+            }
+            start = idx + ch.len_utf8();
+        }
+    }
+    let part = line[start..].trim();
+    if !part.is_empty() {
+        parts.push(part.to_string());
+    }
+    parts
+}
+
+fn has_contract_key_after_separator(rest: &str, is_contract_key: fn(&str) -> bool) -> bool {
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix("- ").unwrap_or(rest).trim_start();
+    let Some((key, _summary)) = rest.split_once(':') else {
+        return false;
+    };
+    let key = key.trim().trim_matches(['`', '*', '_', ' ']);
+    !key.is_empty() && key.len() <= 32 && is_contract_key(key)
+}
+
+fn is_surface_contract_key(value: &str) -> bool {
+    matches!(
+        normalize_table_token(value).as_str(),
+        "cli"
+            | "command"
+            | "commands"
+            | "http"
+            | "api"
+            | "rest"
+            | "sdk"
+            | "ui"
+            | "webui"
+            | "web"
+            | "config"
+            | "configuration"
+            | "fileformat"
+            | "file"
+            | "format"
+            | "agent"
+            | "agents"
+            | "browser"
+            | "browsere2e"
+            | "webe2e"
+            | "webappe2e"
+            | "e2e"
+    )
+}
+
+fn is_ec_dimension_contract_key(value: &str) -> bool {
+    parse_ec_dimension_kind(value).is_some()
+}
+
+fn clean_runner_prefixed_summary(summary: &str) -> String {
+    clean_leading_code_summary(summary)
+}
+
+fn clean_leading_code_summary(summary: &str) -> String {
+    let summary = summary.trim();
+    if summary.starts_with('`') {
+        if let Some((_commands, rest)) = summary.split_once(" - ") {
+            return rest.trim().to_string();
+        }
+    }
+    if let Some(rest) = summary
+        .strip_prefix('`')
+        .and_then(|after_open| after_open.split_once('`').map(|(_code, rest)| rest))
+    {
+        let rest = rest.trim();
+        let rest = rest.strip_prefix('-').unwrap_or(rest).trim();
+        if rest.is_empty() {
+            return String::new();
+        }
+        return rest.to_string();
+    }
+    summary.to_string()
+}
+
+fn parse_markdown_surface_table(
+    headers: &[String],
+    rows: &[Vec<String>],
+) -> Option<Vec<CapabilitySurface>> {
+    let surface_idx = find_table_column(headers, &["surface", "kind"]);
+    let command_idx = find_table_column(headers, &["command", "commands", "cli"]);
+    let summary_idx = find_table_column(headers, &["summary", "owns", "purpose"]);
+    let verification_idx = find_table_column(headers, &["verification", "gate", "evidence"]);
+    if surface_idx.is_none() && command_idx.is_none() {
+        return None;
+    }
+    Some(
+        rows.iter()
+            .filter_map(|row| {
+                let kind = surface_idx
+                    .map(|idx| table_cell(row, idx))
+                    .filter(|value| !is_empty_table_value(value))
+                    .unwrap_or_else(|| "CLI".to_string());
+                let command_text = command_idx
+                    .map(|idx| table_cell(row, idx))
+                    .unwrap_or_else(|| "-".to_string());
+                let summary = summary_idx
+                    .map(|idx| table_cell(row, idx))
+                    .unwrap_or_default();
+                let verification = verification_idx
+                    .map(|idx| table_cell(row, idx))
+                    .unwrap_or_default();
+                if is_empty_table_value(&command_text)
+                    && summary.trim().is_empty()
+                    && verification.trim().is_empty()
+                {
+                    return None;
+                }
+                Some(CapabilitySurface {
+                    kind: normalize_surface_kind(&kind),
+                    commands: extract_backtick_values(&command_text),
+                    summary,
+                    verification,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn parse_markdown_ec_dimension_table(
+    headers: &[String],
+    rows: &[Vec<String>],
+) -> Option<Vec<CapabilityEcDimension>> {
+    let dimension_idx = find_table_column(headers, &["dimension", "ecdimension", "category"])?;
+    let runner_idx = find_table_column(headers, &["runner", "tool", "command"]);
+    let summary_idx = find_table_column(headers, &["summary", "evidence", "contract"]);
+    Some(
+        rows.iter()
+            .filter_map(|row| {
+                let dimension = parse_ec_dimension_kind(&table_cell(row, dimension_idx))?;
+                let runner = runner_idx
+                    .map(|idx| table_cell(row, idx))
+                    .filter(|value| !is_empty_table_value(value))
+                    .unwrap_or_default();
+                let summary = summary_idx
+                    .map(|idx| table_cell(row, idx))
+                    .unwrap_or_default();
+                Some(CapabilityEcDimension {
+                    dimension,
+                    runner,
+                    summary,
+                    required_for_production: None,
+                    efficiency_backfill: None,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn parse_efficiency_slot_from_contract(
+    operating_point: &str,
+    cube: &str,
+) -> Option<CapabilityEfficiencyBackfillSlot> {
+    if is_empty_table_value(operating_point) && is_empty_table_value(cube) {
+        return None;
+    }
+    Some(CapabilityEfficiencyBackfillSlot {
+        operating_point: if is_empty_table_value(operating_point) {
+            String::new()
+        } else {
+            operating_point.trim().to_string()
+        },
+        cube: if is_empty_table_value(cube) {
+            String::new()
+        } else {
+            cube.trim().to_string()
+        },
+    })
+}
+
+fn parse_efficiency_backfill_section(
+    lines: &[&str],
+    start: usize,
+    block_end: usize,
+) -> Option<(CapabilityEfficiencyBackfillSlot, (usize, usize))> {
+    let (section_start, section_end) =
+        find_efficiency_backfill_section_span(lines, start, block_end)?;
+    let values = parse_markdown_field_values(lines, section_start + 1, section_end);
+    let slot = parse_efficiency_slot_from_contract(
+        values
+            .get("operatingpoint")
+            .or_else(|| values.get("efficiencyoperatingpoint"))
+            .map(String::as_str)
+            .unwrap_or("-"),
+        values
+            .get("cube")
+            .or_else(|| values.get("cuberef"))
+            .or_else(|| values.get("efficiencycube"))
+            .map(String::as_str)
+            .unwrap_or("-"),
+    )?;
+    Some((slot, (section_start, section_end)))
+}
+
+fn find_efficiency_backfill_section_span(
+    lines: &[&str],
+    start: usize,
+    block_end: usize,
+) -> Option<(usize, usize)> {
+    let fenced = markdown_fenced_line_mask(lines);
+    let mut cursor = start;
+    while cursor < block_end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let Some((_level, title)) = parse_heading(lines[cursor]) else {
+            cursor += 1;
+            continue;
+        };
+        let normalized = normalize_table_token(&title);
+        if normalized != "efficiency" && !normalized.starts_with("efficiencygenerated") {
+            cursor += 1;
+            continue;
+        }
+        let section_end = next_heading(lines, cursor + 1)
+            .filter(|idx| *idx < block_end)
+            .unwrap_or(block_end);
+        return Some((cursor, section_end));
+    }
+    None
+}
+
+fn parse_markdown_field_values(
+    lines: &[&str],
+    start: usize,
+    end: usize,
+) -> BTreeMap<String, String> {
+    let mut values = BTreeMap::<String, String>::new();
+    let mut current_key: Option<String> = None;
+    let fenced = markdown_fenced_line_mask(lines);
+    let mut cursor = start;
+    while cursor < end {
+        if fenced[cursor] {
+            cursor += 1;
+            continue;
+        }
+        if parse_markdown_table_at(lines, cursor).is_some() {
+            break;
+        }
+        let trimmed = lines[cursor].trim();
+        if trimmed.is_empty() {
+            cursor += 1;
+            continue;
+        }
+        if let Some((raw_key, raw_value)) = trimmed
+            .strip_prefix("- ")
+            .unwrap_or(trimmed)
+            .split_once(':')
+        {
+            let key = normalize_table_token(raw_key.trim().trim_matches('*'));
+            current_key = Some(key.clone());
+            append_markdown_contract_field_value(
+                &mut values,
+                &key,
+                &clean_markdown_contract_continuation(raw_value),
+            );
+        } else if let Some(key) = current_key.as_deref() {
+            append_markdown_contract_field_value(
+                &mut values,
+                key,
+                &clean_markdown_contract_continuation(trimmed),
+            );
+        }
+        cursor += 1;
+    }
+    values
+}
+
+fn merge_efficiency_backfill_slot(
+    dimensions: &mut Vec<CapabilityEcDimension>,
+    slot: CapabilityEfficiencyBackfillSlot,
+) {
+    if let Some(dimension) = dimensions
+        .iter_mut()
+        .find(|dimension| dimension.dimension == CapabilityEcDimensionKind::Efficiency)
+    {
+        dimension.efficiency_backfill = Some(slot);
+        return;
+    }
+    dimensions.push(CapabilityEcDimension {
+        dimension: CapabilityEcDimensionKind::Efficiency,
+        runner: String::new(),
+        summary: "aw-generated efficiency backfill slot".to_string(),
+        required_for_production: None,
+        efficiency_backfill: Some(slot),
+    });
+}
+
+fn dedupe_ec_dimensions(dimensions: Vec<CapabilityEcDimension>) -> Vec<CapabilityEcDimension> {
+    let mut by_dimension = BTreeMap::<CapabilityEcDimensionKind, CapabilityEcDimension>::new();
+    for dimension in dimensions {
+        by_dimension
+            .entry(dimension.dimension)
+            .and_modify(|existing| {
+                if existing.runner.is_empty() {
+                    existing.runner = dimension.runner.clone();
+                }
+                if existing.summary.is_empty() {
+                    existing.summary = dimension.summary.clone();
+                }
+                if existing.required_for_production.is_none() {
+                    existing.required_for_production = dimension.required_for_production;
+                }
+                if existing.efficiency_backfill.is_none() {
+                    existing.efficiency_backfill = dimension.efficiency_backfill.clone();
+                }
+            })
+            .or_insert(dimension);
+    }
+    by_dimension.into_values().collect()
+}
+
+fn dedupe_surfaces(surfaces: Vec<CapabilitySurface>) -> Vec<CapabilitySurface> {
+    let mut seen = BTreeSet::new();
+    surfaces
+        .into_iter()
+        .filter(|surface| {
+            let key = format!(
+                "{}:{}:{}",
+                normalize_table_token(&surface.kind),
+                surface.commands.join(","),
+                surface.summary
+            );
+            seen.insert(key)
+        })
+        .collect()
+}
+
+fn normalize_surface_kind(value: &str) -> String {
+    match normalize_table_token(value).as_str() {
+        "cli" | "command" | "commands" => "CLI",
+        "http" | "api" | "rest" => "HTTP",
+        "sdk" => "SDK",
+        "ui" | "webui" | "web" => "UI",
+        "config" | "configuration" => "Config",
+        "fileformat" | "file" | "format" => "FileFormat",
+        _ => value.trim(),
+    }
+    .to_string()
+}
+
+fn parse_ec_dimension_kind(value: &str) -> Option<CapabilityEcDimensionKind> {
+    match normalize_table_token(value).as_str() {
+        "behavior" | "behaviour" | "functional" | "function" | "render" => {
+            Some(CapabilityEcDimensionKind::Behavior)
+        }
+        "efficiency" | "performance" | "perf" => Some(CapabilityEcDimensionKind::Efficiency),
+        "security" | "secure" => Some(CapabilityEcDimensionKind::Security),
+        "stability" | "resilience" | "reliability" => Some(CapabilityEcDimensionKind::Stability),
+        _ => None,
+    }
+}
+
+fn first_backtick_value(value: &str) -> Option<String> {
+    extract_backtick_values(value).into_iter().next()
 }
 
 fn parse_dependency_list(cell: &str) -> Vec<String> {
@@ -2940,6 +9589,21 @@ fn parse_capability_status_cell(cell: &str) -> CapabilityStatus {
         "verified" => CapabilityStatus::Verified,
         "retired" => CapabilityStatus::Retired,
         _ => CapabilityStatus::Candidate,
+    }
+}
+
+fn parse_capability_status_arg(value: &str) -> Result<CapabilityStatus> {
+    match normalize_table_token(value).as_str() {
+        "candidate" => Ok(CapabilityStatus::Candidate),
+        "confirmed" => Ok(CapabilityStatus::Confirmed),
+        "auditing" => Ok(CapabilityStatus::Auditing),
+        "blocked" => Ok(CapabilityStatus::Blocked),
+        "verified" => Ok(CapabilityStatus::Verified),
+        "retired" => Ok(CapabilityStatus::Retired),
+        other => anyhow::bail!(
+            "invalid capability status `{}`; expected candidate, confirmed, auditing, blocked, verified, or retired",
+            other
+        ),
     }
 }
 
@@ -3055,17 +9719,39 @@ fn capability_claim_evidence_from_table(
 ) -> (Vec<CapabilityClaimGate>, Vec<String>) {
     let mut gates = Vec::new();
     let mut fixtures = Vec::new();
-    for piece in extract_backtick_values(gate_evidence) {
-        gates.push(CapabilityClaimGate {
-            id: format!("{}-gate", gap_id),
-            command: piece,
-            proves: work_root.to_string(),
-        });
+    for piece in split_gate_evidence_pieces(gate_evidence) {
+        let commands = extract_backtick_values(&piece);
+        if commands.is_empty() {
+            if !is_empty_table_value(&piece) {
+                fixtures.push(piece);
+            }
+            continue;
+        }
+        for command in commands {
+            let id = if gates.is_empty() {
+                format!("{}-gate", gap_id)
+            } else {
+                format!("{}-gate-{}", gap_id, gates.len() + 1)
+            };
+            gates.push(CapabilityClaimGate {
+                id,
+                command,
+                proves: work_root.to_string(),
+            });
+        }
     }
-    if gates.is_empty() && !is_empty_table_value(gate_evidence) {
+    if gates.is_empty() && fixtures.is_empty() && !is_empty_table_value(gate_evidence) {
         fixtures.push(gate_evidence.to_string());
     }
     (gates, fixtures)
+}
+
+fn split_gate_evidence_pieces(cell: &str) -> Vec<String> {
+    cell.split("<br>")
+        .flat_map(|part| part.lines())
+        .map(|part| part.trim().trim_start_matches("- ").trim().to_string())
+        .filter(|part| !part.is_empty())
+        .collect()
 }
 
 fn extract_backtick_values(cell: &str) -> Vec<String> {
@@ -3396,6 +10082,7 @@ pub fn collect_td_capability_refs(
                             .display()
                             .to_string(),
                         spec_id: spec_id.clone(),
+                        review_status: td_review_status_from_content(&content),
                         capability_id: td_ref.id,
                         role: td_ref.role,
                         gap: td_ref.gap,
@@ -3636,45 +10323,177 @@ fn extract_hash_numbers(text: &str) -> Vec<u64> {
 }
 
 fn run_verification_command(project_root: &Path, command: &str) -> VerificationRuntimeResult {
-    let output = std::process::Command::new("sh")
+    run_verification_command_with_timeout(project_root, command, capability_gate_timeout())
+}
+
+fn capability_gate_timeout() -> Duration {
+    std::env::var(CAPABILITY_GATE_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_CAPABILITY_GATE_TIMEOUT_SECS))
+}
+
+fn run_verification_command_with_timeout(
+    project_root: &Path,
+    command: &str,
+    timeout: Duration,
+) -> VerificationRuntimeResult {
+    let started = Instant::now();
+    let stdout_file = match tempfile::NamedTempFile::new() {
+        Ok(file) => file,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stderr_file = match tempfile::NamedTempFile::new() {
+        Ok(file) => file,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stdout = match stdout_file.reopen() {
+        Ok(file) => file,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stderr = match stderr_file.reopen() {
+        Ok(file) => file,
+        Err(err) => return verification_command_error(command, err),
+    };
+
+    let mut command_process = std::process::Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    configure_capability_verification_process_group(&mut command_process);
+    let mut child = match command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)
-        .output();
-    match output {
-        Ok(output) => {
-            let stdout = output_excerpt(&output.stdout);
-            let stderr = output_excerpt(&output.stderr);
-            let status = if output_mentions_env_skip(stdout.as_deref())
-                .or_else(|| output_mentions_env_skip(stderr.as_deref()))
-                .is_some()
-            {
-                "env_blocked"
-            } else if output.status.success() {
-                "pass"
-            } else {
-                "fail"
-            };
-            VerificationRuntimeResult {
-                id: String::new(),
-                command: command.to_string(),
-                status: status.to_string(),
-                proves: None,
-                exit_code: output.status.code(),
-                stdout,
-                stderr,
-            }
+        .stdout(stdout)
+        .stderr(stderr)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => return verification_command_error(command, err),
+    };
+
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(err) => return verification_command_error(command, err),
         }
-        Err(err) => VerificationRuntimeResult {
-            id: String::new(),
-            command: command.to_string(),
-            status: "error".to_string(),
-            proves: None,
-            exit_code: None,
-            stdout: None,
-            stderr: Some(err.to_string()),
-        },
+        if started.elapsed() >= timeout {
+            timed_out = true;
+            terminate_capability_verification_child(&mut child);
+            break None;
+        }
+        thread::sleep(Duration::from_millis(250));
+    };
+
+    let stdout_bytes = match fs::read(stdout_file.path()) {
+        Ok(bytes) => bytes,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stderr_bytes = match fs::read(stderr_file.path()) {
+        Ok(bytes) => bytes,
+        Err(err) => return verification_command_error(command, err),
+    };
+    let stdout = output_excerpt(&stdout_bytes);
+    let mut stderr = output_excerpt(&stderr_bytes);
+    if timed_out {
+        let timeout_note = format!(
+            "aw capability gate timed out after {}s; set {CAPABILITY_GATE_TIMEOUT_ENV} to override",
+            timeout.as_secs()
+        );
+        stderr = Some(match stderr {
+            Some(existing) if !existing.trim().is_empty() => format!("{existing}\n{timeout_note}"),
+            _ => timeout_note,
+        });
     }
+    let result_status = if timed_out {
+        "timeout"
+    } else if output_mentions_env_skip(stdout.as_deref())
+        .or_else(|| output_mentions_env_skip(stderr.as_deref()))
+        .is_some()
+    {
+        "env_blocked"
+    } else if status
+        .as_ref()
+        .map(|status| status.success())
+        .unwrap_or(false)
+    {
+        "pass"
+    } else {
+        "fail"
+    };
+    VerificationRuntimeResult {
+        id: String::new(),
+        command: command.to_string(),
+        status: result_status.to_string(),
+        proves: None,
+        exit_code: status.as_ref().and_then(|status| status.code()),
+        stdout,
+        stderr,
+    }
+}
+
+fn verification_command_error(
+    command: &str,
+    err: impl std::fmt::Display,
+) -> VerificationRuntimeResult {
+    VerificationRuntimeResult {
+        id: String::new(),
+        command: command.to_string(),
+        status: "error".to_string(),
+        proves: None,
+        exit_code: None,
+        stdout: None,
+        stderr: Some(err.to_string()),
+    }
+}
+
+#[cfg(unix)]
+fn configure_capability_verification_process_group(command: &mut std::process::Command) {
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_capability_verification_process_group(_command: &mut std::process::Command) {}
+
+fn terminate_capability_verification_child(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    unsafe {
+        let pgid = child.id() as i32;
+        if pgid > 0 {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+
+    let terminate_started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => return,
+        }
+        if terminate_started.elapsed() >= Duration::from_secs(2) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    #[cfg(unix)]
+    unsafe {
+        let pgid = child.id() as i32;
+        if pgid > 0 {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn output_mentions_env_skip(output: Option<&str>) -> Option<()> {
@@ -3712,7 +10531,9 @@ fn run_next_action_command(
         };
     }
     let executed_command = command_for_current_aw_binary(&action.command);
-    let output = std::process::Command::new("sh")
+    let mut command_process = std::process::Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let output = command_process
         .arg("-c")
         .arg(&executed_command)
         .current_dir(project_root)
@@ -3758,10 +10579,18 @@ fn apply_capability_format_migration_tick(
         let resolved = resolve_capability_path(project_root, project, cap_path)?;
         let body = std::fs::read_to_string(&resolved)
             .with_context(|| format!("failed to read {}", resolved.display()))?;
-        let document = parse_capability_document(&body, &resolved)?;
+        let (body, document) = match parse_capability_document(&body, &resolved) {
+            Ok(document) => (body, document),
+            Err(err) if err.to_string().contains("duplicate capability id") => {
+                let repaired = strip_previous_canonical_capability_tail(&body).ok_or(err)?;
+                let document = parse_capability_document(&repaired, &resolved)?;
+                (repaired, document)
+            }
+            Err(err) => return Err(err),
+        };
         if !document.requires_format_migration() {
             return Ok(format!(
-                "{} already uses Markdown capability tables",
+                "{} already uses canonical Markdown capability format",
                 resolved.display()
             ));
         }
@@ -3797,6 +10626,16 @@ fn apply_capability_format_migration_tick(
             hitl_question: None,
         },
     }
+}
+
+fn strip_previous_canonical_capability_tail(body: &str) -> Option<String> {
+    let idx = ["\n### Capability Index\n", "\n## Capability Index\n"]
+        .iter()
+        .filter_map(|marker| body.rfind(marker))
+        .max()?;
+    let mut repaired = body[..idx].trim_end().to_string();
+    repaired.push('\n');
+    Some(repaired)
 }
 
 fn command_for_current_aw_binary(command: &str) -> String {
@@ -3853,11 +10692,7 @@ fn output_excerpt(output: &[u8]) -> Option<String> {
 
 fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<()> {
     if !human {
-        if pretty {
-            println!("{}", serde_json::to_string_pretty(report)?);
-        } else {
-            println!("{}", serde_json::to_string(report)?);
-        }
+        print_json_output(report, pretty)?;
         return Ok(());
     }
     println!(
@@ -3871,12 +10706,40 @@ fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<
     for blocker in &report.blockers {
         println!("blocker: {blocker}");
     }
+    for warning in &report.warnings {
+        println!("warning: {warning}");
+    }
+    println!("{}", capability_human_readiness_line(report));
     println!(
         "test gates: {:?} [{}/{} passed]",
         report.test_gates.status, report.test_gates.passed_count, report.test_gates.command_count
     );
+    print_contract_facets(report);
     print_next_action(&report.next_action);
     Ok(())
+}
+
+fn capability_human_readiness_line(report: &CapabilityReport) -> String {
+    format!(
+        "readiness: loop={}; production={}/{} [scope={}, blockers={}]",
+        capability_loop_status(report),
+        production_status_label(report.production_status),
+        if report.production_ready {
+            "ready"
+        } else {
+            "not_ready"
+        },
+        report.production_scope.len(),
+        report.production_blockers.len(),
+    )
+}
+
+fn production_status_label(status: ProductionStatus) -> &'static str {
+    match status {
+        ProductionStatus::Ready => "ready",
+        ProductionStatus::Blocked => "blocked",
+        ProductionStatus::NotEvaluated => "not_evaluated",
+    }
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -3891,6 +10754,7 @@ fn capability_summary(report: &CapabilityReport, include_run_results: bool) -> s
         "completion": capability_completion(report),
         "next": capability_next(report),
         "coverage": capability_coverage_summary(report),
+        "contract_facets": capability_contract_facets_summary(report),
         "next_action": &report.next_action,
     });
     if include_run_results && !report.run_results.is_empty() {
@@ -4024,10 +10888,90 @@ fn capability_coverage_summary(report: &CapabilityReport) -> serde_json::Value {
         "verified_claim_count": report.verified_claim_count,
         "claim_percent": report.claim_percent,
         "blocker_count": report.blockers.len(),
+        "warning_count": report.warnings.len(),
         "production_ready": report.production_ready,
         "production_status": &report.production_status,
         "test_gate_status": &report.test_gates.status,
     })
+}
+
+fn capability_contract_facets_summary(report: &CapabilityReport) -> serde_json::Value {
+    let mut type_counts = BTreeMap::<String, usize>::new();
+    let mut surface_kinds = BTreeSet::<String>::new();
+    let mut ec_dimensions = BTreeSet::<String>::new();
+    let mut typed_count = 0usize;
+    let mut surface_capability_count = 0usize;
+    let mut ec_capability_count = 0usize;
+    let mut efficiency_backfill_count = 0usize;
+    for capability in report
+        .capabilities
+        .iter()
+        .filter(|capability| capability.status != CapabilityStatus::Retired)
+    {
+        if let Some(capability_type) = capability.capability_type {
+            typed_count += 1;
+            *type_counts
+                .entry(capability_type.as_str().to_string())
+                .or_default() += 1;
+        }
+        if !capability.surfaces.is_empty() {
+            surface_capability_count += 1;
+        }
+        for surface in &capability.surfaces {
+            let kind = surface.kind.trim();
+            if !kind.is_empty() {
+                surface_kinds.insert(kind.to_string());
+            }
+        }
+        if !capability.ec_dimensions.is_empty() {
+            ec_capability_count += 1;
+        }
+        for dimension in &capability.ec_dimensions {
+            ec_dimensions.insert(dimension.dimension.as_str().to_string());
+            if dimension.efficiency_backfill.is_some() {
+                efficiency_backfill_count += 1;
+            }
+        }
+    }
+    serde_json::json!({
+        "typed_count": typed_count,
+        "surface_capability_count": surface_capability_count,
+        "ec_capability_count": ec_capability_count,
+        "efficiency_backfill_count": efficiency_backfill_count,
+        "types": type_counts,
+        "surface_kinds": surface_kinds.into_iter().collect::<Vec<_>>(),
+        "ec_dimensions": ec_dimensions.into_iter().collect::<Vec<_>>(),
+    })
+}
+
+fn print_contract_facets(report: &CapabilityReport) {
+    let summary = capability_contract_facets_summary(report);
+    let typed_count = summary["typed_count"].as_u64().unwrap_or(0);
+    let surface_count = summary["surface_capability_count"].as_u64().unwrap_or(0);
+    let ec_count = summary["ec_capability_count"].as_u64().unwrap_or(0);
+    let efficiency_count = summary["efficiency_backfill_count"].as_u64().unwrap_or(0);
+    println!(
+        "contracts: typed {}/{}; surfaces {}; ec {}; efficiency slots {}",
+        typed_count, report.capability_count, surface_count, ec_count, efficiency_count
+    );
+    if let Some(values) = summary["surface_kinds"].as_array() {
+        let kinds = values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        if !kinds.is_empty() {
+            println!("surfaces: {}", kinds.join(", "));
+        }
+    }
+    if let Some(values) = summary["ec_dimensions"].as_array() {
+        let dimensions = values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        if !dimensions.is_empty() {
+            println!("ec dimensions: {}", dimensions.join(", "));
+        }
+    }
 }
 
 fn print_next_action(action: &CapabilityAction) {
@@ -4039,61 +10983,73 @@ fn print_next_action(action: &CapabilityAction) {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityWiPlanRow {
+    pub capability: String,
+    pub capability_type: String,
+    pub surfaces: String,
+    pub ec_dimensions: String,
+    pub current_state: String,
+    pub gaps: String,
+    pub root_wi: String,
+    pub active_wi: String,
+    pub evidence: String,
+    pub claim_id: Option<String>,
+    pub claim_user_story: Option<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub fn capability_rows_for_wi_plan(
     document: &CapabilityDocument,
     td_refs: &[TdCapabilityEvidence],
-) -> Result<
-    Vec<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-    )>,
-> {
+    report_items: &[CapabilityReportItem],
+) -> Result<Vec<CapabilityWiPlanRow>> {
     if document.is_legacy_only() {
         anyhow::bail!(
-            "legacy capability table detected; migrate README to `## Capability:` sections before planning WIs"
+            "legacy capability table detected; migrate README to canonical field-style capability contracts under `## Capabilities` before planning WIs"
         );
     }
+    let report_by_id = report_items
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect::<BTreeMap<_, _>>();
     let mut rows = Vec::new();
     for capability in &document.capabilities {
+        let report_item = report_by_id.get(capability.id.as_str()).copied();
         if let Some(contract) = capability.verification_contract.as_ref() {
+            let work_roots_by_id = capability
+                .work_roots
+                .iter()
+                .map(|work_root| (work_root.id.as_str(), work_root))
+                .collect::<BTreeMap<_, _>>();
             for claim in contract
                 .claims
                 .iter()
                 .filter(|claim| claim.required_for_verified)
             {
+                let work_root = work_roots_by_id.get(claim.id.as_str()).copied();
                 let has_primary_td = td_refs.iter().any(|td| {
                     td.capability_id == capability.id
                         && td.role == CapabilityRefRole::Primary
                         && td.claim.as_deref() == Some(&claim.id)
                 });
-                let first_gate = claim
-                    .gates
-                    .first()
-                    .map(|gate| gate.command.clone())
-                    .unwrap_or_else(|| {
-                        "Add at least one concrete verification gate to this claim.".to_string()
-                    });
-                rows.push((
-                    capability.title.clone(),
-                    capability.current_state.clone(),
-                    if has_primary_td {
+                rows.push(CapabilityWiPlanRow {
+                    capability: capability.title.clone(),
+                    capability_type: capability_wi_plan_type(capability, report_item),
+                    surfaces: capability_wi_plan_surfaces(capability, report_item),
+                    ec_dimensions: capability_wi_plan_ec_dimensions(capability, report_item),
+                    current_state: capability.current_state.clone(),
+                    gaps: if has_primary_td || work_root_has_closed_evidence(work_root, claim) {
                         "none".to_string()
                     } else {
                         format!("claim {}: {}", claim.id, claim.user_story)
                     },
-                    active_wi_for_capability(capability),
-                    format!(
-                        "claim gate: {}; oracle: {}; maturity: {:?}",
-                        first_gate, claim.oracle, claim.maturity
-                    ),
-                    Some(claim.id.clone()),
-                    Some(claim.user_story.clone()),
-                ));
+                    root_wi: active_wi_for_capability(capability),
+                    active_wi: active_wi_for_claim(capability, work_root),
+                    evidence: claim_wi_plan_evidence(claim),
+                    claim_id: Some(claim.id.clone()),
+                    claim_user_story: Some(claim.user_story.clone()),
+                });
             }
             continue;
         }
@@ -4117,26 +11073,159 @@ pub fn capability_rows_for_wi_plan(
                 .collect::<Vec<_>>()
                 .join(", ");
             let evidence = summarize_evidence(&capability.evidence);
-            (
-                capability.title.clone(),
-                capability.current_state.clone(),
-                if gap_summary.is_empty() {
+            CapabilityWiPlanRow {
+                capability: capability.title.clone(),
+                capability_type: capability_wi_plan_type(capability, report_item),
+                surfaces: capability_wi_plan_surfaces(capability, report_item),
+                ec_dimensions: capability_wi_plan_ec_dimensions(capability, report_item),
+                current_state: capability.current_state.clone(),
+                gaps: if gap_summary.is_empty() {
                     "none".to_string()
                 } else {
                     gap_summary
                 },
-                if active_wi.is_empty() {
+                root_wi: active_wi_for_capability(capability),
+                active_wi: if active_wi.is_empty() {
                     "none".to_string()
                 } else {
                     active_wi
                 },
                 evidence,
-                None,
-                None,
-            )
+                claim_id: None,
+                claim_user_story: None,
+            }
         });
     }
     Ok(rows)
+}
+
+fn work_root_has_closed_evidence(
+    work_root: Option<&CapabilityWorkRoot>,
+    claim: &CapabilityClaim,
+) -> bool {
+    let Some(work_root) = work_root else {
+        return false;
+    };
+    capability_gap_status_from_table(&work_root.implementation, &work_root.verification)
+        == CapabilityGapStatus::Closed
+        && parse_first_maturity(&work_root.maturity).is_some()
+        && (!claim.gates.is_empty() || !claim.fixtures.is_empty())
+}
+
+fn claim_wi_plan_evidence(claim: &CapabilityClaim) -> String {
+    let oracle = if claim.oracle.trim().is_empty() || is_empty_table_value(&claim.oracle) {
+        None
+    } else {
+        Some(claim.oracle.trim())
+    };
+    let detail = if !claim.gates.is_empty() {
+        format!(
+            "claim gate: {}",
+            claim
+                .gates
+                .iter()
+                .map(|gate| gate.command.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else if !claim.fixtures.is_empty() {
+        let label = if claim
+            .fixtures
+            .iter()
+            .all(|fixture| looks_like_verification_inventory_reference(fixture))
+        {
+            "claim inventory"
+        } else {
+            "claim evidence"
+        };
+        format!("{label}: {}", claim.fixtures.join(", "))
+    } else {
+        "claim verification: add a concrete gate command or inventory reference".to_string()
+    };
+
+    match oracle {
+        Some(oracle) => format!("{detail}; oracle: {oracle}; maturity: {:?}", claim.maturity),
+        None => format!("{detail}; maturity: {:?}", claim.maturity),
+    }
+}
+
+fn looks_like_verification_inventory_reference(value: &str) -> bool {
+    let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    trimmed.starts_with('/')
+        || trimmed.starts_with("./")
+        || lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("projects/")
+        || lower.starts_with("crates/")
+        || lower.starts_with("examples/")
+        || lower.starts_with("tests/")
+        || lower.starts_with("src/")
+        || lower.starts_with(".aw/")
+        || [
+            ".rs", ".py", ".sh", ".md", ".json", ".toml", ".yaml", ".yml", ".js", ".mjs", ".ts",
+            ".tsx",
+        ]
+        .iter()
+        .any(|extension| lower.contains(extension))
+}
+
+fn capability_wi_plan_type(
+    capability: &CapabilitySection,
+    report_item: Option<&CapabilityReportItem>,
+) -> String {
+    report_item
+        .and_then(|item| item.capability_type)
+        .or(capability.capability_type)
+        .map(|capability_type| capability_type.as_str().to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn capability_wi_plan_surfaces(
+    capability: &CapabilitySection,
+    report_item: Option<&CapabilityReportItem>,
+) -> String {
+    let surfaces = report_item
+        .map(|item| item.surfaces.as_slice())
+        .filter(|surfaces| !surfaces.is_empty())
+        .unwrap_or(capability.surfaces.as_slice());
+    let items = render_surface_field_items(surfaces);
+    if items.is_empty() {
+        "-".to_string()
+    } else {
+        items.join("<br>")
+    }
+}
+
+fn capability_wi_plan_ec_dimensions(
+    capability: &CapabilitySection,
+    report_item: Option<&CapabilityReportItem>,
+) -> String {
+    let ec_dimensions = report_item
+        .map(|item| item.ec_dimensions.as_slice())
+        .filter(|dimensions| !dimensions.is_empty())
+        .unwrap_or(capability.ec_dimensions.as_slice());
+    let items = ec_dimensions
+        .iter()
+        .map(|dimension| {
+            let mut item = render_ec_dimension_field_items(std::slice::from_ref(dimension))
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| dimension.dimension.as_str().to_string());
+            if let Some(slot) = dimension.efficiency_backfill.as_ref() {
+                item.push_str(&format!(
+                    " (operating point: {}; cube: {})",
+                    slot.operating_point, slot.cube
+                ));
+            }
+            item
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        "-".to_string()
+    } else {
+        items.join("<br>")
+    }
 }
 
 fn active_wi_for_capability(capability: &CapabilitySection) -> String {
@@ -4150,6 +11239,17 @@ fn active_wi_for_capability(capability: &CapabilitySection) -> String {
         "none".to_string()
     } else {
         active_wi
+    }
+}
+
+fn active_wi_for_claim(
+    capability: &CapabilitySection,
+    work_root: Option<&CapabilityWorkRoot>,
+) -> String {
+    match work_root {
+        Some(work_root) if !is_empty_table_value(&work_root.wi) => work_root.wi.clone(),
+        Some(_) => "none".to_string(),
+        None => active_wi_for_capability(capability),
     }
 }
 
@@ -4186,8 +11286,50 @@ fn summarize_evidence(evidence: &CapabilityEvidence) -> String {
 mod tests {
     use super::*;
 
+    struct BrokenPipeWriter;
+
+    impl std::io::Write for BrokenPipeWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "downstream closed",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn capability_output_ignores_broken_pipe() {
+        assert!(write_line_to(BrokenPipeWriter, "{}").is_ok());
+    }
+
     fn cap_doc(body: &str) -> CapabilityDocument {
         parse_capability_document(body, Path::new("README.md")).unwrap()
+    }
+
+    fn canonical_doc(body: &str) -> CapabilityDocument {
+        let mut document = cap_doc(body);
+        document.needs_canonicalization = false;
+        document
+    }
+
+    /// A capability-type map that assigns `Service` to every capability id in
+    /// the report and document, so the `assign_capability_type` HITL check is
+    /// satisfied and these tests exercise their original next-action path.
+    fn all_typed(
+        report: &CapabilityReport,
+        document: &CapabilityDocument,
+    ) -> BTreeMap<String, crate::cli::capability_type::CapabilityType> {
+        report
+            .capabilities
+            .iter()
+            .map(|item| item.id.clone())
+            .chain(document.capabilities.iter().map(|cap| cap.id.clone()))
+            .map(|id| (id, crate::cli::capability_type::CapabilityType::Service))
+            .collect()
     }
 
     fn sample_report(next_action: CapabilityAction) -> CapabilityReport {
@@ -4210,6 +11352,7 @@ mod tests {
             claim_percent: 0.0,
             capabilities: Vec::new(),
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action,
             run_results: Vec::new(),
         }
@@ -4231,6 +11374,1016 @@ mod tests {
             requires_hitl,
             hitl_question: None,
         }
+    }
+
+    fn sample_report_item_with_gap(active_wi: Option<&str>) -> CapabilityReportItem {
+        CapabilityReportItem {
+            id: "package-manager".to_string(),
+            title: "Package Manager".to_string(),
+            status: CapabilityStatus::Auditing,
+            capability_type: None,
+            surfaces: Vec::new(),
+            ec_dimensions: Vec::new(),
+            promise: "Replace package manager flows.".to_string(),
+            current_state: "Install surface exists.".to_string(),
+            gaps: vec![CapabilityGap {
+                id: "package-manager-readiness".to_string(),
+                status: CapabilityGapStatus::Open,
+                active_wi: active_wi.map(str::to_string),
+                summary: "Readiness audit pending.".to_string(),
+            }],
+            td_refs: Vec::new(),
+            wi_refs: active_wi.into_iter().map(str::to_string).collect(),
+            wi_evidence: Vec::new(),
+            claims: Vec::new(),
+            claim_count: 0,
+            verified_claim_count: 0,
+            claim_percent: 0.0,
+            verification: Vec::new(),
+            verified: false,
+            release_scope: false,
+            full_regenerability_required: false,
+            dependencies: Vec::new(),
+            dependency_closure: Vec::new(),
+            production_ready: false,
+            production_blockers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn empty_capability_map_is_actionable_document_state() {
+        let doc = cap_doc("# Mamba\n\n## Capabilities\n\n");
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert_eq!(doc.format_version(), 0);
+        assert!(doc.capabilities.is_empty());
+        assert!(doc.legacy_rows.is_empty());
+        assert!(doc.prose_candidates.is_empty());
+        assert!(doc
+            .findings
+            .iter()
+            .any(|finding| finding.contains("no capability sections found")));
+    }
+
+    #[test]
+    fn prose_capability_headings_are_candidate_input_not_contracts() {
+        let doc = cap_doc(
+            r#"# Mamba
+
+## Brief
+
+Python runtime.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+
+### C1. Py3.12 functional parity - Axis 1 ([#3331](https://github.com/chrischeng-c4/cclab/issues/3331))
+
+Mamba can execute the Python 3.12 language and standard library surface with CPython-compatible behavior.
+
+#### Gates
+
+- CPython fixture corpus
+
+### C2. Less CPU time AND less memory than CPython - Axis 2 ([#3880](https://github.com/chrischeng-c4/cclab/issues/3880))
+
+Mamba should improve both runtime CPU and memory profile on selected workloads.
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert_eq!(doc.format_version(), 0);
+        assert!(doc.capabilities.is_empty());
+        assert_eq!(doc.prose_candidates.len(), 2);
+        assert_eq!(
+            doc.prose_candidates[0].id,
+            "c1-py3-12-functional-parity-axis-1"
+        );
+        assert_eq!(
+            doc.prose_candidates[0].title,
+            "C1. Py3.12 functional parity - Axis 1"
+        );
+        assert_eq!(doc.prose_candidates[0].root_wi.as_deref(), Some("#3331"));
+        assert!(doc.prose_candidates[0]
+            .summary
+            .as_deref()
+            .unwrap()
+            .contains("Python 3.12 language"));
+        assert!(doc
+            .findings
+            .iter()
+            .any(|finding| finding.contains("candidate prose capability roots detected")));
+    }
+
+    #[test]
+    fn capability_tables_without_contract_fields_are_candidate_input() {
+        let doc = cap_doc(
+            r#"# cue
+
+Cue turns business intent into governed internal work.
+
+## Required Platform Capabilities
+
+| Capability | Why it matters |
+|------------|----------------|
+| WorkItem lifecycle | Required ticket and routing state for every prompt-to-X flow |
+| App Spec schema | Contract that generation, runtime, policy, and tests share |
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert!(doc.capabilities.is_empty());
+        assert_eq!(doc.prose_candidates.len(), 2);
+        assert_eq!(doc.prose_candidates[0].id, "workitem-lifecycle");
+        assert_eq!(doc.prose_candidates[0].title, "WorkItem lifecycle");
+        assert_eq!(
+            doc.prose_candidates[0].promise.as_deref(),
+            Some("Required ticket and routing state for every prompt-to-X flow")
+        );
+        assert_eq!(doc.prose_candidates[1].id, "app-spec-schema");
+        assert!(doc
+            .findings
+            .iter()
+            .any(|finding| finding.contains("candidate prose capability roots detected")));
+    }
+
+    #[test]
+    fn prose_candidate_titles_strip_trailing_root_wi_refs() {
+        let doc = cap_doc(
+            r#"# demo
+
+## Features
+
+- Runtime Parity (#100): Execute compatible runtime programs
+
+## Candidate Capability Matrix
+
+| Capability | Summary |
+|---|---|
+| Package Manager (#200) | Resolve, lock, and install packages |
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        let titles = doc
+            .prose_candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.title.as_str(),
+                    candidate.id.as_str(),
+                    candidate.root_wi.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            vec![
+                ("Runtime Parity", "runtime-parity", Some("#100")),
+                ("Package Manager", "package-manager", Some("#200")),
+            ]
+        );
+    }
+
+    #[test]
+    fn feature_and_module_bullets_are_candidate_input() {
+        let doc = cap_doc(
+            r#"# pgkit
+
+Native PostgreSQL toolkit core for Mamba-facing applications.
+
+## Modules
+
+- **connection**: Connection pooling and management
+- **query**: Type-safe SQL query builder
+
+## Features
+
+- Parameterized queries to prevent SQL injection
+- Transaction support with savepoints
+
+### Implemented
+
+- Basic CRUD operations
+
+## Dependencies
+
+- sqlx
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        let ids = doc
+            .prose_candidates
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                "connection",
+                "query",
+                "parameterized-queries-to-prevent-sql-injection",
+                "transaction-support-with-savepoints"
+            ]
+        );
+        assert_eq!(
+            doc.prose_candidates[0].promise.as_deref(),
+            Some("Connection pooling and management")
+        );
+        assert!(!ids.contains(&"sqlx"));
+        assert!(!ids.contains(&"basic-crud-operations"));
+    }
+
+    #[test]
+    fn implemented_bullets_are_fallback_candidate_input() {
+        let doc = cap_doc(
+            r#"# pgkit
+
+Native PostgreSQL toolkit core.
+
+## Status
+
+### Implemented
+
+- Connection pooling and management
+- Raw SQL execution
+"#,
+        );
+
+        let ids = doc
+            .prose_candidates
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec!["connection-pooling-and-management", "raw-sql-execution"]
+        );
+    }
+
+    #[test]
+    fn canonical_capability_index_is_not_candidate_input() {
+        let doc = cap_doc(
+            r#"# Demo
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Search | #1 | planned | planned | smoke | not_ready | candidate |
+"#,
+        );
+
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert!(doc.prose_candidates.is_empty());
+    }
+
+    #[test]
+    fn empty_capability_map_next_action_requires_hitl_definition() {
+        let document = cap_doc("# Cue\n\n## Capabilities\n\n");
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.capability_count = 0;
+        report.verified_count = 0;
+        report.format_version = document.format_version();
+        report.blockers = document.findings.clone();
+
+        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
+
+        assert_eq!(action.kind, CapabilityActionKind::DefineCapabilityMap);
+        assert_eq!(action.command, "aw capability draft --project jet");
+        assert!(action.requires_hitl);
+        assert_eq!(
+            action
+                .hitl_question
+                .as_ref()
+                .unwrap()
+                .default_choice
+                .as_deref(),
+            Some("define_roots")
+        );
+    }
+
+    #[test]
+    fn prose_candidates_are_in_define_map_hitl_prompt() {
+        let document = cap_doc(
+            r#"# Mamba
+
+## Capabilities
+
+### C1. Py3.12 functional parity - Axis 1 (#3331)
+
+Mamba can execute the Python 3.12 language and standard library surface.
+"#,
+        );
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.capability_count = 0;
+        report.verified_count = 0;
+        report.format_version = document.format_version();
+        report.blockers = document.findings.clone();
+
+        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
+        let prompt = action
+            .hitl_question
+            .as_ref()
+            .and_then(|question| question.freeform_prompt.as_deref())
+            .unwrap();
+
+        assert_eq!(action.kind, CapabilityActionKind::DefineCapabilityMap);
+        assert_eq!(action.command, "aw capability draft --project jet");
+        assert!(prompt.contains("Candidate README capability roots detected"));
+        assert!(prompt.contains("C1. Py3.12 functional parity"));
+        assert!(prompt.contains("#3331"));
+        assert!(prompt.contains("inference only"));
+    }
+
+    #[test]
+    fn capability_map_draft_artifact_is_pending_review_not_readme_mutation() {
+        let candidates = vec![CapabilityProseCandidate {
+            id: "c1-py3-12-functional-parity-axis-1".to_string(),
+            title: "C1. Py3.12 functional parity - Axis 1".to_string(),
+            line: 11,
+            root_wi: Some("#3331".to_string()),
+            summary: Some("Run real Python 3.12 programs without semantic divergence.".to_string()),
+            promise: Some("Run real Python 3.12 programs without semantic divergence.".to_string()),
+        }];
+
+        let artifact = render_capability_map_draft(
+            "mamba",
+            Path::new("projects/mamba/README.md"),
+            &candidates,
+        );
+
+        assert!(artifact.contains("kind: capability_map_draft"));
+        assert!(artifact.contains("status: pending_review"));
+        assert!(artifact.contains("source: prose_candidates"));
+        assert!(artifact.contains("## Draft Canonical README Section"));
+        assert!(artifact.contains("## Review Decisions"));
+        assert!(artifact.contains(
+            "| C1. Py3.12 functional parity - Axis 1 | confirm / rename / split / merge / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | #3331 | (confirm gates or inventory refs) |"
+        ));
+        assert!(artifact.contains("ID: c1-py3-12-functional-parity-axis-1"));
+        assert!(artifact.contains(
+            "Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)"
+        ));
+        assert!(artifact.contains(
+            "Surfaces:\n- (confirm public surface, e.g. CLI: `command` - short summary)"
+        ));
+        assert!(artifact.contains(
+            "EC Dimensions:\n- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)"
+        ));
+        assert!(artifact.contains("Root WI: #3331"));
+        assert!(artifact.contains("Status: candidate"));
+        assert!(artifact.contains("(confirm gate inventory)"));
+        assert!(artifact.contains("This artifact is inference only"));
+    }
+
+    #[test]
+    fn capability_map_draft_preserves_full_promise_for_prose_candidates() {
+        let long_promise = "This capability keeps CPython-compatible import, runtime, exception, and package semantics available through the mamba command surface while preserving agent-readable evidence for corpus parity, negative behavior, and ecosystem fixtures across repeated standardization passes."
+            .repeat(2);
+        let readme = format!(
+            "# Mamba\n\n## Capabilities\n\n### C2. Runtime parity (#4444)\n\n{}\n",
+            long_promise
+        );
+
+        let candidates = parse_capability_prose_candidates(&readme);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].promise.as_deref(),
+            Some(long_promise.as_str())
+        );
+        assert!(candidates[0]
+            .summary
+            .as_deref()
+            .is_some_and(|summary| summary.ends_with("...")));
+
+        let artifact = render_capability_map_draft(
+            "mamba",
+            Path::new("projects/mamba/README.md"),
+            &candidates,
+        );
+        assert!(artifact.contains(&format!("Promise:\n{}\nGate Inventory:", long_promise)));
+    }
+
+    #[test]
+    fn empty_capability_map_draft_artifact_is_definition_worksheet() {
+        let artifact = render_capability_map_draft("cue", Path::new("projects/cue/README.md"), &[]);
+
+        assert!(artifact.contains("kind: capability_map_draft"));
+        assert!(artifact.contains("source: empty_capability_map"));
+        assert!(artifact.contains("candidate_count: 0"));
+        assert!(artifact.contains("README has no candidate capability roots"));
+        assert!(artifact.contains("## Review Decisions"));
+        assert!(artifact.contains(
+            "| Cue Capability | define / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | - | (confirm gates or inventory refs) |"
+        ));
+        assert!(artifact.contains("### Cue Capability"));
+        assert!(artifact.contains("ID: cue-capability"));
+        assert!(artifact.contains(
+            "Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)"
+        ));
+        assert!(artifact.contains("Root WI: -"));
+        assert!(artifact.contains(
+            "EC Dimensions:\n- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)"
+        ));
+        assert!(artifact.contains("Promise:\n(confirm product promise)"));
+        assert!(artifact.contains("This artifact is inference only"));
+    }
+
+    #[test]
+    fn apply_draft_rejects_unreviewed_placeholders() {
+        let artifact = render_capability_map_draft("cue", Path::new("projects/cue/README.md"), &[]);
+
+        let err = extract_reviewed_draft_registry(&artifact).unwrap_err();
+
+        assert!(err.to_string().contains("placeholders"));
+    }
+
+    #[test]
+    fn apply_draft_requires_review_decisions_before_readme_mutation() {
+        let draft = r#"# Cue Capability Map Draft
+
+## Review Decisions
+
+| Candidate | Decision | Type | Surfaces | EC Dimensions | Root WI | Gate Inventory |
+|---|---|---|---|---|---:|---|
+| Workflow Control Plane | confirm / rename / split / merge / defer | (confirm type) | (confirm public surfaces) | (confirm EC dimensions and runners) | #3893 | (confirm gates or inventory refs) |
+
+## Draft Canonical README Section
+
+```md
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Workflow Control Plane | #3893 | planned | planned | smoke | not_ready | human confirmed |
+
+### Workflow Control Plane
+
+ID: workflow-control-plane
+Type: DeveloperTool
+Root WI: #3893
+Status: confirmed
+Required Verification: smoke
+Promise:
+Cue provides a team workflow control plane over AW Core concepts.
+Gate Inventory:
+- projects/cue/tests/workflow-control-plane.md
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |
+```
+"#;
+
+        let err = extract_reviewed_draft_registry(draft).unwrap_err();
+
+        assert!(err.to_string().contains("Review Decisions"));
+    }
+
+    #[test]
+    fn apply_draft_materializes_review_decisions_into_canonical_registry() {
+        let draft = r#"# Cue Capability Map Draft
+
+## Review Decisions
+
+| Candidate | Decision | Type | Surfaces | EC Dimensions | Root WI | Gate Inventory |
+|---|---|---|---|---|---:|---|
+| Workflow Control Plane | confirm | DeveloperTool | CLI: `cue run` - app generation command | behavior: `jet e2e` - browser/API workflow | #3893 | projects/cue/tests/workflow-control-plane.md |
+
+## Draft Canonical README Section
+
+```md
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Workflow Control Plane | - | planned | planned | smoke | not_ready | human confirmed |
+
+### Workflow Control Plane
+
+ID: workflow-control-plane
+Type: (confirm capability type: AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool)
+Surfaces:
+- (confirm public surface, e.g. CLI: `command` - short summary)
+EC Dimensions:
+- (confirm EC dimension, e.g. behavior: `runner command` - contract summary)
+Root WI: -
+Status: candidate
+Required Verification: smoke
+Promise:
+Cue provides a team workflow control plane over AW Core concepts.
+Gate Inventory:
+- (confirm gate inventory)
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Workflow control plane readiness | epic | - | planned | planned | smoke | (confirm gate/evidence) |
+```
+"#;
+
+        let registry = extract_reviewed_draft_registry(draft).unwrap();
+        let doc = cap_doc(&registry);
+
+        assert!(!registry.contains("(confirm"));
+        assert!(registry.contains("| Workflow Control Plane | #3893 | planned | planned | smoke | not_ready | human confirmed |"));
+        assert!(registry.contains("Type: DeveloperTool"));
+        assert!(registry.contains("Surfaces: CLI: `cue run` - app generation command"));
+        assert!(registry.contains("EC Dimensions: behavior: `jet e2e` - browser/API workflow"));
+        assert!(registry.contains("Gate Inventory: projects/cue/tests/workflow-control-plane.md"));
+        assert!(registry.contains("| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |"));
+        assert_eq!(doc.capabilities.len(), 1);
+        assert_eq!(doc.capabilities[0].id, "workflow-control-plane");
+        assert_eq!(
+            doc.capabilities[0].capability_type,
+            Some(CapabilityType::DeveloperTool)
+        );
+        assert_eq!(doc.capabilities[0].surfaces[0].kind, "CLI");
+        assert_eq!(
+            doc.capabilities[0].ec_dimensions[0].dimension,
+            CapabilityEcDimensionKind::Behavior
+        );
+    }
+
+    #[test]
+    fn apply_reviewed_draft_replaces_capabilities_section() {
+        let draft = r#"# Cue Capability Map Draft
+
+## Draft Canonical README Section
+
+```md
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Workflow Control Plane | #3893 | planned | planned | smoke | not_ready | human confirmed |
+
+### Workflow Control Plane
+
+ID: workflow-control-plane
+Type: DeveloperTool
+Root WI: #3893
+Status: confirmed
+Required Verification: smoke
+Promise:
+Cue provides a team workflow control plane over AW Core concepts.
+Gate Inventory:
+- projects/cue/tests/workflow-control-plane.md
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Workflow control plane readiness | epic | #3893 | planned | planned | smoke | projects/cue/tests/workflow-control-plane.md |
+```
+"#;
+        let registry = extract_reviewed_draft_registry(draft).unwrap();
+        let original = r#"# Cue
+
+Team workflow product.
+
+## Capabilities
+
+old placeholder
+
+## Notes
+
+Keep this section.
+"#;
+
+        let applied = apply_capability_registry_to_readme(original, &registry, "cue").unwrap();
+        let doc = cap_doc(&applied);
+
+        assert!(applied.contains("## Brief\n\nTeam workflow product."));
+        assert!(applied.contains("## Notes\n\nKeep this section."));
+        assert!(!applied.contains("old placeholder"));
+        assert_eq!(doc.capabilities.len(), 1);
+        assert_eq!(doc.capabilities[0].id, "workflow-control-plane");
+        assert_eq!(
+            doc.capabilities[0].capability_type,
+            Some(CapabilityType::DeveloperTool)
+        );
+    }
+
+    #[test]
+    fn apply_reviewed_draft_inserts_capabilities_after_brief_when_missing() {
+        let registry = r#"## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Validation Type System | - | implemented | passing | conformance | not_ready | Rust validation API |
+
+### Validation Type System
+
+ID: validation-type-system
+Type: DeveloperTool
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Validate Rust values against schema descriptors.
+Gate Inventory:
+- `cargo test -p cclab-schema`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Validation foundation | epic | - | implemented | passing | conformance | `cargo test -p cclab-schema` |
+"#;
+        let original = r#"# cclab-shield
+
+Unified validation library for the cclab framework.
+
+## Overview
+
+Long project details.
+
+## License
+
+MIT OR Apache-2.0
+"#;
+
+        let applied = apply_capability_registry_to_readme(original, registry, "cclab-schema")
+            .expect("apply registry");
+        let brief_idx = applied.find("## Brief").expect("brief section");
+        let capabilities_idx = applied.find("## Capabilities").expect("capability section");
+        let overview_idx = applied.find("## Overview").expect("overview section");
+        let license_idx = applied.find("## License").expect("license section");
+
+        assert!(brief_idx < capabilities_idx);
+        assert!(capabilities_idx < overview_idx);
+        assert!(overview_idx < license_idx);
+        assert!(applied
+            .contains("Unified validation library for the cclab framework.\n\n## Capabilities"));
+        assert!(!applied.contains("MIT OR Apache-2.0\n\n## Capabilities"));
+    }
+
+    #[test]
+    fn apply_reviewed_draft_relocates_existing_capabilities_after_brief() {
+        let registry = r#"## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Validation Type System | - | implemented | passing | conformance | not_ready | Rust validation API |
+
+### Validation Type System
+
+ID: validation-type-system
+Type: DeveloperTool
+Root WI: -
+Status: confirmed
+Required Verification: smoke
+Promise:
+Validate Rust values against schema descriptors.
+Gate Inventory:
+- `cargo test -p cclab-schema`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Validation foundation | epic | - | implemented | passing | conformance | `cargo test -p cclab-schema` |
+"#;
+        let original = r#"# cclab-shield
+
+## Brief
+
+Unified validation library for the cclab framework.
+
+## Overview
+
+Long project details.
+
+## License
+
+MIT OR Apache-2.0
+
+## Capabilities
+
+old tail placeholder
+"#;
+
+        let applied = apply_capability_registry_to_readme(original, registry, "cclab-schema")
+            .expect("apply registry");
+        let brief_idx = applied.find("## Brief").expect("brief section");
+        let capabilities_idx = applied.find("## Capabilities").expect("capability section");
+        let overview_idx = applied.find("## Overview").expect("overview section");
+        let license_idx = applied.find("## License").expect("license section");
+
+        assert!(brief_idx < capabilities_idx);
+        assert!(capabilities_idx < overview_idx);
+        assert!(overview_idx < license_idx);
+        assert!(!applied.contains("old tail placeholder"));
+        assert!(!applied.contains("MIT OR Apache-2.0\n\n## Capabilities"));
+    }
+
+    #[test]
+    fn draft_commands_preserve_cap_path_override() {
+        let cap_path = Path::new("/tmp/aw draft/cue README.md");
+        let draft_path = Path::new("/tmp/aw draft/cue capability draft.md");
+
+        let apply = capability_apply_draft_command("cue", draft_path, Some(cap_path));
+        let check = capability_check_command("cue", Some(cap_path));
+
+        assert_eq!(
+            apply,
+            "aw capability apply-draft --project cue --draft '/tmp/aw draft/cue capability draft.md' --cap-path '/tmp/aw draft/cue README.md' --reviewed"
+        );
+        assert_eq!(
+            check,
+            "aw capability check --project cue --cap-path '/tmp/aw draft/cue README.md'"
+        );
+    }
+
+    #[test]
+    fn legacy_format_next_action_uses_explicit_migrate_command() {
+        let document = cap_doc(one_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.format_version = document.format_version();
+        report.capabilities = Vec::new();
+        report.capability_count = document.legacy_rows.len();
+        report.blockers = document.findings.clone();
+
+        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
+
+        assert_eq!(action.kind, CapabilityActionKind::FormatMigrationRequired);
+        assert!(!action.requires_hitl);
+        assert_eq!(action.command, "aw capability migrate --project jet");
+    }
+
+    #[test]
+    fn create_wi_next_action_keeps_unavailable_inventory_review_only() {
+        let document = canonical_doc(one_field_markdown_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.format_version = document.format_version();
+        report.capabilities = vec![sample_report_item_with_gap(None)];
+        report
+            .warnings
+            .push("issue inventory unavailable: gh auth missing".to_string());
+
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types, true);
+
+        assert_eq!(action.kind, CapabilityActionKind::CreateWi);
+        assert_eq!(action.command, "aw wi plan --project jet");
+        assert!(action.reason.contains("issue inventory unavailable"));
+        assert!(action.reason.contains("local/review-only"));
+        assert!(!action.requires_hitl);
+    }
+
+    #[test]
+    fn noncanonical_markdown_reports_v1_until_migrated() {
+        let document = cap_doc(one_markdown_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.format_version = document.format_version();
+        report.capability_count = document.capabilities.len();
+
+        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
+
+        assert_eq!(document.format, CapabilityDocumentFormat::MarkdownTables);
+        assert!(document.requires_format_migration());
+        assert_eq!(document.format_version(), 1);
+        assert_eq!(action.kind, CapabilityActionKind::FormatMigrationRequired);
+        assert_eq!(action.command, "aw capability migrate --project jet");
+    }
+
+    #[test]
+    fn canonical_h3_field_style_markdown_reports_v2() {
+        let body = r#"# demo
+
+## Brief
+
+Demo project.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | partial | planned | conformance | not_ready | install flow |
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Surfaces: CLI: `jet install` - package install surface
+EC Dimensions: behavior: `cargo test -p jet --lib pkg_manager` - package lifecycle conformance
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+"#;
+        let document = cap_doc(body);
+
+        assert_eq!(document.format, CapabilityDocumentFormat::MarkdownTables);
+        assert!(!document.requires_format_migration());
+        assert_eq!(document.format_version(), 2);
+        assert_eq!(
+            document.capabilities[0].capability_type,
+            Some(CapabilityType::DeveloperTool)
+        );
+        assert_eq!(document.capabilities[0].surfaces[0].kind, "CLI");
+    }
+
+    #[test]
+    fn non_candidate_field_style_requires_type_surface_and_ec_dimensions() {
+        let body = r#"# demo
+
+## Brief
+
+Demo project.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | partial | planned | conformance | not_ready | install flow |
+
+### Package Manager
+
+ID: package-manager
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+"#;
+        let document = cap_doc(body);
+
+        assert!(document
+            .findings
+            .iter()
+            .any(|finding| finding.contains("requires Type")));
+        assert!(document
+            .findings
+            .iter()
+            .any(|finding| finding.contains("requires at least one Surface")));
+        assert!(document
+            .findings
+            .iter()
+            .any(|finding| finding.contains("requires at least one EC Dimensions entry")));
+    }
+
+    #[test]
+    fn canonical_field_style_requires_brief_heading() {
+        let body = r#"# demo
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | partial | planned | conformance | not_ready | install flow |
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Surfaces: CLI: `jet install` - package install surface
+EC Dimensions: behavior: `cargo test -p jet --lib pkg_manager` - package lifecycle conformance
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+"#;
+        let document = cap_doc(body);
+
+        assert_eq!(document.format, CapabilityDocumentFormat::MarkdownTables);
+        assert!(document.requires_format_migration());
+        assert_eq!(document.format_version(), 1);
+    }
+
+    #[test]
+    fn canonical_field_style_requires_capabilities_parent_and_h3_index() {
+        let missing_parent = r#"# demo
+
+## Brief
+
+Demo project.
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | partial | planned | conformance | not_ready | install flow |
+
+### Package Manager
+
+ID: package-manager
+Type: DeveloperTool
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+"#;
+        let missing_index = missing_parent.replace(
+            "### Capability Index",
+            "## Capabilities\n\n## Capability Index",
+        );
+
+        let parent_doc = cap_doc(missing_parent);
+        assert!(parent_doc.requires_format_migration());
+        assert_eq!(parent_doc.format_version(), 1);
+
+        let index_doc = cap_doc(&missing_index);
+        assert!(index_doc.requires_format_migration());
+        assert_eq!(index_doc.format_version(), 1);
+    }
+
+    #[test]
+    fn unreadable_capability_map_report_requires_config_hitl() {
+        let report = capability_map_read_blocked_report(
+            "pg",
+            PathBuf::from("projects/pgkit/README.md"),
+            ProjectTestGateReport::not_evaluated("pg"),
+            "failed to read capability map: No such file or directory".to_string(),
+        );
+
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.next_action.kind, CapabilityActionKind::EnvBlocked);
+        assert!(report.next_action.requires_hitl);
+        assert_eq!(
+            report
+                .next_action
+                .hitl_question
+                .as_ref()
+                .unwrap()
+                .default_choice
+                .as_deref(),
+            Some("fix_config")
+        );
+        let summary = capability_summary(&report, false);
+        assert_eq!(summary["status"].as_str(), Some("blocked"));
+        assert_eq!(summary["next"]["kind"].as_str(), Some("hitl"));
+    }
+
+    #[test]
+    fn missing_capability_parent_reports_stale_project_config() {
+        let missing_capability_path = PathBuf::from("__missing_capability_parent__/README.md");
+        let report = capability_map_read_failure_report(
+            "cclab-array",
+            missing_capability_path,
+            ProjectTestGateReport::not_evaluated("cclab-array"),
+            "failed to read capability map: No such file or directory".to_string(),
+        );
+
+        assert_eq!(report.status, "blocked");
+        assert_eq!(
+            report.next_action.kind,
+            CapabilityActionKind::StaleProjectConfig
+        );
+        assert_eq!(
+            capability_action_kind_label(report.next_action.kind),
+            "stale_project_config"
+        );
+        assert!(report.next_action.requires_hitl);
+        assert!(report
+            .next_action
+            .reason
+            .contains("configured capability map parent directory does not exist"));
+        let summary = capability_summary(&report, false);
+        assert_eq!(summary["status"].as_str(), Some("blocked"));
+        assert_eq!(summary["next"]["kind"].as_str(), Some("hitl"));
     }
 
     #[test]
@@ -4259,6 +12412,103 @@ mod tests {
     }
 
     #[test]
+    fn human_readiness_line_separates_loop_and_production_readiness() {
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.status = "healthy".to_string();
+        report.production_status = ProductionStatus::Blocked;
+        report.production_scope = vec!["package-manager".to_string()];
+        report
+            .production_blockers
+            .push("package-manager: catalog/claim verification is not complete".to_string());
+
+        assert_eq!(
+            capability_human_readiness_line(&report),
+            "readiness: loop=continue; production=blocked/not_ready [scope=1, blockers=1]"
+        );
+    }
+
+    #[test]
+    fn capability_check_preserves_reconcile_wi_refs_next_action() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::ReconcileWiRefs,
+            "aw wi plan --project jet",
+            false,
+        ));
+        report.next_action.reason =
+            "active WI reference is not present in project issue inventory".to_string();
+
+        let failed = normalize_capability_check_report(&mut report, false, true);
+
+        assert!(failed);
+        assert_eq!(report.status, "blocked");
+        assert_eq!(
+            report.next_action.kind,
+            CapabilityActionKind::ReconcileWiRefs
+        );
+        assert_eq!(report.next_action.command, "aw wi plan --project jet");
+        assert!(report.next_action.reason.contains("active WI reference"));
+    }
+
+    #[test]
+    fn capability_check_ignores_skipped_issue_inventory_for_structural_check() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::ReconcileWiRefs,
+            "aw wi plan --project jet",
+            false,
+        ));
+        report.next_action.reason =
+            "active WI reference was not resolved because issue inventory was skipped".to_string();
+
+        let failed = normalize_capability_check_report(&mut report, false, false);
+
+        assert!(!failed);
+        assert_eq!(report.status, "healthy");
+        assert_eq!(report.next_action.kind, CapabilityActionKind::None);
+        assert_eq!(
+            report.next_action.reason,
+            "capability format and TD refs are valid"
+        );
+    }
+
+    #[test]
+    fn capability_check_keeps_unverified_run_verify_structural_by_default() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::RunVerify,
+            "aw capability report --project jet --verify",
+            false,
+        ));
+
+        let failed = normalize_capability_check_report(&mut report, false, false);
+
+        assert!(!failed);
+        assert_eq!(report.status, "healthy");
+        assert_eq!(report.next_action.kind, CapabilityActionKind::None);
+        assert_eq!(
+            report.next_action.reason,
+            "capability format and TD refs are valid"
+        );
+    }
+
+    #[test]
+    fn capability_check_preserves_run_verify_after_verify_mode() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::RunVerify,
+            "aw capability report --project jet --verify",
+            false,
+        ));
+
+        let failed = normalize_capability_check_report(&mut report, true, false);
+
+        assert!(failed);
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.next_action.kind, CapabilityActionKind::RunVerify);
+        assert_eq!(
+            report.next_action.command,
+            "aw capability report --project jet --verify"
+        );
+    }
+
+    #[test]
     fn capability_summary_marks_hitl_as_blocked() {
         let report = sample_report(sample_action(
             CapabilityActionKind::HumanConfirmRequired,
@@ -4275,6 +12525,850 @@ mod tests {
             summary["next"]["command"].as_str(),
             Some("aw capability report --project jet --verify")
         );
+    }
+
+    #[test]
+    fn capability_summary_keeps_issue_inventory_warning_out_of_missing() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::RunTd,
+            "aw td create 3779",
+            false,
+        ));
+        report
+            .warnings
+            .push("issue inventory unavailable: gh auth missing".to_string());
+
+        let summary = capability_summary(&report, false);
+        let missing = summary["completion"]["missing"].as_array().unwrap();
+
+        assert_eq!(summary["coverage"]["blocker_count"].as_u64(), Some(0));
+        assert_eq!(summary["coverage"]["warning_count"].as_u64(), Some(1));
+        assert!(!missing.iter().any(|value| value
+            .as_str()
+            .is_some_and(|missing| missing.contains("issue inventory unavailable"))));
+    }
+
+    #[test]
+    fn capability_summary_exposes_contract_facets() {
+        let mut report = sample_report(sample_action(
+            CapabilityActionKind::RunTd,
+            "aw td create 3779",
+            false,
+        ));
+        let mut item = sample_report_item_with_gap(Some("#3779"));
+        item.capability_type = Some(CapabilityType::DeveloperTool);
+        item.surfaces = vec![
+            CapabilitySurface {
+                kind: "CLI".to_string(),
+                commands: vec!["jet test".to_string()],
+                summary: "native test command".to_string(),
+                verification: String::new(),
+            },
+            CapabilitySurface {
+                kind: "WebAppE2E".to_string(),
+                commands: vec!["jet e2e".to_string()],
+                summary: "browser product-flow verification".to_string(),
+                verification: String::new(),
+            },
+        ];
+        item.ec_dimensions = vec![
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Behavior,
+                runner: "jet e2e".to_string(),
+                summary: "frontend behavior and app/API boundaries".to_string(),
+                required_for_production: Some(true),
+                efficiency_backfill: None,
+            },
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Efficiency,
+                runner: "meter".to_string(),
+                summary: "resource attribution".to_string(),
+                required_for_production: Some(true),
+                efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
+                    operating_point: "local-vat-jet-e2e".to_string(),
+                    cube: "projects/jet/.aw/ec/efficiency/e2e.cube.json".to_string(),
+                }),
+            },
+        ];
+        report.capabilities = vec![item];
+
+        let summary = capability_summary(&report, false);
+
+        assert_eq!(summary["contract_facets"]["typed_count"].as_u64(), Some(1));
+        assert_eq!(
+            summary["contract_facets"]["surface_capability_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["contract_facets"]["ec_capability_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["contract_facets"]["efficiency_backfill_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["contract_facets"]["types"]["DeveloperTool"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["contract_facets"]["surface_kinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["CLI", "WebAppE2E"]
+        );
+        assert_eq!(
+            summary["contract_facets"]["ec_dimensions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["behavior", "efficiency"]
+        );
+    }
+
+    #[test]
+    fn capability_sweep_groups_by_report_status_and_next_action() {
+        let mut healthy = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        healthy.status = "healthy".to_string();
+        healthy.verified_count = healthy.capability_count;
+
+        let mut blocked = sample_report(sample_action(
+            CapabilityActionKind::EnvBlocked,
+            "aw capability report --project pg",
+            true,
+        ));
+        blocked.project = "pg".to_string();
+
+        let sweep = capability_sweep_report(&[healthy, blocked], false, false);
+
+        assert_eq!(sweep.status, "blocked");
+        assert_eq!(sweep.project_count, 2);
+        assert_eq!(sweep.verified_project_count, 1);
+        assert_eq!(
+            sweep
+                .groups
+                .iter()
+                .map(|group| format!(
+                    "{}:{}:{}",
+                    group.status, group.next_action_kind, group.count
+                ))
+                .collect::<Vec<_>>(),
+            vec!["blocked:env_blocked:1", "healthy:none:1"]
+        );
+    }
+
+    #[test]
+    fn capability_sweep_splits_define_map_draft_from_report() {
+        let mut draftable = sample_report(sample_action(
+            CapabilityActionKind::DefineCapabilityMap,
+            "aw capability draft --project mamba",
+            false,
+        ));
+        draftable.project = "mamba".to_string();
+
+        let mut inspect_only = sample_report(sample_action(
+            CapabilityActionKind::DefineCapabilityMap,
+            "aw capability report --project pg",
+            true,
+        ));
+        inspect_only.project = "pg".to_string();
+
+        let sweep = capability_sweep_report(&[draftable, inspect_only], false, false);
+
+        assert_eq!(
+            sweep
+                .groups
+                .iter()
+                .map(|group| format!(
+                    "{}:{}:{}",
+                    group.status, group.next_action_group, group.count
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                "blocked:define_capability_map:draft:1",
+                "blocked:define_capability_map:report:1"
+            ]
+        );
+        assert_eq!(sweep.groups[0].next_action_kind, "define_capability_map");
+        assert_eq!(sweep.groups[0].next_action_detail, Some("draft"));
+        assert_eq!(sweep.groups[1].next_action_detail, Some("report"));
+
+        let draft_projects = capability_sweep_draft_projects(&sweep.projects)
+            .into_iter()
+            .map(|project| project.project.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(draft_projects, vec!["mamba"]);
+    }
+
+    #[test]
+    fn capability_sweep_selects_create_wi_projects_for_wi_plans() {
+        let mut planable = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project lumen",
+            false,
+        ));
+        planable.project = "lumen".to_string();
+        planable.cap_path = PathBuf::from("projects/lumen/README.md");
+
+        let mut skipped_inventory = sample_report(sample_action(
+            CapabilityActionKind::ReconcileWiRefs,
+            "aw wi plan --project jet",
+            false,
+        ));
+        skipped_inventory.project = "jet".to_string();
+        skipped_inventory.next_action.reason =
+            "active WI reference was not resolved because issue inventory was skipped; sync or recreate a bounded WI before TD/CB lifecycle"
+                .to_string();
+
+        let mut td_ready = sample_report(sample_action(
+            CapabilityActionKind::RunTd,
+            "aw td create 3783",
+            false,
+        ));
+        td_ready.project = "jet".to_string();
+
+        let sweep = capability_sweep_report(&[planable, skipped_inventory, td_ready], false, false);
+
+        let plan_projects = capability_sweep_wi_plan_projects(&sweep.projects)
+            .into_iter()
+            .map(|project| {
+                (
+                    project.project.as_str(),
+                    project.cap_path.display().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            plan_projects,
+            vec![("lumen", "projects/lumen/README.md".to_string())]
+        );
+        let groups = sweep
+            .groups
+            .iter()
+            .map(|group| {
+                format!(
+                    "{}:{}:{}",
+                    group.status, group.next_action_group, group.count
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(groups.contains(&"blocked:create_wi:plan_review:1".to_string()));
+        assert!(groups.contains(&"blocked:reconcile_wi_refs:issue_inventory_skipped:1".to_string()));
+    }
+
+    #[test]
+    fn capability_sweep_action_queue_selects_executable_next_actions() {
+        let mut td_ready = sample_report(sample_action(
+            CapabilityActionKind::RunTd,
+            "aw td create 3783",
+            false,
+        ));
+        td_ready.project = "jet".to_string();
+
+        let mut verify_ready = sample_report(sample_action(
+            CapabilityActionKind::RunVerify,
+            "aw capability report --project meter-fixture --verify",
+            false,
+        ));
+        verify_ready.project = "meter-fixture".to_string();
+
+        let mut planable = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project lumen",
+            false,
+        ));
+        planable.project = "lumen".to_string();
+
+        let mut skipped_inventory = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project jet",
+            false,
+        ));
+        skipped_inventory.project = "jet".to_string();
+        skipped_inventory.next_action.reason =
+            "active WI reference was not resolved because issue inventory was skipped; sync or recreate a bounded WI before TD/CB lifecycle"
+                .to_string();
+
+        let mut draftable = sample_report(sample_action(
+            CapabilityActionKind::DefineCapabilityMap,
+            "aw capability draft --project mamba",
+            true,
+        ));
+        draftable.project = "mamba".to_string();
+
+        let sweep = capability_sweep_report(
+            &[
+                td_ready,
+                verify_ready,
+                planable,
+                skipped_inventory,
+                draftable,
+            ],
+            false,
+            false,
+        );
+
+        let queue = capability_sweep_action_queue(&sweep.projects)
+            .into_iter()
+            .map(|entry| (entry.project, entry.action_group, entry.command))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            queue,
+            vec![
+                (
+                    "jet".to_string(),
+                    "run_td".to_string(),
+                    "aw td create 3783".to_string()
+                ),
+                (
+                    "meter-fixture".to_string(),
+                    "run_verify".to_string(),
+                    "aw capability report --project meter-fixture --verify --write-evidence"
+                        .to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn capability_sweep_draft_index_lists_review_queue() {
+        let index = render_capability_sweep_draft_index(&[
+            CapabilityDraftReport {
+                schema_version: "aw.cli.v1",
+                action: "capability_draft",
+                project: "pg".to_string(),
+                cap_path: PathBuf::from("projects/pg/README.md"),
+                path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
+                status: "pending_review".to_string(),
+                source: "empty_capability_map",
+                candidate_count: 0,
+                agent_review_required: true,
+                review_status: "pending",
+                apply_command: "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed".to_string(),
+                check_command: "aw capability check --project pg".to_string(),
+            },
+            CapabilityDraftReport {
+                schema_version: "aw.cli.v1",
+                action: "capability_draft",
+                project: "cue".to_string(),
+                cap_path: PathBuf::from("projects/cue/README.md"),
+                path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
+                status: "pending_review".to_string(),
+                source: "prose_candidates",
+                candidate_count: 3,
+                agent_review_required: true,
+                review_status: "pending",
+                apply_command: "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed".to_string(),
+                check_command: "aw capability check --project cue".to_string(),
+            },
+        ]);
+
+        assert!(index.contains("kind: capability_map_draft_index"));
+        assert!(index.contains("draft_count: 2"));
+        assert!(index.contains("## Review Summary"));
+        assert!(index.contains(
+            "| candidate review | 1 | 3 | confirm, merge, split, rename, or defer inferred roots |"
+        ));
+        assert!(index.contains("| definition needed | 1 | 0 | define product promises before applying a README capability section |"));
+        assert!(index.contains("## Suggested Review Order"));
+        assert!(index.contains("| cue | 3 | /tmp/aw/cue/capability-map-drafts/draft.md | `aw capability check --project cue` |"));
+        assert!(index.contains("| pg | empty_capability_map | 0 |"));
+        assert!(index.contains("/tmp/aw/pg/capability-map-drafts/draft.md"));
+        assert!(index.contains(
+            "`aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed`"
+        ));
+        assert!(index.contains("`aw capability check --project pg`"));
+        assert!(index.contains("Do not edit README until the capability promise is confirmed."));
+    }
+
+    #[test]
+    fn capability_sweep_wi_plan_index_lists_review_queue() {
+        let index =
+            render_capability_sweep_wi_plan_index(&[crate::cli::issues::CapabilityWiPlanReport {
+                action: "planned",
+                kind: "capability_plan",
+                project: "lumen".to_string(),
+                backend: "unavailable".to_string(),
+                path: PathBuf::from("/tmp/aw/lumen/capability-plan/plan.md"),
+                cap_path: PathBuf::from("projects/lumen/README.md"),
+                capability_count: 17,
+                planning_row_count: 54,
+                issue_count: 0,
+                candidate_count: 48,
+                reconciliation_count: 3,
+                resolved_wi_ref_count: 0,
+                warnings: vec!["issue inventory unavailable: gh auth missing".to_string()],
+                agent_review_required: true,
+                review_status: "pending",
+                plan_command: "aw wi plan --project lumen".to_string(),
+            }]);
+
+        assert!(index.contains("kind: capability_wi_plan_index"));
+        assert!(index.contains("plan_count: 1"));
+        assert!(index.contains("| lumen | unavailable | 48 | 3 |"));
+        assert!(index.contains("/tmp/aw/lumen/capability-plan/plan.md"));
+        assert!(index.contains("`aw wi plan --project lumen`"));
+        assert!(index.contains("keep the artifact local/review-only"));
+    }
+
+    #[test]
+    fn capability_sweep_action_queue_index_lists_executable_commands() {
+        let index = render_capability_sweep_action_queue_index(&[
+            CapabilityActionQueueEntry {
+                project: "jet".to_string(),
+                action_kind: "run_td",
+                action_group: "run_td".to_string(),
+                target: "WASM And Multi-Target Execution".to_string(),
+                command: "aw td create 3783".to_string(),
+                latest_evidence_path: None,
+                reason: "active WI exists; continue WI -> TD -> CB lifecycle".to_string(),
+            },
+            CapabilityActionQueueEntry {
+                project: "meter".to_string(),
+                action_kind: "run_verify",
+                action_group: "run_verify".to_string(),
+                target: "Runtime Resource Attribution".to_string(),
+                command: "aw capability report --project meter --verify --write-evidence"
+                    .to_string(),
+                latest_evidence_path: Some(PathBuf::from(
+                    "/tmp/aw/meter/capability-verify-reports/report.md",
+                )),
+                reason: "runtime verification must be rerun".to_string(),
+            },
+        ]);
+
+        assert!(index.contains("kind: capability_action_queue"));
+        assert!(index.contains("action_count: 2"));
+        assert!(index
+            .contains("| jet | run_td | WASM And Multi-Target Execution | `aw td create 3783` |"));
+        assert!(index.contains("| meter | run_verify | Runtime Resource Attribution | `aw capability report --project meter --verify --write-evidence` | /tmp/aw/meter/capability-verify-reports/report.md |"));
+        assert!(index.contains("Execute one command at a time"));
+    }
+
+    #[test]
+    fn capability_sweep_check_index_normalizes_structural_results() {
+        let mut skipped_inventory = sample_report(CapabilityAction {
+            kind: CapabilityActionKind::ReconcileWiRefs,
+            capability_id: Some("package-manager".to_string()),
+            gap_id: Some("package-manager-readiness".to_string()),
+            claim_id: None,
+            target: "Package Manager".to_string(),
+            command: "aw wi plan --project jet".to_string(),
+            reason: "issue inventory was skipped; run with --include-issue-inventory to check tracker alignment".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        });
+        skipped_inventory.project = "jet".to_string();
+        skipped_inventory.cap_path = PathBuf::from("projects/jet/README.md");
+
+        let mut missing_work = sample_report(CapabilityAction {
+            kind: CapabilityActionKind::CreateWi,
+            capability_id: Some("lexical-bm25".to_string()),
+            gap_id: Some("lexical-bm25-readiness".to_string()),
+            claim_id: None,
+            target: "Lexical (BM25)".to_string(),
+            command: "aw wi plan --project lumen".to_string(),
+            reason: "open capability gap has no active WI in README".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        });
+        missing_work.project = "lumen".to_string();
+        missing_work.cap_path = PathBuf::from("projects/lumen/README.md");
+
+        let index = capability_sweep_check_index(&[skipped_inventory, missing_work], false, false);
+
+        assert_eq!(index.len(), 2);
+        assert_eq!(index[0].project, "jet");
+        assert_eq!(index[0].status, "passed");
+        assert_eq!(
+            index[0].command,
+            "aw capability check --project jet --skip-issue-inventory"
+        );
+        assert_eq!(index[0].next_action_kind, "none");
+        assert_eq!(index[0].target, "projects/jet/README.md");
+        assert_eq!(index[0].reason, "capability format and TD refs are valid");
+        assert_eq!(index[1].project, "lumen");
+        assert_eq!(index[1].status, "failed");
+        assert_eq!(
+            index[1].command,
+            "aw capability check --project lumen --skip-issue-inventory"
+        );
+        assert_eq!(index[1].next_action_kind, "create_wi");
+        assert_eq!(index[1].target, "Lexical (BM25)");
+    }
+
+    #[test]
+    fn capability_sweep_check_index_renders_rollout_checkpoint() {
+        let index = render_capability_sweep_check_index(
+            &[
+                CapabilityCheckIndexEntry {
+                    project: "jet".to_string(),
+                    status: "passed",
+                    command: "aw capability check --project jet --skip-issue-inventory".to_string(),
+                    cap_path: PathBuf::from("projects/jet/README.md"),
+                    next_action_kind: "none",
+                    target: "projects/jet/README.md".to_string(),
+                    reason: "capability format and TD refs are valid".to_string(),
+                },
+                CapabilityCheckIndexEntry {
+                    project: "lumen".to_string(),
+                    status: "failed",
+                    command:
+                        "aw capability check --project lumen --verify --include-issue-inventory"
+                            .to_string(),
+                    cap_path: PathBuf::from("projects/lumen/README.md"),
+                    next_action_kind: "create_wi",
+                    target: "Lexical (BM25)".to_string(),
+                    reason: "open capability gap has no active WI in README".to_string(),
+                },
+            ],
+            true,
+            true,
+        );
+
+        assert!(index.contains("kind: capability_check_index"));
+        assert!(index.contains("status: failed"));
+        assert!(index.contains("project_count: 2"));
+        assert!(index.contains("passed_count: 1"));
+        assert!(index.contains("verify: true"));
+        assert!(index.contains("include_issue_inventory: true"));
+        assert!(index.contains("| jet | passed | `aw capability check --project jet --skip-issue-inventory` | none | projects/jet/README.md | projects/jet/README.md | capability format and TD refs are valid |"));
+        assert!(index.contains("| lumen | failed | `aw capability check --project lumen --verify --include-issue-inventory` | create_wi | Lexical (BM25) | projects/lumen/README.md | open capability gap has no active WI in README |"));
+        assert!(index.contains(
+            "Re-run the command in the table after each README, WI, TD, or verification change."
+        ));
+    }
+
+    #[test]
+    fn capability_sweep_rollout_index_links_review_artifacts() {
+        let mut draftable = sample_report(sample_action(
+            CapabilityActionKind::DefineCapabilityMap,
+            "aw capability draft --project cue",
+            false,
+        ));
+        draftable.project = "cue".to_string();
+        let mut sweep = capability_sweep_report(
+            &[
+                sample_report(sample_action(CapabilityActionKind::None, "", false)),
+                draftable,
+            ],
+            false,
+            false,
+        );
+        sweep.write_rollout = true;
+        sweep.write_check_index = true;
+        sweep.check_index = vec![CapabilityCheckIndexEntry {
+            project: "jet".to_string(),
+            status: "passed",
+            command: "aw capability check --project jet --skip-issue-inventory".to_string(),
+            cap_path: PathBuf::from("projects/jet/README.md"),
+            next_action_kind: "none",
+            target: "projects/jet/README.md".to_string(),
+            reason: "capability format and TD refs are valid".to_string(),
+        }];
+        sweep.check_index_path = Some(PathBuf::from("/tmp/aw/capability-checks/check-index.md"));
+        sweep.write_drafts = true;
+        sweep.drafts = vec![
+            CapabilityDraftReport {
+                schema_version: "aw.cli.v1",
+                action: "capability_draft",
+                project: "cue".to_string(),
+                cap_path: PathBuf::from("projects/cue/README.md"),
+                path: PathBuf::from("/tmp/aw/cue/capability-map-drafts/draft.md"),
+                status: "pending_review".to_string(),
+                source: "prose_candidates",
+                candidate_count: 3,
+                agent_review_required: true,
+                review_status: "pending",
+                apply_command:
+                    "aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed"
+                        .to_string(),
+                check_command: "aw capability check --project cue".to_string(),
+            },
+            CapabilityDraftReport {
+                schema_version: "aw.cli.v1",
+                action: "capability_draft",
+                project: "pg".to_string(),
+                cap_path: PathBuf::from("projects/pg/README.md"),
+                path: PathBuf::from("/tmp/aw/pg/capability-map-drafts/draft.md"),
+                status: "pending_review".to_string(),
+                source: "empty_capability_map",
+                candidate_count: 0,
+                agent_review_required: true,
+                review_status: "pending",
+                apply_command:
+                    "aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed"
+                        .to_string(),
+                check_command: "aw capability check --project pg".to_string(),
+            },
+        ];
+        sweep.draft_index_path = Some(PathBuf::from(
+            "/tmp/aw/capability-map-drafts/draft-index.md",
+        ));
+        sweep.write_wi_plans = true;
+        sweep.wi_plans = vec![crate::cli::issues::CapabilityWiPlanReport {
+            action: "planned",
+            kind: "capability_plan",
+            project: "lumen".to_string(),
+            backend: "unavailable".to_string(),
+            path: PathBuf::from("/tmp/aw/lumen/capability-plan/plan.md"),
+            cap_path: PathBuf::from("projects/lumen/README.md"),
+            capability_count: 17,
+            planning_row_count: 54,
+            issue_count: 0,
+            candidate_count: 48,
+            reconciliation_count: 3,
+            resolved_wi_ref_count: 0,
+            warnings: Vec::new(),
+            agent_review_required: true,
+            review_status: "pending",
+            plan_command: "aw wi plan --project lumen".to_string(),
+        }];
+        sweep.wi_plan_index_path = Some(PathBuf::from(
+            "/tmp/aw/capability-wi-plans/wi-plan-index.md",
+        ));
+        sweep.write_action_queue = true;
+        sweep.action_queue = vec![CapabilityActionQueueEntry {
+            project: "meter".to_string(),
+            action_kind: "run_verify",
+            action_group: "run_verify".to_string(),
+            target: "Runtime Resource Attribution".to_string(),
+            command: "aw capability report --project meter --verify --write-evidence".to_string(),
+            latest_evidence_path: None,
+            reason: "runtime verification must be rerun".to_string(),
+        }];
+        sweep.action_queue_index_path = Some(PathBuf::from(
+            "/tmp/aw/capability-action-queue/action-queue.md",
+        ));
+
+        let index = render_capability_sweep_rollout_index(&sweep);
+
+        assert!(index.contains("kind: capability_rollout_index"));
+        assert!(index.contains("project_count: 2"));
+        assert!(index.contains("| Check index | 1 | /tmp/aw/capability-checks/check-index.md |"));
+        assert!(index
+            .contains("| Capability drafts | 2 | /tmp/aw/capability-map-drafts/draft-index.md |"));
+        assert!(index.contains("| WI plans | 1 | /tmp/aw/capability-wi-plans/wi-plan-index.md |"));
+        assert!(index
+            .contains("| Action queue | 1 | /tmp/aw/capability-action-queue/action-queue.md |"));
+        assert!(index.contains("| blocked | define_capability_map:draft | 1 | cue |"));
+        assert!(index.contains("Start with the check index"));
+        assert!(index.contains("skipped issue inventory alone is not backlog"));
+
+        let mut skipped_inventory = sample_report(CapabilityAction {
+            kind: CapabilityActionKind::ReconcileWiRefs,
+            capability_id: Some("package-manager".to_string()),
+            gap_id: Some("package-manager-readiness".to_string()),
+            claim_id: None,
+            target: "Package Manager".to_string(),
+            command: "aw wi plan --project jet".to_string(),
+            reason: "issue inventory was skipped; run with --include-issue-inventory to check tracker alignment".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        });
+        skipped_inventory.project = "jet".to_string();
+        sweep
+            .projects
+            .push(capability_sweep_project(&skipped_inventory));
+        sweep.write_review_packet = true;
+        sweep.review_packet_path =
+            Some(PathBuf::from("/tmp/aw/capability-review/review-packet.md"));
+
+        let packet = render_capability_sweep_review_packet(&sweep);
+
+        assert!(packet.contains("kind: capability_hitl_review_packet"));
+        assert!(packet.contains("status: pending_execution"));
+        assert!(packet.contains("| Non-HITL action queue | 1 |"));
+        assert!(packet.contains("## Execute Before Review"));
+        assert!(packet.contains("## Tracker Inventory Review"));
+        assert!(packet.contains("| jet | Package Manager | `aw wi plan --project jet` |"));
+        assert!(packet.contains("## WI Plan Review"));
+        assert!(packet.contains("| lumen | 48 | 3 | 0 |"));
+        assert!(packet.contains("## Capability Draft Review"));
+        assert!(packet.contains("| candidate review | 1 | 3 |"));
+        assert!(
+            packet.contains("| Project | Candidate Roots | Draft | Apply After Review | Check |")
+        );
+        assert!(packet.contains("| cue | 3 | /tmp/aw/cue/capability-map-drafts/draft.md | `aw capability apply-draft --project cue --draft '/tmp/aw/cue/capability-map-drafts/draft.md' --reviewed` | `aw capability check --project cue` |"));
+        assert!(packet.contains("### Definition Needed"));
+        assert!(packet.contains("These projects have no confirmed capability roots yet."));
+        assert!(packet.contains("| pg | empty_capability_map | /tmp/aw/pg/capability-map-drafts/draft.md | `aw capability apply-draft --project pg --draft '/tmp/aw/pg/capability-map-drafts/draft.md' --reviewed` | `aw capability check --project pg` |"));
+        assert!(packet.contains("do not apply README drafts until every product promise"));
+    }
+
+    #[test]
+    fn capability_verify_evidence_requires_verify_mode() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let err = maybe_write_capability_verify_evidence(&report, false, true, false)
+            .expect_err("write evidence without verify should fail");
+
+        assert!(err
+            .to_string()
+            .contains("--write-evidence requires --verify"));
+    }
+
+    #[test]
+    fn capability_verify_evidence_renders_runtime_summary() {
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.status = "healthy".to_string();
+        report.test_gates = ProjectTestGateReport {
+            evaluated: true,
+            status: ProjectTestGateStatus::Failed,
+            note: None,
+            command_count: 1,
+            passed_count: 0,
+            failed_count: 1,
+            skipped_count: 0,
+            commands: vec![ProjectTestCommandReport {
+                workspace: "demo".to_string(),
+                command: "cargo test -p demo".to_string(),
+                status: ProjectTestCommandStatus::Failed,
+                exit_code: Some(101),
+                duration_ms: 123,
+                stdout_tail: "running 1 test".to_string(),
+                stderr_tail: "assertion failed".to_string(),
+            }],
+        };
+        report.production_status = ProductionStatus::Blocked;
+        report
+            .production_blockers
+            .push("demo: catalog/claim verification is not complete".to_string());
+        let mut item = sample_report_item_with_gap(None);
+        item.verification = vec![VerificationRuntimeResult {
+            id: "demo-gate".to_string(),
+            command: "cargo test -p demo demo_gate".to_string(),
+            status: "pass".to_string(),
+            proves: Some("demo runtime gate".to_string()),
+            exit_code: Some(0),
+            stdout: None,
+            stderr: None,
+        }];
+        report.capabilities = vec![item];
+
+        let body = render_capability_verify_evidence(
+            &report,
+            "aw capability report --project jet --verify --write-evidence",
+            Some("abc123"),
+            Some(false),
+        );
+
+        assert!(body.contains("kind: capability_verify_evidence"));
+        assert!(body.contains("git_head: abc123"));
+        assert!(body.contains("git_dirty: false"));
+        assert!(body.contains("This is a runtime evidence artifact."));
+        assert!(body.contains("aw capability report --project jet --verify --write-evidence"));
+        assert!(body.contains("| Project test gates | failed [0/1 passed] |"));
+        assert!(body.contains("| failed | `cargo test -p demo` | 101 | 123 |"));
+        assert!(body.contains("### Project Test Output Tails"));
+        assert!(body.contains("assertion failed"));
+        assert!(body.contains("| Package Manager | demo-gate | pass | `cargo test -p demo demo_gate` | demo runtime gate |"));
+        assert!(body.contains("- demo: catalog/claim verification is not complete"));
+    }
+
+    #[test]
+    fn capability_verify_evidence_matches_only_current_healthy_loop() {
+        let body = r#"---
+kind: capability_verify_evidence
+project: meter
+status: healthy
+loop_status: done
+production_status: blocked
+production_ready: false
+git_head: abc123
+git_dirty: false
+generated_at: 2026-06-18T00:00:00Z
+---
+
+# Capability Verify Evidence: meter
+"#;
+        let fields = capability_verify_evidence_frontmatter_from_str(body).unwrap();
+
+        assert!(capability_verify_evidence_matches_current_project(
+            &fields, "meter", "abc123"
+        ));
+        assert!(!capability_verify_evidence_matches_current_project(
+            &fields, "meter", "old"
+        ));
+        assert!(!capability_verify_evidence_matches_current_project(
+            &fields, "jet", "abc123"
+        ));
+        let stale = body.replace("loop_status: done", "loop_status: continue");
+        let stale_fields = capability_verify_evidence_frontmatter_from_str(&stale).unwrap();
+        assert!(!capability_verify_evidence_matches_current_project(
+            &stale_fields,
+            "meter",
+            "abc123"
+        ));
+        let dirty = body.replace("git_dirty: false", "git_dirty: true");
+        let dirty_fields = capability_verify_evidence_frontmatter_from_str(&dirty).unwrap();
+        assert!(!capability_verify_evidence_matches_current_project(
+            &dirty_fields,
+            "meter",
+            "abc123"
+        ));
+    }
+
+    #[test]
+    fn capability_sweep_project_exposes_stable_next_action_label() {
+        let report = sample_report(sample_action(
+            CapabilityActionKind::AssignCapabilityType,
+            "aw capability set-type --project jet --capability package-manager --type DeveloperTool",
+            true,
+        ));
+
+        let project = capability_sweep_project(&report);
+
+        assert_eq!(project.project, "jet");
+        assert_eq!(project.next_action_kind, "assign_capability_type");
+        assert_eq!(project.next_action_group, "assign_capability_type");
+        assert_eq!(project.next_action_detail, None);
+        assert!(project.requires_hitl);
+    }
+
+    #[test]
+    fn capability_sweep_project_marks_wi_plan_as_review_lane() {
+        let report = sample_report(sample_action(
+            CapabilityActionKind::CreateWi,
+            "aw wi plan --project lumen",
+            false,
+        ));
+
+        let project = capability_sweep_project(&report);
+
+        assert_eq!(project.next_action_kind, "create_wi");
+        assert_eq!(project.next_action_group, "create_wi:plan_review");
+        assert_eq!(project.next_action_detail, Some("plan_review"));
+        assert!(!project.requires_hitl);
+    }
+
+    #[test]
+    fn capability_init_renders_empty_canonical_readme_shell() {
+        let body = render_empty_capability_readme(
+            "Cclab Core",
+            "Capability map placeholder for `cclab-core`.",
+        );
+        let doc = cap_doc(&body);
+
+        assert!(body.starts_with("# Cclab Core\n\n## Brief\n\n"));
+        assert!(body.contains("\n## Capabilities\n\n### Capability Index\n\n"));
+        assert!(body.contains(
+            "| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |"
+        ));
+        assert_eq!(doc.format, CapabilityDocumentFormat::Empty);
+        assert!(doc.capabilities.is_empty());
+    }
+
+    #[test]
+    fn capability_init_humanizes_project_slug_title() {
+        assert_eq!(humanize_project_title("cclab-core"), "Cclab Core");
+        assert_eq!(humanize_project_title("agentkit"), "Agentkit");
+        assert_eq!(humanize_project_title("cclab_grid_wasm"), "Cclab Grid Wasm");
     }
 
     fn one_capability() -> &'static str {
@@ -4341,6 +13435,334 @@ out_of_scope:
 |---|---|---:|---|---|---|---|
 | Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
 	"#
+    }
+
+    fn one_field_markdown_capability() -> &'static str {
+        r#"# demo
+
+## Package Manager
+
+ID: package-manager
+Root WI: #3779
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- projects/jet/validation/pkg-manager.toml
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |
+	"#
+    }
+
+    #[test]
+    fn set_type_updates_field_style_readme_contract() {
+        let updated = upsert_capability_type_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityType::DeveloperTool,
+        )
+        .unwrap();
+
+        assert!(updated.contains("ID: package-manager\nType: DeveloperTool\nRoot WI: #3779"));
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        assert_eq!(
+            parsed.capabilities[0].capability_type,
+            Some(CapabilityType::DeveloperTool)
+        );
+    }
+
+    #[test]
+    fn set_type_updates_field_value_readme_contract() {
+        let updated = upsert_capability_type_in_readme(
+            one_markdown_capability(),
+            "package-manager",
+            CapabilityType::RuntimeTool,
+        )
+        .unwrap();
+
+        assert!(updated
+            .contains("| ID | package-manager |\n| Type | RuntimeTool |\n| Root WI | #3779 |"));
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        assert_eq!(
+            parsed.capabilities[0].capability_type,
+            Some(CapabilityType::RuntimeTool)
+        );
+    }
+
+    #[test]
+    fn set_status_updates_field_style_readme_contract() {
+        let updated = upsert_capability_status_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityStatus::Retired,
+        )
+        .unwrap();
+
+        assert!(updated.contains("Status: retired"));
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        assert_eq!(parsed.capabilities[0].status, CapabilityStatus::Retired);
+    }
+
+    #[test]
+    fn set_status_retired_updates_capability_index_production() {
+        let body = r#"# demo
+
+## Brief
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Package Manager | #3779 | implemented | verified | smoke | ready | install flow |
+
+### Package Manager
+
+ID: package-manager
+Root WI: #3779
+Status: verified
+Required Verification: smoke
+Promise:
+Replace package manager flows.
+Gate Inventory:
+- `cargo test -p jet`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Package manager readiness | epic | #3779 | implemented | verified | smoke | `cargo test -p jet` |
+"#;
+        let updated =
+            upsert_capability_status_in_readme(body, "package-manager", CapabilityStatus::Retired)
+                .unwrap();
+
+        assert!(updated.contains(
+            "| Package Manager | #3779 | implemented | verified | smoke | retired | install flow |"
+        ));
+        assert!(updated.contains("Status: retired"));
+    }
+
+    #[test]
+    fn set_status_blocked_updates_capability_index_verification_and_production() {
+        let body = r#"# demo
+
+## Brief
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Dynamic Security Evidence | - | implemented | verified | smoke | ready | vat/rig/meter evidence adapters |
+
+### Dynamic Security Evidence
+
+ID: dynamic-security-evidence
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+Compose dynamic security evidence.
+Gate Inventory:
+- `cargo test -p guard`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Dynamic security evidence | epic | - | implemented | verified | smoke | `cargo test -p guard` |
+"#;
+        let updated = upsert_capability_status_in_readme(
+            body,
+            "dynamic-security-evidence",
+            CapabilityStatus::Blocked,
+        )
+        .unwrap();
+
+        assert!(updated.contains(
+            "| Dynamic Security Evidence | - | implemented | blocked | smoke | blocked | vat/rig/meter evidence adapters |"
+        ));
+        assert!(updated.contains("Status: blocked"));
+    }
+
+    #[test]
+    fn set_surface_updates_field_style_readme_contract() {
+        let with_type = upsert_capability_type_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityType::DeveloperTool,
+        )
+        .unwrap();
+        let updated = upsert_capability_surface_in_readme(
+            &with_type,
+            "package-manager",
+            CapabilitySurface {
+                kind: "CLI".to_string(),
+                commands: vec!["jet install".to_string(), "jet add react".to_string()],
+                summary: "package-management command surface, including lockfile flows".to_string(),
+                verification: String::new(),
+            },
+        )
+        .unwrap();
+
+        assert!(updated.contains(
+            "Type: DeveloperTool\nSurfaces: CLI: `jet install` + `jet add react` - package-management command surface, including lockfile flows\nRoot WI: #3779"
+        ));
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        assert_eq!(parsed.capabilities[0].surfaces.len(), 1);
+        assert_eq!(parsed.capabilities[0].surfaces[0].kind, "CLI");
+        assert_eq!(
+            parsed.capabilities[0].surfaces[0].commands,
+            vec!["jet install", "jet add react"]
+        );
+        assert_eq!(
+            parsed.capabilities[0].surfaces[0].summary,
+            "package-management command surface, including lockfile flows"
+        );
+    }
+
+    #[test]
+    fn set_surface_replaces_existing_kind_without_reordering() {
+        let with_type = upsert_capability_type_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityType::DeveloperTool,
+        )
+        .unwrap();
+        let with_surfaces = with_type.replace(
+            "Type: DeveloperTool\nRoot WI: #3779",
+            "Type: DeveloperTool\nSurfaces: CLI: `jet install` - package install surface.; UI: `http://localhost:<port>` - browser client surface.\nRoot WI: #3779",
+        );
+        let updated = upsert_capability_surface_in_readme(
+            &with_surfaces,
+            "package-manager",
+            CapabilitySurface {
+                kind: "CLI".to_string(),
+                commands: vec!["jet install".to_string(), "jet add react".to_string()],
+                summary: "package-management command surface".to_string(),
+                verification: String::new(),
+            },
+        )
+        .unwrap();
+
+        assert!(updated.contains(
+            "Surfaces: CLI: `jet install` + `jet add react` - package-management command surface; UI: `http://localhost:<port>` - browser client surface."
+        ));
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        assert_eq!(parsed.capabilities[0].surfaces[0].kind, "CLI");
+        assert_eq!(parsed.capabilities[0].surfaces[1].kind, "UI");
+    }
+
+    #[test]
+    fn set_ec_dimension_updates_field_style_readme_contract_with_efficiency_slot() {
+        let updated = upsert_capability_ec_dimension_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Efficiency,
+                runner: "rig".to_string(),
+                summary: "load pin, latency regression, and RSS gate".to_string(),
+                required_for_production: None,
+                efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
+                    operating_point: "local-vat-search-p95".to_string(),
+                    cube: "projects/demo/.aw/ec/efficiency/search.cube.json".to_string(),
+                }),
+            },
+        )
+        .unwrap();
+
+        assert!(updated.contains(
+            "EC Dimensions: efficiency: `rig` - load pin, latency regression, and RSS gate"
+        ));
+        assert!(updated.contains("Efficiency Operating Point: local-vat-search-p95"));
+        assert!(
+            updated.contains("Efficiency Cube: projects/demo/.aw/ec/efficiency/search.cube.json")
+        );
+        assert!(updated
+            .contains("#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)"));
+        assert!(updated.contains("Operating point: local-vat-search-p95"));
+        assert!(updated.contains("Cube: projects/demo/.aw/ec/efficiency/search.cube.json"));
+        let parsed = parse_capability_document(&updated, Path::new("README.md")).unwrap();
+        let efficiency = parsed.capabilities[0]
+            .ec_dimensions
+            .iter()
+            .find(|dimension| dimension.dimension == CapabilityEcDimensionKind::Efficiency)
+            .unwrap();
+        assert_eq!(efficiency.runner, "rig");
+        assert_eq!(
+            efficiency.summary,
+            "load pin, latency regression, and RSS gate"
+        );
+        assert_eq!(
+            efficiency.efficiency_backfill.as_ref().unwrap().cube,
+            "projects/demo/.aw/ec/efficiency/search.cube.json"
+        );
+    }
+
+    #[test]
+    fn set_ec_dimension_rejects_partial_efficiency_backfill_slot() {
+        let missing_cube = upsert_capability_ec_dimension_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Efficiency,
+                runner: "meter".to_string(),
+                summary: "resource attribution gate".to_string(),
+                required_for_production: None,
+                efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
+                    operating_point: "local-vat-search-p95".to_string(),
+                    cube: String::new(),
+                }),
+            },
+        )
+        .unwrap_err();
+        assert!(missing_cube
+            .to_string()
+            .contains("requires both --operating-point and --cube"));
+
+        let missing_operating_point = upsert_capability_ec_dimension_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Efficiency,
+                runner: "meter".to_string(),
+                summary: "resource attribution gate".to_string(),
+                required_for_production: None,
+                efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
+                    operating_point: String::new(),
+                    cube: "projects/demo/.aw/ec/efficiency/search.cube.json".to_string(),
+                }),
+            },
+        )
+        .unwrap_err();
+        assert!(missing_operating_point
+            .to_string()
+            .contains("requires both --operating-point and --cube"));
+    }
+
+    #[test]
+    fn set_ec_dimension_rejects_backfill_slot_on_non_efficiency_dimension() {
+        let err = upsert_capability_ec_dimension_in_readme(
+            one_field_markdown_capability(),
+            "package-manager",
+            CapabilityEcDimension {
+                dimension: CapabilityEcDimensionKind::Behavior,
+                runner: "rig".to_string(),
+                summary: "request conformance".to_string(),
+                required_for_production: None,
+                efficiency_backfill: Some(CapabilityEfficiencyBackfillSlot {
+                    operating_point: "local-vat-search-p95".to_string(),
+                    cube: "projects/demo/.aw/ec/efficiency/search.cube.json".to_string(),
+                }),
+            },
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("only valid for the efficiency EC dimension"));
     }
 
     #[test]
@@ -4451,6 +13873,395 @@ out_of_scope:
     }
 
     #[test]
+    fn parse_markdown_field_capability_contract() {
+        let doc = cap_doc(one_field_markdown_capability());
+        assert_eq!(doc.format, CapabilityDocumentFormat::MarkdownTables);
+        assert_eq!(doc.capabilities.len(), 1);
+        let capability = &doc.capabilities[0];
+        assert_eq!(capability.id, "package-manager");
+        assert_eq!(capability.status, CapabilityStatus::Auditing);
+        assert_eq!(capability.promise, "Replace package manager flows.");
+        assert_eq!(
+            capability.current_state,
+            "Root WI: #3779; Gate inventory: projects/jet/validation/pkg-manager.toml"
+        );
+    }
+
+    #[test]
+    fn parse_capability_contract_facets_for_78() {
+        let body = r#"# demo
+
+## Search
+
+ID: search
+Root WI: #4141
+Status: auditing
+Type: Service
+Surfaces:
+- HTTP: `GET /search` serves ranked external ids.
+- CLI: `lumen serve` starts the service.
+EC Dimensions:
+- behavior: `rig run search-flow` validates API behavior.
+- efficiency: `rig load search-perf` backfills latency and qps.
+- security: `guard scan lumen-auth` validates auth boundaries.
+Required Verification: smoke, conformance
+Promise:
+Serve search queries as ranked external ids only.
+Gate Inventory:
+- `cargo test -p lumen planner`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Query planner | epic | #4141 | implemented | passing | conformance | `cargo test -p lumen planner` |
+| Fixture inventory | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
+| Prose follow-up | epic | - | planned | none | smoke | future service hardening chapter |
+
+### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)
+
+Operating point: 1M docs, qps=100, metric=p99_ms, ratchet=0.8
+Cube: projects/lumen/tests/perf-cube.json
+
+| feature | lumen | pg |
+|---|---|---|
+| text_bm25 | 1.0 | 22.5x win |
+"#;
+        let doc = cap_doc(body);
+        let capability = &doc.capabilities[0];
+
+        assert_eq!(capability.capability_type, Some(CapabilityType::Service));
+        assert_eq!(capability.surfaces.len(), 2);
+        assert_eq!(capability.surfaces[0].kind, "HTTP");
+        assert_eq!(capability.surfaces[0].commands, vec!["GET /search"]);
+        assert_eq!(capability.surfaces[1].kind, "CLI");
+        assert_eq!(capability.surfaces[1].commands, vec!["lumen serve"]);
+        assert_eq!(capability.ec_dimensions.len(), 3);
+        let efficiency = capability
+            .ec_dimensions
+            .iter()
+            .find(|dimension| dimension.dimension == CapabilityEcDimensionKind::Efficiency)
+            .unwrap();
+        assert_eq!(efficiency.runner, "rig load search-perf");
+        let slot = efficiency.efficiency_backfill.as_ref().unwrap();
+        assert_eq!(
+            slot.operating_point,
+            "1M docs, qps=100, metric=p99_ms, ratchet=0.8"
+        );
+        assert_eq!(slot.cube, "projects/lumen/tests/perf-cube.json");
+
+        let wi_rows = capability_rows_for_wi_plan(&doc, &[], &[]).unwrap();
+        let query_planner = wi_rows
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("query-planner"))
+            .unwrap();
+        assert_eq!(query_planner.gaps, "none");
+        assert_eq!(query_planner.active_wi, "#4141");
+        assert_eq!(query_planner.capability_type, "Service");
+        assert!(query_planner
+            .surfaces
+            .contains("HTTP: `GET /search` - serves ranked external ids."));
+        assert!(query_planner
+            .surfaces
+            .contains("CLI: `lumen serve` - starts the service."));
+        assert!(query_planner
+            .ec_dimensions
+            .contains("behavior: `rig run search-flow` - validates API behavior."));
+        assert!(query_planner
+            .ec_dimensions
+            .contains("efficiency: `rig load search-perf` - backfills latency and qps."));
+        assert!(query_planner.ec_dimensions.contains(
+            "operating point: 1M docs, qps=100, metric=p99_ms, ratchet=0.8; cube: projects/lumen/tests/perf-cube.json"
+        ));
+        assert!(query_planner
+            .ec_dimensions
+            .contains("security: `guard scan lumen-auth` - validates auth boundaries."));
+
+        let fixture_inventory = wi_rows
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("fixture-inventory"))
+            .unwrap();
+        assert_eq!(fixture_inventory.gaps, "none");
+        assert_eq!(fixture_inventory.active_wi, "none");
+        assert!(fixture_inventory
+            .evidence
+            .contains("claim inventory: projects/lumen/tests/planner_diff.rs"));
+        assert!(!fixture_inventory
+            .evidence
+            .contains("Add at least one concrete verification gate"));
+
+        let prose_follow_up = wi_rows
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("prose-follow-up"))
+            .unwrap();
+        assert!(prose_follow_up.gaps.contains("claim prose-follow-up"));
+        assert_eq!(prose_follow_up.active_wi, "none");
+        assert!(prose_follow_up
+            .evidence
+            .contains("claim evidence: future service hardening chapter"));
+        assert!(!prose_follow_up.evidence.contains("claim inventory:"));
+    }
+
+    #[test]
+    fn wi_plan_uses_report_derived_ec_dimensions() {
+        let body = r#"# demo
+
+## Search
+
+ID: search
+Root WI: -
+Status: auditing
+Type: Service
+Required Verification: smoke, conformance
+Promise:
+Serve search queries as ranked external ids only.
+Gate Inventory:
+- projects/lumen/tests/planner_diff.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Query planner | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
+"#;
+        let doc = cap_doc(body);
+        let mut report_item = sample_report_item_with_gap(None);
+        report_item.id = "search".to_string();
+        report_item.title = "Search".to_string();
+        report_item.capability_type = Some(CapabilityType::Service);
+        report_item.ec_dimensions =
+            derive_report_ec_dimensions(&doc.capabilities[0], &BTreeMap::new());
+
+        let rows = capability_rows_for_wi_plan(&doc, &[], &[report_item]).unwrap();
+        let query_planner = rows
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("query-planner"))
+            .unwrap();
+
+        assert_eq!(query_planner.capability_type, "Service");
+        assert_eq!(query_planner.surfaces, "-");
+        assert!(query_planner
+            .ec_dimensions
+            .contains("behavior: declared by behavior surfaces or verification contract"));
+    }
+
+    #[test]
+    fn surface_and_dimension_summaries_strip_leading_command_prefixes() {
+        assert_eq!(
+            clean_surface_summary(
+                "`jet test` + `jet e2e` - Native test runner and product-flow e2e surface."
+            ),
+            "Native test runner and product-flow e2e surface."
+        );
+        assert_eq!(
+            clean_surface_summary("`GET /search` serves ranked external ids."),
+            "serves ranked external ids."
+        );
+        assert_eq!(
+            clean_runner_prefixed_summary("`rig + meter` - load pins plus resource attribution."),
+            "load pins plus resource attribution."
+        );
+    }
+
+    #[test]
+    fn inline_surface_and_ec_dimension_semicolons_preserve_summary_text() {
+        let body = r#"# demo
+
+## Brief
+
+Demo project.
+
+## Capabilities
+
+### Dev Server And HMR
+
+ID: dev-server-hmr
+Root WI: #3780
+Status: auditing
+Type: DeveloperTool
+Surfaces: CLI: `jet dev` - starts dev server; keeps browser logs.; UI: `http://localhost:<port>` - connected browser client.
+EC Dimensions: behavior: `jet e2e` - checks frontend flow; includes API call path.; efficiency: `meter collect jet-dev` - profiles dev loop.
+Required Verification: smoke, conformance
+Promise:
+Run local dev server with browser-connected feedback.
+Gate Inventory:
+- `cargo test -p jet dev_server`
+"#;
+        let doc = cap_doc(body);
+        let capability = &doc.capabilities[0];
+
+        assert_eq!(capability.surfaces.len(), 2);
+        assert_eq!(capability.surfaces[0].kind, "CLI");
+        assert_eq!(capability.surfaces[0].commands, vec!["jet dev"]);
+        assert_eq!(
+            capability.surfaces[0].summary,
+            "starts dev server; keeps browser logs."
+        );
+        assert_eq!(capability.surfaces[1].kind, "UI");
+        assert_eq!(
+            capability.surfaces[1].commands,
+            vec!["http://localhost:<port>"]
+        );
+
+        assert_eq!(capability.ec_dimensions.len(), 2);
+        let behavior = capability
+            .ec_dimensions
+            .iter()
+            .find(|dimension| dimension.dimension == CapabilityEcDimensionKind::Behavior)
+            .unwrap();
+        assert_eq!(behavior.runner, "jet e2e");
+        assert_eq!(
+            behavior.summary,
+            "checks frontend flow; includes API call path."
+        );
+        let efficiency = capability
+            .ec_dimensions
+            .iter()
+            .find(|dimension| dimension.dimension == CapabilityEcDimensionKind::Efficiency)
+            .unwrap();
+        assert_eq!(efficiency.runner, "meter collect jet-dev");
+    }
+
+    #[test]
+    fn ec_dimension_kind_rejects_content_dimension_aliases() {
+        assert_eq!(
+            parse_ec_dimension_kind("behavior"),
+            Some(CapabilityEcDimensionKind::Behavior)
+        );
+        assert_eq!(
+            parse_ec_dimension_kind("efficiency"),
+            Some(CapabilityEcDimensionKind::Efficiency)
+        );
+        assert_eq!(parse_ec_dimension_kind("content"), None);
+        assert_eq!(parse_ec_dimension_kind("docs"), None);
+        assert_eq!(parse_ec_dimension_kind("documentation"), None);
+    }
+
+    #[test]
+    fn report_ec_required_for_production_uses_type_ceiling_for_declared_dimensions() {
+        let body = r#"# demo
+
+## Tooling
+
+ID: tooling
+Root WI: #78
+Status: auditing
+Type: DeveloperTool
+Required Verification: smoke
+Promise:
+Expose a developer-facing toolchain.
+Gate Inventory:
+- `cargo test -p demo tooling`
+
+| Dimension | Runner | Required |
+|---|---|---|
+| behavior | `rig run tooling-flow` | no |
+| efficiency | `meter collect tooling` | no |
+| security | `guard scan tooling` | yes |
+"#;
+        let doc = cap_doc(body);
+        let capability = &doc.capabilities[0];
+
+        assert!(capability
+            .ec_dimensions
+            .iter()
+            .all(|dimension| dimension.required_for_production.is_none()));
+
+        let derived = derive_report_ec_dimensions(capability, &BTreeMap::new());
+        let required = derived
+            .iter()
+            .map(|dimension| {
+                (
+                    dimension.dimension,
+                    dimension.required_for_production.unwrap(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            required.get(&CapabilityEcDimensionKind::Behavior),
+            Some(&true)
+        );
+        assert_eq!(
+            required.get(&CapabilityEcDimensionKind::Efficiency),
+            Some(&true)
+        );
+        assert_eq!(
+            required.get(&CapabilityEcDimensionKind::Security),
+            Some(&false)
+        );
+    }
+
+    #[test]
+    fn report_ec_dimensions_do_not_materialize_empty_type_dimensions() {
+        let body = r#"# demo
+
+## Search
+
+ID: search
+Root WI: #78
+Status: auditing
+Type: Service
+Required Verification: smoke
+Promise:
+Expose a service capability.
+Gate Inventory:
+- `cargo test -p demo search`
+"#;
+        let doc = cap_doc(body);
+        let capability = &doc.capabilities[0];
+
+        assert!(capability.ec_dimensions.is_empty());
+
+        let derived = derive_report_ec_dimensions(capability, &BTreeMap::new());
+
+        assert_eq!(derived.len(), 1);
+        assert_eq!(derived[0].dimension, CapabilityEcDimensionKind::Behavior);
+        assert_eq!(derived[0].required_for_production, Some(true));
+    }
+
+    #[test]
+    fn report_ec_dimensions_require_efficiency_only_when_slot_declares_content() {
+        let body = r#"# demo
+
+## Search
+
+ID: search
+Root WI: #78
+Status: auditing
+Type: Service
+Efficiency Operating Point: 1M docs, qps=100, metric=p99_ms, ratchet=0.8
+Efficiency Cube: projects/lumen/.aw/ec/efficiency/search.cube.json
+Required Verification: smoke
+Promise:
+Expose a service search capability.
+Gate Inventory:
+- `cargo test -p demo search`
+"#;
+        let doc = cap_doc(body);
+        let capability = &doc.capabilities[0];
+
+        let derived = derive_report_ec_dimensions(capability, &BTreeMap::new());
+        let required = derived
+            .iter()
+            .map(|dimension| {
+                (
+                    dimension.dimension,
+                    dimension.required_for_production.unwrap(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(derived.len(), 2);
+        assert_eq!(
+            required.get(&CapabilityEcDimensionKind::Behavior),
+            Some(&true)
+        );
+        assert_eq!(
+            required.get(&CapabilityEcDimensionKind::Efficiency),
+            Some(&true)
+        );
+        assert!(!required.contains_key(&CapabilityEcDimensionKind::Security));
+        assert!(!required.contains_key(&CapabilityEcDimensionKind::Stability));
+    }
+
+    #[test]
     fn markdown_required_verification_parses_full_regenerability_contract() {
         let body = one_markdown_capability().replace(
             "Required Verification | smoke, conformance",
@@ -4500,6 +14311,8 @@ out_of_scope:
 "#;
         let doc = cap_doc(body);
         assert_eq!(doc.format, CapabilityDocumentFormat::MarkdownTables);
+        assert!(doc.requires_format_migration());
+        assert_eq!(doc.format_version(), 1);
         assert_eq!(doc.capabilities.len(), 2);
         assert_eq!(doc.capabilities[0].id, "rust-native-frontend-toolchain");
         assert_eq!(
@@ -4508,6 +14321,46 @@ out_of_scope:
         );
         assert_eq!(doc.capabilities[1].id, "package-manager");
         assert_eq!(doc.capabilities[1].gaps[0].id, "lockfile-parity");
+    }
+
+    #[test]
+    fn one_row_contract_table_migration_renders_canonical_field_style_h3() {
+        let body = r#"# Jet
+
+Legacy intro.
+
+## Package Manager
+
+| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
+|---|---:|---|---|---|---|
+| package-manager | #3779 | verified | Replace package manager flows. | smoke, conformance | `cargo test -p jet pkg_manager` |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Lockfile parity | epic | #3779 | implemented | verified | conformance | `cargo test -p jet pkg_manager::lockfile` |
+"#;
+        let doc = cap_doc(body);
+
+        assert!(doc.requires_format_migration());
+        assert_eq!(doc.format_version(), 1);
+
+        let migrated = render_capability_markdown_migration(body, &doc, "jet");
+
+        assert!(migrated.contains("## Brief"));
+        assert!(migrated.contains("## Capabilities"));
+        assert!(migrated.contains("\n### Capability Index\n"));
+        assert!(migrated.contains("\n### Package Manager\n"));
+        assert!(migrated.contains("\nID: package-manager\n"));
+        assert!(migrated.contains("\nPromise:\nReplace package manager flows."));
+        assert!(!migrated.contains(
+            "| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |"
+        ));
+        assert!(!migrated.contains("\n## Package Manager\n"));
+
+        let reparsed = cap_doc(&migrated);
+        assert_eq!(reparsed.format_version(), 2);
+        assert!(!reparsed.requires_format_migration());
+        assert_eq!(reparsed.capabilities[0].id, "package-manager");
     }
 
     #[test]
@@ -4525,9 +14378,13 @@ out_of_scope:
     fn yaml_migration_renders_markdown_tables_without_yaml_sections() {
         let doc = cap_doc(one_capability());
         let migrated = render_capability_markdown_migration(one_capability(), &doc, "jet");
-        assert!(migrated.contains("## Capability Index"));
-        assert!(migrated.contains("## Package Manager"));
-        assert!(migrated.contains("| Field | Value |"));
+        assert!(migrated.contains("## Brief"));
+        assert!(migrated.contains("## Capabilities"));
+        assert!(migrated.contains("\n### Capability Index\n"));
+        assert!(migrated.contains("\n### Package Manager\n"));
+        assert!(migrated.contains("\nID: package-manager\n"));
+        assert!(migrated.contains("\nPromise:\nReplace package manager flows."));
+        assert!(!migrated.contains("| Field | Value |"));
         assert!(migrated.contains(
             "| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |"
         ));
@@ -4537,6 +14394,282 @@ out_of_scope:
         let reparsed = cap_doc(&migrated);
         assert_eq!(reparsed.format, CapabilityDocumentFormat::MarkdownTables);
         assert_eq!(reparsed.capabilities[0].id, "package-manager");
+    }
+
+    #[test]
+    fn markdown_migration_preserves_project_brief_outside_capability_registry() {
+        let body = format!(
+            r#"# Jet
+
+## Brief
+
+Jet is a Rust-native frontend toolchain.
+
+| Surface | Commands | Owns |
+|---|---|---|
+| Build | `jet build` | Production artifacts. |
+
+## Capabilities
+
+{}
+"#,
+            one_markdown_capability()
+        );
+        let doc = cap_doc(&body);
+        let migrated = render_capability_markdown_migration(&body, &doc, "jet");
+
+        assert!(migrated.contains("Jet is a Rust-native frontend toolchain."));
+        assert!(migrated.contains("| Build | `jet build` | Production artifacts. |"));
+        assert!(!migrated.contains("TODO: Add the human-confirmed project brief"));
+        assert!(migrated.contains("\n### Capability Index\n"));
+        assert!(migrated.contains("\n### Package Manager\n"));
+    }
+
+    #[test]
+    fn markdown_migration_inserts_registry_at_original_capability_position() {
+        let body = r#"# lumen
+
+A K8s-native search specialist.
+
+## Capabilities
+
+Capability intro stays before the registry.
+
+## Capability Index
+
+The capability roots group into pillars.
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| search | - | implemented | auditing | conformance | not_ready | broad search evidence |
+
+**Honest scope (do not over-claim):**
+
+- Ingestion is the caller's own pub/sub.
+
+### Search
+
+ID: search
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Search returns external ids only.
+Gate Inventory:
+- projects/lumen/tests/planner_diff.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Query planner | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
+
+## Benchmarks
+
+Benchmark reference stays after the registry.
+"#;
+        let doc = cap_doc(body);
+        let migrated = render_capability_markdown_migration(body, &doc, "lumen");
+
+        assert!(migrated.contains("\n## Brief\n"));
+        assert!(migrated.contains("## Brief\n\nA K8s-native search specialist."));
+        assert!(!migrated.contains("## Brief\n\n\nA K8s-native search specialist."));
+        assert!(migrated.contains("A K8s-native search specialist.\n\n## Capabilities"));
+        assert!(migrated.contains("A K8s-native search specialist."));
+        assert!(!migrated.contains("TODO: Add the human-confirmed project brief"));
+        assert!(migrated.contains("The capability roots group into pillars."));
+        assert!(migrated.contains("Ingestion is the caller's own pub/sub."));
+        assert!(migrated.contains("Benchmark reference stays after the registry."));
+        assert!(migrated.contains("\n### Capability Index\n"));
+        assert!(migrated.contains("\n### Search\n"));
+        assert!(
+            migrated.find("\n### Search\n").unwrap() < migrated.find("\n## Benchmarks\n").unwrap()
+        );
+        assert!(!migrated.contains(CAPABILITY_MIGRATION_INSERT_MARKER));
+    }
+
+    #[test]
+    fn markdown_migration_preserves_multiple_capability_index_tables() {
+        let body = r#"# lumen
+
+## Brief
+
+Search specialist.
+
+## Capabilities
+
+## Capability Index
+
+**Pillar — agent-first**
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| agentic-integration | 4143 | implemented | passing | conformance | ready | offline CLI contract |
+
+**Pillar — serve / search**
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| search-lexical | - | partial | auditing | conformance | not_ready | WAND/block-max remains open |
+
+### Lexical
+
+ID: search-lexical
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+BM25 ranking over text.
+Gate Inventory:
+- projects/lumen/scripts/bench_vs_db.py
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| BM25 ranking | subepic | - | implemented | passing | conformance | projects/lumen/scripts/bench_vs_db.py |
+
+### Agentic Integration
+
+ID: agentic-integration
+Root WI: 4143
+Status: verified
+Required Verification: conformance
+Promise:
+Offline CLI schema and topics.
+Gate Inventory:
+- projects/lumen/tests/spec_cli.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| `lumen spec` | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
+"#;
+        let doc = cap_doc(body);
+        let migrated = render_capability_markdown_migration(body, &doc, "lumen");
+
+        assert!(migrated.contains("| Lexical | - | partial | auditing | conformance | not_ready | WAND/block-max remains open |"));
+        assert!(migrated.contains("| Agentic Integration | 4143 | implemented | passing | conformance | ready | offline CLI contract |"));
+        assert!(!migrated.contains("**Pillar — agent-first**"));
+        assert!(!migrated.contains("**Pillar — serve / search**"));
+    }
+
+    #[test]
+    fn previous_canonical_tail_repair_accepts_h2_or_h3_capability_index() {
+        let legacy_prefix = "# Jet\n\n## Package Manager\n\nLegacy package-manager table.\n";
+        let h2_tail = format!(
+            "{legacy_prefix}\n## Capability Index\n\n| Capability | Root WI |\n|---|---:|\n| Package Manager | #3779 |\n\n### Package Manager\n\nID: package-manager\n"
+        );
+        let h3_tail = h2_tail.replace("\n## Capability Index\n", "\n### Capability Index\n");
+
+        assert_eq!(
+            strip_previous_canonical_capability_tail(&h2_tail).as_deref(),
+            Some(legacy_prefix)
+        );
+        assert_eq!(
+            strip_previous_canonical_capability_tail(&h3_tail).as_deref(),
+            Some(legacy_prefix)
+        );
+    }
+
+    #[test]
+    fn markdown_migration_keeps_fenced_code_inside_capability_postlude() {
+        let body = r#"# lumen
+
+K8s-native search specialist.
+
+## Capabilities
+
+### Kubernetes-Native Deployment
+
+ID: k8s-deployment
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Deploy declaratively.
+Gate Inventory:
+- projects/lumen/k8s
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| kustomize base | epic | - | implemented | passing | conformance | projects/lumen/k8s |
+
+Deployment handoff:
+
+```bash
+# 1. build
+kubectl apply -k k8s/overlays/myenv
+```
+
+### HTTP / REST Integration
+
+ID: rest-integration
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+REST clients work.
+Gate Inventory:
+- projects/lumen/src
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| REST API | epic | - | implemented | passing | conformance | projects/lumen/src |
+"#;
+        let doc = cap_doc(body);
+        let migrated = render_capability_markdown_migration(body, &doc, "lumen");
+        let k8s = migrated
+            .find("\n### Kubernetes-Native Deployment\n")
+            .unwrap();
+        let code = migrated.find("# 1. build").unwrap();
+        let http = migrated.find("\n### HTTP / REST Integration\n").unwrap();
+
+        assert!(k8s < code && code < http);
+        assert!(migrated.contains(
+            "```bash\n# 1. build\nkubectl apply -k k8s/overlays/myenv\n```\n\n### HTTP / REST Integration"
+        ));
+    }
+
+    #[test]
+    fn markdown_migration_canonicalizes_plain_efficiency_backfill_section() {
+        let body = r#"# demo
+
+## Brief
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Search | - | implemented | auditing | conformance | not_ready | search service |
+
+### Search
+
+ID: search
+Type: Service
+Root WI: -
+Status: auditing
+Required Verification: smoke, conformance
+Promise:
+Serve ranked external ids.
+Gate Inventory:
+- `cargo test -p lumen planner`
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Query planner | epic | - | implemented | passing | conformance | `cargo test -p lumen planner` |
+
+#### Efficiency
+
+Operating point: 1M docs, qps=100, metric=p99_ms
+Cube: projects/lumen/.aw/ec/efficiency/search.cube.json
+"#;
+        let doc = cap_doc(body);
+        assert!(doc.requires_format_migration());
+
+        let migrated = render_capability_markdown_migration(body, &doc, "lumen");
+
+        assert!(!migrated.contains("\n#### Efficiency\n"));
+        assert!(migrated.contains(
+            "\n#### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)\n\nOperating point: 1M docs, qps=100, metric=p99_ms\nCube: projects/lumen/.aw/ec/efficiency/search.cube.json\n"
+        ));
     }
 
     #[test]
@@ -4717,6 +14850,24 @@ evidence:
     }
 
     #[test]
+    fn verification_command_timeout_reports_timeout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = run_verification_command_with_timeout(
+            tmp.path(),
+            "sleep 2",
+            Duration::from_millis(200),
+        );
+
+        assert_eq!(result.status, "timeout");
+        assert_eq!(result.exit_code, None);
+        assert!(result
+            .stderr
+            .as_deref()
+            .unwrap_or("")
+            .contains("aw capability gate timed out"));
+    }
+
+    #[test]
     fn duplicate_claim_gate_commands_run_once_per_report_pass() {
         let tmp = tempfile::tempdir().unwrap();
         let body = r#"# Demo
@@ -4823,6 +14974,15 @@ evidence:
         assert!(doc.is_legacy_only());
         assert_eq!(doc.legacy_rows.len(), 1);
         assert_eq!(doc.findings.len(), 1);
+        assert!(doc.findings[0].contains("canonical field-style capability contracts"));
+        assert!(doc.findings[0].contains("## Capabilities"));
+        assert!(!doc.findings[0].contains("## Capability:"));
+
+        let err = capability_rows_for_wi_plan(&doc, &[], &[]).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("canonical field-style capability contracts"));
+        assert!(message.contains("## Capabilities"));
+        assert!(!message.contains("## Capability:"));
     }
 
     #[test]
@@ -4978,7 +15138,7 @@ capability_refs:
 |---|---:|---|---|---|---|
 | package-manager | #3779 | auditing | Replace package manager flows. | - | - |
 "#;
-        let document = cap_doc(&body);
+        let document = canonical_doc(&body);
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
@@ -5000,6 +15160,9 @@ capability_refs:
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Auditing,
+                capability_type: None,
+                surfaces: Vec::new(),
+                ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
                 current_state: "Install surface exists.".to_string(),
                 gaps: Vec::new(),
@@ -5020,6 +15183,7 @@ capability_refs:
                 production_blockers: Vec::new(),
             }],
             blockers: document.findings.clone(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -5034,7 +15198,8 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(
             action.kind,
@@ -5051,7 +15216,7 @@ capability_refs:
                 "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
                 "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
             );
-        let document = cap_doc(&body);
+        let document = canonical_doc(&body);
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
@@ -5073,12 +15238,16 @@ capability_refs:
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
+                capability_type: None,
+                surfaces: Vec::new(),
+                ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
                 current_state: "Install surface exists.".to_string(),
                 gaps: Vec::new(),
                 td_refs: vec![TdCapabilityEvidence {
                     spec_path: ".aw/tech-design/projects/jet/specs/3779.md".to_string(),
                     spec_id: Some("jet-package-manager-readiness-audit".to_string()),
+                    review_status: None,
                     capability_id: "package-manager".to_string(),
                     role: CapabilityRefRole::Primary,
                     gap: Some("package-manager-readiness".to_string()),
@@ -5120,6 +15289,7 @@ capability_refs:
                 production_blockers: Vec::new(),
             }],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -5134,7 +15304,8 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::RunVerify);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -5143,17 +15314,127 @@ capability_refs:
             "aw capability report --project jet --verify"
         );
         assert!(action.reason.contains("runtime verification"));
+
+        let action_without_issue_inventory = choose_next_action(&report, &document, &types, false);
+        assert_eq!(
+            action_without_issue_inventory.kind,
+            CapabilityActionKind::RunVerify
+        );
+        assert_eq!(
+            action_without_issue_inventory.command,
+            "aw capability report --project jet --verify --skip-issue-inventory"
+        );
     }
 
     #[test]
-    fn next_action_does_not_rerun_runtime_verification_after_gate_failed() {
+    fn next_action_reruns_verification_for_fixture_inventory_claims() {
         let body = one_markdown_capability()
             .replace("| Status | auditing |", "| Status | verified |")
             .replace(
                 "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
                 "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
             );
-        let document = cap_doc(&body);
+        let document = canonical_doc(&body);
+        let report = CapabilityReport {
+            action: "capability",
+            project: "jet".to_string(),
+            cap_path: PathBuf::from("projects/jet/README.md"),
+            format_version: 1,
+            status: "blocked".to_string(),
+            test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            production_ready: false,
+            production_status: ProductionStatus::NotEvaluated,
+            production_scope: Vec::new(),
+            production_blockers: Vec::new(),
+            capability_count: 1,
+            verified_count: 0,
+            percent: 0.0,
+            claim_count: 1,
+            verified_claim_count: 0,
+            claim_percent: 0.0,
+            capabilities: vec![CapabilityReportItem {
+                id: "package-manager".to_string(),
+                title: "Package Manager".to_string(),
+                status: CapabilityStatus::Verified,
+                capability_type: None,
+                surfaces: Vec::new(),
+                ec_dimensions: Vec::new(),
+                promise: "Replace package manager flows.".to_string(),
+                current_state: "Install surface exists.".to_string(),
+                gaps: Vec::new(),
+                td_refs: vec![TdCapabilityEvidence {
+                    spec_path: ".aw/tech-design/projects/jet/specs/3779.md".to_string(),
+                    spec_id: Some("jet-package-manager-readiness-audit".to_string()),
+                    review_status: None,
+                    capability_id: "package-manager".to_string(),
+                    role: CapabilityRefRole::Primary,
+                    gap: Some("package-manager-readiness".to_string()),
+                    claim: Some("lockfile-determinism".to_string()),
+                    coverage: CapabilityCoverage::Partial,
+                    rationale: None,
+                }],
+                wi_refs: Vec::new(),
+                wi_evidence: Vec::new(),
+                claims: vec![CapabilityClaimReport {
+                    id: "lockfile-determinism".to_string(),
+                    user_story: "reproducible lockfile".to_string(),
+                    required_for_verified: true,
+                    maturity: CapabilityMaturity::Conformance,
+                    oracle: "projects/jet/validation/pkg-manager.toml".to_string(),
+                    fixtures: vec!["projects/jet/validation/pkg-manager.toml".to_string()],
+                    negative_cases: Vec::new(),
+                    gates: Vec::new(),
+                    verified: false,
+                }],
+                claim_count: 1,
+                verified_claim_count: 0,
+                claim_percent: 0.0,
+                verification: Vec::new(),
+                verified: false,
+                release_scope: true,
+                full_regenerability_required: false,
+                dependencies: Vec::new(),
+                dependency_closure: Vec::new(),
+                production_ready: false,
+                production_blockers: Vec::new(),
+            }],
+            blockers: Vec::new(),
+            warnings: Vec::new(),
+            next_action: CapabilityAction {
+                kind: CapabilityActionKind::None,
+                capability_id: None,
+                gap_id: None,
+                claim_id: None,
+                target: "jet".to_string(),
+                command: String::new(),
+                reason: String::new(),
+                requires_hitl: false,
+                hitl_question: None,
+            },
+            run_results: Vec::new(),
+        };
+
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types, true);
+
+        assert_eq!(action.kind, CapabilityActionKind::RunVerify);
+        assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
+        assert_eq!(
+            action.command,
+            "aw capability report --project jet --verify"
+        );
+        assert!(action.reason.contains("fixture/inventory"));
+    }
+
+    #[test]
+    fn next_action_reports_failing_runtime_verification_for_catalog_verified_capability() {
+        let body = one_markdown_capability()
+            .replace("| Status | auditing |", "| Status | verified |")
+            .replace(
+                "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
+            );
+        let document = canonical_doc(&body);
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
@@ -5177,6 +15458,9 @@ capability_refs:
                 id: "package-manager".to_string(),
                 title: "Package Manager".to_string(),
                 status: CapabilityStatus::Verified,
+                capability_type: None,
+                surfaces: Vec::new(),
+                ec_dimensions: Vec::new(),
                 promise: "Replace package manager flows.".to_string(),
                 current_state: "Install surface exists.".to_string(),
                 gaps: Vec::new(),
@@ -5205,6 +15489,7 @@ capability_refs:
                 production_blockers: Vec::new(),
             }],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -5219,8 +15504,112 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types, true);
 
+        assert_eq!(action.kind, CapabilityActionKind::RunVerify);
+        assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
+        assert_eq!(action.command, "cargo test -p jet pkg_manager::lockfile");
+        assert!(action.reason.contains("failing verification gate"));
+    }
+
+    /// A real (non-candidate, non-retired) capability with NO type assigned in
+    /// .aw/capability-types.toml triggers the assign-capability-type HITL; the
+    /// same report with a type assigned proceeds past it.
+    #[test]
+    fn next_action_requires_capability_type_when_unset() {
+        let body = one_markdown_capability()
+            .replace("| Status | auditing |", "| Status | verified |")
+            .replace(
+                "| Package manager readiness | epic | #3779 | partial | planned | conformance | projects/jet/validation/pkg-manager.toml |",
+                "| Package manager readiness | epic | #3779 | implemented | verified | conformance | projects/jet/validation/pkg-manager.toml |",
+            );
+        let document = canonical_doc(&body);
+        let report = CapabilityReport {
+            action: "capability",
+            project: "jet".to_string(),
+            cap_path: PathBuf::from("projects/jet/README.md"),
+            format_version: 1,
+            status: "blocked".to_string(),
+            test_gates: ProjectTestGateReport::not_evaluated("jet"),
+            production_ready: false,
+            production_status: ProductionStatus::Blocked,
+            production_scope: Vec::new(),
+            production_blockers: Vec::new(),
+            capability_count: 1,
+            verified_count: 1,
+            percent: 100.0,
+            claim_count: 0,
+            verified_claim_count: 0,
+            claim_percent: 0.0,
+            capabilities: vec![CapabilityReportItem {
+                id: "package-manager".to_string(),
+                title: "Package Manager".to_string(),
+                status: CapabilityStatus::Verified,
+                capability_type: None,
+                surfaces: Vec::new(),
+                ec_dimensions: Vec::new(),
+                promise: "Replace package manager flows.".to_string(),
+                current_state: "Install surface exists.".to_string(),
+                gaps: Vec::new(),
+                td_refs: Vec::new(),
+                wi_refs: Vec::new(),
+                wi_evidence: Vec::new(),
+                claims: Vec::new(),
+                claim_count: 0,
+                verified_claim_count: 0,
+                claim_percent: 0.0,
+                verification: Vec::new(),
+                verified: true,
+                release_scope: true,
+                full_regenerability_required: false,
+                dependencies: Vec::new(),
+                dependency_closure: Vec::new(),
+                production_ready: true,
+                production_blockers: Vec::new(),
+            }],
+            blockers: Vec::new(),
+            warnings: Vec::new(),
+            next_action: CapabilityAction {
+                kind: CapabilityActionKind::None,
+                capability_id: None,
+                gap_id: None,
+                claim_id: None,
+                target: "jet".to_string(),
+                command: String::new(),
+                reason: String::new(),
+                requires_hitl: false,
+                hitl_question: None,
+            },
+            run_results: Vec::new(),
+        };
+
+        // No type assigned -> assign-capability-type HITL.
+        let empty = BTreeMap::new();
+        let action = choose_next_action(&report, &document, &empty, true);
+        assert_eq!(action.kind, CapabilityActionKind::AssignCapabilityType);
+        assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
+        assert!(action.requires_hitl);
+        let question = action.hitl_question.expect("hitl question present");
+        assert_eq!(question.id, "capability:package-manager:assign_type");
+        assert_eq!(question.default_choice.as_deref(), Some("service"));
+        let choice_ids: Vec<&str> = question.choices.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            choice_ids,
+            vec![
+                "agent_first",
+                "service",
+                "devops",
+                "developer_tool",
+                "runtime_tool",
+                "security_tool"
+            ]
+        );
+
+        // Type assigned -> the verified, gapless capability yields no action.
+        let typed = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &typed, true);
+        assert_ne!(action.kind, CapabilityActionKind::AssignCapabilityType);
         assert_eq!(action.kind, CapabilityActionKind::None);
     }
 
@@ -5243,7 +15632,7 @@ capability_refs:
 |---|---|---:|---|---|---|---|
 | Legacy internals | epic | - | out_of_scope | verified | smoke | `cargo test -p meter` |
 "#;
-        let document = cap_doc(body);
+        let document = canonical_doc(body);
         let report = CapabilityReport {
             action: "capability",
             project: "meter".to_string(),
@@ -5265,6 +15654,9 @@ capability_refs:
                 id: "legacy-carried-internals".to_string(),
                 title: "Legacy Carried Internals".to_string(),
                 status: CapabilityStatus::Retired,
+                capability_type: None,
+                surfaces: Vec::new(),
+                ec_dimensions: Vec::new(),
                 promise: "Compatibility-only internals retained outside public scope.".to_string(),
                 current_state: "Root WI: -; Gate inventory: `cargo test -p meter`".to_string(),
                 gaps: vec![CapabilityGap {
@@ -5308,6 +15700,7 @@ capability_refs:
                 production_blockers: Vec::new(),
             }],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -5322,14 +15715,15 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::None);
     }
 
     #[test]
     fn next_action_prefers_bounded_child_wi_when_epic_is_active() {
-        let document = cap_doc(one_markdown_capability());
+        let document = canonical_doc(one_markdown_capability());
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
@@ -5352,6 +15746,9 @@ capability_refs:
                     id: "rust-native-frontend-toolchain".to_string(),
                     title: "Rust-Native Frontend Toolchain Replacement".to_string(),
                     status: CapabilityStatus::Auditing,
+                    capability_type: None,
+                    surfaces: Vec::new(),
+                    ec_dimensions: Vec::new(),
                     promise: "replace frontend toolchain".to_string(),
                     current_state: "epic exists".to_string(),
                     gaps: vec![CapabilityGap {
@@ -5367,6 +15764,8 @@ capability_refs:
                         gap_id: "production-replacement-readiness".to_string(),
                         issue_type: "epic".to_string(),
                         state: "open".to_string(),
+                        phase: None,
+                        expected_command: None,
                         title: "epic(jet): production replacement readiness".to_string(),
                     }],
                     claims: Vec::new(),
@@ -5386,6 +15785,9 @@ capability_refs:
                     id: "package-manager".to_string(),
                     title: "Package Manager".to_string(),
                     status: CapabilityStatus::Auditing,
+                    capability_type: None,
+                    surfaces: Vec::new(),
+                    ec_dimensions: Vec::new(),
                     promise: "replace package manager flows".to_string(),
                     current_state: "surface exists".to_string(),
                     gaps: vec![CapabilityGap {
@@ -5401,6 +15803,8 @@ capability_refs:
                         gap_id: "package-manager-readiness".to_string(),
                         issue_type: "test".to_string(),
                         state: "open".to_string(),
+                        phase: None,
+                        expected_command: None,
                         title: "audit(jet): package manager production replacement readiness"
                             .to_string(),
                     }],
@@ -5419,6 +15823,7 @@ capability_refs:
                 },
             ],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -5433,7 +15838,8 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::RunTd);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -5443,7 +15849,7 @@ capability_refs:
 
     #[test]
     fn next_action_requires_review_when_epic_children_are_closed() {
-        let document = cap_doc(one_markdown_capability());
+        let document = canonical_doc(one_markdown_capability());
         let report = CapabilityReport {
             action: "capability",
             project: "jet".to_string(),
@@ -5466,6 +15872,9 @@ capability_refs:
                     id: "rust-native-frontend-toolchain".to_string(),
                     title: "Rust-Native Frontend Toolchain Replacement".to_string(),
                     status: CapabilityStatus::Auditing,
+                    capability_type: None,
+                    surfaces: Vec::new(),
+                    ec_dimensions: Vec::new(),
                     promise: "replace frontend toolchain".to_string(),
                     current_state: "epic exists".to_string(),
                     gaps: vec![CapabilityGap {
@@ -5481,6 +15890,8 @@ capability_refs:
                         gap_id: "production-replacement-readiness".to_string(),
                         issue_type: "epic".to_string(),
                         state: "open".to_string(),
+                        phase: None,
+                        expected_command: None,
                         title: "epic(jet): production replacement readiness".to_string(),
                     }],
                     claims: Vec::new(),
@@ -5500,6 +15911,9 @@ capability_refs:
                     id: "package-manager".to_string(),
                     title: "Package Manager".to_string(),
                     status: CapabilityStatus::Auditing,
+                    capability_type: None,
+                    surfaces: Vec::new(),
+                    ec_dimensions: Vec::new(),
                     promise: "replace package manager flows".to_string(),
                     current_state: "surface exists".to_string(),
                     gaps: vec![CapabilityGap {
@@ -5515,6 +15929,8 @@ capability_refs:
                         gap_id: "package-manager-readiness".to_string(),
                         issue_type: "test".to_string(),
                         state: "closed".to_string(),
+                        phase: None,
+                        expected_command: None,
                         title: "audit(jet): package manager production replacement readiness"
                             .to_string(),
                     }],
@@ -5533,6 +15949,7 @@ capability_refs:
                 },
             ],
             blockers: Vec::new(),
+            warnings: Vec::new(),
             next_action: CapabilityAction {
                 kind: CapabilityActionKind::None,
                 capability_id: None,
@@ -5547,7 +15964,8 @@ capability_refs:
             run_results: Vec::new(),
         };
 
-        let action = choose_next_action(&report, &document);
+        let types = all_typed(&report, &document);
+        let action = choose_next_action(&report, &document, &types, true);
 
         assert_eq!(action.kind, CapabilityActionKind::HumanConfirmRequired);
         assert_eq!(
@@ -5566,6 +15984,143 @@ capability_refs:
         let question = action.hitl_question.expect("epic rollup asks human");
         assert_eq!(question.tool_hint, "ask_user_question");
         assert_eq!(question.default_choice.as_deref(), Some("approve_rollup"));
+    }
+
+    #[test]
+    fn lifecycle_action_for_reviewed_td_runs_cb_gen_with_spec_path() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let evidence = CapabilityWiEvidence {
+            reference: "#57".to_string(),
+            gap_id: "generated-manual-ec-evidence-schema".to_string(),
+            issue_type: "enhancement".to_string(),
+            state: "open".to_string(),
+            phase: Some("td_reviewed".to_string()),
+            expected_command: None,
+            title: "Promote generated manuals to first-class AW evidence artifacts".to_string(),
+        };
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "57",
+            Some(&evidence),
+            Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+            None,
+            true,
+            "active WI exists; continue WI -> TD -> CB lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::RunCb);
+        assert_eq!(
+            command,
+            "aw cb gen 57 --spec-path 'projects/agentic-workflow/tech-design/logic/manual.md'"
+        );
+        assert_eq!(reason, "active WI has reviewed TD; continue CB generation");
+    }
+
+    #[test]
+    fn lifecycle_action_prefers_expected_command_from_workflow_projection() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let evidence = CapabilityWiEvidence {
+            reference: "#57".to_string(),
+            gap_id: "generated-manual-ec-evidence-schema".to_string(),
+            issue_type: "enhancement".to_string(),
+            state: "open".to_string(),
+            phase: Some("td_reviewed".to_string()),
+            expected_command: Some("aw cb fill 57".to_string()),
+            title: "Promote generated manuals to first-class AW evidence artifacts".to_string(),
+        };
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "57",
+            Some(&evidence),
+            Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+            Some("approved"),
+            true,
+            "active WI exists; continue WI -> TD -> CB lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::RunCb);
+        assert_eq!(command, "aw cb fill 57");
+        assert_eq!(
+            reason,
+            "active WI has a workflow expected_command; follow lifecycle lock"
+        );
+    }
+
+    #[test]
+    fn lifecycle_action_routes_missing_issue_evidence_to_wi_plan_before_cb() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "57",
+            None,
+            Some("projects/agentic-workflow/tech-design/logic/manual.md"),
+            Some("approved"),
+            true,
+            "active WI exists; continue WI -> TD -> CB lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
+        assert_eq!(command, "aw wi plan --project jet");
+        assert!(reason.contains("active WI reference is not present"));
+    }
+
+    #[test]
+    fn lifecycle_action_routes_unknown_issue_evidence_to_wi_plan_before_cb() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let evidence = CapabilityWiEvidence {
+            reference: "#3783".to_string(),
+            gap_id: "wasm-multi-target-readiness".to_string(),
+            issue_type: "unknown".to_string(),
+            state: "unknown".to_string(),
+            phase: None,
+            expected_command: None,
+            title: String::new(),
+        };
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "3783",
+            Some(&evidence),
+            Some(".aw/tech-design/projects/jet/specs/3783.md"),
+            Some("approved"),
+            true,
+            "active WI exists; continue WI -> TD -> CB lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
+        assert_eq!(command, "aw wi plan --project jet");
+        assert!(reason.contains("before TD/CB lifecycle"));
+    }
+
+    #[test]
+    fn lifecycle_action_routes_skipped_issue_inventory_to_wi_plan_before_cb() {
+        let report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        let evidence = CapabilityWiEvidence {
+            reference: "#3783".to_string(),
+            gap_id: "wasm-multi-target-readiness".to_string(),
+            issue_type: "unknown".to_string(),
+            state: "unknown".to_string(),
+            phase: None,
+            expected_command: None,
+            title: String::new(),
+        };
+
+        let (kind, command, reason) = lifecycle_action_for_work_item(
+            &report,
+            "3783",
+            Some(&evidence),
+            Some(".aw/tech-design/projects/jet/specs/3783.md"),
+            Some("approved"),
+            false,
+            "active WI exists; continue WI -> TD -> CB lifecycle",
+        );
+
+        assert_eq!(kind, CapabilityActionKind::ReconcileWiRefs);
+        assert_eq!(command, "aw wi plan --project jet");
+        assert!(reason.contains("issue inventory was skipped"));
     }
 }
 // CODEGEN-END

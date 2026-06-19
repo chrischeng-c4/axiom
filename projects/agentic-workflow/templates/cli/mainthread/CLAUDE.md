@@ -17,7 +17,7 @@ parent.
 | CLI | Use it for |
 |-----|------------|
 | `aw run` | Root-driven workflow runner. Choose exactly one root with `--project <project>`, `--capability <project>:<capability-id>`, or `--wi <id>`; follow `invoke.command` and `agent_prompt` until `completion.workflow_complete=true` or `requires_hitl=true`. |
-| `aw capability` | Product capability completion loop: `report`, `next`, `run`, and `check`; use `check --verify` when capability proof should include configured test gates. README is the default `cap_path` and uses Markdown H1-Hn capability headings plus contract/work-root tables. YAML `## Capability:` sections and legacy capability tables are migration input only. |
+| `aw capability` | Product capability completion loop: `report`, `next`, `run`, and `check`; use `check --verify` when capability proof should include configured test gates. README is the default `cap_path` and uses `## Brief`, `## Capabilities`, `### Capability Index`, field-style capability contracts, and work-root tables. YAML `## Capability:` sections and legacy capability tables are migration input only. |
 | `aw wi` | Work-item inventory, planning, and CRRR: `draft`, `list`, `show`, `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`, `enrich`, `validate`, `fill-section`, `review`, `arbitrate`. Planning commands write local artifacts under `/tmp/aw/{project}/...` and do not publish tracker changes. |
 | `aw td` | Tech-design lifecycle and checks: `create`, `validate`, `review`, `revise`, `merge`, `arbitrate`, plus read-only/utility verbs `check`, `ast`, `migrate-mermaid`, `claim`. |
 | `aw cb` | Code-artifact lifecycle: `gen`, `check`, `claim`, `fill`, `review`, `revise`, `arbitrate`. |

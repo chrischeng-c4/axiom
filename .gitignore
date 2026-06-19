@@ -14,6 +14,9 @@
 # source.
 .guard/
 
+# Tool-local runtime state such as GH device ids; process-local, never source.
+.local/
+
 # vat copy-on-write workspaces and run state; process output, never source.
 .vat/
 

@@ -29,7 +29,9 @@ pub struct BrowserContext {
     /// Root (browser-level) CDP session for Target / Storage domain calls.
     cdp: CdpSession,
     /// CDP `browserContextId` returned from `Target.createBrowserContext`.
-    context_id: String,
+    /// `None` means Chrome's real default browser context, which keeps
+    /// pages in the visible tab strip of the existing browser window.
+    context_id: Option<String>,
     /// True iff this context was auto-created by `Browser::launch()` /
     /// `Browser::connect()` as the implicit default. Default contexts are
     /// owned by the `Browser` and skip `Target.disposeBrowserContext` on
@@ -42,14 +44,24 @@ impl BrowserContext {
     pub(crate) fn new(cdp: CdpSession, context_id: String, default: bool) -> Self {
         Self {
             cdp,
-            context_id,
+            context_id: Some(context_id),
             default,
+        }
+    }
+
+    pub(crate) fn browser_default(cdp: CdpSession) -> Self {
+        Self {
+            cdp,
+            context_id: None,
+            default: true,
         }
     }
 
     /// Chromium `browserContextId` assigned by `Target.createBrowserContext`.
     pub fn id(&self) -> &str {
-        &self.context_id
+        self.context_id
+            .as_deref()
+            .expect("Chrome default browser context has no browserContextId")
     }
 
     /// Whether this is the implicit default context created by the Browser.
@@ -64,16 +76,11 @@ impl BrowserContext {
     /// contexts carry `Page::context_id = Some(self.context_id.clone())`.
     // @spec .aw/issues/open/enhancement-browsercontext-refactor-multi-context-isolation-fo.md#R4
     pub async fn new_page(&self) -> Result<Page> {
-        let create_res = self
-            .cdp
-            .send(
-                "Target.createTarget",
-                serde_json::json!({
-                    "url": "about:blank",
-                    "browserContextId": self.context_id,
-                }),
-            )
-            .await?;
+        let mut params = serde_json::json!({ "url": "about:blank" });
+        if let Some(context_id) = &self.context_id {
+            params["browserContextId"] = Value::String(context_id.clone());
+        }
+        let create_res = self.cdp.send("Target.createTarget", params).await?;
         let target_id = create_res["targetId"]
             .as_str()
             .context("Missing targetId in createTarget response")?
@@ -98,7 +105,7 @@ impl BrowserContext {
         let page_context_id = if self.default {
             None
         } else {
-            Some(self.context_id.clone())
+            self.context_id.clone()
         };
         Ok(Page::with_context(page_session, target_id, page_context_id))
     }
@@ -115,8 +122,14 @@ impl BrowserContext {
                 if info["type"].as_str() != Some("page") {
                     continue;
                 }
-                if info["browserContextId"].as_str() != Some(self.context_id.as_str()) {
-                    continue;
+                match &self.context_id {
+                    Some(context_id)
+                        if info["browserContextId"].as_str() != Some(context_id.as_str()) =>
+                    {
+                        continue;
+                    }
+                    None if info["browserContextId"].as_str().is_some() => continue,
+                    _ => {}
                 }
                 if let Some(id) = info["targetId"].as_str() {
                     out.push(id.to_string());
@@ -135,10 +148,10 @@ impl BrowserContext {
     /// rejects it for the default storage partition.
     // @spec .aw/tech-design/projects/jet/logic/storage-state.md#S1
     pub async fn cookies(&self) -> Result<Vec<Value>> {
-        let params = if self.default {
+        let params = if self.default || self.context_id.is_none() {
             serde_json::json!({})
         } else {
-            serde_json::json!({ "browserContextId": self.context_id })
+            serde_json::json!({ "browserContextId": self.context_id.as_ref().unwrap() })
         };
         let res = self.cdp.send("Storage.getCookies", params).await?;
         // GH #3761 — sibling of #3739 on the READ path. The prior
@@ -172,7 +185,9 @@ impl BrowserContext {
     pub async fn add_cookies(&self, cookies: Vec<Value>) -> Result<()> {
         let mut params = serde_json::json!({ "cookies": cookies });
         if !self.default {
-            params["browserContextId"] = Value::String(self.context_id.clone());
+            if let Some(context_id) = &self.context_id {
+                params["browserContextId"] = Value::String(context_id.clone());
+            }
         }
         self.cdp.send("Storage.setCookies", params).await?;
         Ok(())
@@ -181,10 +196,10 @@ impl BrowserContext {
     /// Drop all cookies in this context via `Storage.clearCookies`.
     // @spec .aw/tech-design/projects/jet/logic/storage-state.md#S3
     pub async fn clear_cookies(&self) -> Result<()> {
-        let params = if self.default {
+        let params = if self.default || self.context_id.is_none() {
             serde_json::json!({})
         } else {
-            serde_json::json!({ "browserContextId": self.context_id })
+            serde_json::json!({ "browserContextId": self.context_id.as_ref().unwrap() })
         };
         self.cdp.send("Storage.clearCookies", params).await?;
         Ok(())
@@ -224,10 +239,17 @@ impl BrowserContext {
         if self.default {
             return Ok(());
         }
+        self.dispose_if_owned().await
+    }
+
+    pub(crate) async fn dispose_if_owned(&self) -> Result<()> {
+        let Some(context_id) = &self.context_id else {
+            return Ok(());
+        };
         self.cdp
             .send(
                 "Target.disposeBrowserContext",
-                serde_json::json!({ "browserContextId": self.context_id }),
+                serde_json::json!({ "browserContextId": context_id }),
             )
             .await?;
         Ok(())

@@ -33,6 +33,9 @@ pub struct CbArgs {
 pub enum CbCommand {
     // Generate implementation code from an approved TD spec.
     Gen(CbGenArgs),
+    // Forward-generate a target source file from a per-file rust-source-unit
+    // TD (routes through the @spec-injecting lossless item-tree generator).
+    GenSource(CbGenSourceArgs),
     // Audit code-space files for CODEGEN drift, MarkerGap, Uncovered,
     // and Handwrite items.
     Check(CbCheckArgs),
@@ -188,6 +191,7 @@ pub async fn run(args: CbArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     match &args.command {
         CbCommand::Check(_) => {}
+        CbCommand::GenSource(_) => {}
         CbCommand::Gen(a) => {
             if let Some(slug) = a.slug.as_deref() {
                 crate::cli::workflow_guard::guard_issue_mutation(&project_root, Some(("cb", slug)))
@@ -218,6 +222,7 @@ pub async fn run(args: CbArgs) -> Result<()> {
     }
     match args.command {
         CbCommand::Gen(a) => run_gen(a).await,
+        CbCommand::GenSource(a) => run_gen_source(a),
         CbCommand::Check(a) => run_check(a),
         CbCommand::Claim(a) => run_claim(a).await,
         CbCommand::Fill(a) => crate::cli::cb_fill::run(a).await,
@@ -225,6 +230,48 @@ pub async fn run(args: CbArgs) -> Result<()> {
         CbCommand::Revise(a) => crate::cli::cb_revise::run_revise(a).await,
         CbCommand::Arbitrate(a) => crate::cli::cb_arbitrate::run_arbitrate(a).await,
     }
+}
+
+// Args for `aw cb gen-source --spec <td> --target <rs>`.
+#[derive(Debug, Args)]
+pub struct CbGenSourceArgs {
+    // Repo-relative path to the per-file source TD (with a `## Source`
+    // rust-source-unit fence).
+    #[arg(long)]
+    pub spec: String,
+    // Repo-relative path to the target source file to write.
+    #[arg(long)]
+    pub target: String,
+    // Print the generated source to stdout without writing the target.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+// Forward-generate a target source file from a per-file rust-source-unit TD,
+// reusing the same generator path as codegen (@spec injection + lossless
+// item-tree regeneration). The forward inverse of `cb gen --force-regen`
+// (which syncs TD<-source); this writes source<-TD.
+fn run_gen_source(args: CbGenSourceArgs) -> Result<()> {
+    let root = crate::find_project_root()?;
+    let spec_abs = root.join(&args.spec);
+    let target_abs = root.join(&args.target);
+    let report = crate::generate::apply::run_apply_scoped_targets(
+        &spec_abs,
+        &root,
+        args.dry_run,
+        std::slice::from_ref(&target_abs),
+    )
+    .map_err(|e| anyhow::anyhow!("gen-source apply {} -> {}: {e}", args.spec, args.target))?;
+    eprintln!(
+        "gen-source {} -> {}: {} block(s) updated, {} file(s) created, wrote={} (dry_run={})",
+        args.spec,
+        args.target,
+        report.total_blocks_updated(),
+        report.files_created(),
+        report.wrote_files,
+        args.dry_run,
+    );
+    Ok(())
 }
 
 // Implementation of `aw cb gen`.
@@ -980,8 +1027,10 @@ fn format_rust_files(paths: &[std::path::PathBuf]) -> Result<()> {
     if rust_files.is_empty() {
         return Ok(());
     }
+    let rustfmt = crate::git::find_rustfmt_bin()
+        .context("rustfmt binary not found on PATH or rustup defaults")?;
     for chunk in rust_files.chunks(100) {
-        let output = std::process::Command::new("rustfmt")
+        let output = std::process::Command::new(&rustfmt)
             .arg("--edition")
             .arg("2021")
             .arg("--config")
@@ -2302,8 +2351,10 @@ fn classify_source_template(
 fn spec_declares_source_section(spec_content: &str) -> bool {
     spec_content.contains("<!-- type: source")
         || spec_content.contains("<!-- type: rust-source-unit")
+        || spec_content.contains("<!-- type: text-source-unit")
         || spec_content.contains("section: source")
         || spec_content.contains("section: rust-source-unit")
+        || spec_content.contains("section: text-source-unit")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2811,11 +2862,12 @@ mod tests {
         extract_project_root_llms_target_paths, extract_spec_managed_ref,
         extract_spec_managed_refs, format_rust_files, is_minified_asset_file,
         resolve_project_force_regen_scope, run_force_regen_specs, sample_count,
-        sample_semantic_review_units, td_public_symbol_semantic_coverage,
-        upsert_public_api_overview, upsert_public_api_overview_targets,
-        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs,
-        ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
-        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
+        sample_semantic_review_units, spec_declares_source_section,
+        td_public_symbol_semantic_coverage, upsert_public_api_overview,
+        upsert_public_api_overview_targets, write_project_root_llms_targets, CbCodegenOriginClass,
+        CbCommand, CbGenArgs, ForceRegenConformanceReport, ForceRegenScope,
+        PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
+        SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -2867,6 +2919,20 @@ mod tests {
             classify_codegen_origin_spec(artifact_replay),
             CbCodegenOriginClass::ArtifactReplay
         );
+    }
+
+    #[test]
+    fn spec_declares_text_source_unit_as_source_section() {
+        let text_source_unit = "\
+## Source
+<!-- type: text-source-unit lang: javascript -->
+
+```javascript
+console.log('ok');
+```
+";
+
+        assert!(spec_declares_source_section(text_source_unit));
     }
 
     fn init_git_repo(root: &std::path::Path) {

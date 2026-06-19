@@ -166,7 +166,7 @@ impl GitHubBackend {
             args.push("--force".into());
             // Silent on failure — the issue-edit call below will surface a
             // clearer error if the label still cannot be applied.
-            let _ = Command::new("gh").args(&args).output();
+            let _ = gh_command().args(&args).output();
         }
         Ok(())
     }
@@ -614,7 +614,7 @@ fn parse_gh_issue(v: &Value) -> Result<Issue> {
 }
 
 fn run_gh(args: &[String]) -> Result<String> {
-    let output = Command::new("gh")
+    let output = gh_command()
         .args(args)
         .output()
         .context("Failed to execute gh — is the GitHub CLI installed?")?;
@@ -642,7 +642,7 @@ fn run_gh_api(args: &[String]) -> Result<String> {
 }
 
 fn run_gh_api_direct(args: &[String]) -> Result<String> {
-    let mut command = Command::new("gh");
+    let mut command = gh_command();
     command.args(args);
     if std::env::var_os("GH_TOKEN").is_none() {
         if let Some(token) = gh_auth_token() {
@@ -671,7 +671,9 @@ fn run_gh_api_via_shell(args: &[String]) -> Result<String> {
     parts.push(shell_quote("gh"));
     parts.extend(args.iter().map(|arg| shell_quote(arg)));
     let command_line = parts.join(" ");
-    let output = Command::new(shell)
+    let mut command = Command::new(shell);
+    crate::cli::shell_env::apply_default_shell_env(&mut command);
+    let output = command
         .arg("-lc")
         .arg(command_line)
         .output()
@@ -690,12 +692,18 @@ fn shell_quote(value: &str) -> String {
 }
 
 fn gh_auth_token() -> Option<String> {
-    let output = Command::new("gh").args(["auth", "token"]).output().ok()?;
+    let output = gh_command().args(["auth", "token"]).output().ok()?;
     if !output.status.success() {
         return None;
     }
     let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!token.is_empty()).then_some(token)
+}
+
+fn gh_command() -> Command {
+    let mut command = Command::new("gh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command);
+    command
 }
 
 fn is_graphql_or_auth_error(message: &str) -> bool {

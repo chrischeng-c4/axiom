@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-pins-mod-rs
+capability_refs:
+  - id: load-pins
+    role: primary
+    claim: floor-and-ratchet-pin-gates
+    coverage: partial
+    rationale: "This source unit implements rig floor and ratchet pin gate behavior."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,18 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/pins/mod.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/pins/mod.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `GateOutcome` | projects/rig/src/pins/mod.rs | enum | pub | 90 |  |
+| `Pin` | projects/rig/src/pins/mod.rs | struct | pub | 30 |  |
+| `baseline` | projects/rig/src/pins/mod.rs | module | pub | 21 |  |
+| `gate` | projects/rig/src/pins/mod.rs | function | pub | 107 | gate(pin: &Pin, scenario_id: &str, value: f64, store: &BaselineStore) -> GateOutcome |
+| `load_pins` | projects/rig/src/pins/mod.rs | function | pub | 52 | load_pins(dir: &Path) -> Result<Vec<Pin>, String> |
+| `matches` | projects/rig/src/pins/mod.rs | function | pub | 82 | matches(&self, scenario_id: &str) -> bool |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

@@ -1,5 +1,11 @@
 ---
 id: projects-arena-arena-cli-src-bin-arena-rs
+capability_refs:
+  - id: n-target-comparison-runner
+    role: primary
+    claim: sequential-target-fanout-and-measurement
+    coverage: partial
+    rationale: "This source unit implements arena CLI, spec parsing, measurement, or runner orchestration for N-target comparisons."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,11 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/arena/arena-cli/src/bin/arena.rs`, captured as a rust-source-unit (td_ast) item-tree
-during arena standardization onto the codegen ladder.
+Public API manifest for `projects/arena/arena-cli/src/bin/arena.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+No public AST symbols.
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

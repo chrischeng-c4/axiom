@@ -1823,7 +1823,7 @@ fn section_type_brief_hint(st: crate::models::spec_rules::SectionType) -> &'stat
         SectionType::Doc => "User-facing documentation (markdown)",
         SectionType::Manifest => "Package manifest deps (Cargo.toml / pyproject / package.json)",
         SectionType::ToolContract => {
-            "AW tool-contract bridge to native vat/rig/meter/guard/arena manifests"
+            "AW tool-contract bridge to native vat/rig/meter/guard manifests; arena remains legacy compatibility"
         }
         SectionType::RustSourceUnit => "Lossless Rust source unit (CST-backed regen)",
         SectionType::TextSourceUnit => "Lossless shell/text source unit (TD-owned regen)",

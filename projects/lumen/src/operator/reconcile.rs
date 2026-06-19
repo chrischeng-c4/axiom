@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-operator.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The reconcile loop. Watches `Lumen` objects cluster-wide; for each, renders
 //! the child objects ([`render::render`]) and server-side-applies them as the
@@ -31,8 +31,8 @@ const MANAGER: &str = "lumen-operator";
 
 /// Reconcile errors. `kube` + serde failures plus a guard for malformed
 /// rendered objects (which would be an operator bug, not a cluster condition).
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(thiserror::Error, Debug)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
 pub enum Error {
     #[error("kube api error: {0}")]
     Kube(#[from] kube::Error),
@@ -63,7 +63,7 @@ fn lease_namespace() -> String {
 /// Run the operator until the process is terminated. Every replica watches and
 /// runs the reconcile loop, but only the Lease holder applies changes (HA-safe
 /// at `replicas > 1` — see [`super::lease`]).
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
     let client = Client::try_default().await?;
     let election = Election::new(identity());

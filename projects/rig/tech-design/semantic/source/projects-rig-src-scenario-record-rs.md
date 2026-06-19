@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-scenario-record-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,18 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/scenario/record.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/scenario/record.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ExpectedOutcome` | projects/rig/src/scenario/record.rs | enum | pub | 29 |  |
+| `LintViolation` | projects/rig/src/scenario/record.rs | struct | pub | 67 |  |
+| `Record` | projects/rig/src/scenario/record.rs | struct | pub | 44 |  |
+| `ScenarioKind` | projects/rig/src/scenario/record.rs | enum | pub | 17 |  |
+| `lint_record` | projects/rig/src/scenario/record.rs | function | pub | 74 | lint_record(path: &Path, record: &Record) -> Vec<LintViolation> |
+| `scenario_id` | projects/rig/src/scenario/record.rs | function | pub | 131 | scenario_id(record: &Record) -> String |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

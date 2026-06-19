@@ -621,6 +621,7 @@ e2e_tests:
   - id: vat-toml-runner-local-service-smoke
     name: "vat.toml runner local service smoke"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: local-agent-test-runner-protocol
     contract_id: local-agent-test-runner-protocol
     category: behavior
     command: "cargo test -p vat vat_toml_runner -- --nocapture"
