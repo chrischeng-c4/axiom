@@ -214,6 +214,28 @@ async fn probes_and_drain() {
 }
 
 #[tokio::test]
+async fn metrics_records_per_route_requests() {
+    let (app, _) = app();
+    // Exercise a couple of data-plane routes.
+    send_json(&app, "PUT", "/v1/kv/m", json!({"value": 1})).await;
+    send_json(&app, "GET", "/v1/kv/m", Value::Null).await;
+
+    let req = Request::builder().uri("/metrics").body(Body::empty()).unwrap();
+    let (st, bytes) = send(&app, req).await;
+    assert_eq!(st, StatusCode::OK);
+    let text = String::from_utf8_lossy(&bytes);
+    // Request counter labelled by the matched route pattern (not the raw key).
+    assert!(text.contains("keep_http_requests_total"), "missing request counter");
+    assert!(
+        text.contains("route=\"/v1/kv/{key}\""),
+        "missing matched-route label:\n{text}"
+    );
+    // Latency histogram + the existing engine gauges.
+    assert!(text.contains("keep_http_request_duration_seconds_bucket"), "missing histogram");
+    assert!(text.contains("keep_keys_total"), "engine gauges dropped");
+}
+
+#[tokio::test]
 async fn openapi_document_is_served() {
     let (app, _) = app();
     let req = Request::builder().uri("/openapi.json").body(Body::empty()).unwrap();
