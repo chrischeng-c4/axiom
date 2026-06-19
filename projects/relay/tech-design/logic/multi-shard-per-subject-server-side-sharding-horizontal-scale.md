@@ -94,7 +94,6 @@ flowchart TD
     suite --> t_compat[shards=1]
     t_compat --> a_compat([identical to single-shard])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
