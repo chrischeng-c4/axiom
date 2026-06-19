@@ -1738,11 +1738,25 @@ pub fn mb_bytes_rindex(
 pub fn mb_bytes_center(receiver: MbValue, width: MbValue, fill: MbValue) -> MbValue {
     let data = extract_bytes(receiver).unwrap_or_default();
     let w = width.as_int().unwrap_or(0).max(0) as usize;
+    // CPython: the fill argument must be a byte string of length 1.
+    if let Some(v) = extract_bytes(fill) {
+        if v.len() != 1 {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "center() argument 2 must be a byte string of length 1, not {}",
+                    super::builtins::value_type_name(fill)
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
     if data.len() >= w {
         return bytes_to_value(receiver, data);
     }
     let pad = w - data.len();
-    let left = pad / 2;
+    // CPython do_center: left bias of `(marg & width & 1)` — matches mb_str_center.
+    let left = pad / 2 + (pad & w & 1);
     let right = pad - left;
     let f = fill_byte(fill);
     let mut out = Vec::with_capacity(w);
