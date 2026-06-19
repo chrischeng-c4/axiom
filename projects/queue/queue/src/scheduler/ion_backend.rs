@@ -5,7 +5,8 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cclab_kv::client::{KvClient, KvValue};
+use keep::client::KvClient;
+use keep::KvValue;
 use tokio::sync::Mutex;
 
 use super::backend::{SchedulerBackend, TaskScheduleState};
