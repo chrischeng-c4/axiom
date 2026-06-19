@@ -1394,6 +1394,18 @@ impl KvEngine {
         }
     }
 
+    /// Durability barrier for durable-before-ack writes: returns a receiver that
+    /// fires once every WAL op logged so far has been fsynced to disk. Returns
+    /// `None` when persistence is disabled (nothing to wait for). Concurrent
+    /// callers are batched into a single fsync (group commit) by the writer.
+    #[inline]
+    pub fn durability_barrier(&self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        if !self.persistence_enabled.load(Ordering::Acquire) {
+            return None;
+        }
+        self.persistence.load().as_ref().and_then(|p| p.barrier())
+    }
+
     /// Get the shard for a given key
     #[inline]
     fn shard_for_key(&self, key: &str) -> &Shard {

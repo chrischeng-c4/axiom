@@ -30,6 +30,15 @@ fn ttl(ms: Option<u64>) -> Option<Duration> {
     ms.map(Duration::from_millis)
 }
 
+/// Await durability of the writes issued so far, then return — the basis for
+/// durable-before-ack. No-op when persistence is disabled. Concurrent writers
+/// share one fsync (group commit), so this is cheap under load.
+async fn ack_durable(st: &AppState) {
+    if let Some(rx) = st.engine.durability_barrier() {
+        let _ = rx.await;
+    }
+}
+
 /// TTL passed via query string on the raw-bytes write path.
 #[derive(Debug, Deserialize)]
 pub struct TtlQuery {
@@ -120,6 +129,7 @@ pub async fn put_key(
             "unsupported content-type: {ct}"
         )));
     }
+    ack_durable(&st).await;
     Ok((StatusCode::OK, Json(OkResponse { key, ok: true })).into_response())
 }
 
@@ -136,9 +146,9 @@ pub async fn delete_key(
     Path(key): Path<String>,
 ) -> Result<Json<DeleteResponse>, ApiErr> {
     let k = key_of(&key)?;
-    Ok(Json(DeleteResponse {
-        deleted: st.engine.delete(&k),
-    }))
+    let deleted = st.engine.delete(&k);
+    ack_durable(&st).await;
+    Ok(Json(DeleteResponse { deleted }))
 }
 
 /// Existence check (no body).
@@ -179,6 +189,7 @@ pub async fn incr_key(
 ) -> Result<Json<IncrResponse>, ApiErr> {
     let k = key_of(&key)?;
     let value = st.engine.incr(&k, req.delta).map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(IncrResponse { value }))
 }
 
@@ -202,6 +213,7 @@ pub async fn cas_key(
         .engine
         .cas(&k, &expected, json_to_kv(req.new), ttl(req.ttl_ms))
         .map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(CasResponse { swapped }))
 }
 
@@ -224,6 +236,7 @@ pub async fn setnx_key(
         .engine
         .setnx(&k, json_to_kv(req.value), ttl(req.ttl_ms))
         .map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(SetNxResponse { set }))
 }
 
@@ -284,6 +297,7 @@ pub async fn mset(
     st.engine
         .mset(&pairs, ttl(req.ttl_ms))
         .map_err(ApiErr::from)?;
+    ack_durable(&st).await;
     Ok(Json(CountResponse { count: pairs.len() }))
 }
 
@@ -306,9 +320,9 @@ pub async fn mdel(
         .collect::<Result<_, _>>()
         .map_err(ApiErr::from)?;
     let refs: Vec<&KvKey> = keys.iter().collect();
-    Ok(Json(CountResponse {
-        count: st.engine.mdel(&refs),
-    }))
+    let count = st.engine.mdel(&refs);
+    ack_durable(&st).await;
+    Ok(Json(CountResponse { count }))
 }
 
 /// List keys, optionally filtered by prefix.
