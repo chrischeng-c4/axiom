@@ -67,9 +67,66 @@ flowchart TD
 <!-- type: schema lang: yaml -->
 
 ```yaml
-(fill)
-```
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: relay-work-queue-throughput#schema
+title: Relay Work-Queue Batch Types
+description: >
+  Batch lease / ack DTOs that amortize HTTP round-trips. A worker leases up to
+  `max` entries in one call and acks many in one call. Single lease/ack (from
+  #113) are unchanged; the core Lease (with its epoch) is reused.
 
+definitions:
+  LeaseBatchRequest:
+    type: object
+    $id: LeaseBatchRequest
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [consumer_id, max]
+    properties:
+      consumer_id: { type: string }
+      max: { type: integer, minimum: 1, description: "Maximum entries to lease in this call." }
+
+  LeaseBatchResponse:
+    type: object
+    $id: LeaseBatchResponse
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [leases]
+    description: "Up to `max` granted leases, in seq order; empty when nothing is ready."
+    properties:
+      leases:
+        type: array
+        items: { x-rust-type: "crate::types::Lease" }
+
+  AckOne:
+    type: object
+    $id: AckOne
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [lease_id]
+    properties:
+      lease_id: { type: string }
+      epoch:
+        oneOf: [{ type: "null" }, { type: integer, minimum: 1 }]
+
+  AckBatchRequest:
+    type: object
+    $id: AckBatchRequest
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [acks]
+    properties:
+      acks:
+        type: array
+        items: { $ref: "#/definitions/AckOne" }
+
+  AckBatchResponse:
+    type: object
+    $id: AckBatchResponse
+    x-rust-derive: ["Debug", "Clone", "Serialize", "Deserialize"]
+    required: [acked]
+    description: "How many of the batch were accepted, plus the resulting committed offset."
+    properties:
+      acked: { type: integer, minimum: 0 }
+      committed_seq:
+        oneOf: [{ type: "null" }, { type: integer, minimum: 0 }]
+```
 ## Rest Api
 <!-- type: rest-api lang: yaml -->
 
