@@ -122,3 +122,12 @@ changes:
     impl_mode: hand-written
     reason: "Tests: rotation into multiple segment files + ordered range across them, byte-based pruning advancing start_seq, reads of pruned seqs (None / clamp), multi-segment recovery on reopen, and single-segment parity at default sizes."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Segment list ordered by base_seq with a rolling active segment; per-segment offsets located by binary search; retention deletes oldest whole segments (never the active) by bytes/age, advancing start_seq; reads clamp to start_seq and walk per-segment runs; recovery replays survivors. Coherent full lifecycle.
+- [unit-test] Rotation + cross-segment ordered range, byte pruning + start_seq, pruned reads, multi-segment recovery, default parity.
+- [changes] log.rs + a new test; reuses existing segment_bytes / retention config.
