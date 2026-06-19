@@ -109,3 +109,12 @@ changes:
     impl_mode: hand-written
     reason: "Tests: disk-backed entry() for evicted seqs, broadcast range/replay across the evict boundary, bounded dedupe window (in-window dedupes, evicted re-appends), and no-eviction parity when the ring exceeds N."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Sound: a dense offset index + a bounded ring give RAM ~8 bytes/entry instead of a full entry; cold reads seek the offset and read the line; range reads the cold prefix sequentially then the hot tail; dedupe is a FIFO window. Replay rebuilds all of it. Scales beyond RAM without changing the hot path.
+- [unit-test] Covers disk-backed reads for evicted seqs, replay across the evict boundary, the bounded dedupe window (in-window dedupes, evicted re-appends), and no-eviction parity.
+- [changes] Bounded to log.rs + a new test; reuses existing config knobs.
