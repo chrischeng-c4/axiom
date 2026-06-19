@@ -363,15 +363,14 @@ pub fn register() {
         vec![("run_test_script", noop)],
     );
 
-    // 4) `os_helper.TESTFN`: a concrete scratch-file name (CPython uses
-    //    `@test_<pid>`). A plain string is enough for the fixtures that build
-    //    `os_helper.TESTFN + '.gz'` etc.
+    // 4) `os_helper.TESTFN`: a concrete scratch-file name. CPython suffixes the
+    //    PID so each process gets a unique name; mirror that so fixtures that do
+    //    `open(TESTFN, 'x')` (exclusive create) don't collide with a stale file
+    //    left by another fixture process in the shared CWD.
+    let testfn = format!("@mamba_test_{}", std::process::id());
     merge_register(
         "test.support.os_helper",
-        vec![(
-            "TESTFN",
-            MbValue::from_ptr(MbObject::new_str("@mamba_test".to_string())),
-        )],
+        vec![("TESTFN", MbValue::from_ptr(MbObject::new_str(testfn)))],
     );
 
     // 5) Missing submodules referenced via `from test.support import <leaf>`.

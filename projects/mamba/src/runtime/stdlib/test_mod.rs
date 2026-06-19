@@ -53,6 +53,32 @@ unsafe extern "C" fn dispatch_identity(args_ptr: *const MbValue, nargs: usize) -
     a.get(0).copied().unwrap_or_else(MbValue::none)
 }
 
+/// test.support.os_helper.FakePath(path) — a minimal os.PathLike wrapper whose
+/// __fspath__ returns the stored path (or raises it, if it is an exception).
+unsafe extern "C" fn dispatch_fakepath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let path = a.first().copied().unwrap_or_else(MbValue::none);
+    let inst = MbObject::new_instance("FakePath".to_string());
+    if let ObjData::Instance { ref fields, .. } = (*inst).data {
+        super::super::rc::retain_if_ptr(path);
+        fields.write().unwrap().insert("path".to_string(), path);
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// FakePath.__fspath__(self) -> the stored path.
+unsafe extern "C" fn fakepath_fspath(self_v: MbValue, _args: MbValue) -> MbValue {
+    let path = self_v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().ok().and_then(|f| f.get("path").copied())
+        } else {
+            None
+        }
+    }).unwrap_or_else(MbValue::none);
+    super::super::rc::retain_if_ptr(path);
+    path
+}
+
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
@@ -116,6 +142,22 @@ pub fn register() {
 fn register_support_submodules() {
     let noop = dispatch_noop_variadic as usize;
     let identity = dispatch_identity as usize;
+    let fakepath = dispatch_fakepath as usize;
+    // FakePath is a real os.PathLike: register the class (with __fspath__) and
+    // wire its constructor addr so isinstance(FakePath(x), os.PathLike) holds.
+    {
+        let mut m: HashMap<String, MbValue> = HashMap::new();
+        let fsp = fakepath_fspath as *const () as usize;
+        super::super::module::register_variadic_func(fsp as u64);
+        m.insert("__fspath__".to_string(), MbValue::from_func(fsp));
+        super::super::class::mb_class_register("FakePath", vec![], m);
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(fakepath as u64);
+        });
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(fakepath as u64, "FakePath".to_string());
+        });
+    }
 
     fn make_attrs(entries: &[(&str, usize)]) -> HashMap<String, MbValue> {
         let mut attrs = HashMap::new();
@@ -134,7 +176,7 @@ fn register_support_submodules() {
         ("requires_IEEE_754", identity),
         ("ExtraAssertions", noop),
         ("INVALID_UNDERSCORE_LITERALS", noop),
-        ("FakePath", noop),
+        ("FakePath", fakepath),
         ("C_RECURSION_LIMIT", noop),
         ("BrokenIter", noop),
         ("check_warnings", noop),
@@ -304,7 +346,7 @@ fn register_support_submodules() {
     );
 
     let os_helper_entries: &[(&str, usize)] = &[
-        ("FakePath", noop),
+        ("FakePath", fakepath),
         ("temp_cwd", noop),
         ("temp_dir", noop),
         ("change_cwd", noop),
