@@ -5,8 +5,8 @@
 use utoipa::OpenApi;
 
 use crate::http::error::ApiError;
-use crate::http::handlers;
 use crate::http::models::*;
+use crate::http::{handlers, hash, meta, sets, zsets};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -23,7 +23,11 @@ use crate::http::models::*;
         (name = "KV",    description = "Single-key get/set/delete + scalar ops"),
         (name = "Batch", description = "Multi-key get/set/delete"),
         (name = "Locks", description = "Leased distributed locks"),
-        (name = "Lists", description = "List push/pop"),
+        (name = "Lists", description = "List push/pop/range"),
+        (name = "Hashes", description = "Field-map ops (in-memory only)"),
+        (name = "Sets", description = "Set ops (in-memory only)"),
+        (name = "SortedSets", description = "Scored-member ops (in-memory only)"),
+        (name = "Expiry", description = "TTL / expire / persist on any key"),
         (name = "Admin", description = "Health, readiness, metrics, OpenAPI")
     ),
     paths(
@@ -45,6 +49,31 @@ use crate::http::models::*;
         handlers::rpush,
         handlers::lpop,
         handlers::rpop,
+        meta::lrange,
+        meta::llen,
+        meta::expire,
+        meta::ttl,
+        meta::persist,
+        hash::hset,
+        hash::hgetall,
+        hash::hdel,
+        hash::hlen,
+        hash::hmget,
+        hash::hincr,
+        hash::hget,
+        hash::hexists,
+        sets::sadd,
+        sets::smembers,
+        sets::srem,
+        sets::scard,
+        sets::sismember,
+        zsets::zadd,
+        zsets::zrange,
+        zsets::zrem,
+        zsets::zcard,
+        zsets::zincr,
+        zsets::zscore,
+        zsets::zrank,
         handlers::healthz,
         handlers::readyz,
         handlers::metrics,
@@ -78,6 +107,28 @@ use crate::http::models::*;
         PopResponse,
         InfoResponse,
         ApiError,
+        hash::HSetRequest,
+        hash::HGetAllResponse,
+        hash::HGetResponse,
+        hash::FieldsRequest,
+        hash::HMGetResponse,
+        hash::HIncrRequest,
+        hash::IntValueResponse,
+        sets::MembersRequest,
+        sets::MembersResponse,
+        zsets::ScoredMember,
+        zsets::ZAddRequest,
+        zsets::ZRemRequest,
+        zsets::ZRangeResponse,
+        zsets::ZIncrRequest,
+        zsets::ScoreResponse,
+        zsets::FloatValueResponse,
+        zsets::RankResponse,
+        meta::ExpireRequest,
+        meta::AppliedResponse,
+        meta::TtlResponse,
+        meta::ListRangeResponse,
+        meta::LenResponse,
     ))
 )]
 pub struct ApiDoc;

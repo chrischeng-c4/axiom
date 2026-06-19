@@ -1912,6 +1912,84 @@ impl KvEngine {
         self.shard_for_key(key.as_str()).llen(key.as_str())
     }
 
+    // ==================== Set Operations ====================
+    // Engine-level wrappers over the per-shard set ops. Like the hash/list
+    // collection ops, these are in-memory only (the WAL covers scalar ops only).
+
+    /// Add members to a set (SADD). Returns the number newly added.
+    pub fn sadd(&self, key: &KvKey, members: Vec<String>) -> Result<usize, KvError> {
+        self.check_memory_and_evict()?;
+        self.shard_for_key(key.as_str()).sadd(key.as_str(), members)
+    }
+
+    /// Remove members from a set (SREM). Returns the number removed.
+    pub fn srem(&self, key: &KvKey, members: Vec<String>) -> Result<usize, KvError> {
+        self.shard_for_key(key.as_str()).srem(key.as_str(), members)
+    }
+
+    /// All members of a set (SMEMBERS).
+    pub fn smembers(&self, key: &KvKey) -> Result<Vec<String>, KvError> {
+        self.shard_for_key(key.as_str()).smembers(key.as_str())
+    }
+
+    /// Membership test (SISMEMBER).
+    pub fn sismember(&self, key: &KvKey, member: &str) -> Result<bool, KvError> {
+        self.shard_for_key(key.as_str())
+            .sismember(key.as_str(), member)
+    }
+
+    /// Set cardinality (SCARD).
+    pub fn scard(&self, key: &KvKey) -> Result<usize, KvError> {
+        self.shard_for_key(key.as_str()).scard(key.as_str())
+    }
+
+    // ==================== Sorted-Set Operations ====================
+
+    /// Add scored members to a sorted set (ZADD). Returns the number newly added.
+    pub fn zadd(&self, key: &KvKey, members: Vec<(String, f64)>) -> Result<usize, KvError> {
+        self.check_memory_and_evict()?;
+        self.shard_for_key(key.as_str()).zadd(key.as_str(), members)
+    }
+
+    /// Remove members from a sorted set (ZREM). Returns the number removed.
+    pub fn zrem(&self, key: &KvKey, members: Vec<String>) -> Result<usize, KvError> {
+        self.shard_for_key(key.as_str()).zrem(key.as_str(), members)
+    }
+
+    /// Score of a member (ZSCORE).
+    pub fn zscore(&self, key: &KvKey, member: &str) -> Result<Option<f64>, KvError> {
+        self.shard_for_key(key.as_str()).zscore(key.as_str(), member)
+    }
+
+    /// Increment a member's score (ZINCRBY). Returns the new score.
+    pub fn zincrby(&self, key: &KvKey, member: &str, increment: f64) -> Result<f64, KvError> {
+        self.check_memory_and_evict()?;
+        self.shard_for_key(key.as_str())
+            .zincrby(key.as_str(), member, increment)
+    }
+
+    /// Rank (0-based, ascending by score) of a member (ZRANK).
+    pub fn zrank(&self, key: &KvKey, member: &str) -> Result<Option<usize>, KvError> {
+        self.shard_for_key(key.as_str()).zrank(key.as_str(), member)
+    }
+
+    /// Members in a rank range, ascending by score (ZRANGE). Negative indices
+    /// count from the end.
+    pub fn zrange(
+        &self,
+        key: &KvKey,
+        start: i64,
+        stop: i64,
+    ) -> Result<Vec<(String, f64)>, KvError> {
+        self.shard_for_key(key.as_str())
+            .zrange(key.as_str(), start, stop)
+    }
+
+    /// Sorted-set cardinality (ZCARD).
+    pub fn zcard(&self, key: &KvKey) -> Result<usize, KvError> {
+        self.shard_for_key(key.as_str()).zcard(key.as_str())
+    }
+
     // ==================== Scan Operations ====================
 
     /// Scan keys across all shards with optional prefix filter

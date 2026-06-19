@@ -6,9 +6,13 @@
 
 pub mod error;
 pub mod handlers;
+pub mod hash;
+pub mod meta;
 pub mod models;
 pub mod openapi;
 pub mod routes;
+pub mod sets;
+pub mod zsets;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
