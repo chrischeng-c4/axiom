@@ -2,24 +2,31 @@
 // HANDWRITE-BEGIN gap="missing-generator:logic:3e8f9afa" tracker="pending-tracker" reason="Durable ordered log substrate: append with deterministic-id dedupe, monotonic seq, RAM ring + disk segment persistence, ordered read/replay."
 //! Durable ordered log substrate for one `(subject, shard)`.
 //!
-//! Append assigns a monotonic, gap-free [`Seq`], dedupes on [`MessageId`] for
-//! idempotent at-least-once semantics, and persists entries as newline-delimited
-//! JSON replayed on open.
-//!
-//! RAM is bounded (#130): only the most recent `ram_ring_entries` entries stay
-//! resident in a ring; older entries are evicted (they remain on disk) and read
-//! back on demand via a dense byte-offset index, so the log scales far beyond
-//! memory. The dedupe map is likewise capped to `dedupe.window_entries`.
+//! Append assigns a monotonic, gap-free [`Seq`], dedupes on [`MessageId`], and
+//! persists entries as newline-delimited JSON. Storage is **segmented** (#131):
+//! the active segment rolls at `segment_bytes`, and retention prunes the oldest
+//! whole segments by `max_bytes_per_shard` / `max_age_secs`, advancing
+//! `start_seq`. RAM is bounded (#130): only the most recent `ram_ring_entries`
+//! stay resident; older (but un-pruned) entries are read back from their segment
+//! via a per-segment byte-offset index. The dedupe map is a FIFO window.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use crate::config::{FsyncPolicy, RelayCoreConfig};
 use crate::types::{AppendOutcome, LogEntry, MessageId, Payload, Seq, ShardId, Subject};
+
+/// One on-disk NDJSON segment holding seqs `[base_seq, next segment's base_seq)`.
+struct Segment {
+    base_seq: Seq,
+    path: PathBuf,
+    bytes: u64,
+    last_ts: DateTime<Utc>,
+}
 
 /// A durable ordered log for a single `(subject, shard)`.
 ///
@@ -28,24 +35,27 @@ pub struct Log {
     subject: Subject,
     shard: ShardId,
     fsync: FsyncPolicy,
-    /// Total entries appended (also the next seq to assign).
+    /// Total entries ever appended (also the next seq to assign).
     len: Seq,
+    /// Earliest still-available seq (advances as old segments are pruned).
+    start_seq: Seq,
     /// Resident window: the most recent entries (at most `ram_cap` when disk-backed).
     ring: VecDeque<LogEntry>,
-    /// Max resident entries (`ram_ring_entries`); only enforced when disk-backed.
     ram_cap: usize,
-    /// Dense byte offset of each seq's NDJSON line (for cold disk reads).
+    /// Byte offset of each seq WITHIN its segment (located by base_seq).
     offsets: Vec<u64>,
-    writer: Option<BufWriter<File>>,
-    /// Next byte offset to write (== current file length).
-    write_pos: u64,
-    /// NDJSON path, for reading evicted entries back.
-    read_path: Option<PathBuf>,
     dedupe: HashMap<MessageId, Seq>,
-    /// FIFO of dedupe ids, to evict the oldest beyond the window.
     dedupe_order: VecDeque<MessageId>,
     dedupe_cap: usize,
-    /// Sidecar path for the durable committed watermark (None = RAM-only).
+    // ---- disk (None fields => RAM-only) ----
+    dir: Option<PathBuf>,
+    segment_bytes: u64,
+    max_bytes: u64,
+    max_age: i64,
+    segments: Vec<Segment>,
+    writer: Option<BufWriter<File>>,
+    /// Bytes in the active (last) segment.
+    active_bytes: u64,
     commit_path: Option<PathBuf>,
 }
 
@@ -72,25 +82,31 @@ fn cap_or_unbounded(n: u64) -> usize {
 impl Log {
     /// Open (and recover) the log for `(subject, shard)`.
     ///
-    /// With an empty `config.data_dir` the log is RAM-only (never evicts).
-    /// Otherwise existing segment contents are replayed — rebuilding the offset
-    /// index, the resident ring (last `ram_ring_entries`), the dedupe window,
-    /// and the write position — and further appends are persisted.
+    /// With an empty `config.data_dir` the log is RAM-only. Otherwise all
+    /// surviving segment files are replayed in seq order — rebuilding the
+    /// segment list, the per-segment offset index, the resident ring, the
+    /// dedupe window, `len` and `start_seq` — and the last segment is reopened
+    /// for appends.
     pub fn open(config: &RelayCoreConfig, subject: &str, shard: ShardId) -> io::Result<Log> {
         let mut log = Log {
             subject: subject.to_string(),
             shard,
             fsync: config.fsync,
             len: 0,
+            start_seq: 0,
             ring: VecDeque::new(),
             ram_cap: cap_or_unbounded(config.ram_ring_entries),
             offsets: Vec::new(),
-            writer: None,
-            write_pos: 0,
-            read_path: None,
             dedupe: HashMap::new(),
             dedupe_order: VecDeque::new(),
             dedupe_cap: cap_or_unbounded(config.dedupe.window_entries),
+            dir: None,
+            segment_bytes: config.segment_bytes.max(1),
+            max_bytes: config.retention.max_bytes_per_shard,
+            max_age: config.retention.max_age_secs as i64,
+            segments: Vec::new(),
+            writer: None,
+            active_bytes: 0,
             commit_path: None,
         };
 
@@ -100,14 +116,40 @@ impl Log {
 
         let dir = PathBuf::from(&config.data_dir);
         create_dir_all(&dir)?;
-        let path = dir.join(format!("{}__shard{}.ndjson", sanitize(subject), shard));
-        log.read_path = Some(path.clone());
         log.commit_path = Some(dir.join(format!("{}__shard{}.commit", sanitize(subject), shard)));
 
-        if path.exists() {
-            let mut reader = BufReader::new(File::open(&path)?);
+        // Discover existing segment files: <subject>__shardN__<base>.ndjson
+        let prefix = format!("{}__shard{}__", sanitize(subject), shard);
+        let mut found: Vec<(Seq, PathBuf)> = Vec::new();
+        for ent in std::fs::read_dir(&dir)? {
+            let path = ent?.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if let Some(rest) = name.strip_prefix(&prefix) {
+                    if let Some(base) = rest.strip_suffix(".ndjson") {
+                        if let Ok(b) = base.parse::<Seq>() {
+                            found.push((b, path));
+                        }
+                    }
+                }
+            }
+        }
+        found.sort_by_key(|(b, _)| *b);
+
+        // Seqs and the offset index are relative to the earliest surviving seq.
+        let base0 = found.first().map(|(b, _)| *b).unwrap_or(0);
+        log.start_seq = base0;
+        log.len = base0;
+
+        for (base, path) in &found {
+            let mut reader = BufReader::new(File::open(path)?);
             let mut pos: u64 = 0;
             let mut line = String::new();
+            let mut seg = Segment {
+                base_seq: *base,
+                path: path.clone(),
+                bytes: 0,
+                last_ts: Utc::now(),
+            };
             loop {
                 line.clear();
                 let n = reader.read_line(&mut line)?;
@@ -120,41 +162,77 @@ impl Log {
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                     let seq = log.len;
                     log.offsets.push(pos);
+                    seg.last_ts = entry.appended_at;
                     log.dedupe_insert(entry.message_id.clone(), seq);
                     log.ring_push(entry, true);
                     log.len += 1;
                 }
                 pos += n as u64;
             }
-            log.write_pos = pos;
+            seg.bytes = pos;
+            log.segments.push(seg);
         }
+        log.start_seq = log.segments.first().map(|s| s.base_seq).unwrap_or(0);
+        log.dir = Some(dir);
 
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
-        log.writer = Some(BufWriter::new(file));
+        // Open (or create) the active segment for appends.
+        if log.segments.is_empty() {
+            log.start_new_segment(0)?;
+        } else {
+            let active = log.segments.last().unwrap();
+            log.active_bytes = active.bytes;
+            log.writer = Some(open_append(&active.path)?);
+        }
         Ok(log)
     }
 
-    /// Number of entries in the log; also the next seq to assign.
+    fn segment_path(&self, base: Seq) -> PathBuf {
+        self.dir.as_ref().unwrap().join(format!(
+            "{}__shard{}__{}.ndjson",
+            sanitize(&self.subject),
+            self.shard,
+            base
+        ))
+    }
+
+    /// Close the active segment (if any) and open a fresh one at `base`.
+    fn start_new_segment(&mut self, base: Seq) -> io::Result<()> {
+        if let Some(w) = self.writer.as_mut() {
+            w.flush()?;
+            w.get_ref().sync_all()?;
+        }
+        let path = self.segment_path(base);
+        self.writer = Some(open_append(&path)?);
+        self.active_bytes = 0;
+        self.segments.push(Segment {
+            base_seq: base,
+            path,
+            bytes: 0,
+            last_ts: Utc::now(),
+        });
+        Ok(())
+    }
+
     pub fn len(&self) -> Seq {
         self.len
     }
 
-    /// True when the log holds no entries.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Seq of the oldest entry still resident in the RAM ring.
+    /// Earliest still-available seq (entries below it have been pruned).
+    pub fn start_seq(&self) -> Seq {
+        self.start_seq
+    }
+
     fn ring_start(&self) -> Seq {
         self.len - self.ring.len() as Seq
     }
 
-    /// Insert an id into the bounded dedupe window, evicting the oldest beyond `dedupe_cap`.
     fn dedupe_insert(&mut self, id: MessageId, seq: Seq) {
         self.dedupe.insert(id.clone(), seq);
         self.dedupe_order.push_back(id);
-        // FIFO window: dedupe and dedupe_order stay in lockstep (an id is only
-        // inserted once — repeats are deduped before reaching here).
         while self.dedupe_order.len() > self.dedupe_cap {
             if let Some(old) = self.dedupe_order.pop_front() {
                 self.dedupe.remove(&old);
@@ -162,7 +240,6 @@ impl Log {
         }
     }
 
-    /// Push an entry into the ring; when disk-backed, evict the oldest beyond `ram_cap`.
     fn ring_push(&mut self, entry: LogEntry, disk_backed: bool) {
         self.ring.push_back(entry);
         if disk_backed {
@@ -172,12 +249,25 @@ impl Log {
         }
     }
 
-    /// Read one entry by seq — from the RAM ring when resident, else from disk
-    /// via the offset index.
+    /// Index of the segment holding `seq` (largest base_seq <= seq).
+    fn segment_for(&self, seq: Seq) -> usize {
+        self.segments.partition_point(|s| s.base_seq <= seq) - 1
+    }
+
+    /// Exclusive end seq of segment `i`.
+    fn segment_end(&self, i: usize) -> Seq {
+        self.segments
+            .get(i + 1)
+            .map(|s| s.base_seq)
+            .unwrap_or(self.len)
+    }
+
+    /// Read one entry by seq — RAM ring when resident, else its segment on disk;
+    /// `None` if out of range or pruned.
     ///
     /// @spec projects/relay/tech-design/logic/bounded-ram-durable-log-entry-eviction-offset-index-disk-backed.md#logic
     pub fn entry(&self, seq: Seq) -> io::Result<Option<LogEntry>> {
-        if seq >= self.len {
+        if seq >= self.len || seq < self.start_seq {
             return Ok(None);
         }
         let start = self.ring_start();
@@ -187,71 +277,115 @@ impl Log {
         Ok(self.read_disk_range(seq, seq + 1)?.into_iter().next())
     }
 
-    /// Ordered entries from `from_seq` onward (for fan-out / replay): the cold
-    /// (evicted) prefix is read sequentially from disk, the hot tail from the ring.
+    /// Ordered entries from `from_seq` (clamped up to `start_seq`) onward; the
+    /// cold prefix is read from disk segments in order, the hot tail from RAM.
     ///
-    /// @spec projects/relay/tech-design/logic/bounded-ram-durable-log-entry-eviction-offset-index-disk-backed.md#logic
+    /// @spec projects/relay/tech-design/logic/log-segment-rotation-retention-full-log-lifecycle.md#logic
     pub fn range(&self, from_seq: Seq) -> io::Result<Vec<LogEntry>> {
-        let from = from_seq.min(self.len);
-        let start = self.ring_start();
+        let from = from_seq.max(self.start_seq).min(self.len);
+        let ring_start = self.ring_start();
         let mut out = Vec::with_capacity((self.len - from) as usize);
-        if from < start {
-            out.extend(self.read_disk_range(from, start)?);
+        if from < ring_start {
+            out.extend(self.read_disk_range(from, ring_start)?);
         }
-        let hot_from = from.max(start);
-        for seq in hot_from..self.len {
-            out.push(self.ring[(seq - start) as usize].clone());
+        for seq in from.max(ring_start)..self.len {
+            out.push(self.ring[(seq - ring_start) as usize].clone());
         }
         Ok(out)
     }
 
-    /// Read seqs `[from, to)` back from the on-disk NDJSON via the offset index.
+    /// Read seqs `[from, to)` from disk, walking each segment's run in order.
     fn read_disk_range(&self, from: Seq, to: Seq) -> io::Result<Vec<LogEntry>> {
-        let path = self
-            .read_path
-            .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no on-disk segment"))?;
-        let mut reader = BufReader::new(File::open(path)?);
-        reader.seek(SeekFrom::Start(self.offsets[from as usize]))?;
+        if self.dir.is_none() {
+            return Ok(Vec::new());
+        }
         let mut out = Vec::with_capacity((to - from) as usize);
-        let mut line = String::new();
-        for _ in from..to {
-            line.clear();
-            if reader.read_line(&mut line)? == 0 {
-                break;
+        let mut seq = from;
+        while seq < to {
+            let si = self.segment_for(seq);
+            let run_end = self.segment_end(si).min(to);
+            let mut reader = BufReader::new(File::open(&self.segments[si].path)?);
+            reader.seek(SeekFrom::Start(
+                self.offsets[(seq - self.start_seq) as usize],
+            ))?;
+            let mut line = String::new();
+            for _ in seq..run_end {
+                line.clear();
+                if reader.read_line(&mut line)? == 0 {
+                    break;
+                }
+                let entry: LogEntry = serde_json::from_str(line.trim_end())
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                out.push(entry);
             }
-            let entry: LogEntry = serde_json::from_str(line.trim_end())
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            out.push(entry);
+            seq = run_end;
         }
         Ok(out)
     }
 
-    /// Write one entry's NDJSON line, recording its byte offset; respects the
-    /// per-append fsync policy.
-    fn write_entry(&mut self, entry: &LogEntry) -> io::Result<()> {
-        let offset = self.write_pos;
+    /// Roll to a new segment when the active one is full.
+    fn rotate_if_needed(&mut self) -> io::Result<()> {
+        if self.dir.is_some() && self.active_bytes >= self.segment_bytes {
+            // active segment has at least one entry (base_seq < len) once full.
+            let base = self.len;
+            self.start_new_segment(base)?;
+        }
+        Ok(())
+    }
+
+    /// Write one entry's line to the active segment, recording its in-segment offset.
+    fn write_line(&mut self, entry: &LogEntry) -> io::Result<()> {
+        let offset = self.active_bytes;
         if let Some(writer) = self.writer.as_mut() {
             let line = serde_json::to_string(entry)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             writer.write_all(line.as_bytes())?;
             writer.write_all(b"\n")?;
-            self.write_pos += line.len() as u64 + 1;
-            match self.fsync {
-                FsyncPolicy::Always => {
-                    writer.flush()?;
-                    writer.get_ref().sync_all()?;
-                }
-                FsyncPolicy::Interval => writer.flush()?,
-                FsyncPolicy::Os => {}
+            self.active_bytes += line.len() as u64 + 1;
+            if let Some(seg) = self.segments.last_mut() {
+                seg.bytes = self.active_bytes;
+                seg.last_ts = entry.appended_at;
             }
         }
         self.offsets.push(offset);
         Ok(())
     }
 
-    /// Append `payload` under `message_id`. Idempotent: a repeated id returns
-    /// the existing seq with `deduped = true` and writes nothing new.
+    fn fsync_active(&mut self) -> io::Result<()> {
+        if let Some(writer) = self.writer.as_mut() {
+            writer.flush()?;
+            writer.get_ref().sync_all()?;
+        }
+        Ok(())
+    }
+
+    /// Prune the oldest whole segments by total bytes / age, advancing `start_seq`.
+    /// Never prunes the active (last) segment.
+    fn prune(&mut self, now: DateTime<Utc>) -> io::Result<()> {
+        loop {
+            if self.segments.len() <= 1 {
+                break;
+            }
+            let total: u64 = self.segments.iter().map(|s| s.bytes).sum();
+            let oldest = &self.segments[0];
+            let over_bytes = self.max_bytes > 0 && total > self.max_bytes;
+            let too_old =
+                self.max_age > 0 && oldest.last_ts < now - Duration::seconds(self.max_age);
+            if !over_bytes && !too_old {
+                break;
+            }
+            let removed = self.segments.remove(0);
+            let _ = std::fs::remove_file(&removed.path);
+            let new_start = self.segments[0].base_seq;
+            // Offsets are relative to start_seq; drop the pruned prefix.
+            let drop_n = (new_start - self.start_seq) as usize;
+            self.offsets.drain(0..drop_n.min(self.offsets.len()));
+            self.start_seq = new_start;
+        }
+        Ok(())
+    }
+
+    /// Append `payload` under `message_id`. Idempotent on `message_id`.
     ///
     /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
     pub fn append(
@@ -264,6 +398,7 @@ impl Log {
         if let Some(&seq) = self.dedupe.get(message_id) {
             return Ok(AppendOutcome { seq, deduped: true });
         }
+        self.rotate_if_needed()?;
         let seq = self.len;
         let entry = LogEntry {
             seq,
@@ -274,21 +409,29 @@ impl Log {
             headers,
             appended_at: now,
         };
-        self.write_entry(&entry)?;
+        self.write_line(&entry)?;
+        match self.fsync {
+            FsyncPolicy::Always => self.fsync_active()?,
+            FsyncPolicy::Interval => {
+                if let Some(w) = self.writer.as_mut() {
+                    w.flush()?;
+                }
+            }
+            FsyncPolicy::Os => {}
+        }
         let disk = self.writer.is_some();
         self.dedupe_insert(message_id.to_string(), seq);
         self.ring_push(entry, disk);
         self.len += 1;
+        self.prune(now)?;
         Ok(AppendOutcome {
             seq,
             deduped: false,
         })
     }
 
-    /// Append a batch, then issue ONE `sync_all` for the whole batch (group
-    /// commit): every entry becomes durable with a single fsync, so durability
-    /// cost is amortized. Idempotent per `message_id` (against existing entries
-    /// and within the batch). Returns one outcome per input, in order.
+    /// Append a batch with ONE fsync (group commit). Idempotent per `message_id`
+    /// (against existing entries and within the batch).
     ///
     /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
     pub fn append_many(
@@ -298,12 +441,12 @@ impl Log {
     ) -> io::Result<Vec<AppendOutcome>> {
         let mut outcomes = Vec::with_capacity(items.len());
         let disk = self.writer.is_some();
-
         for (message_id, payload, headers) in items {
             if let Some(&seq) = self.dedupe.get(&message_id) {
                 outcomes.push(AppendOutcome { seq, deduped: true });
                 continue;
             }
+            self.rotate_if_needed()?;
             let seq = self.len;
             let entry = LogEntry {
                 seq,
@@ -314,16 +457,7 @@ impl Log {
                 headers,
                 appended_at: now,
             };
-            // Write the line + record the offset, but defer the fsync (group commit).
-            let offset = self.write_pos;
-            if let Some(writer) = self.writer.as_mut() {
-                let line = serde_json::to_string(&entry)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                writer.write_all(line.as_bytes())?;
-                writer.write_all(b"\n")?;
-                self.write_pos += line.len() as u64 + 1;
-            }
-            self.offsets.push(offset);
+            self.write_line(&entry)?;
             self.dedupe_insert(message_id, seq);
             self.ring_push(entry, disk);
             self.len += 1;
@@ -332,17 +466,15 @@ impl Log {
                 deduped: false,
             });
         }
-
         // Group commit: a single fsync makes the whole batch durable.
-        if let Some(writer) = self.writer.as_mut() {
-            writer.flush()?;
-            writer.get_ref().sync_all()?;
+        if self.fsync != FsyncPolicy::Os {
+            self.fsync_active()?;
         }
+        self.prune(now)?;
         Ok(outcomes)
     }
 
-    /// Durably record the committed watermark (one write + fsync). No-op when
-    /// RAM-only.
+    /// Durably record the committed watermark (one write + fsync). No-op when RAM-only.
     ///
     /// @spec projects/relay/tech-design/logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md#logic
     pub fn persist_commit(&self, watermark: Seq) -> io::Result<()> {
@@ -361,5 +493,11 @@ impl Log {
         let path = self.commit_path.as_ref()?;
         std::fs::read_to_string(path).ok()?.trim().parse().ok()
     }
+}
+
+fn open_append(path: &PathBuf) -> io::Result<BufWriter<File>> {
+    Ok(BufWriter::new(
+        OpenOptions::new().create(true).append(true).open(path)?,
+    ))
 }
 // HANDWRITE-END
