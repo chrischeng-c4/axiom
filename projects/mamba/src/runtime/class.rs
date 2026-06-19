@@ -9343,6 +9343,14 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         drop(guard);
                         return super::dict_ops::mb_dict_getitem(data, key);
                     }
+                    if class_name == "mappingproxy" {
+                        // Read-only view: forward subscript to the wrapped
+                        // mapping (KeyError on miss propagates).
+                        let guard = fields.read().unwrap();
+                        let data = guard.get("_mapping").copied().unwrap_or(MbValue::none());
+                        drop(guard);
+                        return mb_obj_getitem(data, key);
+                    }
                     if class_name == "collections.defaultdict" {
                         let guard = fields.read().unwrap();
                         let data = guard.get("_data").copied().unwrap_or(MbValue::none());
@@ -9422,6 +9430,22 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
     if !obj_has_user_dunder(obj, "__setitem__") {
         if let Some(tuple_key) = slice_obj_as_tuple(key) {
             return mb_obj_setitem(obj, tuple_key, value);
+        }
+    }
+    // mappingproxy is a read-only mapping view: item assignment is a TypeError
+    // (CPython). Reject before any backing-dict mutation.
+    if let Some(ptr) = obj.as_ptr() {
+        let is_proxy = unsafe {
+            matches!(&(*ptr).data,
+                ObjData::Instance { class_name, .. } if class_name == "mappingproxy")
+        };
+        if is_proxy {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "'mappingproxy' object does not support item assignment".to_string())),
+            );
+            return MbValue::none();
         }
     }
     // memoryview[i] = v / memoryview[a:b] = v → forward to the backing buffer
