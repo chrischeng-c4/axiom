@@ -4,6 +4,7 @@
 //! seq order, replayable from any seq, via an independent per-subscriber cursor.
 
 use std::collections::HashMap;
+use std::io;
 
 use crate::log::Log;
 use crate::types::{LogEntry, Seq, ShardId, SubscriberCursor};
@@ -49,17 +50,17 @@ impl BroadcastDelivery {
     }
 
     /// Deliver every not-yet-delivered entry to `subscriber_id` and advance its
-    /// cursor. Returns the entries in seq order; empty if the subscriber is
-    /// caught up or unknown.
+    /// cursor. Returns the entries in seq order (reading any evicted prefix back
+    /// from disk); empty if the subscriber is caught up or unknown.
     ///
     /// @spec projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#logic
-    pub fn poll(&mut self, subscriber_id: &str, log: &Log) -> Vec<LogEntry> {
+    pub fn poll(&mut self, subscriber_id: &str, log: &Log) -> io::Result<Vec<LogEntry>> {
         let Some(cursor) = self.subscribers.get_mut(subscriber_id) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        let out: Vec<LogEntry> = log.range(cursor.next).to_vec();
+        let out = log.range(cursor.next)?;
         cursor.next = log.len();
-        out
+        Ok(out)
     }
 
     /// Snapshot of a subscriber's cursor.
