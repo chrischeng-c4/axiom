@@ -6,16 +6,21 @@ use super::wal::WalWriter;
 ///! Provides non-blocking persistence through a background thread and channel.
 use super::{PersistenceConfig, PersistenceError, Result};
 use crate::engine::KvEngine;
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
 /// Command sent to persistence thread
 enum PersistenceCommand {
     /// Write operation to WAL
     LogOp(WalOp),
+
+    /// Durability barrier: fire the sender once every op enqueued before it is
+    /// fsynced. Enables durable-before-ack with group commit.
+    Barrier(oneshot::Sender<()>),
 
     /// Force flush WAL to disk
     Flush,
@@ -51,8 +56,11 @@ impl PersistenceHandle {
     pub fn new(config: PersistenceConfig, engine: Arc<KvEngine>) -> Result<Self> {
         info!("Starting persistence background thread");
 
-        // Create bounded channel (buffer up to 10K operations)
-        let (sender, receiver) = bounded::<PersistenceCommand>(10_000);
+        // Unbounded so the (sync) write path never drops a WAL op. Backpressure
+        // is applied at the ack layer instead: a durable write awaits its
+        // barrier, so a slow disk throttles producers rather than losing data.
+        // In-flight ops are bounded by the server's concurrent-request count.
+        let (sender, receiver) = unbounded::<PersistenceCommand>();
 
         // Clone config for thread
         let thread_config = config.clone();
@@ -74,12 +82,23 @@ impl PersistenceHandle {
         })
     }
 
-    /// Log a WAL operation (non-blocking)
+    /// Log a WAL operation. Non-blocking and lossless: the unbounded channel
+    /// never rejects, so the op is always queued (only fails if the writer
+    /// thread is gone, i.e. during shutdown).
     pub fn log_operation(&self, op: WalOp) {
-        // Send to background thread, drop if channel is full
-        // This is acceptable for task backends where slight data loss is OK
-        if let Err(e) = self.sender.try_send(PersistenceCommand::LogOp(op)) {
-            warn!("Failed to log WAL operation: {}", e);
+        if let Err(e) = self.sender.send(PersistenceCommand::LogOp(op)) {
+            warn!("WAL writer gone, op not logged: {}", e);
+        }
+    }
+
+    /// Register a durability barrier. The returned receiver fires once every WAL
+    /// op enqueued *before* this call has been fsynced to disk — the basis for
+    /// durable-before-ack. Returns `None` only if the writer thread is gone.
+    pub fn barrier(&self) -> Option<oneshot::Receiver<()>> {
+        let (tx, rx) = oneshot::channel();
+        match self.sender.send(PersistenceCommand::Barrier(tx)) {
+            Ok(()) => Some(rx),
+            Err(_) => None,
         }
     }
 
@@ -109,110 +128,102 @@ impl PersistenceHandle {
         let mut ops_since_snapshot = 0usize;
         let mut last_snapshot = Instant::now();
 
-        // Tracking for flushes
-        let mut last_flush = Instant::now();
-
         info!("Persistence thread started");
 
+        let timeout = Duration::from_millis(config.wal_config.flush_interval_ms);
+
         loop {
-            // Try to receive with timeout for periodic flushes
-            let timeout = Duration::from_millis(config.wal_config.flush_interval_ms);
-
+            // --- collect one burst of commands ---------------------------------
+            // Block (with a timeout for periodic maintenance) for the first
+            // command, then drain everything else already queued. The whole
+            // burst shares a single fsync below — that's the group commit: N
+            // concurrent durable writes cost one fsync, not N.
+            let mut cmds: Vec<PersistenceCommand> = Vec::new();
             match receiver.recv_timeout(timeout) {
-                Ok(PersistenceCommand::LogOp(op)) => {
-                    // Write to WAL
-                    if let Err(e) = wal_writer.append(op) {
-                        error!("Failed to append to WAL: {}", e);
-                        continue;
-                    }
-
-                    ops_since_snapshot += 1;
-
-                    // Check if rotation is needed
-                    if wal_writer.should_rotate() {
-                        debug!("WAL rotation triggered");
-                        if let Err(e) = wal_writer.rotate() {
-                            error!("Failed to rotate WAL: {}", e);
-                        }
-                    }
-
-                    // Check if flush is needed
-                    if wal_writer.should_flush() {
-                        if let Err(e) = wal_writer.flush() {
-                            error!("Failed to flush WAL: {}", e);
-                        } else {
-                            last_flush = Instant::now();
-                        }
-                    }
-                }
-
-                Ok(PersistenceCommand::Flush) => {
-                    debug!("Force flush requested");
-                    if let Err(e) = wal_writer.flush() {
-                        error!("Failed to flush WAL: {}", e);
-                    } else {
-                        last_flush = Instant::now();
-                    }
-                }
-
-                Ok(PersistenceCommand::CreateSnapshot) => {
-                    info!("Creating snapshot (manual trigger)");
-                    Self::create_snapshot_internal(
-                        &snapshot_writer,
-                        &engine,
-                        &config,
-                        wal_writer.position(),
-                    );
-                    ops_since_snapshot = 0;
-                    last_snapshot = Instant::now();
-                }
-
-                Ok(PersistenceCommand::Shutdown) => {
-                    info!("Shutdown signal received");
-                    break;
-                }
-
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                    // Periodic flush check
-                    if last_flush.elapsed().as_millis()
-                        >= config.wal_config.flush_interval_ms as u128
-                    {
-                        if let Err(e) = wal_writer.flush() {
-                            error!("Failed to flush WAL: {}", e);
-                        } else {
-                            last_flush = Instant::now();
-                        }
-                    }
-
-                    // Periodic snapshot check
-                    let should_snapshot = ops_since_snapshot
-                        >= config.snapshot_config.ops_threshold
-                        || last_snapshot.elapsed().as_secs()
-                            >= config.snapshot_config.interval_secs;
-
-                    if should_snapshot {
-                        info!(
-                            "Creating snapshot ({} ops, {} seconds since last)",
-                            ops_since_snapshot,
-                            last_snapshot.elapsed().as_secs()
-                        );
-
-                        Self::create_snapshot_internal(
-                            &snapshot_writer,
-                            &engine,
-                            &config,
-                            wal_writer.position(),
-                        );
-
-                        ops_since_snapshot = 0;
-                        last_snapshot = Instant::now();
-                    }
-                }
-
+                Ok(cmd) => cmds.push(cmd),
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                     info!("Channel disconnected, shutting down");
                     break;
                 }
+            }
+            while let Ok(cmd) = receiver.try_recv() {
+                cmds.push(cmd);
+            }
+
+            // --- apply the burst ----------------------------------------------
+            let mut barriers: Vec<oneshot::Sender<()>> = Vec::new();
+            let mut wrote = false;
+            let mut force_flush = false;
+            let mut want_snapshot = false;
+            let mut stop = false;
+
+            for cmd in cmds {
+                match cmd {
+                    PersistenceCommand::LogOp(op) => {
+                        if let Err(e) = wal_writer.append(op) {
+                            error!("Failed to append to WAL: {}", e);
+                            continue;
+                        }
+                        ops_since_snapshot += 1;
+                        wrote = true;
+                    }
+                    PersistenceCommand::Barrier(tx) => barriers.push(tx),
+                    PersistenceCommand::Flush => force_flush = true,
+                    PersistenceCommand::CreateSnapshot => want_snapshot = true,
+                    PersistenceCommand::Shutdown => stop = true,
+                }
+            }
+
+            // --- group commit: one fsync for the whole burst -------------------
+            let has_barriers = !barriers.is_empty();
+            if wrote || force_flush || has_barriers {
+                if let Err(e) = wal_writer.flush() {
+                    error!("Failed to flush WAL: {}", e);
+                }
+            }
+            // Release awaiting durable writes — their ops are now on disk.
+            for b in barriers {
+                let _ = b.send(());
+            }
+
+            if wrote && wal_writer.should_rotate() {
+                debug!("WAL rotation triggered");
+                if let Err(e) = wal_writer.rotate() {
+                    error!("Failed to rotate WAL: {}", e);
+                }
+            }
+
+            // --- periodic maintenance -----------------------------------------
+            // On an idle tick (no ops/barriers) still flush any straggler bytes.
+            if !wrote && !has_barriers && !force_flush && wal_writer.should_flush() {
+                if let Err(e) = wal_writer.flush() {
+                    error!("Failed to flush WAL: {}", e);
+                }
+            }
+
+            let should_snapshot = want_snapshot
+                || ops_since_snapshot >= config.snapshot_config.ops_threshold
+                || last_snapshot.elapsed().as_secs() >= config.snapshot_config.interval_secs;
+            if should_snapshot && (ops_since_snapshot > 0 || want_snapshot) {
+                info!(
+                    "Creating snapshot ({} ops, {}s since last)",
+                    ops_since_snapshot,
+                    last_snapshot.elapsed().as_secs()
+                );
+                Self::create_snapshot_internal(
+                    &snapshot_writer,
+                    &engine,
+                    &config,
+                    wal_writer.position(),
+                );
+                ops_since_snapshot = 0;
+                last_snapshot = Instant::now();
+            }
+
+            if stop {
+                info!("Shutdown signal received");
+                break;
             }
         }
 
