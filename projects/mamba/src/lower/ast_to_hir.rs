@@ -5572,6 +5572,9 @@ impl<'a> AstLowerer<'a> {
                             | "quote" | "unquote"
                             // property(fget=, fset=, fdel=, doc=) keyword form
                             | "property"
+                            // decimal.localcontext(prec=, rounding=, Emin=, …)
+                            // and Context(...) read a trailing kwargs dict.
+                            | "localcontext" | "Context"
                             // urllib.request.Request(url, data=, headers=,
                             // method=) — its native dispatcher reads a trailing
                             // kwargs dict, so a bare `Request(...)` (from-import)
