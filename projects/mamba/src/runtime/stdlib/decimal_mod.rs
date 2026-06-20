@@ -2561,17 +2561,111 @@ unsafe extern "C" fn dispatch_Decimal(args_ptr: *const MbValue, nargs: usize) ->
 /// fixtures check `callable(...)` and `hasattr(...)`. Full context-object
 /// behaviour is not modelled by this shim (would require class.rs handle
 /// routing); these return `None` rather than a real context object.
+thread_local! {
+    /// The active `localcontext()` stack (top = current). Empty → the default.
+    static CTX_STACK: RefCell<Vec<MbValue>> = const { RefCell::new(Vec::new()) };
+    /// The process-default context, created lazily with a STABLE identity so
+    /// `getcontext() is getcontext()` holds (CPython thread-local singleton).
+    static DEFAULT_CTX: RefCell<Option<MbValue>> = const { RefCell::new(None) };
+}
+
+/// A fresh `Context` instance carrying its core settings as fields.
+fn new_context(prec: i64, rounding: &str, emin: i64, emax: i64) -> MbValue {
+    let inst = MbObject::new_instance("Context".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut m = fields.write().unwrap();
+            m.insert("prec".to_string(), int_val(prec));
+            m.insert("rounding".to_string(), str_val(rounding));
+            m.insert("Emin".to_string(), int_val(emin));
+            m.insert("Emax".to_string(), int_val(emax));
+            m.insert("capitals".to_string(), MbValue::from_int(1));
+            m.insert("clamp".to_string(), MbValue::from_int(0));
+            m.insert("flags".to_string(), MbValue::from_ptr(MbObject::new_dict()));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn ctx_field(ctx: MbValue, key: &str) -> Option<MbValue> {
+    ctx.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().unwrap().get(key).copied()
+        } else {
+            None
+        }
+    })
+}
+
+/// A new, independent `Context` copying `src`'s fields (flags become a fresh
+/// dict so the copy's flags never alias the source's).
+fn copy_context(src: MbValue) -> MbValue {
+    let inst = MbObject::new_instance("Context".to_string());
+    unsafe {
+        if let (Some(sp), ObjData::Instance { ref fields, .. }) = (src.as_ptr(), &(*inst).data) {
+            if let ObjData::Instance { fields: ref sfields, .. } = (*sp).data {
+                let s = sfields.read().unwrap();
+                let mut m = fields.write().unwrap();
+                for (k, v) in s.iter() {
+                    if k == "flags" {
+                        m.insert(k.clone(), MbValue::from_ptr(MbObject::new_dict()));
+                    } else {
+                        super::super::rc::retain_if_ptr(*v);
+                        m.insert(k.clone(), *v);
+                    }
+                }
+            }
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn default_ctx() -> MbValue {
+    DEFAULT_CTX.with(|d| {
+        let mut g = d.borrow_mut();
+        if g.is_none() {
+            *g = Some(new_context(28, "ROUND_HALF_EVEN", -999999, 999999));
+        }
+        let c = g.unwrap();
+        unsafe { super::super::rc::retain_if_ptr(c); }
+        c
+    })
+}
+
+/// The current context: the stack top if a `localcontext()` is active, else the
+/// stable process-default singleton.
+fn current_ctx() -> MbValue {
+    match CTX_STACK.with(|s| s.borrow().last().copied()) {
+        Some(c) => {
+            unsafe { super::super::rc::retain_if_ptr(c); }
+            c
+        }
+        None => default_ctx(),
+    }
+}
+
 unsafe extern "C" fn dispatch_decimal_getcontext(
     _args_ptr: *const MbValue,
     _nargs: usize,
 ) -> MbValue {
-    MbValue::none()
+    current_ctx()
 }
 
 unsafe extern "C" fn dispatch_decimal_setcontext(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
+    args_ptr: *const MbValue,
+    nargs: usize,
 ) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    if let Some(c) = a.first().copied() {
+        if ctx_field(c, "prec").is_some() {
+            unsafe { super::super::rc::retain_if_ptr(c); }
+            DEFAULT_CTX.with(|d| *d.borrow_mut() = Some(c));
+        }
+    }
     MbValue::none()
 }
 
@@ -2584,9 +2678,15 @@ unsafe extern "C" fn dispatch_decimal_localcontext(
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
-    // kwargs ride a trailing dict: capitals/clamp accept only 0 or 1.
-    if let Some(last) = a.last() {
-        if let Some(ptr) = last.as_ptr() {
+    // Trailing kwargs dict (prec=/rounding=/Emin=/Emax=/capitals=/clamp=).
+    let kw = a.last().copied().filter(|v| {
+        v.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .unwrap_or(false)
+    });
+    // capitals/clamp accept only 0 or 1.
+    if let Some(kwv) = kw {
+        if let Some(ptr) = kwv.as_ptr() {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let guard = lock.read().unwrap();
@@ -2610,7 +2710,60 @@ unsafe extern "C" fn dispatch_decimal_localcontext(
             }
         }
     }
-    MbValue::none()
+    // Base: an explicit positional Context, else the current context.
+    let pos_ctx = a.iter().copied().find(|v| ctx_field(*v, "prec").is_some());
+    let base = pos_ctx.unwrap_or_else(current_ctx);
+    let copy = copy_context(base);
+    // Apply keyword overrides onto the copy.
+    if let Some(kwv) = kw {
+        if let Some(ptr) = kwv.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let g = lock.read().unwrap();
+                    if let Some(cp) = copy.as_ptr() {
+                        if let ObjData::Instance { ref fields, .. } = (*cp).data {
+                            let mut m = fields.write().unwrap();
+                            for (k, v) in g.iter() {
+                                if let super::super::dict_ops::DictKey::Str(s) = k {
+                                    super::super::rc::retain_if_ptr(*v);
+                                    m.insert(s.clone(), *v);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Wrap the prepared context in a `_LocalCtx` context manager.
+    let cm = MbObject::new_instance("_LocalCtx".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*cm).data {
+            fields.write().unwrap().insert("_ctx".to_string(), copy);
+        }
+    }
+    MbValue::from_ptr(cm)
+}
+
+/// `_LocalCtx.__enter__` — push the prepared context as current, return it.
+unsafe extern "C" fn localctx_enter(self_v: MbValue, _args: MbValue) -> MbValue {
+    let ctx = ctx_field(self_v, "_ctx").unwrap_or_else(MbValue::none);
+    if !ctx.is_none() {
+        unsafe { super::super::rc::retain_if_ptr(ctx); }
+        CTX_STACK.with(|s| s.borrow_mut().push(ctx));
+    }
+    unsafe { super::super::rc::retain_if_ptr(ctx); }
+    ctx
+}
+
+/// `_LocalCtx.__exit__` — pop the context, restoring the previous current one.
+unsafe extern "C" fn localctx_exit(_self: MbValue, _args: MbValue) -> MbValue {
+    CTX_STACK.with(|s| {
+        if let Some(c) = s.borrow_mut().pop() {
+            unsafe { super::super::rc::release_if_ptr(c); }
+        }
+    });
+    MbValue::from_bool(false)
 }
 
 /// Surface-only stub for `Decimal` instance methods registered on the class so
@@ -2760,6 +2913,17 @@ fn register_context_methods() {
         m.insert(name.to_string(), MbValue::from_func(addr));
     }
     super::super::class::mb_class_register("Context", Vec::new(), m);
+
+    // `_LocalCtx` — the context-manager returned by `localcontext()`.
+    let mut lm: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("__enter__", localctx_enter as *const () as usize),
+        ("__exit__", localctx_exit as *const () as usize),
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+        lm.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register("_LocalCtx", Vec::new(), lm);
 }
 
 pub fn register() {
