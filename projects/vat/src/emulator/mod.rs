@@ -15,6 +15,7 @@ pub mod dispatch;
 pub mod pubsub;
 pub mod scheduler;
 pub mod tasks;
+pub mod workflows;
 
 use anyhow::Result;
 
@@ -24,6 +25,7 @@ pub enum Kind {
     FirebaseAuth,
     CloudTasks,
     CloudScheduler,
+    CloudWorkflows,
 }
 
 /// Serve the selected emulator on `host_port` (e.g. `127.0.0.1:8085`) until the
@@ -34,6 +36,7 @@ pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
         Kind::Pubsub => pubsub::serve(host_port).await,
         Kind::CloudTasks => tasks::serve(host_port).await,
         Kind::CloudScheduler => scheduler::serve(host_port).await,
+        Kind::CloudWorkflows => workflows::serve(host_port).await,
     }
 }
 // CODEGEN-END

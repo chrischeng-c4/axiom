@@ -126,6 +126,7 @@ pub enum EmulatorKind {
     FirebaseAuth,
     CloudTasks,
     CloudScheduler,
+    CloudWorkflows,
 }
 
 /// Standalone `vat cluster` verbs. Clusters created here outlive a single run;

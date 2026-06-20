@@ -63,9 +63,18 @@ fn mint_oidc(oidc: &Oidc) -> String {
     .expect("mint oidc token")
 }
 
-/// Deliver `target` over HTTP. Returns the response status code, or an error if
+/// The result of a dispatch: the response status and body text.
+pub struct DispatchResult {
+    pub code: u16,
+    pub body: String,
+}
+
+/// Deliver `target` over HTTP and collect the response status + body. Errors if
 /// the request could not be made.
-pub async fn dispatch_http(client: &reqwest::Client, target: &Target) -> anyhow::Result<u16> {
+pub async fn dispatch_collect(
+    client: &reqwest::Client,
+    target: &Target,
+) -> anyhow::Result<DispatchResult> {
     let method =
         reqwest::Method::from_bytes(target.method.as_bytes()).unwrap_or(reqwest::Method::POST);
     let mut req = client.request(method, &target.uri);
@@ -76,6 +85,14 @@ pub async fn dispatch_http(client: &reqwest::Client, target: &Target) -> anyhow:
         req = req.header("Authorization", format!("Bearer {}", mint_oidc(oidc)));
     }
     let resp = req.body(target.body.clone()).send().await?;
-    Ok(resp.status().as_u16())
+    let code = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    Ok(DispatchResult { code, body })
+}
+
+/// Deliver `target` over HTTP. Returns the response status code, or an error if
+/// the request could not be made.
+pub async fn dispatch_http(client: &reqwest::Client, target: &Target) -> anyhow::Result<u16> {
+    Ok(dispatch_collect(client, target).await?.code)
 }
 // CODEGEN-END
