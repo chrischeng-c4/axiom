@@ -791,6 +791,35 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/vat/src/emulator/workflows"
+      - path: "projects/vat/src/emulator/storage.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "store_object"
+            kind: "function"
+            public: false
+          - name: "upload_object"
+            kind: "function"
+            public: false
+          - name: "get_object"
+            kind: "function"
+            public: false
+          - name: "parse_multipart"
+            kind: "function"
+            public: false
+          - name: "object_resource"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
 ```
 
 ## Changes
