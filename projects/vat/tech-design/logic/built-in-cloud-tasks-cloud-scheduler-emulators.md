@@ -215,3 +215,44 @@ requirementDiagram
       verifies: scheduler_dispatch
     }
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-cloud-tasks-dispatch-smoke
+    name: "Cloud Tasks emulator dispatches a task to its target"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_emulator_tasks -- --nocapture"
+    assertions:
+      - "spawning `vat emulator cloud-tasks`, creating a queue and a task targeting a local sink, results in the emulator POSTing the task body to the sink."
+      - "no gcloud / Java required; the emulator starts in well under a second."
+  - id: vat-cloud-scheduler-dispatch-smoke
+    name: "Cloud Scheduler emulator fires a job on :run"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_emulator_scheduler -- --nocapture"
+    assertions:
+      - "creating an httpTarget job and calling jobs/{j}:run results in the emulator POSTing to the sink."
+      - "no gcloud / Java required."
+  - id: vat-cloud-builtin-preset-run-smoke
+    name: "builtin cloud preset exports the host var to the runner"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat cloud_builtin_preset_exports_host -- --nocapture --ignored"
+    assertions:
+      - "a `preset = \"cloud-tasks\"` / `preset = \"cloud-scheduler\"` vat.toml run exports CLOUD_TASKS_EMULATOR_HOST / CLOUD_SCHEDULER_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown."
+  - id: vat-cloud-emulator-lean-build
+    name: "lean build still compiles"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo build -p vat --no-default-features"
+    assertions:
+      - "vat compiles without the emulator feature; the cloud-tasks/cloud-scheduler emulator verbs then error cleanly, never a panic."
+```
