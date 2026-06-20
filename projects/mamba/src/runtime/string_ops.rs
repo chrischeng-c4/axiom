@@ -3228,6 +3228,23 @@ pub fn value_to_string(val: MbValue) -> String {
                     class_name,
                     ref fields,
                 } => {
+                    // Type objects: str(type) -> "<class 'name'>", matching repr
+                    // and CPython's type.__str__ behavior.
+                    if class_name == "type" {
+                        let name = fields
+                            .read()
+                            .ok()
+                            .and_then(|f| f.get("__name__").copied())
+                            .and_then(|v| v.as_ptr())
+                            .and_then(|p| if let ObjData::Str(ref s) = (*p).data {
+                                Some(s.clone())
+                            } else {
+                                None
+                            });
+                        if let Some(name) = name {
+                            return format!("<class '{name}'>");
+                        }
+                    }
                     if class_name == "UnionType" {
                         return super::builtins::union_type_repr(val);
                     }
