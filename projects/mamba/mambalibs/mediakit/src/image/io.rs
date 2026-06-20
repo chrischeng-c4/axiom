@@ -139,33 +139,24 @@ pub fn imwrite(path: &str, img: &Image) -> Result<(), ImageError> {
 
     let dyn_img = match img.format {
         PixelFormat::Gray => {
-            let buf =
-                ::image::GrayImage::from_raw(img.width, img.height, img.data.clone())
-                    .ok_or_else(|| {
-                        ImageError::UnsupportedFormat(
-                            "failed to create gray image buffer".into(),
-                        )
-                    })?;
+            let buf = ::image::GrayImage::from_raw(img.width, img.height, img.data.clone())
+                .ok_or_else(|| {
+                    ImageError::UnsupportedFormat("failed to create gray image buffer".into())
+                })?;
             DynamicImage::ImageLuma8(buf)
         }
         PixelFormat::Rgb => {
-            let buf =
-                ::image::RgbImage::from_raw(img.width, img.height, img.data.clone())
-                    .ok_or_else(|| {
-                        ImageError::UnsupportedFormat(
-                            "failed to create RGB image buffer".into(),
-                        )
-                    })?;
+            let buf = ::image::RgbImage::from_raw(img.width, img.height, img.data.clone())
+                .ok_or_else(|| {
+                    ImageError::UnsupportedFormat("failed to create RGB image buffer".into())
+                })?;
             DynamicImage::ImageRgb8(buf)
         }
         PixelFormat::Rgba => {
-            let buf =
-                ::image::RgbaImage::from_raw(img.width, img.height, img.data.clone())
-                    .ok_or_else(|| {
-                        ImageError::UnsupportedFormat(
-                            "failed to create RGBA image buffer".into(),
-                        )
-                    })?;
+            let buf = ::image::RgbaImage::from_raw(img.width, img.height, img.data.clone())
+                .ok_or_else(|| {
+                    ImageError::UnsupportedFormat("failed to create RGBA image buffer".into())
+                })?;
             DynamicImage::ImageRgba8(buf)
         }
         PixelFormat::Hsv | PixelFormat::Lab => {

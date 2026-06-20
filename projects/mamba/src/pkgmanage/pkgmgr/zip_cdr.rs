@@ -89,7 +89,8 @@ pub fn walk_central_directory(cd_bytes: &[u8]) -> Result<Vec<CdEntry>, IndexErro
         if sig != CDR_SIG {
             if sig == [0x50, 0x4b, 0x05, 0x06]      // EOCD
                 || sig == [0x50, 0x4b, 0x06, 0x06]  // Zip64 EOCD
-                || sig == [0x50, 0x4b, 0x06, 0x07]  // Zip64 locator
+                || sig == [0x50, 0x4b, 0x06, 0x07]
+            // Zip64 locator
             {
                 break;
             }
@@ -135,8 +136,7 @@ pub fn walk_central_directory(cd_bytes: &[u8]) -> Result<Vec<CdEntry>, IndexErro
         }
 
         let filename_bytes = &cd_bytes[var_start..var_start + filename_len];
-        let extra_bytes =
-            &cd_bytes[var_start + filename_len..var_start + filename_len + extra_len];
+        let extra_bytes = &cd_bytes[var_start + filename_len..var_start + filename_len + extra_len];
 
         let filename = String::from_utf8_lossy(filename_bytes).into_owned();
 
@@ -212,10 +212,12 @@ fn promote_zip64(
         let id = u16_le(&extra[cursor..cursor + 2]);
         let size = u16_le(&extra[cursor + 2..cursor + 4]) as usize;
         let body_start = cursor + 4;
-        let body_end = body_start.checked_add(size).ok_or_else(|| IndexError::ParseError {
-            url: String::new(),
-            detail: "Zip64 extra field length overflow".into(),
-        })?;
+        let body_end = body_start
+            .checked_add(size)
+            .ok_or_else(|| IndexError::ParseError {
+                url: String::new(),
+                detail: "Zip64 extra field length overflow".into(),
+            })?;
         if body_end > extra.len() {
             return Err(IndexError::ParseError {
                 url: String::new(),
@@ -285,21 +287,21 @@ mod tests {
     ) -> Vec<u8> {
         let mut buf = Vec::with_capacity(CDR_FIXED_LEN + filename.len() + extra.len());
         buf.extend_from_slice(&CDR_SIG);
-        buf.extend_from_slice(&20u16.to_le_bytes());      // version made by
-        buf.extend_from_slice(&20u16.to_le_bytes());      // version needed
-        buf.extend_from_slice(&0u16.to_le_bytes());       // gp flag
+        buf.extend_from_slice(&20u16.to_le_bytes()); // version made by
+        buf.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        buf.extend_from_slice(&0u16.to_le_bytes()); // gp flag
         buf.extend_from_slice(&compression_method.to_le_bytes()); // method
-        buf.extend_from_slice(&0u16.to_le_bytes());       // mod time
-        buf.extend_from_slice(&0u16.to_le_bytes());       // mod date
-        buf.extend_from_slice(&0u32.to_le_bytes());       // CRC-32
+        buf.extend_from_slice(&0u16.to_le_bytes()); // mod time
+        buf.extend_from_slice(&0u16.to_le_bytes()); // mod date
+        buf.extend_from_slice(&0u32.to_le_bytes()); // CRC-32
         buf.extend_from_slice(&compressed_size.to_le_bytes());
         buf.extend_from_slice(&uncompressed_size.to_le_bytes());
         buf.extend_from_slice(&(filename.len() as u16).to_le_bytes());
         buf.extend_from_slice(&(extra.len() as u16).to_le_bytes());
-        buf.extend_from_slice(&0u16.to_le_bytes());       // comment len
-        buf.extend_from_slice(&0u16.to_le_bytes());       // disk number
-        buf.extend_from_slice(&0u16.to_le_bytes());       // internal attrs
-        buf.extend_from_slice(&0u32.to_le_bytes());       // external attrs
+        buf.extend_from_slice(&0u16.to_le_bytes()); // comment len
+        buf.extend_from_slice(&0u16.to_le_bytes()); // disk number
+        buf.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+        buf.extend_from_slice(&0u32.to_le_bytes()); // external attrs
         buf.extend_from_slice(&local_offset.to_le_bytes());
         buf.extend_from_slice(filename);
         buf.extend_from_slice(extra);
@@ -331,8 +333,22 @@ mod tests {
     #[test]
     fn walk_multiple_entries_in_declaration_order() {
         let mut cd = build_cdr(b"pkg/__init__.py", 50, 80, 0, 8, &[]);
-        cd.extend(build_cdr(b"pkg-1.0.dist-info/RECORD", 200, 300, 500, 8, &[]));
-        cd.extend(build_cdr(b"pkg-1.0.dist-info/METADATA", 400, 600, 800, 8, &[]));
+        cd.extend(build_cdr(
+            b"pkg-1.0.dist-info/RECORD",
+            200,
+            300,
+            500,
+            8,
+            &[],
+        ));
+        cd.extend(build_cdr(
+            b"pkg-1.0.dist-info/METADATA",
+            400,
+            600,
+            800,
+            8,
+            &[],
+        ));
 
         let entries = walk_central_directory(&cd).unwrap();
         assert_eq!(entries.len(), 3);
@@ -573,9 +589,23 @@ mod tests {
         // Mock a small wheel CD: __init__.py, RECORD, WHEEL, METADATA.
         let mut cd = Vec::new();
         cd.extend(build_cdr(b"pkg/__init__.py", 30, 50, 0, 8, &[]));
-        cd.extend(build_cdr(b"pkg-1.0.dist-info/RECORD", 200, 300, 100, 8, &[]));
+        cd.extend(build_cdr(
+            b"pkg-1.0.dist-info/RECORD",
+            200,
+            300,
+            100,
+            8,
+            &[],
+        ));
         cd.extend(build_cdr(b"pkg-1.0.dist-info/WHEEL", 80, 100, 500, 8, &[]));
-        cd.extend(build_cdr(b"pkg-1.0.dist-info/METADATA", 1024, 2048, 700, 8, &[]));
+        cd.extend(build_cdr(
+            b"pkg-1.0.dist-info/METADATA",
+            1024,
+            2048,
+            700,
+            8,
+            &[],
+        ));
 
         let entries = walk_central_directory(&cd).unwrap();
         assert_eq!(entries.len(), 4);
@@ -592,7 +622,7 @@ mod tests {
         // size=0 extra field record (legal per spec) — must not loop.
         let mut extra = Vec::new();
         extra.extend_from_slice(&0x9999u16.to_le_bytes()); // unknown id
-        extra.extend_from_slice(&0u16.to_le_bytes());      // size 0
+        extra.extend_from_slice(&0u16.to_le_bytes()); // size 0
         extra.extend_from_slice(&build_zip64_extra(&[42]));
 
         let cd = build_cdr(

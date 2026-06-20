@@ -135,7 +135,12 @@ pub fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
+                diff.push_str(&format!(
+                    "  line {}: expected {:?}, got {:?}\n",
+                    i + 1,
+                    e,
+                    a
+                ));
             }
         }
         panic!(
@@ -188,7 +193,6 @@ pub mod test_copy;
 pub mod test_custom_iter;
 pub mod test_decorators;
 pub mod test_default_kw_args;
-pub mod test_dunder_ops;
 pub mod test_dict;
 pub mod test_dict_comprehension;
 pub mod test_dict_counter;
@@ -200,6 +204,7 @@ pub mod test_dict_pop_clear;
 pub mod test_dict_update_merge;
 pub mod test_dict_views;
 pub mod test_difflib;
+pub mod test_dunder_ops;
 pub mod test_elif_chains;
 pub mod test_else_clauses;
 pub mod test_enumerate;
@@ -207,12 +212,12 @@ pub mod test_exception_variants;
 pub mod test_exceptions;
 pub mod test_filter_map;
 pub mod test_float;
+pub mod test_float_extended;
 pub mod test_float_ops;
+pub mod test_fnmatch;
 pub mod test_format;
 pub mod test_format_braces;
 pub mod test_format_method;
-pub mod test_float_extended;
-pub mod test_fnmatch;
 pub mod test_fstring;
 pub mod test_fstring_expressions;
 pub mod test_fstring_format_specs;

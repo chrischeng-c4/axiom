@@ -41,8 +41,6 @@ pub enum TdCommand {
     Revise(ReviseArgs),
     /// Merge an approved tech-design spec back to main.
     Merge(MergeArgs),
-    /// Escalate to human after 2nd needs-revision.
-    Arbitrate(ArbitrateArgs),
     /// Read-only rule-registry check against `.aw/tech-design/` files.
     /// Accepts a slug (resolved in the current checkout), a single file path, or
     /// a directory. Runs the unified rule registry; no commit, no phase
@@ -59,6 +57,16 @@ pub enum TdCommand {
     Lock(super::td_lock::TdLockArgs),
     /// Adopt an on-disk TD spec into the score lifecycle.
     Claim(TdClaimArgs),
+    /// Generate implementation code from an approved TD spec.
+    Gen(super::cb::CbGenArgs),
+    /// Forward-generate one target source file from a per-file TD source unit.
+    GenSource(super::cb::CbGenSourceArgs),
+    /// Audit code-space files for TD generation drift and HANDWRITE gaps.
+    CodeCheck(super::cb::CbCheckArgs),
+    /// Adopt existing code by generating a TD spec via the fillback pipeline.
+    CodeClaim(super::cb::CbClaimArgs),
+    /// Fill HANDWRITE marker blocks in generated code.
+    Fill(super::cb::CbFillArgs),
 }
 
 /// Args for `aw td claim <slug>`.
@@ -128,7 +136,7 @@ pub struct CreateArgs {
 #[derive(Debug, Args)]
 /// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub struct ValidateArgs {
-    /// Target: issue slug (slug mode, CRRR commit-gate) OR a spec path
+    /// Target: issue slug (slug mode lifecycle gate) OR a spec path
     /// (read-only rule check). A value containing `/` or ending in `.md`
     /// is treated as a path; everything else is a slug.
     pub slug: String,
@@ -256,13 +264,6 @@ pub struct MergeArgs {
     /// only for legitimate spec-only / docs-only merges.
     #[arg(long)]
     pub allow_empty_impl: bool,
-}
-
-#[derive(Debug, Args)]
-/// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
-pub struct ArbitrateArgs {
-    /// Issue slug.
-    pub slug: String,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -1724,7 +1725,7 @@ fn first_yaml_fence(content: &str) -> Option<String> {
 fn check_codegen_ready(spec_content: &str) -> Vec<String> {
     let mut errors = Vec::new();
 
-    // Rule 2-2 (hand-written) specs skip codegen entirely — `aw cb gen`
+    // Rule 2-2 (hand-written) specs skip codegen entirely — `aw td gen`
     // emits zero files — so codegen-shape checks (LogicContent etc.) don't
     // apply. Short-circuit before we demand Mermaid Plus frontmatter that
     // would be meaningless for these specs.
@@ -2274,10 +2275,23 @@ fn preserve_or_derive_dest_rel(
 pub async fn run(args: TdArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     match &args.command {
-        TdCommand::Check(_) | TdCommand::Ast(_) | TdCommand::Lock(_) => {}
+        TdCommand::Check(_) | TdCommand::Ast(_) | TdCommand::Lock(_) | TdCommand::CodeCheck(_) => {}
         TdCommand::Validate(a) => {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
+        }
+        TdCommand::Gen(a) => {
+            if let Some(slug) = a.slug.as_deref() {
+                super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", slug)))
+                    .await?;
+            } else {
+                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
+            }
+        }
+        TdCommand::GenSource(a) => {
+            if !a.dry_run {
+                super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
+            }
         }
         TdCommand::Create(a) => {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
@@ -2295,11 +2309,11 @@ pub async fn run(args: TdArgs) -> Result<()> {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
         }
-        TdCommand::Arbitrate(a) => {
+        TdCommand::Fill(a) => {
             super::workflow_guard::guard_issue_mutation(&project_root, Some(("td", &a.slug)))
                 .await?;
         }
-        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) => {
+        TdCommand::MigrateMermaid(_) | TdCommand::Claim(_) | TdCommand::CodeClaim(_) => {
             super::workflow_guard::guard_issue_mutation(&project_root, None).await?;
         }
     }
@@ -2309,12 +2323,16 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::Review(a) => run_review(a).await,
         TdCommand::Revise(a) => run_revise(a).await,
         TdCommand::Merge(a) => run_merge(a).await,
-        TdCommand::Arbitrate(a) => run_arbitrate(a).await,
         TdCommand::Check(a) => run_check(a),
         TdCommand::Ast(a) => run_ast(a),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
         TdCommand::Lock(a) => super::td_lock::run(args.project.as_deref(), a),
         TdCommand::Claim(a) => run_claim(a).await,
+        TdCommand::Gen(a) => super::cb::run_gen(a).await,
+        TdCommand::GenSource(a) => super::cb::run_gen_source(a),
+        TdCommand::CodeCheck(a) => super::cb::run_check(a),
+        TdCommand::CodeClaim(a) => super::cb::run_claim(a).await,
+        TdCommand::Fill(a) => super::cb_fill::run(a).await,
     }
 }
 
@@ -3177,7 +3195,7 @@ fn run_validate_readonly(shape: crate::validate::PathShape, json: bool) -> Resul
 /// in the emitted error envelope:
 /// - `retry=1` — mainthread re-dispatches td-author with error feedback.
 /// - `retry=2 takeover` — mainthread runs `aw td create --apply` itself.
-/// - `retry=N arbitrate` (N >= 3) — terminal; surfaces to user.
+/// - `retry=N stop` (N >= 3) — terminal; surfaces to user.
 /// On success, reset `fill_retry_count` to 0.
 async fn handle_create_milestone(
     args: &ValidateArgs,
@@ -3222,7 +3240,7 @@ async fn handle_create_milestone(
         } else if new_count == 2 {
             "retry=2 takeover".to_string()
         } else {
-            format!("retry={} arbitrate", new_count)
+            format!("retry={} stop", new_count)
         };
         let msg = format!(
             "spec validation failed [{}]: {}",
@@ -3351,7 +3369,7 @@ async fn handle_review_milestone(
                 agent: None,
                 slug,
                 invoke: Invoke {
-                    command: "aw cb gen",
+                    command: "aw td gen",
                     args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
                 },
             })?;
@@ -3371,8 +3389,8 @@ async fn handle_review_milestone(
                 agent: None,
                 slug,
                 invoke: Invoke {
-                    command: "aw td arbitrate",
-                    args: serde_json::json!({ "slug": slug }),
+                    command: "aw td revise",
+                    args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
                 },
             })?;
         }
@@ -4098,14 +4116,14 @@ async fn complete_phase_review_apply(
                     ("TD-Section", "review"),
                     ("Previous-Phase", issue.phase.as_deref().unwrap_or("")),
                     ("Next-Phase", "td_reviewed"),
-                    ("Next-Command", "aw cb gen"),
+                    ("Next-Command", "aw td gen"),
                 ],
             )?;
             print_envelope(&TdEnvelope::Dispatch {
                 agent: None,
                 slug,
                 invoke: Invoke {
-                    command: "aw cb gen",
+                    command: "aw td gen",
                     args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
                 },
             })?;
@@ -4138,15 +4156,15 @@ async fn complete_phase_review_apply(
                         ("TD-Section", "review"),
                         ("Previous-Phase", issue.phase.as_deref().unwrap_or("")),
                         ("Next-Phase", "td_reviewed"),
-                        ("Next-Command", "aw td arbitrate"),
+                        ("Next-Command", "aw td revise"),
                     ],
                 )?;
                 print_envelope(&TdEnvelope::Dispatch {
                     agent: None,
                     slug,
                     invoke: Invoke {
-                        command: "aw td arbitrate",
-                        args: serde_json::json!({ "slug": slug }),
+                        command: "aw td revise",
+                        args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
                     },
                 })?;
                 return Ok(());
@@ -4497,9 +4515,9 @@ async fn run_revise_apply(args: &ReviseArgs) -> Result<()> {
     Ok(())
 }
 
-// ── cb gen ─────────────────────────────────────────────────────────
+// ── td gen ─────────────────────────────────────────────────────────
 
-/// Implementation of `aw cb gen` — generates code from an approved TD spec.
+/// Implementation of `aw td gen` — generates code from an approved TD spec.
 /// Writes canonical phase `cb_genned` and trailer `Cb-Gen`.
 ///
 /// @spec .aw/tech-design/projects/score/specs/score-namespaces.md#changes
@@ -4547,7 +4565,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             Some(p) => p,
             None => {
                 anyhow::bail!(
-                    "--spec-path is required for cb gen (auto-discovery found no \
+                    "--spec-path is required for td gen (auto-discovery found no \
                      unique spec under .aw/tech-design/ in the current checkout)"
                 );
             }
@@ -4619,7 +4637,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
 
     // Phase 3 (R8): post-codegen dispatch decision.
     // Count emitted HANDWRITE markers in the worktree source tree. If any
-    // remain, dispatch to `aw cb fill`. Otherwise (0-marker fast-path,
+    // remain, dispatch to `aw td fill`. Otherwise (0-marker fast-path,
     // R11) retain the historical `aw td merge` dispatch.
     // @spec .aw/tech-design/projects/score/specs/score-cb-fill-workflow.md#logic
     let marker_count = super::cb_fill::count_worktree_handwrite_markers(&worktree_abs);
@@ -4628,7 +4646,7 @@ pub(crate) async fn run_gen_code(args: GenCodeArgs) -> Result<()> {
             agent: None,
             slug,
             invoke: Invoke {
-                command: "aw cb fill",
+                command: "aw td fill",
                 args: serde_json::json!({ "slug": slug, "spec_path": spec_path }),
             },
         })?;
@@ -4675,7 +4693,7 @@ async fn run_merge(args: MergeArgs) -> Result<()> {
 
     let phase = issue.phase.as_deref().unwrap_or("");
     // Accept cb_genned (canonical Phase 1+), cb_filled (Phase 3 post-fill),
-    // cb_reviewed (Phase 4 post-review; verdict applied by `aw cb review --apply`),
+    // cb_reviewed (legacy post-review phase kept mergeable for existing worktrees),
     // td_gen_coded (legacy reader alias for one release), td_reviewed
     // (no-codegen path), or td_merged (retry).
     // @spec .aw/tech-design/projects/score/specs/score-cb-fill-workflow.md#logic (R10)
@@ -4746,7 +4764,7 @@ async fn run_merge(args: MergeArgs) -> Result<()> {
             if block {
                 let msg = format!(
                     "refusing to merge: spec lists {} file(s) but {} are missing on disk \
-                     (codegen likely skipped; run `aw cb gen {}` then implement, \
+                     (codegen likely skipped; run `aw td gen {}` then implement, \
                      or pass --allow-empty-impl for spec-only merges).\n{}",
                     entries_total,
                     total_missing,
@@ -4931,48 +4949,6 @@ fn td_merge_labels_to_remove() -> Vec<String> {
     ]
 }
 
-// ── td arbitrate ────────────────────────────────────────────────────
-
-async fn run_arbitrate(args: ArbitrateArgs) -> Result<()> {
-    let project_root = crate::find_project_root()?;
-    let slug = &args.slug;
-
-    td_activate_inplace_if_present(&project_root, slug)?;
-    let worktree_abs = td_workspace_path(&project_root, slug);
-    if !worktree_abs.exists() {
-        let msg = format!("workspace not found: {}", worktree_abs.display());
-        print_envelope(&TdEnvelope::Error {
-            slug,
-            message: &msg,
-        })?;
-        return Ok(());
-    }
-
-    let backend = LocalBackend::from_project_root(&worktree_abs);
-    let issue = backend
-        .get(slug)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("issue '{}' not found", slug))?;
-
-    eprintln!(
-        "\u{26a0} Tech-design for '{}' needs human arbitration.",
-        slug
-    );
-    eprintln!("  Issue: {}", issue.title);
-    eprintln!("  Checkout: {}", worktree_abs.display());
-    eprintln!("  2 review rounds completed without approval.");
-    eprintln!("  Read the # Reviews section in the spec, then either:");
-    eprintln!("    - Approve: aw td merge {}", slug);
-    eprintln!("    - Reset phase and re-run the TD lifecycle");
-
-    print_envelope(&TdEnvelope::Done {
-        slug,
-        message: "escalated to human arbitration \u{2014} 2 review rounds exhausted",
-    })?;
-
-    Ok(())
-}
-
 // ── Audit ──────────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -5015,8 +4991,8 @@ pub(crate) fn run_audit(args: AuditArgs) -> Result<()> {
     if args.drift {
         anyhow::bail!(
             "`--drift` has been removed. Drift is now the default behavior of \
-             `aw cb check <path>`, with Clean/Drift/MarkerGap/Uncovered classified \
-             in one walk. Run `aw cb check projects/` to scan all code."
+             `aw td code-check <path>`, with Clean/Drift/MarkerGap/Uncovered classified \
+             in one walk. Run `aw td code-check projects/` to scan all code."
         );
     }
 
@@ -6663,7 +6639,7 @@ fill_sections: [schema]
 /// the `td-<slug>` branch only when launched from `main`; otherwise it stays
 /// on the current branch. It sets `phase: td_reviewed`, commits the
 /// `Lifecycle-Stage: Td-Claim` trailer with a `Claim-Source:` sub-trailer, and
-/// emits a dispatch envelope to `aw cb gen`. Idempotent on re-run when the
+/// emits a dispatch envelope to `aw td gen`. Idempotent on re-run when the
 /// active branch already carries the trailer (use `--force-rebase` to re-run).
 /// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
@@ -6838,7 +6814,7 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
         &[("Claim-Source", &claim_source), ("Claim-Type", "td-spec")],
     )?;
 
-    // 6. Emit dispatch envelope to aw cb gen
+    // 6. Emit dispatch envelope to aw td gen
     let invoke_args = match spec_path_in_worktree {
         Some(sp) => serde_json::json!({ "slug": slug, "spec_path": sp }),
         None => serde_json::json!({ "slug": slug }),
@@ -6847,7 +6823,7 @@ pub async fn run_claim(args: TdClaimArgs) -> Result<()> {
         agent: None,
         slug,
         invoke: Invoke {
-            command: "aw cb gen",
+            command: "aw td gen",
             args: invoke_args,
         },
     })?;

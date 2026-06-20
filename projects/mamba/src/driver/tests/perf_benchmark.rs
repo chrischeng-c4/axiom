@@ -17,7 +17,6 @@
 /// `assert_all_outputs_match` and runs AFTER `print_table` so the timing
 /// row is preserved as diagnostics. A wrong-output run cannot be trusted
 /// as a speedup — fast for the wrong answer is no speedup at all.
-
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -94,7 +93,7 @@ fn run_mamba(src: &str, iters: u32) -> (Duration, String) {
 /// Returns `None` if python3 is not available or the script fails.
 fn run_cpython(src: &str, iters: u32) -> Option<(Duration, String)> {
     let timer_script = format!(
-r#"import time, sys, os, io
+        r#"import time, sys, os, io
 __src = {src:?}
 __devnull = open(os.devnull, 'w')
 __real = sys.stdout
@@ -172,8 +171,7 @@ fn bench(name: &'static str, src: &'static str, iters: u32) -> BenchResult {
 /// benchmark id and includes a compact, deterministic diff of the two
 /// outputs (capped at 160 chars per side so the message stays scannable).
 fn assert_all_outputs_match(results: &[BenchResult]) {
-    let mismatched: Vec<&BenchResult> =
-        results.iter().filter(|r| !r.output_match).collect();
+    let mismatched: Vec<&BenchResult> = results.iter().filter(|r| !r.output_match).collect();
     if mismatched.is_empty() {
         return;
     }
@@ -390,8 +388,7 @@ print(total)
 
     // Summary statistics before the assertion so the timing table and
     // average speedup are always visible — even on mismatch.
-    let avg_speedup: f64 =
-        results.iter().map(|r| r.speedup).sum::<f64>() / results.len() as f64;
+    let avg_speedup: f64 = results.iter().map(|r| r.speedup).sum::<f64>() / results.len() as f64;
     println!("Average speedup vs CPython 3.12: {avg_speedup:.1}x");
 
     // Acceptance (closes #2564): mismatched output fails the test before
@@ -462,8 +459,17 @@ fn mismatch_message_includes_id_and_both_outputs_2564() {
         .map(|s| s.clone())
         .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
         .unwrap_or_default();
-    assert!(msg.contains("benchmark_id=fixture_delta"), "must name id: {msg}");
-    assert!(msg.contains("left-side"), "must include mamba output: {msg}");
-    assert!(msg.contains("right-side"), "must include cpython output: {msg}");
+    assert!(
+        msg.contains("benchmark_id=fixture_delta"),
+        "must name id: {msg}"
+    );
+    assert!(
+        msg.contains("left-side"),
+        "must include mamba output: {msg}"
+    );
+    assert!(
+        msg.contains("right-side"),
+        "must include cpython output: {msg}"
+    );
     assert!(msg.contains("#2564"), "must cite the tracking issue: {msg}");
 }

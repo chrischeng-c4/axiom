@@ -43,8 +43,7 @@ Output schema (JSON default):
   "completion": { "workflow_complete": bool, "requires_hitl": bool, "missing": [string] },
   "next": { "kind": "run_command" | "hitl" | "blocked" | "done" | "error", "command": string?, "reason": string },
   "readiness": object,
-  "metrics": object,
-  "gates": object,
+  "axes": { "capability": object, "ec": object, "ec_gen": object, "td": object, "td_gen": object },
   "blockers": object,
   "payload_path": string
 }"#)]
@@ -69,7 +68,7 @@ pub struct ProjectHealthArgs {
     // Run configured workspace test commands as production release gates.
     #[arg(long)]
     pub verify_tests: bool,
-    // Run TD-derived external contract commands from tests/aw-ec.toml.
+    // Run external-contract commands from the project aw.toml EC inventory.
     #[arg(long)]
     pub verify_ec: bool,
     // DEPRECATED compatibility no-op. Agents should invoke `aw health --project <project>`.
@@ -136,12 +135,9 @@ pub struct ProjectHealthReport {
     pub optional_quality_warnings: Vec<String>,
     pub managed_percent: f64,
     pub semantic_percent: f64,
-    pub regenerable_percent: f64,
     pub codegen_percent: f64,
-    pub full_codegen_percent: f64,
     pub codegen_eligible_files: usize,
     pub codegen_files: usize,
-    pub fully_codegen_files: usize,
     pub cb_ownership: CbOwnershipSummary,
     pub codegen_origin: CbCodegenOriginSummary,
     pub traceability_evaluated: bool,
@@ -323,7 +319,7 @@ pub enum ProjectTestCommandStatus {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-/// TD-derived external-contract gate report.
+/// Project aw.toml external-contract gate report.
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectEcGateReport {
     pub evaluated: bool,
@@ -331,7 +327,7 @@ pub struct ProjectEcGateReport {
     pub verify_evaluated: bool,
     pub status: ProjectEcGateStatus,
     pub note: Option<String>,
-    pub manifest_path: String,
+    pub inventory_path: String,
     pub expected_case_count: usize,
     pub case_count: usize,
     pub expected_tool_manifest_count: usize,
@@ -455,7 +451,7 @@ impl ProjectEcGateReport {
             note: Some(format!(
                 "EC not evaluated; run `aw health --project {project} --verify-ec`"
             )),
-            manifest_path: format!("projects/{project}/tests/aw-ec.toml"),
+            inventory_path: format!("projects/{project}/aw.toml"),
             expected_case_count: 0,
             case_count: 0,
             expected_tool_manifest_count: 0,
@@ -478,10 +474,10 @@ impl ProjectEcGateReport {
         };
         let note = match status {
             ProjectEcGateStatus::NotConfigured => Some(
-                "EC inventory has no cases; add TD e2e-test sections and run `aw ec gen --project <project>`"
+                "EC inventory has no cases; add external-contract e2e-test sections and run `aw ec gen --project <project>`"
                     .to_string(),
             ),
-            ProjectEcGateStatus::CheckFailed => Some("EC manifest/check is blocked".to_string()),
+            ProjectEcGateStatus::CheckFailed => Some("EC inventory/check is blocked".to_string()),
             ProjectEcGateStatus::NotVerified => Some(format!(
                 "EC commands not evaluated; run `aw health --project {} --verify-ec`",
                 summary.project
@@ -494,7 +490,7 @@ impl ProjectEcGateReport {
             verify_evaluated: false,
             status,
             note,
-            manifest_path: summary.manifest_path,
+            inventory_path: summary.inventory_path,
             expected_case_count: summary.expected_case_count,
             case_count: summary.case_count,
             expected_tool_manifest_count: summary.expected_tool_manifest_count,
@@ -951,7 +947,7 @@ impl ProjectHealthReport {
         }
         if regenerable.handwrite_files > 0 {
             regenerability_gaps.push(format!(
-                "{} file(s) still contain HANDWRITE gaps",
+                "{} file(s) are HANDWRITE because they are not TD AST-codegen",
                 regenerable.handwrite_files
             ));
         }
@@ -963,25 +959,25 @@ impl ProjectHealthReport {
         }
         if !regenerable.unsupported_codegen_files.is_empty() {
             regenerability_gaps.push(format!(
-                "{} CODEGEN file(s) are not replay-supported by current generators",
+                "{} file(s) are wrapped as CODEGEN but are not AST-codegen replay-supported",
                 regenerable.unsupported_codegen_files.len()
             ));
         }
         if !regenerable.non_replayable_codegen_files.is_empty() {
             regenerability_gaps.push(format!(
-                "{} CODEGEN file(s) are backed by hand-written TD changes and are not full codegen",
+                "{} file(s) are wrapped as CODEGEN but backed by hand-written TD changes; mark HANDWRITE or implement AST codegen",
                 regenerable.non_replayable_codegen_files.len()
             ));
         }
         if !regenerable.snapshot_codegen_files.is_empty() {
             regenerability_gaps.push(format!(
-                "{} CODEGEN file(s) use source-template/artifact replay instead of lossless TD AST codegen",
+                "{} file(s) are wrapped as CODEGEN but use source-template/artifact replay instead of TD AST codegen",
                 regenerable.snapshot_codegen_files.len()
             ));
         }
         if !regenerable.codegen_drift_files.is_empty() {
             regenerability_gaps.push(format!(
-                "{} CODEGEN file(s) have audit/replay drift",
+                "{} file(s) are wrapped as CODEGEN but have audit/replay drift",
                 regenerable.codegen_drift_files.len()
             ));
         }
@@ -1173,16 +1169,9 @@ impl ProjectHealthReport {
             optional_quality_warnings: Vec::new(),
             managed_percent: managed.percent,
             semantic_percent: semantic.percent,
-            regenerable_percent: regenerable.percent,
-            codegen_percent: if regenerable.eligible_files == 0 {
-                100.0
-            } else {
-                (regenerable.codegen_files as f64 / regenerable.eligible_files as f64) * 100.0
-            },
-            full_codegen_percent: regenerable.percent,
+            codegen_percent: regenerable.percent,
             codegen_eligible_files: regenerable.eligible_files,
             codegen_files: regenerable.codegen_files,
-            fully_codegen_files: regenerable.fully_codegen_files,
             cb_ownership,
             codegen_origin,
             traceability_evaluated: true,
@@ -1338,11 +1327,7 @@ fn regenerability_authority_report(
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn regenerability_gap_count(coverage: &RegenerabilityCoverage) -> usize {
-    coverage.handwrite_files
-        + coverage.unmarked_files
-        + coverage.unsupported_codegen_files.len()
-        + coverage.snapshot_codegen_files.len()
-        + coverage.codegen_drift_files.len()
+    coverage.gap_files.len()
         + coverage.missing_generator_primitive_gaps
         + coverage.insufficient_td_section_gaps
         + coverage.human_decision_required_gaps
@@ -1745,8 +1730,7 @@ pub fn project_health_compact_summary(report: &ProjectHealthReport) -> serde_jso
         "completion": project_health_compact_completion(report),
         "next": project_health_next(report),
         "readiness": project_health_compact_readiness(report),
-        "metrics": project_health_metrics_summary(report),
-        "gates": project_health_gate_metrics_summary(report),
+        "axes": project_health_axes_summary(report),
         "blockers": project_health_compact_blockers(report),
     })
 }
@@ -1771,8 +1755,7 @@ pub fn project_health_section_summary(
         ProjectHealthSection::Full => unreachable!(),
         ProjectHealthSection::Metrics => serde_json::json!({
             "readiness": project_health_compact_readiness(report),
-            "metrics": project_health_metrics_summary(report),
-            "gates": project_health_gate_metrics_summary(report),
+            "axes": project_health_axes_summary(report),
         }),
         ProjectHealthSection::Capability => project_health_capability_summary(&report.capability),
         ProjectHealthSection::Gates => serde_json::json!({
@@ -1796,10 +1779,8 @@ pub fn project_health_section_summary(
             "cb_ownership": &report.cb_ownership,
             "codegen_origin": &report.codegen_origin,
             "codegen_percent": report.codegen_percent,
-            "full_codegen_percent": report.full_codegen_percent,
             "codegen_eligible_files": report.codegen_eligible_files,
             "codegen_files": report.codegen_files,
-            "fully_codegen_files": report.fully_codegen_files,
         }),
         ProjectHealthSection::Cold => serde_json::json!({
             "cold_rebuild_evaluated": report.cold_rebuild_evaluated,
@@ -1823,12 +1804,9 @@ pub fn project_health_section_summary(
             "traceability": &report.traceability,
         }),
         ProjectHealthSection::Regenerable => serde_json::json!({
-            "regenerable_percent": report.regenerable_percent,
             "codegen_percent": report.codegen_percent,
-            "full_codegen_percent": report.full_codegen_percent,
             "codegen_eligible_files": report.codegen_eligible_files,
             "codegen_files": report.codegen_files,
-            "fully_codegen_files": report.fully_codegen_files,
             "cb_ownership": &report.cb_ownership,
             "codegen_origin": &report.codegen_origin,
             "regenerability_authority": &report.regenerability_authority,
@@ -1892,7 +1870,8 @@ pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value
         "completion": project_health_completion(report),
         "next": project_health_next(report),
         "readiness": project_health_readiness_summary(report),
-        "report": project_health_report_summary(report),
+        "axes": project_health_axes_summary(report),
+        "blockers": project_health_compact_blockers(report),
     })
 }
 
@@ -1934,57 +1913,108 @@ fn project_health_compact_readiness(report: &ProjectHealthReport) -> serde_json:
         "production_status": &report.production_status,
         "takeover_ready": report.takeover_ready,
         "generator_request_ready": report.generator_request_ready,
-        "capability_ready": report.capability_ready,
-        "managed_ready": report.managed_ready,
-        "semantic_ready": report.semantic_ready,
-        "traceability_ready": report.traceability_ready,
-        "claim_closure_ready": report.claim_closure.evaluated && report.claim_closure.blocker_count == 0,
     })
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
-fn project_health_metrics_summary(report: &ProjectHealthReport) -> serde_json::Value {
+fn project_health_axes_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
-        "capability": {
-            "format": &report.capability.format,
-            "capability_count": report.capability.capability_count,
-            "release_scope_count": report.capability.release_scope_count,
-            "production_percent": report.capability.production_percent,
-            "claim_closure_percent": report.claim_closure.claim_closure_percent,
-        },
-        "coverage": {
-            "managed_percent": report.managed_percent,
-            "semantic_percent": report.semantic_percent,
-            "traceability_percent": report.traceability_percent,
-            "command_traceability_percent": report.command_traceability_percent,
-            "regenerable_percent": report.regenerable_percent,
-        },
-        "codegen": {
-            "codegen_percent": report.codegen_percent,
-            "full_codegen_percent": report.full_codegen_percent,
-            "codegen_eligible_files": report.codegen_eligible_files,
-            "codegen_files": report.codegen_files,
-            "fully_codegen_files": report.fully_codegen_files,
-        },
+        "capability": project_health_capability_axis(report),
+        "ec": project_health_ec_axis(report),
+        "ec_gen": project_health_ec_gen_axis(report),
+        "td": project_health_td_axis(report),
+        "td_gen": project_health_td_gen_axis(report),
     })
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
-fn project_health_gate_metrics_summary(report: &ProjectHealthReport) -> serde_json::Value {
+fn project_health_capability_axis(report: &ProjectHealthReport) -> serde_json::Value {
+    let blocker_count = report.capability.blocker_count + report.claim_closure.blocker_count;
     serde_json::json!({
-        "test_gate_status": &report.test_gates.status,
-        "ec_status": &report.ec.status,
-        "ec_check_clean": report.ec.check_clean,
-        "ec_verify_evaluated": report.ec.verify_evaluated,
+        "status": if blocker_count == 0 && report.capability.production_percent >= 100.0 {
+            "passed"
+        } else {
+            "blocked"
+        },
+        "production_percent": report.capability.production_percent,
         "claim_closure_percent": report.claim_closure.claim_closure_percent,
-        "claim_closure_blocker_count": report.claim_closure.blocker_count,
-        "cb_verify_evaluated": report.cb_verify_evaluated,
-        "cb_verify_clean": report.cb_verify_clean,
-        "cold_rebuild_evaluated": report.cold_rebuild_evaluated,
-        "cold_rebuild_clean": report.cold_rebuild_clean,
-        "td_lock_status": &report.td_lock.status,
+        "blocker_count": blocker_count,
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_ec_axis(report: &ProjectHealthReport) -> serde_json::Value {
+    serde_json::json!({
+        "status": &report.ec.status,
+        "verified": report.ec.verify_evaluated,
+        "passed_commands": report.ec.passed_count,
+        "command_count": report.ec.command_count,
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_ec_gen_axis(report: &ProjectHealthReport) -> serde_json::Value {
+    let generated_units = report.ec.case_count + report.ec.tool_manifest_count;
+    let expected_units = report.ec.expected_case_count + report.ec.expected_tool_manifest_count;
+    let missing_units = expected_units.saturating_sub(generated_units);
+    let status = if !report.ec.evaluated {
+        "not_evaluated"
+    } else if report.ec.check_clean
+        && report.ec.case_count == report.ec.expected_case_count
+        && report.ec.tool_manifest_count == report.ec.expected_tool_manifest_count
+    {
+        "passed"
+    } else {
+        "blocked"
+    };
+    serde_json::json!({
+        "status": status,
+        "document_kind": "ec",
+        "generated_units": generated_units,
+        "expected_units": expected_units,
+        "generated_percent": percent_of(generated_units, expected_units),
+        "handwrite_units": 0,
+        "missing_units": missing_units,
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_td_axis(report: &ProjectHealthReport) -> serde_json::Value {
+    let passed = report.managed_ready
+        && report.semantic_ready
+        && report.traceability_ready
+        && report.td_lock.clean;
+    serde_json::json!({
+        "status": if passed { "passed" } else { "blocked" },
+        "managed_percent": report.managed_percent,
+        "semantic_percent": report.semantic_percent,
+        "traceability_percent": report.traceability_percent,
         "td_lock_clean": report.td_lock.clean,
-        "workflow_lock_count": report.workflow_lock_count,
+    })
+}
+
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+fn project_health_td_gen_axis(report: &ProjectHealthReport) -> serde_json::Value {
+    let generated_units = report.codegen_files;
+    let expected_units = report.codegen_eligible_files;
+    let status = if report.regenerability_authority.required_for_production
+        && report.regenerability_authority.gap_count > 0
+    {
+        "blocked"
+    } else if report.codegen_percent >= 100.0 {
+        "passed"
+    } else {
+        "partial"
+    };
+    serde_json::json!({
+        "status": status,
+        "document_kind": "td",
+        "generated_units": generated_units,
+        "expected_units": expected_units,
+        "generated_percent": percent_of(generated_units, expected_units),
+        "handwrite_units": report.cb_ownership.handwrite_files,
+        "missing_units": report.cb_ownership.unmarked_files,
+        "required_for_production": report.regenerability_authority.required_for_production,
     })
 }
 
@@ -2000,53 +2030,6 @@ fn project_health_compact_blockers(report: &ProjectHealthReport) -> serde_json::
         "next_gap": &report.next_gap,
         "blocked_gap_count": report.blocked_gap_count,
         "human_decision_required_count": report.human_decision_required_count,
-    })
-}
-
-/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
-fn project_health_report_summary(report: &ProjectHealthReport) -> serde_json::Value {
-    serde_json::json!({
-        "project": &report.project,
-        "status": &report.status,
-        "production_ready": report.production_ready,
-        "production_status": &report.production_status,
-        "production_scope": &report.production_scope,
-        "production_blocker_count": report.production_blockers.len(),
-        "production_blockers_preview": preview_strings(&report.production_blockers),
-        "global_blocker_count": report.global_blockers.len(),
-        "global_blockers_preview": preview_strings(&report.global_blockers),
-        "capability": project_health_capability_summary(&report.capability),
-        "test_gates": project_test_gate_summary(&report.test_gates),
-        "ec": project_ec_gate_summary(&report.ec),
-        "claim_closure": project_claim_closure_summary(&report.claim_closure),
-        "managed_percent": report.managed_percent,
-        "semantic_percent": report.semantic_percent,
-        "traceability_evaluated": report.traceability_evaluated,
-        "traceability_percent": report.traceability_percent,
-        "traceability_blocker_count": report.traceability_blocker_count,
-        "command_traceability_percent": report.command_traceability_percent,
-        "command_traceability_blocker_count": report.command_traceability_blocker_count,
-        "codegen_percent": report.codegen_percent,
-        "full_codegen_percent": report.full_codegen_percent,
-        "codegen_eligible_files": report.codegen_eligible_files,
-        "codegen_files": report.codegen_files,
-        "fully_codegen_files": report.fully_codegen_files,
-        "cb_ownership": &report.cb_ownership,
-        "codegen_origin": &report.codegen_origin,
-        "regenerable_percent": report.regenerable_percent,
-        "cb_verify_evaluated": report.cb_verify_evaluated,
-        "cb_verify_clean": report.cb_verify_clean,
-        "cold_rebuild_evaluated": report.cold_rebuild_evaluated,
-        "cold_rebuild_clean": report.cold_rebuild_clean,
-        "stack_migration_percent": report.stack_migration_percent,
-        "workflow_lock_count": report.workflow_lock_count,
-        "td_lock": project_td_lock_summary(&report.td_lock),
-        "ec_status": &report.ec.status,
-        "ec_check_clean": report.ec.check_clean,
-        "ec_verify_evaluated": report.ec.verify_evaluated,
-        "next_gap": &report.next_gap,
-        "blocker_count": report.blockers.len(),
-        "blockers_preview": preview_strings(&report.blockers),
     })
 }
 
@@ -2109,7 +2092,7 @@ fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
         "verify_evaluated": report.verify_evaluated,
         "status": &report.status,
         "note": &report.note,
-        "manifest_path": &report.manifest_path,
+        "inventory_path": &report.inventory_path,
         "expected_case_count": report.expected_case_count,
         "case_count": report.case_count,
         "expected_tool_manifest_count": report.expected_tool_manifest_count,
@@ -2447,7 +2430,7 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
             .findings
             .first()
             .cloned()
-            .unwrap_or_else(|| "EC manifest/check is blocked".to_string());
+            .unwrap_or_else(|| "EC inventory/check is blocked".to_string());
     }
     if matches!(report.ec.status, ProjectEcGateStatus::NotConfigured) {
         return report
@@ -2516,35 +2499,8 @@ fn project_health_readiness_summary(report: &ProjectHealthReport) -> serde_json:
         "production_status": &report.production_status,
         "takeover_ready": report.takeover_ready,
         "generator_request_ready": report.generator_request_ready,
-        "capability_ready": report.capability_ready,
-        "managed_ready": report.managed_ready,
-        "semantic_ready": report.semantic_ready,
-        "traceability_ready": report.traceability_ready,
-        "managed_percent": report.managed_percent,
-        "semantic_percent": report.semantic_percent,
-        "traceability_percent": report.traceability_percent,
-        "codegen_percent": report.codegen_percent,
-        "full_codegen_percent": report.full_codegen_percent,
-        "codegen_eligible_files": report.codegen_eligible_files,
-        "codegen_files": report.codegen_files,
-        "fully_codegen_files": report.fully_codegen_files,
-        "cb_ownership": &report.cb_ownership,
-        "codegen_origin": &report.codegen_origin,
-        "regenerable_percent": report.regenerable_percent,
-        "command_traceability_percent": report.command_traceability_percent,
         "blocker_count": report.blockers.len(),
         "production_blocker_count": report.production_blockers.len(),
-        "workflow_lock_count": report.workflow_lock_count,
-        "td_lock_status": &report.td_lock.status,
-        "td_lock_clean": report.td_lock.clean,
-        "ec_status": &report.ec.status,
-        "ec_check_clean": report.ec.check_clean,
-        "ec_verify_evaluated": report.ec.verify_evaluated,
-        "test_gate_status": &report.test_gates.status,
-        "cb_verify_evaluated": report.cb_verify_evaluated,
-        "cb_verify_clean": report.cb_verify_clean,
-        "cold_rebuild_evaluated": report.cold_rebuild_evaluated,
-        "cold_rebuild_clean": report.cold_rebuild_clean,
     })
 }
 
@@ -2780,18 +2736,18 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
 
     if verify_ec {
         if ec_report.case_count == 0 && ec_report.tool_manifest_count == 0 {
-            let finding = "EC inventory has no cases; add TD e2e-test sections and run `aw ec gen --project <project>`"
+            let finding = "EC inventory has no cases; add external-contract e2e-test sections and run `aw ec gen --project <project>`"
                 .to_string();
             ec_report.findings.push(finding.clone());
             ec_report.status = ProjectEcGateStatus::NotConfigured;
             ec_report.note = Some(finding.clone());
             block_health_report(report, format!("ec verify: {finding}"));
         } else {
-            let Some((_manifest_path, manifest)) =
+            let Some((_inventory_path, manifest)) =
                 crate::cli::ec::load_project_ec_manifest(&report.project)?
             else {
                 let finding = format!(
-                    "EC manifest not generated; run `aw ec gen --project {} --verify`",
+                    "EC inventory not generated in aw.toml; run `aw ec gen --project {} --verify`",
                     report.project
                 );
                 ec_report.findings.push(finding.clone());
@@ -2803,9 +2759,9 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                 return Ok(());
             };
             let project_root = crate::find_project_root()?;
-            // wi-13: a category bound in the project's `ec` map dispatches to
-            // its external tool command; unbound categories keep the manifest
-            // command.
+            // aw.toml case commands are authoritative for generated EC
+            // inventory. Legacy category bindings remain as fallback for old
+            // inventories that have not materialized per-case commands yet.
             let project_model = crate::services::project_registry::load_projects(&project_root)?
                 .into_iter()
                 .find(|project| project.name == report.project);
@@ -3165,7 +3121,7 @@ impl EcBinding {
                     .dir
                     .as_deref()
                     .context("ec binding `rig` requires `dir`")?;
-                Ok(format!("rig test --dir {dir}"))
+                Ok(format!("rig run --dir {dir}"))
             }
             "meter" => {
                 let target = self
@@ -3203,14 +3159,17 @@ impl EcBinding {
     }
 }
 
-/// wi-13 R3: the command a case actually runs — the bound tool command when
-/// the case category is bound in the owning project's `ec` map, else the
-/// manifest command (the cargo-test fallback).
+/// The command a case actually runs. Generated aw.toml case commands are
+/// authoritative; category bindings are fallback for legacy inventories whose
+/// cases do not carry a command yet.
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn resolve_project_ec_command(
     case: &crate::cli::ec::EcManifestCase,
     project: Option<&crate::models::project::Project>,
 ) -> Result<String> {
+    if !case.command.trim().is_empty() {
+        return Ok(case.command.clone());
+    }
     match project.and_then(|project| project_ec_binding_for_category(project, &case.category)) {
         Some(binding) => binding.command(),
         None => Ok(case.command.clone()),
@@ -3332,15 +3291,14 @@ fn print_health_compact_report(report: &ProjectHealthReport) {
         report.production_ready, report.takeover_ready, report.generator_request_ready
     );
     println!(
-        "layers: capability={}, managed={} ({:.1}%), semantic={} ({:.1}%), traceability={} ({:.1}%), regenerable {:.1}%",
+        "layers: capability={}, managed={} ({:.1}%), semantic={} ({:.1}%), traceability={} ({:.1}%)",
         report.capability_ready,
         report.managed_ready,
         report.managed_percent,
         report.semantic_ready,
         report.semantic_percent,
         report.traceability_ready,
-        report.traceability_percent,
-        report.regenerable_percent
+        report.traceability_percent
     );
     println!(
         "gates: tests={:?}, ec={:?}, cb={}, cold={}, td_lock={:?}/{}",
@@ -3438,17 +3396,13 @@ fn print_health_report(report: &ProjectHealthReport) {
         println!("  blocker: {blocker}");
     }
     println!(
-        "coverage: managed {:.1}%, semantic {:.1}%, traceability {:.1}%, codegen {:.1}% ({}/{}), full_codegen {:.1}% ({}/{}), regenerable maturity {:.1}%",
+        "coverage: managed {:.1}%, semantic {:.1}%, traceability {:.1}%, codegen {:.1}% ({}/{})",
         report.managed_percent,
         report.semantic_percent,
         report.traceability_percent,
         report.codegen_percent,
         report.codegen_files,
-        report.codegen_eligible_files,
-        report.full_codegen_percent,
-        report.fully_codegen_files,
-        report.codegen_eligible_files,
-        report.regenerable_percent
+        report.codegen_eligible_files
     );
     println!(
         "cb_ownership: codegen {}/{} ({:.1}%), handwrite {}/{} ({:.1}%), unmarked {}/{} ({:.1}%)",
@@ -3568,7 +3522,7 @@ fn print_health_report(report: &ProjectHealthReport) {
         report.ec.passed_count,
         report.ec.command_count
     );
-    println!("  manifest: {}", report.ec.manifest_path);
+    println!("  inventory: {}", report.ec.inventory_path);
     if let Some(note) = &report.ec.note {
         println!("  note: {note}");
     }
@@ -3988,7 +3942,7 @@ mod tests {
                 ProjectEcGateStatus::Failed
             },
             note: None,
-            manifest_path: "projects/demo/tests/aw-ec.toml".to_string(),
+            inventory_path: "projects/demo/aw.toml".to_string(),
             expected_case_count: 1,
             case_count: 1,
             expected_tool_manifest_count: 0,
@@ -4167,7 +4121,7 @@ mod tests {
             dir: Some("tests/rig/scenarios".into()),
             meter: None,
         };
-        assert_eq!(rig.command().unwrap(), "rig test --dir tests/rig/scenarios");
+        assert_eq!(rig.command().unwrap(), "rig run --dir tests/rig/scenarios");
 
         let meter = EcBinding {
             tool: "meter".into(),
@@ -4272,10 +4226,10 @@ mod tests {
             .contains("requires `spec`"));
     }
 
-    /// wi-13 AC3: a bound category resolves to the tool command; an unbound
-    /// category on the same project falls back to the manifest command.
+    /// Generated aw.toml case commands are authoritative. A bound category is
+    /// used only when an old inventory has a blank per-case command.
     #[test]
-    fn resolve_ec_command_dispatches_bound_category() {
+    fn resolve_ec_command_prefers_case_command_and_falls_back_to_bound_category() {
         let mut ec = BTreeMap::new();
         ec.insert(
             "efficiency".to_string(),
@@ -4289,7 +4243,12 @@ mod tests {
         );
         let project = ec_project(ec);
 
-        let bound = resolve_project_ec_command(&ec_case("efficiency"), Some(&project)).unwrap();
+        let explicit = resolve_project_ec_command(&ec_case("efficiency"), Some(&project)).unwrap();
+        assert_eq!(explicit, "cargo test -p demo");
+
+        let mut blank_case = ec_case("efficiency");
+        blank_case.command.clear();
+        let bound = resolve_project_ec_command(&blank_case, Some(&project)).unwrap();
         assert_eq!(bound, "meter run --target projects/lumen");
 
         let unbound = resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
@@ -4311,7 +4270,9 @@ mod tests {
         );
         let project = ec_project(ec);
 
-        let command = resolve_project_ec_command(&ec_case("efficiency"), Some(&project)).unwrap();
+        let mut case = ec_case("efficiency");
+        case.command.clear();
+        let command = resolve_project_ec_command(&case, Some(&project)).unwrap();
         assert_eq!(
             command,
             "arena run --spec projects/arena/examples/lumen-vs-pg.toml"
@@ -4333,12 +4294,14 @@ mod tests {
         );
         let project = ec_project(ec);
 
-        let command = resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap();
+        let mut case = ec_case("benchmark");
+        case.command.clear();
+        let command = resolve_project_ec_command(&case, Some(&project)).unwrap();
         assert_eq!(command, "meter run --target projects/lumen");
     }
 
     /// wi-13 AC4: no `ec` map (or no project model at all) is today's
-    /// behavior — pure manifest-command verify-ec.
+    /// behavior — pure generated-case-command verify-ec.
     #[test]
     fn resolve_ec_command_defaults_without_bindings() {
         let project = ec_project(BTreeMap::new());

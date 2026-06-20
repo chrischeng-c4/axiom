@@ -16,7 +16,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn cap_command_lease_throttling() {
-    let command = "cargo test -p cap throttle -- --nocapture && cargo test -p cap sampler -- --nocapture";
+    let command =
+        "cargo test -p cap throttle -- --nocapture && cargo test -p cap sampler -- --nocapture";
     let id = "cap-command-lease-throttling";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

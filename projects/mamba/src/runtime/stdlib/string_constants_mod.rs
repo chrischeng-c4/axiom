@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// string module for Mamba (#452).
 ///
 /// Provides string constants (ascii_lowercase, ascii_uppercase, ascii_letters,
@@ -11,10 +13,7 @@
 /// overridable hook (`get_value`, `convert_field`, `format_field`,
 /// `check_unused_args`, `parse`, `get_field`) so a subclass override is
 /// honored exactly like CPython.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── small helpers ─────────────────────────────────────────────────────────
 
@@ -28,12 +27,17 @@ fn new_list(items: Vec<MbValue>) -> MbValue {
 
 fn str_of(v: MbValue) -> Option<String> {
     v.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
 fn is_str_value(v: MbValue) -> bool {
-    v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
 }
 
 fn is_none_value(v: MbValue) -> bool {
@@ -57,15 +61,18 @@ fn instance_class_name(v: MbValue) -> Option<String> {
     v.as_ptr().and_then(|p| unsafe {
         if let ObjData::Instance { ref class_name, .. } = (*p).data {
             Some(class_name.clone())
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
 /// True when `v` is an instance of `Formatter` (or a subclass).
 fn is_formatter_instance(v: MbValue) -> bool {
     match instance_class_name(v) {
-        Some(cn) => cn == "Formatter"
-            || super::super::class::class_mro_any(&cn, |c| c == "Formatter"),
+        Some(cn) => {
+            cn == "Formatter" || super::super::class::class_mro_any(&cn, |c| c == "Formatter")
+        }
         None => false,
     }
 }
@@ -104,7 +111,10 @@ unsafe extern "C" fn dispatch_template(args_ptr: *const MbValue, nargs: usize) -
 fn make_instance(class_name: &str, fields: Vec<(&str, MbValue)>) -> MbValue {
     let inst = MbObject::new_instance(class_name.to_string());
     unsafe {
-        if let ObjData::Instance { fields: ref iflds, .. } = (*inst).data {
+        if let ObjData::Instance {
+            fields: ref iflds, ..
+        } = (*inst).data
+        {
             let mut g = iflds.write().unwrap();
             for (k, v) in fields {
                 super::super::rc::retain_if_ptr(v);
@@ -119,22 +129,34 @@ fn make_instance(class_name: &str, fields: Vec<(&str, MbValue)>) -> MbValue {
 pub fn register() {
     let mut attrs = HashMap::new();
 
-    attrs.insert("ascii_lowercase".to_string(),
-        new_str("abcdefghijklmnopqrstuvwxyz"));
-    attrs.insert("ascii_uppercase".to_string(),
-        new_str("ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
-    attrs.insert("ascii_letters".to_string(),
-        new_str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+    attrs.insert(
+        "ascii_lowercase".to_string(),
+        new_str("abcdefghijklmnopqrstuvwxyz"),
+    );
+    attrs.insert(
+        "ascii_uppercase".to_string(),
+        new_str("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+    );
+    attrs.insert(
+        "ascii_letters".to_string(),
+        new_str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+    );
     attrs.insert("digits".to_string(), new_str("0123456789"));
     attrs.insert("hexdigits".to_string(), new_str("0123456789abcdefABCDEF"));
     attrs.insert("octdigits".to_string(), new_str("01234567"));
-    attrs.insert("punctuation".to_string(),
-        new_str("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"));
+    attrs.insert(
+        "punctuation".to_string(),
+        new_str("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"),
+    );
     attrs.insert("whitespace".to_string(), new_str(" \t\n\r\x0b\x0c"));
     // printable = digits + ascii_letters + punctuation + whitespace
-    attrs.insert("printable".to_string(), new_str(
-        "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\
-         !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ \t\n\r\x0b\x0c"));
+    attrs.insert(
+        "printable".to_string(),
+        new_str(
+            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\
+         !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ \t\n\r\x0b\x0c",
+        ),
+    );
 
     // ── Register native classes ──
     register_formatter_class();
@@ -142,21 +164,34 @@ pub fn register() {
 
     // ── Constructor / function dispatchers ──
     let ctor_dispatchers: Vec<(&str, usize, &str)> = vec![
-        ("Formatter", dispatch_formatter as *const () as usize, "Formatter"),
-        ("Template", dispatch_template as *const () as usize, "Template"),
+        (
+            "Formatter",
+            dispatch_formatter as *const () as usize,
+            "Formatter",
+        ),
+        (
+            "Template",
+            dispatch_template as *const () as usize,
+            "Template",
+        ),
     ];
     for (name, addr, type_name) in &ctor_dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(*addr));
-        super::super::module::NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(*addr as u64); });
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| { m.borrow_mut().insert(*addr as u64, type_name.to_string()); });
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(*addr as u64);
+        });
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(*addr as u64, type_name.to_string());
+        });
     }
 
-    let func_dispatchers: Vec<(&str, usize)> = vec![
-        ("capwords", dispatch_capwords as *const () as usize),
-    ];
+    let func_dispatchers: Vec<(&str, usize)> =
+        vec![("capwords", dispatch_capwords as *const () as usize)];
     for (name, addr) in &func_dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(*addr));
-        super::super::module::NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(*addr as u64); });
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(*addr as u64);
+        });
     }
 
     super::register_module("string", attrs);
@@ -171,7 +206,10 @@ fn register_formatter_class() {
         ("parse", m_formatter_parse as *const ()),
         ("get_field", m_formatter_get_field as *const ()),
         ("get_value", m_formatter_get_value as *const ()),
-        ("check_unused_args", m_formatter_check_unused_args as *const ()),
+        (
+            "check_unused_args",
+            m_formatter_check_unused_args as *const (),
+        ),
         ("convert_field", m_formatter_convert_field as *const ()),
         ("format_field", m_formatter_format_field as *const ()),
     ];
@@ -214,7 +252,11 @@ fn register_template_class() {
     // None by default (falls back to idpattern); flags=2 == re.IGNORECASE.
     let cls = new_str("Template");
     super::super::class::mb_class_set_class_attr(cls, new_str("delimiter"), new_str("$"));
-    super::super::class::mb_class_set_class_attr(cls, new_str("idpattern"), new_str("(?a:[_a-z][_a-z0-9]*)"));
+    super::super::class::mb_class_set_class_attr(
+        cls,
+        new_str("idpattern"),
+        new_str("(?a:[_a-z][_a-z0-9]*)"),
+    );
     super::super::class::mb_class_set_class_attr(cls, new_str("flags"), MbValue::from_int(2));
 }
 
@@ -278,13 +320,23 @@ fn formatter_parse(s: &str) -> Result<Vec<ParsedField>, String> {
                 let mut depth = 1u32;
                 while i < n {
                     let cc = chars[i];
-                    if cc == '{' { depth += 1; spec.push(cc); i += 1; continue; }
+                    if cc == '{' {
+                        depth += 1;
+                        spec.push(cc);
+                        i += 1;
+                        continue;
+                    }
                     if cc == '}' {
                         depth -= 1;
-                        if depth == 0 { break; }
-                        spec.push(cc); i += 1; continue;
+                        if depth == 0 {
+                            break;
+                        }
+                        spec.push(cc);
+                        i += 1;
+                        continue;
                     }
-                    spec.push(cc); i += 1;
+                    spec.push(cc);
+                    i += 1;
                 }
                 format_spec = Some(spec);
             }
@@ -344,7 +396,9 @@ fn field_name_split(field_name: &str) -> (String, Vec<(bool, String)>) {
                 idx.push(chars[i]);
                 i += 1;
             }
-            if i < n { i += 1; } // consume ']'
+            if i < n {
+                i += 1;
+            } // consume ']'
             rest.push((false, idx));
         } else {
             break;
@@ -359,8 +413,10 @@ extern "C" fn m_formatter_format(this: MbValue, args_list: MbValue, kwargs: MbVa
     let items = super::super::builtins::extract_items(args_list);
     let format_string = items.first().copied().unwrap_or_else(MbValue::none);
     if format_string.is_none() && items.is_empty() {
-        return raise("TypeError",
-            "descriptor 'format' of 'string.Formatter' object needs an argument");
+        return raise(
+            "TypeError",
+            "descriptor 'format' of 'string.Formatter' object needs an argument",
+        );
     }
     let args: Vec<MbValue> = items.iter().skip(1).copied().collect();
     formatter_vformat_entry(this, format_string, args, kwargs)
@@ -378,23 +434,42 @@ extern "C" fn m_formatter_vformat(this: MbValue, args_list: MbValue) -> MbValue 
 }
 
 /// Shared entry for format/vformat: runs `_vformat`, then check_unused_args.
-fn formatter_vformat_entry(this: MbValue, format_string: MbValue, args: Vec<MbValue>, kwargs: MbValue) -> MbValue {
+fn formatter_vformat_entry(
+    this: MbValue,
+    format_string: MbValue,
+    args: Vec<MbValue>,
+    kwargs: MbValue,
+) -> MbValue {
     let kwargs = if kwargs.is_none() {
         MbValue::from_ptr(MbObject::new_dict())
-    } else { kwargs };
+    } else {
+        kwargs
+    };
     let args_v = new_list(args);
     let used_args = make_set();
     // _vformat(format_string, args, kwargs, used_args, recursion_depth=2)
     // returns (result_string, auto_arg_index)
-    let pair = call_method(this, "_vformat", vec![
-        format_string, args_v, kwargs, used_args, MbValue::from_int(2),
-    ]);
-    if has_exc() { return MbValue::none(); }
+    let pair = call_method(
+        this,
+        "_vformat",
+        vec![
+            format_string,
+            args_v,
+            kwargs,
+            used_args,
+            MbValue::from_int(2),
+        ],
+    );
+    if has_exc() {
+        return MbValue::none();
+    }
     let parts = super::super::builtins::extract_items(pair);
     let result = parts.first().copied().unwrap_or_else(|| new_str(""));
     // check_unused_args(used_args, args, kwargs)
     call_method(this, "check_unused_args", vec![used_args, args_v, kwargs]);
-    if has_exc() { return MbValue::none(); }
+    if has_exc() {
+        return MbValue::none();
+    }
     result
 }
 
@@ -404,7 +479,10 @@ extern "C" fn m_formatter_vformat_impl(this: MbValue, args_list: MbValue) -> MbV
     let a = super::super::builtins::extract_items(args_list);
     let format_string = a.first().copied().unwrap_or_else(MbValue::none);
     let args = a.get(1).copied().unwrap_or_else(|| new_list(vec![]));
-    let kwargs = a.get(2).copied().unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
+    let kwargs = a
+        .get(2)
+        .copied()
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
     let used_args = a.get(3).copied().unwrap_or_else(make_set);
     let recursion_depth = a.get(4).and_then(|v| v.as_int()).unwrap_or(2);
     let mut auto_arg_index: i64 = a.get(5).and_then(|v| v.as_int()).unwrap_or(0);
@@ -414,15 +492,23 @@ extern "C" fn m_formatter_vformat_impl(this: MbValue, args_list: MbValue) -> MbV
     }
     let fmt = match str_of(format_string) {
         Some(s) => s,
-        None => return MbValue::from_ptr(MbObject::new_tuple(vec![new_str(""), MbValue::from_int(auto_arg_index)])),
+        None => {
+            return MbValue::from_ptr(MbObject::new_tuple(vec![
+                new_str(""),
+                MbValue::from_int(auto_arg_index),
+            ]))
+        }
     };
 
     // parse via self.parse so overrides apply.
     let parsed = call_method(this, "parse", vec![new_str(fmt.clone())]);
-    if has_exc() { return MbValue::none(); }
-    let parsed_list = super::super::iter::mb_list_from_iter(
-        super::super::iter::mb_iter(parsed));
-    if has_exc() { return MbValue::none(); }
+    if has_exc() {
+        return MbValue::none();
+    }
+    let parsed_list = super::super::iter::mb_list_from_iter(super::super::iter::mb_iter(parsed));
+    if has_exc() {
+        return MbValue::none();
+    }
     let fields = super::super::builtins::extract_items(parsed_list);
 
     let mut result = String::new();
@@ -460,22 +546,45 @@ extern "C" fn m_formatter_vformat_impl(this: MbValue, args_list: MbValue) -> MbV
                 fname.clone()
             };
             let (obj, used_key) = get_field_dispatch(this, &key_field, args, kwargs);
-            if has_exc() { return MbValue::none(); }
+            if has_exc() {
+                return MbValue::none();
+            }
             // Record the consumed argument key (int index or str name).
             super::super::set_ops::mb_set_add(used_args, used_key);
-            let obj = apply_conversion_and_format(this, obj, conversion, format_spec,
-                args, kwargs, used_args, recursion_depth, &mut auto_arg_index);
-            if has_exc() { return MbValue::none(); }
+            let obj = apply_conversion_and_format(
+                this,
+                obj,
+                conversion,
+                format_spec,
+                args,
+                kwargs,
+                used_args,
+                recursion_depth,
+                &mut auto_arg_index,
+            );
+            if has_exc() {
+                return MbValue::none();
+            }
             result.push_str(&pystr(obj));
         }
     }
-    MbValue::from_ptr(MbObject::new_tuple(vec![new_str(result), MbValue::from_int(auto_arg_index)]))
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        new_str(result),
+        MbValue::from_int(auto_arg_index),
+    ]))
 }
 
 /// Run `self.get_field(field_name, args, kwargs)`; returns (object, used_key).
-fn get_field_dispatch(this: MbValue, field_name: &str, args: MbValue, kwargs: MbValue) -> (MbValue, MbValue) {
+fn get_field_dispatch(
+    this: MbValue,
+    field_name: &str,
+    args: MbValue,
+    kwargs: MbValue,
+) -> (MbValue, MbValue) {
     let r = call_method(this, "get_field", vec![new_str(field_name), args, kwargs]);
-    if has_exc() { return (MbValue::none(), MbValue::none()); }
+    if has_exc() {
+        return (MbValue::none(), MbValue::none());
+    }
     // get_field returns (obj, used_key)
     let parts = super::super::builtins::extract_items(r);
     let obj = parts.first().copied().unwrap_or_else(MbValue::none);
@@ -486,26 +595,50 @@ fn get_field_dispatch(this: MbValue, field_name: &str, args: MbValue, kwargs: Mb
 /// Apply conversion (!s/!r/!a) then recursively expand the format spec and
 /// run format_field. Threads `auto_arg_index` through the nested `_vformat`.
 fn apply_conversion_and_format(
-    this: MbValue, obj: MbValue, conversion: MbValue, format_spec: MbValue,
-    args: MbValue, kwargs: MbValue, used_args: MbValue, recursion_depth: i64,
+    this: MbValue,
+    obj: MbValue,
+    conversion: MbValue,
+    format_spec: MbValue,
+    args: MbValue,
+    kwargs: MbValue,
+    used_args: MbValue,
+    recursion_depth: i64,
     auto_arg_index: &mut i64,
 ) -> MbValue {
     let converted = call_method(this, "convert_field", vec![obj, conversion]);
-    if has_exc() { return MbValue::none(); }
+    if has_exc() {
+        return MbValue::none();
+    }
     // Expand the format spec (it may itself contain replacement fields).
-    let spec = if format_spec.is_none() { new_str("") } else { format_spec };
-    let pair = call_method(this, "_vformat", vec![
-        spec, args, kwargs, used_args, MbValue::from_int(recursion_depth - 1),
-        MbValue::from_int(*auto_arg_index),
-    ]);
-    if has_exc() { return MbValue::none(); }
+    let spec = if format_spec.is_none() {
+        new_str("")
+    } else {
+        format_spec
+    };
+    let pair = call_method(
+        this,
+        "_vformat",
+        vec![
+            spec,
+            args,
+            kwargs,
+            used_args,
+            MbValue::from_int(recursion_depth - 1),
+            MbValue::from_int(*auto_arg_index),
+        ],
+    );
+    if has_exc() {
+        return MbValue::none();
+    }
     let parts = super::super::builtins::extract_items(pair);
     let expanded = parts.first().copied().unwrap_or_else(|| new_str(""));
     if let Some(idx) = parts.get(1).and_then(|v| v.as_int()) {
         *auto_arg_index = idx;
     }
     let r = call_method(this, "format_field", vec![converted, expanded]);
-    if has_exc() { return MbValue::none(); }
+    if has_exc() {
+        return MbValue::none();
+    }
     r
 }
 
@@ -514,23 +647,29 @@ extern "C" fn m_formatter_parse(_this: MbValue, format_string: MbValue) -> MbVal
     let s = str_of(format_string).unwrap_or_default();
     match formatter_parse(&s) {
         Ok(fields) => {
-            let tuples: Vec<MbValue> = fields.into_iter().map(|f| {
-                let conv = match f.conversion {
-                    Some(c) => new_str(c.to_string()),
-                    None => MbValue::none(),
-                };
-                let fname = match f.field_name {
-                    Some(n) => new_str(n),
-                    None => MbValue::none(),
-                };
-                let spec = match f.format_spec {
-                    Some(sp) => new_str(sp),
-                    None => MbValue::none(),
-                };
-                MbValue::from_ptr(MbObject::new_tuple(vec![
-                    new_str(f.literal), fname, spec, conv,
-                ]))
-            }).collect();
+            let tuples: Vec<MbValue> = fields
+                .into_iter()
+                .map(|f| {
+                    let conv = match f.conversion {
+                        Some(c) => new_str(c.to_string()),
+                        None => MbValue::none(),
+                    };
+                    let fname = match f.field_name {
+                        Some(n) => new_str(n),
+                        None => MbValue::none(),
+                    };
+                    let spec = match f.format_spec {
+                        Some(sp) => new_str(sp),
+                        None => MbValue::none(),
+                    };
+                    MbValue::from_ptr(MbObject::new_tuple(vec![
+                        new_str(f.literal),
+                        fname,
+                        spec,
+                        conv,
+                    ]))
+                })
+                .collect();
             new_list(tuples)
         }
         Err(msg) => raise("ValueError", msg),
@@ -538,7 +677,12 @@ extern "C" fn m_formatter_parse(_this: MbValue, format_string: MbValue) -> MbVal
 }
 
 // Formatter.get_field(self, field_name, args, kwargs) → (obj, first_key)
-extern "C" fn m_formatter_get_field(this: MbValue, field_name: MbValue, args: MbValue, kwargs: MbValue) -> MbValue {
+extern "C" fn m_formatter_get_field(
+    this: MbValue,
+    field_name: MbValue,
+    args: MbValue,
+    kwargs: MbValue,
+) -> MbValue {
     let fname = str_of(field_name).unwrap_or_default();
     let (first, rest) = field_name_split(&fname);
     // key is int if it parses as an integer, else the string name.
@@ -548,7 +692,9 @@ extern "C" fn m_formatter_get_field(this: MbValue, field_name: MbValue, args: Mb
         new_str(first.clone())
     };
     let mut obj = call_method(this, "get_value", vec![key, args, kwargs]);
-    if has_exc() { return MbValue::none(); }
+    if has_exc() {
+        return MbValue::none();
+    }
     for (is_attr, accessor) in rest {
         if is_attr {
             // mb_getattr does not raise for missing attributes on built-in
@@ -557,8 +703,10 @@ extern "C" fn m_formatter_get_field(this: MbValue, field_name: MbValue, args: Mb
             if !builtin_has_attr(obj, &accessor) {
                 let tn = builtin_type_name(obj);
                 if let Some(name) = tn {
-                    return raise("AttributeError",
-                        format!("'{}' object has no attribute '{}'", name, accessor));
+                    return raise(
+                        "AttributeError",
+                        format!("'{}' object has no attribute '{}'", name, accessor),
+                    );
                 }
             }
             obj = super::super::class::mb_getattr(obj, new_str(accessor));
@@ -577,13 +725,16 @@ extern "C" fn m_formatter_get_field(this: MbValue, field_name: MbValue, args: Mb
                 obj = super::super::class::mb_obj_getitem(obj, new_str(accessor));
             }
         }
-        if has_exc() { return MbValue::none(); }
+        if has_exc() {
+            return MbValue::none();
+        }
     }
     MbValue::from_ptr(MbObject::new_tuple(vec![obj, key]))
 }
 
 fn is_dict_value(v: MbValue) -> bool {
-    v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+    v.as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
 }
 
 /// Built-in container type name for `obj` (None for user Instances, which keep
@@ -638,11 +789,19 @@ fn index_oob_error(v: MbValue, idx: i64) -> Option<(&'static str, String)> {
 }
 
 // Formatter.get_value(self, key, args, kwargs)
-extern "C" fn m_formatter_get_value(_this: MbValue, key: MbValue, args: MbValue, kwargs: MbValue) -> MbValue {
+extern "C" fn m_formatter_get_value(
+    _this: MbValue,
+    key: MbValue,
+    args: MbValue,
+    kwargs: MbValue,
+) -> MbValue {
     if let Some(idx) = key.as_int() {
         let items = super::super::builtins::extract_items(args);
         if idx < 0 || idx as usize >= items.len() {
-            return raise("IndexError", "Replacement index out of range for positional args tuple");
+            return raise(
+                "IndexError",
+                "Replacement index out of range for positional args tuple",
+            );
         }
         return items[idx as usize];
     }
@@ -651,12 +810,21 @@ extern "C" fn m_formatter_get_value(_this: MbValue, key: MbValue, args: MbValue,
 }
 
 // Formatter.check_unused_args(self, used_args, args, kwargs) — default no-op
-extern "C" fn m_formatter_check_unused_args(_this: MbValue, _used: MbValue, _args: MbValue, _kwargs: MbValue) -> MbValue {
+extern "C" fn m_formatter_check_unused_args(
+    _this: MbValue,
+    _used: MbValue,
+    _args: MbValue,
+    _kwargs: MbValue,
+) -> MbValue {
     MbValue::none()
 }
 
 // Formatter.convert_field(self, value, conversion)
-extern "C" fn m_formatter_convert_field(_this: MbValue, value: MbValue, conversion: MbValue) -> MbValue {
+extern "C" fn m_formatter_convert_field(
+    _this: MbValue,
+    value: MbValue,
+    conversion: MbValue,
+) -> MbValue {
     if conversion.is_none() {
         return value;
     }
@@ -665,13 +833,24 @@ extern "C" fn m_formatter_convert_field(_this: MbValue, value: MbValue, conversi
         "s" => super::super::builtins::mb_str(value),
         "r" => super::super::builtins::mb_repr(value),
         "a" => super::super::builtins::mb_ascii(value),
-        other => raise("ValueError", format!("Unknown conversion specifier {}", other)),
+        other => raise(
+            "ValueError",
+            format!("Unknown conversion specifier {}", other),
+        ),
     }
 }
 
 // Formatter.format_field(self, value, format_spec)
-extern "C" fn m_formatter_format_field(_this: MbValue, value: MbValue, format_spec: MbValue) -> MbValue {
-    let spec = if format_spec.is_none() { new_str("") } else { format_spec };
+extern "C" fn m_formatter_format_field(
+    _this: MbValue,
+    value: MbValue,
+    format_spec: MbValue,
+) -> MbValue {
+    let spec = if format_spec.is_none() {
+        new_str("")
+    } else {
+        format_spec
+    };
     super::super::builtins::mb_format(value, spec)
 }
 
@@ -692,8 +871,10 @@ pub fn formatter_format_from_kwargs(this: MbValue, pos_args: MbValue, kwargs: Mb
             "format() got some positional-only arguments passed as keyword arguments: 'format_string'");
     }
     if items.is_empty() {
-        return raise("TypeError",
-            "format() missing 1 required positional argument: 'format_string'");
+        return raise(
+            "TypeError",
+            "format() missing 1 required positional argument: 'format_string'",
+        );
     }
     let format_string = items.first().copied().unwrap_or_else(MbValue::none);
     let rest: Vec<MbValue> = items.iter().skip(1).copied().collect();
@@ -723,18 +904,28 @@ struct TemplateConfig {
 fn template_config(this: MbValue) -> TemplateConfig {
     let getattr_str = |name: &str| -> Option<String> {
         let v = super::super::class::mb_getattr_default(this, new_str(name), MbValue::none());
-        if v.is_none() { None } else { str_of(v) }
+        if v.is_none() {
+            None
+        } else {
+            str_of(v)
+        }
     };
     let delimiter = getattr_str("delimiter").unwrap_or_else(|| "$".to_string());
-    let idpattern = getattr_str("idpattern")
-        .unwrap_or_else(|| "(?a:[_a-z][_a-z0-9]*)".to_string());
+    let idpattern = getattr_str("idpattern").unwrap_or_else(|| "(?a:[_a-z][_a-z0-9]*)".to_string());
     let braceidpattern = getattr_str("braceidpattern");
     // flags: re.IGNORECASE == 2. Default is IGNORECASE on.
-    let flags_v = super::super::class::mb_getattr_default(this, new_str("flags"), MbValue::from_int(2));
+    let flags_v =
+        super::super::class::mb_getattr_default(this, new_str("flags"), MbValue::from_int(2));
     let flags = flags_v.as_int().unwrap_or(2);
     let ignorecase = (flags & 2) != 0;
     let custom_pattern = getattr_str("pattern");
-    TemplateConfig { delimiter, idpattern, braceidpattern, ignorecase, custom_pattern }
+    TemplateConfig {
+        delimiter,
+        idpattern,
+        braceidpattern,
+        ignorecase,
+        custom_pattern,
+    }
 }
 
 /// Convert a CPython idpattern fragment to a Rust-regex compatible one.
@@ -753,20 +944,17 @@ fn normalize_idpattern(p: &str) -> String {
 /// A single placeholder match in the template.
 enum Token {
     Literal(String),
-    Escaped,          // delimiter delimiter -> literal delimiter
-    Named(String),    // $name
-    Braced(String),   // ${name}
-    Invalid(usize),   // index into the string where the bad delimiter is
+    Escaped,        // delimiter delimiter -> literal delimiter
+    Named(String),  // $name
+    Braced(String), // ${name}
+    Invalid(usize), // index into the string where the bad delimiter is
 }
 
 /// Tokenize the template using the (possibly subclass-overridden) grammar.
 /// Returns Err(byte_index_of_invalid) when a custom pattern path needs error
 /// reporting handled by the regex engine; here we hand-roll the default and
 /// split-id grammars and use a regex fallback for custom patterns.
-fn tokenize_default(
-    template: &str,
-    cfg: &TemplateConfig,
-) -> Result<Vec<Token>, usize> {
+fn tokenize_default(template: &str, cfg: &TemplateConfig) -> Result<Vec<Token>, usize> {
     let delim: Vec<char> = cfg.delimiter.chars().collect();
     let chars: Vec<char> = template.chars().collect();
     let n = chars.len();
@@ -775,14 +963,20 @@ fn tokenize_default(
     let mut lit = String::new();
 
     let id_re = build_id_regex(&normalize_idpattern(&cfg.idpattern), cfg.ignorecase);
-    let brace_src = cfg.braceidpattern.clone()
+    let brace_src = cfg
+        .braceidpattern
+        .clone()
         .map(|b| normalize_idpattern(&b))
         .unwrap_or_else(|| normalize_idpattern(&cfg.idpattern));
     let brace_re = build_id_regex(&brace_src, cfg.ignorecase);
 
     let matches_delim = |pos: usize| -> bool {
-        if delim.is_empty() { return false; }
-        if pos + delim.len() > n { return false; }
+        if delim.is_empty() {
+            return false;
+        }
+        if pos + delim.len() > n {
+            return false;
+        }
         chars[pos..pos + delim.len()] == delim[..]
     };
 
@@ -792,7 +986,9 @@ fn tokenize_default(
             let after = i + delim.len();
             // escaped: delimiter delimiter
             if matches_delim(after) {
-                if !lit.is_empty() { out.push(Token::Literal(std::mem::take(&mut lit))); }
+                if !lit.is_empty() {
+                    out.push(Token::Literal(std::mem::take(&mut lit)));
+                }
                 out.push(Token::Escaped);
                 i = after + delim.len();
                 continue;
@@ -802,11 +998,15 @@ fn tokenize_default(
                 // find closing '}'
                 let mut j = after + 1;
                 let start = j;
-                while j < n && chars[j] != '}' { j += 1; }
+                while j < n && chars[j] != '}' {
+                    j += 1;
+                }
                 if j < n {
                     let name: String = chars[start..j].iter().collect();
                     if regex_full_match(&brace_re, &name) {
-                        if !lit.is_empty() { out.push(Token::Literal(std::mem::take(&mut lit))); }
+                        if !lit.is_empty() {
+                            out.push(Token::Literal(std::mem::take(&mut lit)));
+                        }
                         out.push(Token::Braced(name));
                         i = j + 1;
                         continue;
@@ -815,7 +1015,9 @@ fn tokenize_default(
                 // invalid braced placeholder: the delimiter matches `invalid`
                 // (empty), consuming just the delimiter. Emit Invalid and keep
                 // scanning from immediately after the delimiter.
-                if !lit.is_empty() { out.push(Token::Literal(std::mem::take(&mut lit))); }
+                if !lit.is_empty() {
+                    out.push(Token::Literal(std::mem::take(&mut lit)));
+                }
                 out.push(Token::Invalid(dstart));
                 i = after;
                 continue;
@@ -825,14 +1027,18 @@ fn tokenize_default(
                 // greedily match the id pattern from `after`
                 let tail: String = chars[after..].iter().collect();
                 if let Some(m) = regex_prefix_match(&id_re, &tail) {
-                    if !lit.is_empty() { out.push(Token::Literal(std::mem::take(&mut lit))); }
+                    if !lit.is_empty() {
+                        out.push(Token::Literal(std::mem::take(&mut lit)));
+                    }
                     out.push(Token::Named(m.clone()));
                     i = after + m.chars().count();
                     continue;
                 }
             }
             // invalid lone/trailing delimiter — consume just the delimiter.
-            if !lit.is_empty() { out.push(Token::Literal(std::mem::take(&mut lit))); }
+            if !lit.is_empty() {
+                out.push(Token::Literal(std::mem::take(&mut lit)));
+            }
             out.push(Token::Invalid(dstart));
             i = after;
             continue;
@@ -840,7 +1046,9 @@ fn tokenize_default(
         lit.push(chars[i]);
         i += 1;
     }
-    if !lit.is_empty() { out.push(Token::Literal(lit)); }
+    if !lit.is_empty() {
+        out.push(Token::Literal(lit));
+    }
     Ok(out)
 }
 
@@ -861,7 +1069,9 @@ fn regex_full_match(re: &regex::Regex, s: &str) -> bool {
 
 /// Match the id regex at the start of `s`, returning the matched prefix.
 fn regex_prefix_match(re: &regex::Regex, s: &str) -> Option<String> {
-    re.find(s).filter(|m| m.start() == 0).map(|m| m.as_str().to_string())
+    re.find(s)
+        .filter(|m| m.start() == 0)
+        .map(|m| m.as_str().to_string())
 }
 
 /// Compute (line, col) of a byte/char offset for error messages.
@@ -869,8 +1079,15 @@ fn line_col(template: &str, char_idx: usize) -> (usize, usize) {
     let mut line = 1usize;
     let mut col = 1usize;
     for (i, c) in template.chars().enumerate() {
-        if i == char_idx { break; }
-        if c == '\n' { line += 1; col = 1; } else { col += 1; }
+        if i == char_idx {
+            break;
+        }
+        if c == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
     }
     (line, col)
 }
@@ -881,10 +1098,17 @@ fn line_col(template: &str, char_idx: usize) -> (usize, usize) {
 /// keeps the placeholder for safe_substitute.
 fn template_lookup(name: &str, mapping: MbValue, kwargs: MbValue) -> Option<MbValue> {
     // kwargs first
-    if let Some(v) = dict_get(kwargs, name) { return Some(v); }
-    if mapping.is_none() { return None; }
+    if let Some(v) = dict_get(kwargs, name) {
+        return Some(v);
+    }
+    if mapping.is_none() {
+        return None;
+    }
     // A plain dict: probe directly so a genuine None value is still "found".
-    if mapping.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }) {
+    if mapping
+        .as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+    {
         return dict_get(mapping, name);
     }
     // Otherwise an object supporting __getitem__ (e.g. a custom Mapping).
@@ -899,10 +1123,13 @@ fn template_lookup(name: &str, mapping: MbValue, kwargs: MbValue) -> Option<MbVa
 fn dict_get(d: MbValue, key: &str) -> Option<MbValue> {
     d.as_ptr().and_then(|p| unsafe {
         if let ObjData::Dict(ref lock) = (*p).data {
-            lock.read().unwrap()
+            lock.read()
+                .unwrap()
                 .get(&super::super::dict_ops::DictKey::Str(key.to_string()))
                 .copied()
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
@@ -926,7 +1153,11 @@ extern "C" fn m_template_substitute(this: MbValue, args_list: MbValue, kwargs: M
 }
 
 // Template.safe_substitute(self, mapping={}, /, **kwargs)
-extern "C" fn m_template_safe_substitute(this: MbValue, args_list: MbValue, kwargs: MbValue) -> MbValue {
+extern "C" fn m_template_safe_substitute(
+    this: MbValue,
+    args_list: MbValue,
+    kwargs: MbValue,
+) -> MbValue {
     let items = super::super::builtins::extract_items(args_list);
     let mapping = items.first().copied().unwrap_or_else(MbValue::none);
     template_do_substitute(this, mapping, kwargs, true)
@@ -945,8 +1176,10 @@ fn template_do_substitute(this: MbValue, mapping: MbValue, kwargs: MbValue, safe
         Ok(t) => t,
         Err(idx) => {
             let (l, c) = line_col(&template, idx);
-            return raise("ValueError",
-                format!("Invalid placeholder in string: line {}, col {}", l, c));
+            return raise(
+                "ValueError",
+                format!("Invalid placeholder in string: line {}, col {}", l, c),
+            );
         }
     };
     let mut out = String::new();
@@ -954,37 +1187,35 @@ fn template_do_substitute(this: MbValue, mapping: MbValue, kwargs: MbValue, safe
         match tok {
             Token::Literal(s) => out.push_str(&s),
             Token::Escaped => out.push_str(&cfg.delimiter),
-            Token::Named(name) => {
-                match template_lookup(&name, mapping, kwargs) {
-                    Some(v) => out.push_str(&pystr(v)),
-                    None => {
-                        if safe {
-                            out.push_str(&format!("{}{}", cfg.delimiter, name));
-                        } else {
-                            return raise_keyerror(&name);
-                        }
+            Token::Named(name) => match template_lookup(&name, mapping, kwargs) {
+                Some(v) => out.push_str(&pystr(v)),
+                None => {
+                    if safe {
+                        out.push_str(&format!("{}{}", cfg.delimiter, name));
+                    } else {
+                        return raise_keyerror(&name);
                     }
                 }
-            }
-            Token::Braced(name) => {
-                match template_lookup(&name, mapping, kwargs) {
-                    Some(v) => out.push_str(&pystr(v)),
-                    None => {
-                        if safe {
-                            out.push_str(&format!("{}{{{}}}", cfg.delimiter, name));
-                        } else {
-                            return raise_keyerror(&name);
-                        }
+            },
+            Token::Braced(name) => match template_lookup(&name, mapping, kwargs) {
+                Some(v) => out.push_str(&pystr(v)),
+                None => {
+                    if safe {
+                        out.push_str(&format!("{}{{{}}}", cfg.delimiter, name));
+                    } else {
+                        return raise_keyerror(&name);
                     }
                 }
-            }
+            },
             Token::Invalid(idx) => {
                 if safe {
                     out.push_str(&cfg.delimiter);
                 } else {
                     let (l, c) = line_col(&template, idx);
-                    return raise("ValueError",
-                        format!("Invalid placeholder in string: line {}, col {}", l, c));
+                    return raise(
+                        "ValueError",
+                        format!("Invalid placeholder in string: line {}, col {}", l, c),
+                    );
                 }
             }
         }
@@ -1013,24 +1244,47 @@ fn cpython_re_to_rust(pat: &str) -> String {
         match c {
             '\\' => {
                 out.push(c);
-                if i + 1 < n { out.push(chars[i + 1]); i += 2; } else { i += 1; }
+                if i + 1 < n {
+                    out.push(chars[i + 1]);
+                    i += 2;
+                } else {
+                    i += 1;
+                }
                 continue;
             }
-            '[' if !in_class => { in_class = true; out.push(c); i += 1; continue; }
-            ']' if in_class => { in_class = false; out.push(c); i += 1; continue; }
+            '[' if !in_class => {
+                in_class = true;
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            ']' if in_class => {
+                in_class = false;
+                out.push(c);
+                i += 1;
+                continue;
+            }
             '{' if !in_class => {
                 // Look ahead for a valid quantifier body: digits, optional comma,
                 // digits, then '}'.
                 let mut j = i + 1;
                 let mut saw_digit = false;
-                while j < n && chars[j].is_ascii_digit() { j += 1; saw_digit = true; }
+                while j < n && chars[j].is_ascii_digit() {
+                    j += 1;
+                    saw_digit = true;
+                }
                 if j < n && chars[j] == ',' {
                     j += 1;
-                    while j < n && chars[j].is_ascii_digit() { j += 1; saw_digit = true; }
+                    while j < n && chars[j].is_ascii_digit() {
+                        j += 1;
+                        saw_digit = true;
+                    }
                 }
                 if saw_digit && j < n && chars[j] == '}' {
                     // valid quantifier; copy verbatim
-                    for &ch in &chars[i..=j] { out.push(ch); }
+                    for &ch in &chars[i..=j] {
+                        out.push(ch);
+                    }
                     i = j + 1;
                 } else {
                     out.push_str("\\{");
@@ -1045,7 +1299,10 @@ fn cpython_re_to_rust(pat: &str) -> String {
                 i += 1;
                 continue;
             }
-            _ => { out.push(c); i += 1; }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
         }
     }
     out
@@ -1054,8 +1311,12 @@ fn cpython_re_to_rust(pat: &str) -> String {
 /// Custom-pattern substitution path: compile the user `pattern` (re.VERBOSE)
 /// with named groups escaped/named/braced/invalid and drive substitution.
 fn template_substitute_custom(
-    template: &str, pattern: &str, cfg: &TemplateConfig,
-    mapping: MbValue, kwargs: MbValue, safe: bool,
+    template: &str,
+    pattern: &str,
+    cfg: &TemplateConfig,
+    mapping: MbValue,
+    kwargs: MbValue,
+    safe: bool,
 ) -> MbValue {
     // CPython compiles `pattern` with re.IGNORECASE|re.VERBOSE (or just VERBOSE
     // when flags overridden). Build a Rust regex with (?x) verbose and
@@ -1063,7 +1324,9 @@ fn template_substitute_custom(
     // it is not a valid `{m,n}` quantifier; Rust's regex is stricter, so
     // pre-escape those braces.
     let mut prefix = String::from("(?x)");
-    if cfg.ignorecase { prefix.push_str("(?i)"); }
+    if cfg.ignorecase {
+        prefix.push_str("(?i)");
+    }
     let translated = cpython_re_to_rust(pattern);
     let full = format!("{}{}", prefix, translated);
     let re = match regex::Regex::new(&full) {
@@ -1109,8 +1372,10 @@ fn template_substitute_custom(
                 let off = m.start();
                 let cidx = template[..off].chars().count();
                 let (l, c) = line_col(template, cidx);
-                return raise("ValueError",
-                    format!("Invalid placeholder in string: line {}, col {}", l, c));
+                return raise(
+                    "ValueError",
+                    format!("Invalid placeholder in string: line {}, col {}", l, c),
+                );
             }
             continue;
         }

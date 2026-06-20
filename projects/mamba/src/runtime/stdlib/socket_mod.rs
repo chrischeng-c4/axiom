@@ -1,11 +1,10 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// socket module for Mamba (#418).
 ///
 /// Provides: socket(), connect, bind, listen, accept, send, recv, close
 /// Address family and socket type constants.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Variadic dispatchers (callable from module-attr context) ──
 
@@ -82,7 +81,10 @@ pub fn register() {
         ("gethostname", d_gethostname as *const () as usize),
         ("gethostbyname", d_gethostbyname as *const () as usize),
         ("getaddrinfo", d_getaddrinfo as *const () as usize),
-        ("create_connection", d_create_connection as *const () as usize),
+        (
+            "create_connection",
+            d_create_connection as *const () as usize,
+        ),
         ("create_server", d_create_server as *const () as usize),
         ("htons", d_htons as *const () as usize),
         ("htonl", d_htonl as *const () as usize),
@@ -96,7 +98,7 @@ pub fn register() {
         });
     }
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("AF_APPLETALK".into(), MbValue::from_int(16));
     attrs.insert("AF_DECnet".into(), MbValue::from_int(12));
     attrs.insert("AF_IPX".into(), MbValue::from_int(23));
@@ -137,11 +139,17 @@ pub fn register() {
     attrs.insert("ETHERTYPE_IPV6".into(), MbValue::from_int(34525));
     attrs.insert("ETHERTYPE_VLAN".into(), MbValue::from_int(33024));
     attrs.insert("EWOULDBLOCK".into(), MbValue::from_int(35));
-    attrs.insert("INADDR_ALLHOSTS_GROUP".into(), MbValue::from_int(3758096385));
+    attrs.insert(
+        "INADDR_ALLHOSTS_GROUP".into(),
+        MbValue::from_int(3758096385),
+    );
     attrs.insert("INADDR_ANY".into(), MbValue::from_int(0));
     attrs.insert("INADDR_BROADCAST".into(), MbValue::from_int(4294967295));
     attrs.insert("INADDR_LOOPBACK".into(), MbValue::from_int(2130706433));
-    attrs.insert("INADDR_MAX_LOCAL_GROUP".into(), MbValue::from_int(3758096639));
+    attrs.insert(
+        "INADDR_MAX_LOCAL_GROUP".into(),
+        MbValue::from_int(3758096639),
+    );
     attrs.insert("INADDR_NONE".into(), MbValue::from_int(4294967295));
     attrs.insert("INADDR_UNSPEC_GROUP".into(), MbValue::from_int(3758096384));
     attrs.insert("IPPORT_RESERVED".into(), MbValue::from_int(1024));
@@ -294,12 +302,28 @@ pub fn register() {
     // only assert `hasattr(socket, NAME)` / `callable(socket.NAME)`.
     let stub_addr = d_socket_stub as *const () as usize;
     let stub_funcs: &[&str] = &[
-        "CMSG_LEN", "CMSG_SPACE", "close", "dup", "fromfd",
-        "getdefaulttimeout", "getfqdn", "gethostbyaddr", "gethostbyname_ex",
-        "getnameinfo", "getprotobyname", "getservbyport",
-        "has_dualstack_ipv6", "if_indextoname", "if_nameindex",
-        "if_nametoindex", "inet_ntop", "inet_pton",
-        "recv_fds", "send_fds", "setdefaulttimeout", "sethostname",
+        "CMSG_LEN",
+        "CMSG_SPACE",
+        "close",
+        "dup",
+        "fromfd",
+        "getdefaulttimeout",
+        "getfqdn",
+        "gethostbyaddr",
+        "gethostbyname_ex",
+        "getnameinfo",
+        "getprotobyname",
+        "getservbyport",
+        "has_dualstack_ipv6",
+        "if_indextoname",
+        "if_nameindex",
+        "if_nametoindex",
+        "inet_ntop",
+        "inet_pton",
+        "recv_fds",
+        "send_fds",
+        "setdefaulttimeout",
+        "sethostname",
         "socketpair",
     ];
     for name in stub_funcs {
@@ -312,7 +336,10 @@ pub fn register() {
     for (name, addr) in [
         ("inet_aton", dispatch_inet_aton as *const () as usize),
         ("inet_ntoa", dispatch_inet_ntoa as *const () as usize),
-        ("getservbyname", dispatch_getservbyname as *const () as usize),
+        (
+            "getservbyname",
+            dispatch_getservbyname as *const () as usize,
+        ),
     ] {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
@@ -325,8 +352,14 @@ pub fn register() {
     // `callable`, and `type(...)` surface checks pass.
     let type_addr = d_socket_type_stub as *const () as usize;
     let type_names: &[&str] = &[
-        "AddressFamily", "AddressInfo", "MsgFlag", "SocketKind", "SocketType",
-        "SocketIO", "IntEnum", "IntFlag",
+        "AddressFamily",
+        "AddressInfo",
+        "MsgFlag",
+        "SocketKind",
+        "SocketType",
+        "SocketIO",
+        "IntEnum",
+        "IntFlag",
     ];
     for name in type_names {
         attrs.insert((*name).to_string(), MbValue::from_func(type_addr));
@@ -352,31 +385,47 @@ pub fn register() {
     // already registers gaierror/herror) so `socket.error is OSError` resolves
     // via class identity. Matches CPython (`callable(OSError)` is True).
     super::super::class::mb_class_register(
-        "OSError", vec!["Exception".to_string()], HashMap::new());
+        "OSError",
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
     super::super::class::mb_class_register(
-        "TimeoutError", vec!["OSError".to_string()], HashMap::new());
-    super::super::class::mb_class_register(
-        "gaierror", vec!["OSError".to_string()], HashMap::new());
-    super::super::class::mb_class_register(
-        "herror", vec!["OSError".to_string()], HashMap::new());
-    attrs.insert("error".to_string(),
-        MbValue::from_ptr(MbObject::new_str("OSError".to_string())));
-    attrs.insert("timeout".to_string(),
-        MbValue::from_ptr(MbObject::new_str("TimeoutError".to_string())));
-    attrs.insert("gaierror".to_string(),
-        MbValue::from_ptr(MbObject::new_str("gaierror".to_string())));
-    attrs.insert("herror".to_string(),
-        MbValue::from_ptr(MbObject::new_str("herror".to_string())));
+        "TimeoutError",
+        vec!["OSError".to_string()],
+        HashMap::new(),
+    );
+    super::super::class::mb_class_register("gaierror", vec!["OSError".to_string()], HashMap::new());
+    super::super::class::mb_class_register("herror", vec!["OSError".to_string()], HashMap::new());
+    attrs.insert(
+        "error".to_string(),
+        MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
+    );
+    attrs.insert(
+        "timeout".to_string(),
+        MbValue::from_ptr(MbObject::new_str("TimeoutError".to_string())),
+    );
+    attrs.insert(
+        "gaierror".to_string(),
+        MbValue::from_ptr(MbObject::new_str("gaierror".to_string())),
+    );
+    attrs.insert(
+        "herror".to_string(),
+        MbValue::from_ptr(MbObject::new_str("herror".to_string())),
+    );
 
     // ── surface: re-exported helper modules + C-API capsule ──
     // socket.py imports these at module scope; surface fixtures only assert
     // presence (`hasattr`). Registered as present string placeholders.
     for name in &["os", "sys", "io", "errno", "selectors", "array"] {
-        attrs.insert((*name).to_string(),
-            MbValue::from_ptr(MbObject::new_str((*name).to_string())));
+        attrs.insert(
+            (*name).to_string(),
+            MbValue::from_ptr(MbObject::new_str((*name).to_string())),
+        );
     }
-    attrs.insert("CAPI".to_string(),
-        MbValue::from_ptr(MbObject::new_str("_socket.CAPI".to_string())));
+    attrs.insert(
+        "CAPI".to_string(),
+        MbValue::from_ptr(MbObject::new_str("_socket.CAPI".to_string())),
+    );
 
     // Real fd-backed socket class + module functions (#23) — registered last
     // so the live implementations overwrite the legacy dict-stub dispatchers.
@@ -387,7 +436,11 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -415,12 +468,18 @@ pub fn mb_socket_new(family: MbValue, stype: MbValue) -> MbValue {
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
-            map.insert("__class__".into(),
-                MbValue::from_ptr(MbObject::new_str("socket".to_string())));
-            map.insert("family".into(),
-                MbValue::from_int(family.as_int().unwrap_or(2)));
-            map.insert("type".into(),
-                MbValue::from_int(stype.as_int().unwrap_or(1)));
+            map.insert(
+                "__class__".into(),
+                MbValue::from_ptr(MbObject::new_str("socket".to_string())),
+            );
+            map.insert(
+                "family".into(),
+                MbValue::from_int(family.as_int().unwrap_or(2)),
+            );
+            map.insert(
+                "type".into(),
+                MbValue::from_int(stype.as_int().unwrap_or(1)),
+            );
             map.insert("connected".into(), MbValue::from_bool(false));
             map.insert("closed".into(), MbValue::from_bool(false));
         }
@@ -515,7 +574,9 @@ pub fn mb_socket_gethostbyname(name: MbValue) -> MbValue {
 
 /// socket.inet_aton(ip) -> 4 packed bytes.
 unsafe extern "C" fn dispatch_inet_aton(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = if nargs == 0 || args_ptr.is_null() { &[] } else {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
     let s = a.first().copied().and_then(extract_str).unwrap_or_default();
@@ -535,20 +596,27 @@ unsafe extern "C" fn dispatch_inet_aton(args_ptr: *const MbValue, nargs: usize) 
 
 /// socket.inet_ntoa(packed) -> dotted-quad string.
 unsafe extern "C" fn dispatch_inet_ntoa(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = if nargs == 0 || args_ptr.is_null() { &[] } else {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
-    let bytes = a.first().copied().and_then(|v| v.as_ptr()).and_then(|p| unsafe {
-        match &(*p).data {
-            ObjData::Bytes(b) => Some(b.clone()),
-            ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
-            _ => None,
-        }
-    });
+    let bytes = a
+        .first()
+        .copied()
+        .and_then(|v| v.as_ptr())
+        .and_then(|p| unsafe {
+            match &(*p).data {
+                ObjData::Bytes(b) => Some(b.clone()),
+                ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
+                _ => None,
+            }
+        });
     match bytes {
-        Some(b) if b.len() == 4 => MbValue::from_ptr(MbObject::new_str(
-            format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3]),
-        )),
+        Some(b) if b.len() == 4 => MbValue::from_ptr(MbObject::new_str(format!(
+            "{}.{}.{}.{}",
+            b[0], b[1], b[2], b[3]
+        ))),
         _ => {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
@@ -563,14 +631,25 @@ unsafe extern "C" fn dispatch_inet_ntoa(args_ptr: *const MbValue, nargs: usize) 
 
 /// socket.getservbyname(name[, proto]) -> well-known IANA port.
 unsafe extern "C" fn dispatch_getservbyname(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = if nargs == 0 || args_ptr.is_null() { &[] } else {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
     let name = a.first().copied().and_then(extract_str).unwrap_or_default();
     let port: i64 = match name.as_str() {
-        "ftp" => 21, "ssh" => 22, "telnet" => 23, "smtp" => 25,
-        "domain" => 53, "http" => 80, "pop3" => 110, "imap" | "imap2" => 143,
-        "https" => 443, "smtps" => 465, "imaps" => 993, "pop3s" => 995,
+        "ftp" => 21,
+        "ssh" => 22,
+        "telnet" => 23,
+        "smtp" => 25,
+        "domain" => 53,
+        "http" => 80,
+        "pop3" => 110,
+        "imap" | "imap2" => 143,
+        "https" => 443,
+        "smtps" => 465,
+        "imaps" => 993,
+        "pop3s" => 995,
         _ => {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
@@ -594,10 +673,10 @@ pub fn mb_socket_getaddrinfo(host: MbValue, port: MbValue) -> MbValue {
         MbValue::from_int(port_i),
     ]);
     let entry = MbObject::new_tuple(vec![
-        MbValue::from_int(2),  // AF_INET
-        MbValue::from_int(1),  // SOCK_STREAM
-        MbValue::from_int(0),  // proto
-        MbValue::from_ptr(MbObject::new_str(String::new())),  // canonname
+        MbValue::from_int(2),                                // AF_INET
+        MbValue::from_int(1),                                // SOCK_STREAM
+        MbValue::from_int(0),                                // proto
+        MbValue::from_ptr(MbObject::new_str(String::new())), // canonname
         MbValue::from_ptr(sockaddr),
     ]);
     MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(entry)]))
@@ -620,25 +699,33 @@ pub fn mb_socket_create_server(addr: MbValue) -> MbValue {
 
 /// socket.htons(x) -> integer in network byte order.
 pub fn mb_socket_htons(value: MbValue) -> MbValue {
-    let Some(n) = socket_int_arg(value, "htons") else { return MbValue::none(); };
+    let Some(n) = socket_int_arg(value, "htons") else {
+        return MbValue::none();
+    };
     MbValue::from_int((n as u16).to_be() as i64)
 }
 
 /// socket.htonl(x) -> integer in network byte order.
 pub fn mb_socket_htonl(value: MbValue) -> MbValue {
-    let Some(n) = socket_int_arg(value, "htonl") else { return MbValue::none(); };
+    let Some(n) = socket_int_arg(value, "htonl") else {
+        return MbValue::none();
+    };
     MbValue::from_int((n as u32).to_be() as i64)
 }
 
 /// socket.ntohs(x) -> integer in host byte order.
 pub fn mb_socket_ntohs(value: MbValue) -> MbValue {
-    let Some(n) = socket_int_arg(value, "ntohs") else { return MbValue::none(); };
+    let Some(n) = socket_int_arg(value, "ntohs") else {
+        return MbValue::none();
+    };
     MbValue::from_int(u16::from_be(n as u16) as i64)
 }
 
 /// socket.ntohl(x) -> integer in host byte order.
 pub fn mb_socket_ntohl(value: MbValue) -> MbValue {
-    let Some(n) = socket_int_arg(value, "ntohl") else { return MbValue::none(); };
+    let Some(n) = socket_int_arg(value, "ntohl") else {
+        return MbValue::none();
+    };
     MbValue::from_int(u32::from_be(n as u32) as i64)
 }
 
@@ -650,7 +737,9 @@ mod tests {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 lock.read().unwrap().get(key).and_then(|v| v.as_bool())
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
@@ -658,13 +747,19 @@ mod tests {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 lock.read().unwrap().get(key).and_then(|v| v.as_int())
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
     fn str_val(s: MbValue) -> Option<String> {
         s.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref st) = (*ptr).data { Some(st.clone()) } else { None }
+            if let ObjData::Str(ref st) = (*ptr).data {
+                Some(st.clone())
+            } else {
+                None
+            }
         })
     }
 
@@ -798,8 +893,12 @@ mod tests {
         std::env::remove_var("HOSTNAME");
         std::env::remove_var("HOST");
         let result = mb_socket_gethostname();
-        if let Some(h) = orig_hostname { std::env::set_var("HOSTNAME", h); }
-        if let Some(h) = orig_host { std::env::set_var("HOST", h); }
+        if let Some(h) = orig_hostname {
+            std::env::set_var("HOSTNAME", h);
+        }
+        if let Some(h) = orig_host {
+            std::env::set_var("HOST", h);
+        }
         let s = str_val(result).unwrap_or_default();
         assert_eq!(s, "localhost");
     }
@@ -908,7 +1007,9 @@ fn sock_set_field(self_v: MbValue, name: &str, val: MbValue) {
 
 /// The live descriptor, or None (raising OSError EBADF) when closed.
 fn sock_fd_or_raise(self_v: MbValue) -> Option<i64> {
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     if fd < 0 {
         raise("OSError", "[Errno 9] Bad file descriptor");
         return None;
@@ -944,11 +1045,7 @@ fn kwarg_get(kwargs: Option<MbValue>, name: &str) -> Option<MbValue> {
     let ptr = kwargs?.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            return lock
-                .read()
-                .unwrap()
-                .get(name)
-                .copied();
+            return lock.read().unwrap().get(name).copied();
         }
     }
     None
@@ -1042,7 +1139,11 @@ fn set_cloexec(fd: i64, on: bool) {
     unsafe {
         let flags = libc::fcntl(fd as c_int, libc::F_GETFD);
         if flags >= 0 {
-            let newf = if on { flags | libc::FD_CLOEXEC } else { flags & !libc::FD_CLOEXEC };
+            let newf = if on {
+                flags | libc::FD_CLOEXEC
+            } else {
+                flags & !libc::FD_CLOEXEC
+            };
             let _ = libc::fcntl(fd as c_int, libc::F_SETFD, newf);
         }
     }
@@ -1052,7 +1153,11 @@ fn set_nonblocking(fd: i64, on: bool) {
     unsafe {
         let flags = libc::fcntl(fd as c_int, libc::F_GETFL);
         if flags >= 0 {
-            let newf = if on { flags | libc::O_NONBLOCK } else { flags & !libc::O_NONBLOCK };
+            let newf = if on {
+                flags | libc::O_NONBLOCK
+            } else {
+                flags & !libc::O_NONBLOCK
+            };
             let _ = libc::fcntl(fd as c_int, libc::F_SETFL, newf);
         }
     }
@@ -1076,11 +1181,17 @@ fn bytes_arg(v: MbValue) -> Option<Vec<u8>> {
 // ── socket.socket methods (variadic: fn(self, args_list)) ──
 
 unsafe extern "C" fn m_fileno(self_v: MbValue, _args: MbValue) -> MbValue {
-    MbValue::from_int(sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1))
+    MbValue::from_int(
+        sock_field(self_v, "_fd")
+            .and_then(|v| v.as_int())
+            .unwrap_or(-1),
+    )
 }
 
 unsafe extern "C" fn m_close(self_v: MbValue, _args: MbValue) -> MbValue {
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     if fd >= 0 {
         sock_set_field(self_v, "_fd", MbValue::from_int(-1));
         if unsafe { libc::close(fd as c_int) } < 0 {
@@ -1091,19 +1202,29 @@ unsafe extern "C" fn m_close(self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn m_detach(self_v: MbValue, _args: MbValue) -> MbValue {
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     sock_set_field(self_v, "_fd", MbValue::from_int(-1));
     MbValue::from_int(fd)
 }
 
 unsafe extern "C" fn m_bind(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let Some((host, port)) = a.first().copied().and_then(parse_addr_pair) else {
-        return raise("TypeError", "bind(): AF_INET address must be a (host, port) tuple");
+        return raise(
+            "TypeError",
+            "bind(): AF_INET address must be a (host, port) tuple",
+        );
     };
     let Some(sin) = sockaddr_v4(&host, port) else {
-        return raise("gaierror", "[Errno 8] nodename nor servname provided, or not known");
+        return raise(
+            "gaierror",
+            "[Errno 8] nodename nor servname provided, or not known",
+        );
     };
     let rc = unsafe {
         libc::bind(
@@ -1119,7 +1240,9 @@ unsafe extern "C" fn m_bind(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn m_getsockname(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let mut sin: libc::sockaddr_in = unsafe { std::mem::zeroed() };
     let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
     let rc = unsafe {
@@ -1136,7 +1259,9 @@ unsafe extern "C" fn m_getsockname(self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn m_getpeername(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let mut sin: libc::sockaddr_in = unsafe { std::mem::zeroed() };
     let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
     let rc = unsafe {
@@ -1154,7 +1279,9 @@ unsafe extern "C" fn m_getpeername(self_v: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn m_listen(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let backlog = a.first().and_then(|v| v.as_int()).unwrap_or(128);
     if unsafe { libc::listen(fd as c_int, backlog as c_int) } < 0 {
         return raise_os_errno("listen");
@@ -1163,7 +1290,9 @@ unsafe extern "C" fn m_listen(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn m_accept(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let mut sin: libc::sockaddr_in = unsafe { std::mem::zeroed() };
     let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
     let newfd = unsafe {
@@ -1177,20 +1306,32 @@ unsafe extern "C" fn m_accept(self_v: MbValue, _args: MbValue) -> MbValue {
         return raise_os_errno("accept");
     }
     set_cloexec(newfd as i64, true);
-    let family = sock_field(self_v, "family").and_then(|v| v.as_int()).unwrap_or(2);
-    let stype = sock_field(self_v, "type").and_then(|v| v.as_int()).unwrap_or(1);
+    let family = sock_field(self_v, "family")
+        .and_then(|v| v.as_int())
+        .unwrap_or(2);
+    let stype = sock_field(self_v, "type")
+        .and_then(|v| v.as_int())
+        .unwrap_or(1);
     let conn = sock_instance(newfd as i64, family, stype, 0);
     MbValue::from_ptr(MbObject::new_tuple(vec![conn, addr_tuple_v4(&sin)]))
 }
 
 unsafe extern "C" fn m_connect(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let Some((host, port)) = a.first().copied().and_then(parse_addr_pair) else {
-        return raise("TypeError", "connect(): AF_INET address must be a (host, port) tuple");
+        return raise(
+            "TypeError",
+            "connect(): AF_INET address must be a (host, port) tuple",
+        );
     };
     let Some(sin) = sockaddr_v4(&host, port) else {
-        return raise("gaierror", "[Errno 8] nodename nor servname provided, or not known");
+        return raise(
+            "gaierror",
+            "[Errno 8] nodename nor servname provided, or not known",
+        );
     };
     let rc = unsafe {
         libc::connect(
@@ -1207,9 +1348,14 @@ unsafe extern "C" fn m_connect(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn m_connect_ex(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let Some((host, port)) = a.first().copied().and_then(parse_addr_pair) else {
-        return raise("TypeError", "connect_ex(): AF_INET address must be a (host, port) tuple");
+        return raise(
+            "TypeError",
+            "connect_ex(): AF_INET address must be a (host, port) tuple",
+        );
     };
     let Some(sin) = sockaddr_v4(&host, port) else {
         return MbValue::from_int(libc::EHOSTUNREACH as i64);
@@ -1222,18 +1368,29 @@ unsafe extern "C" fn m_connect_ex(self_v: MbValue, args: MbValue) -> MbValue {
         )
     };
     if rc < 0 {
-        return MbValue::from_int(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as i64);
+        return MbValue::from_int(
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as i64
+        );
     }
     MbValue::from_int(0)
 }
 
 unsafe extern "C" fn m_send(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let Some(data) = a.first().copied().and_then(bytes_arg) else {
         return raise("TypeError", "a bytes-like object is required");
     };
-    let n = unsafe { libc::send(fd as c_int, data.as_ptr() as *const libc::c_void, data.len(), 0) };
+    let n = unsafe {
+        libc::send(
+            fd as c_int,
+            data.as_ptr() as *const libc::c_void,
+            data.len(),
+            0,
+        )
+    };
     if n < 0 {
         return raise_os_errno("send");
     }
@@ -1242,7 +1399,9 @@ unsafe extern "C" fn m_send(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn m_sendall(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let Some(data) = a.first().copied().and_then(bytes_arg) else {
         return raise("TypeError", "a bytes-like object is required");
     };
@@ -1266,7 +1425,9 @@ unsafe extern "C" fn m_sendall(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn m_recv(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let n = a.first().and_then(|v| v.as_int()).unwrap_or(1024).max(0) as usize;
     let mut buf = vec![0u8; n];
     let got = unsafe { libc::recv(fd as c_int, buf.as_mut_ptr() as *mut libc::c_void, n, 0) };
@@ -1279,15 +1440,23 @@ unsafe extern "C" fn m_recv(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn m_sendto(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let Some(data) = a.first().copied().and_then(bytes_arg) else {
         return raise("TypeError", "a bytes-like object is required");
     };
     let Some((host, port)) = a.get(1).copied().and_then(parse_addr_pair) else {
-        return raise("TypeError", "sendto(): AF_INET address must be a (host, port) tuple");
+        return raise(
+            "TypeError",
+            "sendto(): AF_INET address must be a (host, port) tuple",
+        );
     };
     let Some(sin) = sockaddr_v4(&host, port) else {
-        return raise("gaierror", "[Errno 8] nodename nor servname provided, or not known");
+        return raise(
+            "gaierror",
+            "[Errno 8] nodename nor servname provided, or not known",
+        );
     };
     let n = unsafe {
         libc::sendto(
@@ -1307,7 +1476,9 @@ unsafe extern "C" fn m_sendto(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn m_recvfrom(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let n = a.first().and_then(|v| v.as_int()).unwrap_or(1024).max(0) as usize;
     let mut buf = vec![0u8; n];
     let mut sin: libc::sockaddr_in = unsafe { std::mem::zeroed() };
@@ -1334,12 +1505,17 @@ unsafe extern "C" fn m_recvfrom(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn m_setsockopt(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let (Some(level), Some(opt)) = (
         a.first().and_then(|v| v.as_int()),
         a.get(1).and_then(|v| v.as_int()),
     ) else {
-        return raise("TypeError", "setsockopt(): integer level and option required");
+        return raise(
+            "TypeError",
+            "setsockopt(): integer level and option required",
+        );
     };
     let val = a.get(2).and_then(|v| v.as_int_pyint()).unwrap_or(0) as c_int;
     let rc = unsafe {
@@ -1359,12 +1535,17 @@ unsafe extern "C" fn m_setsockopt(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn m_getsockopt(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let (Some(level), Some(opt)) = (
         a.first().and_then(|v| v.as_int()),
         a.get(1).and_then(|v| v.as_int()),
     ) else {
-        return raise("TypeError", "getsockopt(): integer level and option required");
+        return raise(
+            "TypeError",
+            "getsockopt(): integer level and option required",
+        );
     };
     let mut val: c_int = 0;
     let mut len = std::mem::size_of::<c_int>() as libc::socklen_t;
@@ -1386,7 +1567,9 @@ unsafe extern "C" fn m_getsockopt(self_v: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn m_settimeout(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
     let t = a.first().copied().unwrap_or_else(MbValue::none);
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     if t.is_none() {
         sock_set_field(self_v, "_timeout", MbValue::none());
         if fd >= 0 {
@@ -1418,14 +1601,20 @@ unsafe extern "C" fn m_setblocking(self_v: MbValue, args: MbValue) -> MbValue {
         .first()
         .map(|v| v.as_bool().unwrap_or(v.as_int().unwrap_or(1) != 0))
         .unwrap_or(true);
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     if fd >= 0 {
         set_nonblocking(fd, !blocking);
     }
     sock_set_field(
         self_v,
         "_timeout",
-        if blocking { MbValue::none() } else { MbValue::from_float(0.0) },
+        if blocking {
+            MbValue::none()
+        } else {
+            MbValue::from_float(0.0)
+        },
     );
     MbValue::none()
 }
@@ -1437,8 +1626,13 @@ unsafe extern "C" fn m_getblocking(self_v: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn m_shutdown(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
-    let how = a.first().and_then(|v| v.as_int()).unwrap_or(libc::SHUT_RDWR as i64);
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
+    let how = a
+        .first()
+        .and_then(|v| v.as_int())
+        .unwrap_or(libc::SHUT_RDWR as i64);
     if unsafe { libc::shutdown(fd as c_int, how as c_int) } < 0 {
         return raise_os_errno("shutdown");
     }
@@ -1446,20 +1640,30 @@ unsafe extern "C" fn m_shutdown(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn m_dup(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let newfd = unsafe { libc::dup(fd as c_int) };
     if newfd < 0 {
         return raise_os_errno("dup");
     }
     set_cloexec(newfd as i64, true);
-    let family = sock_field(self_v, "family").and_then(|v| v.as_int()).unwrap_or(2);
-    let stype = sock_field(self_v, "type").and_then(|v| v.as_int()).unwrap_or(1);
-    let proto = sock_field(self_v, "proto").and_then(|v| v.as_int()).unwrap_or(0);
+    let family = sock_field(self_v, "family")
+        .and_then(|v| v.as_int())
+        .unwrap_or(2);
+    let stype = sock_field(self_v, "type")
+        .and_then(|v| v.as_int())
+        .unwrap_or(1);
+    let proto = sock_field(self_v, "proto")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     sock_instance(newfd as i64, family, stype, proto)
 }
 
 unsafe extern "C" fn m_get_inheritable(self_v: MbValue, _args: MbValue) -> MbValue {
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     if fd < 0 {
         return MbValue::from_bool(false);
     }
@@ -1473,7 +1677,9 @@ unsafe extern "C" fn m_set_inheritable(self_v: MbValue, args: MbValue) -> MbValu
         .first()
         .map(|v| v.as_bool().unwrap_or(v.as_int().unwrap_or(0) != 0))
         .unwrap_or(false);
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     if fd >= 0 {
         set_cloexec(fd, !inheritable);
     }
@@ -1486,7 +1692,9 @@ const SOCKFILE_CLASS: &str = "socket._socketfile";
 
 unsafe extern "C" fn m_makefile(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sock_fd_or_raise(self_v) else { return MbValue::none() };
+    let Some(fd) = sock_fd_or_raise(self_v) else {
+        return MbValue::none();
+    };
     let mode = a
         .first()
         .copied()
@@ -1518,7 +1726,9 @@ unsafe extern "C" fn m_makefile(self_v: MbValue, args: MbValue) -> MbValue {
 
 /// Raise the closed-file ValueError when the wrapper's fd is gone.
 fn sockfile_live_fd(self_v: MbValue) -> Option<i64> {
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     if fd < 0 {
         raise("ValueError", "I/O operation on closed file.");
         return None;
@@ -1548,7 +1758,9 @@ unsafe extern "C" fn sf_seekable(self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn sf_close(self_v: MbValue, _args: MbValue) -> MbValue {
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     if fd >= 0 {
         sock_set_field(self_v, "_fd", MbValue::from_int(-1));
         unsafe { libc::close(fd as c_int) };
@@ -1558,7 +1770,9 @@ unsafe extern "C" fn sf_close(self_v: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn sf_read(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sockfile_live_fd(self_v) else { return MbValue::none() };
+    let Some(fd) = sockfile_live_fd(self_v) else {
+        return MbValue::none();
+    };
     let n = a.first().and_then(|v| v.as_int()).unwrap_or(-1);
     let cap = if n < 0 { 65536 } else { n as usize };
     let mut buf = vec![0u8; cap];
@@ -1572,11 +1786,19 @@ unsafe extern "C" fn sf_read(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn sf_write(self_v: MbValue, args: MbValue) -> MbValue {
     let a = args_vec(args);
-    let Some(fd) = sockfile_live_fd(self_v) else { return MbValue::none() };
+    let Some(fd) = sockfile_live_fd(self_v) else {
+        return MbValue::none();
+    };
     let Some(data) = a.first().copied().and_then(bytes_arg) else {
         return raise("TypeError", "a bytes-like object is required");
     };
-    let n = unsafe { libc::write(fd as c_int, data.as_ptr() as *const libc::c_void, data.len()) };
+    let n = unsafe {
+        libc::write(
+            fd as c_int,
+            data.as_ptr() as *const libc::c_void,
+            data.len(),
+        )
+    };
     if n < 0 {
         return raise_os_errno("write");
     }
@@ -1588,7 +1810,9 @@ unsafe extern "C" fn sf_flush(_self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn sf_repr(self_v: MbValue, _args: MbValue) -> MbValue {
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
     MbValue::from_ptr(MbObject::new_str(format!("<_io.BufferedReader name={fd}>")))
 }
 
@@ -1613,10 +1837,18 @@ unsafe extern "C" fn m_exit(self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn m_repr(self_v: MbValue, _args: MbValue) -> MbValue {
-    let fd = sock_field(self_v, "_fd").and_then(|v| v.as_int()).unwrap_or(-1);
-    let family = sock_field(self_v, "family").and_then(|v| v.as_int()).unwrap_or(2);
-    let stype = sock_field(self_v, "type").and_then(|v| v.as_int()).unwrap_or(1);
-    let proto = sock_field(self_v, "proto").and_then(|v| v.as_int()).unwrap_or(0);
+    let fd = sock_field(self_v, "_fd")
+        .and_then(|v| v.as_int())
+        .unwrap_or(-1);
+    let family = sock_field(self_v, "family")
+        .and_then(|v| v.as_int())
+        .unwrap_or(2);
+    let stype = sock_field(self_v, "type")
+        .and_then(|v| v.as_int())
+        .unwrap_or(1);
+    let proto = sock_field(self_v, "proto")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     let mut s = if fd < 0 {
         format!("<socket.socket [closed] fd=-1, family={family}, type={stype}, proto={proto}>")
     } else {
@@ -1633,10 +1865,7 @@ unsafe extern "C" fn m_repr(self_v: MbValue, _args: MbValue) -> MbValue {
         };
         if rc == 0 && u16::from_be(sin.sin_port) != 0 {
             let laddr = addr_tuple_v4(&sin);
-            tail.push_str(&format!(
-                ", laddr={}",
-                extract_repr_of_tuple(laddr)
-            ));
+            tail.push_str(&format!(", laddr={}", extract_repr_of_tuple(laddr)));
         }
         let mut peer: libc::sockaddr_in = unsafe { std::mem::zeroed() };
         let mut plen = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
@@ -1679,7 +1908,11 @@ fn extract_repr_of_tuple(t: MbValue) -> String {
 unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let raw = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kwargs = kwargs_of(raw);
-    let positional: &[MbValue] = if kwargs.is_some() { &raw[..nargs - 1] } else { raw };
+    let positional: &[MbValue] = if kwargs.is_some() {
+        &raw[..nargs - 1]
+    } else {
+        raw
+    };
 
     // Validate the int-typed parameters: bool is an int subclass; float/str
     // raise TypeError per CPython.
@@ -1697,7 +1930,10 @@ unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> Mb
         }
     };
     let family = match int_param(
-        positional.first().copied().or_else(|| kwarg_get(kwargs, "family")),
+        positional
+            .first()
+            .copied()
+            .or_else(|| kwarg_get(kwargs, "family")),
         2,
         "family",
     ) {
@@ -1705,7 +1941,10 @@ unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> Mb
         Err(e) => return e,
     };
     let stype = match int_param(
-        positional.get(1).copied().or_else(|| kwarg_get(kwargs, "type")),
+        positional
+            .get(1)
+            .copied()
+            .or_else(|| kwarg_get(kwargs, "type")),
         1,
         "type",
     ) {
@@ -1713,7 +1952,10 @@ unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> Mb
         Err(e) => return e,
     };
     let proto = match int_param(
-        positional.get(2).copied().or_else(|| kwarg_get(kwargs, "proto")),
+        positional
+            .get(2)
+            .copied()
+            .or_else(|| kwarg_get(kwargs, "proto")),
         0,
         "proto",
     ) {
@@ -1722,7 +1964,10 @@ unsafe extern "C" fn d_socket_real(args_ptr: *const MbValue, nargs: usize) -> Mb
     };
 
     // fileno=: adopt an existing descriptor.
-    let fileno = positional.get(3).copied().or_else(|| kwarg_get(kwargs, "fileno"));
+    let fileno = positional
+        .get(3)
+        .copied()
+        .or_else(|| kwarg_get(kwargs, "fileno"));
     if let Some(fv) = fileno {
         if !fv.is_none() {
             let Some(fd) = fv.as_int_pyint() else {
@@ -1773,7 +2018,10 @@ unsafe extern "C" fn d_create_server_real(args_ptr: *const MbValue, nargs: usize
     let raw = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kwargs = kwargs_of(raw);
     let Some((host, port)) = raw.first().copied().and_then(parse_addr_pair) else {
-        return raise("TypeError", "create_server(): address must be a (host, port) tuple");
+        return raise(
+            "TypeError",
+            "create_server(): address must be a (host, port) tuple",
+        );
     };
     let reuse_port = kwarg_get(kwargs, "reuse_port")
         .map(|v| v.as_bool().unwrap_or(v.as_int().unwrap_or(0) != 0))
@@ -1804,7 +2052,10 @@ unsafe extern "C" fn d_create_server_real(args_ptr: *const MbValue, nargs: usize
     }
     let Some(sin) = sockaddr_v4(&host, port) else {
         unsafe { libc::close(fd) };
-        return raise("gaierror", "[Errno 8] nodename nor servname provided, or not known");
+        return raise(
+            "gaierror",
+            "[Errno 8] nodename nor servname provided, or not known",
+        );
     };
     let rc = unsafe {
         libc::bind(
@@ -1828,7 +2079,10 @@ unsafe extern "C" fn d_create_server_real(args_ptr: *const MbValue, nargs: usize
 unsafe extern "C" fn d_create_connection_real(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let raw = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let Some((host, port)) = raw.first().copied().and_then(parse_addr_pair) else {
-        return raise("TypeError", "create_connection(): address must be a (host, port) tuple");
+        return raise(
+            "TypeError",
+            "create_connection(): address must be a (host, port) tuple",
+        );
     };
     let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
     if fd < 0 {
@@ -1837,7 +2091,10 @@ unsafe extern "C" fn d_create_connection_real(args_ptr: *const MbValue, nargs: u
     set_cloexec(fd as i64, true);
     let Some(sin) = sockaddr_v4(&host, port) else {
         unsafe { libc::close(fd) };
-        return raise("gaierror", "[Errno 8] nodename nor servname provided, or not known");
+        return raise(
+            "gaierror",
+            "[Errno 8] nodename nor servname provided, or not known",
+        );
     };
     let rc = unsafe {
         libc::connect(
@@ -1860,8 +2117,14 @@ unsafe extern "C" fn d_getaddrinfo_real(args_ptr: *const MbValue, nargs: usize) 
     let host = raw.first().copied().unwrap_or_else(MbValue::none);
     let port = raw.get(1).copied().unwrap_or_else(MbValue::none);
 
-    let host_str = if host.is_none() { None } else { extract_str(host) };
-    let c_host = host_str.as_deref().map(|h| std::ffi::CString::new(h).unwrap_or_default());
+    let host_str = if host.is_none() {
+        None
+    } else {
+        extract_str(host)
+    };
+    let c_host = host_str
+        .as_deref()
+        .map(|h| std::ffi::CString::new(h).unwrap_or_default());
 
     // The service: int port, numeric-string port, or None. Out-of-range ints
     // pass through as strings — the resolver answers with EAI_* (gaierror),
@@ -1875,7 +2138,9 @@ unsafe extern "C" fn d_getaddrinfo_real(args_ptr: *const MbValue, nargs: usize) 
     } else {
         extract_str(port)
     };
-    let c_serv = service.as_deref().map(|s| std::ffi::CString::new(s).unwrap_or_default());
+    let c_serv = service
+        .as_deref()
+        .map(|s| std::ffi::CString::new(s).unwrap_or_default());
 
     let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
     hints.ai_family = raw.get(2).and_then(|v| v.as_int()).unwrap_or(0) as c_int;
@@ -1886,8 +2151,14 @@ unsafe extern "C" fn d_getaddrinfo_real(args_ptr: *const MbValue, nargs: usize) 
     let mut res: *mut libc::addrinfo = std::ptr::null_mut();
     let rc = unsafe {
         libc::getaddrinfo(
-            c_host.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null()),
-            c_serv.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null()),
+            c_host
+                .as_ref()
+                .map(|c| c.as_ptr())
+                .unwrap_or(std::ptr::null()),
+            c_serv
+                .as_ref()
+                .map(|c| c.as_ptr())
+                .unwrap_or(std::ptr::null()),
             &hints,
             &mut res,
         )
@@ -1978,7 +2249,10 @@ unsafe extern "C" fn d_getnameinfo_real(args_ptr: *const MbValue, nargs: usize) 
         None => Vec::new(),
     };
     if items.len() < 2 {
-        return raise("TypeError", "getnameinfo(): address must be a (host, port) tuple");
+        return raise(
+            "TypeError",
+            "getnameinfo(): address must be a (host, port) tuple",
+        );
     }
     let Some(host) = extract_str(items[0]) else {
         return raise("TypeError", "getnameinfo(): host must be a string");
@@ -2048,8 +2322,16 @@ unsafe extern "C" fn d_getnameinfo_real(args_ptr: *const MbValue, nargs: usize) 
         };
         return raise("gaierror", &format!("[Errno {rc}] {msg}"));
     }
-    let h = unsafe { std::ffi::CStr::from_ptr(hostbuf.as_ptr()).to_string_lossy().into_owned() };
-    let s = unsafe { std::ffi::CStr::from_ptr(servbuf.as_ptr()).to_string_lossy().into_owned() };
+    let h = unsafe {
+        std::ffi::CStr::from_ptr(hostbuf.as_ptr())
+            .to_string_lossy()
+            .into_owned()
+    };
+    let s = unsafe {
+        std::ffi::CStr::from_ptr(servbuf.as_ptr())
+            .to_string_lossy()
+            .into_owned()
+    };
     MbValue::from_ptr(MbObject::new_tuple(vec![
         MbValue::from_ptr(MbObject::new_str(h)),
         MbValue::from_ptr(MbObject::new_str(s)),
@@ -2077,7 +2359,11 @@ unsafe extern "C" fn d_gethostname_real(_a: *const MbValue, _n: usize) -> MbValu
     let mut buf = [0i8; 256];
     let rc = unsafe { libc::gethostname(buf.as_mut_ptr(), buf.len()) };
     let name = if rc == 0 {
-        unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned() }
+        unsafe {
+            std::ffi::CStr::from_ptr(buf.as_ptr())
+                .to_string_lossy()
+                .into_owned()
+        }
     } else {
         "localhost".to_string()
     };
@@ -2149,7 +2435,10 @@ pub(crate) fn register_real_socket(attrs: &mut HashMap<String, MbValue>) {
     let dispatchers: Vec<(&str, usize)> = vec![
         ("socket", d_socket_real as *const () as usize),
         ("create_server", d_create_server_real as *const () as usize),
-        ("create_connection", d_create_connection_real as *const () as usize),
+        (
+            "create_connection",
+            d_create_connection_real as *const () as usize,
+        ),
         ("getaddrinfo", d_getaddrinfo_real as *const () as usize),
         ("getnameinfo", d_getnameinfo_real as *const () as usize),
         ("gethostname", d_gethostname_real as *const () as usize),
@@ -2168,22 +2457,61 @@ pub(crate) fn register_real_socket(attrs: &mut HashMap<String, MbValue>) {
     });
 
     // Real OS-level option constants (macOS values).
-    attrs.insert("SOL_SOCKET".into(), MbValue::from_int(libc::SOL_SOCKET as i64));
-    attrs.insert("SO_REUSEADDR".into(), MbValue::from_int(libc::SO_REUSEADDR as i64));
-    attrs.insert("SO_REUSEPORT".into(), MbValue::from_int(libc::SO_REUSEPORT as i64));
-    attrs.insert("SO_KEEPALIVE".into(), MbValue::from_int(libc::SO_KEEPALIVE as i64));
-    attrs.insert("SO_BROADCAST".into(), MbValue::from_int(libc::SO_BROADCAST as i64));
-    attrs.insert("SO_RCVBUF".into(), MbValue::from_int(libc::SO_RCVBUF as i64));
-    attrs.insert("SO_SNDBUF".into(), MbValue::from_int(libc::SO_SNDBUF as i64));
+    attrs.insert(
+        "SOL_SOCKET".into(),
+        MbValue::from_int(libc::SOL_SOCKET as i64),
+    );
+    attrs.insert(
+        "SO_REUSEADDR".into(),
+        MbValue::from_int(libc::SO_REUSEADDR as i64),
+    );
+    attrs.insert(
+        "SO_REUSEPORT".into(),
+        MbValue::from_int(libc::SO_REUSEPORT as i64),
+    );
+    attrs.insert(
+        "SO_KEEPALIVE".into(),
+        MbValue::from_int(libc::SO_KEEPALIVE as i64),
+    );
+    attrs.insert(
+        "SO_BROADCAST".into(),
+        MbValue::from_int(libc::SO_BROADCAST as i64),
+    );
+    attrs.insert(
+        "SO_RCVBUF".into(),
+        MbValue::from_int(libc::SO_RCVBUF as i64),
+    );
+    attrs.insert(
+        "SO_SNDBUF".into(),
+        MbValue::from_int(libc::SO_SNDBUF as i64),
+    );
     attrs.insert("SO_ERROR".into(), MbValue::from_int(libc::SO_ERROR as i64));
     attrs.insert("SHUT_RD".into(), MbValue::from_int(libc::SHUT_RD as i64));
     attrs.insert("SHUT_WR".into(), MbValue::from_int(libc::SHUT_WR as i64));
-    attrs.insert("SHUT_RDWR".into(), MbValue::from_int(libc::SHUT_RDWR as i64));
-    attrs.insert("IPPROTO_TCP".into(), MbValue::from_int(libc::IPPROTO_TCP as i64));
-    attrs.insert("IPPROTO_UDP".into(), MbValue::from_int(libc::IPPROTO_UDP as i64));
-    attrs.insert("TCP_NODELAY".into(), MbValue::from_int(libc::TCP_NODELAY as i64));
+    attrs.insert(
+        "SHUT_RDWR".into(),
+        MbValue::from_int(libc::SHUT_RDWR as i64),
+    );
+    attrs.insert(
+        "IPPROTO_TCP".into(),
+        MbValue::from_int(libc::IPPROTO_TCP as i64),
+    );
+    attrs.insert(
+        "IPPROTO_UDP".into(),
+        MbValue::from_int(libc::IPPROTO_UDP as i64),
+    );
+    attrs.insert(
+        "TCP_NODELAY".into(),
+        MbValue::from_int(libc::TCP_NODELAY as i64),
+    );
     attrs.insert("MSG_PEEK".into(), MbValue::from_int(libc::MSG_PEEK as i64));
-    attrs.insert("NI_NUMERICHOST".into(), MbValue::from_int(libc::NI_NUMERICHOST as i64));
-    attrs.insert("NI_NUMERICSERV".into(), MbValue::from_int(libc::NI_NUMERICSERV as i64));
+    attrs.insert(
+        "NI_NUMERICHOST".into(),
+        MbValue::from_int(libc::NI_NUMERICHOST as i64),
+    );
+    attrs.insert(
+        "NI_NUMERICSERV".into(),
+        MbValue::from_int(libc::NI_NUMERICSERV as i64),
+    );
     attrs.insert("has_ipv6".into(), MbValue::from_bool(true));
 }

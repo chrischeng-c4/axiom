@@ -4,9 +4,52 @@ summary: Semantic coverage for "projects/lumen/tests"
 capability_refs:
   - id: "search"
     role: primary
+    gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/tests`."
+  - id: "security-auth"
+    role: primary
+    gap: "adversarial-query-safety"
+    claim: "adversarial-query-safety"
+    coverage: full
+    rationale: "coverage_gaps_e2e pins malformed/deep/special-character query safety as a production security contract."
+  - id: "security-auth"
+    role: primary
+    gap: "score-confidentiality"
+    claim: "score-confidentiality"
+    coverage: full
+    rationale: "coverage_gaps_e2e proves collection boundary isolation for hit existence and relevance scores."
+  - id: "search"
+    role: primary
+    gap: "search-p99-survives-fault-and-recovers"
+    claim: "search-p99-survives-fault-and-recovers"
+    coverage: full
+    rationale: "tests/rig resilience cases pin search p99 and recovery behavior under fault."
+  - id: "search"
+    role: primary
+    gap: "graceful-degradation-under-overload"
+    claim: "graceful-degradation-under-overload"
+    coverage: full
+    rationale: "tests/rig load cases and pins define bounded overload behavior."
+  - id: "search"
+    role: primary
+    gap: "no-fd-socket-thread-leak"
+    claim: "no-fd-socket-thread-leak"
+    coverage: full
+    rationale: "tests/rig endurance cases define sustained-load FD/socket/thread leak checks."
+  - id: "search"
+    role: primary
+    gap: "no-latency-drift-over-soak"
+    claim: "no-latency-drift-over-soak"
+    coverage: full
+    rationale: "tests/rig endurance soak cases define the latency drift contract."
+  - id: "ops-operability"
+    role: primary
+    gap: "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
+    claim: "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
+    coverage: full
+    rationale: "perf_gate_vs_db is the ratcheted competitive regression gate used by the efficiency EC."
 fill_sections: [schema, unit-test, changes]
 ---
 

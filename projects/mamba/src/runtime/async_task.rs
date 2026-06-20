@@ -1,3 +1,6 @@
+use super::async_rt::{alloc_task_id, mb_coroutine_step, MbTask, COROUTINES, TASKS};
+use super::rc::{MbObject, ObjData};
+use super::value::MbValue;
 /// Task management, event loop, await, orbit bridge, and GIL for Mamba async (#313).
 ///
 /// Thread-safe version — uses global RwLock-protected state from async_rt.
@@ -7,15 +10,8 @@
 /// All async state (COROUTINES, TASKS, WAKERS, TIMERS) is global and
 /// thread-safe. Tasks can be scheduled on Tokio's multi-threaded executor
 /// for true parallel async I/O.
-
 use std::collections::HashMap;
 use std::sync::RwLock;
-use super::value::MbValue;
-use super::rc::{MbObject, ObjData};
-use super::async_rt::{
-    MbTask, COROUTINES, TASKS, alloc_task_id,
-    mb_coroutine_step,
-};
 
 // ── Task Creation (asyncio.create_task equivalent) ──
 
@@ -37,8 +33,12 @@ pub fn mb_create_task(coro: MbValue) -> MbValue {
 pub fn mb_task_done(task_handle: MbValue) -> MbValue {
     if let Some(id) = task_handle.as_int() {
         MbValue::from_bool(
-            TASKS.read().unwrap()
-                .get(&(id as u64)).map(|t| t.done).unwrap_or(true)
+            TASKS
+                .read()
+                .unwrap()
+                .get(&(id as u64))
+                .map(|t| t.done)
+                .unwrap_or(true),
         )
     } else {
         MbValue::from_bool(true)
@@ -48,7 +48,9 @@ pub fn mb_task_done(task_handle: MbValue) -> MbValue {
 /// Get the result of a completed task.
 pub fn mb_task_result(task_handle: MbValue) -> MbValue {
     if let Some(id) = task_handle.as_int() {
-        TASKS.read().unwrap()
+        TASKS
+            .read()
+            .unwrap()
             .get(&(id as u64))
             .map(|t| t.result)
             .unwrap_or(MbValue::none())
@@ -92,10 +94,12 @@ pub fn mb_cancel_task(task_handle: MbValue) -> MbValue {
 pub fn mb_task_cancelled(task_handle: MbValue) -> MbValue {
     if let Some(id) = task_handle.as_int() {
         MbValue::from_bool(
-            TASKS.read().unwrap()
+            TASKS
+                .read()
+                .unwrap()
                 .get(&(id as u64))
                 .map(|t| t.done && t.result.is_none())
-                .unwrap_or(false)
+                .unwrap_or(false),
         )
     } else {
         MbValue::from_bool(false)
@@ -106,12 +110,14 @@ pub fn mb_task_cancelled(task_handle: MbValue) -> MbValue {
 
 /// Event loop state for scheduling tasks.
 struct EventLoop {
-    ready_queue: Vec<u64>,  // task IDs ready to run
+    ready_queue: Vec<u64>, // task IDs ready to run
 }
 
 impl EventLoop {
     fn new() -> Self {
-        Self { ready_queue: Vec::new() }
+        Self {
+            ready_queue: Vec::new(),
+        }
     }
 
     fn schedule(&mut self, task_id: u64) {
@@ -129,7 +135,8 @@ impl EventLoop {
         let now = std::time::Instant::now();
         let expired: Vec<u64> = {
             let timers = TIMERS.read().unwrap();
-            timers.iter()
+            timers
+                .iter()
                 .filter(|(_, deadline)| now >= **deadline)
                 .map(|(&cid, _)| cid)
                 .collect()
@@ -145,11 +152,14 @@ impl EventLoop {
         for task_id in tasks_to_run {
             let (coro_id, is_done) = {
                 let tasks = TASKS.read().unwrap();
-                tasks.get(&task_id)
+                tasks
+                    .get(&task_id)
                     .map(|t| (t.coroutine_id, t.done))
                     .unwrap_or((0, true))
             };
-            if is_done { continue; }
+            if is_done {
+                continue;
+            }
 
             // Skip timer coroutines that haven't expired yet
             let is_pending_timer = TIMERS.read().unwrap().contains_key(&coro_id);
@@ -162,11 +172,17 @@ impl EventLoop {
             mb_coroutine_step(MbValue::from_int(coro_id as i64));
 
             // Check if coroutine is done
-            let exhausted = COROUTINES.read().unwrap()
-                .get(&coro_id).map(|c| c.exhausted).unwrap_or(true);
+            let exhausted = COROUTINES
+                .read()
+                .unwrap()
+                .get(&coro_id)
+                .map(|c| c.exhausted)
+                .unwrap_or(true);
 
             if exhausted {
-                let result = COROUTINES.read().unwrap()
+                let result = COROUTINES
+                    .read()
+                    .unwrap()
                     .get(&coro_id)
                     .and_then(|c| c.result)
                     .unwrap_or(MbValue::none());
@@ -182,12 +198,15 @@ impl EventLoop {
 
         // If there are pending timers and no other work to do, yield CPU
         let has_timers = !TIMERS.read().unwrap().is_empty();
-        if has_timers && self.ready_queue.iter().all(|tid| {
-            let tasks = TASKS.read().unwrap();
-            tasks.get(tid)
-                .map(|t| TIMERS.read().unwrap().contains_key(&t.coroutine_id))
-                .unwrap_or(false)
-        }) {
+        if has_timers
+            && self.ready_queue.iter().all(|tid| {
+                let tasks = TASKS.read().unwrap();
+                tasks
+                    .get(tid)
+                    .map(|t| TIMERS.read().unwrap().contains_key(&t.coroutine_id))
+                    .unwrap_or(false)
+            })
+        {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
@@ -210,7 +229,8 @@ pub fn mb_orbit_register_waker(coro: MbValue) -> MbValue {
     if let Some(coro_id) = coro.as_int() {
         let task_id = {
             let tasks = TASKS.read().unwrap();
-            tasks.iter()
+            tasks
+                .iter()
                 .find(|(_, t)| t.coroutine_id == coro_id as u64 && !t.done)
                 .map(|(&id, _)| id)
         };
@@ -243,14 +263,22 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
             return awaitable;
         }
         // Fast path: coroutine already complete
-        let exhausted = COROUTINES.read().unwrap()
-            .get(&(id as u64)).map(|c| c.exhausted).unwrap_or(true);
+        let exhausted = COROUTINES
+            .read()
+            .unwrap()
+            .get(&(id as u64))
+            .map(|c| c.exhausted)
+            .unwrap_or(true);
         if exhausted {
-            let result = COROUTINES.read().unwrap()
+            let result = COROUTINES
+                .read()
+                .unwrap()
                 .get(&(id as u64))
                 .and_then(|c| c.result)
                 .unwrap_or(MbValue::none());
-            unsafe { super::rc::retain_if_ptr(result); }
+            unsafe {
+                super::rc::retain_if_ptr(result);
+            }
             return result;
         }
 
@@ -275,9 +303,16 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
         let mut completed = false;
         for _ in 0..max_iterations {
             super::gc::gc_safepoint();
-            let done = COROUTINES.read().unwrap()
-                .get(&(id as u64)).map(|c| c.exhausted).unwrap_or(true);
-            if done { completed = true; break; }
+            let done = COROUTINES
+                .read()
+                .unwrap()
+                .get(&(id as u64))
+                .map(|c| c.exhausted)
+                .unwrap_or(true);
+            if done {
+                completed = true;
+                break;
+            }
             event_loop.tick();
         }
         if !completed {
@@ -286,11 +321,15 @@ pub fn mb_await(awaitable: MbValue) -> MbValue {
 
         WAKERS.write().unwrap().remove(&(id as u64));
 
-        let result = COROUTINES.read().unwrap()
+        let result = COROUTINES
+            .read()
+            .unwrap()
             .get(&(id as u64))
             .and_then(|c| c.result)
             .unwrap_or(MbValue::none());
-        unsafe { super::rc::retain_if_ptr(result); }
+        unsafe {
+            super::rc::retain_if_ptr(result);
+        }
         result
     } else {
         // await on a non-coroutine (e.g. list from asyncio.gather, constant value):
@@ -308,34 +347,51 @@ pub fn mb_gather(coros: MbValue) -> MbValue {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let coro_list = lock.read().unwrap();
                 let mut event_loop = EventLoop::new();
-                let task_ids: Vec<(u64, u64)> = coro_list.iter().map(|c| {
-                    let coro_id = c.as_int().unwrap_or(0) as u64;
-                    let task = mb_create_task(*c);
-                    let tid = task.as_int().unwrap_or(0) as u64;
-                    event_loop.schedule(tid);
-                    (coro_id, tid)
-                }).collect();
+                let task_ids: Vec<(u64, u64)> = coro_list
+                    .iter()
+                    .map(|c| {
+                        let coro_id = c.as_int().unwrap_or(0) as u64;
+                        let task = mb_create_task(*c);
+                        let tid = task.as_int().unwrap_or(0) as u64;
+                        event_loop.schedule(tid);
+                        (coro_id, tid)
+                    })
+                    .collect();
 
                 let max_iterations = 100_000;
                 let mut completed = false;
                 for _ in 0..max_iterations {
                     let all_done = task_ids.iter().all(|(cid, _)| {
-                        COROUTINES.read().unwrap()
-                            .get(cid).map(|c| c.exhausted).unwrap_or(true)
+                        COROUTINES
+                            .read()
+                            .unwrap()
+                            .get(cid)
+                            .map(|c| c.exhausted)
+                            .unwrap_or(true)
                     });
-                    if all_done { completed = true; break; }
+                    if all_done {
+                        completed = true;
+                        break;
+                    }
                     event_loop.tick();
                 }
                 if !completed {
-                    eprintln!("mamba: mb_gather: iteration limit reached, some tasks may be incomplete");
+                    eprintln!(
+                        "mamba: mb_gather: iteration limit reached, some tasks may be incomplete"
+                    );
                 }
 
-                let results: Vec<MbValue> = task_ids.iter().map(|(cid, _)| {
-                    COROUTINES.read().unwrap()
-                        .get(cid)
-                        .and_then(|c| c.result)
-                        .unwrap_or(MbValue::none())
-                }).collect();
+                let results: Vec<MbValue> = task_ids
+                    .iter()
+                    .map(|(cid, _)| {
+                        COROUTINES
+                            .read()
+                            .unwrap()
+                            .get(cid)
+                            .and_then(|c| c.result)
+                            .unwrap_or(MbValue::none())
+                    })
+                    .collect();
                 return MbValue::from_ptr(MbObject::new_list(results));
             }
         }
@@ -434,13 +490,21 @@ pub fn mb_run_until_complete(main_coro: MbValue) -> MbValue {
     let max_iterations = 10_000;
     for _ in 0..max_iterations {
         super::gc::gc_safepoint();
-        let main_done = TASKS.read().unwrap()
-            .get(&main_task_id).map(|t| t.done).unwrap_or(true);
-        if main_done { break; }
+        let main_done = TASKS
+            .read()
+            .unwrap()
+            .get(&main_task_id)
+            .map(|t| t.done)
+            .unwrap_or(true);
+        if main_done {
+            break;
+        }
         event_loop.tick();
     }
 
-    TASKS.read().unwrap()
+    TASKS
+        .read()
+        .unwrap()
         .get(&main_task_id)
         .map(|t| t.result)
         .unwrap_or(MbValue::none())
@@ -473,8 +537,7 @@ pub fn mb_gil_held() -> MbValue {
 /// Await an external future.
 pub fn mb_await_external(future: MbValue) -> MbValue {
     if let Some(id) = future.as_int() {
-        let is_coro = COROUTINES.read().unwrap()
-            .contains_key(&(id as u64));
+        let is_coro = COROUTINES.read().unwrap().contains_key(&(id as u64));
         if is_coro {
             return mb_await(future);
         }
@@ -484,10 +547,8 @@ pub fn mb_await_external(future: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
+    use super::super::async_rt::{mb_coroutine_complete, mb_coroutine_new, mb_coroutine_release};
     use super::*;
-    use super::super::async_rt::{
-        mb_coroutine_new, mb_coroutine_complete, mb_coroutine_release,
-    };
 
     #[test]
     fn test_task() {
@@ -534,7 +595,9 @@ mod tests {
         let task = mb_orbit_schedule(coro);
         assert!(task.is_int());
         mb_orbit_register_waker(coro);
-        let has_waker = WAKERS.read().unwrap()
+        let has_waker = WAKERS
+            .read()
+            .unwrap()
             .contains_key(&(coro.as_int().unwrap() as u64));
         assert!(has_waker, "waker should be registered for the coroutine");
         mb_coroutine_release(coro);
@@ -561,7 +624,9 @@ mod tests {
     fn test_sleep_creates_timer_coroutine() {
         let coro = mb_sleep(MbValue::from_int(0));
         assert!(coro.is_int(), "sleep should return a coroutine handle");
-        let is_registered = COROUTINES.read().unwrap()
+        let is_registered = COROUTINES
+            .read()
+            .unwrap()
             .contains_key(&(coro.as_int().unwrap() as u64));
         assert!(is_registered, "sleep timer should be in COROUTINES");
     }
@@ -577,9 +642,12 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1));
         event_loop.tick();
 
-        let exhausted = COROUTINES.read().unwrap()
+        let exhausted = COROUTINES
+            .read()
+            .unwrap()
             .get(&(timer_coro.as_int().unwrap() as u64))
-            .map(|c| c.exhausted).unwrap_or(false);
+            .map(|c| c.exhausted)
+            .unwrap_or(false);
         assert!(exhausted, "zero-duration timer should expire after tick");
     }
 }

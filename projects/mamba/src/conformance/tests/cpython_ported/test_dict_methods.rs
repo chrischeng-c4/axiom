@@ -54,5 +54,8 @@ print(sorted(d.values()))
 print(sorted(d.items()))
 "#,
     );
-    assert_output(&out, "['a', 'b', 'c']\n[1, 2, 3]\n[('a', 1), ('b', 2), ('c', 3)]\n");
+    assert_output(
+        &out,
+        "['a', 'b', 'c']\n[1, 2, 3]\n[('a', 1), ('b', 2), ('c', 3)]\n",
+    );
 }

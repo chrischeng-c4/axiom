@@ -1,0 +1,14 @@
+[record]
+suite = "lumen"
+dimension = "endurance"
+case = "search_stability_latency_drift"
+subject = "search latency drift remains bounded over the local endurance smoke"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[[steps]]
+type = "exec"
+name = "match_query_latency_floor"
+cmd = ["cargo", "test", "-p", "lumen", "--test", "perf_gate", "match_query_latency_floor", "--", "--nocapture"]
+timeout_secs = 120

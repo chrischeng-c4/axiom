@@ -11,9 +11,10 @@ use std::path::PathBuf;
 use toml::Value;
 
 fn manifest_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
-        format!("{}/core/async/async_gen_event_loop_interleaving_gate/manifest.toml", crate::conformance::FIXTURES_ROOT),
-    )
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "{}/core/async/async_gen_event_loop_interleaving_gate/manifest.toml",
+        crate::conformance::FIXTURES_ROOT
+    ))
 }
 
 fn manifest() -> Value {
@@ -205,10 +206,7 @@ fn r3_gather_interleaves_n_async_gens() {
     ] {
         assert_eq!(c[key].as_bool(), Some(true), "{key}");
     }
-    assert_eq!(
-        c["n_async_gens_field_name"].as_str(),
-        Some("n_async_gens")
-    );
+    assert_eq!(c["n_async_gens_field_name"].as_str(), Some("n_async_gens"));
     assert_eq!(c["expected_min_n_async_gens"].as_integer(), Some(2));
     assert_eq!(
         c["yield_sequence_field_name"].as_str(),
@@ -222,18 +220,12 @@ fn r3_gather_interleaves_n_async_gens() {
         c["drain_before_other_failure_kind"].as_str(),
         Some("async_gen_gather_drained_a_before_b_started")
     );
-    assert_eq!(
-        c["drain_before_other_exit_code"].as_integer(),
-        Some(307)
-    );
+    assert_eq!(c["drain_before_other_exit_code"].as_integer(), Some(307));
     assert_eq!(
         c["serialized_silently_failure_kind"].as_str(),
         Some("async_gen_gather_serialized_silently")
     );
-    assert_eq!(
-        c["serialized_silently_exit_code"].as_integer(),
-        Some(308)
-    );
+    assert_eq!(c["serialized_silently_exit_code"].as_integer(), Some(308));
 }
 
 #[test]

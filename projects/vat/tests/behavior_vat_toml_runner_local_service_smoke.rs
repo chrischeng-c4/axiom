@@ -11,7 +11,7 @@
 // AW-EC-END
 
 #[test]
-#[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
+#[ignore = "AW EC placeholder: implement this external contract test or keep the aw.toml inventory command authoritative"]
 fn vat_toml_runner_local_service_smoke() {
     panic!("AW EC placeholder for vat-toml-runner-local-service-smoke");
 }

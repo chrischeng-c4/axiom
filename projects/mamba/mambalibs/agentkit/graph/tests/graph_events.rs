@@ -13,7 +13,8 @@ async fn linear_walk_emits_typed_event_stream() {
 
     let mut g: Graph<u32> = Graph::new();
     g.add_fn("inc", |s: u32| async move { Ok(s + 1) }).unwrap();
-    g.add_fn("double", |s: u32| async move { Ok(s * 2) }).unwrap();
+    g.add_fn("double", |s: u32| async move { Ok(s * 2) })
+        .unwrap();
     g.add_edge("inc", "double").unwrap();
     g.set_entry("inc").unwrap();
     g.events(bus.clone());

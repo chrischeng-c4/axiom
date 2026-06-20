@@ -172,6 +172,10 @@ Gate Inventory:
 | Filter + sort early-termination | epic | - | implemented | passing | conformance | projects/lumen/scripts/bench_vs_db.py (filter_sort, pure_sort) |
 | selective-match-driver (drive cheapest positive incl. match) | epic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs |
 | Wide-range filter index (on-disk sorted-value range) | epic | - | implemented | passing | conformance | projects/lumen/src/storage.rs (segment_number_range_diff_tests); projects/lumen/tests/perf_gate_vs_db.rs (range cell) |
+| Search p99 survives fault and recovers | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/resilience |
+| Graceful degradation under overload | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/load; projects/lumen/tests/rig/config/pins |
+| No fd socket thread leak | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/endurance |
+| No latency drift over soak | epic | - | implemented | passing | dogfood | projects/lumen/tests/rig/cases/endurance |
 
 #### Efficiency - GENERATED (backfilled by `aw ec`; do not hand-edit)
 
@@ -538,6 +542,8 @@ Gate Inventory:
 |---|---|---:|---|---|---|---|
 | Bearer-token auth (`LUMEN_AUTH`) | epic | - | implemented | passing | conformance | projects/lumen/tests/auth_e2e.rs |
 | Role-based authz matrix (per-route) | epic | - | implemented | passing | conformance | projects/lumen/tests/authz_matrix_e2e.rs |
+| Adversarial query safety | epic | - | implemented | passing | conformance | projects/lumen/tests/coverage_gaps_e2e.rs (search_security_query_injection_rejects_bad_queries) |
+| Score confidentiality | epic | - | implemented | passing | conformance | projects/lumen/tests/coverage_gaps_e2e.rs (search_security_result_leak_respects_collection_boundaries) |
 | TLS (rustls) | epic | - | implemented | passing | smoke | `cargo test -p lumen tls`; projects/lumen/src/tls.rs (rustls server/client config builder) |
 
 ### Backup & Restore
@@ -622,6 +628,7 @@ Gate Inventory:
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
+| Meta API: health / ready / metrics / version | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs |
 | Stateless serving + rebuild-from-log (no PVC) | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
 | Perf-gate envelope (absolute latency + throughput floors) | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate.rs |
 | Competitive regression gate (beat pg + OS per-cell, ratcheting) | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json; all OS search cells and pg non-home-turf/native cells are WIN-gated |

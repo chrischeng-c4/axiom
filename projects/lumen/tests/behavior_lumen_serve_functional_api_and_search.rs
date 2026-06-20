@@ -16,7 +16,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_serve_functional_api_and_search() {
-    let command = "cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture";
+    let command =
+        "cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture";
     let id = "lumen-serve-functional-api-and-search";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

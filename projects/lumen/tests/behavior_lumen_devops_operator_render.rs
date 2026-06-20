@@ -3,7 +3,7 @@
 // AW-EC-BEGIN
 // @ec lumen-devops-operator-render
 // @capability k8s-deployment
-// @claim operator-renders-managed-child-set-incl-nats
+// @claim lumen-crd-reconcile-loop-kube-rs-operator
 // @contract devops-operator-render-golden
 // @category behavior
 // @required_for_production true

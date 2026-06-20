@@ -1,12 +1,12 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/cb_review.md#source
 // CODEGEN-BEGIN
-//! `aw cb review` — third-of-four CB CRRR verbs.
+//! `aw td code-review` — third-of-four code-artifact CRRR verbs.
 //!
 //! Brief mode dispatches `score-cb-reviewer` with the list of slug-introduced
 //! files and the filled HANDWRITE markers within them. Apply mode reads
 //! `.aw/payloads/<slug>/cb_review.md`, validates the verdict, commits a
 //! `Lifecycle-Stage: Cb-Review` trailer, advances phase to `cb_reviewed`, and
-//! emits the next dispatch (td merge / cb revise / cb arbitrate).
+//! emits the next dispatch (td merge / code revise / code arbitrate).
 //!
 //! @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
 
@@ -24,7 +24,7 @@ use crate::models::preflight::{
     default_preflight_gates, PreFlightGateReport, PreFlightGateSeverity, PreFlightGateStatus,
 };
 
-// Args for `aw cb review <slug>`.
+// Args for `aw td code-review <slug>`.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
 #[derive(Debug, Args)]
@@ -73,15 +73,15 @@ fn cb_review_payload_rel(slug: &str) -> String {
 }
 
 fn cb_review_apply_command(slug: &str) -> String {
-    format!("aw cb review {} --apply", slug)
+    format!("aw td code-review {} --apply", slug)
 }
 
 fn cb_revise_command(slug: &str) -> String {
-    format!("aw cb revise {}", slug)
+    format!("aw td code-revise {}", slug)
 }
 
 fn cb_arbitrate_command(slug: &str) -> String {
-    format!("aw cb arbitrate {}", slug)
+    format!("aw td code-arbitrate {}", slug)
 }
 
 fn td_merge_command(slug: &str, spec_path: &str) -> String {
@@ -297,7 +297,7 @@ async fn run_review_brief(args: CbReviewArgs) -> Result<()> {
         "next": next_for_review_apply(&slug, &payload_path),
         "payload_initialized": payload_created,
         "invoke": {
-            "command": "aw cb review",
+            "command": "aw td code-review",
             "args": {
                 "slug": slug,
                 "round": round,
@@ -693,7 +693,7 @@ async fn run_review_apply(args: CbReviewArgs) -> Result<()> {
             "slug": slug,
             "next": next_for_cb_revise(&slug),
             "invoke": {
-                "command": "aw cb revise",
+                "command": "aw td code-revise",
                 "args": { "slug": slug, "flagged_markers": flagged },
             },
         }),
@@ -703,7 +703,7 @@ async fn run_review_apply(args: CbReviewArgs) -> Result<()> {
             "slug": slug,
             "next": next_for_cb_arbitrate(&slug),
             "invoke": {
-                "command": "aw cb arbitrate",
+                "command": "aw td code-arbitrate",
                 "args": { "slug": slug },
             },
         }),
@@ -810,7 +810,7 @@ mod tests {
     fn cb_review_next_command_omits_legacy_json() {
         let next = next_for_review_apply("4124", ".aw/payloads/4124/cb_review.md");
 
-        assert_eq!(next["command"], "aw cb review 4124 --apply");
+        assert_eq!(next["command"], "aw td code-review 4124 --apply");
         assert!(!next["command"].as_str().unwrap().contains("--json"));
         assert_eq!(next["payload_path"], ".aw/payloads/4124/cb_review.md");
     }

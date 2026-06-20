@@ -29,10 +29,7 @@ fn header_is_well_formed() {
     );
     assert_eq!(m["issue"].as_integer(), Some(1234));
     assert_eq!(m["profile"].as_str(), Some("third_party"));
-    assert_eq!(
-        m["family"].as_str(),
-        Some("c3_pytest_runs_unmodified_gate")
-    );
+    assert_eq!(m["family"].as_str(), Some("c3_pytest_runs_unmodified_gate"));
     assert_eq!(m["network"].as_str(), Some("offline"));
     let related: Vec<_> = m["related_issues"]
         .as_array()
@@ -257,10 +254,7 @@ fn r4_parametrize_emits_n_runs_with_distinct_ids() {
         c["parametrize_collapsed_failure_kind"].as_str(),
         Some("c3_pytest_parametrize_collapsed_to_single_run")
     );
-    assert_eq!(
-        c["parametrize_collapsed_exit_code"].as_integer(),
-        Some(271)
-    );
+    assert_eq!(c["parametrize_collapsed_exit_code"].as_integer(), Some(271));
     assert_eq!(
         c["parametrize_duplicate_id_failure_kind"].as_str(),
         Some("c3_pytest_parametrize_duplicate_test_id")
@@ -338,10 +332,7 @@ fn r6_no_regression_on_existing_suites() {
     ] {
         assert_eq!(c[key].as_bool(), Some(true), "{key}");
     }
-    assert_eq!(
-        c["required_conformance_pass_count"].as_integer(),
-        Some(591)
-    );
+    assert_eq!(c["required_conformance_pass_count"].as_integer(), Some(591));
     assert_eq!(
         c["required_conformance_total_count"].as_integer(),
         Some(591)

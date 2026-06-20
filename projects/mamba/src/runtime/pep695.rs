@@ -15,9 +15,9 @@
 //! other user-set attributes on function / closure values, which carry no
 //! field storage of their own.
 
-use std::collections::HashMap;
 use super::rc::{MbObject, ObjData};
 use super::value::MbValue;
+use std::collections::HashMap;
 
 /// Field names used to stash the lazy evaluation thunks on the instances.
 const BOUND_THUNK: &str = "__mb_bound_thunk__";
@@ -102,11 +102,7 @@ pub fn mb_pep695_typevar(
 /// kind: 0 = TypeVar, 1 = TypeVarTuple, 2 = ParamSpec. `constraints` holds
 /// the eagerly evaluated constraint values (empty for none). Runtime-call
 /// constructed vars never infer variance (unlike `[T]`-syntax params).
-pub fn make_typevar_instance(
-    name: &str,
-    kind: i64,
-    constraints: Vec<MbValue>,
-) -> MbValue {
+pub fn make_typevar_instance(name: &str, kind: i64, constraints: Vec<MbValue>) -> MbValue {
     let class_name = match kind {
         1 => "TypeVarTuple",
         2 => "ParamSpec",
@@ -131,11 +127,7 @@ pub fn make_typevar_instance(
 }
 
 /// `__mb_pep695_type_alias__(name, value_thunk, params_tuple)`.
-pub fn mb_pep695_type_alias(
-    name: MbValue,
-    value_thunk: MbValue,
-    params: MbValue,
-) -> MbValue {
+pub fn mb_pep695_type_alias(name: MbValue, value_thunk: MbValue, params: MbValue) -> MbValue {
     let inst = MbObject::new_instance("TypeAliasType".to_string());
     let name_str = extract_str(name).unwrap_or_default();
     instance_field_set(
@@ -161,11 +153,7 @@ pub fn is_pep695_class(class_name: &str) -> bool {
 /// is called, the result cached in the field, and the thunk slot dropped.
 /// Returns None when the attribute is not lazily managed here (so the normal
 /// instance-field path proceeds).
-pub fn instance_lazy_attr_hook(
-    obj: MbValue,
-    class_name: &str,
-    attr_name: &str,
-) -> Option<MbValue> {
+pub fn instance_lazy_attr_hook(obj: MbValue, class_name: &str, attr_name: &str) -> Option<MbValue> {
     if !is_pep695_class(class_name) {
         return None;
     }
@@ -216,13 +204,14 @@ pub fn is_attrable_function(v: MbValue) -> bool {
     if super::generator::is_known_generator(v) {
         return false;
     }
-    !super::closure::mb_func_get_name(v).is_none()
-        || super::closure::mb_func_is_registered(v)
+    !super::closure::mb_func_get_name(v).is_none() || super::closure::mb_func_is_registered(v)
 }
 
 /// Store `func.attr = value` in the side registry.
 pub fn func_attrs_set(func: MbValue, attr: MbValue, value: MbValue) {
-    let Some(attr_name) = extract_str(attr) else { return };
+    let Some(attr_name) = extract_str(attr) else {
+        return;
+    };
     unsafe { super::rc::retain_if_ptr(value) };
     FUNC_ATTRS.with(|m| {
         let mut map = m.borrow_mut();
@@ -235,16 +224,17 @@ pub fn func_attrs_set(func: MbValue, attr: MbValue, value: MbValue) {
 
 /// Read a previously stored function attribute. Returns None on miss.
 pub fn func_attrs_get(func: MbValue, attr_name: &str) -> Option<MbValue> {
-    FUNC_ATTRS.with(|m| {
-        m.borrow()
-            .get(&func.to_bits())
-            .and_then(|attrs| attrs.get(attr_name))
-            .copied()
-    })
-    .map(|v| {
-        unsafe { super::rc::retain_if_ptr(v) };
-        v
-    })
+    FUNC_ATTRS
+        .with(|m| {
+            m.borrow()
+                .get(&func.to_bits())
+                .and_then(|attrs| attrs.get(attr_name))
+                .copied()
+        })
+        .map(|v| {
+            unsafe { super::rc::retain_if_ptr(v) };
+            v
+        })
 }
 
 /// Test-support / shutdown cleanup: drop all stored function attributes.
@@ -267,15 +257,14 @@ mod tests {
     #[test]
     fn typevar_builds_named_instance_with_eager_defaults() {
         let name = MbValue::from_ptr(MbObject::new_str("T".to_string()));
-        let tv = mb_pep695_typevar(
-            name,
-            MbValue::from_int(0),
-            MbValue::none(),
-            MbValue::none(),
-        );
+        let tv = mb_pep695_typevar(name, MbValue::from_int(0), MbValue::none(), MbValue::none());
         let ptr = tv.as_ptr().expect("instance");
         unsafe {
-            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
                 assert_eq!(class_name, "TypeVar");
                 let f = fields.read().unwrap();
                 assert!(f.get("__bound__").unwrap().is_none());
@@ -311,7 +300,10 @@ mod tests {
         let attr = MbValue::from_ptr(MbObject::new_str("__type_params__".to_string()));
         let val = MbValue::from_int(42);
         func_attrs_set(f, attr, val);
-        assert_eq!(func_attrs_get(f, "__type_params__").unwrap().as_int(), Some(42));
+        assert_eq!(
+            func_attrs_get(f, "__type_params__").unwrap().as_int(),
+            Some(42)
+        );
         assert!(func_attrs_get(f, "missing").is_none());
         cleanup_func_attrs();
         assert!(func_attrs_get(f, "__type_params__").is_none());

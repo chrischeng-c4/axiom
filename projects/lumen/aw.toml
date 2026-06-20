@@ -10,7 +10,7 @@ command = "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db 
 
 [ec.stability]
 tool = "rig"
-dir = "projects/lumen/tests/rig/scenarios/resilience"
+dir = "projects/lumen/tests/rig/cases/resilience"
 
 [[workspaces]]
 name = "lumen"
@@ -18,3 +18,307 @@ paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p lumen"
 codegen.profile = "rust/score-crate"
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "lumen"
+generated_from_td_digest = "sha256:178ac9b0511eb687dc57949fe665244e76b8127f9b38f67d3f53a4d12481a9ca"
+
+[[aw.ec.generated.cases]]
+id = "lumen-agentic-integration-llm-playbook"
+capability_id = "agentic-integration"
+claim_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+contract_id = "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/agentic-integration/behavior/agentic-integration.md#lumen-agentic-integration-llm-playbook"
+test_path = "projects/lumen/tests/behavior_lumen_agentic_integration_llm_playbook.rs"
+command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
+assertions = [
+    "lumen llm outline, workflow, integration, quickstart, and recipes preserve the agent-facing topic set.",
+    "lumen llm integration preserves the provider-neutral Postgres/AlloyDB adapter guidance and keeps Pub/Sub-specific ownership outside lumen core.",
+    "agent-facing playbook output remains deterministic and offline.",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-agentic-integration-offline-cli"
+capability_id = "agentic-integration"
+claim_id = "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
+contract_id = "offline-cli-agent-onboarding"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/agentic-integration/behavior/agentic-integration.md#lumen-agentic-integration-offline-cli"
+test_path = "projects/lumen/tests/behavior_lumen_agentic_integration_offline_cli.rs"
+command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
+assertions = [
+    "lumen spec emits valid OpenAPI JSON, OpenAPI YAML, and JSON-schema output offline.",
+    "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.",
+    "lumen llm outline, workflow, integration, quickstart, and recipes preserve the ingest-search-hydrate agent workflow and non-goals.",
+    "lumen llm integration recommends the Postgres/AlloyDB boundary: database commit/outbox or CDC, external adapter-owned Pub/Sub retry/DLQ, HTTP writes into lumen, and no direct external publishing to lumen's NATS WAL.",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-agentic-integration-query-catalog"
+capability_id = "agentic-integration"
+claim_id = "query-shape-cookbook-field-analyzer-catalog"
+contract_id = "query-shape-cookbook-field-analyzer-catalog"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/agentic-integration/behavior/agentic-integration.md#lumen-agentic-integration-query-catalog"
+test_path = "projects/lumen/tests/behavior_lumen_agentic_integration_query_catalog.rs"
+command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
+assertions = [
+    "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.",
+    "agent-facing query catalog output remains deterministic and offline.",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-devops-operator-render"
+capability_id = "k8s-deployment"
+claim_id = "lumen-crd-reconcile-loop-kube-rs-operator"
+contract_id = "devops-operator-render-golden"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/k8s-deployment/behavior/devops-render.md#lumen-devops-operator-render"
+test_path = "projects/lumen/tests/behavior_lumen_devops_operator_render.rs"
+command = "cargo test -p lumen --features operator --test operator_render -- --nocapture"
+required_for_production = true
+assertions = [
+    "render(Lumen) emits the managed serving Deployment/Service/HPA/PDB plus the NATS JetStream ConfigMap/StatefulSet/Service when NATS is managed.",
+    "BYO-NATS (nats.externalUrl) omits the managed NATS objects and wires the external URL into the serving env.",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-ops-meta-api"
+capability_id = "ops-operability"
+claim_id = "meta-api-health-ready-metrics-version"
+contract_id = "ops-meta-api-surface"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/ops-operability/behavior/meta-api.md#lumen-ops-meta-api"
+test_path = "projects/lumen/tests/behavior_lumen_ops_meta_api.rs"
+command = "cargo test -p lumen --test api_e2e -- --nocapture"
+required_for_production = true
+assertions = [
+    "GET /healthz (liveness) returns 200 always; GET /readyz returns 200 normally and 503 while draining; both bypass auth.",
+    "GET /metrics returns Prometheus text v0.0.4 with the scrape content-type; bypasses auth.",
+    "GET /version returns 200 with the build version (and git SHA / build time when available); bypasses auth.",
+    "The k8s livenessProbe/startupProbe (/healthz) and readinessProbe (/readyz) paths match the actual endpoints; the Prometheus scrape path (/metrics) matches.",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-search-efficiency-competitive"
+capability_id = "ops-operability"
+claim_id = "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
+contract_id = "search-efficiency-filtering-ranking-pagination"
+category = "efficiency"
+td_ref = "projects/lumen/external-contracts/search/efficiency/competitive-benchmark.md#lumen-search-efficiency-competitive"
+test_path = "projects/lumen/tests/benchmark_lumen_search_efficiency_competitive.rs"
+command = "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
+required_for_production = false
+assertions = [
+    "FILTERING: filtered_search (AND[BM25+term+range]) beats pg >= 3.73x and OpenSearch(disk) >= 2.4x; filtered_knn beats pg >= 2.4x (OS exempt, no kNN plugin).",
+    "RANKING: text_bm25 single-term beats pg >= 14.56x; text_and multi-term beats pg >= 1.47x (OS >= 2.4x each).",
+    "PAGINATION/SORT: pure_sort (scan + sort) beats pg >= 18.32x (OS >= 2.4x); cursor pagination stays within the search_qps pin.",
+    "Floors are ratcheted (perf-baseline.json, 0.8); btree point-lookup cells stay EXEMPT, not gated. lumen vs pg/OS only.",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-search-security-access-control"
+capability_id = "security-auth"
+claim_id = "role-based-authz-matrix-per-route"
+contract_id = "search-security-rbac-and-limit"
+category = "security"
+td_ref = "projects/lumen/external-contracts/search/security/access-control.md#lumen-search-security-access-control"
+test_path = "projects/lumen/tests/security_lumen_search_security_access_control.rs"
+command = "cargo test -p lumen --test authz_matrix_e2e --test api_e2e -- --nocapture"
+required_for_production = true
+assertions = [
+    "FILTERING: search over a collection the token cannot read returns 403; results never leak rows outside the caller's RBAC scope.",
+    "PAGINATION: bulk/index requests over MAX_INDEX_ITEMS return 413; result pages are bounded (cursor), not unbounded.",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-search-security-query-injection"
+capability_id = "security-auth"
+claim_id = "adversarial-query-safety"
+contract_id = "search-security-injection"
+category = "security"
+td_ref = "projects/lumen/external-contracts/search/security/access-control.md#lumen-search-security-query-injection"
+test_path = "projects/lumen/tests/security_lumen_search_security_query_injection.rs"
+command = "cargo test -p lumen --test coverage_gaps_e2e search_security_query_injection_rejects_bad_queries -- --nocapture"
+required_for_production = true
+assertions = ["C2: malformed JSON, deeply-nested JSON query DSL, special-char search text, inverted ranges, and range numeric overflow are rejected or evaluated safely (no panic, no 5xx, bounded work)."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-search-security-result-leak"
+capability_id = "security-auth"
+claim_id = "score-confidentiality"
+contract_id = "search-security-result-leak"
+category = "security"
+td_ref = "projects/lumen/external-contracts/search/security/access-control.md#lumen-search-security-result-leak"
+test_path = "projects/lumen/tests/security_lumen_search_security_result_leak.rs"
+command = "cargo test -p lumen --test coverage_gaps_e2e search_security_result_leak_respects_collection_boundaries -- --nocapture"
+required_for_production = true
+assertions = ["C3: relevance scores and hit existence do not leak documents across collection boundaries; RBAC denial coverage remains pinned by the authz matrix case."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-search-stability-latency-drift"
+capability_id = "search"
+claim_id = "no-latency-drift-over-soak"
+contract_id = "search-stability-latency-drift"
+category = "stability"
+td_ref = "projects/lumen/external-contracts/search/stability/query-resilience.md#lumen-search-stability-latency-drift"
+test_path = "projects/lumen/tests/stability_lumen_search_stability_latency_drift.rs"
+command = "rig run --dir projects/lumen/tests/rig/cases/endurance"
+required_for_production = true
+assertions = ["(f) search p99 per window over the soak drifts <= 1.10x + 6ms (rig endurance/soak_p99_drift.toml). Env-dependent (vat-provisioned lumen)."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-search-stability-overload-backpressure"
+capability_id = "search"
+claim_id = "graceful-degradation-under-overload"
+contract_id = "search-stability-backpressure"
+category = "stability"
+td_ref = "projects/lumen/external-contracts/search/stability/query-resilience.md#lumen-search-stability-overload-backpressure"
+test_path = "projects/lumen/tests/stability_lumen_search_stability_backpressure.rs"
+command = "rig run --dir projects/lumen/tests/rig/cases/load --pins projects/lumen/tests/rig/config/pins"
+required_for_production = true
+assertions = ["(d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen)."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-search-stability-resilience"
+capability_id = "search"
+claim_id = "search-p99-survives-fault-and-recovers"
+contract_id = "search-stability-fault-resilience"
+category = "stability"
+td_ref = "projects/lumen/external-contracts/search/stability/query-resilience.md#lumen-search-stability-resilience"
+test_path = "projects/lumen/tests/stability_lumen_search_stability_resilience.rs"
+command = "rig run --dir projects/lumen/tests/rig/cases/resilience"
+required_for_production = true
+assertions = [
+    "FILTERING/RANKING: under 5% packet loss (toxiproxy timeout toxic) search p99 stays <= 2x baseline_p99 + 20ms.",
+    "ALL: after a full network partition, search recovers within 10s and post-recovery p99 stays <= 2x baseline_p99 + 1ms.",
+    "RSS plateau: over the bounded-keyspace soak, window-2 RSS <= 1.10x window-1 RSS (no leak).",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-search-stability-resource-leak"
+capability_id = "search"
+claim_id = "no-fd-socket-thread-leak"
+contract_id = "search-stability-resource-leak"
+category = "stability"
+td_ref = "projects/lumen/external-contracts/search/stability/query-resilience.md#lumen-search-stability-resource-leak"
+test_path = "projects/lumen/tests/stability_lumen_search_stability_resource_leak.rs"
+command = "rig run --dir projects/lumen/tests/rig/cases/endurance"
+required_for_production = true
+assertions = ["(e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen)."]
+
+[[aw.ec.generated.cases]]
+id = "lumen-security-auth-bearer-rbac"
+capability_id = "security-auth"
+claim_id = "bearer-token-auth-lumen-auth"
+contract_id = "bearer-token-auth-lumen-auth"
+category = "security"
+td_ref = "projects/lumen/external-contracts/security-auth/security/auth-bearer-rbac.md#lumen-security-auth-bearer-rbac"
+test_path = "projects/lumen/tests/security_lumen_security_auth_bearer_rbac.rs"
+command = "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
+required_for_production = true
+assertions = [
+    "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens.",
+    "Per-route RBAC authz matrix enforces each token's role permissions on every API route (read vs write vs admin).",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-serve-functional-api-and-search"
+capability_id = "search"
+claim_id = "query-planner-boolean-eval-roaring-postings"
+contract_id = "serve-functional-api-and-search-correctness"
+category = "behavior"
+td_ref = "projects/lumen/external-contracts/search/behavior/serve-functional.md#lumen-serve-functional-api-and-search"
+test_path = "projects/lumen/tests/behavior_lumen_serve_functional_api_and_search.rs"
+command = "cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture"
+required_for_production = true
+assertions = [
+    "The HTTP API end-to-end (create -> index -> search -> hydrate ids) returns correct ranked external_ids and never documents.",
+    "Vector kNN and filtered kNN return the nearest within the filter without recall collapse.",
+    "The query planner produces byte-identical plans (planner_diff) across the search-flavor sub-capabilities.",
+]
+
+[[aw.ec.generated.cases]]
+id = "lumen-stability-resilience-survival"
+capability_id = "resilience"
+claim_id = "broker-kill-pod-kill-survival"
+contract_id = "broker-kill-pod-kill-survival"
+category = "stability"
+td_ref = "projects/lumen/external-contracts/resilience/stability/resilience-survival.md#lumen-stability-resilience-survival"
+test_path = "projects/lumen/tests/stability_lumen_stability_resilience_survival.rs"
+command = "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture"
+required_for_production = true
+assertions = [
+    "Search p99 stays within 2x baseline under 5% packet loss (toxiproxy timeout toxic; rig resilience scenario).",
+    "Search survives a full network partition and recovers within budget; post-recovery p99 stays within 2x baseline.",
+]
+
+[[aw.ec.generated.tool_manifests]]
+id = "lumen-guard-auth-surface"
+tool = "guard"
+path = "projects/lumen/guard.toml"
+td_ref = "projects/lumen/external-contracts/security-auth/security/auth-bearer-rbac.md#lumen-guard-auth-surface"
+content_digest = "sha256:3e614521a823e54fb58a7a53b8c90683e027fb030ad2ce7ce83c660560a3faa2"
+command = "guard scan projects/lumen --compact --no-persist"
+category = "security"
+
+[[aw.ec.generated.tool_manifests]]
+id = "lumen-guard-search-security"
+tool = "guard"
+path = "projects/lumen/guard-search.toml"
+td_ref = "projects/lumen/external-contracts/search/security/access-control.md#lumen-guard-search-security"
+content_digest = "sha256:4413f0cf943f30e0f296586378283c8adae3242a463e76dc8db641780d1fd7e8"
+command = "guard scan projects/lumen --compact --no-persist"
+category = "security"
+
+[[aw.ec.generated.tool_manifests]]
+id = "lumen-meter-search-efficiency"
+tool = "meter"
+path = "projects/lumen/meter-search-efficiency.toml"
+td_ref = "projects/lumen/external-contracts/search/efficiency/competitive-benchmark.md#lumen-meter-search-efficiency"
+content_digest = "sha256:c58adcb4c692b4ca599c4a97bd7a0b0cf91dcddeb882d6d2d5d268b9a9e8de0f"
+command = "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
+category = "efficiency"
+
+[[aw.ec.generated.tool_manifests]]
+id = "lumen-meter-search-security"
+tool = "meter"
+path = "projects/lumen/meter-search-security.toml"
+td_ref = "projects/lumen/external-contracts/search/security/access-control.md#lumen-meter-search-security"
+content_digest = "sha256:99fedf340070e5ff0892fb321a02b824efe50b40aad5ef38a3f974193d28e8fc"
+command = "target/debug/meter test -- -p lumen --test api_e2e -- --ignored"
+category = "security"
+
+[[aw.ec.generated.tool_manifests]]
+id = "lumen-meter-search-stability"
+tool = "meter"
+path = "projects/lumen/meter-search-stability.toml"
+td_ref = "projects/lumen/external-contracts/search/stability/query-resilience.md#lumen-meter-search-stability"
+content_digest = "sha256:e2ce1f94ea89ca84e1e1840db06880e1e5ded0561246798a879251abf117e9a5"
+command = "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"
+category = "stability"
+
+[[aw.ec.generated.tool_manifests]]
+id = "lumen-rig-resilience"
+tool = "rig"
+path = "projects/lumen/rig.toml"
+td_ref = "projects/lumen/external-contracts/resilience/stability/resilience-survival.md#lumen-rig-resilience"
+content_digest = "sha256:1b7c22547ab14fda9ea498639bcdb339e4b9542d6ee9a0f3fe0243cd561ba055"
+command = "rig run --dir projects/lumen/tests/rig/cases/resilience"
+category = "stability"
+
+[[aw.ec.generated.tool_manifests]]
+id = "lumen-rig-search-stability"
+tool = "rig"
+path = "projects/lumen/rig-search.toml"
+td_ref = "projects/lumen/external-contracts/search/stability/query-resilience.md#lumen-rig-search-stability"
+content_digest = "sha256:5bd17f5f326c52e13842893f286dbf617823c58166a748a5f90619e3e388fef2"
+command = "rig run --dir projects/lumen/tests/rig/cases/resilience"
+category = "stability"
+# AW-EC-END

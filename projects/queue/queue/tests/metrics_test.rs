@@ -3,7 +3,7 @@
 #[cfg(feature = "metrics")]
 #[cfg(test)]
 mod tests {
-    use cclab_queue::metrics::{METRICS, gather_metrics};
+    use cclab_queue::metrics::{gather_metrics, METRICS};
 
     #[test]
     fn test_metrics_recording() {

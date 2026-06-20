@@ -54,7 +54,8 @@ impl RdbSnapshot {
     /// text float arrays — far smaller and faster to parse than JSON.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut raw = Vec::new();
-        ciborium::into_writer(self, &mut raw).map_err(|e| anyhow::anyhow!("cbor encode RDB: {e}"))?;
+        ciborium::into_writer(self, &mut raw)
+            .map_err(|e| anyhow::anyhow!("cbor encode RDB: {e}"))?;
         Ok(lz4_flex::compress_prepend_size(&raw))
     }
 

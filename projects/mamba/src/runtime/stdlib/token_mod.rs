@@ -1,11 +1,11 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// token module for Mamba (#698).
 ///
 /// Implements Python 3.12 `token` stdlib: token type constants, tok_name dict,
 /// EXACT_TOKEN_TYPES dict, ISTERMINAL, ISNONTERMINAL, ISEOF functions.
 /// All constant values match CPython 3.12 exactly.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -228,7 +228,10 @@ pub fn register() {
     // CPython parity: `tok_name` and `EXACT_TOKEN_TYPES` are dict
     // attributes, not callables. Build them eagerly at register time.
     attrs.insert("tok_name".to_string(), mb_token_tok_name());
-    attrs.insert("EXACT_TOKEN_TYPES".to_string(), mb_token_exact_token_types());
+    attrs.insert(
+        "EXACT_TOKEN_TYPES".to_string(),
+        mb_token_exact_token_types(),
+    );
 
     // ISTERMINAL / ISNONTERMINAL / ISEOF are callables.
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -376,7 +379,10 @@ mod tests {
     fn test_tok_name_returns_dict() {
         let dict = mb_token_tok_name();
         // Must return a pointer (i.e., a heap object — the dict).
-        assert!(dict.as_ptr().is_some(), "tok_name must return a dict pointer");
+        assert!(
+            dict.as_ptr().is_some(),
+            "tok_name must return a dict pointer"
+        );
     }
 
     // REQ: R2

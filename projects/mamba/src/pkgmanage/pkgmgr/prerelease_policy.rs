@@ -102,9 +102,7 @@ impl PrereleasePolicy {
             PrereleasePolicy::Allow => true,
             PrereleasePolicy::IfNecessary => !has_stable_candidate,
             PrereleasePolicy::Explicit => explicit_request,
-            PrereleasePolicy::IfNecessaryOrExplicit => {
-                explicit_request || !has_stable_candidate
-            }
+            PrereleasePolicy::IfNecessaryOrExplicit => explicit_request || !has_stable_candidate,
         }
     }
 }
@@ -135,8 +133,7 @@ pub fn is_prerelease(version: &str) -> bool {
     // prerelease marker with `.`, `-`, `_`, or no separator at all.
     let markers = [
         ".dev", "-dev", "_dev", "dev", ".pre", "-pre", "_pre", "pre", ".rc", "-rc", "_rc", "rc",
-        ".alpha", "-alpha", "_alpha", "alpha", ".beta", "-beta", "_beta", "beta", ".c", "-c",
-        "_c",
+        ".alpha", "-alpha", "_alpha", "alpha", ".beta", "-beta", "_beta", "beta", ".c", "-c", "_c",
     ];
     if markers.iter().any(|m| lower.contains(m)) {
         return true;

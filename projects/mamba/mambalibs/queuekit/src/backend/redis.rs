@@ -156,12 +156,10 @@ impl ResultBackend for RedisBackend {
         let state_key = self.state_key(task_id);
         let result_key = self.result_key(task_id);
 
-        let state_value = serde_json::to_string(&result.state).map_err(|e| {
-            TaskError::Serialization(format!("Failed to serialize state: {}", e))
-        })?;
-        let result_value = serde_json::to_string(&result).map_err(|e| {
-            TaskError::Serialization(format!("Failed to serialize result: {}", e))
-        })?;
+        let state_value = serde_json::to_string(&result.state)
+            .map_err(|e| TaskError::Serialization(format!("Failed to serialize state: {}", e)))?;
+        let result_value = serde_json::to_string(&result)
+            .map_err(|e| TaskError::Serialization(format!("Failed to serialize result: {}", e)))?;
 
         let ttl_secs = self.get_ttl_seconds(ttl);
         let mut conn = self.get_conn().await?;
@@ -286,7 +284,8 @@ impl ResultBackend for RedisBackend {
 
         let mut conn = self.get_conn().await?;
 
-        let values: Vec<Option<String>> = conn.get(&keys)
+        let values: Vec<Option<String>> = conn
+            .get(&keys)
             .await
             .map_err(|e| TaskError::Backend(format!("Failed to get many results: {}", e)))?;
 
@@ -315,7 +314,9 @@ impl ResultBackend for RedisBackend {
         let mut conn = self.get_conn().await?;
 
         // Just get the connection - if we can connect, Redis is healthy
-        let _: Option<String> = conn.get("__health_check__").await
+        let _: Option<String> = conn
+            .get("__health_check__")
+            .await
             .map_err(|e| TaskError::Backend(format!("Health check failed: {}", e)))?;
 
         Ok(())
@@ -330,15 +331,16 @@ impl ResultBackend for RedisBackend {
         ttl: Option<Duration>,
     ) -> Result<(), TaskError> {
         let full_key = format!("{}:meta:{}", self.config.key_prefix, key);
-        let serialized = serde_json::to_string(&value)
-            .map_err(|e| TaskError::Serialization(e.to_string()))?;
+        let serialized =
+            serde_json::to_string(&value).map_err(|e| TaskError::Serialization(e.to_string()))?;
 
         let mut conn = self.get_conn().await?;
 
         let ttl = ttl.unwrap_or(self.config.default_ttl);
         let ttl_secs = ttl.as_secs() as i64;
 
-        let _: () = conn.set_ex(&full_key, &serialized, ttl_secs as u64)
+        let _: () = conn
+            .set_ex(&full_key, &serialized, ttl_secs as u64)
             .await
             .map_err(|e| TaskError::Backend(format!("Failed to set metadata: {}", e)))?;
 
@@ -350,7 +352,8 @@ impl ResultBackend for RedisBackend {
 
         let mut conn = self.get_conn().await?;
 
-        let value: Option<String> = conn.get(&full_key)
+        let value: Option<String> = conn
+            .get(&full_key)
             .await
             .map_err(|e| TaskError::Backend(format!("Failed to get metadata: {}", e)))?;
 
@@ -369,7 +372,8 @@ impl ResultBackend for RedisBackend {
 
         let mut conn = self.get_conn().await?;
 
-        let _: () = conn.del(&full_key)
+        let _: () = conn
+            .del(&full_key)
             .await
             .map_err(|e| TaskError::Backend(format!("Failed to delete metadata: {}", e)))?;
 

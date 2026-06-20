@@ -37,12 +37,12 @@
 //! CODEGEN once the standardize sweep grows a `format_string_codec`
 //! section type. See `.aw/handoffs/1414-patrol-handoff.md` cluster.
 
-use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
-use std::sync::atomic::AtomicU32;
-use super::super::value::MbValue;
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU32;
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -127,7 +127,7 @@ unsafe extern "C" fn dispatch_iter_unpack(args_ptr: *const MbValue, nargs: usize
 
 unsafe extern "C" fn dispatch_pack_into(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let fmt    = a.get(0).copied().unwrap_or_else(MbValue::none);
+    let fmt = a.get(0).copied().unwrap_or_else(MbValue::none);
     let buffer = a.get(1).copied().unwrap_or_else(MbValue::none);
     let offset = a.get(2).copied().unwrap_or_else(MbValue::none);
     // Variadic tail. Accept both flat positional and single list/tuple
@@ -155,7 +155,7 @@ unsafe extern "C" fn dispatch_unpack_from(args_ptr: *const MbValue, nargs: usize
 unsafe extern "C" fn dispatch_struct_init(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let this = a.get(0).copied().unwrap_or_else(MbValue::none);
-    let fmt  = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let fmt = a.get(1).copied().unwrap_or_else(MbValue::none);
     mb_struct_init_inplace(this, fmt);
     MbValue::none()
 }
@@ -189,12 +189,12 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("pack",        dispatch_pack        as usize),
-        ("unpack",      dispatch_unpack      as usize),
-        ("calcsize",    dispatch_calcsize    as usize),
-        ("Struct",      dispatch_struct      as usize),
+        ("pack", dispatch_pack as usize),
+        ("unpack", dispatch_unpack as usize),
+        ("calcsize", dispatch_calcsize as usize),
+        ("Struct", dispatch_struct as usize),
         ("iter_unpack", dispatch_iter_unpack as usize),
-        ("pack_into",   dispatch_pack_into   as usize),
+        ("pack_into", dispatch_pack_into as usize),
         ("unpack_from", dispatch_unpack_from as usize),
     ];
     for (name, addr) in dispatchers {
@@ -258,14 +258,21 @@ fn with_str<R>(val: MbValue, f: impl FnOnce(&str) -> R) -> R {
 }
 
 #[derive(Copy, Clone)]
-enum Endian { Little, Big }
+enum Endian {
+    Little,
+    Big,
+}
 
 /// One parsed format token: optional repeat count + a single code char +
 /// the sizing mode it was parsed under. For the string codes (`s`, `p`) the
 /// `count` is the field width and the token consumes exactly one argument (not
 /// `count` arguments). `mode` is carried so size / alignment lookups stay
 /// correct even after the endian/mode prefix has been stripped.
-struct Token { count: usize, code: char, mode: Mode }
+struct Token {
+    count: usize,
+    code: char,
+    mode: Mode,
+}
 
 /// Native size of this token's scalar code (mode-aware).
 fn tok_size(t: &Token) -> usize {
@@ -307,7 +314,10 @@ fn raise_overflow_error(msg: &str) {
 ///   * Standard mode uses fixed sizes (`l`/`L` = 4), no alignment padding, and
 ///     rejects the native-only `n`/`N`/`P` codes.
 #[derive(Copy, Clone, PartialEq)]
-enum Mode { Native, Standard }
+enum Mode {
+    Native,
+    Standard,
+}
 
 /// Strip the leading byte-order / native-mode prefix and return the endian,
 /// the sizing mode, and the remaining code string. Only a marker at index 0 is
@@ -333,11 +343,29 @@ fn split_prefix(fmt: &str) -> (Endian, Mode, &str) {
 /// Whether `c` is a recognised format/pad code at all (mode-independent). Any
 /// other character is a hard "bad char in struct format" error.
 fn is_known_code(c: char) -> bool {
-    matches!(c,
-        'x' | 'c' | 'b' | 'B' | '?' | 's' | 'p'
-        | 'e' | 'h' | 'H'
-        | 'i' | 'I' | 'l' | 'L' | 'f'
-        | 'q' | 'Q' | 'd' | 'n' | 'N' | 'P')
+    matches!(
+        c,
+        'x' | 'c'
+            | 'b'
+            | 'B'
+            | '?'
+            | 's'
+            | 'p'
+            | 'e'
+            | 'h'
+            | 'H'
+            | 'i'
+            | 'I'
+            | 'l'
+            | 'L'
+            | 'f'
+            | 'q'
+            | 'Q'
+            | 'd'
+            | 'n'
+            | 'N'
+            | 'P'
+    )
 }
 
 /// Size in bytes of a single scalar format code for a given sizing mode. The
@@ -349,7 +377,13 @@ fn code_size_mode(c: char, mode: Mode) -> usize {
         'x' | 'c' | 'b' | 'B' | '?' | 's' | 'p' => 1,
         'e' | 'h' | 'H' => 2,
         'i' | 'I' | 'f' => 4,
-        'l' | 'L' => if mode == Mode::Native { 8 } else { 4 },
+        'l' | 'L' => {
+            if mode == Mode::Native {
+                8
+            } else {
+                4
+            }
+        }
         'q' | 'Q' | 'd' | 'n' | 'N' | 'P' => 8,
         _ => 0,
     }
@@ -387,12 +421,16 @@ fn parse_format(rest: &str, mode: Mode) -> Option<Vec<Token>> {
     for c in rest.chars() {
         if c.is_ascii_digit() {
             let d = c as usize - '0' as usize;
-            let next = count.unwrap_or(0)
+            let next = count
+                .unwrap_or(0)
                 .checked_mul(10)
                 .and_then(|v| v.checked_add(d));
             match next {
                 Some(v) => count = Some(v),
-                None => { overflow = true; count = Some(usize::MAX); }
+                None => {
+                    overflow = true;
+                    count = Some(usize::MAX);
+                }
             }
             continue;
         }
@@ -421,7 +459,11 @@ fn parse_format(rest: &str, mode: Mode) -> Option<Vec<Token>> {
             raise_struct_error("overflow in item count");
             return None;
         }
-        tokens.push(Token { count: count.take().unwrap_or(1), code: c, mode });
+        tokens.push(Token {
+            count: count.take().unwrap_or(1),
+            code: c,
+            mode,
+        });
     }
     // A repeat count with no following code (e.g. "4", "12345", "c12345",
     // "14s42") is illegal: CPython raises "repeat count given without format
@@ -440,11 +482,14 @@ fn parse_format(rest: &str, mode: Mode) -> Option<Vec<Token>> {
 /// Number of argument values a parsed format string consumes (pad bytes take
 /// none; `s`/`p` take one regardless of width; everything else takes `count`).
 fn value_slots(tokens: &[Token]) -> usize {
-    tokens.iter().map(|t| match t.code {
-        'x' => 0,
-        's' | 'p' => 1,
-        _ => t.count,
-    }).sum()
+    tokens
+        .iter()
+        .map(|t| match t.code {
+            'x' => 0,
+            's' | 'p' => 1,
+            _ => t.count,
+        })
+        .sum()
 }
 
 /// Parse + validate a full format string (prefix + codes). Returns the endian
@@ -485,9 +530,15 @@ fn token_width(t: &Token) -> usize {
 /// have alignment 1, so they never pad.
 fn token_pad(t: &Token, offset: usize) -> usize {
     let align = code_align(t.code, t.mode);
-    if align <= 1 { return 0; }
+    if align <= 1 {
+        return 0;
+    }
     let rem = offset % align;
-    if rem == 0 { 0 } else { align - rem }
+    if rem == 0 {
+        0
+    } else {
+        align - rem
+    }
 }
 
 /// Total packed size of a parsed token list, including native alignment
@@ -506,13 +557,11 @@ pub fn mb_struct_calcsize(fmt: MbValue) -> MbValue {
     let fmt = normalize_format(fmt);
     let mut total: usize = 0;
     let mut bad = false;
-    with_str(fmt, |s| {
-        match parse_checked(s) {
-            Some((_endian, tokens)) => {
-                total = layout_size(&tokens);
-            }
-            None => bad = true,
+    with_str(fmt, |s| match parse_checked(s) {
+        Some((_endian, tokens)) => {
+            total = layout_size(&tokens);
         }
+        None => bad = true,
     });
     if bad {
         // A pending struct.error is set; the returned value is ignored by the
@@ -562,9 +611,15 @@ fn read_int_sized(slice: &[u8], size: usize, signed: bool, endian: Endian) -> i6
 }
 
 fn arg_as_float(v: MbValue) -> f64 {
-    if let Some(f) = v.as_float() { return f; }
-    if let Some(i) = v.as_int() { return i as f64; }
-    if let Some(b) = v.as_bool() { return if b { 1.0 } else { 0.0 }; }
+    if let Some(f) = v.as_float() {
+        return f;
+    }
+    if let Some(i) = v.as_int() {
+        return i as f64;
+    }
+    if let Some(b) = v.as_bool() {
+        return if b { 1.0 } else { 0.0 };
+    }
     0.0
 }
 
@@ -581,8 +636,12 @@ fn is_floatable(v: MbValue) -> bool {
 /// values are likewise rejected here (the legacy `c`-code byte coercion is
 /// handled separately in the `'c'` arm).
 fn arg_as_pyint(v: MbValue) -> Option<i64> {
-    if let Some(i) = v.as_int() { return Some(i); }
-    if let Some(b) = v.as_bool() { return Some(if b { 1 } else { 0 }); }
+    if let Some(i) = v.as_int() {
+        return Some(i);
+    }
+    if let Some(b) = v.as_bool() {
+        return Some(if b { 1 } else { 0 });
+    }
     None
 }
 
@@ -644,7 +703,7 @@ fn f64_to_half(value: f64) -> Result<u16, ()> {
 
     let x = value.abs();
     let (mut f, mut e) = frexp(x); // x == f * 2^e, 0.5 <= f < 1.0
-    // Renormalize to 1.0 <= f < 2.0.
+                                   // Renormalize to 1.0 <= f < 2.0.
     f *= 2.0;
     e -= 1;
 
@@ -710,7 +769,11 @@ fn half_to_f64(h: u16) -> f64 {
         // Zero or subnormal.
         sign_f * (frac as f64) * 2f64.powi(-24)
     } else if exp == 0x1F {
-        if frac == 0 { sign_f * f64::INFINITY } else { f64::NAN }
+        if frac == 0 {
+            sign_f * f64::INFINITY
+        } else {
+            f64::NAN
+        }
     } else {
         let m = 1.0 + (frac as f64) / 1024.0;
         sign_f * m * 2f64.powi(exp as i32 - 15)
@@ -725,13 +788,19 @@ pub fn mb_struct_pack(fmt: MbValue, args: &[MbValue]) -> MbValue {
     with_str(fmt, |fmt_str| {
         let (endian, tokens) = match parse_checked(fmt_str) {
             Some(t) => t,
-            None => { bad = true; return; }
+            None => {
+                bad = true;
+                return;
+            }
         };
         // Argument-count check (CPython: "pack expected N items for packing").
         let needed = value_slots(&tokens);
         if args.len() != needed {
             raise_struct_error(&format!(
-                "pack expected {} items for packing (got {})", needed, args.len()));
+                "pack expected {} items for packing (got {})",
+                needed,
+                args.len()
+            ));
             bad = true;
             return;
         }
@@ -739,10 +808,14 @@ pub fn mb_struct_pack(fmt: MbValue, args: &[MbValue]) -> MbValue {
         for tok in &tokens {
             // Native-mode alignment: pad with zero bytes so the next field
             // starts on its natural boundary (no-op in standard mode).
-            for _ in 0..token_pad(tok, out.len()) { out.push(0u8); }
+            for _ in 0..token_pad(tok, out.len()) {
+                out.push(0u8);
+            }
             match tok.code {
                 'x' => {
-                    for _ in 0..tok.count { out.push(0u8); }
+                    for _ in 0..tok.count {
+                        out.push(0u8);
+                    }
                 }
                 's' => {
                     // Fixed N-byte field, one bytes argument: zero-pad if short,
@@ -794,21 +867,20 @@ pub fn mb_struct_pack(fmt: MbValue, args: &[MbValue]) -> MbValue {
                         match tok.code {
                             'f' => {
                                 if f.is_finite() && (f as f32).is_infinite() {
-                                    raise_overflow_error(
-                                        "float too large to pack with f format");
+                                    raise_overflow_error("float too large to pack with f format");
                                     bad = true;
                                     return;
                                 }
                                 let bytes = match endian {
                                     Endian::Little => (f as f32).to_le_bytes(),
-                                    Endian::Big    => (f as f32).to_be_bytes(),
+                                    Endian::Big => (f as f32).to_be_bytes(),
                                 };
                                 out.extend_from_slice(&bytes);
                             }
                             'd' => {
                                 let bytes = match endian {
                                     Endian::Little => f.to_le_bytes(),
-                                    Endian::Big    => f.to_be_bytes(),
+                                    Endian::Big => f.to_be_bytes(),
                                 };
                                 out.extend_from_slice(&bytes);
                             }
@@ -818,14 +890,15 @@ pub fn mb_struct_pack(fmt: MbValue, args: &[MbValue]) -> MbValue {
                                     Ok(h) => h,
                                     Err(()) => {
                                         raise_overflow_error(
-                                            "float too large to pack with e format");
+                                            "float too large to pack with e format",
+                                        );
                                         bad = true;
                                         return;
                                     }
                                 };
                                 let bytes = match endian {
                                     Endian::Little => h.to_le_bytes(),
-                                    Endian::Big    => h.to_be_bytes(),
+                                    Endian::Big => h.to_be_bytes(),
                                 };
                                 out.extend_from_slice(&bytes);
                             }
@@ -859,13 +932,14 @@ pub fn mb_struct_pack(fmt: MbValue, args: &[MbValue]) -> MbValue {
                         if (n as i128) < min || (n as i128) > max {
                             raise_struct_error(&format!(
                                 "'{}' format requires {} <= number <= {}",
-                                tok.code, min, max));
+                                tok.code, min, max
+                            ));
                             bad = true;
                             return;
                         }
                         match endian {
                             Endian::Little => write_int_le(&mut out, n, size),
-                            Endian::Big    => write_int_be(&mut out, n, size),
+                            Endian::Big => write_int_be(&mut out, n, size),
                         }
                     }
                 }
@@ -909,7 +983,9 @@ fn struct_unpack_into(bytes: &[u8], endian: Endian, tokens: &[Token], values: &m
         // standard mode).
         offset += token_pad(tok, offset);
         match tok.code {
-            'x' => { offset += tok.count; }
+            'x' => {
+                offset += tok.count;
+            }
             's' => {
                 // One bytes value of width N (the repeat count).
                 let n = tok.count;
@@ -937,16 +1013,16 @@ fn struct_unpack_into(bytes: &[u8], endian: Endian, tokens: &[Token], values: &m
             _ => {
                 let size = tok_size(tok);
                 for _ in 0..tok.count {
-                    if offset + size > bytes.len() { return; }
+                    if offset + size > bytes.len() {
+                        return;
+                    }
                     let slice = &bytes[offset..offset + size];
                     match tok.code {
-                        'c' => values.push(MbValue::from_ptr(
-                            MbObject::new_bytes(vec![slice[0]])
-                        )),
+                        'c' => values.push(MbValue::from_ptr(MbObject::new_bytes(vec![slice[0]]))),
                         'e' => {
                             let h = match endian {
                                 Endian::Little => u16::from_le_bytes([slice[0], slice[1]]),
-                                Endian::Big    => u16::from_be_bytes([slice[0], slice[1]]),
+                                Endian::Big => u16::from_be_bytes([slice[0], slice[1]]),
                             };
                             values.push(MbValue::from_float(half_to_f64(h)));
                         }
@@ -954,7 +1030,7 @@ fn struct_unpack_into(bytes: &[u8], endian: Endian, tokens: &[Token], values: &m
                             let arr = [slice[0], slice[1], slice[2], slice[3]];
                             let f = match endian {
                                 Endian::Little => f32::from_le_bytes(arr),
-                                Endian::Big    => f32::from_be_bytes(arr),
+                                Endian::Big => f32::from_be_bytes(arr),
                             } as f64;
                             values.push(MbValue::from_float(f));
                         }
@@ -963,7 +1039,7 @@ fn struct_unpack_into(bytes: &[u8], endian: Endian, tokens: &[Token], values: &m
                             arr.copy_from_slice(slice);
                             let f = match endian {
                                 Endian::Little => f64::from_le_bytes(arr),
-                                Endian::Big    => f64::from_be_bytes(arr),
+                                Endian::Big => f64::from_be_bytes(arr),
                             };
                             values.push(MbValue::from_float(f));
                         }
@@ -971,8 +1047,7 @@ fn struct_unpack_into(bytes: &[u8], endian: Endian, tokens: &[Token], values: &m
                         _ => {
                             // Width-driven integer decode (mode-aware: `l`/`L`
                             // are 8 bytes in native mode, 4 in standard mode).
-                            let signed = matches!(tok.code,
-                                'b' | 'h' | 'i' | 'l' | 'q' | 'n');
+                            let signed = matches!(tok.code, 'b' | 'h' | 'i' | 'l' | 'q' | 'n');
                             let n = read_int_sized(slice, size, signed, endian);
                             values.push(MbValue::from_int(n));
                         }
@@ -997,7 +1072,10 @@ pub fn mb_struct_unpack(fmt: MbValue, data: MbValue) -> MbValue {
     with_str(fmt, |fmt_str| {
         let (endian, tokens) = match parse_checked(fmt_str) {
             Some(t) => t,
-            None => { bad = true; return; }
+            None => {
+                bad = true;
+                return;
+            }
         };
         // Buffer size must match the full native layout (including alignment
         // padding), not just the summed field widths.
@@ -1006,15 +1084,13 @@ pub fn mb_struct_unpack(fmt: MbValue, data: MbValue) -> MbValue {
         // A non-buffer argument (int, None, ...) is a TypeError, not a size
         // mismatch.
         let Some(buf) = buffer_bytes(data) else {
-            raise_type_error(
-                "a bytes-like object is required, not a non-buffer");
+            raise_type_error("a bytes-like object is required, not a non-buffer");
             bad = true;
             return;
         };
 
         if buf.len() != expected {
-            raise_struct_error(&format!(
-                "unpack requires a buffer of {} bytes", expected));
+            raise_struct_error(&format!("unpack requires a buffer of {} bytes", expected));
             bad = true;
             return;
         }
@@ -1076,8 +1152,9 @@ fn normalize_format(fmt: MbValue) -> MbValue {
         unsafe {
             let decoded = match &(*ptr).data {
                 ObjData::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-                ObjData::ByteArray(lock) =>
-                    Some(String::from_utf8_lossy(&lock.read().unwrap()).into_owned()),
+                ObjData::ByteArray(lock) => {
+                    Some(String::from_utf8_lossy(&lock.read().unwrap()).into_owned())
+                }
                 _ => None,
             };
             if let Some(s) = decoded {
@@ -1100,10 +1177,15 @@ fn normalize_format(fmt: MbValue) -> MbValue {
 fn bound_method(addr: usize, bound: Vec<MbValue>) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("func".to_string(), MbValue::from_func(addr));
-    fields.insert("args".to_string(),
-        MbValue::from_ptr(MbObject::new_list(bound)));
+    fields.insert(
+        "args".to_string(),
+        MbValue::from_ptr(MbObject::new_list(bound)),
+    );
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: "functools.partial".to_string(),
             fields: RwLock::new(fields),
@@ -1125,18 +1207,27 @@ fn populate_struct_fields(fields: &mut FxHashMap<String, MbValue>, fmt: MbValue)
     fields.insert("size".to_string(), size);
     // Each bound method re-resolves the format from a fresh str value so the
     // partial owns its own copy (the instance `format` field can be mutated).
-    let fmt_for = || MbValue::from_ptr(MbObject::new_str(
-        with_str(fmt, |s| s.to_string())));
-    fields.insert("pack".to_string(),
-        bound_method(dispatch_pack as usize, vec![fmt_for()]));
-    fields.insert("unpack".to_string(),
-        bound_method(dispatch_unpack as usize, vec![fmt_for()]));
-    fields.insert("pack_into".to_string(),
-        bound_method(dispatch_pack_into as usize, vec![fmt_for()]));
-    fields.insert("unpack_from".to_string(),
-        bound_method(dispatch_unpack_from as usize, vec![fmt_for()]));
-    fields.insert("iter_unpack".to_string(),
-        bound_method(dispatch_iter_unpack as usize, vec![fmt_for()]));
+    let fmt_for = || MbValue::from_ptr(MbObject::new_str(with_str(fmt, |s| s.to_string())));
+    fields.insert(
+        "pack".to_string(),
+        bound_method(dispatch_pack as usize, vec![fmt_for()]),
+    );
+    fields.insert(
+        "unpack".to_string(),
+        bound_method(dispatch_unpack as usize, vec![fmt_for()]),
+    );
+    fields.insert(
+        "pack_into".to_string(),
+        bound_method(dispatch_pack_into as usize, vec![fmt_for()]),
+    );
+    fields.insert(
+        "unpack_from".to_string(),
+        bound_method(dispatch_unpack_from as usize, vec![fmt_for()]),
+    );
+    fields.insert(
+        "iter_unpack".to_string(),
+        bound_method(dispatch_iter_unpack as usize, vec![fmt_for()]),
+    );
 }
 
 /// struct.Struct(format) -> Struct instance
@@ -1152,7 +1243,10 @@ pub fn mb_struct_new(fmt: MbValue) -> MbValue {
     let mut fields = FxHashMap::default();
     populate_struct_fields(&mut fields, fmt);
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: "Struct".to_string(),
             fields: RwLock::new(fields),
@@ -1228,12 +1322,15 @@ pub fn mb_struct_pack_into(
     if super::super::exception::current_exception_type().is_some() {
         return MbValue::none();
     }
-    let packed_bytes: Vec<u8> = packed.as_ptr().map(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::Bytes(b) => b.clone(),
-            _ => Vec::new(),
-        }
-    }).unwrap_or_default();
+    let packed_bytes: Vec<u8> = packed
+        .as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Bytes(b) => b.clone(),
+                _ => Vec::new(),
+            }
+        })
+        .unwrap_or_default();
     let size = packed_bytes.len();
     let off = offset.as_int().unwrap_or(0);
 
@@ -1249,14 +1346,18 @@ pub fn mb_struct_pack_into(
                     if -off > buflen {
                         raise_struct_error(&format!(
                             "offset {} out of range for {}-byte buffer",
-                            off, buf.len()));
+                            off,
+                            buf.len()
+                        ));
                         return MbValue::none();
                     }
                     let start = (buflen + off) as usize;
                     // The field must fit between `start` and the buffer end.
                     if start + size > buf.len() {
                         raise_struct_error(&format!(
-                            "no space to pack {} bytes at offset {}", size, off));
+                            "no space to pack {} bytes at offset {}",
+                            size, off
+                        ));
                         return MbValue::none();
                     }
                     for (i, b) in packed_bytes.iter().enumerate() {
@@ -1269,7 +1370,11 @@ pub fn mb_struct_pack_into(
                     raise_struct_error(&format!(
                         "pack_into requires a buffer of at least {} bytes for \
                          packing {} bytes at offset {} (actual buffer size is {})",
-                        off as usize + size, size, off, buf.len()));
+                        off as usize + size,
+                        size,
+                        off,
+                        buf.len()
+                    ));
                     return MbValue::none();
                 }
                 let start = off as usize;
@@ -1309,13 +1414,18 @@ pub fn mb_struct_unpack_from(fmt: MbValue, buffer: MbValue, offset: MbValue) -> 
         // enough data" (distinct CPython messages from the positive case).
         if -off > buflen {
             raise_struct_error(&format!(
-                "offset {} out of range for {}-byte buffer", off, bytes.len()));
+                "offset {} out of range for {}-byte buffer",
+                off,
+                bytes.len()
+            ));
             return MbValue::from_ptr(MbObject::new_tuple(Vec::new()));
         }
         let abs_off = buflen + off;
         if abs_off + size as i64 > buflen {
             raise_struct_error(&format!(
-                "not enough data to unpack {} bytes at offset {}", size, off));
+                "not enough data to unpack {} bytes at offset {}",
+                size, off
+            ));
             return MbValue::from_ptr(MbObject::new_tuple(Vec::new()));
         }
         let start = abs_off as usize;
@@ -1328,7 +1438,11 @@ pub fn mb_struct_unpack_from(fmt: MbValue, buffer: MbValue, offset: MbValue) -> 
         raise_struct_error(&format!(
             "unpack_from requires a buffer of at least {} bytes for unpacking \
              {} bytes at offset {} (actual buffer size is {})",
-            off as usize + size, size, off, bytes.len()));
+            off as usize + size,
+            size,
+            off,
+            bytes.len()
+        ));
         return MbValue::from_ptr(MbObject::new_tuple(Vec::new()));
     }
     let start = abs_off as usize;
@@ -1423,7 +1537,9 @@ mod tests {
                 assert_eq!(items[0].as_int(), Some(42));
                 assert_eq!(items[1].as_int(), Some(1000));
                 assert_eq!(items[2].as_int(), Some(-5));
-            } else { panic!("expected Tuple"); }
+            } else {
+                panic!("expected Tuple");
+            }
         }
     }
 
@@ -1435,10 +1551,14 @@ mod tests {
         unsafe {
             if let ObjData::Bytes(ref b) = (*le.as_ptr().unwrap()).data {
                 assert_eq!(b, &[0x78, 0x56, 0x34, 0x12]);
-            } else { panic!("expected Bytes"); }
+            } else {
+                panic!("expected Bytes");
+            }
             if let ObjData::Bytes(ref b) = (*be.as_ptr().unwrap()).data {
                 assert_eq!(b, &[0x12, 0x34, 0x56, 0x78]);
-            } else { panic!("expected Bytes"); }
+            } else {
+                panic!("expected Bytes");
+            }
         }
     }
 
@@ -1451,7 +1571,9 @@ mod tests {
             if let ObjData::Tuple(ref items) = (*unpacked.as_ptr().unwrap()).data {
                 assert_eq!(items.len(), 1);
                 assert!((items[0].as_float().unwrap() - 3.14).abs() < 1e-9);
-            } else { panic!("expected Tuple"); }
+            } else {
+                panic!("expected Tuple");
+            }
         }
     }
 
@@ -1464,7 +1586,9 @@ mod tests {
                 assert_eq!(b.len(), 2);
                 assert_eq!(b[0], 0);
                 assert_eq!(b[1], 1);
-            } else { panic!("expected Bytes"); }
+            } else {
+                panic!("expected Bytes");
+            }
         }
     }
 
@@ -1473,7 +1597,9 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     let f = fields.read().unwrap();
-                    if let Some(v) = f.get(field) { return *v; }
+                    if let Some(v) = f.get(field) {
+                        return *v;
+                    }
                 }
             }
         }
@@ -1482,7 +1608,11 @@ mod tests {
 
     fn get_str(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
     }
 
@@ -1524,7 +1654,9 @@ mod tests {
             unsafe {
                 if let ObjData::Tuple(ref items) = (*t.as_ptr().unwrap()).data {
                     got.push(items[0].as_int().unwrap());
-                } else { panic!("expected Tuple"); }
+                } else {
+                    panic!("expected Tuple");
+                }
             }
         }
         assert_eq!(got, vec![10, 20, 30]);
@@ -1558,7 +1690,9 @@ mod tests {
                 assert_eq!(&b[2..6], &[0x04, 0x03, 0x02, 0x01]);
                 // bytes 6..8 untouched
                 assert_eq!(&b[6..8], &[0, 0]);
-            } else { panic!("expected ByteArray"); }
+            } else {
+                panic!("expected ByteArray");
+            }
         }
     }
 
@@ -1572,7 +1706,9 @@ mod tests {
             if let ObjData::Tuple(ref items) = (*r.as_ptr().unwrap()).data {
                 assert_eq!(items.len(), 1);
                 assert_eq!(items[0].as_int(), Some(0x01020304));
-            } else { panic!("expected Tuple"); }
+            } else {
+                panic!("expected Tuple");
+            }
         }
     }
 
@@ -1580,10 +1716,7 @@ mod tests {
     fn test_pack_into_unpack_from_roundtrip() {
         // Round-trip via a bytearray buffer with leading + trailing pad.
         let buf = MbValue::from_ptr(MbObject::new_bytearray(vec![0u8; 16]));
-        let args = vec![
-            MbValue::from_int(42),
-            MbValue::from_int(1000),
-        ];
+        let args = vec![MbValue::from_int(42), MbValue::from_int(1000)];
         let _ = mb_struct_pack_into(s("<iH"), buf, MbValue::from_int(4), &args);
         let r = mb_struct_unpack_from(s("<iH"), buf, MbValue::from_int(4));
         unsafe {
@@ -1591,7 +1724,9 @@ mod tests {
                 assert_eq!(items.len(), 2);
                 assert_eq!(items[0].as_int(), Some(42));
                 assert_eq!(items[1].as_int(), Some(1000));
-            } else { panic!("expected Tuple"); }
+            } else {
+                panic!("expected Tuple");
+            }
         }
     }
 
@@ -1604,7 +1739,9 @@ mod tests {
             if let ObjData::Tuple(ref items) = (*r.as_ptr().unwrap()).data {
                 // No bytes left to read — produces no tuple entries.
                 assert_eq!(items.len(), 0);
-            } else { panic!("expected Tuple"); }
+            } else {
+                panic!("expected Tuple");
+            }
         }
     }
 
@@ -1617,21 +1754,34 @@ mod tests {
         // fields. We can't easily call register() in tests, but we can
         // verify the same shape is constructible.
         let err_obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+            header: MbObjectHeader {
+                rc: AtomicU32::new(1),
+                kind: ObjKind::Instance,
+            },
             data: ObjData::Instance {
                 class_name: "error".to_string(),
                 fields: RwLock::new({
                     let mut f = FxHashMap::default();
-                    f.insert("__name__".to_string(),
-                        MbValue::from_ptr(MbObject::new_str("error".to_string())));
-                    f.insert("__module__".to_string(),
-                        MbValue::from_ptr(MbObject::new_str("struct".to_string())));
+                    f.insert(
+                        "__name__".to_string(),
+                        MbValue::from_ptr(MbObject::new_str("error".to_string())),
+                    );
+                    f.insert(
+                        "__module__".to_string(),
+                        MbValue::from_ptr(MbObject::new_str("struct".to_string())),
+                    );
                     f
                 }),
             },
         });
         let err = MbValue::from_ptr(Box::into_raw(err_obj));
-        assert_eq!(get_str(get_field(err, "__name__")), Some("error".to_string()));
-        assert_eq!(get_str(get_field(err, "__module__")), Some("struct".to_string()));
+        assert_eq!(
+            get_str(get_field(err, "__name__")),
+            Some("error".to_string())
+        );
+        assert_eq!(
+            get_str(get_field(err, "__module__")),
+            Some("struct".to_string())
+        );
     }
 }

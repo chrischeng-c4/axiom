@@ -47,7 +47,8 @@ const REPS: usize = 50;
 // EC env override: vat exports LUMEN_BENCH_PG_DSN / LUMEN_BENCH_OS_URL when it
 // provisions pg + OpenSearch; fall back to the local-dev defaults otherwise.
 fn pg_dsn() -> String {
-    std::env::var("LUMEN_BENCH_PG_DSN").unwrap_or_else(|_| "host=/tmp dbname=lumenbench".to_string())
+    std::env::var("LUMEN_BENCH_PG_DSN")
+        .unwrap_or_else(|_| "host=/tmp dbname=lumenbench".to_string())
 }
 fn os_url() -> String {
     std::env::var("LUMEN_BENCH_OS_URL").unwrap_or_else(|_| "http://localhost:9200".to_string())
@@ -748,7 +749,8 @@ fn lumen_native_frame(cell: &str) -> Vec<u8> {
 // postgres: tokio-postgres
 // ---------------------------------------------------------------------------
 async fn pg_setup(docs: &[Doc], table: &str) -> Option<tokio_postgres::Client> {
-    let (client, connection) = match tokio_postgres::connect(&pg_dsn(), tokio_postgres::NoTls).await {
+    let (client, connection) = match tokio_postgres::connect(&pg_dsn(), tokio_postgres::NoTls).await
+    {
         Ok(c) => c,
         Err(e) => {
             eprintln!("  ! postgres unavailable ({e}); skipping pg");

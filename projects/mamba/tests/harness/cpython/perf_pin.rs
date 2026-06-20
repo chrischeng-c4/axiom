@@ -490,4 +490,8 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-harness!(run_pin, "tests/harness/cpython/config/perf/pins", r"^.*\.toml$");
+harness!(
+    run_pin,
+    "tests/harness/cpython/config/perf/pins",
+    r"^.*\.toml$"
+);

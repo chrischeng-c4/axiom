@@ -11,7 +11,7 @@
 // AW-EC-END
 
 #[test]
-#[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
+#[ignore = "AW EC placeholder: implement this external contract test or keep the aw.toml inventory command authoritative"]
 fn meter_profile_phase_boundary_cost_report() {
     panic!("AW EC placeholder for meter-profile-phase-boundary-cost-report");
 }

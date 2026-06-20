@@ -277,19 +277,20 @@ impl AofWriter {
             let mut header = [0u8; HEADER_LEN];
             while off + HEADER_LEN as u64 <= good_end {
                 src.seek(SeekFrom::Start(off))?;
-                src.read_exact(&mut header).context("read frame header for compaction")?;
+                src.read_exact(&mut header)
+                    .context("read frame header for compaction")?;
                 let seq = u64::from_le_bytes([
                     header[0], header[1], header[2], header[3], header[4], header[5], header[6],
                     header[7],
                 ]);
-                let len =
-                    u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as u64;
+                let len = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as u64;
                 let frame_end = off + HEADER_LEN as u64 + len;
                 if frame_end > good_end {
                     break; // defensive: torn tail inside the good region cannot happen
                 }
                 let mut payload = vec![0u8; len as usize];
-                src.read_exact(&mut payload).context("read frame payload for compaction")?;
+                src.read_exact(&mut payload)
+                    .context("read frame payload for compaction")?;
                 if seq > through {
                     dst.write_all(&header).context("write surviving header")?;
                     dst.write_all(&payload).context("write surviving payload")?;
@@ -297,11 +298,17 @@ impl AofWriter {
                 off = frame_end;
             }
             dst.flush().context("flush AOF compaction temp")?;
-            dst.get_ref().sync_all().context("fsync AOF compaction temp")?;
+            dst.get_ref()
+                .sync_all()
+                .context("fsync AOF compaction temp")?;
         }
 
         std::fs::rename(&tmp, &self.path).with_context(|| {
-            format!("commit AOF compaction {} -> {}", tmp.display(), self.path.display())
+            format!(
+                "commit AOF compaction {} -> {}",
+                tmp.display(),
+                self.path.display()
+            )
         })?;
 
         // Re-open the append handle on the freshly compacted file; the old handle
@@ -479,8 +486,10 @@ mod tests {
         let path = dir.path().join("a.aof");
         let mut w = AofWriter::open_with_policy(&path, FsyncPolicy::Always).unwrap();
         w.append(1, &rec(create_entry("u"))).unwrap();
-        w.append(2, &rec(index_entry("u", "u1", "a@x.com"))).unwrap();
-        w.append(3, &rec(index_entry("u", "u2", "b@x.com"))).unwrap();
+        w.append(2, &rec(index_entry("u", "u1", "a@x.com")))
+            .unwrap();
+        w.append(3, &rec(index_entry("u", "u2", "b@x.com")))
+            .unwrap();
         w.sync().unwrap();
 
         let mut seqs = Vec::new();
@@ -501,7 +510,8 @@ mod tests {
         let path = dir.path().join("a.aof");
         let mut w = AofWriter::open_with_policy(&path, FsyncPolicy::Always).unwrap();
         for s in 1..=5 {
-            w.append(s, &rec(index_entry("u", &format!("u{s}"), "x@y"))).unwrap();
+            w.append(s, &rec(index_entry("u", &format!("u{s}"), "x@y")))
+                .unwrap();
         }
         w.sync().unwrap();
         // from_seq = 3 → only seq 4, 5 are replayed (strict `>`).
@@ -518,7 +528,8 @@ mod tests {
         let path = dir.path().join("a.aof");
         let mut w = AofWriter::open_with_policy(&path, FsyncPolicy::Always).unwrap();
         for s in 1..=6 {
-            w.append(s, &rec(index_entry("u", &format!("u{s}"), "x@y"))).unwrap();
+            w.append(s, &rec(index_entry("u", &format!("u{s}"), "x@y")))
+                .unwrap();
         }
         w.sync().unwrap();
         w.truncate_through(4).unwrap();
@@ -537,7 +548,8 @@ mod tests {
         {
             let mut w = AofWriter::open_with_policy(&path, FsyncPolicy::Always).unwrap();
             for s in 1..=5 {
-                w.append(s, &rec(index_entry("u", &format!("u{s}"), "x@y"))).unwrap();
+                w.append(s, &rec(index_entry("u", &format!("u{s}"), "x@y")))
+                    .unwrap();
             }
             w.sync().unwrap();
             w.truncate_through(2).unwrap();
@@ -599,7 +611,11 @@ mod tests {
         // Flip a byte in the LAST frame's payload → crc mismatch → torn tail.
         let len = std::fs::metadata(&path).unwrap().len();
         {
-            let mut f = OpenOptions::new().read(true).write(true).open(&path).unwrap();
+            let mut f = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .unwrap();
             f.seek(SeekFrom::Start(len - 1)).unwrap();
             let mut b = [0u8; 1];
             f.read_exact(&mut b).unwrap();
@@ -706,12 +722,40 @@ mod crux_recovery_tests {
             collection_id: coll.into(),
             req: IndexRequest {
                 items: vec![
-                    IndexItem { external_id: eid.into(), field: "num".into(), value: FieldValue::Number(n) },
-                    IndexItem { external_id: eid.into(), field: "kw".into(), value: FieldValue::String(kw.into()) },
-                    IndexItem { external_id: eid.into(), field: "tags".into(), value: FieldValue::StringList(vec![tag.into()]) },
-                    IndexItem { external_id: eid.into(), field: "body".into(), value: FieldValue::String(if tok { "tok filler".into() } else { "filler".into() }) },
-                    IndexItem { external_id: eid.into(), field: "sig".into(), value: FieldValue::String(format!("{sig:016x}")) },
-                    IndexItem { external_id: eid.into(), field: "emb".into(), value: FieldValue::Vector(emb.to_vec()) },
+                    IndexItem {
+                        external_id: eid.into(),
+                        field: "num".into(),
+                        value: FieldValue::Number(n),
+                    },
+                    IndexItem {
+                        external_id: eid.into(),
+                        field: "kw".into(),
+                        value: FieldValue::String(kw.into()),
+                    },
+                    IndexItem {
+                        external_id: eid.into(),
+                        field: "tags".into(),
+                        value: FieldValue::StringList(vec![tag.into()]),
+                    },
+                    IndexItem {
+                        external_id: eid.into(),
+                        field: "body".into(),
+                        value: FieldValue::String(if tok {
+                            "tok filler".into()
+                        } else {
+                            "filler".into()
+                        }),
+                    },
+                    IndexItem {
+                        external_id: eid.into(),
+                        field: "sig".into(),
+                        value: FieldValue::String(format!("{sig:016x}")),
+                    },
+                    IndexItem {
+                        external_id: eid.into(),
+                        field: "emb".into(),
+                        value: FieldValue::Vector(emb.to_vec()),
+                    },
                 ],
                 request_id: None,
             },
@@ -719,7 +763,14 @@ mod crux_recovery_tests {
     }
 
     fn req(query: QueryNode, limit: u32) -> SearchRequest {
-        SearchRequest { query, limit, cursor: None, sort: None, track_total: true, collapse: None }
+        SearchRequest {
+            query,
+            limit,
+            cursor: None,
+            sort: None,
+            track_total: true,
+            collapse: None,
+        }
     }
 
     fn run(e: &Engine, coll: &str, query: QueryNode, limit: u32) -> Vec<(String, u32)> {
@@ -740,7 +791,11 @@ mod crux_recovery_tests {
 
     fn driven(extra: QueryNode) -> QueryNode {
         QueryNode::And(vec![
-            QueryNode::Match(MatchQuery { field: "body".into(), text: "tok".into(), op: MatchOp::And }),
+            QueryNode::Match(MatchQuery {
+                field: "body".into(),
+                text: "tok".into(),
+                op: MatchOp::And,
+            }),
             extra,
         ])
     }
@@ -749,20 +804,55 @@ mod crux_recovery_tests {
     /// as (set, byte-scores), kNN as the ordered ranked vec, and a doc count.
     fn battery(e: &Engine, coll: &str) -> Vec<(BTreeSet<String>, BTreeMap<String, u32>)> {
         let legs = vec![
-            driven(QueryNode::Range(RangeQuery { field: "num".into(), gt: None, gte: Some(2.0), lt: Some(9.0), lte: None })),
-            driven(QueryNode::Term(TermQuery { field: "kw".into(), value: FieldValue::String("a".into()) })),
-            driven(QueryNode::Terms(TermsQuery { field: "tags".into(), values: vec![FieldValue::String("red".into())] })),
-            QueryNode::Term(TermQuery { field: "kw".into(), value: FieldValue::String("b".into()) }),
-            QueryNode::Match(MatchQuery { field: "body".into(), text: "tok".into(), op: MatchOp::And }),
-            QueryNode::Hamming(crate::types::HammingQuery { field: "sig".into(), hash: format!("{:016x}", 0u64), max_distance: 8 }),
+            driven(QueryNode::Range(RangeQuery {
+                field: "num".into(),
+                gt: None,
+                gte: Some(2.0),
+                lt: Some(9.0),
+                lte: None,
+            })),
+            driven(QueryNode::Term(TermQuery {
+                field: "kw".into(),
+                value: FieldValue::String("a".into()),
+            })),
+            driven(QueryNode::Terms(TermsQuery {
+                field: "tags".into(),
+                values: vec![FieldValue::String("red".into())],
+            })),
+            QueryNode::Term(TermQuery {
+                field: "kw".into(),
+                value: FieldValue::String("b".into()),
+            }),
+            QueryNode::Match(MatchQuery {
+                field: "body".into(),
+                text: "tok".into(),
+                op: MatchOp::And,
+            }),
+            QueryNode::Hamming(crate::types::HammingQuery {
+                field: "sig".into(),
+                hash: format!("{:016x}", 0u64),
+                max_distance: 8,
+            }),
         ];
         legs.into_iter()
-            .map(|q| { let r = run(e, coll, q, 100_000); (set_of(&r), scores_of(&r)) })
+            .map(|q| {
+                let r = run(e, coll, q, 100_000);
+                (set_of(&r), scores_of(&r))
+            })
             .collect()
     }
 
     fn knn(e: &Engine, coll: &str, q: &[f32]) -> Vec<(String, u32)> {
-        run(e, coll, QueryNode::Knn(KnnQuery { field: "emb".into(), vector: q.to_vec(), k: 8 }), 8)
+        run(
+            e,
+            coll,
+            QueryNode::Knn(KnnQuery {
+                field: "emb".into(),
+                vector: q.to_vec(),
+                k: 8,
+            }),
+            8,
+        )
     }
 
     /// The full op TRANSCRIPT, in apply order. Two collections, all field types;
@@ -770,8 +860,14 @@ mod crux_recovery_tests {
     /// ordered RaftLogEntry list — applied with seq = index+1.
     fn transcript() -> (Vec<RaftLogEntry>, usize) {
         let mut ops = Vec::new();
-        ops.push(RaftLogEntry::CreateCollection { collection_id: "alpha".into(), req: schema() });
-        ops.push(RaftLogEntry::CreateCollection { collection_id: "beta".into(), req: schema() });
+        ops.push(RaftLogEntry::CreateCollection {
+            collection_id: "alpha".into(),
+            req: schema(),
+        });
+        ops.push(RaftLogEntry::CreateCollection {
+            collection_id: "beta".into(),
+            req: schema(),
+        });
         // Base docs (these end up under the segment checkpoint at S).
         let base = [
             ("d0", 1.0, "a", "red", true, 0u64, [0.1f32, 0.2, 0.3, 0.4]),
@@ -781,19 +877,45 @@ mod crux_recovery_tests {
         ];
         for (eid, n, kw, tag, tok, sig, emb) in base {
             ops.push(index_entry("alpha", eid, n, kw, tag, tok, sig, &emb));
-            ops.push(index_entry("beta", &format!("b{eid}"), n + 1.0, kw, tag, tok, sig + 1, &emb));
+            ops.push(index_entry(
+                "beta",
+                &format!("b{eid}"),
+                n + 1.0,
+                kw,
+                tag,
+                tok,
+                sig + 1,
+                &emb,
+            ));
         }
         // S = number of ops so far (the checkpoint boundary).
         let s = ops.len();
         // Tail docs (these end up only in the AOF, S+1..=A).
         let tail = [
-            ("d4", 2.5, "b", "red", true, 0u64, [0.11f32, 0.22, 0.33, 0.44]),
+            (
+                "d4",
+                2.5,
+                "b",
+                "red",
+                true,
+                0u64,
+                [0.11f32, 0.22, 0.33, 0.44],
+            ),
             ("d5", 6.5, "a", "blue", true, 7, [0.6, 0.6, 0.6, 0.6]),
             ("d6", 8.5, "c", "green", false, 2, [0.3, 0.3, 0.3, 0.3]),
         ];
         for (eid, n, kw, tag, tok, sig, emb) in tail {
             ops.push(index_entry("alpha", eid, n, kw, tag, tok, sig, &emb));
-            ops.push(index_entry("beta", &format!("b{eid}"), n + 1.0, kw, tag, tok, sig + 1, &emb));
+            ops.push(index_entry(
+                "beta",
+                &format!("b{eid}"),
+                n + 1.0,
+                kw,
+                tag,
+                tok,
+                sig + 1,
+                &emb,
+            ));
         }
         (ops, s)
     }
@@ -842,17 +964,42 @@ mod crux_recovery_tests {
         // --- RESTART: fresh engine, RDB reopen → AOF replay (no NATS). ---
         let restarted = Arc::new(Engine::new());
         let s_recovered = restarted.reopen_from_segment_dir(&seg_dir).unwrap();
-        assert_eq!(s_recovered, s as u64, "RDB must restore to the checkpoint seq S");
+        assert_eq!(
+            s_recovered, s as u64,
+            "RDB must restore to the checkpoint seq S"
+        );
         let a_recovered = replay_aof_into(&restarted, &aof_path, s_recovered).unwrap();
         assert_eq!(a_recovered, a as u64, "AOF replay must advance to A");
 
         // The restarted engine must be byte-identical to the live engine at A.
-        assert_eq!(battery(&restarted, "alpha"), live_alpha, "alpha legs diverged after RDB+AOF recovery");
-        assert_eq!(battery(&restarted, "beta"), live_beta, "beta legs diverged after RDB+AOF recovery");
-        assert_eq!(knn(&restarted, "alpha", &qa), live_knn_alpha, "alpha kNN diverged after RDB+AOF recovery");
-        assert_eq!(knn(&restarted, "beta", &qa), live_knn_beta, "beta kNN diverged after RDB+AOF recovery");
-        assert_eq!(restarted.stats("alpha").unwrap().documents_indexed, live.stats("alpha").unwrap().documents_indexed);
-        assert_eq!(restarted.stats("beta").unwrap().documents_indexed, live.stats("beta").unwrap().documents_indexed);
+        assert_eq!(
+            battery(&restarted, "alpha"),
+            live_alpha,
+            "alpha legs diverged after RDB+AOF recovery"
+        );
+        assert_eq!(
+            battery(&restarted, "beta"),
+            live_beta,
+            "beta legs diverged after RDB+AOF recovery"
+        );
+        assert_eq!(
+            knn(&restarted, "alpha", &qa),
+            live_knn_alpha,
+            "alpha kNN diverged after RDB+AOF recovery"
+        );
+        assert_eq!(
+            knn(&restarted, "beta", &qa),
+            live_knn_beta,
+            "beta kNN diverged after RDB+AOF recovery"
+        );
+        assert_eq!(
+            restarted.stats("alpha").unwrap().documents_indexed,
+            live.stats("alpha").unwrap().documents_indexed
+        );
+        assert_eq!(
+            restarted.stats("beta").unwrap().documents_indexed,
+            live.stats("beta").unwrap().documents_indexed
+        );
     }
 
     /// Recovery is robust to a torn AOF tail: a crash mid-append leaves a partial
@@ -887,7 +1034,10 @@ mod crux_recovery_tests {
         // overruns EOF, plus a stray byte.
         {
             use std::io::Write as _;
-            let mut f = std::fs::OpenOptions::new().append(true).open(&aof_path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&aof_path)
+                .unwrap();
             let mut hdr = [0u8; HEADER_LEN];
             hdr[0..8].copy_from_slice(&((ops.len()) as u64).to_le_bytes());
             hdr[8..12].copy_from_slice(&999_999u32.to_le_bytes());
@@ -906,11 +1056,27 @@ mod crux_recovery_tests {
         let s_rec = restarted.reopen_from_segment_dir(&seg_dir).unwrap();
         assert_eq!(s_rec, s as u64);
         let a_rec = replay_aof_into(&restarted, &aof_path, s_rec).unwrap();
-        assert_eq!(a_rec, (ops.len() - 1) as u64, "torn final frame must not be replayed");
+        assert_eq!(
+            a_rec,
+            (ops.len() - 1) as u64,
+            "torn final frame must not be replayed"
+        );
 
-        assert_eq!(battery(&restarted, "alpha"), live_alpha, "alpha diverged after torn-tail recovery");
-        assert_eq!(battery(&restarted, "beta"), live_beta, "beta diverged after torn-tail recovery");
-        assert_eq!(knn(&restarted, "alpha", &qa), live_knn, "kNN diverged after torn-tail recovery");
+        assert_eq!(
+            battery(&restarted, "alpha"),
+            live_alpha,
+            "alpha diverged after torn-tail recovery"
+        );
+        assert_eq!(
+            battery(&restarted, "beta"),
+            live_beta,
+            "beta diverged after torn-tail recovery"
+        );
+        assert_eq!(
+            knn(&restarted, "alpha", &qa),
+            live_knn,
+            "kNN diverged after torn-tail recovery"
+        );
 
         // And the next writer open truncates the torn tail back to the prefix.
         let _w = AofWriter::open(&aof_path).unwrap();

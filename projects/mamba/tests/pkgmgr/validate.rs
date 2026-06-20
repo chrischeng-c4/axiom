@@ -25,7 +25,9 @@ fn pkgmgr_validate_human_reports_all_eight_families_pass() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    for fam in ["init", "add", "lock", "sync", "run", "install", "hash", "cache"] {
+    for fam in [
+        "init", "add", "lock", "sync", "run", "install", "hash", "cache",
+    ] {
         assert!(
             stderr.contains(&format!("[pass] {fam}")),
             "stderr must include `[pass] {fam}`: {stderr}"
@@ -68,7 +70,9 @@ fn pkgmgr_validate_json_has_runner_contract_shape() {
     ] {
         assert!(stdout.contains(key), "json missing {key}: {stdout}");
     }
-    for fam in ["init", "add", "lock", "sync", "run", "install", "hash", "cache"] {
+    for fam in [
+        "init", "add", "lock", "sync", "run", "install", "hash", "cache",
+    ] {
         assert!(
             stdout.contains(&format!("\"{fam}\":")),
             "json missing family {fam}: {stdout}"

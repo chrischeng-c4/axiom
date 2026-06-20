@@ -2,8 +2,8 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-search-security-access-control
-// @capability search
-// @claim per-route-rbac-result-filtering
+// @capability security-auth
+// @claim role-based-authz-matrix-per-route
 // @contract search-security-rbac-and-limit
 // @category security
 // @required_for_production true

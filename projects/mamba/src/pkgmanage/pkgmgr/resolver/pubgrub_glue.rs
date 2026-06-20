@@ -45,9 +45,7 @@ pub struct IndexClientProvider {
     /// Memoization for per-version `requires_dist` to avoid re-hitting the
     /// `/pypi/{name}/{version}/json` endpoint when the same node is examined
     /// from multiple paths in the resolution graph.
-    requires_cache: std::sync::Mutex<
-        std::collections::HashMap<(String, String), Vec<String>>,
-    >,
+    requires_cache: std::sync::Mutex<std::collections::HashMap<(String, String), Vec<String>>>,
 }
 
 impl IndexClientProvider {
@@ -89,10 +87,7 @@ impl IndexClientProvider {
     ///
     /// Returns the cached result on subsequent calls for the same name —
     /// including the cached `Err` when the index returned 404 / parse error.
-    pub fn fetch_metadata_blocking(
-        &self,
-        name: &str,
-    ) -> Result<PackageMetadata, IndexError> {
+    pub fn fetch_metadata_blocking(&self, name: &str) -> Result<PackageMetadata, IndexError> {
         if let Some(hit) = self.cache.lock().unwrap().get(name) {
             return Ok(hit.clone());
         }
@@ -148,8 +143,8 @@ impl IndexClientProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::specifier::parse_set;
+    use super::*;
 
     fn req(name: &str, specs: &str) -> Requirement {
         Requirement {

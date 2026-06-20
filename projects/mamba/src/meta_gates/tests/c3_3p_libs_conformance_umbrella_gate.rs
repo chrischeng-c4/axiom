@@ -10,8 +10,9 @@ use std::path::PathBuf;
 use toml::Value;
 
 fn manifest_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/governance/gates/third_party/c3_3p_libs_conformance_umbrella_gate/manifest.toml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "tests/governance/gates/third_party/c3_3p_libs_conformance_umbrella_gate/manifest.toml",
+    )
 }
 
 fn manifest() -> Value {
@@ -269,10 +270,7 @@ fn per_child_blocker_tier_reporting() {
         c["blocker_tier_missing_failure_kind"].as_str(),
         Some("c3_umbrella_blocker_tier_missing")
     );
-    assert_eq!(
-        c["blocker_tier_missing_exit_code"].as_integer(),
-        Some(301)
-    );
+    assert_eq!(c["blocker_tier_missing_exit_code"].as_integer(), Some(301));
     assert_eq!(
         c["unknown_blocker_tier_failure_kind"].as_str(),
         Some("c3_umbrella_unknown_blocker_tier")

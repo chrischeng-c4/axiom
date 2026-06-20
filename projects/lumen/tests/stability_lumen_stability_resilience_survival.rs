@@ -15,7 +15,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_stability_resilience_survival() {
-    let command = "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture";
+    let command =
+        "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture";
     let id = "lumen-stability-resilience-survival";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

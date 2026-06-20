@@ -7,7 +7,6 @@
 /// Current status: structural implementation with textual LLVM IR
 /// generation. Direct LLVM-C FFI can be added when llvm-sys dependency
 /// is enabled.
-
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::mir::*;
 use crate::types::{Ty, TypeContext};
@@ -57,8 +56,7 @@ impl CodegenBackend for LlvmBackend {
 
         // Write IR to temp file and invoke LLC
         let tmp = std::env::temp_dir().join("mamba_output.ll");
-        std::fs::write(&tmp, &ir)
-            .map_err(|e| crate::error::MambaError::codegen(e.to_string()))?;
+        std::fs::write(&tmp, &ir).map_err(|e| crate::error::MambaError::codegen(e.to_string()))?;
 
         let obj_path = std::env::temp_dir().join("mamba_output.o");
         let opt_flag = match self.opt_level {
@@ -73,7 +71,8 @@ impl CodegenBackend for LlvmBackend {
             .args([
                 opt_flag,
                 "--filetype=obj",
-                "-o", obj_path.to_str().unwrap(),
+                "-o",
+                obj_path.to_str().unwrap(),
                 tmp.to_str().unwrap(),
             ])
             .status();
@@ -84,9 +83,9 @@ impl CodegenBackend for LlvmBackend {
                     .map_err(|e| crate::error::MambaError::codegen(e.to_string()))?;
                 Ok(CodegenOutput::ObjectFile(bytes))
             }
-            Ok(s) => Err(crate::error::MambaError::codegen(
-                format!("llc exited with status {s}")
-            )),
+            Ok(s) => Err(crate::error::MambaError::codegen(format!(
+                "llc exited with status {s}"
+            ))),
             Err(_) => {
                 // LLC not available — return IR text for downstream use
                 Ok(CodegenOutput::LlvmIr(ir))
@@ -94,7 +93,9 @@ impl CodegenBackend for LlvmBackend {
         }
     }
 
-    fn name(&self) -> &str { "llvm" }
+    fn name(&self) -> &str {
+        "llvm"
+    }
 }
 
 // ── LLVM IR Generation ──
@@ -108,12 +109,15 @@ fn generate_llvm_ir(module: &MirModule, tcx: &TypeContext, target: &str) -> Stri
     // Declare external runtime functions
     for ext in &module.externs {
         let ret_ty = mir_type_to_llvm(&ext.return_type);
-        let params: Vec<String> = ext.params.iter()
+        let params: Vec<String> = ext
+            .params
+            .iter()
             .map(|p| mir_type_to_llvm(p).to_string())
             .collect();
         ir.push_str(&format!(
             "declare {ret_ty} @{}({})\n",
-            ext.name, params.join(", ")
+            ext.name,
+            params.join(", ")
         ));
     }
     ir.push('\n');
@@ -135,13 +139,16 @@ fn generate_function(ir: &mut String, body: &MirBody, tcx: &TypeContext) {
     };
 
     let ret_ty = mir_type_to_llvm_from_type_id(body.return_ty, tcx);
-    let params: Vec<String> = body.params.iter()
-        .map(|(vreg, ty)| {
-            format!("{} %v{}", mir_type_to_llvm_from_type_id(*ty, tcx), vreg.0)
-        })
+    let params: Vec<String> = body
+        .params
+        .iter()
+        .map(|(vreg, ty)| format!("{} %v{}", mir_type_to_llvm_from_type_id(*ty, tcx), vreg.0))
         .collect();
 
-    ir.push_str(&format!("define {ret_ty} @{name}({}) {{\n", params.join(", ")));
+    ir.push_str(&format!(
+        "define {ret_ty} @{name}({}) {{\n",
+        params.join(", ")
+    ));
 
     for block in &body.blocks {
         ir.push_str(&format!("bb{}:\n", block.id.0));
@@ -167,35 +174,48 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                 MirConst::Float(f) => {
                     let bits = f.to_bits();
                     ir.push_str(&format!(
-                        "  %v{} = bitcast i64 {} to double\n", dest.0, bits
+                        "  %v{} = bitcast i64 {} to double\n",
+                        dest.0, bits
                     ));
                 }
                 MirConst::Bool(b) => {
                     ir.push_str(&format!(
-                        "  %v{} = add i64 0, {}\n", dest.0, if *b { 1 } else { 0 }
+                        "  %v{} = add i64 0, {}\n",
+                        dest.0,
+                        if *b { 1 } else { 0 }
                     ));
                 }
                 MirConst::Str(s) => {
                     // String constants require global data — simplified to i64 placeholder
                     ir.push_str(&format!(
                         "  ; string const: \"{}\"\n  %v{} = add i64 0, 0\n",
-                        s.escape_debug(), dest.0
+                        s.escape_debug(),
+                        dest.0
                     ));
                 }
                 MirConst::Bytes(data) => {
                     ir.push_str(&format!(
                         "  ; bytes const ({} bytes)\n  %v{} = add i64 0, 0\n",
-                        data.len(), dest.0
+                        data.len(),
+                        dest.0
                     ));
                 }
                 MirConst::None => {
                     ir.push_str(&format!("  %v{} = add i64 0, 0\n", dest.0));
                 }
                 MirConst::NotImplemented => {
-                    ir.push_str(&format!("  %v{} = add i64 0, {}\n", dest.0, crate::runtime::MbValue::not_implemented().to_bits()));
+                    ir.push_str(&format!(
+                        "  %v{} = add i64 0, {}\n",
+                        dest.0,
+                        crate::runtime::MbValue::not_implemented().to_bits()
+                    ));
                 }
                 MirConst::Ellipsis => {
-                    ir.push_str(&format!("  %v{} = add i64 0, {}\n", dest.0, crate::runtime::MbValue::ellipsis().to_bits()));
+                    ir.push_str(&format!(
+                        "  %v{} = add i64 0, {}\n",
+                        dest.0,
+                        crate::runtime::MbValue::ellipsis().to_bits()
+                    ));
                 }
                 MirConst::FuncRef(sym) => {
                     // Load function pointer as i64 for async body (#313 R1)
@@ -204,22 +224,24 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                     } else {
                         format!("fn_{}", sym.0)
                     };
-                    ir.push_str(&format!(
-                        "  %v{} = ptrtoint ptr @{fname} to i64\n", dest.0
-                    ));
+                    ir.push_str(&format!("  %v{} = ptrtoint ptr @{fname} to i64\n", dest.0));
                 }
                 MirConst::ExternFuncRef(name) => {
                     // Load address of a runtime extern function.
-                    ir.push_str(&format!(
-                        "  %v{} = ptrtoint ptr @{name} to i64\n", dest.0
-                    ));
+                    ir.push_str(&format!("  %v{} = ptrtoint ptr @{name} to i64\n", dest.0));
                 }
             }
         }
         MirInst::Copy { dest, source } => {
             ir.push_str(&format!("  %v{} = add i64 0, %v{}\n", dest.0, source.0));
         }
-        MirInst::BinOp { dest, op, lhs, rhs, ty } => {
+        MirInst::BinOp {
+            dest,
+            op,
+            lhs,
+            rhs,
+            ty,
+        } => {
             let resolved_ty = tcx.get(*ty);
             let use_primitive = match op {
                 MirBinOp::Is | MirBinOp::IsNot => true,
@@ -230,16 +252,14 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                 // `in`/`not in`: call mb_obj_contains(rhs, lhs) — RHS is the container
                 ir.push_str(&format!(
                     "  %contains_{d} = call i64 @mb_obj_contains(i64 %v{r}, i64 %v{l})\n",
-                    d = dest.0, r = rhs.0, l = lhs.0
+                    d = dest.0,
+                    r = rhs.0,
+                    l = lhs.0
                 ));
                 if matches!(op, MirBinOp::NotIn) {
-                    ir.push_str(&format!(
-                        "  %v{d} = xor i64 %contains_{d}, 1\n", d = dest.0
-                    ));
+                    ir.push_str(&format!("  %v{d} = xor i64 %contains_{d}, 1\n", d = dest.0));
                 } else {
-                    ir.push_str(&format!(
-                        "  %v{d} = add i64 0, %contains_{d}\n", d = dest.0
-                    ));
+                    ir.push_str(&format!("  %v{d} = add i64 0, %contains_{d}\n", d = dest.0));
                 }
             } else if !use_primitive {
                 let opcode = op.to_opcode();
@@ -260,18 +280,28 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                     MirBinOp::LShift => "shl",
                     MirBinOp::RShift => "ashr",
                     // Comparison ops handled in the match below; others routed to runtime above
-                    MirBinOp::Eq | MirBinOp::NotEq | MirBinOp::Lt
-                    | MirBinOp::Gt | MirBinOp::LtEq | MirBinOp::GtEq
-                    | MirBinOp::Is | MirBinOp::IsNot => "add", // placeholder; handled below
+                    MirBinOp::Eq
+                    | MirBinOp::NotEq
+                    | MirBinOp::Lt
+                    | MirBinOp::Gt
+                    | MirBinOp::LtEq
+                    | MirBinOp::GtEq
+                    | MirBinOp::Is
+                    | MirBinOp::IsNot => "add", // placeholder; handled below
                     // Pow, In, NotIn are already routed to runtime dispatch above
                     MirBinOp::Pow | MirBinOp::In | MirBinOp::NotIn => {
                         unreachable!("should be handled by runtime dispatch above")
                     }
                 };
                 match op {
-                    MirBinOp::Eq | MirBinOp::NotEq | MirBinOp::Lt
-                    | MirBinOp::Gt | MirBinOp::LtEq | MirBinOp::GtEq
-                    | MirBinOp::Is | MirBinOp::IsNot => {
+                    MirBinOp::Eq
+                    | MirBinOp::NotEq
+                    | MirBinOp::Lt
+                    | MirBinOp::Gt
+                    | MirBinOp::LtEq
+                    | MirBinOp::GtEq
+                    | MirBinOp::Is
+                    | MirBinOp::IsNot => {
                         let cmp = match op {
                             MirBinOp::Eq | MirBinOp::Is => "eq",
                             MirBinOp::NotEq | MirBinOp::IsNot => "ne",
@@ -295,7 +325,12 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                 }
             }
         }
-        MirInst::UnaryOp { dest, op, operand, ty } => {
+        MirInst::UnaryOp {
+            dest,
+            op,
+            operand,
+            ty,
+        } => {
             let resolved_ty = tcx.get(*ty);
             let is_primitive = matches!(resolved_ty, Ty::Int | Ty::Float | Ty::Bool);
             if !is_primitive {
@@ -307,58 +342,51 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
             } else {
                 match op {
                     MirUnaryOp::Neg => {
-                        ir.push_str(&format!(
-                            "  %v{} = sub i64 0, %v{}\n", dest.0, operand.0
-                        ));
+                        ir.push_str(&format!("  %v{} = sub i64 0, %v{}\n", dest.0, operand.0));
                     }
                     MirUnaryOp::Not => {
-                        ir.push_str(&format!(
-                            "  %v{} = xor i64 %v{}, 1\n", dest.0, operand.0
-                        ));
+                        ir.push_str(&format!("  %v{} = xor i64 %v{}, 1\n", dest.0, operand.0));
                     }
                     MirUnaryOp::BitNot => {
-                        ir.push_str(&format!(
-                            "  %v{} = xor i64 %v{}, -1\n", dest.0, operand.0
-                        ));
+                        ir.push_str(&format!("  %v{} = xor i64 %v{}, -1\n", dest.0, operand.0));
                     }
                     MirUnaryOp::Pos => {
-                        ir.push_str(&format!(
-                            "  %v{} = add i64 0, %v{}\n", dest.0, operand.0
-                        ));
+                        ir.push_str(&format!("  %v{} = add i64 0, %v{}\n", dest.0, operand.0));
                     }
                 }
             }
         }
-        MirInst::Call { dest, func, args, .. } => {
-            let arg_list: Vec<String> = args.iter()
-                .map(|a| format!("i64 %v{}", a.0))
-                .collect();
+        MirInst::Call {
+            dest, func, args, ..
+        } => {
+            let arg_list: Vec<String> = args.iter().map(|a| format!("i64 %v{}", a.0)).collect();
             if let Some(d) = dest {
                 ir.push_str(&format!(
                     "  %v{} = call i64 @fn_{}({})\n",
-                    d.0, func.0, arg_list.join(", ")
+                    d.0,
+                    func.0,
+                    arg_list.join(", ")
                 ));
             } else {
                 ir.push_str(&format!(
                     "  call void @fn_{}({})\n",
-                    func.0, arg_list.join(", ")
+                    func.0,
+                    arg_list.join(", ")
                 ));
             }
         }
-        MirInst::CallExtern { dest, name, args, .. } => {
-            let arg_list: Vec<String> = args.iter()
-                .map(|a| format!("i64 %v{}", a.0))
-                .collect();
+        MirInst::CallExtern {
+            dest, name, args, ..
+        } => {
+            let arg_list: Vec<String> = args.iter().map(|a| format!("i64 %v{}", a.0)).collect();
             if let Some(d) = dest {
                 ir.push_str(&format!(
                     "  %v{} = call i64 @{name}({})\n",
-                    d.0, arg_list.join(", ")
-                ));
-            } else {
-                ir.push_str(&format!(
-                    "  call void @{name}({})\n",
+                    d.0,
                     arg_list.join(", ")
                 ));
+            } else {
+                ir.push_str(&format!("  call void @{name}({})\n", arg_list.join(", ")));
             }
         }
         MirInst::MakeList { dest, elements, .. } => {
@@ -374,24 +402,34 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
         MirInst::MakeTuple { dest, elements, .. } => {
             ir.push_str(&format!(
                 "  ; make tuple ({} elems)\n  %v{} = add i64 0, 0\n",
-                elements.len(), dest.0
+                elements.len(),
+                dest.0
             ));
         }
         MirInst::MakeDict { dest, .. } => {
-            ir.push_str(&format!(
-                "  %v{} = call i64 @mb_dict_new()\n", dest.0
-            ));
+            ir.push_str(&format!("  %v{} = call i64 @mb_dict_new()\n", dest.0));
         }
-        MirInst::GetAttr { dest, object, attr, .. } => {
+        MirInst::GetAttr {
+            dest, object, attr, ..
+        } => {
             ir.push_str(&format!(
                 "  ; getattr(.{attr})\n  %v{} = call i64 @mb_getattr(i64 %v{}, i64 0)\n",
                 dest.0, object.0
             ));
         }
-        MirInst::GetItem { dest, object, index, ty } => {
+        MirInst::GetItem {
+            dest,
+            object,
+            index,
+            ty,
+        } => {
             let resolved_ty = tcx.get(*ty);
             let is_list = matches!(resolved_ty, Ty::List(_));
-            let func_name = if is_list { "mb_list_getitem" } else { "mb_obj_getitem" };
+            let func_name = if is_list {
+                "mb_list_getitem"
+            } else {
+                "mb_obj_getitem"
+            };
             ir.push_str(&format!(
                 "  %v{} = call i64 @{func_name}(i64 %v{}, i64 %v{})\n",
                 dest.0, object.0, index.0
@@ -399,18 +437,24 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
         }
         MirInst::Raise { value } => {
             if let Some(v) = value {
-                ir.push_str(&format!(
-                    "  call void @mb_raise(i64 %v{}, i64 0)\n", v.0
-                ));
+                ir.push_str(&format!("  call void @mb_raise(i64 %v{}, i64 0)\n", v.0));
             }
         }
-        MirInst::SetAttr { object, attr, value } => {
+        MirInst::SetAttr {
+            object,
+            attr,
+            value,
+        } => {
             ir.push_str(&format!(
                 "  ; setattr(.{attr})\n  call void @mb_setattr(i64 %v{}, i64 0, i64 %v{})\n",
                 object.0, value.0
             ));
         }
-        MirInst::SetItem { object, index, value } => {
+        MirInst::SetItem {
+            object,
+            index,
+            value,
+        } => {
             ir.push_str(&format!(
                 "  call void @mb_list_setitem(i64 %v{}, i64 %v{}, i64 %v{})\n",
                 object.0, index.0, value.0
@@ -418,30 +462,37 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
         }
         MirInst::LoadGlobal { dest, name, .. } => {
             ir.push_str(&format!(
-                "  %v{} = call i64 @mb_global_get_id(i64 {})\n", dest.0, name.0
+                "  %v{} = call i64 @mb_global_get_id(i64 {})\n",
+                dest.0, name.0
             ));
         }
         MirInst::StoreGlobal { name, value } => {
             ir.push_str(&format!(
-                "  call void @mb_global_set_id(i64 {}, i64 %v{})\n", name.0, value.0
+                "  call void @mb_global_set_id(i64 {}, i64 %v{})\n",
+                name.0, value.0
             ));
         }
         MirInst::LoadCell { dest, cell_idx, .. } => {
             ir.push_str(&format!(
-                "  %v{} = call i64 @mb_cell_get(i64 {})\n", dest.0, cell_idx
+                "  %v{} = call i64 @mb_cell_get(i64 {})\n",
+                dest.0, cell_idx
             ));
         }
         MirInst::StoreCell { cell_idx, value } => {
             ir.push_str(&format!(
-                "  call void @mb_cell_set(i64 {}, i64 %v{})\n", cell_idx, value.0
+                "  call void @mb_cell_set(i64 {}, i64 %v{})\n",
+                cell_idx, value.0
             ));
         }
         MirInst::MakeCell { dest, value, .. } => {
             ir.push_str(&format!(
-                "  %v{} = call i64 @mb_cell_new(i64 %v{})\n", dest.0, value.0
+                "  %v{} = call i64 @mb_cell_new(i64 %v{})\n",
+                dest.0, value.0
             ));
         }
-        MirInst::LoadCapture { dest, capture_idx, .. } => {
+        MirInst::LoadCapture {
+            dest, capture_idx, ..
+        } => {
             ir.push_str(&format!(
                 "  %v{} = call i64 @mb_closure_get_capture(i64 %v0, i64 {})\n",
                 dest.0, capture_idx
@@ -449,13 +500,22 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
         }
         // LLVM backend: fall back to wrapping arithmetic (no BigInt promotion).
         MirInst::CheckedAdd { dest, lhs, rhs, .. } => {
-            ir.push_str(&format!("  %v{} = add i64 %v{}, %v{}\n", dest.0, lhs.0, rhs.0));
+            ir.push_str(&format!(
+                "  %v{} = add i64 %v{}, %v{}\n",
+                dest.0, lhs.0, rhs.0
+            ));
         }
         MirInst::CheckedSub { dest, lhs, rhs, .. } => {
-            ir.push_str(&format!("  %v{} = sub i64 %v{}, %v{}\n", dest.0, lhs.0, rhs.0));
+            ir.push_str(&format!(
+                "  %v{} = sub i64 %v{}, %v{}\n",
+                dest.0, lhs.0, rhs.0
+            ));
         }
         MirInst::CheckedMul { dest, lhs, rhs, .. } => {
-            ir.push_str(&format!("  %v{} = mul i64 %v{}, %v{}\n", dest.0, lhs.0, rhs.0));
+            ir.push_str(&format!(
+                "  %v{} = mul i64 %v{}, %v{}\n",
+                dest.0, lhs.0, rhs.0
+            ));
         }
     }
 }
@@ -472,10 +532,16 @@ fn generate_terminator(ir: &mut String, term: &Terminator) {
         Terminator::Goto(block) => {
             ir.push_str(&format!("  br label %bb{}\n", block.0));
         }
-        Terminator::Branch { cond, then_block, else_block } => {
+        Terminator::Branch {
+            cond,
+            then_block,
+            else_block,
+        } => {
             ir.push_str(&format!(
                 "  %br_{c} = icmp ne i64 %v{c}, 0\n  br i1 %br_{c}, label %bb{t}, label %bb{e}\n",
-                c = cond.0, t = then_block.0, e = else_block.0
+                c = cond.0,
+                t = then_block.0,
+                e = else_block.0
             ));
         }
         Terminator::Unreachable => {
@@ -539,13 +605,11 @@ mod tests {
                 return_ty: int_ty,
                 blocks: vec![BasicBlock {
                     id: BlockId(0),
-                    stmts: vec![
-                        MirInst::LoadConst {
-                            dest: VReg(0),
-                            value: MirConst::Int(42),
-                            ty: int_ty,
-                        },
-                    ],
+                    stmts: vec![MirInst::LoadConst {
+                        dest: VReg(0),
+                        value: MirConst::Int(42),
+                        ty: int_ty,
+                    }],
                     terminator: Terminator::Return(Some(VReg(0))),
                 }],
             }],
@@ -565,19 +629,17 @@ mod tests {
         let module = MirModule {
             bodies: vec![MirBody {
                 name: crate::resolve::SymbolId(0),
-                params: vec![
-                    (VReg(0), int_ty),
-                    (VReg(1), int_ty),
-                ],
+                params: vec![(VReg(0), int_ty), (VReg(1), int_ty)],
                 return_ty: int_ty,
                 blocks: vec![BasicBlock {
                     id: BlockId(0),
-                    stmts: vec![
-                        MirInst::BinOp {
-                            dest: VReg(2), op: MirBinOp::Add,
-                            lhs: VReg(0), rhs: VReg(1), ty: int_ty,
-                        },
-                    ],
+                    stmts: vec![MirInst::BinOp {
+                        dest: VReg(2),
+                        op: MirBinOp::Add,
+                        lhs: VReg(0),
+                        rhs: VReg(1),
+                        ty: int_ty,
+                    }],
                     terminator: Terminator::Return(Some(VReg(2))),
                 }],
             }],
@@ -740,7 +802,10 @@ mod tests {
                 return_ty: int_ty,
                 blocks: vec![BasicBlock {
                     id: BlockId(0),
-                    stmts: vec![MirInst::Copy { dest: VReg(1), source: VReg(0) }],
+                    stmts: vec![MirInst::Copy {
+                        dest: VReg(1),
+                        source: VReg(0),
+                    }],
                     terminator: Terminator::Return(Some(VReg(1))),
                 }],
             }],
@@ -771,7 +836,11 @@ mod tests {
                     blocks: vec![BasicBlock {
                         id: BlockId(0),
                         stmts: vec![MirInst::BinOp {
-                            dest: VReg(2), op, lhs: VReg(0), rhs: VReg(1), ty: int_ty,
+                            dest: VReg(2),
+                            op,
+                            lhs: VReg(0),
+                            rhs: VReg(1),
+                            ty: int_ty,
                         }],
                         terminator: Terminator::Return(Some(VReg(2))),
                     }],
@@ -804,7 +873,9 @@ mod tests {
                     BasicBlock {
                         id: BlockId(1),
                         stmts: vec![MirInst::LoadConst {
-                            dest: VReg(0), value: MirConst::Int(0), ty: int_ty,
+                            dest: VReg(0),
+                            value: MirConst::Int(0),
+                            ty: int_ty,
                         }],
                         terminator: Terminator::Return(Some(VReg(0))),
                     },
@@ -829,7 +900,9 @@ mod tests {
                     BasicBlock {
                         id: BlockId(0),
                         stmts: vec![MirInst::LoadConst {
-                            dest: VReg(0), value: MirConst::Bool(true), ty: int_ty,
+                            dest: VReg(0),
+                            value: MirConst::Bool(true),
+                            ty: int_ty,
                         }],
                         terminator: Terminator::Branch {
                             cond: VReg(0),
@@ -840,14 +913,18 @@ mod tests {
                     BasicBlock {
                         id: BlockId(1),
                         stmts: vec![MirInst::LoadConst {
-                            dest: VReg(1), value: MirConst::Int(1), ty: int_ty,
+                            dest: VReg(1),
+                            value: MirConst::Int(1),
+                            ty: int_ty,
                         }],
                         terminator: Terminator::Return(Some(VReg(1))),
                     },
                     BasicBlock {
                         id: BlockId(2),
                         stmts: vec![MirInst::LoadConst {
-                            dest: VReg(2), value: MirConst::Int(0), ty: int_ty,
+                            dest: VReg(2),
+                            value: MirConst::Int(0),
+                            ty: int_ty,
                         }],
                         terminator: Terminator::Return(Some(VReg(2))),
                     },
@@ -895,7 +972,9 @@ mod tests {
                     id: BlockId(0),
                     stmts: vec![
                         MirInst::LoadConst {
-                            dest: VReg(0), value: MirConst::Int(5), ty: int_ty,
+                            dest: VReg(0),
+                            value: MirConst::Int(5),
+                            ty: int_ty,
                         },
                         MirInst::UnaryOp {
                             dest: VReg(1),
@@ -926,7 +1005,9 @@ mod tests {
                     id: BlockId(0),
                     stmts: vec![
                         MirInst::LoadConst {
-                            dest: VReg(0), value: MirConst::Bool(true), ty: int_ty,
+                            dest: VReg(0),
+                            value: MirConst::Bool(true),
+                            ty: int_ty,
                         },
                         MirInst::UnaryOp {
                             dest: VReg(1),
@@ -956,7 +1037,9 @@ mod tests {
                 blocks: vec![BasicBlock {
                     id: BlockId(0),
                     stmts: vec![MirInst::LoadConst {
-                        dest: VReg(0), value: MirConst::Int(0), ty: int_ty,
+                        dest: VReg(0),
+                        value: MirConst::Int(0),
+                        ty: int_ty,
                     }],
                     terminator: Terminator::Return(Some(VReg(0))),
                 }],

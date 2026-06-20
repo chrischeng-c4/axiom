@@ -94,8 +94,7 @@ impl CertBundle {
                     .map(|p| (p, CertBundleSource::CurlCaBundle))
             })
             .or_else(|| {
-                pick("ssl_cert_file", "SSL_CERT_FILE")
-                    .map(|p| (p, CertBundleSource::SslCertFile))
+                pick("ssl_cert_file", "SSL_CERT_FILE").map(|p| (p, CertBundleSource::SslCertFile))
             });
 
         let bundle_dir = pick("ssl_cert_dir", "SSL_CERT_DIR");
@@ -240,10 +239,7 @@ mod tests {
 
     #[test]
     fn paths_are_trimmed() {
-        let cb = CertBundle::from_env(lookup(env(&[(
-            "SSL_CERT_FILE",
-            "  /etc/ssl/cert.pem  ",
-        )])));
+        let cb = CertBundle::from_env(lookup(env(&[("SSL_CERT_FILE", "  /etc/ssl/cert.pem  ")])));
         assert_eq!(cb.path(), Some("/etc/ssl/cert.pem"));
     }
 
@@ -254,8 +250,14 @@ mod tests {
             CertBundleSource::RequestsCaBundle.env_var_name(),
             "REQUESTS_CA_BUNDLE"
         );
-        assert_eq!(CertBundleSource::CurlCaBundle.env_var_name(), "CURL_CA_BUNDLE");
-        assert_eq!(CertBundleSource::SslCertFile.env_var_name(), "SSL_CERT_FILE");
+        assert_eq!(
+            CertBundleSource::CurlCaBundle.env_var_name(),
+            "CURL_CA_BUNDLE"
+        );
+        assert_eq!(
+            CertBundleSource::SslCertFile.env_var_name(),
+            "SSL_CERT_FILE"
+        );
     }
 
     #[test]

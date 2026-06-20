@@ -1,8 +1,8 @@
+use super::ast::*;
+use super::Parser;
 use crate::error::MambaError;
 use crate::lexer::token::TokenKind;
 use crate::source::span::{Span, Spanned};
-use super::ast::*;
-use super::Parser;
 
 /// Compound statement parsers: def, class, enum, if, while, for, match,
 /// try, raise, with, assert, del, global, nonlocal, type alias, decorated.
@@ -51,7 +51,14 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Colon)?;
         let body = self.parse_block()?;
         Ok(Spanned::new(
-            Stmt::FnDef { decorators, name, type_params, params, return_ty, body },
+            Stmt::FnDef {
+                decorators,
+                name,
+                type_params,
+                params,
+                return_ty,
+                body,
+            },
             self.span_from(start),
         ))
     }
@@ -91,7 +98,14 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Colon)?;
         let body = self.parse_block()?;
         Ok(Spanned::new(
-            Stmt::AsyncFnDef { decorators, name, type_params, params, return_ty, body },
+            Stmt::AsyncFnDef {
+                decorators,
+                name,
+                type_params,
+                params,
+                return_ty,
+                body,
+            },
             self.span_from(start),
         ))
     }
@@ -156,7 +170,14 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Colon)?;
         let body = self.parse_block()?;
         Ok(Spanned::new(
-            Stmt::ClassDef { decorators, name, type_params, bases, keyword_args, body },
+            Stmt::ClassDef {
+                decorators,
+                name,
+                type_params,
+                bases,
+                keyword_args,
+                body,
+            },
             self.span_from(start),
         ))
     }
@@ -174,7 +195,9 @@ impl<'a> Parser<'a> {
             && self.peek_kind() != Some(TokenKind::Eof)
         {
             self.skip_newlines();
-            if self.peek_kind() == Some(TokenKind::Dedent) { break; }
+            if self.peek_kind() == Some(TokenKind::Dedent) {
+                break;
+            }
             let v_start = self.peek().map(|t| t.start).unwrap_or(0);
             let (vs, ve) = self.expect(TokenKind::Ident)?;
             let v_name = self.text_at(vs, ve).to_string();
@@ -186,12 +209,22 @@ impl<'a> Parser<'a> {
             } else {
                 Vec::new()
             };
-            variants.push(Variant { name: v_name, fields, span: self.span_from(v_start) });
+            variants.push(Variant {
+                name: v_name,
+                fields,
+                span: self.span_from(v_start),
+            });
             self.skip_newlines();
         }
-        if self.peek_kind() == Some(TokenKind::Dedent) { self.advance(); }
+        if self.peek_kind() == Some(TokenKind::Dedent) {
+            self.advance();
+        }
         Ok(Spanned::new(
-            Stmt::EnumDef { name, type_params, variants },
+            Stmt::EnumDef {
+                name,
+                type_params,
+                variants,
+            },
             self.span_from(start),
         ))
     }
@@ -216,7 +249,12 @@ impl<'a> Parser<'a> {
             None
         };
         Ok(Spanned::new(
-            Stmt::If { condition, body, elif_clauses, else_body },
+            Stmt::If {
+                condition,
+                body,
+                elif_clauses,
+                else_body,
+            },
             self.span_from(start),
         ))
     }
@@ -233,20 +271,27 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        Ok(Spanned::new(Stmt::While { condition, body, else_body }, self.span_from(start)))
+        Ok(Spanned::new(
+            Stmt::While {
+                condition,
+                body,
+                else_body,
+            },
+            self.span_from(start),
+        ))
     }
 
     pub(crate) fn parse_for(&mut self, is_async: bool) -> crate::error::Result<Spanned<Stmt>> {
         let (start, _) = self.advance(); // consume `for`
-        // Parse comma-separated target units: each unit is either a bare
-        // name or a parenthesized group `(a, b, ...)`.
-        //   #1590: outer parens around the *whole* target list (single
-        //          group) flatten directly into `targets`.
-        //   #1594: per-unit parenthesized groups in non-leading position
-        //          (e.g. `for (a, b), c in ...` or `for (a, b), (c, d) in ...`)
-        //          desugar into a fresh `__for_target_N_K__` flat target
-        //          plus a prepended `(orig...) = __for_target_N_K__` in the
-        //          body.
+                                         // Parse comma-separated target units: each unit is either a bare
+                                         // name or a parenthesized group `(a, b, ...)`.
+                                         //   #1590: outer parens around the *whole* target list (single
+                                         //          group) flatten directly into `targets`.
+                                         //   #1594: per-unit parenthesized groups in non-leading position
+                                         //          (e.g. `for (a, b), c in ...` or `for (a, b), (c, d) in ...`)
+                                         //          desugar into a fresh `__for_target_N_K__` flat target
+                                         //          plus a prepended `(orig...) = __for_target_N_K__` in the
+                                         //          body.
         let mut targets: Vec<String> = Vec::new();
         let mut prepends: Vec<Spanned<Stmt>> = Vec::new();
         let mut units: Vec<(Option<Vec<String>>, String)> = Vec::new();
@@ -258,19 +303,26 @@ impl<'a> Parser<'a> {
                 group.push(self.text_at(s, e).to_string());
                 while self.peek_kind() == Some(TokenKind::Comma) {
                     self.advance();
-                    if self.peek_kind() == Some(TokenKind::RParen) { break; }
+                    if self.peek_kind() == Some(TokenKind::RParen) {
+                        break;
+                    }
                     let (s, e) = self.expect_name()?;
                     group.push(self.text_at(s, e).to_string());
                 }
                 self.expect(TokenKind::RParen)?;
-                units.push((Some(group), format!("__for_target_{}_{}__", lp_start, units.len())));
+                units.push((
+                    Some(group),
+                    format!("__for_target_{}_{}__", lp_start, units.len()),
+                ));
             } else {
                 let (s, e) = self.expect_name()?;
                 units.push((None, self.text_at(s, e).to_string()));
             }
             if self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();
-                if self.peek_kind() == Some(TokenKind::In) { break; }
+                if self.peek_kind() == Some(TokenKind::In) {
+                    break;
+                }
             } else {
                 break;
             }
@@ -278,21 +330,29 @@ impl<'a> Parser<'a> {
         // Single outer-paren group with no continuation → treat as flat.
         if units.len() == 1 {
             match units.into_iter().next().unwrap() {
-                (Some(group), _) => { targets = group; }
-                (None, name) => { targets.push(name); }
+                (Some(group), _) => {
+                    targets = group;
+                }
+                (None, name) => {
+                    targets.push(name);
+                }
             }
         } else {
             for (group, flat_name) in units {
                 targets.push(flat_name.clone());
                 if let Some(names) = group {
                     let span = Span::dummy();
-                    let tuple_elems: Vec<Spanned<Expr>> = names.into_iter()
+                    let tuple_elems: Vec<Spanned<Expr>> = names
+                        .into_iter()
                         .map(|n| Spanned::new(Expr::Ident(n), span))
                         .collect();
                     let tuple_target = Spanned::new(Expr::TupleLit(tuple_elems), span);
                     let tmp_ident = Spanned::new(Expr::Ident(flat_name), span);
                     prepends.push(Spanned::new(
-                        Stmt::Assign { target: tuple_target, value: tmp_ident },
+                        Stmt::Assign {
+                            target: tuple_target,
+                            value: tmp_ident,
+                        },
                         span,
                     ));
                 }
@@ -322,9 +382,21 @@ impl<'a> Parser<'a> {
             None
         };
         let stmt = if is_async {
-            Stmt::AsyncFor { targets, var_ty, iter, body, else_body }
+            Stmt::AsyncFor {
+                targets,
+                var_ty,
+                iter,
+                body,
+                else_body,
+            }
         } else {
-            Stmt::For { targets, var_ty, iter, body, else_body }
+            Stmt::For {
+                targets,
+                var_ty,
+                iter,
+                body,
+                else_body,
+            }
         };
         Ok(Spanned::new(stmt, self.span_from(start)))
     }
@@ -340,7 +412,9 @@ impl<'a> Parser<'a> {
             && self.peek_kind() != Some(TokenKind::Eof)
         {
             self.skip_newlines();
-            if self.peek_kind() == Some(TokenKind::Dedent) { break; }
+            if self.peek_kind() == Some(TokenKind::Dedent) {
+                break;
+            }
             let arm_start = self.peek().map(|t| t.start).unwrap_or(0);
             self.expect(TokenKind::Case)?;
             let pattern = self.parse_pattern()?;
@@ -352,13 +426,23 @@ impl<'a> Parser<'a> {
             };
             self.expect(TokenKind::Colon)?;
             let body = self.parse_block()?;
-            arms.push(MatchArm { pattern, guard, body, span: self.span_from(arm_start) });
+            arms.push(MatchArm {
+                pattern,
+                guard,
+                body,
+                span: self.span_from(arm_start),
+            });
         }
-        if self.peek_kind() == Some(TokenKind::Dedent) { self.advance(); }
+        if self.peek_kind() == Some(TokenKind::Dedent) {
+            self.advance();
+        }
         if let Err(msg) = validate_match_arms(&arms) {
             return Err(crate::error::MambaError::syntax(self.span_from(start), msg));
         }
-        Ok(Spanned::new(Stmt::Match { expr, arms }, self.span_from(start)))
+        Ok(Spanned::new(
+            Stmt::Match { expr, arms },
+            self.span_from(start),
+        ))
     }
 
     pub(crate) fn parse_try(&mut self) -> crate::error::Result<Spanned<Stmt>> {
@@ -369,7 +453,7 @@ impl<'a> Parser<'a> {
         while self.peek_kind() == Some(TokenKind::Except) {
             let h_start = self.peek().unwrap().start;
             self.advance(); // consume `except`
-            // Check for `except*` (PEP 654)
+                            // Check for `except*` (PEP 654)
             let is_star = if self.peek_kind() == Some(TokenKind::Star) {
                 self.advance(); // consume `*`
                 true
@@ -414,19 +498,26 @@ impl<'a> Parser<'a> {
             None
         };
         Ok(Spanned::new(
-            Stmt::Try { body, handlers, else_body, finally_body },
+            Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            },
             self.span_from(start),
         ))
     }
 
     pub(crate) fn parse_raise(&mut self) -> crate::error::Result<Spanned<Stmt>> {
         let (start, _) = self.advance();
-        if self.peek_kind() == Some(TokenKind::Newline)
-            || self.peek_kind() == Some(TokenKind::Eof)
+        if self.peek_kind() == Some(TokenKind::Newline) || self.peek_kind() == Some(TokenKind::Eof)
         {
             self.skip_newlines();
             return Ok(Spanned::new(
-                Stmt::Raise { value: None, from: None },
+                Stmt::Raise {
+                    value: None,
+                    from: None,
+                },
                 self.span_from(start),
             ));
         }
@@ -439,20 +530,20 @@ impl<'a> Parser<'a> {
         };
         self.skip_newlines();
         Ok(Spanned::new(
-            Stmt::Raise { value: Some(value), from },
+            Stmt::Raise {
+                value: Some(value),
+                from,
+            },
             self.span_from(start),
         ))
     }
 
-    pub(crate) fn parse_with(
-        &mut self,
-        is_async: bool,
-    ) -> crate::error::Result<Spanned<Stmt>> {
+    pub(crate) fn parse_with(&mut self, is_async: bool) -> crate::error::Result<Spanned<Stmt>> {
         let (start, _) = self.advance(); // consume `with`
 
         // PEP 617: parenthesized with-statement `with (ctx1 as a, ctx2 as b):` (#1014)
-        let parenthesized = self.peek_kind() == Some(TokenKind::LParen)
-            && self.is_parenthesized_with();
+        let parenthesized =
+            self.peek_kind() == Some(TokenKind::LParen) && self.is_parenthesized_with();
         if parenthesized {
             self.advance(); // consume `(`
         }
@@ -464,9 +555,13 @@ impl<'a> Parser<'a> {
         let mut tuple_unpack_prepends: Vec<Spanned<Stmt>> = Vec::new();
         loop {
             // Skip newlines inside parenthesized form
-            if parenthesized { self.skip_newlines(); }
+            if parenthesized {
+                self.skip_newlines();
+            }
             // Stop at `)` in parenthesized form
-            if parenthesized && self.peek_kind() == Some(TokenKind::RParen) { break; }
+            if parenthesized && self.peek_kind() == Some(TokenKind::RParen) {
+                break;
+            }
 
             let context = self.parse_expr()?;
             let alias = if self.peek_kind() == Some(TokenKind::As) {
@@ -484,7 +579,9 @@ impl<'a> Parser<'a> {
                     tuple_elems.push(self.parse_expr()?);
                     while self.peek_kind() == Some(TokenKind::Comma) {
                         self.advance();
-                        if self.peek_kind() == Some(TokenKind::RParen) { break; }
+                        if self.peek_kind() == Some(TokenKind::RParen) {
+                            break;
+                        }
                         tuple_elems.push(self.parse_expr()?);
                     }
                     self.expect(TokenKind::RParen)?;
@@ -493,7 +590,10 @@ impl<'a> Parser<'a> {
                     let tuple_target = Spanned::new(Expr::TupleLit(tuple_elems), span);
                     let tmp_ident = Spanned::new(Expr::Ident(tmp.clone()), span);
                     tuple_unpack_prepends.push(Spanned::new(
-                        Stmt::Assign { target: tuple_target, value: tmp_ident },
+                        Stmt::Assign {
+                            target: tuple_target,
+                            value: tmp_ident,
+                        },
                         span,
                     ));
                     Some(tmp)
@@ -522,7 +622,10 @@ impl<'a> Parser<'a> {
                         let tmp = format!("__with_target_{}__", target_expr.span.start);
                         let tmp_ident = Spanned::new(Expr::Ident(tmp.clone()), span);
                         tuple_unpack_prepends.push(Spanned::new(
-                            Stmt::Assign { target: target_expr, value: tmp_ident },
+                            Stmt::Assign {
+                                target: target_expr,
+                                value: tmp_ident,
+                            },
                             span,
                         ));
                         Some(tmp)
@@ -539,7 +642,9 @@ impl<'a> Parser<'a> {
             // Allow trailing comma before `)`
             if parenthesized {
                 self.skip_newlines();
-                if self.peek_kind() == Some(TokenKind::RParen) { break; }
+                if self.peek_kind() == Some(TokenKind::RParen) {
+                    break;
+                }
             }
         }
         if parenthesized {
@@ -574,7 +679,7 @@ impl<'a> Parser<'a> {
         // Called after `with` has already been consumed, so `self.pos` is at `(`.
         // Scan forward past the `(` and look for `as` or `,` at depth 1 before `:` or `)`.
         let mut i = self.pos; // pos is at `(`
-        // skip `(`
+                              // skip `(`
         if i >= self.tokens.len() || self.tokens[i].kind != TokenKind::LParen {
             return false;
         }
@@ -620,7 +725,10 @@ impl<'a> Parser<'a> {
             None
         };
         self.skip_newlines();
-        Ok(Spanned::new(Stmt::Assert { test, msg }, self.span_from(start)))
+        Ok(Spanned::new(
+            Stmt::Assert { test, msg },
+            self.span_from(start),
+        ))
     }
 
     pub(crate) fn parse_del(&mut self) -> crate::error::Result<Spanned<Stmt>> {
@@ -637,7 +745,9 @@ impl<'a> Parser<'a> {
         loop {
             let (ns, ne) = self.expect_name()?;
             names.push(self.text_at(ns, ne).to_string());
-            if self.peek_kind() != Some(TokenKind::Comma) { break; }
+            if self.peek_kind() != Some(TokenKind::Comma) {
+                break;
+            }
             self.advance();
         }
         self.skip_newlines();
@@ -650,7 +760,9 @@ impl<'a> Parser<'a> {
         loop {
             let (ns, ne) = self.expect_name()?;
             names.push(self.text_at(ns, ne).to_string());
-            if self.peek_kind() != Some(TokenKind::Comma) { break; }
+            if self.peek_kind() != Some(TokenKind::Comma) {
+                break;
+            }
             self.advance();
         }
         self.skip_newlines();
@@ -668,7 +780,11 @@ impl<'a> Parser<'a> {
         let value = self.parse_expr()?;
         self.skip_newlines();
         Ok(Spanned::new(
-            Stmt::TypeAlias { name, type_params, value },
+            Stmt::TypeAlias {
+                name,
+                type_params,
+                value,
+            },
             self.span_from(start),
         ))
     }
@@ -680,7 +796,9 @@ mod tests {
     use crate::parser::ast::*;
     use crate::source::span::FileId;
 
-    fn fid() -> FileId { FileId(0) }
+    fn fid() -> FileId {
+        FileId(0)
+    }
     fn parse_stmt(src: &str) -> Stmt {
         let module = parser::parse(src, fid()).expect("parse failed");
         module.stmts.into_iter().next().unwrap().node
@@ -691,7 +809,14 @@ mod tests {
     #[test]
     fn test_fn_def_basic() {
         match parse_stmt("def foo():\n    pass\n") {
-            Stmt::FnDef { name, params, return_ty, body, decorators, .. } => {
+            Stmt::FnDef {
+                name,
+                params,
+                return_ty,
+                body,
+                decorators,
+                ..
+            } => {
                 assert_eq!(name, "foo");
                 assert!(params.is_empty());
                 assert!(return_ty.is_none());
@@ -751,7 +876,13 @@ mod tests {
     #[test]
     fn test_class_def_basic() {
         match parse_stmt("class Foo:\n    pass\n") {
-            Stmt::ClassDef { name, bases, body, decorators, .. } => {
+            Stmt::ClassDef {
+                name,
+                bases,
+                body,
+                decorators,
+                ..
+            } => {
                 assert_eq!(name, "Foo");
                 assert!(bases.is_empty());
                 assert!(decorators.is_empty());
@@ -826,7 +957,9 @@ mod tests {
     #[test]
     fn test_decorator_on_fn() {
         match parse_stmt("@my_dec\ndef foo():\n    pass\n") {
-            Stmt::FnDef { decorators, name, .. } => {
+            Stmt::FnDef {
+                decorators, name, ..
+            } => {
                 assert_eq!(decorators.len(), 1);
                 assert_eq!(name, "foo");
             }
@@ -837,7 +970,9 @@ mod tests {
     #[test]
     fn test_decorator_on_class() {
         match parse_stmt("@my_dec\nclass Foo:\n    pass\n") {
-            Stmt::ClassDef { decorators, name, .. } => {
+            Stmt::ClassDef {
+                decorators, name, ..
+            } => {
                 assert_eq!(decorators.len(), 1);
                 assert_eq!(name, "Foo");
             }
@@ -858,7 +993,9 @@ mod tests {
     #[test]
     fn test_decorator_on_async_fn() {
         match parse_stmt("@my_dec\nasync def foo():\n    pass\n") {
-            Stmt::AsyncFnDef { decorators, name, .. } => {
+            Stmt::AsyncFnDef {
+                decorators, name, ..
+            } => {
                 assert_eq!(decorators.len(), 1);
                 assert_eq!(name, "foo");
             }
@@ -871,7 +1008,12 @@ mod tests {
     #[test]
     fn test_if_basic() {
         match parse_stmt("if True:\n    pass\n") {
-            Stmt::If { condition, body, elif_clauses, else_body } => {
+            Stmt::If {
+                condition,
+                body,
+                elif_clauses,
+                else_body,
+            } => {
                 assert!(matches!(condition.node, Expr::BoolLit(true)));
                 assert_eq!(body.len(), 1);
                 assert!(elif_clauses.is_empty());
@@ -895,7 +1037,11 @@ mod tests {
     fn test_if_elif_else() {
         let src = "if x:\n    pass\nelif y:\n    pass\nelif z:\n    pass\nelse:\n    pass\n";
         match parse_stmt(src) {
-            Stmt::If { elif_clauses, else_body, .. } => {
+            Stmt::If {
+                elif_clauses,
+                else_body,
+                ..
+            } => {
                 assert_eq!(elif_clauses.len(), 2);
                 assert!(else_body.is_some());
             }
@@ -908,7 +1054,11 @@ mod tests {
     #[test]
     fn test_while_basic() {
         match parse_stmt("while True:\n    pass\n") {
-            Stmt::While { condition, body, else_body } => {
+            Stmt::While {
+                condition,
+                body,
+                else_body,
+            } => {
                 assert!(matches!(condition.node, Expr::BoolLit(true)));
                 assert_eq!(body.len(), 1);
                 assert!(else_body.is_none());
@@ -932,7 +1082,13 @@ mod tests {
     #[test]
     fn test_for_basic() {
         match parse_stmt("for x in items:\n    pass\n") {
-            Stmt::For { targets, iter, body, else_body, .. } => {
+            Stmt::For {
+                targets,
+                iter,
+                body,
+                else_body,
+                ..
+            } => {
                 assert_eq!(targets, vec!["x"]);
                 assert_eq!(body.len(), 1);
                 assert!(else_body.is_none());
@@ -977,7 +1133,12 @@ mod tests {
     #[test]
     fn test_try_except_basic() {
         match parse_stmt("try:\n    pass\nexcept:\n    pass\n") {
-            Stmt::Try { body, handlers, else_body, finally_body } => {
+            Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
                 assert_eq!(body.len(), 1);
                 assert_eq!(handlers.len(), 1);
                 assert!(handlers[0].exc_type.is_none());
@@ -1034,7 +1195,9 @@ mod tests {
                         assert!(matches!(&target.node, Expr::Ident(n) if n == "d"));
                         match &value.node {
                             Expr::Index { object, index } => {
-                                assert!(matches!(&object.node, Expr::DictLit(entries) if entries.is_empty()));
+                                assert!(
+                                    matches!(&object.node, Expr::DictLit(entries) if entries.is_empty())
+                                );
                                 assert!(matches!(&index.node, Expr::StrLit(s) if s == "x"));
                             }
                             other => panic!("expected Index, got {other:?}"),
@@ -1144,7 +1307,9 @@ mod tests {
                 match &body[0].node {
                     Stmt::Assign { target, value } => {
                         assert!(matches!(&target.node, Expr::Ident(n) if n == "d"));
-                        assert!(matches!(&value.node, Expr::DictLit(entries) if entries.is_empty()));
+                        assert!(
+                            matches!(&value.node, Expr::DictLit(entries) if entries.is_empty())
+                        );
                     }
                     other => panic!("expected Assign, got {other:?}"),
                 }
@@ -1164,7 +1329,10 @@ mod tests {
     #[test]
     fn test_raise_bare() {
         match parse_stmt("raise\n") {
-            Stmt::Raise { value: None, from: None } => {}
+            Stmt::Raise {
+                value: None,
+                from: None,
+            } => {}
             other => panic!("expected Raise(None), got {other:?}"),
         }
     }
@@ -1172,7 +1340,10 @@ mod tests {
     #[test]
     fn test_raise_value() {
         match parse_stmt("raise ValueError()\n") {
-            Stmt::Raise { value: Some(_), from: None } => {}
+            Stmt::Raise {
+                value: Some(_),
+                from: None,
+            } => {}
             other => panic!("expected Raise(value), got {other:?}"),
         }
     }
@@ -1180,7 +1351,10 @@ mod tests {
     #[test]
     fn test_raise_from() {
         match parse_stmt("raise ValueError() from e\n") {
-            Stmt::Raise { value: Some(_), from: Some(f) } => {
+            Stmt::Raise {
+                value: Some(_),
+                from: Some(f),
+            } => {
                 assert!(matches!(f.node, Expr::Ident(ref n) if n == "e"));
             }
             other => panic!("expected Raise from, got {other:?}"),
@@ -1295,7 +1469,11 @@ mod tests {
     #[test]
     fn test_type_alias_simple() {
         match parse_stmt("type Number = int\n") {
-            Stmt::TypeAlias { name, type_params, value } => {
+            Stmt::TypeAlias {
+                name,
+                type_params,
+                value,
+            } => {
                 assert_eq!(name, "Number");
                 assert!(type_params.is_empty());
                 assert!(matches!(value.node, Expr::Ident(ref n) if n == "int"));
@@ -1308,7 +1486,13 @@ mod tests {
     fn test_type_alias_union() {
         match parse_stmt("type Number = int | float\n") {
             Stmt::TypeAlias { value, .. } => {
-                assert!(matches!(value.node, Expr::BinOp { op: BinOp::BitOr, .. }));
+                assert!(matches!(
+                    value.node,
+                    Expr::BinOp {
+                        op: BinOp::BitOr,
+                        ..
+                    }
+                ));
             }
             other => panic!("expected TypeAlias(Union), got {other:?}"),
         }
@@ -1317,7 +1501,9 @@ mod tests {
     #[test]
     fn test_type_alias_with_type_params() {
         match parse_stmt("type Container[T] = list[int]\n") {
-            Stmt::TypeAlias { name, type_params, .. } => {
+            Stmt::TypeAlias {
+                name, type_params, ..
+            } => {
                 assert_eq!(name, "Container");
                 let names: Vec<&str> = type_params.iter().map(|p| p.name.as_str()).collect();
                 assert_eq!(names, vec!["T"]);
@@ -1366,7 +1552,6 @@ mod tests {
         let result = parser::parse("async pass\n", fid());
         assert!(result.is_err());
     }
-
 }
 
 // ── match-pattern static validation (CPython compile-time SyntaxErrors) ──
@@ -1386,12 +1571,13 @@ fn match_key_of(expr: &Expr) -> Option<MatchKey> {
         Expr::BoolLit(b) => Some(MatchKey::Num(if *b { 1.0 } else { 0.0 })),
         Expr::StrLit(s) => Some(MatchKey::Str(s.clone())),
         Expr::NoneLit => Some(MatchKey::NoneKey),
-        Expr::UnaryOp { op: crate::parser::ast::UnaryOp::Neg, operand } => {
-            match match_key_of(&operand.node) {
-                Some(MatchKey::Num(n)) => Some(MatchKey::Num(-n)),
-                _ => None,
-            }
-        }
+        Expr::UnaryOp {
+            op: crate::parser::ast::UnaryOp::Neg,
+            operand,
+        } => match match_key_of(&operand.node) {
+            Some(MatchKey::Num(n)) => Some(MatchKey::Num(-n)),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -1488,9 +1674,7 @@ fn validate_pattern(p: &Pattern, names: &mut Vec<String>) -> Result<(), String> 
             for (kw, sub) in patterns {
                 if let Some(name) = kw {
                     if kw_seen.iter().any(|x| *x == name) {
-                        return Err(format!(
-                            "attribute name repeated in class pattern: {name}"
-                        ));
+                        return Err(format!("attribute name repeated in class pattern: {name}"));
                     }
                     kw_seen.push(name);
                 }
@@ -1513,9 +1697,7 @@ fn validate_pattern(p: &Pattern, names: &mut Vec<String>) -> Result<(), String> 
             // Only the final alternative may be irrefutable.
             for a in alts.iter().take(alts.len().saturating_sub(1)) {
                 if pattern_is_irrefutable(&a.node) {
-                    return Err(
-                        "wildcard makes remaining patterns unreachable".to_string()
-                    );
+                    return Err("wildcard makes remaining patterns unreachable".to_string());
                 }
             }
             // Every alternative must bind the same set of names; the whole
@@ -1530,9 +1712,7 @@ fn validate_pattern(p: &Pattern, names: &mut Vec<String>) -> Result<(), String> 
                     None => first_set = Some(sorted),
                     Some(expected) => {
                         if *expected != sorted {
-                            return Err(
-                                "alternative patterns bind different names".to_string()
-                            );
+                            return Err("alternative patterns bind different names".to_string());
                         }
                     }
                 }
@@ -1556,9 +1736,7 @@ fn validate_match_arms(arms: &[MatchArm]) -> Result<(), String> {
     for (idx, arm) in arms.iter().enumerate() {
         let mut names = Vec::new();
         validate_pattern(&arm.pattern.node, &mut names)?;
-        if idx + 1 < arms.len()
-            && arm.guard.is_none()
-            && pattern_is_irrefutable(&arm.pattern.node)
+        if idx + 1 < arms.len() && arm.guard.is_none() && pattern_is_irrefutable(&arm.pattern.node)
         {
             return Err("wildcard makes remaining patterns unreachable".to_string());
         }

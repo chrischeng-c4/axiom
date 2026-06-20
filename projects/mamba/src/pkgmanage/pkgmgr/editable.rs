@@ -72,12 +72,8 @@ pub fn build_editable_wheel(
         detail: format!("canonicalize out_dir: {e}"),
     })?;
 
-    let frontend = pep517_frontend_script(
-        &bs.backend,
-        "build_editable",
-        Some("build_wheel"),
-        &out_abs,
-    );
+    let frontend =
+        pep517_frontend_script(&bs.backend, "build_editable", Some("build_wheel"), &out_abs);
     let stdout = run_subprocess_capture(
         &venv_python,
         &["-c", &frontend],

@@ -1,10 +1,9 @@
+use super::rc::{MbObject, ObjData};
 /// String operations for the Mamba runtime (#284).
 ///
 /// Implements Python-compatible string methods as extern-callable functions.
 /// All functions operate on MbValue (NaN-boxed) and return MbValue.
-
 use super::value::MbValue;
-use super::rc::{MbObject, ObjData};
 
 /// Helper: extract string reference from a MbValue pointer.
 unsafe fn as_str(val: MbValue) -> Option<&'static str> {
@@ -38,7 +37,9 @@ pub fn mb_str_concat(a: MbValue, b: MbValue) -> MbValue {
 pub fn mb_str_repeat(s: MbValue, n: MbValue) -> MbValue {
     unsafe {
         if let (Some(st), Some(count)) = (as_str(s), n.as_int()) {
-            if count <= 0 { return new_str(String::new()); }
+            if count <= 0 {
+                return new_str(String::new());
+            }
             new_str(st.repeat(count as usize))
         } else {
             MbValue::none()
@@ -97,9 +98,7 @@ fn clamp_rev_str(i: i64, len: i64) -> i64 {
 }
 
 /// str[start:stop:step] → substring (step support, Unicode codepoints)
-pub fn mb_str_slice_full(
-    s: MbValue, start: MbValue, stop: MbValue, step: MbValue,
-) -> MbValue {
+pub fn mb_str_slice_full(s: MbValue, start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
             let chars: Vec<char> = st.chars().collect();
@@ -130,12 +129,16 @@ pub fn mb_str_slice_full(
             let mut i = s_idx;
             if step_val > 0 {
                 while i < e_idx {
-                    if i >= 0 && i < len { result.push(chars[i as usize]); }
+                    if i >= 0 && i < len {
+                        result.push(chars[i as usize]);
+                    }
                     i += step_val;
                 }
             } else {
                 while i > e_idx {
-                    if i >= 0 && i < len { result.push(chars[i as usize]); }
+                    if i >= 0 && i < len {
+                        result.push(chars[i as usize]);
+                    }
                     i += step_val;
                 }
             }
@@ -150,15 +153,21 @@ pub fn mb_str_slice_full(
 
 pub fn mb_str_upper(s: MbValue) -> MbValue {
     unsafe {
-        if let Some(st) = as_str(s) { new_str(st.to_uppercase()) }
-        else { MbValue::none() }
+        if let Some(st) = as_str(s) {
+            new_str(st.to_uppercase())
+        } else {
+            MbValue::none()
+        }
     }
 }
 
 pub fn mb_str_lower(s: MbValue) -> MbValue {
     unsafe {
-        if let Some(st) = as_str(s) { new_str(st.to_lowercase()) }
-        else { MbValue::none() }
+        if let Some(st) = as_str(s) {
+            new_str(st.to_lowercase())
+        } else {
+            MbValue::none()
+        }
     }
 }
 
@@ -226,10 +235,16 @@ pub fn mb_str_title(s: MbValue) -> MbValue {
 pub fn mb_str_swapcase(s: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
-            let result: String = st.chars().map(|c| {
-                if c.is_uppercase() { c.to_lowercase().to_string() }
-                else { c.to_uppercase().to_string() }
-            }).collect();
+            let result: String = st
+                .chars()
+                .map(|c| {
+                    if c.is_uppercase() {
+                        c.to_lowercase().to_string()
+                    } else {
+                        c.to_uppercase().to_string()
+                    }
+                })
+                .collect();
             new_str(result)
         } else {
             MbValue::none()
@@ -250,7 +265,9 @@ pub fn mb_str_strip(s: MbValue, chars: MbValue) -> MbValue {
             } else {
                 MbValue::none()
             }
-        } else { MbValue::none() }
+        } else {
+            MbValue::none()
+        }
     }
 }
 
@@ -265,7 +282,9 @@ pub fn mb_str_lstrip(s: MbValue, chars: MbValue) -> MbValue {
             } else {
                 MbValue::none()
             }
-        } else { MbValue::none() }
+        } else {
+            MbValue::none()
+        }
     }
 }
 
@@ -280,7 +299,9 @@ pub fn mb_str_rstrip(s: MbValue, chars: MbValue) -> MbValue {
             } else {
                 MbValue::none()
             }
-        } else { MbValue::none() }
+        } else {
+            MbValue::none()
+        }
     }
 }
 
@@ -310,8 +331,7 @@ pub fn mb_str_index(s: MbValue, sub: MbValue, start: MbValue, end: MbValue) -> M
         if idx < 0 {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "substring not found".to_string())),
+                MbValue::from_ptr(MbObject::new_str("substring not found".to_string())),
             );
             return MbValue::none();
         }
@@ -326,8 +346,7 @@ pub fn mb_str_rindex(s: MbValue, sub: MbValue, start: MbValue, end: MbValue) -> 
         if idx < 0 {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "substring not found".to_string())),
+                MbValue::from_ptr(MbObject::new_str("substring not found".to_string())),
             );
             return MbValue::none();
         }
@@ -405,7 +424,9 @@ pub fn mb_str_startswith(s: MbValue, prefix: MbValue, start: MbValue, end: MbVal
                 if let Some(items) = prefixes {
                     for item in &items {
                         if let Some(p) = as_str(*item) {
-                            if slice.starts_with(p) { return MbValue::from_bool(true); }
+                            if slice.starts_with(p) {
+                                return MbValue::from_bool(true);
+                            }
                         }
                     }
                     return MbValue::from_bool(false);
@@ -416,7 +437,9 @@ pub fn mb_str_startswith(s: MbValue, prefix: MbValue, start: MbValue, end: MbVal
             } else {
                 MbValue::from_bool(false)
             }
-        } else { MbValue::from_bool(false) }
+        } else {
+            MbValue::from_bool(false)
+        }
     }
 }
 
@@ -440,7 +463,9 @@ pub fn mb_str_endswith(s: MbValue, suffix: MbValue, start: MbValue, end: MbValue
                 if let Some(items) = suffixes {
                     for item in &items {
                         if let Some(p) = as_str(*item) {
-                            if slice.ends_with(p) { return MbValue::from_bool(true); }
+                            if slice.ends_with(p) {
+                                return MbValue::from_bool(true);
+                            }
                         }
                     }
                     return MbValue::from_bool(false);
@@ -451,7 +476,9 @@ pub fn mb_str_endswith(s: MbValue, suffix: MbValue, start: MbValue, end: MbValue
             } else {
                 MbValue::from_bool(false)
             }
-        } else { MbValue::from_bool(false) }
+        } else {
+            MbValue::from_bool(false)
+        }
     }
 }
 
@@ -492,9 +519,12 @@ pub fn mb_str_split(s: MbValue, sep: MbValue, maxsplit: MbValue) -> MbValue {
             let max = maxsplit.as_int().unwrap_or(-1);
             let parts: Vec<MbValue> = if sep.is_none() {
                 if max < 0 {
-                    st.split_whitespace().map(|p| new_str(p.to_string())).collect()
+                    st.split_whitespace()
+                        .map(|p| new_str(p.to_string()))
+                        .collect()
                 } else {
-                    st.split_whitespace().take(max as usize + 1)
+                    st.split_whitespace()
+                        .take(max as usize + 1)
                         .collect::<Vec<_>>()
                         .into_iter()
                         .enumerate()
@@ -522,7 +552,8 @@ pub fn mb_str_split(s: MbValue, sep: MbValue, maxsplit: MbValue) -> MbValue {
                     st.split(sep_str).map(|p| new_str(p.to_string())).collect()
                 } else {
                     st.splitn(max as usize + 1, sep_str)
-                        .map(|p| new_str(p.to_string())).collect()
+                        .map(|p| new_str(p.to_string()))
+                        .collect()
                 }
             } else {
                 return MbValue::none();
@@ -557,10 +588,16 @@ pub fn mb_str_rsplit(s: MbValue, sep: MbValue, maxsplit: MbValue) -> MbValue {
                     let mut taken: i64 = 0;
                     while taken < max && i > 0 {
                         // Skip trailing whitespace.
-                        while i > 0 && (bytes[i - 1] as char).is_whitespace() { i -= 1; }
-                        if i == 0 { break; }
+                        while i > 0 && (bytes[i - 1] as char).is_whitespace() {
+                            i -= 1;
+                        }
+                        if i == 0 {
+                            break;
+                        }
                         let word_end = i;
-                        while i > 0 && !(bytes[i - 1] as char).is_whitespace() { i -= 1; }
+                        while i > 0 && !(bytes[i - 1] as char).is_whitespace() {
+                            i -= 1;
+                        }
                         tail.push(st[i..word_end].to_string());
                         end = i;
                         taken += 1;
@@ -605,7 +642,9 @@ pub fn mb_str_rsplit(s: MbValue, sep: MbValue, maxsplit: MbValue) -> MbValue {
 /// join(iterable) → string
 pub fn mb_str_join(sep: MbValue, items: MbValue) -> MbValue {
     unsafe {
-        let Some(sep_str) = as_str(sep) else { return MbValue::none(); };
+        let Some(sep_str) = as_str(sep) else {
+            return MbValue::none();
+        };
         // Fast-path: direct container access without consuming an iterator.
         // For List/Tuple/FrozenSet we walk the storage in-place. The classic
         // implementation collected a Vec<&str> then called Vec::join, which
@@ -631,7 +670,9 @@ pub fn mb_str_join(sep: MbValue, items: MbValue) -> MbValue {
                 let mut first = true;
                 for v in values.iter() {
                     if let Some(s) = as_str(*v) {
-                        if !first { out.push_str(sep_str); }
+                        if !first {
+                            out.push_str(sep_str);
+                        }
                         out.push_str(s);
                         first = false;
                     }
@@ -666,7 +707,9 @@ pub fn mb_str_join(sep: MbValue, items: MbValue) -> MbValue {
                     );
                     let mut first = true;
                     for c in s.chars() {
-                        if !first { out.push_str(sep_str); }
+                        if !first {
+                            out.push_str(sep_str);
+                        }
                         out.push(c);
                         first = false;
                     }
@@ -718,16 +761,20 @@ fn is_unicode_digit_no(c: char) -> bool {
         0x24FF |             // NEGATIVE CIRCLED DIGIT ZERO
         0x2776..=0x277E |   // DINGBAT NEGATIVE CIRCLED DIGIT ONE..NINE
         0x2780..=0x2788 |   // DINGBAT CIRCLED SANS-SERIF ONE..NINE
-        0x278A..=0x2792)    // DINGBAT NEGATIVE CIRCLED SANS-SERIF ONE..NINE
+        0x278A..=0x2792) // DINGBAT NEGATIVE CIRCLED SANS-SERIF ONE..NINE
 }
 
 pub fn mb_str_isdigit(s: MbValue) -> MbValue {
-    use unicode_properties::{UnicodeGeneralCategory, GeneralCategory};
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
     unsafe {
         if let Some(st) = as_str(s) {
-            MbValue::from_bool(!st.is_empty() && st.chars().all(|c| {
-                c.general_category() == GeneralCategory::DecimalNumber || is_unicode_digit_no(c)
-            }))
+            MbValue::from_bool(
+                !st.is_empty()
+                    && st.chars().all(|c| {
+                        c.general_category() == GeneralCategory::DecimalNumber
+                            || is_unicode_digit_no(c)
+                    }),
+            )
         } else {
             MbValue::from_bool(false)
         }
@@ -767,8 +814,9 @@ pub fn mb_str_isspace(s: MbValue) -> MbValue {
 pub fn mb_str_isupper(s: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
-            MbValue::from_bool(st.chars().any(|c| c.is_uppercase()) &&
-                st.chars().all(|c| !c.is_lowercase()))
+            MbValue::from_bool(
+                st.chars().any(|c| c.is_uppercase()) && st.chars().all(|c| !c.is_lowercase()),
+            )
         } else {
             MbValue::from_bool(false)
         }
@@ -778,8 +826,9 @@ pub fn mb_str_isupper(s: MbValue) -> MbValue {
 pub fn mb_str_islower(s: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
-            MbValue::from_bool(st.chars().any(|c| c.is_lowercase()) &&
-                st.chars().all(|c| !c.is_uppercase()))
+            MbValue::from_bool(
+                st.chars().any(|c| c.is_lowercase()) && st.chars().all(|c| !c.is_uppercase()),
+            )
         } else {
             MbValue::from_bool(false)
         }
@@ -860,15 +909,20 @@ pub fn mb_str_isidentifier(s: MbValue) -> MbValue {
 /// {Nd, Nl, No}: decimal digits, letter-number (Roman numerals), or
 /// other-number (fractions, superscripts, circled digits, ...).
 pub fn mb_str_isnumeric(s: MbValue) -> MbValue {
-    use unicode_properties::{UnicodeGeneralCategory, GeneralCategory};
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
     unsafe {
         if let Some(st) = as_str(s) {
-            MbValue::from_bool(!st.is_empty() && st.chars().all(|c| {
-                matches!(c.general_category(),
-                    GeneralCategory::DecimalNumber
-                    | GeneralCategory::LetterNumber
-                    | GeneralCategory::OtherNumber)
-            }))
+            MbValue::from_bool(
+                !st.is_empty()
+                    && st.chars().all(|c| {
+                        matches!(
+                            c.general_category(),
+                            GeneralCategory::DecimalNumber
+                                | GeneralCategory::LetterNumber
+                                | GeneralCategory::OtherNumber
+                        )
+                    }),
+            )
         } else {
             MbValue::from_bool(false)
         }
@@ -880,12 +934,15 @@ pub fn mb_str_isnumeric(s: MbValue) -> MbValue {
 /// digits `٠-٩`, Devanagari `०-९`, fullwidth `０-９`, etc., but excludes
 /// superscripts, fractions, Roman numerals.
 pub fn mb_str_isdecimal(s: MbValue) -> MbValue {
-    use unicode_properties::{UnicodeGeneralCategory, GeneralCategory};
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
     unsafe {
         if let Some(st) = as_str(s) {
-            MbValue::from_bool(!st.is_empty() && st.chars().all(|c| {
-                c.general_category() == GeneralCategory::DecimalNumber
-            }))
+            MbValue::from_bool(
+                !st.is_empty()
+                    && st
+                        .chars()
+                        .all(|c| c.general_category() == GeneralCategory::DecimalNumber),
+            )
         } else {
             MbValue::from_bool(false)
         }
@@ -897,9 +954,10 @@ pub fn mb_str_isdecimal(s: MbValue) -> MbValue {
 pub fn mb_str_isprintable(s: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
-            MbValue::from_bool(st.chars().all(|c| {
-                c == ' ' || (!c.is_whitespace() && !c.is_control())
-            }))
+            MbValue::from_bool(
+                st.chars()
+                    .all(|c| c == ' ' || (!c.is_whitespace() && !c.is_control())),
+            )
         } else {
             MbValue::from_bool(false)
         }
@@ -914,7 +972,9 @@ pub fn mb_str_center(s: MbValue, width: MbValue, fill: MbValue) -> MbValue {
             let fillchar = as_str(fill).and_then(|f| f.chars().next()).unwrap_or(' ');
             let w = w as usize;
             let char_len = st.chars().count();
-            if char_len >= w { return new_str(st.to_string()); }
+            if char_len >= w {
+                return new_str(st.to_string());
+            }
             let pad = w - char_len;
             let left = pad / 2 + (pad & w & 1);
             let right = pad - left;
@@ -937,8 +997,14 @@ pub fn mb_str_ljust(s: MbValue, width: MbValue, fill: MbValue) -> MbValue {
             let fillchar = as_str(fill).and_then(|f| f.chars().next()).unwrap_or(' ');
             let w = w as usize;
             let char_len = st.chars().count();
-            if char_len >= w { return new_str(st.to_string()); }
-            new_str(format!("{}{}", st, fillchar.to_string().repeat(w - char_len)))
+            if char_len >= w {
+                return new_str(st.to_string());
+            }
+            new_str(format!(
+                "{}{}",
+                st,
+                fillchar.to_string().repeat(w - char_len)
+            ))
         } else {
             MbValue::none()
         }
@@ -951,8 +1017,14 @@ pub fn mb_str_rjust(s: MbValue, width: MbValue, fill: MbValue) -> MbValue {
             let fillchar = as_str(fill).and_then(|f| f.chars().next()).unwrap_or(' ');
             let w = w as usize;
             let char_len = st.chars().count();
-            if char_len >= w { return new_str(st.to_string()); }
-            new_str(format!("{}{}", fillchar.to_string().repeat(w - char_len), st))
+            if char_len >= w {
+                return new_str(st.to_string());
+            }
+            new_str(format!(
+                "{}{}",
+                fillchar.to_string().repeat(w - char_len),
+                st
+            ))
         } else {
             MbValue::none()
         }
@@ -964,7 +1036,9 @@ pub fn mb_str_zfill(s: MbValue, width: MbValue) -> MbValue {
         if let (Some(st), Some(w)) = (as_str(s), width.as_int()) {
             let w = w as usize;
             let char_len = st.chars().count();
-            if char_len >= w { return new_str(st.to_string()); }
+            if char_len >= w {
+                return new_str(st.to_string());
+            }
             let (sign, num) = if st.starts_with('-') || st.starts_with('+') {
                 (&st[..1], &st[1..])
             } else {
@@ -1018,8 +1092,13 @@ pub(crate) fn nontext_codec_name(enc: &str) -> Option<&'static str> {
 
 pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
     unsafe {
-        let st = match as_str(s) { Some(t) => t, None => return MbValue::none() };
-        let enc = as_str(encoding).map(|e| e.to_ascii_lowercase()).unwrap_or_else(|| "utf-8".to_string());
+        let st = match as_str(s) {
+            Some(t) => t,
+            None => return MbValue::none(),
+        };
+        let enc = as_str(encoding)
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_else(|| "utf-8".to_string());
         let err = as_str(errors).unwrap_or("strict").to_string();
         let raise_uee = |enc_name: &str, ch: char, pos: usize| {
             super::exception::mb_raise(
@@ -1074,32 +1153,44 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
             // binary writer (unicode strings → utf-16be) and test_xml_encodings.
             "utf-16be" | "utf-16-be" | "utf_16_be" => {
                 let mut out = Vec::with_capacity(st.len() * 2);
-                for u in st.encode_utf16() { out.extend_from_slice(&u.to_be_bytes()); }
+                for u in st.encode_utf16() {
+                    out.extend_from_slice(&u.to_be_bytes());
+                }
                 out
             }
             "utf-16le" | "utf-16-le" | "utf_16_le" => {
                 let mut out = Vec::with_capacity(st.len() * 2);
-                for u in st.encode_utf16() { out.extend_from_slice(&u.to_le_bytes()); }
+                for u in st.encode_utf16() {
+                    out.extend_from_slice(&u.to_le_bytes());
+                }
                 out
             }
             "utf-16" | "utf16" => {
                 let mut out = vec![0xFF, 0xFE];
-                for u in st.encode_utf16() { out.extend_from_slice(&u.to_le_bytes()); }
+                for u in st.encode_utf16() {
+                    out.extend_from_slice(&u.to_le_bytes());
+                }
                 out
             }
             "utf-32be" | "utf-32-be" | "utf_32_be" => {
                 let mut out = Vec::with_capacity(st.len() * 4);
-                for ch in st.chars() { out.extend_from_slice(&(ch as u32).to_be_bytes()); }
+                for ch in st.chars() {
+                    out.extend_from_slice(&(ch as u32).to_be_bytes());
+                }
                 out
             }
             "utf-32le" | "utf-32-le" | "utf_32_le" => {
                 let mut out = Vec::with_capacity(st.len() * 4);
-                for ch in st.chars() { out.extend_from_slice(&(ch as u32).to_le_bytes()); }
+                for ch in st.chars() {
+                    out.extend_from_slice(&(ch as u32).to_le_bytes());
+                }
                 out
             }
             "utf-32" | "utf32" => {
                 let mut out = vec![0xFF, 0xFE, 0x00, 0x00];
-                for ch in st.chars() { out.extend_from_slice(&(ch as u32).to_le_bytes()); }
+                for ch in st.chars() {
+                    out.extend_from_slice(&(ch as u32).to_le_bytes());
+                }
                 out
             }
             _ => {
@@ -1123,8 +1214,8 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
 }
 
 pub fn mb_str_hash(s: MbValue) -> MbValue {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
     unsafe {
         if let Some(st) = as_str(s) {
             let mut hasher = DefaultHasher::new();
@@ -1164,9 +1255,13 @@ pub fn mb_str_lt(a: MbValue, b: MbValue) -> MbValue {
 pub fn mb_str_splitlines(s: MbValue, keepends: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
-            let keep = if let Some(b) = keepends.as_bool() { b }
-                else if let Some(i) = keepends.as_int() { i != 0 }
-                else { false };
+            let keep = if let Some(b) = keepends.as_bool() {
+                b
+            } else if let Some(i) = keepends.as_int() {
+                i != 0
+            } else {
+                false
+            };
             let mut out: Vec<MbValue> = Vec::new();
             let bytes = st.as_bytes();
             let mut start = 0usize;
@@ -1175,9 +1270,15 @@ pub fn mb_str_splitlines(s: MbValue, keepends: MbValue) -> MbValue {
                 let b = bytes[i];
                 if b == b'\n' || b == b'\r' {
                     // Line terminator length: \r\n = 2, else 1.
-                    let term_len = if b == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' { 2 } else { 1 };
+                    let term_len = if b == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                        2
+                    } else {
+                        1
+                    };
                     let end = if keep { i + term_len } else { i };
-                    out.push(new_str(String::from_utf8_lossy(&bytes[start..end]).into_owned()));
+                    out.push(new_str(
+                        String::from_utf8_lossy(&bytes[start..end]).into_owned(),
+                    ));
                     i += term_len;
                     start = i;
                 } else {
@@ -1185,7 +1286,9 @@ pub fn mb_str_splitlines(s: MbValue, keepends: MbValue) -> MbValue {
                 }
             }
             if start < bytes.len() {
-                out.push(new_str(String::from_utf8_lossy(&bytes[start..]).into_owned()));
+                out.push(new_str(
+                    String::from_utf8_lossy(&bytes[start..]).into_owned(),
+                ));
             }
             MbValue::from_ptr(MbObject::new_list(out))
         } else {
@@ -1198,16 +1301,21 @@ pub fn mb_str_splitlines(s: MbValue, keepends: MbValue) -> MbValue {
 pub fn mb_str_expandtabs(s: MbValue, tabsize: MbValue) -> MbValue {
     unsafe {
         if let Some(st) = as_str(s) {
-            let size: usize = tabsize.as_int().map(|i| if i < 0 { 0 } else { i as usize }).unwrap_or(8);
+            let size: usize = tabsize
+                .as_int()
+                .map(|i| if i < 0 { 0 } else { i as usize })
+                .unwrap_or(8);
             let mut out = String::with_capacity(st.len());
             let mut col: usize = 0;
             for c in st.chars() {
                 match c {
                     '\t' => {
-                        if size == 0 { /* drop tab */ }
-                        else {
+                        if size == 0 { /* drop tab */
+                        } else {
                             let pad = size - (col % size);
-                            for _ in 0..pad { out.push(' '); }
+                            for _ in 0..pad {
+                                out.push(' ');
+                            }
                             col += pad;
                         }
                     }
@@ -1366,7 +1474,6 @@ pub fn mb_fstring_value(val: MbValue) -> MbValue {
     super::builtins::mb_str(val)
 }
 
-
 // ── Formatting ──
 
 /// CPython-style `repr(float)` / `str(float)`. Lowercase `nan` / `inf` for
@@ -1378,7 +1485,11 @@ pub fn python_float_repr(f: f64) -> String {
         return "nan".to_string();
     }
     if f.is_infinite() {
-        return if f < 0.0 { "-inf".to_string() } else { "inf".to_string() };
+        return if f < 0.0 {
+            "-inf".to_string()
+        } else {
+            "inf".to_string()
+        };
     }
     let abs = f.abs();
     if abs != 0.0 && (abs < 1e-4 || abs >= 1e16) {
@@ -1397,7 +1508,9 @@ pub fn python_float_repr(f: f64) -> String {
 /// (`1.23e+03`, `1.23e-04`): explicit sign, minimum two exponent digits.
 fn pythonize_exponent(raw: &str, upper: bool) -> String {
     let marker = if upper { 'E' } else { 'e' };
-    let Some(idx) = raw.rfind(marker) else { return raw.to_string() };
+    let Some(idx) = raw.rfind(marker) else {
+        return raw.to_string();
+    };
     let (mantissa, exp_part) = raw.split_at(idx);
     let exp_str = &exp_part[1..]; // skip the marker char
     let (sign, digits) = if let Some(rest) = exp_str.strip_prefix('-') {
@@ -1522,7 +1635,11 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
         i += 1;
     }
     let width: usize = if i > width_start {
-        chars[width_start..i].iter().collect::<String>().parse().unwrap_or(0)
+        chars[width_start..i]
+            .iter()
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0)
     } else {
         0
     };
@@ -1543,17 +1660,19 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
         while i < chars.len() && chars[i].is_ascii_digit() {
             i += 1;
         }
-        Some(chars[prec_start..i].iter().collect::<String>().parse().unwrap_or(0))
+        Some(
+            chars[prec_start..i]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0),
+        )
     } else {
         None
     };
 
     // Parse type char (d, f, s, etc.)
-    let type_char = if i < chars.len() {
-        chars[i]
-    } else {
-        '\0'
-    };
+    let type_char = if i < chars.len() { chars[i] } else { '\0' };
 
     // CPython format-code/type validation: a known code applied to the wrong
     // scalar type (or an unknown code) raises ValueError instead of silently
@@ -1565,10 +1684,15 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
         let is_int_val = val.as_int().is_some() || is_bool_val;
         let is_float_val = !is_int_val && val.as_float().is_some();
         if is_str_val || is_int_val || is_float_val {
-            let type_name = if is_str_val { "str" }
-                else if is_float_val { "float" }
-                else if is_bool_val { "bool" }
-                else { "int" };
+            let type_name = if is_str_val {
+                "str"
+            } else if is_float_val {
+                "float"
+            } else if is_bool_val {
+                "bool"
+            } else {
+                "int"
+            };
             let bad = match type_char {
                 'b' | 'c' | 'd' | 'o' | 'x' | 'X' => !is_int_val,
                 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%' => is_str_val,
@@ -1594,26 +1718,29 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
     // Build the sign/magnitude pieces separately so `+`/` ` prefix survives
     // zero-padding (CPython: `"{:+05d}".format(3)` → `"+0003"`).
     let extract_int = || -> i64 {
-        val.as_int().unwrap_or_else(|| val.as_float().map(|f| f as i64).unwrap_or(0))
+        val.as_int()
+            .unwrap_or_else(|| val.as_float().map(|f| f as i64).unwrap_or(0))
     };
     let apply_thousands = |digits: &str, sep: char| -> String {
-        let (minus, num) = digits.strip_prefix('-')
+        let (minus, num) = digits
+            .strip_prefix('-')
             .map(|r| (true, r))
             .unwrap_or((false, digits));
         let bytes = num.as_bytes();
         let mut out = Vec::with_capacity(num.len() + num.len() / 3);
         let first_group = bytes.len() % 3;
         for (idx, b) in bytes.iter().enumerate() {
-            if idx > 0
-                && idx >= first_group
-                && (idx - first_group) % 3 == 0
-            {
+            if idx > 0 && idx >= first_group && (idx - first_group) % 3 == 0 {
                 out.push(sep as u8);
             }
             out.push(*b);
         }
         let with_sep = String::from_utf8(out).unwrap_or_else(|_| num.to_string());
-        if minus { format!("-{with_sep}") } else { with_sep }
+        if minus {
+            format!("-{with_sep}")
+        } else {
+            with_sep
+        }
     };
     // Non-finite floats render as canonical inf/nan, with case following the
     // presentation letter (CPython): lowercase 'f'/'e'/'g'/'%'/None → inf/nan,
@@ -1626,195 +1753,267 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
         }
         let upper = matches!(type_char, 'F' | 'E' | 'G');
         let word = if fv.is_nan() {
-            if upper { "NAN" } else { "nan" }
-        } else if upper { "INF" } else { "inf" };
-        let prefix = if fv.is_sign_negative() { "-" }
-            else if sign == '+' { "+" }
-            else if sign == ' ' { " " }
-            else { "" };
+            if upper {
+                "NAN"
+            } else {
+                "nan"
+            }
+        } else if upper {
+            "INF"
+        } else {
+            "inf"
+        };
+        let prefix = if fv.is_sign_negative() {
+            "-"
+        } else if sign == '+' {
+            "+"
+        } else if sign == ' ' {
+            " "
+        } else {
+            ""
+        };
         Some((prefix.to_string(), word.to_string()))
     });
     let is_nonfinite_float = nonfinite_float.is_some();
-    let (sign_prefix, body) = if let Some(nf) = nonfinite_float { nf } else {
-    match type_char {
-        '%' => {
-            // Percent type: multiply by 100, format as fixed-point, append '%'.
-            let f_val = val.as_float()
-                .or_else(|| val.as_int().map(|i| i as f64))
-                .unwrap_or(0.0);
-            let scaled = f_val * 100.0;
-            let prec = precision.unwrap_or(6);
-            let raw = format!("{:.prec$}", scaled.abs(), prec = prec);
-            let prefix = if f_val.is_sign_negative() { "-".to_string() }
-                else if sign == '+' { "+".to_string() }
-                else if sign == ' ' { " ".to_string() }
-                else { String::new() };
-            (prefix, format!("{raw}%"))
-        }
-        'e' | 'E' => {
-            let f_val = val.as_float()
-                .or_else(|| val.as_int().map(|i| i as f64))
-                .unwrap_or(0.0);
-            let prec = precision.unwrap_or(6);
-            let raw = if type_char == 'e' {
-                format!("{:.prec$e}", f_val.abs(), prec = prec)
-            } else {
-                format!("{:.prec$E}", f_val.abs(), prec = prec)
-            };
-            let raw = pythonize_exponent(&raw, type_char == 'E');
-            let prefix = if f_val.is_sign_negative() { "-".to_string() }
-                else if sign == '+' { "+".to_string() }
-                else if sign == ' ' { " ".to_string() }
-                else { String::new() };
-            (prefix, raw)
-        }
-        'g' | 'G' => {
-            let f_val = val.as_float()
-                .or_else(|| val.as_int().map(|i| i as f64))
-                .unwrap_or(0.0);
-            let raw = format_g_magnitude(f_val, precision, type_char == 'G', alternate, false);
-            let prefix = if f_val.is_sign_negative() { "-".to_string() }
-                else if sign == '+' { "+".to_string() }
-                else if sign == ' ' { " ".to_string() }
-                else { String::new() };
-            (prefix, raw)
-        }
-        'f' | 'F' => {
-            let f_val = val.as_float()
-                .or_else(|| val.as_int().map(|i| i as f64))
-                .unwrap_or(0.0);
-            let prec = precision.unwrap_or(6);
-            let raw = format!("{:.prec$}", f_val.abs(), prec = prec);
-            let digits_body = if let Some(sep) = thousands {
-                // Only the integer part is grouped.
-                if let Some((int_part, frac)) = raw.split_once('.') {
-                    format!("{}.{}", apply_thousands(int_part, sep), frac)
+    let (sign_prefix, body) = if let Some(nf) = nonfinite_float {
+        nf
+    } else {
+        match type_char {
+            '%' => {
+                // Percent type: multiply by 100, format as fixed-point, append '%'.
+                let f_val = val
+                    .as_float()
+                    .or_else(|| val.as_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let scaled = f_val * 100.0;
+                let prec = precision.unwrap_or(6);
+                let raw = format!("{:.prec$}", scaled.abs(), prec = prec);
+                let prefix = if f_val.is_sign_negative() {
+                    "-".to_string()
+                } else if sign == '+' {
+                    "+".to_string()
+                } else if sign == ' ' {
+                    " ".to_string()
                 } else {
-                    apply_thousands(&raw, sep)
-                }
-            } else {
-                raw
-            };
-            let prefix = if f_val.is_sign_negative() { "-".to_string() }
-                else if sign == '+' { "+".to_string() }
-                else if sign == ' ' { " ".to_string() }
-                else { String::new() };
-            (prefix, digits_body)
-        }
-        'd' => {
-            let v = extract_int();
-            let digits = if let Some(sep) = thousands {
-                apply_thousands(&v.abs().to_string(), sep)
-            } else {
-                v.abs().to_string()
-            };
-            let prefix = if v < 0 { "-".to_string() }
-                else if sign == '+' { "+".to_string() }
-                else if sign == ' ' { " ".to_string() }
-                else { String::new() };
-            (prefix, digits)
-        }
-        'b' | 'o' | 'x' | 'X' => {
-            let v = extract_int();
-            let abs_val = v.unsigned_abs();
-            let digits = match type_char {
-                'b' => format!("{:b}", abs_val),
-                'o' => format!("{:o}", abs_val),
-                'x' => format!("{:x}", abs_val),
-                'X' => format!("{:X}", abs_val),
-                _ => unreachable!(),
-            };
-            let alt_prefix = if alternate {
-                match type_char {
-                    'b' => "0b",
-                    'o' => "0o",
-                    'x' => "0x",
-                    'X' => "0X",
-                    _ => "",
-                }
-            } else {
-                ""
-            };
-            let sign_part = if v < 0 { "-".to_string() }
-                else if sign == '+' { "+".to_string() }
-                else if sign == ' ' { " ".to_string() }
-                else { String::new() };
-            (format!("{sign_part}{alt_prefix}"), digits)
-        }
-        's' | '\0' => {
-            // None-type float with an explicit precision is 'g'-like (significant
-            // digits, exponential past the threshold) but keeps a trailing ".0"
-            // when the result would otherwise look integral (CPython's
-            // Py_DTSF_ADD_DOT_0). The `str`-style char truncation below only
-            // applies to actual strings — a float here always has type '\0'
-            // ('s' on a float already raised ValueError in the validation block).
-            if thousands.is_none()
-                && precision.is_some()
-                && val.as_float().is_some()
-                && val.as_int().is_none()
-            {
-                let f_val = val.as_float().unwrap();
-                let mut body = format_g_magnitude(f_val, precision, false, alternate, true);
-                if !body.contains(|c| c == '.' || c == 'e' || c == 'E') {
-                    body.push_str(".0");
-                }
-                let prefix = if f_val.is_sign_negative() { "-".to_string() }
-                    else if sign == '+' { "+".to_string() }
-                    else if sign == ' ' { " ".to_string() }
-                    else { String::new() };
-                (prefix, body)
-            } else
-            // When no type is given but thousands was requested and the value
-            // is numeric, behave like `d` / `f` so `"{:,}".format(1234567)` →
-            // `"1,234,567"`.
-            if thousands.is_some() && (val.as_int().is_some() || val.as_float().is_some()) {
-                let sep = thousands.unwrap();
-                if let Some(f) = val.as_float() {
-                    let raw = format!("{:.6}", f.abs());
-                    let body = if let Some((int_part, frac)) = raw.split_once('.') {
+                    String::new()
+                };
+                (prefix, format!("{raw}%"))
+            }
+            'e' | 'E' => {
+                let f_val = val
+                    .as_float()
+                    .or_else(|| val.as_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let prec = precision.unwrap_or(6);
+                let raw = if type_char == 'e' {
+                    format!("{:.prec$e}", f_val.abs(), prec = prec)
+                } else {
+                    format!("{:.prec$E}", f_val.abs(), prec = prec)
+                };
+                let raw = pythonize_exponent(&raw, type_char == 'E');
+                let prefix = if f_val.is_sign_negative() {
+                    "-".to_string()
+                } else if sign == '+' {
+                    "+".to_string()
+                } else if sign == ' ' {
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
+                (prefix, raw)
+            }
+            'g' | 'G' => {
+                let f_val = val
+                    .as_float()
+                    .or_else(|| val.as_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let raw = format_g_magnitude(f_val, precision, type_char == 'G', alternate, false);
+                let prefix = if f_val.is_sign_negative() {
+                    "-".to_string()
+                } else if sign == '+' {
+                    "+".to_string()
+                } else if sign == ' ' {
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
+                (prefix, raw)
+            }
+            'f' | 'F' => {
+                let f_val = val
+                    .as_float()
+                    .or_else(|| val.as_int().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                let prec = precision.unwrap_or(6);
+                let raw = format!("{:.prec$}", f_val.abs(), prec = prec);
+                let digits_body = if let Some(sep) = thousands {
+                    // Only the integer part is grouped.
+                    if let Some((int_part, frac)) = raw.split_once('.') {
                         format!("{}.{}", apply_thousands(int_part, sep), frac)
                     } else {
                         apply_thousands(&raw, sep)
+                    }
+                } else {
+                    raw
+                };
+                let prefix = if f_val.is_sign_negative() {
+                    "-".to_string()
+                } else if sign == '+' {
+                    "+".to_string()
+                } else if sign == ' ' {
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
+                (prefix, digits_body)
+            }
+            'd' => {
+                let v = extract_int();
+                let digits = if let Some(sep) = thousands {
+                    apply_thousands(&v.abs().to_string(), sep)
+                } else {
+                    v.abs().to_string()
+                };
+                let prefix = if v < 0 {
+                    "-".to_string()
+                } else if sign == '+' {
+                    "+".to_string()
+                } else if sign == ' ' {
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
+                (prefix, digits)
+            }
+            'b' | 'o' | 'x' | 'X' => {
+                let v = extract_int();
+                let abs_val = v.unsigned_abs();
+                let digits = match type_char {
+                    'b' => format!("{:b}", abs_val),
+                    'o' => format!("{:o}", abs_val),
+                    'x' => format!("{:x}", abs_val),
+                    'X' => format!("{:X}", abs_val),
+                    _ => unreachable!(),
+                };
+                let alt_prefix = if alternate {
+                    match type_char {
+                        'b' => "0b",
+                        'o' => "0o",
+                        'x' => "0x",
+                        'X' => "0X",
+                        _ => "",
+                    }
+                } else {
+                    ""
+                };
+                let sign_part = if v < 0 {
+                    "-".to_string()
+                } else if sign == '+' {
+                    "+".to_string()
+                } else if sign == ' ' {
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
+                (format!("{sign_part}{alt_prefix}"), digits)
+            }
+            's' | '\0' => {
+                // None-type float with an explicit precision is 'g'-like (significant
+                // digits, exponential past the threshold) but keeps a trailing ".0"
+                // when the result would otherwise look integral (CPython's
+                // Py_DTSF_ADD_DOT_0). The `str`-style char truncation below only
+                // applies to actual strings — a float here always has type '\0'
+                // ('s' on a float already raised ValueError in the validation block).
+                if thousands.is_none()
+                    && precision.is_some()
+                    && val.as_float().is_some()
+                    && val.as_int().is_none()
+                {
+                    let f_val = val.as_float().unwrap();
+                    let mut body = format_g_magnitude(f_val, precision, false, alternate, true);
+                    if !body.contains(|c| c == '.' || c == 'e' || c == 'E') {
+                        body.push_str(".0");
+                    }
+                    let prefix = if f_val.is_sign_negative() {
+                        "-".to_string()
+                    } else if sign == '+' {
+                        "+".to_string()
+                    } else if sign == ' ' {
+                        " ".to_string()
+                    } else {
+                        String::new()
                     };
-                    let prefix = if f.is_sign_negative() { "-".to_string() }
-                        else if sign == '+' { "+".to_string() }
-                        else if sign == ' ' { " ".to_string() }
-                        else { String::new() };
+                    (prefix, body)
+                } else
+                // When no type is given but thousands was requested and the value
+                // is numeric, behave like `d` / `f` so `"{:,}".format(1234567)` →
+                // `"1,234,567"`.
+                if thousands.is_some()
+                    && (val.as_int().is_some() || val.as_float().is_some())
+                {
+                    let sep = thousands.unwrap();
+                    if let Some(f) = val.as_float() {
+                        let raw = format!("{:.6}", f.abs());
+                        let body = if let Some((int_part, frac)) = raw.split_once('.') {
+                            format!("{}.{}", apply_thousands(int_part, sep), frac)
+                        } else {
+                            apply_thousands(&raw, sep)
+                        };
+                        let prefix = if f.is_sign_negative() {
+                            "-".to_string()
+                        } else if sign == '+' {
+                            "+".to_string()
+                        } else if sign == ' ' {
+                            " ".to_string()
+                        } else {
+                            String::new()
+                        };
+                        (prefix, body)
+                    } else {
+                        let v = val.as_int().unwrap_or(0);
+                        let digits = apply_thousands(&v.abs().to_string(), sep);
+                        let prefix = if v < 0 {
+                            "-".to_string()
+                        } else if sign == '+' {
+                            "+".to_string()
+                        } else if sign == ' ' {
+                            " ".to_string()
+                        } else {
+                            String::new()
+                        };
+                        (prefix, digits)
+                    }
+                } else if matches!(sign, '+' | ' ')
+                    && (val.as_int().is_some() || val.as_float().is_some())
+                {
+                    // Sign flag with no explicit type: treat numerics like `d` / `f`
+                    // so `f"{42:+}"` → `"+42"`, `f"{-3.14: }"` → `"-3.14"`.
+                    // Use `value_to_string` so floats keep CPython's repr (`0.0` not
+                    // `0`, `1e100` not `10000…`); just split off any leading minus.
+                    let raw = value_to_string(val);
+                    let (is_neg, body) = match raw.strip_prefix('-') {
+                        Some(rest) => (true, rest.to_string()),
+                        None => (false, raw),
+                    };
+                    let prefix = if is_neg {
+                        "-".to_string()
+                    } else if sign == '+' {
+                        "+".to_string()
+                    } else {
+                        " ".to_string()
+                    };
                     (prefix, body)
                 } else {
-                    let v = val.as_int().unwrap_or(0);
-                    let digits = apply_thousands(&v.abs().to_string(), sep);
-                    let prefix = if v < 0 { "-".to_string() }
-                        else if sign == '+' { "+".to_string() }
-                        else if sign == ' ' { " ".to_string() }
-                        else { String::new() };
-                    (prefix, digits)
+                    let s = if let Some(prec) = precision {
+                        value_to_string(val).chars().take(prec).collect()
+                    } else {
+                        value_to_string(val)
+                    };
+                    (String::new(), s)
                 }
-            } else if matches!(sign, '+' | ' ') && (val.as_int().is_some() || val.as_float().is_some()) {
-                // Sign flag with no explicit type: treat numerics like `d` / `f`
-                // so `f"{42:+}"` → `"+42"`, `f"{-3.14: }"` → `"-3.14"`.
-                // Use `value_to_string` so floats keep CPython's repr (`0.0` not
-                // `0`, `1e100` not `10000…`); just split off any leading minus.
-                let raw = value_to_string(val);
-                let (is_neg, body) = match raw.strip_prefix('-') {
-                    Some(rest) => (true, rest.to_string()),
-                    None => (false, raw),
-                };
-                let prefix = if is_neg { "-".to_string() }
-                    else if sign == '+' { "+".to_string() }
-                    else { " ".to_string() };
-                (prefix, body)
-            } else {
-                let s = if let Some(prec) = precision {
-                    value_to_string(val).chars().take(prec).collect()
-                } else {
-                    value_to_string(val)
-                };
-                (String::new(), s)
             }
+            _ => (String::new(), value_to_string(val)),
         }
-        _ => (String::new(), value_to_string(val)),
-    }
     };
     let formatted = format!("{sign_prefix}{body}");
 
@@ -1824,9 +2023,19 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
         // Non-finite floats use space fill even when '0' was requested
         // (CPython: `format(inf, "010")` → `"       inf"`).
         let zero_fill = zero_fill && !is_nonfinite_float;
-        let actual_fill = if zero_fill && align == '\0' { '0' } else { fill };
+        let actual_fill = if zero_fill && align == '\0' {
+            '0'
+        } else {
+            fill
+        };
         let actual_align = if align == '\0' {
-            if zero_fill { '>' } else if val.as_ptr().is_some() { '<' } else { '>' }
+            if zero_fill {
+                '>'
+            } else if val.as_ptr().is_some() {
+                '<'
+            } else {
+                '>'
+            }
         } else {
             align
         };
@@ -1837,15 +2046,33 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
             return format!("{sign_prefix}{zeros}{body}");
         }
         match actual_align {
-            '<' => format!("{}{}", formatted, std::iter::repeat(actual_fill).take(padding).collect::<String>()),
-            '>' => format!("{}{}", std::iter::repeat(actual_fill).take(padding).collect::<String>(), formatted),
+            '<' => format!(
+                "{}{}",
+                formatted,
+                std::iter::repeat(actual_fill)
+                    .take(padding)
+                    .collect::<String>()
+            ),
+            '>' => format!(
+                "{}{}",
+                std::iter::repeat(actual_fill)
+                    .take(padding)
+                    .collect::<String>(),
+                formatted
+            ),
             '^' => {
                 let left = padding / 2;
                 let right = padding - left;
-                format!("{}{}{}",
-                    std::iter::repeat(actual_fill).take(left).collect::<String>(),
+                format!(
+                    "{}{}{}",
+                    std::iter::repeat(actual_fill)
+                        .take(left)
+                        .collect::<String>(),
                     formatted,
-                    std::iter::repeat(actual_fill).take(right).collect::<String>())
+                    std::iter::repeat(actual_fill)
+                        .take(right)
+                        .collect::<String>()
+                )
             }
             _ => formatted,
         }
@@ -1880,9 +2107,16 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
     let mut out = String::new();
     let mut chars = tmpl.chars().peekable();
     while let Some(c) = chars.next() {
-        if c != '%' { out.push(c); continue; }
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
         // %% literal
-        if chars.peek() == Some(&'%') { chars.next(); out.push('%'); continue; }
+        if chars.peek() == Some(&'%') {
+            chars.next();
+            out.push('%');
+            continue;
+        }
 
         // Mapping key: `%(name)s` looks up `name` in the dict argument.
         let mut mapping_value: Option<MbValue> = None;
@@ -1891,12 +2125,18 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
             let mut key = String::new();
             let mut depth = 1usize;
             for ch in chars.by_ref() {
-                if ch == '(' { depth += 1; key.push(ch); }
-                else if ch == ')' {
-                    depth -= 1;
-                    if depth == 0 { break; }
+                if ch == '(' {
+                    depth += 1;
                     key.push(ch);
-                } else { key.push(ch); }
+                } else if ch == ')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                    key.push(ch);
+                } else {
+                    key.push(ch);
+                }
             }
             if let Some(map) = mapping {
                 let key_val = MbValue::from_ptr(super::rc::MbObject::new_str(key));
@@ -1912,11 +2152,26 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
         let mut zero_pad = false;
         loop {
             match chars.peek() {
-                Some('-') => { left_align = true; chars.next(); }
-                Some('+') => { sign_plus = true; chars.next(); }
-                Some(' ') => { sign_space = true; chars.next(); }
-                Some('#') => { alternate = true; chars.next(); }
-                Some('0') => { zero_pad = true; chars.next(); }
+                Some('-') => {
+                    left_align = true;
+                    chars.next();
+                }
+                Some('+') => {
+                    sign_plus = true;
+                    chars.next();
+                }
+                Some(' ') => {
+                    sign_space = true;
+                    chars.next();
+                }
+                Some('#') => {
+                    alternate = true;
+                    chars.next();
+                }
+                Some('0') => {
+                    zero_pad = true;
+                    chars.next();
+                }
                 _ => break,
             }
         }
@@ -1934,7 +2189,9 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                 if d.is_ascii_digit() {
                     width = width * 10 + (d as usize - '0' as usize);
                     chars.next();
-                } else { break; }
+                } else {
+                    break;
+                }
             }
         }
 
@@ -1954,7 +2211,9 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                     if d.is_ascii_digit() {
                         p = p * 10 + (d as usize - '0' as usize);
                         chars.next();
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
             }
             precision = Some(p);
@@ -1962,12 +2221,19 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
 
         // Length modifiers (h/l/L) — accept and ignore.
         while let Some(&d) = chars.peek() {
-            if matches!(d, 'h' | 'l' | 'L') { chars.next(); } else { break; }
+            if matches!(d, 'h' | 'l' | 'L') {
+                chars.next();
+            } else {
+                break;
+            }
         }
 
         let conv = match chars.next() {
             Some(ch) => ch,
-            None => { out.push('%'); break; }
+            None => {
+                out.push('%');
+                break;
+            }
         };
 
         let val = if mapping_value.is_some() {
@@ -1975,43 +2241,69 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
         } else {
             arg_slots.get(arg_idx).copied()
         };
-        if mapping_value.is_none() && !matches!(conv, '%') { arg_idx += 1; }
+        if mapping_value.is_none() && !matches!(conv, '%') {
+            arg_idx += 1;
+        }
 
         let (mut sign_prefix, body) = match conv {
             'd' | 'i' => {
-                let v = val.and_then(|a| a.as_int())
+                let v = val
+                    .and_then(|a| a.as_int())
                     .or_else(|| val.and_then(|a| a.as_float()).map(|f| f as i64))
                     .unwrap_or(0);
-                let prefix = if v < 0 { "-".to_string() }
-                    else if sign_plus { "+".to_string() }
-                    else if sign_space { " ".to_string() }
-                    else { String::new() };
+                let prefix = if v < 0 {
+                    "-".to_string()
+                } else if sign_plus {
+                    "+".to_string()
+                } else if sign_space {
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
                 (prefix, v.unsigned_abs().to_string())
             }
             'f' | 'F' => {
-                let v = val.and_then(|a| a.as_float())
+                let v = val
+                    .and_then(|a| a.as_float())
                     .or_else(|| val.and_then(|a| a.as_int()).map(|i| i as f64))
                     .unwrap_or(0.0);
                 let prec = precision.unwrap_or(6);
                 let body = format!("{:.prec$}", v.abs(), prec = prec);
-                let prefix = if v.is_sign_negative() { "-".to_string() }
-                    else if sign_plus { "+".to_string() }
-                    else if sign_space { " ".to_string() }
-                    else { String::new() };
+                let prefix = if v.is_sign_negative() {
+                    "-".to_string()
+                } else if sign_plus {
+                    "+".to_string()
+                } else if sign_space {
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
                 (prefix, body)
             }
             's' => {
                 let s = val.map(value_to_string).unwrap_or_default();
-                let body = if let Some(p) = precision { s.chars().take(p).collect() } else { s };
+                let body = if let Some(p) = precision {
+                    s.chars().take(p).collect()
+                } else {
+                    s
+                };
                 (String::new(), body)
             }
             'r' => {
-                let s = val.map(|v| {
-                    let r = super::builtins::mb_repr(v);
-                    r.as_ptr().and_then(|p| unsafe {
-                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
-                    }).unwrap_or_default()
-                }).unwrap_or_default();
+                let s = val
+                    .map(|v| {
+                        let r = super::builtins::mb_repr(v);
+                        r.as_ptr()
+                            .and_then(|p| unsafe {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
                 (String::new(), s)
             }
             'x' | 'X' | 'o' | 'b' => {
@@ -2024,28 +2316,45 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                     'b' => format!("{:b}", abs),
                     _ => unreachable!(),
                 };
-                let sign_part = if v < 0 { "-".to_string() }
-                    else if sign_plus { "+".to_string() }
-                    else if sign_space { " ".to_string() }
-                    else { String::new() };
+                let sign_part = if v < 0 {
+                    "-".to_string()
+                } else if sign_plus {
+                    "+".to_string()
+                } else if sign_space {
+                    " ".to_string()
+                } else {
+                    String::new()
+                };
                 let alt = if alternate {
                     match conv {
-                        'x' => "0x", 'X' => "0X", 'o' => "0o", 'b' => "0b", _ => "",
+                        'x' => "0x",
+                        'X' => "0X",
+                        'o' => "0o",
+                        'b' => "0b",
+                        _ => "",
                     }
-                } else { "" };
+                } else {
+                    ""
+                };
                 (format!("{sign_part}{alt}"), body)
             }
             'c' => {
-                let s = val.and_then(|a| a.as_int())
+                let s = val
+                    .and_then(|a| a.as_int())
                     .and_then(|i| char::from_u32(i as u32).map(|c| c.to_string()))
                     .or_else(|| val.map(value_to_string))
                     .unwrap_or_default();
                 (String::new(), s)
             }
-            '%' => { out.push('%'); continue; }
+            '%' => {
+                out.push('%');
+                continue;
+            }
             _ => {
                 // Unknown conversion — emit as-is and consume no arg.
-                if !matches!(conv, '%') { arg_idx -= 1; }
+                if !matches!(conv, '%') {
+                    arg_idx -= 1;
+                }
                 out.push('%');
                 out.push(conv);
                 continue;
@@ -2060,13 +2369,19 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
             if left_align {
                 out.push_str(&sign_prefix);
                 out.push_str(&body);
-                for _ in 0..pad { out.push(' '); }
+                for _ in 0..pad {
+                    out.push(' ');
+                }
             } else if zero_pad && matches!(conv, 'd' | 'i' | 'f' | 'F' | 'x' | 'X' | 'o' | 'b') {
                 out.push_str(&sign_prefix);
-                for _ in 0..pad { out.push('0'); }
+                for _ in 0..pad {
+                    out.push('0');
+                }
                 out.push_str(&body);
             } else {
-                for _ in 0..pad { out.push(' '); }
+                for _ in 0..pad {
+                    out.push(' ');
+                }
                 out.push_str(&sign_prefix);
                 out.push_str(&body);
             }
@@ -2082,23 +2397,26 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
 /// Resolve nested `{...}` inside a format spec. `"{:{}}".format("hi", 10)`
 /// pulls the next positional arg (10) to build the actual spec (`"10"`), then
 /// re-parses that as the real spec. Supports `{}` (auto index) and `{N}`.
-fn resolve_nested_spec(
-    spec: &str,
-    arg_list: &[MbValue],
-    auto_idx: &mut usize,
-) -> String {
-    if !spec.contains('{') { return spec.to_string(); }
+fn resolve_nested_spec(spec: &str, arg_list: &[MbValue], auto_idx: &mut usize) -> String {
+    if !spec.contains('{') {
+        return spec.to_string();
+    }
     let mut out = String::new();
     let mut chars = spec.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '{' {
             let mut inner = String::new();
             for ch in chars.by_ref() {
-                if ch == '}' { break; }
+                if ch == '}' {
+                    break;
+                }
                 inner.push(ch);
             }
             let val = if inner.is_empty() {
-                let v = arg_list.get(*auto_idx).copied().unwrap_or_else(MbValue::none);
+                let v = arg_list
+                    .get(*auto_idx)
+                    .copied()
+                    .unwrap_or_else(MbValue::none);
                 *auto_idx += 1;
                 v
             } else if let Ok(idx) = inner.parse::<usize>() {
@@ -2125,24 +2443,34 @@ fn resolve_nested_spec_kwargs(
     kw_map: &std::collections::HashMap<String, MbValue>,
     auto_idx: &mut usize,
 ) -> String {
-    if !spec.contains('{') { return spec.to_string(); }
+    if !spec.contains('{') {
+        return spec.to_string();
+    }
     let mut out = String::new();
     let mut chars = spec.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '{' {
             let mut inner = String::new();
             for ch in chars.by_ref() {
-                if ch == '}' { break; }
+                if ch == '}' {
+                    break;
+                }
                 inner.push(ch);
             }
             let val = if inner.is_empty() {
-                let v = pos_list.get(*auto_idx).copied().unwrap_or_else(MbValue::none);
+                let v = pos_list
+                    .get(*auto_idx)
+                    .copied()
+                    .unwrap_or_else(MbValue::none);
                 *auto_idx += 1;
                 v
             } else if let Ok(idx) = inner.parse::<usize>() {
                 pos_list.get(idx).copied().unwrap_or_else(MbValue::none)
             } else {
-                kw_map.get(inner.as_str()).copied().unwrap_or_else(MbValue::none)
+                kw_map
+                    .get(inner.as_str())
+                    .copied()
+                    .unwrap_or_else(MbValue::none)
             };
             out.push_str(&value_to_string(val));
         } else {
@@ -2201,10 +2529,7 @@ pub fn mb_str_maketrans(x: MbValue, y: MbValue, z: MbValue) -> MbValue {
                                 }
                                 _ => continue,
                             };
-                            guard.insert(
-                                super::dict_ops::DictKey::Int(key_int),
-                                *v,
-                            );
+                            guard.insert(super::dict_ops::DictKey::Int(key_int), *v);
                         }
                     }
                     return MbValue::from_ptr(out);
@@ -2222,8 +2547,14 @@ pub fn mb_str_maketrans(x: MbValue, y: MbValue, z: MbValue) -> MbValue {
 
 /// str.translate(table) — apply a codepoint-indexed translation dict.
 pub fn mb_str_translate(s: MbValue, table: MbValue) -> MbValue {
-    let src = match as_str_owned(s) { Some(x) => x, None => return MbValue::none() };
-    let tbl_ptr = match table.as_ptr() { Some(p) => p, None => return new_str(src) };
+    let src = match as_str_owned(s) {
+        Some(x) => x,
+        None => return MbValue::none(),
+    };
+    let tbl_ptr = match table.as_ptr() {
+        Some(p) => p,
+        None => return new_str(src),
+    };
     let mut out = String::with_capacity(src.len());
     unsafe {
         if let ObjData::Dict(ref lock) = (*tbl_ptr).data {
@@ -2256,14 +2587,21 @@ pub fn mb_str_translate(s: MbValue, table: MbValue) -> MbValue {
 /// Helper: clone an MbValue's string contents if it's a Str, else None.
 fn as_str_owned(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
 /// str.format_map(mapping) — like `format(**mapping)` but uses the mapping
 /// directly; `{name}` placeholders look up via __getitem__ semantics.
 pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
-    let template = match as_str_owned(s) { Some(t) => t, None => return MbValue::none() };
+    let template = match as_str_owned(s) {
+        Some(t) => t,
+        None => return MbValue::none(),
+    };
     let mapping_ptr = mapping.as_ptr();
     let lookup = |name: &str| -> Option<MbValue> {
         let ptr = mapping_ptr?;
@@ -2275,10 +2613,17 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
             }
             // Mapping-protocol objects (e.g. re.Match) look up via
             // __getitem__ semantics.
-            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
                 if class_name == "re.Match" {
-                    return fields.read().unwrap()
-                        .get(&format!("group_name_{name}")).copied();
+                    return fields
+                        .read()
+                        .unwrap()
+                        .get(&format!("group_name_{name}"))
+                        .copied();
                 }
             }
         }
@@ -2289,15 +2634,23 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
     while let Some(ch) = chars.next() {
         if ch == '{' {
             if chars.peek() == Some(&'{') {
-                chars.next(); out.push('{'); continue;
+                chars.next();
+                out.push('{');
+                continue;
             }
             let mut field = String::new();
             let mut depth = 1u32;
             for c in chars.by_ref() {
-                if c == '{' { depth += 1; field.push(c); continue; }
+                if c == '{' {
+                    depth += 1;
+                    field.push(c);
+                    continue;
+                }
                 if c == '}' {
                     depth -= 1;
-                    if depth == 0 { break; }
+                    if depth == 0 {
+                        break;
+                    }
                     field.push(c);
                     continue;
                 }
@@ -2322,7 +2675,9 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
                 }
             }
         } else if ch == '}' {
-            if chars.peek() == Some(&'}') { chars.next(); }
+            if chars.peek() == Some(&'}') {
+                chars.next();
+            }
             out.push('}');
         } else {
             out.push(ch);
@@ -2356,7 +2711,9 @@ unsafe fn resolve_field_path(mut val: MbValue, mut path: &str) -> Option<MbValue
             // .attr — read until next `.` or `[`.
             let rest = &path[1..];
             let (attr, after) = split_field_head(rest);
-            if attr.is_empty() { return None; }
+            if attr.is_empty() {
+                return None;
+            }
             let attr_val = MbValue::from_ptr(MbObject::new_str(attr.to_string()));
             let got = super::class::mb_getattr(val, attr_val);
             if got.is_none() {
@@ -2367,7 +2724,8 @@ unsafe fn resolve_field_path(mut val: MbValue, mut path: &str) -> Option<MbValue
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                         MbValue::from_ptr(MbObject::new_str(format!(
-                            "object has no attribute '{attr}'"))),
+                            "object has no attribute '{attr}'"
+                        ))),
                     );
                 }
                 return None;
@@ -2394,7 +2752,9 @@ unsafe fn resolve_field_path(mut val: MbValue, mut path: &str) -> Option<MbValue
                         if idx >= v.len() {
                             super::exception::mb_raise(
                                 MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
-                                MbValue::from_ptr(MbObject::new_str("list index out of range".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "list index out of range".to_string(),
+                                )),
                             );
                             return None;
                         }
@@ -2404,7 +2764,9 @@ unsafe fn resolve_field_path(mut val: MbValue, mut path: &str) -> Option<MbValue
                         if idx >= items.len() {
                             super::exception::mb_raise(
                                 MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
-                                MbValue::from_ptr(MbObject::new_str("tuple index out of range".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "tuple index out of range".to_string(),
+                                )),
                             );
                             return None;
                         }
@@ -2459,7 +2821,10 @@ unsafe fn resolve_field_path(mut val: MbValue, mut path: &str) -> Option<MbValue
 /// str.format(*args, **kwargs) — positional ({}, {0}), keyword ({name}).
 pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
     unsafe {
-        let template = match as_str(s) { Some(t) => t, None => return MbValue::none() };
+        let template = match as_str(s) {
+            Some(t) => t,
+            None => return MbValue::none(),
+        };
         let arg_list = match args.as_ptr() {
             Some(ptr) => match &(*ptr).data {
                 ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
@@ -2473,17 +2838,25 @@ pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
         while let Some(ch) = chars.next() {
             if ch == '{' {
                 if chars.peek() == Some(&'{') {
-                    chars.next(); result.push('{'); continue;
+                    chars.next();
+                    result.push('{');
+                    continue;
                 }
                 // Read the field — balance nested `{...}` so `{:{}}` captures
                 // the whole inner spec rather than cutting at the first `}`.
                 let mut field = String::new();
                 let mut depth = 1u32;
                 for c in chars.by_ref() {
-                    if c == '{' { depth += 1; field.push(c); continue; }
+                    if c == '{' {
+                        depth += 1;
+                        field.push(c);
+                        continue;
+                    }
                     if c == '}' {
                         depth -= 1;
-                        if depth == 0 { break; }
+                        if depth == 0 {
+                            break;
+                        }
                         field.push(c);
                         continue;
                     }
@@ -2510,10 +2883,14 @@ pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
                                     // A raised field-access error (IndexError /
                                     // AttributeError) propagates; otherwise keep
                                     // the legacy literal passthrough.
-                                    if super::exception::mb_has_exception().as_bool() == Some(true) {
+                                    if super::exception::mb_has_exception().as_bool() == Some(true)
+                                    {
                                         return MbValue::none();
                                     }
-                                    result.push('{'); result.push_str(&field); result.push('}'); continue;
+                                    result.push('{');
+                                    result.push_str(&field);
+                                    result.push('}');
+                                    continue;
                                 }
                             };
                         }
@@ -2531,10 +2908,14 @@ pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
                                     // A raised field-access error (IndexError /
                                     // AttributeError) propagates; otherwise keep
                                     // the legacy literal passthrough.
-                                    if super::exception::mb_has_exception().as_bool() == Some(true) {
+                                    if super::exception::mb_has_exception().as_bool() == Some(true)
+                                    {
                                         return MbValue::none();
                                     }
-                                    result.push('{'); result.push_str(&field); result.push('}'); continue;
+                                    result.push('{');
+                                    result.push_str(&field);
+                                    result.push('}');
+                                    continue;
                                 }
                             };
                         }
@@ -2547,7 +2928,9 @@ pub fn mb_str_format(s: MbValue, args: MbValue) -> MbValue {
                     result.push('}');
                 }
             } else if ch == '}' {
-                if chars.peek() == Some(&'}') { chars.next(); }
+                if chars.peek() == Some(&'}') {
+                    chars.next();
+                }
                 result.push('}');
             } else {
                 result.push(ch);
@@ -2574,10 +2957,15 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
         return super::stdlib::logging_mod::logging_formatter_format(s, record);
     }
     if super::stdlib::string_constants_mod::value_is_formatter(s) {
-        return super::stdlib::string_constants_mod::formatter_format_from_kwargs(s, pos_args, kwargs);
+        return super::stdlib::string_constants_mod::formatter_format_from_kwargs(
+            s, pos_args, kwargs,
+        );
     }
     unsafe {
-        let template = match as_str(s) { Some(t) => t, None => return MbValue::none() };
+        let template = match as_str(s) {
+            Some(t) => t,
+            None => return MbValue::none(),
+        };
         let pos_list: Vec<MbValue> = match pos_args.as_ptr() {
             Some(ptr) => match &(*ptr).data {
                 ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
@@ -2591,7 +2979,7 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
                 ObjData::Dict(ref lock) => {
                     let map = lock.read().unwrap();
                     map.iter().map(|(k, &v)| (k.to_string(), v)).collect()
-                },
+                }
                 _ => std::collections::HashMap::new(),
             },
             None => std::collections::HashMap::new(),
@@ -2602,7 +2990,9 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
         while let Some(ch) = chars.next() {
             if ch == '{' {
                 if chars.peek() == Some(&'{') {
-                    chars.next(); result.push('{'); continue;
+                    chars.next();
+                    result.push('{');
+                    continue;
                 }
                 // Balance nested `{...}` so `{x:>{w}}` captures the whole inner
                 // spec rather than cutting at the first `}` (matches the
@@ -2610,10 +3000,16 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
                 let mut field = String::new();
                 let mut depth = 1u32;
                 for c in chars.by_ref() {
-                    if c == '{' { depth += 1; field.push(c); continue; }
+                    if c == '{' {
+                        depth += 1;
+                        field.push(c);
+                        continue;
+                    }
                     if c == '}' {
                         depth -= 1;
-                        if depth == 0 { break; }
+                        if depth == 0 {
+                            break;
+                        }
                         field.push(c);
                         continue;
                     }
@@ -2631,9 +3027,15 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
                         let v = pos_list[auto_idx];
                         auto_idx += 1;
                         Some(v)
-                    } else { None }
+                    } else {
+                        None
+                    }
                 } else if let Ok(idx) = head.parse::<usize>() {
-                    if idx < pos_list.len() { Some(pos_list[idx]) } else { None }
+                    if idx < pos_list.len() {
+                        Some(pos_list[idx])
+                    } else {
+                        None
+                    }
                 } else {
                     kw_map.get(head).copied()
                 };
@@ -2653,9 +3055,8 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
                         // Resolve any nested `{...}` inside the spec AFTER the
                         // outer field claimed its auto-index slot, mirroring
                         // CPython's evaluation order.
-                        let resolved_spec = resolve_nested_spec_kwargs(
-                            fmt_spec, &pos_list, &kw_map, &mut auto_idx,
-                        );
+                        let resolved_spec =
+                            resolve_nested_spec_kwargs(fmt_spec, &pos_list, &kw_map, &mut auto_idx);
                         result.push_str(&apply_format_spec(value, &resolved_spec));
                     }
                     None => {
@@ -2665,7 +3066,9 @@ pub fn mb_str_format_kwargs(s: MbValue, pos_args: MbValue, kwargs: MbValue) -> M
                     }
                 }
             } else if ch == '}' {
-                if chars.peek() == Some(&'}') { chars.next(); }
+                if chars.peek() == Some(&'}') {
+                    chars.next();
+                }
                 result.push('}');
             } else {
                 result.push(ch);
@@ -2690,7 +3093,10 @@ fn format_bytes_inline(data: &[u8]) -> String {
             b'\n' => out.push_str("\\n"),
             b'\r' => out.push_str("\\r"),
             b'\t' => out.push_str("\\t"),
-            c if c == quote => { out.push('\\'); out.push(c as char); }
+            c if c == quote => {
+                out.push('\\');
+                out.push(c as char);
+            }
             0x20..=0x7E => out.push(b as char),
             c => out.push_str(&format!("\\x{c:02x}")),
         }
@@ -2764,8 +3170,11 @@ pub fn value_to_string(val: MbValue) -> String {
         let name_val = super::closure::mb_func_get_name(val);
         let name = if let Some(ptr) = name_val.as_ptr() {
             unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data { s.clone() }
-                else { "<lambda>".to_string() }
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    s.clone()
+                } else {
+                    "<lambda>".to_string()
+                }
             }
         } else {
             "<lambda>".to_string()
@@ -2790,29 +3199,35 @@ pub fn value_to_string(val: MbValue) -> String {
                 ObjData::Str(s) => s.clone(),
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
-                    let parts: Vec<String> = items.iter()
-                        .map(|v| repr_in_container(*v))
-                        .collect();
+                    let parts: Vec<String> = items.iter().map(|v| repr_in_container(*v)).collect();
                     format!("[{}]", parts.join(", "))
                 }
                 ObjData::Dict(ref lock) => {
                     let items = lock.read().unwrap();
-                    let parts: Vec<String> = items.iter()
-                        .map(|(k, v)| format!("{}: {}", super::dict_ops::dict_key_display(k), repr_in_container(*v)))
+                    let parts: Vec<String> = items
+                        .iter()
+                        .map(|(k, v)| {
+                            format!(
+                                "{}: {}",
+                                super::dict_ops::dict_key_display(k),
+                                repr_in_container(*v)
+                            )
+                        })
                         .collect();
                     format!("{{{}}}", parts.join(", "))
                 }
                 ObjData::Tuple(items) => {
-                    let parts: Vec<String> = items.iter()
-                        .map(|v| repr_in_container(*v))
-                        .collect();
+                    let parts: Vec<String> = items.iter().map(|v| repr_in_container(*v)).collect();
                     if items.len() == 1 {
                         format!("({},)", parts[0])
                     } else {
                         format!("({})", parts.join(", "))
                     }
                 }
-                ObjData::Instance { class_name, ref fields } => {
+                ObjData::Instance {
+                    class_name,
+                    ref fields,
+                } => {
                     if class_name == "UnionType" {
                         return super::builtins::union_type_repr(val);
                     }
@@ -2920,7 +3335,9 @@ pub fn value_to_string(val: MbValue) -> String {
                         let items: Option<Vec<MbValue>> = args_v.as_ptr().and_then(|p| {
                             if let ObjData::Tuple(ref it) = (*p).data {
                                 Some(it.clone())
-                            } else { None }
+                            } else {
+                                None
+                            }
                         });
                         if let Some(items) = items {
                             drop(fields_guard);
@@ -2943,14 +3360,18 @@ pub fn value_to_string(val: MbValue) -> String {
                                     value_to_string(a0)
                                 }
                                 _ => {
-                                    let tuple_val = MbValue::from_ptr(
-                                        super::rc::MbObject::new_tuple(items));
+                                    let tuple_val =
+                                        MbValue::from_ptr(super::rc::MbObject::new_tuple(items));
                                     let r = super::builtins::mb_repr(tuple_val);
-                                    r.as_ptr().and_then(|p| {
-                                        if let ObjData::Str(ref s) = (*p).data {
-                                            Some(s.clone())
-                                        } else { None }
-                                    }).unwrap_or_default()
+                                    r.as_ptr()
+                                        .and_then(|p| {
+                                            if let ObjData::Str(ref s) = (*p).data {
+                                                Some(s.clone())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or_default()
                                 }
                             };
                         }
@@ -2978,9 +3399,8 @@ pub fn value_to_string(val: MbValue) -> String {
                     if items.is_empty() {
                         "set()".to_string()
                     } else {
-                        let parts: Vec<String> = items.iter()
-                            .map(|v| value_to_string(*v))
-                            .collect();
+                        let parts: Vec<String> =
+                            items.iter().map(|v| value_to_string(*v)).collect();
                         format!("{{{}}}", parts.join(", "))
                     }
                 }
@@ -2988,9 +3408,8 @@ pub fn value_to_string(val: MbValue) -> String {
                     if items.is_empty() {
                         "frozenset()".to_string()
                     } else {
-                        let parts: Vec<String> = items.iter()
-                            .map(|v| value_to_string(*v))
-                            .collect();
+                        let parts: Vec<String> =
+                            items.iter().map(|v| value_to_string(*v)).collect();
                         format!("frozenset({{{}}})", parts.join(", "))
                     }
                 }
@@ -3106,7 +3525,8 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(
-                        "__contains__() takes exactly one argument (0 given)".to_string())),
+                        "__contains__() takes exactly one argument (0 given)".to_string(),
+                    )),
                 );
                 return MbValue::none();
             }
@@ -3208,9 +3628,21 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         "isdecimal" => mb_str_isdecimal(receiver),
         "isprintable" => mb_str_isprintable(receiver),
         // Padding methods
-        "center" => mb_str_center(receiver, arg(0), if argc() > 1 { arg(1) } else { MbValue::none() }),
-        "ljust" => mb_str_ljust(receiver, arg(0), if argc() > 1 { arg(1) } else { MbValue::none() }),
-        "rjust" => mb_str_rjust(receiver, arg(0), if argc() > 1 { arg(1) } else { MbValue::none() }),
+        "center" => mb_str_center(
+            receiver,
+            arg(0),
+            if argc() > 1 { arg(1) } else { MbValue::none() },
+        ),
+        "ljust" => mb_str_ljust(
+            receiver,
+            arg(0),
+            if argc() > 1 { arg(1) } else { MbValue::none() },
+        ),
+        "rjust" => mb_str_rjust(
+            receiver,
+            arg(0),
+            if argc() > 1 { arg(1) } else { MbValue::none() },
+        ),
         "zfill" => mb_str_zfill(receiver, arg(0)),
         // Other methods
         "encode" => {
@@ -3224,24 +3656,36 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                 unsafe {
                     if let Some(ptr) = arg(argc() - 1).as_ptr() {
                         matches!((*ptr).data, ObjData::Dict(_))
-                    } else { false }
+                    } else {
+                        false
+                    }
                 }
-            } else { false };
+            } else {
+                false
+            };
             let positional_count = if last_is_kwargs { argc() - 1 } else { argc() };
-            if positional_count >= 1 { encoding = arg(0); }
-            if positional_count >= 2 { errors = arg(1); }
+            if positional_count >= 1 {
+                encoding = arg(0);
+            }
+            if positional_count >= 2 {
+                errors = arg(1);
+            }
             if last_is_kwargs {
                 unsafe {
                     if let Some(ptr) = arg(argc() - 1).as_ptr() {
                         if let ObjData::Dict(ref lock) = (*ptr).data {
                             let guard = lock.read().unwrap();
                             if encoding.is_none() {
-                                if let Some(&v) = guard.get(&super::dict_ops::DictKey::Str("encoding".into())) {
+                                if let Some(&v) =
+                                    guard.get(&super::dict_ops::DictKey::Str("encoding".into()))
+                                {
                                     encoding = v;
                                 }
                             }
                             if errors.is_none() {
-                                if let Some(&v) = guard.get(&super::dict_ops::DictKey::Str("errors".into())) {
+                                if let Some(&v) =
+                                    guard.get(&super::dict_ops::DictKey::Str("errors".into()))
+                                {
                                     errors = v;
                                 }
                             }
@@ -3263,14 +3707,22 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                 if let Some(ptr) = raw.as_ptr() {
                     if let ObjData::Dict(ref lock) = (*ptr).data {
                         let guard = lock.read().unwrap();
-                        guard.get(&super::dict_ops::DictKey::Str("keepends".into()))
-                            .copied().unwrap_or(MbValue::none())
-                    } else { raw }
-                } else { raw }
+                        guard
+                            .get(&super::dict_ops::DictKey::Str("keepends".into()))
+                            .copied()
+                            .unwrap_or(MbValue::none())
+                    } else {
+                        raw
+                    }
+                } else {
+                    raw
+                }
             };
             mb_str_splitlines(receiver, keepends)
         }
-        "expandtabs" => mb_str_expandtabs(receiver, if argc() > 0 { arg(0) } else { MbValue::none() }),
+        "expandtabs" => {
+            mb_str_expandtabs(receiver, if argc() > 0 { arg(0) } else { MbValue::none() })
+        }
         "partition" => mb_str_partition(receiver, arg(0)),
         "rpartition" => mb_str_rpartition(receiver, arg(0)),
         "removeprefix" => mb_str_removeprefix(receiver, arg(0)),
@@ -3287,14 +3739,26 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         "fromhex" => {
             let recv_str = unsafe {
                 if let Some(ptr) = receiver.as_ptr() {
-                    if let ObjData::Str(ref s) = (*ptr).data { s.clone() } else { String::new() }
-                } else { String::new() }
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        s.clone()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
             };
             let hex_val = arg(0);
             let hex_s = unsafe {
                 if let Some(ptr) = hex_val.as_ptr() {
-                    if let ObjData::Str(ref s) = (*ptr).data { s.clone() } else { String::new() }
-                } else { String::new() }
+                    if let ObjData::Str(ref s) = (*ptr).data {
+                        s.clone()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
             };
             // float.fromhex parses a C99 hexadecimal floating-point string and
             // raises ValueError on malformed input — distinct from the
@@ -3314,7 +3778,7 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                 };
             }
             let bytes_data: Vec<u8> = (0..hex_s.len() / 2)
-                .filter_map(|i| u8::from_str_radix(&hex_s[i*2..i*2+2], 16).ok())
+                .filter_map(|i| u8::from_str_radix(&hex_s[i * 2..i * 2 + 2], 16).ok())
                 .collect();
             if recv_str == "bytearray" {
                 MbValue::from_ptr(MbObject::new_bytearray(bytes_data))
@@ -3325,7 +3789,9 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         _ => {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(format!("'str' object has no attribute '{name}'"))),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "'str' object has no attribute '{name}'"
+                ))),
             );
             MbValue::none()
         }
@@ -3343,13 +3809,17 @@ mod tests {
     #[test]
     fn test_concat() {
         let result = mb_str_concat(s("hello"), s(" world"));
-        unsafe { assert_eq!(as_str(result), Some("hello world")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("hello world"));
+        }
     }
 
     #[test]
     fn test_repeat() {
         let result = mb_str_repeat(s("ab"), MbValue::from_int(3));
-        unsafe { assert_eq!(as_str(result), Some("ababab")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("ababab"));
+        }
     }
 
     #[test]
@@ -3373,22 +3843,36 @@ mod tests {
     #[test]
     fn test_find() {
         let n = MbValue::none();
-        assert_eq!(mb_str_find(s("hello world"), s("world"), n, n).as_int(), Some(6));
+        assert_eq!(
+            mb_str_find(s("hello world"), s("world"), n, n).as_int(),
+            Some(6)
+        );
         assert_eq!(mb_str_find(s("hello"), s("xyz"), n, n).as_int(), Some(-1));
     }
 
     #[test]
     fn test_startswith_endswith() {
         let n = MbValue::none();
-        assert_eq!(mb_str_startswith(s("hello"), s("hel"), n, n).as_bool(), Some(true));
-        assert_eq!(mb_str_endswith(s("hello"), s("llo"), n, n).as_bool(), Some(true));
+        assert_eq!(
+            mb_str_startswith(s("hello"), s("hel"), n, n).as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            mb_str_endswith(s("hello"), s("llo"), n, n).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_replace() {
         unsafe {
             assert_eq!(
-                as_str(mb_str_replace(s("hello world"), s("world"), s("rust"), MbValue::none())),
+                as_str(mb_str_replace(
+                    s("hello world"),
+                    s("world"),
+                    s("rust"),
+                    MbValue::none()
+                )),
                 Some("hello rust"),
             );
         }
@@ -3414,8 +3898,14 @@ mod tests {
     #[test]
     fn test_getitem() {
         unsafe {
-            assert_eq!(as_str(mb_str_getitem(s("hello"), MbValue::from_int(0))), Some("h"));
-            assert_eq!(as_str(mb_str_getitem(s("hello"), MbValue::from_int(-1))), Some("o"));
+            assert_eq!(
+                as_str(mb_str_getitem(s("hello"), MbValue::from_int(0))),
+                Some("h")
+            );
+            assert_eq!(
+                as_str(mb_str_getitem(s("hello"), MbValue::from_int(-1))),
+                Some("o")
+            );
         }
     }
 
@@ -3451,13 +3941,25 @@ mod tests {
     fn test_format_spec() {
         unsafe {
             // Integer formatting
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(42), s("05d"))), Some("00042"));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(42), s("05d"))),
+                Some("00042")
+            );
             // Float formatting
-            assert_eq!(as_str(mb_format_value(MbValue::from_float(3.14159), s(".2f"))), Some("3.14"));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_float(3.14159), s(".2f"))),
+                Some("3.14")
+            );
             // Hex formatting
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(255), s("x"))), Some("ff"));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(255), s("x"))),
+                Some("ff")
+            );
             // Alignment
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(42), s("<5d"))), Some("42   "));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(42), s("<5d"))),
+                Some("42   ")
+            );
         }
     }
 
@@ -3472,10 +3974,22 @@ mod tests {
     #[test]
     fn test_removeprefix_removesuffix() {
         unsafe {
-            assert_eq!(as_str(mb_str_removeprefix(s("hello_world"), s("hello_"))), Some("world"));
-            assert_eq!(as_str(mb_str_removeprefix(s("hello"), s("xyz"))), Some("hello"));
-            assert_eq!(as_str(mb_str_removesuffix(s("file.py"), s(".py"))), Some("file"));
-            assert_eq!(as_str(mb_str_removesuffix(s("file.py"), s(".rs"))), Some("file.py"));
+            assert_eq!(
+                as_str(mb_str_removeprefix(s("hello_world"), s("hello_"))),
+                Some("world")
+            );
+            assert_eq!(
+                as_str(mb_str_removeprefix(s("hello"), s("xyz"))),
+                Some("hello")
+            );
+            assert_eq!(
+                as_str(mb_str_removesuffix(s("file.py"), s(".py"))),
+                Some("file")
+            );
+            assert_eq!(
+                as_str(mb_str_removesuffix(s("file.py"), s(".rs"))),
+                Some("file.py")
+            );
         }
     }
 
@@ -3538,7 +4052,10 @@ mod tests {
 
     #[test]
     fn test_contains_true() {
-        assert_eq!(mb_str_contains(s("hello world"), s("world")).as_bool(), Some(true));
+        assert_eq!(
+            mb_str_contains(s("hello world"), s("world")).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
@@ -3557,21 +4074,27 @@ mod tests {
     fn test_join() {
         let items = MbValue::from_ptr(MbObject::new_list(vec![s("a"), s("b"), s("c")]));
         let result = mb_str_join(s(", "), items);
-        unsafe { assert_eq!(as_str(result), Some("a, b, c")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("a, b, c"));
+        }
     }
 
     #[test]
     fn test_join_empty_sep() {
         let items = MbValue::from_ptr(MbObject::new_list(vec![s("x"), s("y")]));
         let result = mb_str_join(s(""), items);
-        unsafe { assert_eq!(as_str(result), Some("xy")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("xy"));
+        }
     }
 
     #[test]
     fn test_join_single_item() {
         let items = MbValue::from_ptr(MbObject::new_list(vec![s("only")]));
         let result = mb_str_join(s("-"), items);
-        unsafe { assert_eq!(as_str(result), Some("only")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("only"));
+        }
     }
 
     // ── capitalize ──
@@ -3579,7 +4102,10 @@ mod tests {
     #[test]
     fn test_capitalize() {
         unsafe {
-            assert_eq!(as_str(mb_str_capitalize(s("hello world"))), Some("Hello world"));
+            assert_eq!(
+                as_str(mb_str_capitalize(s("hello world"))),
+                Some("Hello world")
+            );
         }
     }
 
@@ -3625,7 +4151,10 @@ mod tests {
     #[test]
     fn test_swapcase() {
         unsafe {
-            assert_eq!(as_str(mb_str_swapcase(s("Hello World"))), Some("hELLO wORLD"));
+            assert_eq!(
+                as_str(mb_str_swapcase(s("Hello World"))),
+                Some("hELLO wORLD")
+            );
         }
     }
 
@@ -3691,21 +4220,38 @@ mod tests {
     #[test]
     fn test_center_default_fill() {
         unsafe {
-            assert_eq!(as_str(mb_str_center(s("hi"), MbValue::from_int(6), MbValue::none())), Some("  hi  "));
+            assert_eq!(
+                as_str(mb_str_center(
+                    s("hi"),
+                    MbValue::from_int(6),
+                    MbValue::none()
+                )),
+                Some("  hi  ")
+            );
         }
     }
 
     #[test]
     fn test_center_custom_fill() {
         unsafe {
-            assert_eq!(as_str(mb_str_center(s("hi"), MbValue::from_int(6), s("*"))), Some("**hi**"));
+            assert_eq!(
+                as_str(mb_str_center(s("hi"), MbValue::from_int(6), s("*"))),
+                Some("**hi**")
+            );
         }
     }
 
     #[test]
     fn test_center_no_padding_needed() {
         unsafe {
-            assert_eq!(as_str(mb_str_center(s("hello"), MbValue::from_int(3), MbValue::none())), Some("hello"));
+            assert_eq!(
+                as_str(mb_str_center(
+                    s("hello"),
+                    MbValue::from_int(3),
+                    MbValue::none()
+                )),
+                Some("hello")
+            );
         }
     }
 
@@ -3714,21 +4260,34 @@ mod tests {
     #[test]
     fn test_ljust_default_fill() {
         unsafe {
-            assert_eq!(as_str(mb_str_ljust(s("hi"), MbValue::from_int(5), MbValue::none())), Some("hi   "));
+            assert_eq!(
+                as_str(mb_str_ljust(s("hi"), MbValue::from_int(5), MbValue::none())),
+                Some("hi   ")
+            );
         }
     }
 
     #[test]
     fn test_ljust_custom_fill() {
         unsafe {
-            assert_eq!(as_str(mb_str_ljust(s("hi"), MbValue::from_int(5), s("-"))), Some("hi---"));
+            assert_eq!(
+                as_str(mb_str_ljust(s("hi"), MbValue::from_int(5), s("-"))),
+                Some("hi---")
+            );
         }
     }
 
     #[test]
     fn test_ljust_no_padding_needed() {
         unsafe {
-            assert_eq!(as_str(mb_str_ljust(s("hello"), MbValue::from_int(3), MbValue::none())), Some("hello"));
+            assert_eq!(
+                as_str(mb_str_ljust(
+                    s("hello"),
+                    MbValue::from_int(3),
+                    MbValue::none()
+                )),
+                Some("hello")
+            );
         }
     }
 
@@ -3737,14 +4296,20 @@ mod tests {
     #[test]
     fn test_rjust_default_fill() {
         unsafe {
-            assert_eq!(as_str(mb_str_rjust(s("hi"), MbValue::from_int(5), MbValue::none())), Some("   hi"));
+            assert_eq!(
+                as_str(mb_str_rjust(s("hi"), MbValue::from_int(5), MbValue::none())),
+                Some("   hi")
+            );
         }
     }
 
     #[test]
     fn test_rjust_custom_fill() {
         unsafe {
-            assert_eq!(as_str(mb_str_rjust(s("hi"), MbValue::from_int(5), s("0"))), Some("000hi"));
+            assert_eq!(
+                as_str(mb_str_rjust(s("hi"), MbValue::from_int(5), s("0"))),
+                Some("000hi")
+            );
         }
     }
 
@@ -3753,28 +4318,40 @@ mod tests {
     #[test]
     fn test_zfill_positive() {
         unsafe {
-            assert_eq!(as_str(mb_str_zfill(s("42"), MbValue::from_int(5))), Some("00042"));
+            assert_eq!(
+                as_str(mb_str_zfill(s("42"), MbValue::from_int(5))),
+                Some("00042")
+            );
         }
     }
 
     #[test]
     fn test_zfill_negative() {
         unsafe {
-            assert_eq!(as_str(mb_str_zfill(s("-42"), MbValue::from_int(5))), Some("-0042"));
+            assert_eq!(
+                as_str(mb_str_zfill(s("-42"), MbValue::from_int(5))),
+                Some("-0042")
+            );
         }
     }
 
     #[test]
     fn test_zfill_no_padding_needed() {
         unsafe {
-            assert_eq!(as_str(mb_str_zfill(s("12345"), MbValue::from_int(3))), Some("12345"));
+            assert_eq!(
+                as_str(mb_str_zfill(s("12345"), MbValue::from_int(3))),
+                Some("12345")
+            );
         }
     }
 
     #[test]
     fn test_zfill_with_plus() {
         unsafe {
-            assert_eq!(as_str(mb_str_zfill(s("+5"), MbValue::from_int(5))), Some("+0005"));
+            assert_eq!(
+                as_str(mb_str_zfill(s("+5"), MbValue::from_int(5))),
+                Some("+0005")
+            );
         }
     }
 
@@ -3875,7 +4452,11 @@ mod tests {
     fn test_slice_basic() {
         unsafe {
             assert_eq!(
-                as_str(mb_str_slice(s("hello"), MbValue::from_int(1), MbValue::from_int(4))),
+                as_str(mb_str_slice(
+                    s("hello"),
+                    MbValue::from_int(1),
+                    MbValue::from_int(4)
+                )),
                 Some("ell"),
             );
         }
@@ -3885,7 +4466,11 @@ mod tests {
     fn test_slice_from_start() {
         unsafe {
             assert_eq!(
-                as_str(mb_str_slice(s("hello"), MbValue::from_int(0), MbValue::from_int(2))),
+                as_str(mb_str_slice(
+                    s("hello"),
+                    MbValue::from_int(0),
+                    MbValue::from_int(2)
+                )),
                 Some("he"),
             );
         }
@@ -3895,7 +4480,11 @@ mod tests {
     fn test_slice_negative_start() {
         unsafe {
             assert_eq!(
-                as_str(mb_str_slice(s("hello"), MbValue::from_int(-3), MbValue::from_int(5))),
+                as_str(mb_str_slice(
+                    s("hello"),
+                    MbValue::from_int(-3),
+                    MbValue::from_int(5)
+                )),
                 Some("llo"),
             );
         }
@@ -3905,7 +4494,11 @@ mod tests {
     fn test_slice_empty_result() {
         unsafe {
             assert_eq!(
-                as_str(mb_str_slice(s("hello"), MbValue::from_int(3), MbValue::from_int(1))),
+                as_str(mb_str_slice(
+                    s("hello"),
+                    MbValue::from_int(3),
+                    MbValue::from_int(1)
+                )),
                 Some(""),
             );
         }
@@ -3917,21 +4510,27 @@ mod tests {
     fn test_format_basic() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![s("world")]));
         let result = mb_str_format(s("hello {}"), args);
-        unsafe { assert_eq!(as_str(result), Some("hello world")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("hello world"));
+        }
     }
 
     #[test]
     fn test_format_multiple_args() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![s("a"), s("b")]));
         let result = mb_str_format(s("{} and {}"), args);
-        unsafe { assert_eq!(as_str(result), Some("a and b")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("a and b"));
+        }
     }
 
     #[test]
     fn test_format_int_arg() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(42)]));
         let result = mb_str_format(s("value: {}"), args);
-        unsafe { assert_eq!(as_str(result), Some("value: 42")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("value: 42"));
+        }
     }
 
     // ── value_to_string ──
@@ -3972,56 +4571,80 @@ mod tests {
     #[test]
     fn test_format_value_right_align() {
         unsafe {
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(42), s(">6d"))), Some("    42"));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(42), s(">6d"))),
+                Some("    42")
+            );
         }
     }
 
     #[test]
     fn test_format_value_center_align() {
         unsafe {
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(42), s("^6d"))), Some("  42  "));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(42), s("^6d"))),
+                Some("  42  ")
+            );
         }
     }
 
     #[test]
     fn test_format_value_fill_align() {
         unsafe {
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(42), s("*>5d"))), Some("***42"));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(42), s("*>5d"))),
+                Some("***42")
+            );
         }
     }
 
     #[test]
     fn test_format_value_binary() {
         unsafe {
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(10), s("b"))), Some("1010"));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(10), s("b"))),
+                Some("1010")
+            );
         }
     }
 
     #[test]
     fn test_format_value_octal() {
         unsafe {
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(8), s("o"))), Some("10"));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(8), s("o"))),
+                Some("10")
+            );
         }
     }
 
     #[test]
     fn test_format_value_upper_hex() {
         unsafe {
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(255), s("X"))), Some("FF"));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(255), s("X"))),
+                Some("FF")
+            );
         }
     }
 
     #[test]
     fn test_format_value_string_precision() {
         unsafe {
-            assert_eq!(as_str(mb_format_value(s("hello world"), s(".5s"))), Some("hello"));
+            assert_eq!(
+                as_str(mb_format_value(s("hello world"), s(".5s"))),
+                Some("hello")
+            );
         }
     }
 
     #[test]
     fn test_format_value_empty_spec() {
         unsafe {
-            assert_eq!(as_str(mb_format_value(MbValue::from_int(42), s(""))), Some("42"));
+            assert_eq!(
+                as_str(mb_format_value(MbValue::from_int(42), s(""))),
+                Some("42")
+            );
         }
     }
 
@@ -4038,14 +4661,20 @@ mod tests {
     #[test]
     fn test_repeat_zero() {
         unsafe {
-            assert_eq!(as_str(mb_str_repeat(s("ab"), MbValue::from_int(0))), Some(""));
+            assert_eq!(
+                as_str(mb_str_repeat(s("ab"), MbValue::from_int(0))),
+                Some("")
+            );
         }
     }
 
     #[test]
     fn test_repeat_negative() {
         unsafe {
-            assert_eq!(as_str(mb_str_repeat(s("ab"), MbValue::from_int(-1))), Some(""));
+            assert_eq!(
+                as_str(mb_str_repeat(s("ab"), MbValue::from_int(-1))),
+                Some("")
+            );
         }
     }
 
@@ -4185,25 +4814,37 @@ mod tests {
     #[test]
     fn test_startswith_false() {
         let n = MbValue::none();
-        assert_eq!(mb_str_startswith(s("hello"), s("xyz"), n, n).as_bool(), Some(false));
+        assert_eq!(
+            mb_str_startswith(s("hello"), s("xyz"), n, n).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
     fn test_endswith_false() {
         let n = MbValue::none();
-        assert_eq!(mb_str_endswith(s("hello"), s("xyz"), n, n).as_bool(), Some(false));
+        assert_eq!(
+            mb_str_endswith(s("hello"), s("xyz"), n, n).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
     fn test_startswith_empty_prefix() {
         let n = MbValue::none();
-        assert_eq!(mb_str_startswith(s("hello"), s(""), n, n).as_bool(), Some(true));
+        assert_eq!(
+            mb_str_startswith(s("hello"), s(""), n, n).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_endswith_empty_suffix() {
         let n = MbValue::none();
-        assert_eq!(mb_str_endswith(s("hello"), s(""), n, n).as_bool(), Some(true));
+        assert_eq!(
+            mb_str_endswith(s("hello"), s(""), n, n).as_bool(),
+            Some(true)
+        );
     }
 
     // ── splitlines edge cases ──
@@ -4226,21 +4867,27 @@ mod tests {
     fn test_dispatch_upper() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = dispatch_str_method("upper", s("hello"), args);
-        unsafe { assert_eq!(as_str(result), Some("HELLO")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("HELLO"));
+        }
     }
 
     #[test]
     fn test_dispatch_lower() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = dispatch_str_method("lower", s("HELLO"), args);
-        unsafe { assert_eq!(as_str(result), Some("hello")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("hello"));
+        }
     }
 
     #[test]
     fn test_dispatch_strip() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = dispatch_str_method("strip", s("  hi  "), args);
-        unsafe { assert_eq!(as_str(result), Some("hi")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("hi"));
+        }
     }
 
     #[test]
@@ -4254,7 +4901,9 @@ mod tests {
     fn test_dispatch_replace() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![s("l"), s("r")]));
         let result = dispatch_str_method("replace", s("hello"), args);
-        unsafe { assert_eq!(as_str(result), Some("herro")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("herro"));
+        }
     }
 
     #[test]
@@ -4289,7 +4938,9 @@ mod tests {
         let items_list = MbValue::from_ptr(MbObject::new_list(vec![s("x"), s("y")]));
         let args = MbValue::from_ptr(MbObject::new_list(vec![items_list]));
         let result = dispatch_str_method("join", s("-"), args);
-        unsafe { assert_eq!(as_str(result), Some("x-y")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("x-y"));
+        }
     }
 
     #[test]
@@ -4317,28 +4968,36 @@ mod tests {
     fn test_dispatch_capitalize() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = dispatch_str_method("capitalize", s("hello"), args);
-        unsafe { assert_eq!(as_str(result), Some("Hello")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("Hello"));
+        }
     }
 
     #[test]
     fn test_dispatch_title() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = dispatch_str_method("title", s("hello world"), args);
-        unsafe { assert_eq!(as_str(result), Some("Hello World")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("Hello World"));
+        }
     }
 
     #[test]
     fn test_dispatch_swapcase() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = dispatch_str_method("swapcase", s("Hello"), args);
-        unsafe { assert_eq!(as_str(result), Some("hELLO")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("hELLO"));
+        }
     }
 
     #[test]
     fn test_dispatch_zfill() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(5)]));
         let result = dispatch_str_method("zfill", s("42"), args);
-        unsafe { assert_eq!(as_str(result), Some("00042")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("00042"));
+        }
     }
 
     #[test]
@@ -4368,14 +5027,18 @@ mod tests {
     fn test_dispatch_removeprefix() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![s("he")]));
         let result = dispatch_str_method("removeprefix", s("hello"), args);
-        unsafe { assert_eq!(as_str(result), Some("llo")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("llo"));
+        }
     }
 
     #[test]
     fn test_dispatch_removesuffix() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![s("lo")]));
         let result = dispatch_str_method("removesuffix", s("hello"), args);
-        unsafe { assert_eq!(as_str(result), Some("hel")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("hel"));
+        }
     }
 
     #[test]
@@ -4443,59 +5106,82 @@ mod tests {
     #[test]
     fn test_dispatch_isalpha() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-        assert_eq!(dispatch_str_method("isalpha", s("abc"), args).as_bool(), Some(true));
+        assert_eq!(
+            dispatch_str_method("isalpha", s("abc"), args).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_dispatch_isalnum() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-        assert_eq!(dispatch_str_method("isalnum", s("abc123"), args).as_bool(), Some(true));
+        assert_eq!(
+            dispatch_str_method("isalnum", s("abc123"), args).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_dispatch_isspace() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-        assert_eq!(dispatch_str_method("isspace", s("  "), args).as_bool(), Some(true));
+        assert_eq!(
+            dispatch_str_method("isspace", s("  "), args).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_dispatch_isupper() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-        assert_eq!(dispatch_str_method("isupper", s("ABC"), args).as_bool(), Some(true));
+        assert_eq!(
+            dispatch_str_method("isupper", s("ABC"), args).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_dispatch_islower() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-        assert_eq!(dispatch_str_method("islower", s("abc"), args).as_bool(), Some(true));
+        assert_eq!(
+            dispatch_str_method("islower", s("abc"), args).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_dispatch_lstrip() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = dispatch_str_method("lstrip", s("  hi  "), args);
-        unsafe { assert_eq!(as_str(result), Some("hi  ")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("hi  "));
+        }
     }
 
     #[test]
     fn test_dispatch_rstrip() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let result = dispatch_str_method("rstrip", s("  hi  "), args);
-        unsafe { assert_eq!(as_str(result), Some("  hi")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("  hi"));
+        }
     }
 
     #[test]
     fn test_dispatch_ljust() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(5)]));
         let result = dispatch_str_method("ljust", s("hi"), args);
-        unsafe { assert_eq!(as_str(result), Some("hi   ")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("hi   "));
+        }
     }
 
     #[test]
     fn test_dispatch_rjust() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(5)]));
         let result = dispatch_str_method("rjust", s("hi"), args);
-        unsafe { assert_eq!(as_str(result), Some("   hi")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("   hi"));
+        }
     }
 
     // -- Py3.12 conformance --
@@ -4538,9 +5224,15 @@ mod tests {
     #[test]
     fn test_py312_str_istitle() {
         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-        assert_eq!(dispatch_str_method("istitle", s("Hello World"), args).as_bool(), Some(true));
+        assert_eq!(
+            dispatch_str_method("istitle", s("Hello World"), args).as_bool(),
+            Some(true)
+        );
         let args2 = MbValue::from_ptr(MbObject::new_list(vec![]));
-        assert_eq!(dispatch_str_method("istitle", s("hello world"), args2).as_bool(), Some(false));
+        assert_eq!(
+            dispatch_str_method("istitle", s("hello world"), args2).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
@@ -4565,11 +5257,13 @@ mod tests {
     fn test_str_slice_full_reverse() {
         let result = mb_str_slice_full(
             s("abcdef"),
-            MbValue::none(),  // start absent
-            MbValue::none(),  // stop absent
+            MbValue::none(), // start absent
+            MbValue::none(), // stop absent
             MbValue::from_int(-1),
         );
-        unsafe { assert_eq!(as_str(result), Some("fedcba")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("fedcba"));
+        }
     }
 
     /// S2: Full reverse of single-char string (R1, R2, R6)
@@ -4581,7 +5275,9 @@ mod tests {
             MbValue::none(),
             MbValue::from_int(-1),
         );
-        unsafe { assert_eq!(as_str(result), Some("x")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("x"));
+        }
     }
 
     /// S3: Full reverse of empty string (R1, R2, R6)
@@ -4593,7 +5289,9 @@ mod tests {
             MbValue::none(),
             MbValue::from_int(-1),
         );
-        unsafe { assert_eq!(as_str(result), Some("")); }
+        unsafe {
+            assert_eq!(as_str(result), Some(""));
+        }
     }
 
     /// S4: Partial reverse with explicit negative start (R3)
@@ -4602,11 +5300,13 @@ mod tests {
     fn test_str_slice_partial_reverse_explicit_start() {
         let result = mb_str_slice_full(
             s("abcdef"),
-            MbValue::from_int(-2),  // explicit start → goes through clamp_rev_str
-            MbValue::none(),        // stop absent → literal -1
+            MbValue::from_int(-2), // explicit start → goes through clamp_rev_str
+            MbValue::none(),       // stop absent → literal -1
             MbValue::from_int(-1),
         );
-        unsafe { assert_eq!(as_str(result), Some("edcba")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("edcba"));
+        }
     }
 
     /// S5: Partial reverse with explicit start and stop (R4)
@@ -4615,11 +5315,13 @@ mod tests {
     fn test_str_slice_partial_reverse_explicit_start_stop() {
         let result = mb_str_slice_full(
             s("abcdef"),
-            MbValue::from_int(4),  // explicit start
-            MbValue::from_int(1),  // explicit stop
+            MbValue::from_int(4), // explicit start
+            MbValue::from_int(1), // explicit stop
             MbValue::from_int(-1),
         );
-        unsafe { assert_eq!(as_str(result), Some("edc")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("edc"));
+        }
     }
 
     /// S6: Positive step slicing unaffected (R5)
@@ -4632,7 +5334,9 @@ mod tests {
             MbValue::from_int(4),
             MbValue::from_int(1),
         );
-        unsafe { assert_eq!(as_str(result), Some("bcd")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("bcd"));
+        }
     }
 
     /// S7: Step=-2 skipping reverse (R1, R2)
@@ -4645,7 +5349,9 @@ mod tests {
             MbValue::none(),
             MbValue::from_int(-2),
         );
-        unsafe { assert_eq!(as_str(result), Some("fdb")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("fdb"));
+        }
     }
 
     /// S8: Unicode string reverse (R6)
@@ -4658,7 +5364,9 @@ mod tests {
             MbValue::none(),
             MbValue::from_int(-1),
         );
-        unsafe { assert_eq!(as_str(result), Some("界世好你")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("界世好你"));
+        }
     }
 
     /// S9: step=0 returns empty string
@@ -4670,7 +5378,9 @@ mod tests {
             MbValue::none(),
             MbValue::from_int(0),
         );
-        unsafe { assert_eq!(as_str(result), Some("")); }
+        unsafe {
+            assert_eq!(as_str(result), Some(""));
+        }
     }
 
     /// S10: Reverse with explicit start=0, absent stop → 'abcdef'[0::-1] → 'a'
@@ -4679,11 +5389,13 @@ mod tests {
     fn test_str_slice_reverse_explicit_start_zero() {
         let result = mb_str_slice_full(
             s("abcdef"),
-            MbValue::from_int(0),   // explicit start → clamp_rev_str(0, 6) → 0
-            MbValue::none(),        // absent stop → literal -1
+            MbValue::from_int(0), // explicit start → clamp_rev_str(0, 6) → 0
+            MbValue::none(),      // absent stop → literal -1
             MbValue::from_int(-1),
         );
-        unsafe { assert_eq!(as_str(result), Some("a")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("a"));
+        }
     }
 
     /// S11: Reverse with absent start, explicit stop=0 → 'abcdef'[:0:-1] → 'fedcb'
@@ -4692,11 +5404,13 @@ mod tests {
     fn test_str_slice_reverse_explicit_stop_zero() {
         let result = mb_str_slice_full(
             s("abcdef"),
-            MbValue::none(),        // absent start → literal len-1 = 5
-            MbValue::from_int(0),   // explicit stop → clamp_rev_str(0, 6) → 0
+            MbValue::none(),      // absent start → literal len-1 = 5
+            MbValue::from_int(0), // explicit stop → clamp_rev_str(0, 6) → 0
             MbValue::from_int(-1),
         );
-        unsafe { assert_eq!(as_str(result), Some("fedcb")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("fedcb"));
+        }
     }
 
     /// S12: Forward with absent start/stop, step=1 → 'abcdef'[::1] → 'abcdef'
@@ -4708,7 +5422,9 @@ mod tests {
             MbValue::none(),
             MbValue::from_int(1),
         );
-        unsafe { assert_eq!(as_str(result), Some("abcdef")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("abcdef"));
+        }
     }
 
     /// S13: Forward with step=2, absent start/stop → 'abcdef'[::2] → 'ace'
@@ -4720,7 +5436,9 @@ mod tests {
             MbValue::none(),
             MbValue::from_int(2),
         );
-        unsafe { assert_eq!(as_str(result), Some("ace")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("ace"));
+        }
     }
 
     /// S14: Reverse with explicit negative stop → 'abcdef'[5:-4:-1] → 'fed'
@@ -4733,7 +5451,9 @@ mod tests {
             MbValue::from_int(-4),
             MbValue::from_int(-1),
         );
-        unsafe { assert_eq!(as_str(result), Some("fed")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("fed"));
+        }
     }
 
     // ── R8: mb_str_format_kwargs tests ──
@@ -4746,7 +5466,9 @@ mod tests {
         let kwargs = MbValue::from_ptr(MbObject::new_dict());
         mb_dict_setitem(kwargs, s("name"), s("world"));
         let result = mb_str_format_kwargs(template, pos_args, kwargs);
-        unsafe { assert_eq!(as_str(result), Some("world")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("world"));
+        }
     }
 
     #[test]
@@ -4758,7 +5480,9 @@ mod tests {
         mb_dict_setitem(kwargs, s("name"), s("Alice"));
         mb_dict_setitem(kwargs, s("age"), MbValue::from_int(30));
         let result = mb_str_format_kwargs(template, pos_args, kwargs);
-        unsafe { assert_eq!(as_str(result), Some("Alice is 30")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("Alice is 30"));
+        }
     }
 
     #[test]
@@ -4769,7 +5493,9 @@ mod tests {
         let kwargs = MbValue::from_ptr(MbObject::new_dict());
         mb_dict_setitem(kwargs, s("greeting"), s("hello"));
         let result = mb_str_format_kwargs(template, pos_args, kwargs);
-        unsafe { assert_eq!(as_str(result), Some("Bob says hello")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("Bob says hello"));
+        }
     }
 
     #[test]
@@ -4778,7 +5504,9 @@ mod tests {
         let pos_args = MbValue::from_ptr(MbObject::new_list(vec![s("x"), s("y")]));
         let kwargs = MbValue::from_ptr(MbObject::new_dict());
         let result = mb_str_format_kwargs(template, pos_args, kwargs);
-        unsafe { assert_eq!(as_str(result), Some("x and y")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("x and y"));
+        }
     }
 
     #[test]
@@ -4788,7 +5516,9 @@ mod tests {
         let kwargs = MbValue::from_ptr(MbObject::new_dict());
         super::super::dict_ops::mb_dict_setitem(kwargs, s("name"), s("test"));
         let result = mb_str_format_kwargs(template, pos_args, kwargs);
-        unsafe { assert_eq!(as_str(result), Some("{literal} test")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("{literal} test"));
+        }
     }
 
     #[test]
@@ -4798,7 +5528,9 @@ mod tests {
         let kwargs = MbValue::from_ptr(MbObject::new_dict());
         let result = mb_str_format_kwargs(template, pos_args, kwargs);
         // Unknown key preserved as-is
-        unsafe { assert_eq!(as_str(result), Some("{missing}")); }
+        unsafe {
+            assert_eq!(as_str(result), Some("{missing}"));
+        }
     }
 
     #[test]
@@ -4807,7 +5539,9 @@ mod tests {
         let pos_args = MbValue::from_ptr(MbObject::new_list(vec![]));
         let kwargs = MbValue::from_ptr(MbObject::new_dict());
         let result = mb_str_format_kwargs(template, pos_args, kwargs);
-        unsafe { assert_eq!(as_str(result), Some("")); }
+        unsafe {
+            assert_eq!(as_str(result), Some(""));
+        }
     }
 
     #[test]

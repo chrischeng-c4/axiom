@@ -105,7 +105,11 @@ pub struct ToolReceipt {
 impl ToolReceipt {
     pub const CURRENT_SCHEMA: u32 = 1;
 
-    pub fn new(name: impl Into<String>, version: impl Into<String>, python: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        version: impl Into<String>,
+        python: impl Into<PathBuf>,
+    ) -> Self {
         ToolReceipt {
             schema_version: Self::CURRENT_SCHEMA,
             name: name.into(),
@@ -126,7 +130,10 @@ pub fn render_receipt_toml(receipt: &ToolReceipt) -> String {
     out.push_str(&format!("schema_version = {}\n", receipt.schema_version));
     out.push_str(&format!("name = {}\n", toml_quote(&receipt.name)));
     out.push_str(&format!("version = {}\n", toml_quote(&receipt.version)));
-    out.push_str(&format!("python = {}\n", toml_quote(&receipt.python.display().to_string())));
+    out.push_str(&format!(
+        "python = {}\n",
+        toml_quote(&receipt.python.display().to_string())
+    ));
     if let Some(rp) = &receipt.requires_python {
         out.push_str(&format!("requires_python = {}\n", toml_quote(rp)));
     }
@@ -291,13 +298,35 @@ pub enum UpgradeDecision {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpgradeChange {
-    Version { from: String, to: String },
-    Extras { from: Vec<String>, to: Vec<String> },
-    RequiresPython { from: Option<String>, to: Option<String> },
-    Python { from: PathBuf, to: PathBuf },
-    ClosureAdded { name: String, version: String },
-    ClosureRemoved { name: String, version: String },
-    ClosureChanged { name: String, from: String, to: String },
+    Version {
+        from: String,
+        to: String,
+    },
+    Extras {
+        from: Vec<String>,
+        to: Vec<String>,
+    },
+    RequiresPython {
+        from: Option<String>,
+        to: Option<String>,
+    },
+    Python {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    ClosureAdded {
+        name: String,
+        version: String,
+    },
+    ClosureRemoved {
+        name: String,
+        version: String,
+    },
+    ClosureChanged {
+        name: String,
+        from: String,
+        to: String,
+    },
 }
 
 /// Pure diff: produce an upgrade plan from a current receipt to a
@@ -377,10 +406,7 @@ pub fn plan_upgrade(current: &ToolReceipt, candidate: &ToolReceipt) -> UpgradeDe
 /// `tool_root`, return the launcher basenames it's safe to delete
 /// from `bin_root` (launchers another tool also exposes are spared so
 /// we never break a coexisting `tool install`).
-pub fn plan_launcher_removal(
-    target: &ToolReceipt,
-    other_receipts: &[ToolReceipt],
-) -> Vec<String> {
+pub fn plan_launcher_removal(target: &ToolReceipt, other_receipts: &[ToolReceipt]) -> Vec<String> {
     let claimed: BTreeSet<&String> = other_receipts
         .iter()
         .flat_map(|r| r.launchers.iter())
@@ -429,14 +455,13 @@ mod tests {
 
     #[test]
     fn layout_normalizes_name_for_dir_but_not_launchers() {
-        let layout = ToolLayout::for_name(
-            Path::new("/tools"),
-            Path::new("/bin"),
-            "My_Tool.X",
-        );
+        let layout = ToolLayout::for_name(Path::new("/tools"), Path::new("/bin"), "My_Tool.X");
         assert_eq!(layout.tool_name, "my-tool-x");
         assert_eq!(layout.venv_root, PathBuf::from("/tools/my-tool-x"));
-        assert_eq!(layout.receipt_path, PathBuf::from("/tools/my-tool-x/receipt.toml"));
+        assert_eq!(
+            layout.receipt_path,
+            PathBuf::from("/tools/my-tool-x/receipt.toml")
+        );
         assert_eq!(layout.launchers_dir, PathBuf::from("/bin"));
     }
 

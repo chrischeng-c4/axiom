@@ -113,17 +113,25 @@ mod tests {
     #[test]
     fn resolution_error_kind_serde_snake_case() {
         let kinds = [
-            (ResolutionErrorKind::EmptyIntersection, "\"empty_intersection\""),
-            (ResolutionErrorKind::NoCompatibleVersion, "\"no_compatible_version\""),
+            (
+                ResolutionErrorKind::EmptyIntersection,
+                "\"empty_intersection\"",
+            ),
+            (
+                ResolutionErrorKind::NoCompatibleVersion,
+                "\"no_compatible_version\"",
+            ),
             (ResolutionErrorKind::MissingPackage, "\"missing_package\""),
-            (ResolutionErrorKind::MarkerExcludesAll, "\"marker_excludes_all\""),
+            (
+                ResolutionErrorKind::MarkerExcludesAll,
+                "\"marker_excludes_all\"",
+            ),
             (ResolutionErrorKind::Cycle, "\"cycle\""),
         ];
         for (kind, expected) in kinds {
             let json = serde_json::to_string(&kind).expect("serialize kind");
             assert_eq!(json, expected);
-            let back: ResolutionErrorKind =
-                serde_json::from_str(&json).expect("deserialize kind");
+            let back: ResolutionErrorKind = serde_json::from_str(&json).expect("deserialize kind");
             assert_eq!(back, kind);
         }
     }

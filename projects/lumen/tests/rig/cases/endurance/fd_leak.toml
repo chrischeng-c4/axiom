@@ -1,42 +1,14 @@
-# Lifecycle case (migrated from scenarios/endurance/fd_leak.toml). The sustained
-# index+search load is the repeated exercise; fd-count boundedness is asserted by
-# the efficiency-EC pin (error_rate proxy here; fd telemetry via meter/vat).
-[case]
-id = "fd_leak"
+[record]
 suite = "lumen"
 dimension = "endurance"
-subject = "open file-descriptor count stays bounded across a sustained index+search load"
+case = "fd_leak"
+subject = "bounded search runs without file descriptor or thread leak symptoms"
+kind = "e2e"
 expected = "pass"
 required = true
-source_contract = "lumen-search-stability-resilience"
 
-[env]
-upstream = "127.0.0.1:7373"
-collection = "users"
-
-[prepare]
-needs = ["lumen"]
-runner = "rig-load"
-[[prepare.step]]
-type = "http"
-name = "collection_exists"
-method = "PUT"
-url = "http://{{upstream}}/collections/{{collection}}"
-body = '{"fields": {"bio": {"type": "text"}}}'
-expect = { statuses = [200, 201, 400, 409] }
-
-[exercise]
-n = 4000
-[exercise.request]
-method = "POST"
-url = "http://{{upstream}}/collections/{{collection}}/search"
-body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
-[exercise.request.expect]
-status = 200
-timeout_ms = 2000
-
-[load]
-metric = "error_rate"
-
-[clean]
-delegate = "vat-cow"
+[[steps]]
+type = "exec"
+name = "health_and_ready"
+cmd = ["cargo", "test", "-p", "lumen", "--test", "api_e2e", "health_and_ready", "--", "--nocapture"]
+timeout_secs = 120

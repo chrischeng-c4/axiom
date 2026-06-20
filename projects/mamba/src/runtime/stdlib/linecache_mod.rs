@@ -1,3 +1,6 @@
+use super::super::dict_ops;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// linecache module for Mamba (#672).
 ///
 /// Implements Python 3.12 `linecache` stdlib: random access to text lines
@@ -18,9 +21,6 @@
 ///   lazycache(filename, module_globals)            — register a lazy loader
 ///   updatecache(filename, module_globals=None)     — (re)read into the cache
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::dict_ops;
 
 // ── Native dispatch shims ──
 //
@@ -158,7 +158,12 @@ fn list_to_lines(val: MbValue) -> Vec<String> {
         .and_then(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let guard = lock.read().ok()?;
-                Some(guard.iter().map(|v| extract_str(*v).unwrap_or_default()).collect())
+                Some(
+                    guard
+                        .iter()
+                        .map(|v| extract_str(*v).unwrap_or_default())
+                        .collect(),
+                )
             } else {
                 None
             }
@@ -274,7 +279,9 @@ fn resolve_name_loader(module_globals: MbValue) -> Option<(String, MbValue)> {
     // spec.name overrides __name__ when present and truthy.
     let name = if !spec.is_none() {
         let spec_name = class::mb_getattr(spec, new_str("name"));
-        extract_str(spec_name).filter(|s| !s.is_empty()).unwrap_or(mod_name)
+        extract_str(spec_name)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(mod_name)
     } else {
         mod_name
     };
@@ -342,7 +349,11 @@ pub fn register() {
 // ── Public runtime functions ──
 
 /// linecache.getline(filename, lineno, module_globals=None) -> str
-pub fn mb_linecache_getline(filename: MbValue, lineno: MbValue, module_globals: MbValue) -> MbValue {
+pub fn mb_linecache_getline(
+    filename: MbValue,
+    lineno: MbValue,
+    module_globals: MbValue,
+) -> MbValue {
     // CPython: a non-int lineno raises TypeError ("list indices..."), so reject
     // floats explicitly. `getline(f, 1.1)` -> TypeError. (`test_getline`)
     if lineno.is_float() {
@@ -446,7 +457,9 @@ pub fn mb_linecache_checkcache(filename: MbValue) -> MbValue {
         }
         let cached_size = tuple_get(entry, 0).and_then(|v| v.as_int());
         let cached_mtime = tuple_get(entry, 1).and_then(|v| v.as_int());
-        let fullname = tuple_get(entry, 3).and_then(extract_str).unwrap_or_else(|| fname.clone());
+        let fullname = tuple_get(entry, 3)
+            .and_then(extract_str)
+            .unwrap_or_else(|| fname.clone());
 
         match stat_size_mtime(&fname) {
             None => {
@@ -533,7 +546,13 @@ pub fn mb_linecache_updatecache(filename: MbValue, module_globals: MbValue) -> M
 /// data.splitlines()]` form — CPython uses `splitlines()` (no keepends) then
 /// re-appends '\n' to every element. An empty string yields no lines.
 fn loader_source_to_lines(data: &str) -> Vec<String> {
-    py_splitlines(data).into_iter().map(|mut l| { l.push('\n'); l }).collect()
+    py_splitlines(data)
+        .into_iter()
+        .map(|mut l| {
+            l.push('\n');
+            l
+        })
+        .collect()
 }
 
 /// Python `str.splitlines()` (keepends=False): split on \n, \r, \r\n. An empty
@@ -599,7 +618,9 @@ fn updatecache_internal(fname: &str, module_globals: MbValue) -> Vec<String> {
         // cache[filename][0]() == loader.get_source(name).
         if let Some(entry) = cache_get(fname) {
             if let Some(marker) = tuple_get(entry, 0) {
-                let mod_name = tuple_get(marker, 0).and_then(extract_str).unwrap_or_default();
+                let mod_name = tuple_get(marker, 0)
+                    .and_then(extract_str)
+                    .unwrap_or_default();
                 if let Some(loader) = tuple_get(marker, 1) {
                     match loader_get_source(loader, &mod_name) {
                         // data is None -> source unavailable; CPython returns [].
@@ -682,7 +703,11 @@ mod tests {
         let r = mb_linecache_getlines(make_str(&path), MbValue::none());
         assert_eq!(
             list_to_lines(r),
-            vec!["\n".to_string(), "def f():\n".to_string(), "    return 3\n".to_string()]
+            vec![
+                "\n".to_string(),
+                "def f():\n".to_string(),
+                "    return 3\n".to_string()
+            ]
         );
     }
 
@@ -690,8 +715,22 @@ mod tests {
     fn test_getline_zero_and_negative() {
         clear();
         let path = write_temp_file("mb_lc_zero.txt", "first\n");
-        assert_eq!(get_str(mb_linecache_getline(make_str(&path), make_int(0), MbValue::none())), "");
-        assert_eq!(get_str(mb_linecache_getline(make_str(&path), make_int(-1), MbValue::none())), "");
+        assert_eq!(
+            get_str(mb_linecache_getline(
+                make_str(&path),
+                make_int(0),
+                MbValue::none()
+            )),
+            ""
+        );
+        assert_eq!(
+            get_str(mb_linecache_getline(
+                make_str(&path),
+                make_int(-1),
+                MbValue::none()
+            )),
+            ""
+        );
     }
 
     #[test]

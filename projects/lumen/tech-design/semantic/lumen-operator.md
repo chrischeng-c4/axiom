@@ -4,9 +4,16 @@ summary: Semantic coverage for "projects/lumen/src/operator"
 capability_refs:
   - id: "k8s-deployment"
     role: primary
+    gap: "kustomize-base-overlays-hpa"
     claim: "kustomize-base-overlays-hpa"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/src/operator`."
+  - id: "k8s-deployment"
+    role: primary
+    gap: "lumen-crd-reconcile-loop-kube-rs-operator"
+    claim: "lumen-crd-reconcile-loop-kube-rs-operator"
+    coverage: full
+    rationale: "The operator source group owns the Lumen CRD reconcile/render implementation."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -48,6 +55,10 @@ element UT_SOURCE_TESTS {
 ```yaml
 coverage_kind: semantic
 changes:
+  - action: annotate
+    section: schema
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the schema section."
   - action: annotate
     section: unit-test
     impl_mode: hand-written

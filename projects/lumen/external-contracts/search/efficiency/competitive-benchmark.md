@@ -19,7 +19,7 @@ tool for Lumen efficiency.
 ```yaml
 e2e_tests:
   - id: lumen-search-efficiency-competitive
-    capability_id: search
+    capability_id: ops-operability
     claim_id: competitive-regression-gate-beat-pg-os-per-cell-ratcheting
     contract_id: search-efficiency-filtering-ranking-pagination
     category: efficiency

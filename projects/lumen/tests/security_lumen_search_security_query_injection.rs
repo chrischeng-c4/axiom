@@ -2,19 +2,20 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-search-security-query-injection
-// @capability search
+// @capability security-auth
 // @claim adversarial-query-safety
 // @contract search-security-injection
 // @category security
 // @required_for_production true
-// @command cargo test -p lumen --test security_lumen_search_security_query_injection -- --ignored
+// @command cargo test -p lumen --test coverage_gaps_e2e search_security_query_injection_rejects_bad_queries -- --nocapture
 // AW-EC-END
 
-// Contract: GAP (C2): malformed / oversized / deeply-nested JSON query DSL, special-char search text, and range numeric overflow are rejected safely (no panic, no UB, bounded work). Test not yet written.
+// Contract: C2: malformed JSON, deeply-nested JSON query DSL, special-char search text, inverted ranges, and range numeric overflow are rejected or evaluated safely (no panic, no 5xx, bounded work).
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_search_security_query_injection() {
-    let command = "cargo test -p lumen --test security_lumen_search_security_query_injection -- --ignored";
+    let command =
+        "cargo test -p lumen --test coverage_gaps_e2e search_security_query_injection_rejects_bad_queries -- --nocapture";
     let id = "lumen-search-security-query-injection";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

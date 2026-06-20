@@ -9,7 +9,7 @@
 // AW-EC-END
 
 #[test]
-#[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
+#[ignore = "AW EC placeholder: implement this external contract test or keep the aw.toml inventory command authoritative"]
 fn qc_offline_schema_and_catalog_self_description() {
     panic!(
         "AW EC placeholder for {}",

@@ -1,6 +1,6 @@
 ---
 name: aw:wi
-description: Work-item management — create, update, list, show. Mainthread-only CRRR; no subagent dispatch.
+description: Work-item management — create, update, list, show. Mainthread-only validation loop; no subagent dispatch.
 user-invocable: true
 amended_by: aw-mainthread-phase-2-skill-rewrite-and-agent-delete.md
 amended_on: "2026-05-03"
@@ -12,7 +12,7 @@ aliases: [aw:issue, aw:issues]
 Intent router for work-item management. CLI stdout is the protocol: mutating and
 workflow verbs emit structured envelopes, while list-style verbs may emit short
 summaries. The **envelope protocol** in `CLAUDE.md § AW envelope (mainthread
-protocol)` owns CRRR loops. This skill chooses the verb, relays stdout, and runs
+protocol)` owns validation loops. This skill chooses the verb, relays stdout, and runs
 the **mainthread-only** orchestration spelled out below.
 
 > **Mainthread-only model (post Phase-2).** Every dispatch envelope now
@@ -52,7 +52,7 @@ aw run --project <name> --max-ticks 1
 
 Unknown `--project` / `--agent` names → error envelope on stdout, exit 2.
 
-## create — full CRRR loop (mainthread-only)
+## create — validation loop (mainthread-only)
 
 1. Ask the user for title + type (+ project, optional priority/agent) if not supplied.
 2. Run:
@@ -77,15 +77,8 @@ CLI envelope (mainthread protocol)`. Mainthread-only flow:
 flowchart TD
     C[aw wi create] --> A[mainthread: write payloads + fill-section --apply per section]
     A --> V[mainthread: aw wi validate]
-    V --> R1[mainthread: write review.md + aw wi review --apply]
-    R1 --> V1{validate → Review}
-    V1 -- approved --> M[aw wi merge → done]
-    V1 -- needs-revision --> RV[mainthread: write payload for flagged section + aw wi revise --apply]
-    RV --> VRV[validate → Revise]
-    VRV --> R2[mainthread: write review.md round 2 + aw wi review --apply]
-    R2 --> V2{validate → Review}
-    V2 -- approved --> M
-    V2 -- needs-revision --> ARB[aw wi arbitrate → human]
+    V -- accepted --> M[done]
+    V -- needs-fix --> A
 ```
 
 **Mainthread runs every step.** No `Agent(subagent_type=...)` calls;
@@ -101,8 +94,6 @@ individually so git history is unchanged.
     payload to `.aw/payloads/<slug>/body.md` first (or per-section
     payload), then run the command from mainthread.
   - if the command is `aw wi validate <slug>`, run it; parse the next envelope; loop.
-  - if the command is `aw wi review --apply` / `aw wi revise --apply`,
-    write the corresponding `review.md` / payload first, then run.
 - `done` → print summary; end.
 - `error` → see retry-cap rules below.
 
@@ -117,7 +108,7 @@ When `aw wi validate` rejects mainthread's output, it emits an
   recovery as `retry=1`. The phrase "takeover" is a no-op under the
   mainthread-only model and remains only as a backwards-compatible
   envelope tag.
-- `[retry=N arbitrate]` (N >= 3) → terminal. Surface the error to the
+- `[retry=N]` (N >= 3) → terminal. Surface the error to the
   user and stop. Don't auto-retry further.
 
 ## update
@@ -188,6 +179,6 @@ Non-epic work-items must be atomic before they enter `/aw:td`:
 
 ## Recovery
 
-If a session ends mid-CRRR, inspect the work-item with `aw wi show <slug>`
+If a session ends mid-validation, inspect the work-item with `aw wi show <slug>`
 and continue from the phase recorded in frontmatter. There is no idle scanner
 or per-slug AW workspace recovery path.

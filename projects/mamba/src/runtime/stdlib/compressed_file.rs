@@ -56,10 +56,8 @@ impl Codec {
                 enc.finish().unwrap_or_default()
             }
             Codec::Xz => {
-                let mut enc = xz2::write::XzEncoder::new(
-                    Vec::with_capacity(data.len() / 2 + 64),
-                    6,
-                );
+                let mut enc =
+                    xz2::write::XzEncoder::new(Vec::with_capacity(data.len() / 2 + 64), 6);
                 if enc.write_all(data).is_err() {
                     return Vec::new();
                 }
@@ -268,9 +266,7 @@ pub fn make_file_opts(
     // in-memory file objects).
     fields.insert(
         "name".to_string(),
-        MbValue::from_ptr(MbObject::new_str(
-            as_str(source).unwrap_or_default(),
-        )),
+        MbValue::from_ptr(MbObject::new_str(as_str(source).unwrap_or_default())),
     );
     // GzipFile.mode is the integer gzip.READ (1) / gzip.WRITE (2), not the
     // mode string (CPython 3.12 Lib/gzip.py). BZ2File/LZMAFile expose no
@@ -283,7 +279,10 @@ pub fn make_file_opts(
     }
 
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: MbRwLock::new(fields),
@@ -303,7 +302,9 @@ fn check_open(slf: MbValue) -> bool {
 }
 
 fn mode_of(slf: MbValue) -> String {
-    inst_field(slf, "_mode").and_then(as_str).unwrap_or_else(|| "r".to_string())
+    inst_field(slf, "_mode")
+        .and_then(as_str)
+        .unwrap_or_else(|| "r".to_string())
 }
 
 /// Lazily decompress the full source into `_plain`; returns the plaintext.
@@ -318,8 +319,7 @@ fn ensure_plain(slf: MbValue) -> Option<Vec<u8>> {
 /// up front, and the non-gzip codecs keep the wholesale OSError.
 fn ensure_plain_state(slf: MbValue) -> Option<(Vec<u8>, bool)> {
     if let Some(p) = inst_field(slf, "_plain").and_then(as_bytes) {
-        let truncated =
-            inst_field(slf, "_truncated").and_then(|v| v.as_bool()) == Some(true);
+        let truncated = inst_field(slf, "_truncated").and_then(|v| v.as_bool()) == Some(true);
         return Some((p, truncated));
     }
     let codec = Codec::from_field(inst_field(slf, "_codec"));
@@ -379,7 +379,10 @@ fn gzip_partial_decode(data: &[u8]) -> Vec<u8> {
 }
 
 fn pos_of(slf: MbValue) -> usize {
-    inst_field(slf, "_pos").and_then(|v| v.as_int()).unwrap_or(0).max(0) as usize
+    inst_field(slf, "_pos")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0)
+        .max(0) as usize
 }
 
 fn is_text(slf: MbValue) -> bool {
@@ -433,15 +436,10 @@ fn decode_text(slf: MbValue, data: &[u8]) -> Option<String> {
         _ => match std::str::from_utf8(data) {
             Ok(s) => Some(s.to_string()),
             Err(_) => match errors.as_str() {
-                "ignore" => Some(
-                    String::from_utf8_lossy(data).replace('\u{FFFD}', ""),
-                ),
+                "ignore" => Some(String::from_utf8_lossy(data).replace('\u{FFFD}', "")),
                 "replace" => Some(String::from_utf8_lossy(data).into_owned()),
                 _ => {
-                    raise(
-                        "UnicodeDecodeError",
-                        "'utf-8' codec can't decode byte",
-                    );
+                    raise("UnicodeDecodeError", "'utf-8' codec can't decode byte");
                     None
                 }
             },
@@ -467,8 +465,9 @@ unsafe extern "C" fn m_write(slf: MbValue, args: MbValue) -> MbValue {
                 // Text mode reports characters written, not bytes.
                 let n = s.chars().count() as i64;
                 let encoded = encode_text(slf, &s);
-                let mut buf =
-                    inst_field(slf, "_wbuf").and_then(as_bytes).unwrap_or_default();
+                let mut buf = inst_field(slf, "_wbuf")
+                    .and_then(as_bytes)
+                    .unwrap_or_default();
                 buf.extend_from_slice(&encoded);
                 inst_set(slf, "_wbuf", bytes_val(buf));
                 return MbValue::from_int(n);
@@ -481,7 +480,9 @@ unsafe extern "C" fn m_write(slf: MbValue, args: MbValue) -> MbValue {
             None => return raise("TypeError", "a bytes-like object is required"),
         }
     };
-    let mut buf = inst_field(slf, "_wbuf").and_then(as_bytes).unwrap_or_default();
+    let mut buf = inst_field(slf, "_wbuf")
+        .and_then(as_bytes)
+        .unwrap_or_default();
     buf.extend_from_slice(&data);
     let n = data.len() as i64;
     inst_set(slf, "_wbuf", bytes_val(buf));
@@ -498,7 +499,9 @@ unsafe extern "C" fn m_writelines(slf: MbValue, args: MbValue) -> MbValue {
     let Some(lines) = list_items(args).first().copied() else {
         return raise("TypeError", "writelines() takes an iterable of bytes");
     };
-    let mut buf = inst_field(slf, "_wbuf").and_then(as_bytes).unwrap_or_default();
+    let mut buf = inst_field(slf, "_wbuf")
+        .and_then(as_bytes)
+        .unwrap_or_default();
     for line in list_items(lines) {
         let Some(data) = as_bytes(line) else {
             return raise("TypeError", "a bytes-like object is required");
@@ -565,7 +568,9 @@ unsafe extern "C" fn m_readline(slf: MbValue, _args: MbValue) -> MbValue {
     if !check_open(slf) {
         return MbValue::none();
     }
-    let Some(plain) = ensure_plain(slf) else { return MbValue::none() };
+    let Some(plain) = ensure_plain(slf) else {
+        return MbValue::none();
+    };
     let (line, new_pos) = readline_slice(&plain, pos_of(slf));
     inst_set(slf, "_pos", MbValue::from_int(new_pos as i64));
     if is_text(slf) {
@@ -581,7 +586,9 @@ unsafe extern "C" fn m_readlines(slf: MbValue, _args: MbValue) -> MbValue {
     if !check_open(slf) {
         return MbValue::none();
     }
-    let Some(plain) = ensure_plain(slf) else { return MbValue::none() };
+    let Some(plain) = ensure_plain(slf) else {
+        return MbValue::none();
+    };
     let mut pos = pos_of(slf);
     let mut lines = Vec::new();
     while pos < plain.len() {
@@ -597,7 +604,9 @@ unsafe extern "C" fn m_peek(slf: MbValue, _args: MbValue) -> MbValue {
     if !check_open(slf) {
         return MbValue::none();
     }
-    let Some(plain) = ensure_plain(slf) else { return MbValue::none() };
+    let Some(plain) = ensure_plain(slf) else {
+        return MbValue::none();
+    };
     let pos = pos_of(slf).min(plain.len());
     let end = (pos + 512).min(plain.len());
     bytes_val(plain[pos..end].to_vec())
@@ -607,7 +616,9 @@ unsafe extern "C" fn m_readinto(slf: MbValue, args: MbValue) -> MbValue {
     if !check_open(slf) {
         return MbValue::none();
     }
-    let Some(plain) = ensure_plain(slf) else { return MbValue::none() };
+    let Some(plain) = ensure_plain(slf) else {
+        return MbValue::none();
+    };
     let pos = pos_of(slf).min(plain.len());
     let Some(target) = list_items(args).first().copied() else {
         return raise("TypeError", "readinto() takes a writable buffer");
@@ -647,7 +658,9 @@ unsafe extern "C" fn m_seek(slf: MbValue, args: MbValue) -> MbValue {
     let items = list_items(args);
     let offset = items.first().and_then(|v| v.as_int()).unwrap_or(0);
     let whence = items.get(1).and_then(|v| v.as_int()).unwrap_or(0);
-    let Some(plain) = ensure_plain(slf) else { return MbValue::none() };
+    let Some(plain) = ensure_plain(slf) else {
+        return MbValue::none();
+    };
     // CPython clamps a seek past the end to the decompressed length.
     let new_pos = (match whence {
         1 => pos_of(slf) as i64 + offset,
@@ -740,7 +753,9 @@ unsafe extern "C" fn m_flush(slf: MbValue, _args: MbValue) -> MbValue {
     // CPython GzipFile.flush (Z_SYNC_FLUSH): the sync-flushed compressed
     // prefix (no trailer) becomes visible in the sink; close() later
     // extends exactly these bytes into one complete stream.
-    let raw = inst_field(slf, "_wbuf").and_then(as_bytes).unwrap_or_default();
+    let raw = inst_field(slf, "_wbuf")
+        .and_then(as_bytes)
+        .unwrap_or_default();
     let mut marks = flush_marks(slf);
     marks.push(raw.len());
     let prefix = gzip_replay(&raw, &marks, false);
@@ -792,7 +807,9 @@ unsafe extern "C" fn m_close(slf: MbValue, _args: MbValue) -> MbValue {
     let mode = mode_of(slf);
     if mode != "r" {
         let codec = Codec::from_field(inst_field(slf, "_codec"));
-        let raw = inst_field(slf, "_wbuf").and_then(as_bytes).unwrap_or_default();
+        let raw = inst_field(slf, "_wbuf")
+            .and_then(as_bytes)
+            .unwrap_or_default();
         // gzip goes through the flush-replay so any sync-flushed prefix a
         // flush() already pushed to the sink is extended byte-for-byte
         // into one complete stream (no marks == plain compress).
@@ -846,7 +863,9 @@ unsafe extern "C" fn m_next(slf: MbValue, _args: MbValue) -> MbValue {
     if !check_open(slf) {
         return MbValue::none();
     }
-    let Some(plain) = ensure_plain(slf) else { return MbValue::none() };
+    let Some(plain) = ensure_plain(slf) else {
+        return MbValue::none();
+    };
     let pos = pos_of(slf);
     if pos >= plain.len() {
         return raise("StopIteration", "");
@@ -908,12 +927,22 @@ mod tests {
         let path = dir.join("t.bz2");
         let path_str = path.to_string_lossy().to_string();
 
-        let f = make_file("BZ2File", Codec::Bz2, MbValue::from_ptr(MbObject::new_str(path_str.clone())), "w");
+        let f = make_file(
+            "BZ2File",
+            Codec::Bz2,
+            MbValue::from_ptr(MbObject::new_str(path_str.clone())),
+            "w",
+        );
         let args = MbValue::from_ptr(MbObject::new_list(vec![bytes_val(b"hello world".to_vec())]));
         unsafe { m_write(f, args) };
         unsafe { m_close(f, MbValue::none()) };
 
-        let g = make_file("BZ2File", Codec::Bz2, MbValue::from_ptr(MbObject::new_str(path_str)), "r");
+        let g = make_file(
+            "BZ2File",
+            Codec::Bz2,
+            MbValue::from_ptr(MbObject::new_str(path_str)),
+            "r",
+        );
         let out = unsafe { m_read(g, MbValue::from_ptr(MbObject::new_list(vec![]))) };
         assert_eq!(as_bytes(out).as_deref(), Some(b"hello world".as_ref()));
         let _ = std::fs::remove_dir_all(&dir);

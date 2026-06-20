@@ -1,5 +1,5 @@
-use crate::types::TypeId;
 use crate::resolve::SymbolId;
+use crate::types::TypeId;
 
 /// A virtual register in SSA form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -30,51 +30,134 @@ pub struct BasicBlock {
 #[derive(Debug, Clone)]
 pub enum MirInst {
     /// dest = lhs op rhs
-    BinOp { dest: VReg, op: MirBinOp, lhs: VReg, rhs: VReg, ty: TypeId },
+    BinOp {
+        dest: VReg,
+        op: MirBinOp,
+        lhs: VReg,
+        rhs: VReg,
+        ty: TypeId,
+    },
     /// dest = overflow-checked integer add; promotes to BigInt heap object on 48-bit overflow.
-    CheckedAdd { dest: VReg, lhs: VReg, rhs: VReg, ty: TypeId },
+    CheckedAdd {
+        dest: VReg,
+        lhs: VReg,
+        rhs: VReg,
+        ty: TypeId,
+    },
     /// dest = overflow-checked integer subtract; promotes to BigInt heap object on 48-bit overflow.
-    CheckedSub { dest: VReg, lhs: VReg, rhs: VReg, ty: TypeId },
+    CheckedSub {
+        dest: VReg,
+        lhs: VReg,
+        rhs: VReg,
+        ty: TypeId,
+    },
     /// dest = overflow-checked integer multiply; promotes to BigInt heap object on 48-bit overflow.
-    CheckedMul { dest: VReg, lhs: VReg, rhs: VReg, ty: TypeId },
+    CheckedMul {
+        dest: VReg,
+        lhs: VReg,
+        rhs: VReg,
+        ty: TypeId,
+    },
     /// dest = op operand
-    UnaryOp { dest: VReg, op: MirUnaryOp, operand: VReg, ty: TypeId },
+    UnaryOp {
+        dest: VReg,
+        op: MirUnaryOp,
+        operand: VReg,
+        ty: TypeId,
+    },
     /// dest = constant
-    LoadConst { dest: VReg, value: MirConst, ty: TypeId },
+    LoadConst {
+        dest: VReg,
+        value: MirConst,
+        ty: TypeId,
+    },
     /// dest = call func(args)
-    Call { dest: Option<VReg>, func: SymbolId, args: Vec<VReg>, ty: TypeId },
+    Call {
+        dest: Option<VReg>,
+        func: SymbolId,
+        args: Vec<VReg>,
+        ty: TypeId,
+    },
     /// dest = source (copy/move)
     Copy { dest: VReg, source: VReg },
     /// dest = extern_call name(args) — FFI call (#262)
-    CallExtern { dest: Option<VReg>, name: String, args: Vec<VReg>, ty: TypeId },
+    CallExtern {
+        dest: Option<VReg>,
+        name: String,
+        args: Vec<VReg>,
+        ty: TypeId,
+    },
     /// dest = object.attr
-    GetAttr { dest: VReg, object: VReg, attr: String, ty: TypeId },
+    GetAttr {
+        dest: VReg,
+        object: VReg,
+        attr: String,
+        ty: TypeId,
+    },
     /// object.attr = value
-    SetAttr { object: VReg, attr: String, value: VReg },
+    SetAttr {
+        object: VReg,
+        attr: String,
+        value: VReg,
+    },
     /// dest = object[index]
-    GetItem { dest: VReg, object: VReg, index: VReg, ty: TypeId },
+    GetItem {
+        dest: VReg,
+        object: VReg,
+        index: VReg,
+        ty: TypeId,
+    },
     /// object[index] = value
-    SetItem { object: VReg, index: VReg, value: VReg },
+    SetItem {
+        object: VReg,
+        index: VReg,
+        value: VReg,
+    },
     /// dest = [elements...]
-    MakeList { dest: VReg, elements: Vec<VReg>, ty: TypeId },
+    MakeList {
+        dest: VReg,
+        elements: Vec<VReg>,
+        ty: TypeId,
+    },
     /// dest = {keys: values}
-    MakeDict { dest: VReg, keys: Vec<VReg>, values: Vec<VReg>, ty: TypeId },
+    MakeDict {
+        dest: VReg,
+        keys: Vec<VReg>,
+        values: Vec<VReg>,
+        ty: TypeId,
+    },
     /// dest = (elements...)
-    MakeTuple { dest: VReg, elements: Vec<VReg>, ty: TypeId },
+    MakeTuple {
+        dest: VReg,
+        elements: Vec<VReg>,
+        ty: TypeId,
+    },
     /// raise value
     Raise { value: Option<VReg> },
     /// dest = GLOBAL_NAMESPACE[name] — load from module-level namespace
-    LoadGlobal { dest: VReg, name: SymbolId, ty: TypeId },
+    LoadGlobal {
+        dest: VReg,
+        name: SymbolId,
+        ty: TypeId,
+    },
     /// GLOBAL_NAMESPACE[name] = value — store to module-level namespace
     StoreGlobal { name: SymbolId, value: VReg },
     /// dest = cells[cell_idx].get() — load through cell indirection (nonlocal)
-    LoadCell { dest: VReg, cell_idx: u32, ty: TypeId },
+    LoadCell {
+        dest: VReg,
+        cell_idx: u32,
+        ty: TypeId,
+    },
     /// cells[cell_idx].set(value) — store through cell indirection (nonlocal)
     StoreCell { cell_idx: u32, value: VReg },
     /// dest = new_cell(value) — allocate a heap cell initialized with value
     MakeCell { dest: VReg, value: VReg, ty: TypeId },
     /// dest = closure.captures[capture_idx] — load captured cell from closure env
-    LoadCapture { dest: VReg, capture_idx: u32, ty: TypeId },
+    LoadCapture {
+        dest: VReg,
+        capture_idx: u32,
+        ty: TypeId,
+    },
 }
 
 /// Block terminator.
@@ -82,17 +165,40 @@ pub enum MirInst {
 pub enum Terminator {
     Return(Option<VReg>),
     Goto(BlockId),
-    Branch { cond: VReg, then_block: BlockId, else_block: BlockId },
+    Branch {
+        cond: VReg,
+        then_block: BlockId,
+        else_block: BlockId,
+    },
     Unreachable,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum MirBinOp {
-    Add, Sub, Mul, Div, FloorDiv, Mod, Pow,
-    Eq, NotEq, Lt, Gt, LtEq, GtEq,
-    And, Or,
-    BitAnd, BitOr, BitXor, LShift, RShift,
-    Is, IsNot, In, NotIn,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
+    Is,
+    IsNot,
+    In,
+    NotIn,
 }
 
 impl MirBinOp {
@@ -206,13 +312,30 @@ mod tests {
     fn test_mir_binop_to_opcode_unique() {
         // Every MirBinOp variant should map to a distinct opcode
         let ops = [
-            MirBinOp::Add, MirBinOp::Sub, MirBinOp::Mul, MirBinOp::Div,
-            MirBinOp::FloorDiv, MirBinOp::Mod, MirBinOp::Pow,
-            MirBinOp::Eq, MirBinOp::NotEq, MirBinOp::Lt, MirBinOp::Gt,
-            MirBinOp::LtEq, MirBinOp::GtEq, MirBinOp::And, MirBinOp::Or,
-            MirBinOp::BitAnd, MirBinOp::BitOr, MirBinOp::BitXor,
-            MirBinOp::LShift, MirBinOp::RShift,
-            MirBinOp::Is, MirBinOp::IsNot, MirBinOp::In, MirBinOp::NotIn,
+            MirBinOp::Add,
+            MirBinOp::Sub,
+            MirBinOp::Mul,
+            MirBinOp::Div,
+            MirBinOp::FloorDiv,
+            MirBinOp::Mod,
+            MirBinOp::Pow,
+            MirBinOp::Eq,
+            MirBinOp::NotEq,
+            MirBinOp::Lt,
+            MirBinOp::Gt,
+            MirBinOp::LtEq,
+            MirBinOp::GtEq,
+            MirBinOp::And,
+            MirBinOp::Or,
+            MirBinOp::BitAnd,
+            MirBinOp::BitOr,
+            MirBinOp::BitXor,
+            MirBinOp::LShift,
+            MirBinOp::RShift,
+            MirBinOp::Is,
+            MirBinOp::IsNot,
+            MirBinOp::In,
+            MirBinOp::NotIn,
         ];
         let opcodes: Vec<i64> = ops.iter().map(|op| op.to_opcode()).collect();
         let unique: std::collections::HashSet<i64> = opcodes.iter().copied().collect();
@@ -222,8 +345,10 @@ mod tests {
     #[test]
     fn test_mir_unaryop_to_opcode_unique() {
         let ops = [
-            MirUnaryOp::Pos, MirUnaryOp::Neg,
-            MirUnaryOp::Not, MirUnaryOp::BitNot,
+            MirUnaryOp::Pos,
+            MirUnaryOp::Neg,
+            MirUnaryOp::Not,
+            MirUnaryOp::BitNot,
         ];
         let opcodes: Vec<i64> = ops.iter().map(|op| op.to_opcode()).collect();
         let unique: std::collections::HashSet<i64> = opcodes.iter().copied().collect();
@@ -269,21 +394,17 @@ mod tests {
             name: SymbolId(0),
             params: vec![(VReg(0), int_ty), (VReg(1), int_ty)],
             return_ty: int_ty,
-            blocks: vec![
-                BasicBlock {
-                    id: BlockId(0),
-                    stmts: vec![
-                        MirInst::BinOp {
-                            dest: VReg(2),
-                            op: MirBinOp::Add,
-                            lhs: VReg(0),
-                            rhs: VReg(1),
-                            ty: int_ty,
-                        },
-                    ],
-                    terminator: Terminator::Return(Some(VReg(2))),
-                },
-            ],
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![MirInst::BinOp {
+                    dest: VReg(2),
+                    op: MirBinOp::Add,
+                    lhs: VReg(0),
+                    rhs: VReg(1),
+                    ty: int_ty,
+                }],
+                terminator: Terminator::Return(Some(VReg(2))),
+            }],
         };
         assert_eq!(body.params.len(), 2);
         assert_eq!(body.blocks.len(), 1);

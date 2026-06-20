@@ -2,9 +2,9 @@
 //!
 //! Tests performance of critical PostgreSQL operations using the cclab-probe framework.
 
-use cclab_pg::{QueryBuilder, Operator, OrderDirection, ExtractedValue, JoinType, JoinCondition};
+use cclab_pg::{ExtractedValue, JoinCondition, JoinType, Operator, OrderDirection, QueryBuilder};
+use qc::benchmark::{print_comparison_table, BenchmarkConfig, Benchmarker};
 use qc::{expect, AssertionError};
-use qc::benchmark::{Benchmarker, BenchmarkConfig, print_comparison_table};
 
 // ============================================================================
 // Benchmark: QueryBuilder Construction
@@ -16,9 +16,7 @@ fn bench_query_builder_construction() -> Result<(), AssertionError> {
     let benchmarker = Benchmarker::new(config);
 
     // Benchmark simple QueryBuilder creation
-    let result = benchmarker.run("QueryBuilder::new", || {
-        QueryBuilder::new("users").unwrap()
-    });
+    let result = benchmarker.run("QueryBuilder::new", || QueryBuilder::new("users").unwrap());
 
     println!("\n=== QueryBuilder Construction Benchmark ===");
     result.print_detailed();
@@ -39,7 +37,11 @@ fn bench_query_builder_with_clauses() -> Result<(), AssertionError> {
     let result = benchmarker.run("QueryBuilder with clauses", || {
         QueryBuilder::new("users")
             .unwrap()
-            .select(vec!["id".to_string(), "name".to_string(), "email".to_string()])
+            .select(vec![
+                "id".to_string(),
+                "name".to_string(),
+                "email".to_string(),
+            ])
             .unwrap()
             .where_clause("age", Operator::Gte, ExtractedValue::Int(18))
             .unwrap()
@@ -71,7 +73,11 @@ fn bench_query_builder_with_joins() -> Result<(), AssertionError> {
         let join_cond = JoinCondition::new("id", "orders", "user_id").unwrap();
         QueryBuilder::new("users")
             .unwrap()
-            .select(vec!["users.id".to_string(), "users.name".to_string(), "orders.total".to_string()])
+            .select(vec![
+                "users.id".to_string(),
+                "users.name".to_string(),
+                "orders.total".to_string(),
+            ])
             .unwrap()
             .join(JoinType::Left, "orders", None, join_cond)
             .unwrap()
@@ -103,9 +109,7 @@ fn bench_identifier_validation() -> Result<(), AssertionError> {
     let mut results = Vec::new();
 
     // Benchmark valid table name
-    let result = benchmarker.run("Valid table name", || {
-        QueryBuilder::new("users").unwrap()
-    });
+    let result = benchmarker.run("Valid table name", || QueryBuilder::new("users").unwrap());
     results.push(result);
 
     // Benchmark valid complex name
@@ -141,7 +145,12 @@ fn bench_column_validation() -> Result<(), AssertionError> {
     // Benchmark valid column selection
     let result = benchmarker.run("Valid columns", || {
         let qb = QueryBuilder::new("users").unwrap();
-        qb.select(vec!["id".to_string(), "name".to_string(), "email".to_string()]).unwrap()
+        qb.select(vec![
+            "id".to_string(),
+            "name".to_string(),
+            "email".to_string(),
+        ])
+        .unwrap()
     });
 
     println!("\n=== Column Validation Benchmark ===");
@@ -186,7 +195,11 @@ fn bench_sql_generation_select() -> Result<(), AssertionError> {
     let result = benchmarker.run("Complex SELECT", || {
         let qb = QueryBuilder::new("users")
             .unwrap()
-            .select(vec!["id".to_string(), "name".to_string(), "email".to_string()])
+            .select(vec![
+                "id".to_string(),
+                "name".to_string(),
+                "email".to_string(),
+            ])
             .unwrap()
             .where_clause("age", Operator::Gte, ExtractedValue::Int(18))
             .unwrap()
@@ -222,9 +235,10 @@ fn bench_sql_generation_insert() -> Result<(), AssertionError> {
     // Benchmark single field INSERT
     let result = benchmarker.run("INSERT (1 field)", || {
         let qb = QueryBuilder::new("users").unwrap();
-        let values = vec![
-            ("name".to_string(), ExtractedValue::String("Alice".to_string())),
-        ];
+        let values = vec![(
+            "name".to_string(),
+            ExtractedValue::String("Alice".to_string()),
+        )];
         qb.build_insert(&values).unwrap()
     });
     results.push(result);
@@ -233,9 +247,15 @@ fn bench_sql_generation_insert() -> Result<(), AssertionError> {
     let result = benchmarker.run("INSERT (5 fields)", || {
         let qb = QueryBuilder::new("users").unwrap();
         let values = vec![
-            ("name".to_string(), ExtractedValue::String("Alice".to_string())),
+            (
+                "name".to_string(),
+                ExtractedValue::String("Alice".to_string()),
+            ),
             ("age".to_string(), ExtractedValue::Int(30)),
-            ("email".to_string(), ExtractedValue::String("alice@example.com".to_string())),
+            (
+                "email".to_string(),
+                ExtractedValue::String("alice@example.com".to_string()),
+            ),
             ("active".to_string(), ExtractedValue::Bool(true)),
             ("score".to_string(), ExtractedValue::Double(95.5)),
         ];
@@ -268,9 +288,10 @@ fn bench_sql_generation_update() -> Result<(), AssertionError> {
             .unwrap()
             .where_clause("id", Operator::Eq, ExtractedValue::Int(42))
             .unwrap();
-        let values = vec![
-            ("name".to_string(), ExtractedValue::String("Bob".to_string())),
-        ];
+        let values = vec![(
+            "name".to_string(),
+            ExtractedValue::String("Bob".to_string()),
+        )];
         qb.build_update(&values).unwrap()
     });
     results.push(result);
@@ -282,9 +303,15 @@ fn bench_sql_generation_update() -> Result<(), AssertionError> {
             .where_clause("id", Operator::Eq, ExtractedValue::Int(42))
             .unwrap();
         let values = vec![
-            ("name".to_string(), ExtractedValue::String("Bob".to_string())),
+            (
+                "name".to_string(),
+                ExtractedValue::String("Bob".to_string()),
+            ),
             ("age".to_string(), ExtractedValue::Int(35)),
-            ("email".to_string(), ExtractedValue::String("bob@example.com".to_string())),
+            (
+                "email".to_string(),
+                ExtractedValue::String("bob@example.com".to_string()),
+            ),
             ("active".to_string(), ExtractedValue::Bool(false)),
             ("score".to_string(), ExtractedValue::Double(88.3)),
         ];
@@ -378,7 +405,11 @@ fn bench_parameter_binding() -> Result<(), AssertionError> {
             .unwrap()
             .where_clause("score", Operator::Gte, ExtractedValue::Float(70.0))
             .unwrap()
-            .where_clause("name", Operator::Like, ExtractedValue::String("%John%".to_string()))
+            .where_clause(
+                "name",
+                Operator::Like,
+                ExtractedValue::String("%John%".to_string()),
+            )
             .unwrap();
         qb.build()
     });
@@ -388,11 +419,9 @@ fn bench_parameter_binding() -> Result<(), AssertionError> {
     let result = benchmarker.run("10 parameters", || {
         let mut qb = QueryBuilder::new("users").unwrap();
         for i in 0..10 {
-            qb = qb.where_clause(
-                &format!("field{}", i),
-                Operator::Eq,
-                ExtractedValue::Int(i)
-            ).unwrap();
+            qb = qb
+                .where_clause(&format!("field{}", i), Operator::Eq, ExtractedValue::Int(i))
+                .unwrap();
         }
         qb.build()
     });
@@ -428,9 +457,18 @@ fn bench_operator_conversion() -> Result<(), AssertionError> {
     // Benchmark operator to_sql conversion
     let result = benchmarker.run("Operator::to_sql", || {
         let ops = [
-            Operator::Eq, Operator::Ne, Operator::Gt, Operator::Gte,
-            Operator::Lt, Operator::Lte, Operator::In, Operator::NotIn,
-            Operator::Like, Operator::ILike, Operator::IsNull, Operator::IsNotNull,
+            Operator::Eq,
+            Operator::Ne,
+            Operator::Gt,
+            Operator::Gte,
+            Operator::Lt,
+            Operator::Lte,
+            Operator::In,
+            Operator::NotIn,
+            Operator::Like,
+            Operator::ILike,
+            Operator::IsNull,
+            Operator::IsNotNull,
         ];
         for op in &ops {
             let _ = op.to_sql();

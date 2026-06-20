@@ -1,3 +1,6 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use std::cell::RefCell;
 /// logging module for Mamba (#400).
 ///
 /// Real native behavior matching CPython 3.12:
@@ -13,11 +16,7 @@
 /// subclassing (`class X(logging.Logger)`), and caching identity all work.
 /// All methods are threaded `self`-first through the runtime's generic
 /// instance method-dispatch path — no class.rs predicate branch required.
-
 use std::collections::HashMap;
-use std::cell::RefCell;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Small local helpers (duplicated on purpose; self-contained module) ──
 
@@ -29,10 +28,18 @@ fn extract_str(val: MbValue) -> String {
             }
         }
     }
-    if let Some(i) = val.as_int() { return format!("{i}"); }
-    if let Some(f) = val.as_float() { return format!("{f}"); }
-    if let Some(b) = val.as_bool() { return if b { "True" } else { "False" }.to_string(); }
-    if val.is_none() { return "None".to_string(); }
+    if let Some(i) = val.as_int() {
+        return format!("{i}");
+    }
+    if let Some(f) = val.as_float() {
+        return format!("{f}");
+    }
+    if let Some(b) = val.as_bool() {
+        return if b { "True" } else { "False" }.to_string();
+    }
+    if val.is_none() {
+        return "None".to_string();
+    }
     // Arbitrary objects (list/dict/instance/etc.): fall back to the runtime's
     // str() so non-string `msg` values stringify like CPython rather than
     // collapsing to "". CPython's LogRecord stores `msg` verbatim and applies
@@ -49,7 +56,8 @@ fn extract_str(val: MbValue) -> String {
 }
 
 fn is_str_value(val: MbValue) -> bool {
-    val.as_ptr().is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) })
+    val.as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) })
 }
 
 fn new_str(s: impl Into<String>) -> MbValue {
@@ -58,7 +66,9 @@ fn new_str(s: impl Into<String>) -> MbValue {
 
 // Safe wrapper around the runtime's (unsafe) refcount-bump helper.
 fn retain(val: MbValue) {
-    unsafe { super::super::rc::retain_if_ptr(val); }
+    unsafe {
+        super::super::rc::retain_if_ptr(val);
+    }
 }
 
 fn raise(kind: &str, msg: impl Into<String>) -> MbValue {
@@ -96,14 +106,19 @@ fn instance_class_name(inst: MbValue) -> Option<String> {
     inst.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
             Some(class_name.clone())
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
 fn make_instance(class_name: &str, fields: Vec<(&str, MbValue)>) -> MbValue {
     let inst = MbObject::new_instance(class_name.to_string());
     unsafe {
-        if let ObjData::Instance { fields: ref iflds, .. } = (*inst).data {
+        if let ObjData::Instance {
+            fields: ref iflds, ..
+        } = (*inst).data
+        {
             let mut g = iflds.write().unwrap();
             for (k, v) in fields {
                 retain(v);
@@ -160,7 +175,9 @@ fn default_name_to_level() -> HashMap<String, i64> {
 
 fn level_name_for(num: i64) -> String {
     LEVEL_TO_NAME.with(|m| {
-        m.borrow().get(&num).cloned()
+        m.borrow()
+            .get(&num)
+            .cloned()
             .unwrap_or_else(|| format!("Level {num}"))
     })
 }
@@ -199,7 +216,10 @@ unsafe extern "C" fn dispatch_getlevelname(args_ptr: *const MbValue, nargs: usiz
 }
 
 // getLevelNamesMapping() -> fresh dict copy of name->number
-unsafe extern "C" fn dispatch_getlevelnamesmapping(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_getlevelnamesmapping(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     let dict = MbObject::new_dict();
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
@@ -220,8 +240,12 @@ unsafe extern "C" fn dispatch_addlevelname(args_ptr: *const MbValue, nargs: usiz
     let a = unsafe { args_slice(args_ptr, nargs) };
     let num = arg_or_none(a, 0).as_int().unwrap_or(0);
     let name = extract_str(arg_or_none(a, 1));
-    LEVEL_TO_NAME.with(|m| { m.borrow_mut().insert(num, name.clone()); });
-    NAME_TO_LEVEL.with(|m| { m.borrow_mut().insert(name, num); });
+    LEVEL_TO_NAME.with(|m| {
+        m.borrow_mut().insert(num, name.clone());
+    });
+    NAME_TO_LEVEL.with(|m| {
+        m.borrow_mut().insert(name, num);
+    });
     MbValue::none()
 }
 
@@ -233,7 +257,11 @@ unsafe extern "C" fn dispatch_getlogger(args_ptr: *const MbValue, nargs: usize) 
     if !name_val.is_none() && !is_str_value(name_val) {
         return raise("TypeError", "A logger name must be a string");
     }
-    let name = if name_val.is_none() { "root".to_string() } else { extract_str(name_val) };
+    let name = if name_val.is_none() {
+        "root".to_string()
+    } else {
+        extract_str(name_val)
+    };
     get_logger_by_name(&name)
 }
 
@@ -246,12 +274,18 @@ fn get_logger_by_name(name: &str) -> MbValue {
     // Build a Logger instance. Use the installed class so subclasses route.
     let inst = MbObject::new_instance(class_name.clone());
     unsafe {
-        if let ObjData::Instance { fields: ref iflds, .. } = (*inst).data {
+        if let ObjData::Instance {
+            fields: ref iflds, ..
+        } = (*inst).data
+        {
             let mut g = iflds.write().unwrap();
             g.insert("name".to_string(), new_str(name.to_string()));
             g.insert("level".to_string(), MbValue::from_int(0)); // NOTSET
             g.insert("propagate".to_string(), MbValue::from_bool(true));
-            g.insert("handlers".to_string(), MbValue::from_ptr(MbObject::new_list(vec![])));
+            g.insert(
+                "handlers".to_string(),
+                MbValue::from_ptr(MbObject::new_list(vec![])),
+            );
             g.insert("disabled".to_string(), MbValue::from_bool(false));
         }
     }
@@ -270,7 +304,9 @@ fn get_logger_by_name(name: &str) -> MbValue {
 fn cached_logger(name: &str) -> Option<MbValue> {
     LOGGER_CACHE.with(|c| {
         let v = c.borrow().get(name).copied();
-        if let Some(v) = v { retain(v); }
+        if let Some(v) = v {
+            retain(v);
+        }
         v
     })
 }
@@ -285,7 +321,10 @@ unsafe extern "C" fn dispatch_setloggerclass(args_ptr: *const MbValue, nargs: us
             LOGGER_CLASS.with(|c| *c.borrow_mut() = cn);
             MbValue::none()
         }
-        _ => raise("TypeError", "logger not derived from logging.Logger: ".to_string()),
+        _ => raise(
+            "TypeError",
+            "logger not derived from logging.Logger: ".to_string(),
+        ),
     }
 }
 
@@ -295,17 +334,28 @@ unsafe extern "C" fn dispatch_getloggerclass(_args_ptr: *const MbValue, _nargs: 
 }
 
 // setLogRecordFactory(factory) / getLogRecordFactory()
-unsafe extern "C" fn dispatch_setlogrecordfactory(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_setlogrecordfactory(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let f = arg_or_none(a, 0);
     retain(f);
     RECORD_FACTORY.with(|c| *c.borrow_mut() = f);
     MbValue::none()
 }
-unsafe extern "C" fn dispatch_getlogrecordfactory(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_getlogrecordfactory(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     RECORD_FACTORY.with(|c| {
         let v = *c.borrow();
-        if v.is_none() { new_str("LogRecord") } else { retain(v); v }
+        if v.is_none() {
+            new_str("LogRecord")
+        } else {
+            retain(v);
+            v
+        }
     })
 }
 
@@ -316,20 +366,28 @@ fn resolve_class_arg(val: MbValue) -> Option<String> {
     }
     // a func-pointer constructor with a recorded native type name
     if let Some(addr) = val.as_func() {
-        return super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow().get(&(addr as u64)).cloned()
-        });
+        return super::super::module::NATIVE_TYPE_NAMES
+            .with(|m| m.borrow().get(&(addr as u64)).cloned());
     }
     // a type object Instance{class_name="type", __name__=X}
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { class_name: ref cn, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            class_name: ref cn,
+            ref fields,
+        } = (*ptr).data
+        {
             if cn == "type" {
-                fields.read().ok().and_then(|f| f.get("__name__").map(|v| extract_str(*v)))
+                fields
+                    .read()
+                    .ok()
+                    .and_then(|f| f.get("__name__").map(|v| extract_str(*v)))
             } else {
                 // a bare class instance used as a class? treat class_name.
                 Some(cn.clone())
             }
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
@@ -345,7 +403,10 @@ fn is_logger_subclass(cn: &str) -> bool {
 fn positional_after(a: &[MbValue], msg_index: usize) -> &[MbValue] {
     let mut end = a.len();
     if let Some(last) = a.last() {
-        if last.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }) {
+        if last
+            .as_ptr()
+            .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        {
             // Only peel a trailing dict as kwargs when it is *after* msg; a dict
             // that is itself the msg positional must stay.
             if end > msg_index + 1 {
@@ -353,7 +414,11 @@ fn positional_after(a: &[MbValue], msg_index: usize) -> &[MbValue] {
             }
         }
     }
-    if msg_index + 1 >= end { &[] } else { &a[msg_index + 1..end] }
+    if msg_index + 1 >= end {
+        &[]
+    } else {
+        &a[msg_index + 1..end]
+    }
 }
 
 // Apply CPython's LogRecord.getMessage semantics: `str(msg) % args` when args
@@ -367,7 +432,9 @@ fn build_message(msg: MbValue, args: &[MbValue]) -> MbValue {
     // Single-mapping unwrap: logging treats `logger.info("%(a)s", {"a": 1})`
     // as a mapping rather than a 1-tuple.
     let rhs = if args.len() == 1
-        && args[0].as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        && args[0]
+            .as_ptr()
+            .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
     {
         args[0]
     } else {
@@ -384,28 +451,37 @@ fn root_log_at(level: i64, msg: MbValue) {
 
 unsafe extern "C" fn dispatch_debug(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    root_log_at(10, build_message(arg_or_none(a, 0), positional_after(a, 0))); MbValue::none()
+    root_log_at(10, build_message(arg_or_none(a, 0), positional_after(a, 0)));
+    MbValue::none()
 }
 unsafe extern "C" fn dispatch_info(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    root_log_at(20, build_message(arg_or_none(a, 0), positional_after(a, 0))); MbValue::none()
+    root_log_at(20, build_message(arg_or_none(a, 0), positional_after(a, 0)));
+    MbValue::none()
 }
 unsafe extern "C" fn dispatch_warning(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    root_log_at(30, build_message(arg_or_none(a, 0), positional_after(a, 0))); MbValue::none()
+    root_log_at(30, build_message(arg_or_none(a, 0), positional_after(a, 0)));
+    MbValue::none()
 }
 unsafe extern "C" fn dispatch_error(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    root_log_at(40, build_message(arg_or_none(a, 0), positional_after(a, 0))); MbValue::none()
+    root_log_at(40, build_message(arg_or_none(a, 0), positional_after(a, 0)));
+    MbValue::none()
 }
 unsafe extern "C" fn dispatch_critical(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    root_log_at(50, build_message(arg_or_none(a, 0), positional_after(a, 0))); MbValue::none()
+    root_log_at(50, build_message(arg_or_none(a, 0), positional_after(a, 0)));
+    MbValue::none()
 }
 unsafe extern "C" fn dispatch_log(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let lvl = arg_or_none(a, 0).as_int().unwrap_or(0);
-    root_log_at(lvl, build_message(arg_or_none(a, 1), positional_after(a, 1))); MbValue::none()
+    root_log_at(
+        lvl,
+        build_message(arg_or_none(a, 1), positional_after(a, 1)),
+    );
+    MbValue::none()
 }
 
 // Read a string-keyed value out of any kwargs dict present in the arg slice.
@@ -433,11 +509,14 @@ fn make_basic_formatter(fmt: Option<MbValue>, datefmt: MbValue) -> MbValue {
         // BASIC_FORMAT default.
         _ => "%(levelname)s:%(name)s:%(message)s".to_string(),
     };
-    make_instance("Formatter", vec![
-        ("_fmt", new_str(fmt_str)),
-        ("_style", new_str("%")),
-        ("datefmt", datefmt),
-    ])
+    make_instance(
+        "Formatter",
+        vec![
+            ("_fmt", new_str(fmt_str)),
+            ("_style", new_str("%")),
+            ("datefmt", datefmt),
+        ],
+    )
 }
 
 // basicConfig(filename=None, filemode='a', format=BASIC_FORMAT, datefmt=None,
@@ -450,11 +529,15 @@ unsafe extern "C" fn dispatch_basicconfig(args_ptr: *const MbValue, nargs: usize
 
     // CPython: if root already has handlers, basicConfig is a no-op unless
     // force=True (which removes/closes the existing handlers first).
-    let root_has_handlers = field_get(root, "handlers").as_ptr().is_some_and(|ptr| unsafe {
-        if let ObjData::List(ref lock) = (*ptr).data {
-            !lock.read().unwrap().is_empty()
-        } else { false }
-    });
+    let root_has_handlers = field_get(root, "handlers")
+        .as_ptr()
+        .is_some_and(|ptr| unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                !lock.read().unwrap().is_empty()
+            } else {
+                false
+            }
+        });
     if force {
         if let Some(ptr) = field_get(root, "handlers").as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
@@ -490,21 +573,28 @@ unsafe extern "C" fn dispatch_basicconfig(args_ptr: *const MbValue, nargs: usize
             // Build a single StreamHandler (FileHandler when `filename` given).
             let filename = kwarg(a, "filename").filter(|v| !v.is_none());
             let handler = if let Some(fname) = filename {
-                make_instance("FileHandler", vec![
-                    ("level", MbValue::from_int(0)),
-                    ("name", MbValue::none()),
-                    ("formatter", formatter),
-                    ("baseFilename", fname),
-                ])
+                make_instance(
+                    "FileHandler",
+                    vec![
+                        ("level", MbValue::from_int(0)),
+                        ("name", MbValue::none()),
+                        ("formatter", formatter),
+                        ("baseFilename", fname),
+                    ],
+                )
             } else {
-                let stream = kwarg(a, "stream").filter(|v| !v.is_none())
+                let stream = kwarg(a, "stream")
+                    .filter(|v| !v.is_none())
                     .unwrap_or_else(stderr_stream);
-                make_instance("StreamHandler", vec![
-                    ("level", MbValue::from_int(0)),
-                    ("name", MbValue::none()),
-                    ("formatter", formatter),
-                    ("stream", stream),
-                ])
+                make_instance(
+                    "StreamHandler",
+                    vec![
+                        ("level", MbValue::from_int(0)),
+                        ("name", MbValue::none()),
+                        ("formatter", formatter),
+                        ("stream", stream),
+                    ],
+                )
             };
             m_logger_addhandler(root, handler);
         }
@@ -512,12 +602,18 @@ unsafe extern "C" fn dispatch_basicconfig(args_ptr: *const MbValue, nargs: usize
 
     // `level` may be positional (legacy single-arg) or a keyword. It is applied
     // to root regardless of whether handlers were (re)configured.
-    let level: Option<i64> = a.first()
-        .filter(|v| !v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }))
+    let level: Option<i64> = a
+        .first()
+        .filter(|v| {
+            !v.as_ptr()
+                .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        })
         .and_then(|v| v.as_int())
         .or_else(|| {
             kwarg(a, "level").and_then(|found| {
-                found.as_int().or_else(|| level_num_for(&extract_str(found)))
+                found
+                    .as_int()
+                    .or_else(|| level_num_for(&extract_str(found)))
             })
         });
     if let Some(l) = level {
@@ -540,7 +636,10 @@ unsafe extern "C" fn dispatch_disable(args_ptr: *const MbValue, nargs: usize) ->
 unsafe extern "C" fn dispatch_capturewarnings(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::none()
 }
-unsafe extern "C" fn dispatch_gethandlerbyname(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_gethandlerbyname(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::none()
 }
 unsafe extern "C" fn dispatch_gethandlernames(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -557,14 +656,20 @@ unsafe extern "C" fn dispatch_currentframe(_args_ptr: *const MbValue, _nargs: us
 // StreamHandler(stream=None)
 unsafe extern "C" fn dispatch_streamhandler(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    let stream = a.first().copied().filter(|v| !v.is_none())
+    let stream = a
+        .first()
+        .copied()
+        .filter(|v| !v.is_none())
         .unwrap_or_else(stderr_stream);
-    make_instance("StreamHandler", vec![
-        ("level", MbValue::from_int(0)),
-        ("name", MbValue::none()),
-        ("formatter", MbValue::none()),
-        ("stream", stream),
-    ])
+    make_instance(
+        "StreamHandler",
+        vec![
+            ("level", MbValue::from_int(0)),
+            ("name", MbValue::none()),
+            ("formatter", MbValue::none()),
+            ("stream", stream),
+        ],
+    )
 }
 
 // A sentinel object that compares `is sys.stderr`. We model the default stream
@@ -590,31 +695,40 @@ fn stderr_stream() -> MbValue {
 unsafe extern "C" fn dispatch_handler(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let level = a.first().and_then(|v| v.as_int()).unwrap_or(0);
-    make_instance("Handler", vec![
-        ("level", MbValue::from_int(level)),
-        ("name", MbValue::none()),
-        ("formatter", MbValue::none()),
-    ])
+    make_instance(
+        "Handler",
+        vec![
+            ("level", MbValue::from_int(level)),
+            ("name", MbValue::none()),
+            ("formatter", MbValue::none()),
+        ],
+    )
 }
 
 // NullHandler()
 unsafe extern "C" fn dispatch_nullhandler(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    make_instance("NullHandler", vec![
-        ("level", MbValue::from_int(0)),
-        ("name", MbValue::none()),
-        ("formatter", MbValue::none()),
-    ])
+    make_instance(
+        "NullHandler",
+        vec![
+            ("level", MbValue::from_int(0)),
+            ("name", MbValue::none()),
+            ("formatter", MbValue::none()),
+        ],
+    )
 }
 
 // FileHandler(filename, ...) — minimal: store filename, no real file I/O.
 unsafe extern "C" fn dispatch_filehandler(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    make_instance("FileHandler", vec![
-        ("level", MbValue::from_int(0)),
-        ("name", MbValue::none()),
-        ("formatter", MbValue::none()),
-        ("baseFilename", arg_or_none(a, 0)),
-    ])
+    make_instance(
+        "FileHandler",
+        vec![
+            ("level", MbValue::from_int(0)),
+            ("name", MbValue::none()),
+            ("formatter", MbValue::none()),
+            ("baseFilename", arg_or_none(a, 0)),
+        ],
+    )
 }
 
 // Formatter(fmt=None, datefmt=None, style='%')
@@ -625,7 +739,9 @@ unsafe extern "C" fn dispatch_formatter(args_ptr: *const MbValue, nargs: usize) 
     // style may be positional (3rd) or in a trailing kwargs dict.
     let mut style = String::from("%");
     if let Some(s) = a.get(2) {
-        if is_str_value(*s) { style = extract_str(*s); }
+        if is_str_value(*s) {
+            style = extract_str(*s);
+        }
     }
     for v in a.iter() {
         if let Some(ptr) = v.as_ptr() {
@@ -633,7 +749,9 @@ unsafe extern "C" fn dispatch_formatter(args_ptr: *const MbValue, nargs: usize) 
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let g = lock.read().unwrap();
                     let key = super::super::dict_ops::DictKey::Str("style".to_string());
-                    if let Some(found) = g.get(&key) { style = extract_str(*found); }
+                    if let Some(found) = g.get(&key) {
+                        style = extract_str(*found);
+                    }
                 }
             }
         }
@@ -650,22 +768,32 @@ unsafe extern "C" fn dispatch_formatter(args_ptr: *const MbValue, nargs: usize) 
     } else {
         extract_str(fmt)
     };
-    make_instance("Formatter", vec![
-        ("_fmt", new_str(fmt_str)),
-        ("_style", new_str(style)),
-        ("datefmt", datefmt),
-    ])
+    make_instance(
+        "Formatter",
+        vec![
+            ("_fmt", new_str(fmt_str)),
+            ("_style", new_str(style)),
+            ("datefmt", datefmt),
+        ],
+    )
 }
 
 // BufferingFormatter(linefmt=None)
-unsafe extern "C" fn dispatch_bufferingformatter(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_bufferingformatter(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     make_instance("BufferingFormatter", vec![])
 }
 
 // Filter(name='')
 unsafe extern "C" fn dispatch_filter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
-    let name = if a.is_empty() || a[0].is_none() { new_str("") } else { a[0] };
+    let name = if a.is_empty() || a[0].is_none() {
+        new_str("")
+    } else {
+        a[0]
+    };
     make_instance("Filter", vec![("name", name)])
 }
 
@@ -683,14 +811,17 @@ fn build_log_record(name: MbValue, level: MbValue, msg: MbValue) -> MbValue {
     let levelname = level_name_for(lvlnum);
     let name = if name.is_none() { new_str("") } else { name };
     let msg = if msg.is_none() { new_str("") } else { msg };
-    make_instance("LogRecord", vec![
-        ("name", name),
-        ("levelno", MbValue::from_int(lvlnum)),
-        ("levelname", new_str(levelname)),
-        ("msg", msg),
-        ("message", msg),
-        ("args", MbValue::from_ptr(MbObject::new_tuple(vec![]))),
-    ])
+    make_instance(
+        "LogRecord",
+        vec![
+            ("name", name),
+            ("levelno", MbValue::from_int(lvlnum)),
+            ("levelname", new_str(levelname)),
+            ("msg", msg),
+            ("message", msg),
+            ("args", MbValue::from_ptr(MbObject::new_tuple(vec![]))),
+        ],
+    )
 }
 
 // makeLogRecord(dict) -> LogRecord with attrs from the dict applied.
@@ -705,7 +836,9 @@ unsafe extern "C" fn dispatch_makelogrecord(args_ptr: *const MbValue, nargs: usi
                     if let super::super::dict_ops::DictKey::Str(ref ks) = k {
                         field_set(rec, ks, *v);
                         // keep `message` mirrored to `msg`
-                        if ks == "msg" { field_set(rec, "message", *v); }
+                        if ks == "msg" {
+                            field_set(rec, "message", *v);
+                        }
                     }
                 }
             }
@@ -743,7 +876,9 @@ fn logger_effective_level(this: MbValue) -> i64 {
     let mut name = extract_str(field_get(this, "name"));
     // The starting logger `this` is real; read its own level first.
     let lvl = field_get(this, "level").as_int().unwrap_or(0);
-    if lvl != 0 { return lvl; }
+    if lvl != 0 {
+        return lvl;
+    }
     loop {
         if name == "root" || !name.contains('.') {
             if name != "root" {
@@ -752,7 +887,9 @@ fn logger_effective_level(this: MbValue) -> i64 {
                 // WARNING.
                 if let Some(root) = cached_logger("root") {
                     let rl = field_get(root, "level").as_int().unwrap_or(0);
-                    if rl != 0 { return rl; }
+                    if rl != 0 {
+                        return rl;
+                    }
                 }
             }
             return 30; // CPython root default == WARNING
@@ -761,7 +898,9 @@ fn logger_effective_level(this: MbValue) -> i64 {
         // Only consult an ancestor that already exists as a real Logger.
         if let Some(lg) = cached_logger(&name) {
             let lvl = field_get(lg, "level").as_int().unwrap_or(0);
-            if lvl != 0 { return lvl; }
+            if lvl != 0 {
+                return lvl;
+            }
         }
     }
 }
@@ -785,18 +924,28 @@ extern "C" fn m_logger_isenabledfor(this: MbValue, level: MbValue) -> MbValue {
 extern "C" fn m_logger_getchild(this: MbValue, suffix: MbValue) -> MbValue {
     let base = extract_str(field_get(this, "name"));
     let suf = extract_str(suffix);
-    let full = if base == "root" { suf } else { format!("{base}.{suf}") };
+    let full = if base == "root" {
+        suf
+    } else {
+        format!("{base}.{suf}")
+    };
     get_logger_by_name(&full)
 }
 
 // Logger.getChildren(self) -> set of immediate child loggers
 extern "C" fn m_logger_getchildren(this: MbValue) -> MbValue {
     let base = extract_str(field_get(this, "name"));
-    let prefix = if base == "root" { String::new() } else { format!("{base}.") };
+    let prefix = if base == "root" {
+        String::new()
+    } else {
+        format!("{base}.")
+    };
     let mut kids: Vec<MbValue> = Vec::new();
     LOGGER_CACHE.with(|c| {
         for (n, v) in c.borrow().iter() {
-            if n == "root" { continue; }
+            if n == "root" {
+                continue;
+            }
             let rest = if prefix.is_empty() {
                 Some(n.as_str())
             } else {
@@ -843,8 +992,12 @@ extern "C" fn m_logger_removehandler(this: MbValue, h: MbValue) -> MbValue {
 }
 
 // Logger.addFilter / removeFilter — no-op (filters not modeled in emission).
-extern "C" fn m_logger_addfilter(_this: MbValue, _f: MbValue) -> MbValue { MbValue::none() }
-extern "C" fn m_logger_removefilter(_this: MbValue, _f: MbValue) -> MbValue { MbValue::none() }
+extern "C" fn m_logger_addfilter(_this: MbValue, _f: MbValue) -> MbValue {
+    MbValue::none()
+}
+extern "C" fn m_logger_removefilter(_this: MbValue, _f: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 // Walk from a logger up the hierarchy collecting handlers honoring propagate.
 // Ancestors are resolved WITHOUT materializing new Loggers — only loggers that
@@ -890,8 +1043,12 @@ fn collect_effective_handlers(start: MbValue) -> Vec<MbValue> {
 // Core emission used by Logger.debug/info/.../log and root-level functions.
 fn logger_emit(logger: MbValue, level: i64, msg: MbValue) {
     let disable = MANAGER_DISABLE.with(|c| c.get());
-    if level <= disable { return; }
-    if level < logger_effective_level(logger) { return; }
+    if level <= disable {
+        return;
+    }
+    if level < logger_effective_level(logger) {
+        return;
+    }
     let levelname = level_name_for(level);
     let message = extract_str(msg);
     let logger_name = extract_str(field_get(logger, "name"));
@@ -899,7 +1056,9 @@ fn logger_emit(logger: MbValue, level: i64, msg: MbValue) {
     let mut found = 0usize;
     for h in &handlers {
         let hlevel = field_get(*h, "level").as_int().unwrap_or(0);
-        if level < hlevel { continue; }
+        if level < hlevel {
+            continue;
+        }
         if instance_class_name(*h).as_deref() == Some("NullHandler") {
             // NullHandler still counts as "a handler was found" for the
             // lastResort decision (CPython increments `found` before emit).
@@ -930,7 +1089,13 @@ fn format_record(handler: MbValue, levelname: &str, message: &str, name: &str) -
 }
 
 // Apply a Formatter's fmt string against a small set of record fields.
-fn apply_format(fmt: MbValue, levelname: &str, message: &str, name: &str, extra: &[(String, String)]) -> String {
+fn apply_format(
+    fmt: MbValue,
+    levelname: &str,
+    message: &str,
+    name: &str,
+    extra: &[(String, String)],
+) -> String {
     let style = extract_str(field_get(fmt, "_style"));
     let pattern = extract_str(field_get(fmt, "_fmt"));
     let lookup = |key: &str| -> Option<String> {
@@ -973,7 +1138,9 @@ fn format_percent(pattern: &str, lookup: &dyn Fn(&str) -> Option<String>) -> Str
                 while j < chars.len() && !"sdifgxXeEr%".contains(chars[j]) {
                     j += 1;
                 }
-                if j < chars.len() { j += 1; }
+                if j < chars.len() {
+                    j += 1;
+                }
                 out.push_str(&lookup(&key).unwrap_or_default());
                 i = j;
                 continue;
@@ -1023,7 +1190,9 @@ fn format_dollar(pattern: &str, lookup: &dyn Fn(&str) -> Option<String>) -> Stri
                 }
             } else if chars[i + 1].is_alphabetic() || chars[i + 1] == '_' {
                 let mut j = i + 1;
-                while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') { j += 1; }
+                while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                    j += 1;
+                }
                 let key: String = chars[i + 1..j].iter().collect();
                 out.push_str(&lookup(&key).unwrap_or_default());
                 i = j;
@@ -1054,12 +1223,30 @@ fn write_to_handler_stream(handler: MbValue, text: &str) {
 }
 
 // Logger.debug/info/warning/error/critical/exception/log
-extern "C" fn m_logger_debug(this: MbValue, msg: MbValue) -> MbValue { logger_emit(this, 10, msg); MbValue::none() }
-extern "C" fn m_logger_info(this: MbValue, msg: MbValue) -> MbValue { logger_emit(this, 20, msg); MbValue::none() }
-extern "C" fn m_logger_warning(this: MbValue, msg: MbValue) -> MbValue { logger_emit(this, 30, msg); MbValue::none() }
-extern "C" fn m_logger_error(this: MbValue, msg: MbValue) -> MbValue { logger_emit(this, 40, msg); MbValue::none() }
-extern "C" fn m_logger_critical(this: MbValue, msg: MbValue) -> MbValue { logger_emit(this, 50, msg); MbValue::none() }
-extern "C" fn m_logger_warn(this: MbValue, msg: MbValue) -> MbValue { logger_emit(this, 30, msg); MbValue::none() }
+extern "C" fn m_logger_debug(this: MbValue, msg: MbValue) -> MbValue {
+    logger_emit(this, 10, msg);
+    MbValue::none()
+}
+extern "C" fn m_logger_info(this: MbValue, msg: MbValue) -> MbValue {
+    logger_emit(this, 20, msg);
+    MbValue::none()
+}
+extern "C" fn m_logger_warning(this: MbValue, msg: MbValue) -> MbValue {
+    logger_emit(this, 30, msg);
+    MbValue::none()
+}
+extern "C" fn m_logger_error(this: MbValue, msg: MbValue) -> MbValue {
+    logger_emit(this, 40, msg);
+    MbValue::none()
+}
+extern "C" fn m_logger_critical(this: MbValue, msg: MbValue) -> MbValue {
+    logger_emit(this, 50, msg);
+    MbValue::none()
+}
+extern "C" fn m_logger_warn(this: MbValue, msg: MbValue) -> MbValue {
+    logger_emit(this, 30, msg);
+    MbValue::none()
+}
 
 extern "C" fn m_logger_exception(this: MbValue, msg: MbValue) -> MbValue {
     // Emit the message plus the active exception's type name (traceback-lite).
@@ -1084,13 +1271,19 @@ extern "C" fn m_logger_log(this: MbValue, level: MbValue, msg: MbValue) -> MbVal
 }
 
 // Logger.handle / Logger.callHandlers — no-op compatibility hooks.
-extern "C" fn m_logger_noop1(_this: MbValue, _a: MbValue) -> MbValue { MbValue::none() }
+extern "C" fn m_logger_noop1(_this: MbValue, _a: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 // ── Handler methods ──
 extern "C" fn m_handler_setlevel(this: MbValue, level: MbValue) -> MbValue {
-    let n = if let Some(i) = level.as_int() { i }
-        else if is_str_value(level) { level_num_for(&extract_str(level)).unwrap_or(0) }
-        else { 0 };
+    let n = if let Some(i) = level.as_int() {
+        i
+    } else if is_str_value(level) {
+        level_num_for(&extract_str(level)).unwrap_or(0)
+    } else {
+        0
+    };
     field_set(this, "level", MbValue::from_int(n));
     MbValue::none()
 }
@@ -1101,21 +1294,41 @@ extern "C" fn m_handler_setformatter(this: MbValue, fmt: MbValue) -> MbValue {
 extern "C" fn m_handler_emit(this: MbValue, _record: MbValue) -> MbValue {
     // Base Handler.emit is abstract.
     if instance_class_name(this).as_deref() == Some("Handler") {
-        return raise("NotImplementedError", "emit must be implemented by Handler subclasses");
+        return raise(
+            "NotImplementedError",
+            "emit must be implemented by Handler subclasses",
+        );
     }
     MbValue::none()
 }
-extern "C" fn m_handler_handle(_this: MbValue, _record: MbValue) -> MbValue { MbValue::none() }
-extern "C" fn m_handler_flush(_this: MbValue) -> MbValue { MbValue::none() }
-extern "C" fn m_handler_close(_this: MbValue) -> MbValue { MbValue::none() }
-extern "C" fn m_handler_setname(this: MbValue, name: MbValue) -> MbValue {
-    field_set(this, "name", name); MbValue::none()
+extern "C" fn m_handler_handle(_this: MbValue, _record: MbValue) -> MbValue {
+    MbValue::none()
 }
-extern "C" fn m_handler_getname(this: MbValue) -> MbValue { field_get(this, "name") }
-extern "C" fn m_handler_addfilter(_this: MbValue, _f: MbValue) -> MbValue { MbValue::none() }
-extern "C" fn m_handler_removefilter(_this: MbValue, _f: MbValue) -> MbValue { MbValue::none() }
-extern "C" fn m_handler_acquire(_this: MbValue) -> MbValue { MbValue::none() }
-extern "C" fn m_handler_release(_this: MbValue) -> MbValue { MbValue::none() }
+extern "C" fn m_handler_flush(_this: MbValue) -> MbValue {
+    MbValue::none()
+}
+extern "C" fn m_handler_close(_this: MbValue) -> MbValue {
+    MbValue::none()
+}
+extern "C" fn m_handler_setname(this: MbValue, name: MbValue) -> MbValue {
+    field_set(this, "name", name);
+    MbValue::none()
+}
+extern "C" fn m_handler_getname(this: MbValue) -> MbValue {
+    field_get(this, "name")
+}
+extern "C" fn m_handler_addfilter(_this: MbValue, _f: MbValue) -> MbValue {
+    MbValue::none()
+}
+extern "C" fn m_handler_removefilter(_this: MbValue, _f: MbValue) -> MbValue {
+    MbValue::none()
+}
+extern "C" fn m_handler_acquire(_this: MbValue) -> MbValue {
+    MbValue::none()
+}
+extern "C" fn m_handler_release(_this: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 // StreamHandler.setStream(self, stream) -> prior stream (or None if unchanged)
 extern "C" fn m_streamhandler_setstream(this: MbValue, stream: MbValue) -> MbValue {
@@ -1184,7 +1397,9 @@ pub fn logging_formatter_format(fmt: MbValue, record: MbValue) -> MbValue {
     m_formatter_format(fmt, record)
 }
 
-extern "C" fn m_formatter_formattime(_this: MbValue, _record: MbValue) -> MbValue { new_str("") }
+extern "C" fn m_formatter_formattime(_this: MbValue, _record: MbValue) -> MbValue {
+    new_str("")
+}
 extern "C" fn m_formatter_formatmessage(this: MbValue, record: MbValue) -> MbValue {
     m_formatter_format(this, record)
 }
@@ -1198,14 +1413,22 @@ extern "C" fn m_bufferingformatter_format(_this: MbValue, records: MbValue) -> M
                 ObjData::List(lock) => {
                     for r in lock.read().unwrap().iter() {
                         let m = extract_str(field_get(*r, "message"));
-                        let m = if m.is_empty() { extract_str(field_get(*r, "msg")) } else { m };
+                        let m = if m.is_empty() {
+                            extract_str(field_get(*r, "msg"))
+                        } else {
+                            m
+                        };
                         out.push_str(&m);
                     }
                 }
                 ObjData::Tuple(items) => {
                     for r in items.iter() {
                         let m = extract_str(field_get(*r, "message"));
-                        let m = if m.is_empty() { extract_str(field_get(*r, "msg")) } else { m };
+                        let m = if m.is_empty() {
+                            extract_str(field_get(*r, "msg"))
+                        } else {
+                            m
+                        };
                         out.push_str(&m);
                     }
                 }
@@ -1230,7 +1453,11 @@ extern "C" fn m_filter_filter(this: MbValue, record: MbValue) -> MbValue {
 // LogRecord.getMessage(self) -> message string
 extern "C" fn m_logrecord_getmessage(this: MbValue) -> MbValue {
     let m = field_get(this, "message");
-    if m.is_none() { field_get(this, "msg") } else { m }
+    if m.is_none() {
+        field_get(this, "msg")
+    } else {
+        m
+    }
 }
 // LogRecord.__str__ / __repr__ -> "<LogRecord: name, levelno, ...>"
 extern "C" fn m_logrecord_str(this: MbValue) -> MbValue {
@@ -1242,10 +1469,13 @@ extern "C" fn m_logrecord_str(this: MbValue) -> MbValue {
 
 // ── Manager (man = logging.Manager(None)) ──
 unsafe extern "C" fn dispatch_manager(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    make_instance("Manager", vec![
-        ("loggerClass", MbValue::none()),
-        ("logRecordFactory", MbValue::none()),
-    ])
+    make_instance(
+        "Manager",
+        vec![
+            ("loggerClass", MbValue::none()),
+            ("logRecordFactory", MbValue::none()),
+        ],
+    )
 }
 
 // Manager.setLoggerClass(self, klass): klass must derive from Logger.
@@ -1271,12 +1501,18 @@ extern "C" fn m_manager_getlogger(this: MbValue, name: MbValue) -> MbValue {
     };
     let inst = MbObject::new_instance(class_name);
     unsafe {
-        if let ObjData::Instance { fields: ref iflds, .. } = (*inst).data {
+        if let ObjData::Instance {
+            fields: ref iflds, ..
+        } = (*inst).data
+        {
             let mut g = iflds.write().unwrap();
             g.insert("name".to_string(), new_str(nm));
             g.insert("level".to_string(), MbValue::from_int(0));
             g.insert("propagate".to_string(), MbValue::from_bool(true));
-            g.insert("handlers".to_string(), MbValue::from_ptr(MbObject::new_list(vec![])));
+            g.insert(
+                "handlers".to_string(),
+                MbValue::from_ptr(MbObject::new_list(vec![])),
+            );
             g.insert("disabled".to_string(), MbValue::from_bool(false));
         }
     }
@@ -1316,95 +1552,133 @@ pub fn register() {
     attrs.insert("INFO".into(), MbValue::from_int(20));
     attrs.insert("DEBUG".into(), MbValue::from_int(10));
     attrs.insert("NOTSET".into(), MbValue::from_int(0));
-    attrs.insert("BASIC_FORMAT".into(), new_str("%(levelname)s:%(name)s:%(message)s"));
+    attrs.insert(
+        "BASIC_FORMAT".into(),
+        new_str("%(levelname)s:%(name)s:%(message)s"),
+    );
     attrs.insert("raiseExceptions".into(), MbValue::from_bool(true));
     // lastResort: CPython exposes a _StderrHandler at WARNING level. Model it as
     // a real StreamHandler instance so `hasattr(logging, "lastResort")` holds.
-    attrs.insert("lastResort".into(), make_instance("StreamHandler", vec![
-        ("level", MbValue::from_int(30)),
-        ("name", MbValue::none()),
-        ("formatter", MbValue::none()),
-    ]));
+    attrs.insert(
+        "lastResort".into(),
+        make_instance(
+            "StreamHandler",
+            vec![
+                ("level", MbValue::from_int(30)),
+                ("name", MbValue::none()),
+                ("formatter", MbValue::none()),
+            ],
+        ),
+    );
 
     // ── Register native classes with methods (CLASS_REGISTRY) ──
-    register_native_class("Logger", vec![
-        ("setLevel", m_logger_setlevel as *const ()),
-        ("getEffectiveLevel", m_logger_geteffectivelevel as *const ()),
-        ("isEnabledFor", m_logger_isenabledfor as *const ()),
-        ("getChild", m_logger_getchild as *const ()),
-        ("getChildren", m_logger_getchildren as *const ()),
-        ("addHandler", m_logger_addhandler as *const ()),
-        ("removeHandler", m_logger_removehandler as *const ()),
-        ("addFilter", m_logger_addfilter as *const ()),
-        ("removeFilter", m_logger_removefilter as *const ()),
-        ("debug", m_logger_debug as *const ()),
-        ("info", m_logger_info as *const ()),
-        ("warning", m_logger_warning as *const ()),
-        ("warn", m_logger_warn as *const ()),
-        ("error", m_logger_error as *const ()),
-        ("critical", m_logger_critical as *const ()),
-        ("fatal", m_logger_critical as *const ()),
-        ("exception", m_logger_exception as *const ()),
-        ("log", m_logger_log as *const ()),
-        ("handle", m_logger_noop1 as *const ()),
-        ("callHandlers", m_logger_noop1 as *const ()),
-    ]);
-    register_native_class("Handler", vec![
-        ("setLevel", m_handler_setlevel as *const ()),
-        ("setFormatter", m_handler_setformatter as *const ()),
-        ("emit", m_handler_emit as *const ()),
-        ("handle", m_handler_handle as *const ()),
-        ("flush", m_handler_flush as *const ()),
-        ("close", m_handler_close as *const ()),
-        ("set_name", m_handler_setname as *const ()),
-        ("get_name", m_handler_getname as *const ()),
-        ("addFilter", m_handler_addfilter as *const ()),
-        ("removeFilter", m_handler_removefilter as *const ()),
-        ("acquire", m_handler_acquire as *const ()),
-        ("release", m_handler_release as *const ()),
-    ]);
-    register_native_class_with_base("StreamHandler", "Handler", vec![
-        ("setLevel", m_handler_setlevel as *const ()),
-        ("setFormatter", m_handler_setformatter as *const ()),
-        ("setStream", m_streamhandler_setstream as *const ()),
-        ("emit", m_streamhandler_emit as *const ()),
-        ("flush", m_handler_flush as *const ()),
-        ("close", m_handler_close as *const ()),
-    ]);
-    register_native_class_with_base("NullHandler", "Handler", vec![
-        ("setLevel", m_handler_setlevel as *const ()),
-        ("setFormatter", m_handler_setformatter as *const ()),
-        ("emit", m_handler_handle as *const ()),
-        ("handle", m_handler_handle as *const ()),
-        ("createLock", m_handler_flush as *const ()),
-    ]);
-    register_native_class_with_base("FileHandler", "StreamHandler", vec![
-        ("setLevel", m_handler_setlevel as *const ()),
-        ("setFormatter", m_handler_setformatter as *const ()),
-        ("emit", m_streamhandler_emit as *const ()),
-        ("close", m_handler_close as *const ()),
-    ]);
-    register_native_class("Formatter", vec![
-        ("format", m_formatter_format as *const ()),
-        ("formatTime", m_formatter_formattime as *const ()),
-        ("formatMessage", m_formatter_formatmessage as *const ()),
-    ]);
-    register_native_class("BufferingFormatter", vec![
-        ("format", m_bufferingformatter_format as *const ()),
-    ]);
-    register_native_class("Filter", vec![
-        ("filter", m_filter_filter as *const ()),
-    ]);
-    register_native_class("LogRecord", vec![
-        ("getMessage", m_logrecord_getmessage as *const ()),
-        ("__str__", m_logrecord_str as *const ()),
-        ("__repr__", m_logrecord_str as *const ()),
-    ]);
-    register_native_class("Manager", vec![
-        ("setLoggerClass", m_manager_setloggerclass as *const ()),
-        ("getLogger", m_manager_getlogger as *const ()),
-        ("setLogRecordFactory", m_manager_setlogrecordfactory as *const ()),
-    ]);
+    register_native_class(
+        "Logger",
+        vec![
+            ("setLevel", m_logger_setlevel as *const ()),
+            ("getEffectiveLevel", m_logger_geteffectivelevel as *const ()),
+            ("isEnabledFor", m_logger_isenabledfor as *const ()),
+            ("getChild", m_logger_getchild as *const ()),
+            ("getChildren", m_logger_getchildren as *const ()),
+            ("addHandler", m_logger_addhandler as *const ()),
+            ("removeHandler", m_logger_removehandler as *const ()),
+            ("addFilter", m_logger_addfilter as *const ()),
+            ("removeFilter", m_logger_removefilter as *const ()),
+            ("debug", m_logger_debug as *const ()),
+            ("info", m_logger_info as *const ()),
+            ("warning", m_logger_warning as *const ()),
+            ("warn", m_logger_warn as *const ()),
+            ("error", m_logger_error as *const ()),
+            ("critical", m_logger_critical as *const ()),
+            ("fatal", m_logger_critical as *const ()),
+            ("exception", m_logger_exception as *const ()),
+            ("log", m_logger_log as *const ()),
+            ("handle", m_logger_noop1 as *const ()),
+            ("callHandlers", m_logger_noop1 as *const ()),
+        ],
+    );
+    register_native_class(
+        "Handler",
+        vec![
+            ("setLevel", m_handler_setlevel as *const ()),
+            ("setFormatter", m_handler_setformatter as *const ()),
+            ("emit", m_handler_emit as *const ()),
+            ("handle", m_handler_handle as *const ()),
+            ("flush", m_handler_flush as *const ()),
+            ("close", m_handler_close as *const ()),
+            ("set_name", m_handler_setname as *const ()),
+            ("get_name", m_handler_getname as *const ()),
+            ("addFilter", m_handler_addfilter as *const ()),
+            ("removeFilter", m_handler_removefilter as *const ()),
+            ("acquire", m_handler_acquire as *const ()),
+            ("release", m_handler_release as *const ()),
+        ],
+    );
+    register_native_class_with_base(
+        "StreamHandler",
+        "Handler",
+        vec![
+            ("setLevel", m_handler_setlevel as *const ()),
+            ("setFormatter", m_handler_setformatter as *const ()),
+            ("setStream", m_streamhandler_setstream as *const ()),
+            ("emit", m_streamhandler_emit as *const ()),
+            ("flush", m_handler_flush as *const ()),
+            ("close", m_handler_close as *const ()),
+        ],
+    );
+    register_native_class_with_base(
+        "NullHandler",
+        "Handler",
+        vec![
+            ("setLevel", m_handler_setlevel as *const ()),
+            ("setFormatter", m_handler_setformatter as *const ()),
+            ("emit", m_handler_handle as *const ()),
+            ("handle", m_handler_handle as *const ()),
+            ("createLock", m_handler_flush as *const ()),
+        ],
+    );
+    register_native_class_with_base(
+        "FileHandler",
+        "StreamHandler",
+        vec![
+            ("setLevel", m_handler_setlevel as *const ()),
+            ("setFormatter", m_handler_setformatter as *const ()),
+            ("emit", m_streamhandler_emit as *const ()),
+            ("close", m_handler_close as *const ()),
+        ],
+    );
+    register_native_class(
+        "Formatter",
+        vec![
+            ("format", m_formatter_format as *const ()),
+            ("formatTime", m_formatter_formattime as *const ()),
+            ("formatMessage", m_formatter_formatmessage as *const ()),
+        ],
+    );
+    register_native_class(
+        "BufferingFormatter",
+        vec![("format", m_bufferingformatter_format as *const ())],
+    );
+    register_native_class("Filter", vec![("filter", m_filter_filter as *const ())]);
+    register_native_class(
+        "LogRecord",
+        vec![
+            ("getMessage", m_logrecord_getmessage as *const ()),
+            ("__str__", m_logrecord_str as *const ()),
+            ("__repr__", m_logrecord_str as *const ()),
+        ],
+    );
+    register_native_class(
+        "Manager",
+        vec![
+            ("setLoggerClass", m_manager_setloggerclass as *const ()),
+            ("getLogger", m_manager_getlogger as *const ()),
+            (
+                "setLogRecordFactory",
+                m_manager_setlogrecordfactory as *const (),
+            ),
+        ],
+    );
 
     // ── Logger is a class-name string so isinstance / subclassing work ──
     attrs.insert("Logger".into(), new_str("Logger"));
@@ -1412,32 +1686,78 @@ pub fn register() {
     // ── Constructor dispatchers (native funcs returning Instances) ──
     let ctor_dispatchers: Vec<(&str, usize, &str)> = vec![
         ("Handler", dispatch_handler as *const () as usize, "Handler"),
-        ("StreamHandler", dispatch_streamhandler as *const () as usize, "StreamHandler"),
-        ("NullHandler", dispatch_nullhandler as *const () as usize, "NullHandler"),
-        ("FileHandler", dispatch_filehandler as *const () as usize, "FileHandler"),
-        ("Formatter", dispatch_formatter as *const () as usize, "Formatter"),
-        ("BufferingFormatter", dispatch_bufferingformatter as *const () as usize, "BufferingFormatter"),
+        (
+            "StreamHandler",
+            dispatch_streamhandler as *const () as usize,
+            "StreamHandler",
+        ),
+        (
+            "NullHandler",
+            dispatch_nullhandler as *const () as usize,
+            "NullHandler",
+        ),
+        (
+            "FileHandler",
+            dispatch_filehandler as *const () as usize,
+            "FileHandler",
+        ),
+        (
+            "Formatter",
+            dispatch_formatter as *const () as usize,
+            "Formatter",
+        ),
+        (
+            "BufferingFormatter",
+            dispatch_bufferingformatter as *const () as usize,
+            "BufferingFormatter",
+        ),
         ("Filter", dispatch_filter as *const () as usize, "Filter"),
-        ("LogRecord", dispatch_logrecord as *const () as usize, "LogRecord"),
+        (
+            "LogRecord",
+            dispatch_logrecord as *const () as usize,
+            "LogRecord",
+        ),
         ("Manager", dispatch_manager as *const () as usize, "Manager"),
     ];
     for (name, addr, type_name) in &ctor_dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(*addr));
-        super::super::module::NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(*addr as u64); });
-        super::super::module::NATIVE_TYPE_NAMES.with(|m| { m.borrow_mut().insert(*addr as u64, type_name.to_string()); });
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(*addr as u64);
+        });
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(*addr as u64, type_name.to_string());
+        });
     }
 
     // ── Plain module-level function dispatchers ──
     let func_dispatchers: Vec<(&str, usize)> = vec![
         ("getLogger", dispatch_getlogger as *const () as usize),
         ("getLevelName", dispatch_getlevelname as *const () as usize),
-        ("getLevelNamesMapping", dispatch_getlevelnamesmapping as *const () as usize),
+        (
+            "getLevelNamesMapping",
+            dispatch_getlevelnamesmapping as *const () as usize,
+        ),
         ("addLevelName", dispatch_addlevelname as *const () as usize),
-        ("setLoggerClass", dispatch_setloggerclass as *const () as usize),
-        ("getLoggerClass", dispatch_getloggerclass as *const () as usize),
-        ("setLogRecordFactory", dispatch_setlogrecordfactory as *const () as usize),
-        ("getLogRecordFactory", dispatch_getlogrecordfactory as *const () as usize),
-        ("makeLogRecord", dispatch_makelogrecord as *const () as usize),
+        (
+            "setLoggerClass",
+            dispatch_setloggerclass as *const () as usize,
+        ),
+        (
+            "getLoggerClass",
+            dispatch_getloggerclass as *const () as usize,
+        ),
+        (
+            "setLogRecordFactory",
+            dispatch_setlogrecordfactory as *const () as usize,
+        ),
+        (
+            "getLogRecordFactory",
+            dispatch_getlogrecordfactory as *const () as usize,
+        ),
+        (
+            "makeLogRecord",
+            dispatch_makelogrecord as *const () as usize,
+        ),
         ("basicConfig", dispatch_basicconfig as *const () as usize),
         ("debug", dispatch_debug as *const () as usize),
         ("info", dispatch_info as *const () as usize),
@@ -1450,20 +1770,31 @@ pub fn register() {
         ("log", dispatch_log as *const () as usize),
         ("shutdown", dispatch_shutdown as *const () as usize),
         ("disable", dispatch_disable as *const () as usize),
-        ("captureWarnings", dispatch_capturewarnings as *const () as usize),
-        ("getHandlerByName", dispatch_gethandlerbyname as *const () as usize),
-        ("getHandlerNames", dispatch_gethandlernames as *const () as usize),
+        (
+            "captureWarnings",
+            dispatch_capturewarnings as *const () as usize,
+        ),
+        (
+            "getHandlerByName",
+            dispatch_gethandlerbyname as *const () as usize,
+        ),
+        (
+            "getHandlerNames",
+            dispatch_gethandlernames as *const () as usize,
+        ),
         ("currentframe", dispatch_currentframe as *const () as usize),
     ];
     for (name, addr) in &func_dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(*addr));
-        super::super::module::NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(*addr as u64); });
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(*addr as u64);
+        });
     }
 
     // LoggerAdapter is referenced only by surface presence — expose a stub class.
     attrs.insert("LoggerAdapter".into(), new_str("LoggerAdapter"));
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("logAsyncioTasks".into(), MbValue::from_int(1));
     attrs.insert("logMultiprocessing".into(), MbValue::from_int(1));
     attrs.insert("logProcesses".into(), MbValue::from_int(1));
@@ -1534,16 +1865,30 @@ pub fn mb_logging_basicconfig(level: MbValue) -> MbValue {
     }
     MbValue::none()
 }
-pub fn mb_logging_debug(_msg: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_logging_info(_msg: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_logging_warning(_msg: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_logging_error(_msg: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_logging_critical(_msg: MbValue) -> MbValue { MbValue::none() }
+pub fn mb_logging_debug(_msg: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_logging_info(_msg: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_logging_warning(_msg: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_logging_error(_msg: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_logging_critical(_msg: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 /// Compatibility getLogger returning a {"name": ...} dict (legacy shape).
 pub fn mb_logging_getlogger(name: MbValue) -> MbValue {
     let dict = MbObject::new_dict();
-    let n = if name.is_none() { "root".to_string() } else { extract_str(name) };
+    let n = if name.is_none() {
+        "root".to_string()
+    } else {
+        extract_str(name)
+    };
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
@@ -1579,13 +1924,24 @@ mod tests {
 
     #[test]
     fn test_format_percent() {
-        let look = |k: &str| match k { "levelname" => Some("ERROR".to_string()), "message" => Some("hi".to_string()), _ => None };
-        assert_eq!(format_percent("%(levelname)s|%(message)s", &look), "ERROR|hi");
+        let look = |k: &str| match k {
+            "levelname" => Some("ERROR".to_string()),
+            "message" => Some("hi".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            format_percent("%(levelname)s|%(message)s", &look),
+            "ERROR|hi"
+        );
     }
 
     #[test]
     fn test_format_brace() {
-        let look = |k: &str| match k { "levelname" => Some("INFO".to_string()), "message" => Some("hi".to_string()), _ => None };
+        let look = |k: &str| match k {
+            "levelname" => Some("INFO".to_string()),
+            "message" => Some("hi".to_string()),
+            _ => None,
+        };
         assert_eq!(format_brace("{levelname}|{message}", &look), "INFO|hi");
     }
 

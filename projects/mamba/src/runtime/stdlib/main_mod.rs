@@ -1,11 +1,11 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// __main__ module for Mamba.
 ///
 /// Provides the top-level script execution module. In CPython, `__main__` is
 /// the module where top-level code runs. The `if __name__ == "__main__"` idiom
 /// checks this attribute to distinguish script execution from module import.
 use std::collections::HashMap;
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 
 // @spec .aw/changes/mamba-stdlib-main/groups/stdlib-main-module/specs/mamba-stdlib-main-spec.md
 pub fn register() {
@@ -26,11 +26,25 @@ pub fn register() {
     // __spec__ = None
     attrs.insert("__spec__".to_string(), MbValue::none());
 
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("lib".into(), MbValue::from_ptr(MbObject::new_str("__main__".to_string())));
-    attrs.insert("line".into(), MbValue::from_ptr(MbObject::new_str("zlib zlib_mod.rs".to_string())));
-    attrs.insert("modfile".into(), MbValue::from_ptr(MbObject::new_str("main_mod.rs".to_string())));
-    attrs.insert("msg".into(), MbValue::from_ptr(MbObject::new_str("__future__: 0 missing constants".to_string())));
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "lib".into(),
+        MbValue::from_ptr(MbObject::new_str("__main__".to_string())),
+    );
+    attrs.insert(
+        "line".into(),
+        MbValue::from_ptr(MbObject::new_str("zlib zlib_mod.rs".to_string())),
+    );
+    attrs.insert(
+        "modfile".into(),
+        MbValue::from_ptr(MbObject::new_str("main_mod.rs".to_string())),
+    );
+    attrs.insert(
+        "msg".into(),
+        MbValue::from_ptr(MbObject::new_str(
+            "__future__: 0 missing constants".to_string(),
+        )),
+    );
     attrs.insert("n".into(), MbValue::from_int(0));
     attrs.insert("total".into(), MbValue::from_int(0));
     attrs.insert("touched".into(), MbValue::from_int(0));

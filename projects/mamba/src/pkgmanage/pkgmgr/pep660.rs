@@ -179,7 +179,10 @@ mod tests {
         let kind = classify(&paths);
         assert!(matches!(kind, EditableKind::FinderRedirect { .. }));
         match kind {
-            EditableKind::FinderRedirect { finder_modules, pth_files } => {
+            EditableKind::FinderRedirect {
+                finder_modules,
+                pth_files,
+            } => {
                 assert_eq!(finder_modules, vec!["__editable___mypkg_1_0_finder.py"]);
                 assert_eq!(pth_files, vec!["__editable__.mypkg-1.0.pth"]);
             }
@@ -194,7 +197,10 @@ mod tests {
         // reports FinderRedirect — finder modules are the strong signal.
         let paths = ["__editable__mypkg.py", "regular.pth"];
         match classify(&paths) {
-            EditableKind::FinderRedirect { finder_modules, pth_files } => {
+            EditableKind::FinderRedirect {
+                finder_modules,
+                pth_files,
+            } => {
                 assert_eq!(finder_modules, vec!["__editable__mypkg.py"]);
                 assert_eq!(pth_files, vec!["regular.pth"]);
             }
@@ -206,7 +212,10 @@ mod tests {
     fn finder_redirect_with_no_pth() {
         let paths = ["__editable__mypkg.py"];
         match classify(&paths) {
-            EditableKind::FinderRedirect { finder_modules, pth_files } => {
+            EditableKind::FinderRedirect {
+                finder_modules,
+                pth_files,
+            } => {
                 assert_eq!(finder_modules, vec!["__editable__mypkg.py"]);
                 assert!(pth_files.is_empty());
             }
@@ -246,14 +255,15 @@ mod tests {
     #[test]
     fn is_editable_helper() {
         assert!(!EditableKind::NotEditable.is_editable());
-        assert!(EditableKind::PthRedirect { pth_files: vec!["a.pth".into()] }.is_editable());
-        assert!(
-            EditableKind::FinderRedirect {
-                finder_modules: vec!["__editable__x.py".into()],
-                pth_files: vec![],
-            }
-            .is_editable()
-        );
+        assert!(EditableKind::PthRedirect {
+            pth_files: vec!["a.pth".into()]
+        }
+        .is_editable());
+        assert!(EditableKind::FinderRedirect {
+            finder_modules: vec!["__editable__x.py".into()],
+            pth_files: vec![],
+        }
+        .is_editable());
     }
 
     #[test]
@@ -290,13 +300,13 @@ mod tests {
         ];
         let kind = classify(&paths);
         match kind {
-            EditableKind::FinderRedirect { finder_modules, pth_files } => {
+            EditableKind::FinderRedirect {
+                finder_modules,
+                pth_files,
+            } => {
                 assert_eq!(finder_modules.len(), 1);
                 assert_eq!(pth_files.len(), 1);
-                assert_eq!(
-                    finder_modules[0],
-                    "__editable___mypkg_1_2_3_finder.py"
-                );
+                assert_eq!(finder_modules[0], "__editable___mypkg_1_2_3_finder.py");
                 assert_eq!(pth_files[0], "__editable__.mypkg-1.2.3.pth");
             }
             other => panic!("expected FinderRedirect, got {other:?}"),

@@ -54,4 +54,3 @@ print(binascii.a2b_hex("4142").decode())
     );
     assert_output(&out, "4142\nAB\n");
 }
-

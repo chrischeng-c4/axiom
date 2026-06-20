@@ -76,7 +76,7 @@ pub struct Project {
     /// Override for `.aw/tech-design` sub-path. Defaults to the discovered path when absent.
     #[serde(default, alias = "td_path", skip_serializing_if = "Option::is_none")]
     pub tech_design_dir: Option<String>,
-    /// EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the EC manifest command. Declared before `workspaces`: contract before implementation.
+    /// EC tool bindings by category (free strings, e.g. `benchmark`, `stability`). A category absent from this map falls back to the generated EC case command in the aw.toml inventory. Declared before `workspaces`: contract before implementation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ec: BTreeMap<String, EcBinding>,
     /// Non-empty list of workspaces contained in this project.

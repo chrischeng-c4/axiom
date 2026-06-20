@@ -11,12 +11,12 @@ use std::sync::Arc;
 
 use axum_test::TestServer;
 use lumen::coordinator::WriteCoordinator;
-use lumen::routing::{EngineShardSearch, EngineShardWrite, document_shard_index};
+use lumen::routing::{document_shard_index, EngineShardSearch, EngineShardWrite};
 use lumen::types::{
     CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
 };
 use lumen::wal::MemWal;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn server() -> TestServer {
     let engine = Arc::new(lumen::storage::Engine::new());

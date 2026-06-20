@@ -1,3 +1,8 @@
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::parser::ast;
+use crate::source::span::{FileId, Spanned};
+use rustc_hash::FxHashMap;
 /// code module for Mamba (#1261, #20).
 ///
 /// Real `InteractiveInterpreter` / `InteractiveConsole` classes over a small
@@ -12,13 +17,7 @@
 /// - parse OK, last stmt compound, no final "\n" → incomplete (REPL blank-line rule)
 /// - parse OK otherwise                          → complete
 /// - any other parse error                       → SyntaxError
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, MbObjectHeader, ObjKind, ObjData};
-use crate::parser::ast;
-use crate::source::span::{FileId, Spanned};
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
@@ -144,7 +143,11 @@ impl Env<'_> {
             .as_bool()
             .unwrap_or(false);
         if contains {
-            Some(super::super::dict_ops::mb_dict_get(self.globals, key, MbValue::none()))
+            Some(super::super::dict_ops::mb_dict_get(
+                self.globals,
+                key,
+                MbValue::none(),
+            ))
         } else {
             None
         }
@@ -210,14 +213,20 @@ fn num_binop(op: &ast::BinOp, a: MbValue, b: MbValue) -> Result<MbValue, ExecErr
             }
             FloorDiv => {
                 if y == 0 {
-                    Err(ExecErr::new("ZeroDivisionError", "integer division or modulo by zero"))
+                    Err(ExecErr::new(
+                        "ZeroDivisionError",
+                        "integer division or modulo by zero",
+                    ))
                 } else {
                     Ok(MbValue::from_int(x.div_euclid(y)))
                 }
             }
             Mod => {
                 if y == 0 {
-                    Err(ExecErr::new("ZeroDivisionError", "integer division or modulo by zero"))
+                    Err(ExecErr::new(
+                        "ZeroDivisionError",
+                        "integer division or modulo by zero",
+                    ))
                 } else {
                     Ok(MbValue::from_int(x.rem_euclid(y)))
                 }
@@ -252,7 +261,10 @@ fn num_binop(op: &ast::BinOp, a: MbValue, b: MbValue) -> Result<MbValue, ExecErr
             }
             FloorDiv => {
                 if y == 0.0 {
-                    Err(ExecErr::new("ZeroDivisionError", "float floor division by zero"))
+                    Err(ExecErr::new(
+                        "ZeroDivisionError",
+                        "float floor division by zero",
+                    ))
                 } else {
                     Ok(MbValue::from_float((x / y).floor()))
                 }
@@ -286,9 +298,17 @@ fn num_binop(op: &ast::BinOp, a: MbValue, b: MbValue) -> Result<MbValue, ExecErr
 
 fn interp_func_id(v: MbValue) -> Option<i64> {
     v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             if class_name == "function" {
-                return fields.read().unwrap().get("__interp_id__").and_then(|x| x.as_int());
+                return fields
+                    .read()
+                    .unwrap()
+                    .get("__interp_id__")
+                    .and_then(|x| x.as_int());
             }
         }
         None
@@ -306,21 +326,25 @@ fn eval_expr(expr: &Spanned<ast::Expr>, env: &mut Env) -> Result<MbValue, ExecEr
             "True" => Ok(MbValue::from_bool(true)),
             "False" => Ok(MbValue::from_bool(false)),
             "None" => Ok(MbValue::none()),
-            _ => env.get(name).ok_or_else(|| {
-                ExecErr::new("NameError", format!("name '{name}' is not defined"))
-            }),
+            _ => env
+                .get(name)
+                .ok_or_else(|| ExecErr::new("NameError", format!("name '{name}' is not defined"))),
         },
         ast::Expr::BinOp { op, lhs, rhs } => {
             use ast::BinOp::*;
             match op {
                 And => {
                     let l = eval_expr(lhs, env)?;
-                    if !truthy(l) { return Ok(l); }
+                    if !truthy(l) {
+                        return Ok(l);
+                    }
                     eval_expr(rhs, env)
                 }
                 Or => {
                     let l = eval_expr(lhs, env)?;
-                    if truthy(l) { return Ok(l); }
+                    if truthy(l) {
+                        return Ok(l);
+                    }
                     eval_expr(rhs, env)
                 }
                 _ => {
@@ -364,13 +388,21 @@ fn eval_expr(expr: &Spanned<ast::Expr>, env: &mut Env) -> Result<MbValue, ExecEr
 }
 
 fn call_interp_func(id: i64, args: &[MbValue], globals: MbValue) -> Result<MbValue, ExecErr> {
-    let (params, defaults, body) = INTERP_FUNCS.with(|m| {
-        m.borrow().get(&id).map(|f| (f.params.clone(), f.defaults.clone(), f.body.clone()))
-    }).ok_or_else(|| ExecErr::new("TypeError", "object is not callable"))?;
+    let (params, defaults, body) = INTERP_FUNCS
+        .with(|m| {
+            m.borrow()
+                .get(&id)
+                .map(|f| (f.params.clone(), f.defaults.clone(), f.body.clone()))
+        })
+        .ok_or_else(|| ExecErr::new("TypeError", "object is not callable"))?;
     if args.len() > params.len() {
         return Err(ExecErr::new(
             "TypeError",
-            format!("function takes {} arguments but {} were given", params.len(), args.len()),
+            format!(
+                "function takes {} arguments but {} were given",
+                params.len(),
+                args.len()
+            ),
         ));
     }
     let mut frame: FxHashMap<String, MbValue> = FxHashMap::default();
@@ -387,7 +419,10 @@ fn call_interp_func(id: i64, args: &[MbValue], globals: MbValue) -> Result<MbVal
         };
         frame.insert(p.clone(), v);
     }
-    let mut env = Env { frame: Some(&mut frame), globals };
+    let mut env = Env {
+        frame: Some(&mut frame),
+        globals,
+    };
     for stmt in &body {
         match exec_stmt(stmt, &mut env)? {
             Flow::Return(v) => return Ok(v),
@@ -423,7 +458,9 @@ fn exec_stmt(stmt: &Spanned<ast::Stmt>, env: &mut Env) -> Result<Flow, ExecErr> 
             };
             Ok(Flow::Return(v))
         }
-        ast::Stmt::FnDef { name, params, body, .. } => {
+        ast::Stmt::FnDef {
+            name, params, body, ..
+        } => {
             let mut pnames = Vec::new();
             let mut defaults = Vec::new();
             for p in params {
@@ -440,11 +477,14 @@ fn exec_stmt(stmt: &Spanned<ast::Stmt>, env: &mut Env) -> Result<Flow, ExecErr> 
                 v
             });
             INTERP_FUNCS.with(|m| {
-                m.borrow_mut().insert(id, InterpFunc {
-                    params: pnames,
-                    defaults,
-                    body: body.clone(),
-                });
+                m.borrow_mut().insert(
+                    id,
+                    InterpFunc {
+                        params: pnames,
+                        defaults,
+                        body: body.clone(),
+                    },
+                );
             });
             let mut fields = FxHashMap::default();
             fields.insert("__interp_id__".to_string(), MbValue::from_int(id));
@@ -469,7 +509,13 @@ fn exec_stmt(stmt: &Spanned<ast::Stmt>, env: &mut Env) -> Result<Flow, ExecErr> 
 
 /// `if` handling split out so exec_stmt stays readable.
 fn exec_if_like(stmt: &Spanned<ast::Stmt>, env: &mut Env) -> Result<Flow, ExecErr> {
-    if let ast::Stmt::If { condition, body, elif_clauses, else_body } = &stmt.node {
+    if let ast::Stmt::If {
+        condition,
+        body,
+        elif_clauses,
+        else_body,
+    } = &stmt.node
+    {
         if truthy(eval_expr(condition, env)?) {
             return exec_block(body, env);
         }
@@ -503,13 +549,15 @@ fn exec_block(body: &[Spanned<ast::Stmt>], env: &mut Env) -> Result<Flow, ExecEr
 /// Interactive ('single') semantics: a top-level expression statement whose
 /// value is not None prints its repr to stdout (sys.displayhook).
 fn exec_module(module: &ast::Module, globals: MbValue) -> Result<(), ExecErr> {
-    let mut env = Env { frame: None, globals };
+    let mut env = Env {
+        frame: None,
+        globals,
+    };
     for stmt in &module.stmts {
         if let ast::Stmt::ExprStmt(e) = &stmt.node {
             let v = eval_expr(e, &mut env)?;
             if !v.is_none() {
-                let repr = extract_str(super::super::builtins::mb_repr(v))
-                    .unwrap_or_default();
+                let repr = extract_str(super::super::builtins::mb_repr(v)).unwrap_or_default();
                 let line = format!("{repr}\n");
                 if !super::super::output::write_captured(&line) {
                     print!("{line}");
@@ -583,7 +631,9 @@ fn runsource_impl(self_v: MbValue, source: &str, filename: &str) -> bool {
     match classify_source(source) {
         SourceState::Incomplete => true,
         SourceState::Error(msg) => {
-            write_stderr(&format!("  File \"{filename}\", line 1\nSyntaxError: {msg}\n"));
+            write_stderr(&format!(
+                "  File \"{filename}\", line 1\nSyntaxError: {msg}\n"
+            ));
             false
         }
         SourceState::Complete(module) => {
@@ -602,11 +652,17 @@ fn runsource_impl(self_v: MbValue, source: &str, filename: &str) -> bool {
 
 unsafe extern "C" fn ii_runsource(self_v: MbValue, args: MbValue) -> MbValue {
     let items = method_args(args);
-    let source = match require_str(items.first().copied().unwrap_or_else(MbValue::none), "source") {
+    let source = match require_str(
+        items.first().copied().unwrap_or_else(MbValue::none),
+        "source",
+    ) {
         Ok(s) => s,
         Err(e) => return e,
     };
-    let filename = items.get(1).copied().and_then(extract_str)
+    let filename = items
+        .get(1)
+        .copied()
+        .and_then(extract_str)
         .unwrap_or_else(|| "<input>".to_string());
     MbValue::from_bool(runsource_impl(self_v, &source, &filename))
 }
@@ -614,9 +670,10 @@ unsafe extern "C" fn ii_runsource(self_v: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn ii_runcode(self_v: MbValue, args: MbValue) -> MbValue {
     let items = method_args(args);
     let code = items.first().copied().unwrap_or_else(MbValue::none);
-    let is_code = code.as_ptr().map(|p| {
-        matches!(&(*p).data, ObjData::Instance { class_name, .. } if class_name == "code")
-    }).unwrap_or(false);
+    let is_code = code
+        .as_ptr()
+        .map(|p| matches!(&(*p).data, ObjData::Instance { class_name, .. } if class_name == "code"))
+        .unwrap_or(false);
     if !is_code {
         return raise("TypeError", "runcode() argument must be a code object");
     }
@@ -647,9 +704,10 @@ unsafe extern "C" fn ii_showsyntaxerror(_self_v: MbValue, args: MbValue) -> MbVa
     let items = method_args(args);
     if let Some(filename) = items.first().copied() {
         // A trailing kwargs dict (e.g. source=...) is tolerated.
-        let is_kwargs_dict = filename.as_ptr().map(|p| {
-            matches!(&(*p).data, ObjData::Dict(_))
-        }).unwrap_or(false);
+        let is_kwargs_dict = filename
+            .as_ptr()
+            .map(|p| matches!(&(*p).data, ObjData::Dict(_)))
+            .unwrap_or(false);
         if !filename.is_none() && !is_kwargs_dict && extract_str(filename).is_none() {
             return raise("TypeError", "filename must be str or None");
         }
@@ -677,8 +735,10 @@ unsafe extern "C" fn ic_push(self_v: MbValue, args: MbValue) -> MbValue {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut buf = lock.write().unwrap();
                 buf.push(new_str(&line));
-                buf.iter().map(|v| extract_str(*v).unwrap_or_default())
-                    .collect::<Vec<_>>().join("\n")
+                buf.iter()
+                    .map(|v| extract_str(*v).unwrap_or_default())
+                    .collect::<Vec<_>>()
+                    .join("\n")
             } else {
                 line.clone()
             }
@@ -738,9 +798,10 @@ fn banner_type_ok(banner: MbValue) -> bool {
 unsafe extern "C" fn ic_interact(self_v: MbValue, args: MbValue) -> MbValue {
     let items = method_args(args);
     if let Some(banner) = items.first().copied() {
-        let is_kwargs_dict = banner.as_ptr().map(|p| {
-            matches!(&(*p).data, ObjData::Dict(_))
-        }).unwrap_or(false);
+        let is_kwargs_dict = banner
+            .as_ptr()
+            .map(|p| matches!(&(*p).data, ObjData::Dict(_)))
+            .unwrap_or(false);
         if !is_kwargs_dict && !banner_type_ok(banner) {
             return raise("TypeError", "banner must be str or None");
         }
@@ -804,7 +865,10 @@ unsafe extern "C" fn dispatch_interactive_console(
     };
     let mut fields = FxHashMap::default();
     fields.insert("locals".to_string(), locals);
-    fields.insert("buffer".to_string(), MbValue::from_ptr(MbObject::new_list(vec![])));
+    fields.insert(
+        "buffer".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
     make_instance("InteractiveConsole", fields)
 }
 
@@ -815,9 +879,10 @@ unsafe extern "C" fn dispatch_interact(args_ptr: *const MbValue, nargs: usize) -
         std::slice::from_raw_parts(args_ptr, nargs)
     };
     if let Some(&banner) = args.first() {
-        let is_kwargs_dict = banner.as_ptr().map(|p| {
-            matches!(&(*p).data, ObjData::Dict(_))
-        }).unwrap_or(false);
+        let is_kwargs_dict = banner
+            .as_ptr()
+            .map(|p| matches!(&(*p).data, ObjData::Dict(_)))
+            .unwrap_or(false);
         if !is_kwargs_dict && !banner_type_ok(banner) {
             return raise("TypeError", "banner must be str or None");
         }
@@ -829,14 +894,20 @@ unsafe extern "C" fn dispatch_interact(args_ptr: *const MbValue, nargs: usize) -
 
 unsafe extern "C" fn dispatch_compile_command(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     if nargs == 0 {
-        return raise("TypeError", "compile_command() missing required argument: 'source'");
+        return raise(
+            "TypeError",
+            "compile_command() missing required argument: 'source'",
+        );
     }
     let args = std::slice::from_raw_parts(args_ptr, nargs);
     let source = match require_str(args[0], "source") {
         Ok(s) => s,
         Err(e) => return e,
     };
-    let filename = args.get(1).copied().and_then(extract_str)
+    let filename = args
+        .get(1)
+        .copied()
+        .and_then(extract_str)
         .unwrap_or_else(|| "<input>".to_string());
     match classify_source(&source) {
         SourceState::Incomplete => MbValue::none(),

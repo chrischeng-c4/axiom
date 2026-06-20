@@ -54,7 +54,7 @@ pub enum Commands {
     /// Auto-discover projects and refresh the `.aw/config.toml` registry block.
     Sync(sync::SyncArgs),
 
-    /// Manage work-items — list/show/create/CRRR across local + GitHub backends.
+    /// Manage work-items — list/show/create/validate across local + GitHub backends.
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
     #[command(name = "wi")]
     Issues(issues::IssuesArgs),
@@ -62,12 +62,8 @@ pub enum Commands {
     /// Cross-checkout agent messaging via shared plain-text channel
     Chat(chat::ChatArgs),
 
-    /// Tech-design lifecycle (create/validate/review/revise/merge)
+    /// Tech-design and generated-code lifecycle
     Td(crate::cli::td::TdArgs),
-
-    /// Code-artifact workflow verbs (generation, checks, HANDWRITE fill/review).
-    // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
-    Cb(crate::cli::cb::CbArgs),
 
     /// External-contract lifecycle: generate tests/tool configs and verify EC gates.
     Ec(ec::EcArgs),
@@ -114,9 +110,6 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         }
         Commands::Td(args) => {
             crate::cli::td::run(args).await?;
-        }
-        Commands::Cb(args) => {
-            crate::cli::cb::run(args).await?;
         }
         Commands::Ec(args) => {
             ec::run(args)?;

@@ -55,8 +55,7 @@ impl QrCode {
     /// or byte) and selects the smallest version that fits the data.
     pub fn new(data: &[u8], ec: EcLevel) -> Result<Self, QrError> {
         let mode = tables::detect_mode(data);
-        let version = encode::select_version(data, mode, ec)
-            .ok_or(QrError::DataTooLong(ec))?;
+        let version = encode::select_version(data, mode, ec).ok_or(QrError::DataTooLong(ec))?;
 
         let data_codewords = encode::encode_data(data, version, mode, ec);
         let full_codewords = interleave_with_ec(version, ec, &data_codewords);
@@ -64,7 +63,11 @@ impl QrCode {
         let size = tables::modules_per_side(version);
         let modules = matrix::build_matrix(version, ec, &full_codewords);
 
-        Ok(Self { modules, version, size })
+        Ok(Self {
+            modules,
+            version,
+            size,
+        })
     }
 
     /// Parse an EC level from a string ("L", "M", "Q", "H").

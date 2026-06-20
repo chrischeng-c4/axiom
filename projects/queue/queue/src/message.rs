@@ -343,7 +343,10 @@ mod tests {
         assert_eq!(deser.root_id, Some(root));
         assert_eq!(deser.executor, ExecutorType::K8sJob);
         assert!(deser.k8s_config.is_some());
-        assert_eq!(deser.k8s_config.as_ref().unwrap().image.as_deref(), Some("my-image:latest"));
+        assert_eq!(
+            deser.k8s_config.as_ref().unwrap().image.as_deref(),
+            Some("my-image:latest")
+        );
     }
 
     #[test]
@@ -412,46 +415,42 @@ mod tests {
 
     #[test]
     fn test_with_correlation_id() {
-        let msg = TaskMessage::new("t", serde_json::json!([]))
-            .with_correlation_id("abc-123");
+        let msg = TaskMessage::new("t", serde_json::json!([])).with_correlation_id("abc-123");
         assert_eq!(msg.correlation_id.as_deref(), Some("abc-123"));
     }
 
     #[test]
     fn test_with_parent() {
         let parent = TaskId::new();
-        let msg = TaskMessage::new("t", serde_json::json!([]))
-            .with_parent(parent.clone());
+        let msg = TaskMessage::new("t", serde_json::json!([])).with_parent(parent.clone());
         assert_eq!(msg.parent_id, Some(parent));
     }
 
     #[test]
     fn test_with_root() {
         let root = TaskId::new();
-        let msg = TaskMessage::new("t", serde_json::json!([]))
-            .with_root(root.clone());
+        let msg = TaskMessage::new("t", serde_json::json!([])).with_root(root.clone());
         assert_eq!(msg.root_id, Some(root));
     }
 
     #[test]
     fn test_with_kwargs() {
-        let msg = TaskMessage::new("t", serde_json::json!([]))
-            .with_kwargs(serde_json::json!({"x": 1}));
+        let msg =
+            TaskMessage::new("t", serde_json::json!([])).with_kwargs(serde_json::json!({"x": 1}));
         assert_eq!(msg.kwargs, serde_json::json!({"x": 1}));
     }
 
     #[test]
     fn test_with_executor() {
-        let msg = TaskMessage::new("t", serde_json::json!([]))
-            .with_executor(ExecutorType::K8sJob);
+        let msg = TaskMessage::new("t", serde_json::json!([])).with_executor(ExecutorType::K8sJob);
         assert_eq!(msg.executor, ExecutorType::K8sJob);
         assert!(msg.is_k8s_job());
     }
 
     #[test]
     fn test_with_k8s_config_sets_executor() {
-        let msg = TaskMessage::new("t", serde_json::json!([]))
-            .with_k8s_config(K8sConfig::default());
+        let msg =
+            TaskMessage::new("t", serde_json::json!([])).with_k8s_config(K8sConfig::default());
         // with_k8s_config implicitly sets executor to K8sJob
         assert_eq!(msg.executor, ExecutorType::K8sJob);
         assert!(msg.k8s_config.is_some());
@@ -474,8 +473,7 @@ mod tests {
     #[test]
     fn test_for_retry_clears_eta() {
         let eta = Utc::now() + chrono::Duration::hours(1);
-        let msg = TaskMessage::new("t", serde_json::json!([]))
-            .with_eta(eta);
+        let msg = TaskMessage::new("t", serde_json::json!([])).with_eta(eta);
         assert!(msg.eta.is_some());
         let retried = msg.for_retry();
         assert!(retried.eta.is_none());
@@ -528,8 +526,8 @@ mod tests {
 
     #[test]
     fn test_is_k8s_job_true_after_with_k8s_config() {
-        let msg = TaskMessage::new("t", serde_json::json!([]))
-            .with_k8s_config(K8sConfig::default());
+        let msg =
+            TaskMessage::new("t", serde_json::json!([])).with_k8s_config(K8sConfig::default());
         assert!(msg.is_k8s_job());
     }
 }

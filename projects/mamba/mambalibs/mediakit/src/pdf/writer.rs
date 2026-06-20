@@ -342,11 +342,7 @@ pub fn generate(doc: &Document) -> Vec<u8> {
 
     // Catalog
     w.begin_obj(catalog_obj);
-    write!(
-        w.buf,
-        "<< /Type /Catalog /Pages {pages_obj} 0 R >>\n"
-    )
-    .unwrap();
+    write!(w.buf, "<< /Type /Catalog /Pages {pages_obj} 0 R >>\n").unwrap();
     w.end_obj();
 
     // Cross-reference table
@@ -436,10 +432,7 @@ mod tests {
         assert!(lines.len() > 1, "should wrap into multiple lines");
         for line in &lines {
             let w = line.len() as f64 * Font::Helvetica.avg_char_width() * 12.0;
-            assert!(
-                w <= 110.0,
-                "line too wide: \"{line}\" ({w:.1} > 100)"
-            );
+            assert!(w <= 110.0, "line too wide: \"{line}\" ({w:.1} > 100)");
         }
     }
 

@@ -1,3 +1,8 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::rc::{MbObjectHeader, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 /// io module for Mamba (#415).
 ///
 /// Provides: StringIO and BytesIO in-memory stream objects.
@@ -8,18 +13,16 @@
 /// `seek`, `tell`, `close`) are routed through dispatch arms in
 /// `class.rs::mb_call_method` — the same pattern used for
 /// threading.Lock / Event / Condition.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
-use super::super::rc::{MbObjectHeader, ObjKind};
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -34,10 +37,18 @@ fn raise(kind: &str, msg: impl Into<String>) -> MbValue {
 
 /// Short Python type name for error messages.
 fn type_name_of(val: MbValue) -> &'static str {
-    if val.is_bool() { return "bool"; }
-    if val.is_int() { return "int"; }
-    if val.is_float() { return "float"; }
-    if val.is_none() { return "NoneType"; }
+    if val.is_bool() {
+        return "bool";
+    }
+    if val.is_int() {
+        return "int";
+    }
+    if val.is_float() {
+        return "float";
+    }
+    if val.is_none() {
+        return "NoneType";
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             return match (*ptr).data {
@@ -56,7 +67,9 @@ fn type_name_of(val: MbValue) -> &'static str {
 
 /// True iff `val` is a `str` object (used to TypeError on str→BytesIO.write).
 fn is_str(val: MbValue) -> bool {
-    val.as_ptr().map(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) }).unwrap_or(false)
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) })
+        .unwrap_or(false)
 }
 
 /// True iff `val` is a bytes-like object (bytes / bytearray).
@@ -71,7 +84,9 @@ fn is_closed(io: MbValue) -> bool {
     if let Some(ptr) = io.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                return fields.read().unwrap()
+                return fields
+                    .read()
+                    .unwrap()
                     .get("_closed")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
@@ -113,7 +128,10 @@ fn extract_bytes(val: MbValue) -> Option<Vec<u8>> {
 
 fn make_instance(class_name: &str, fields: FxHashMap<String, MbValue>) -> MbValue {
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: RwLock::new(fields),
@@ -122,15 +140,22 @@ fn make_instance(class_name: &str, fields: FxHashMap<String, MbValue>) -> MbValu
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
-fn trailing_kwargs(a: &[MbValue]) -> Option<indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>> {
+fn trailing_kwargs(
+    a: &[MbValue],
+) -> Option<indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>> {
     a.last().and_then(|v| v.as_ptr()).and_then(|p| unsafe {
         if let ObjData::Dict(ref lock) = (*p).data {
             Some(lock.read().unwrap().clone())
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
-fn kwarg_str(kw: &indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>, key: &str) -> Option<String> {
+fn kwarg_str(
+    kw: &indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>,
+    key: &str,
+) -> Option<String> {
     for (k, v) in kw.iter() {
         if let super::super::dict_ops::DictKey::Str(ref ks) = k {
             if ks == key {
@@ -141,7 +166,10 @@ fn kwarg_str(kw: &indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>, 
     None
 }
 
-fn kwarg_int(kw: &indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>, key: &str) -> Option<i64> {
+fn kwarg_int(
+    kw: &indexmap::IndexMap<super::super::dict_ops::DictKey, MbValue>,
+    key: &str,
+) -> Option<i64> {
     for (k, v) in kw.iter() {
         if let super::super::dict_ops::DictKey::Str(ref ks) = k {
             if ks == key {
@@ -173,18 +201,36 @@ unsafe extern "C" fn dispatch_bytesio_new(args_ptr: *const MbValue, nargs: usize
 unsafe extern "C" fn dispatch_textiowrapper_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
-    let positional_end = if kw.is_some() { a.len().saturating_sub(1) } else { a.len() };
-    let underlying = if positional_end >= 1 { a[0] } else { MbValue::none() };
-    let mut encoding = if positional_end >= 2 { extract_str(a[1]).unwrap_or_else(|| "utf-8".into()) } else { "utf-8".into() };
+    let positional_end = if kw.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
+    let underlying = if positional_end >= 1 {
+        a[0]
+    } else {
+        MbValue::none()
+    };
+    let mut encoding = if positional_end >= 2 {
+        extract_str(a[1]).unwrap_or_else(|| "utf-8".into())
+    } else {
+        "utf-8".into()
+    };
     let mut newline: Option<String> = None;
     let mut write_through = false;
     if let Some(ref m) = kw {
-        if let Some(e) = kwarg_str(m, "encoding") { encoding = e; }
-        if let Some(n) = kwarg_str(m, "newline") { newline = Some(n); }
+        if let Some(e) = kwarg_str(m, "encoding") {
+            encoding = e;
+        }
+        if let Some(n) = kwarg_str(m, "newline") {
+            newline = Some(n);
+        }
         for (k, v) in m.iter() {
             if let super::super::dict_ops::DictKey::Str(ref ks) = k {
                 if ks == "write_through" {
-                    write_through = !v.is_none() && !matches!(v.as_int(), Some(0)) && !matches!(v.as_bool(), Some(false));
+                    write_through = !v.is_none()
+                        && !matches!(v.as_int(), Some(0))
+                        && !matches!(v.as_bool(), Some(false));
                 }
             }
         }
@@ -192,17 +238,32 @@ unsafe extern "C" fn dispatch_textiowrapper_new(args_ptr: *const MbValue, nargs:
     mb_textiowrapper_new(underlying, encoding, newline, write_through)
 }
 
-unsafe extern "C" fn dispatch_bufferedreader_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_bufferedreader_new(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
-    let positional_end = if kw.is_some() { a.len().saturating_sub(1) } else { a.len() };
-    let underlying = if positional_end >= 1 { a[0] } else { MbValue::none() };
+    let positional_end = if kw.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
+    let underlying = if positional_end >= 1 {
+        a[0]
+    } else {
+        MbValue::none()
+    };
     let mut buffer_size: i64 = 8192;
     if positional_end >= 2 {
-        if let Some(n) = a[1].as_int() { buffer_size = n; }
+        if let Some(n) = a[1].as_int() {
+            buffer_size = n;
+        }
     }
     if let Some(ref m) = kw {
-        if let Some(n) = kwarg_int(m, "buffer_size") { buffer_size = n; }
+        if let Some(n) = kwarg_int(m, "buffer_size") {
+            buffer_size = n;
+        }
     }
     mb_bufferedreader_new(underlying, buffer_size)
 }
@@ -236,10 +297,16 @@ pub fn register() {
     register_io_class("TextIOWrapper", &["TextIOBase"], vec![]);
     // Concrete in-memory streams carry a native __iter__ so `for line in x` and
     // `list(x)` iterate over lines.
-    register_io_class("BytesIO", &["BufferedIOBase"],
-        vec![("__iter__", dispatch_bytesio_iter as *const ())]);
-    register_io_class("StringIO", &["TextIOBase"],
-        vec![("__iter__", dispatch_stringio_iter as *const ())]);
+    register_io_class(
+        "BytesIO",
+        &["BufferedIOBase"],
+        vec![("__iter__", dispatch_bytesio_iter as *const ())],
+    );
+    register_io_class(
+        "StringIO",
+        &["TextIOBase"],
+        vec![("__iter__", dispatch_stringio_iter as *const ())],
+    );
 
     let mut attrs = HashMap::new();
 
@@ -280,8 +347,13 @@ pub fn register() {
     // ── Abstract base classes exposed as registered class-name strings.
     // A registered class name is callable() and usable as an isinstance target.
     for cls in [
-        "IOBase", "RawIOBase", "BufferedIOBase", "TextIOBase",
-        "FileIO", "BufferedRandom", "BufferedRWPair",
+        "IOBase",
+        "RawIOBase",
+        "BufferedIOBase",
+        "TextIOBase",
+        "FileIO",
+        "BufferedRandom",
+        "BufferedRWPair",
     ] {
         attrs.insert(cls.into(), new_str(cls));
     }
@@ -295,7 +367,9 @@ pub fn register() {
     // ── text_encoding(encoding[, stacklevel]) → encoding or "utf-8".
     let addr_te = dispatch_text_encoding as *const () as usize;
     attrs.insert("text_encoding".into(), MbValue::from_func(addr_te));
-    super::super::module::NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(addr_te as u64); });
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(addr_te as u64);
+    });
 
     // ── UnsupportedOperation: subclass of OSError + ValueError (CPython).
     super::super::class::mb_class_register(
@@ -303,10 +377,16 @@ pub fn register() {
         vec!["OSError".into(), "ValueError".into()],
         HashMap::new(),
     );
-    attrs.insert("UnsupportedOperation".into(), new_str("UnsupportedOperation"));
+    attrs.insert(
+        "UnsupportedOperation".into(),
+        new_str("UnsupportedOperation"),
+    );
 
     // ── IncrementalNewlineDecoder + BlockingIOError surface.
-    attrs.insert("IncrementalNewlineDecoder".into(), new_str("IncrementalNewlineDecoder"));
+    attrs.insert(
+        "IncrementalNewlineDecoder".into(),
+        new_str("IncrementalNewlineDecoder"),
+    );
     // BlockingIOError is a builtin exception already registered in exception.rs.
     attrs.insert("BlockingIOError".into(), new_str("BlockingIOError"));
 
@@ -320,10 +400,16 @@ pub fn register() {
 
 /// io.text_encoding(encoding[, stacklevel]) → encoding or "utf-8" when None.
 unsafe extern "C" fn dispatch_text_encoding(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return new_str("utf-8"); }
+    if nargs == 0 {
+        return new_str("utf-8");
+    }
     let enc = unsafe { *args_ptr };
-    if enc.is_none() { return new_str("utf-8"); }
-    if let Some(s) = extract_str(enc) { return new_str(s); }
+    if enc.is_none() {
+        return new_str("utf-8");
+    }
+    if let Some(s) = extract_str(enc) {
+        return new_str(s);
+    }
     new_str("utf-8")
 }
 
@@ -335,8 +421,10 @@ pub fn mb_stringio_new() -> MbValue {
 
 pub fn mb_stringio_new_with(initial: String) -> MbValue {
     let mut f = FxHashMap::default();
-    f.insert("_buffer".into(),
-        MbValue::from_ptr(MbObject::new_str(initial)));
+    f.insert(
+        "_buffer".into(),
+        MbValue::from_ptr(MbObject::new_str(initial)),
+    );
     f.insert("_pos".into(), MbValue::from_int(0));
     make_instance("StringIO", f)
 }
@@ -348,10 +436,12 @@ fn stringio_chars_pos(sio: MbValue) -> (Vec<char>, usize) {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                let buf: Vec<char> = f.get("_buffer")
+                let buf: Vec<char> = f
+                    .get("_buffer")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_default()
-                    .chars().collect();
+                    .chars()
+                    .collect();
                 let pos = f.get("_pos").and_then(|v| v.as_int()).unwrap_or(0).max(0) as usize;
                 return (buf, pos);
             }
@@ -367,7 +457,9 @@ fn stringio_store(sio: MbValue, chars: &[char], pos: usize) {
 }
 
 pub fn mb_stringio_write(sio: MbValue, data: MbValue) -> MbValue {
-    if check_closed(sio) { return MbValue::none(); }
+    if check_closed(sio) {
+        return MbValue::none();
+    }
     if !is_str(data) {
         // CPython: StringIO.write() argument must be str, not bytes/int/...
         let tn = type_name_of(data);
@@ -391,7 +483,9 @@ pub fn mb_stringio_write(sio: MbValue, data: MbValue) -> MbValue {
 
 /// read() / read(n): read up to n chars from current position (n<0/None = all).
 pub fn mb_stringio_read_n(sio: MbValue, n: MbValue) -> MbValue {
-    if check_closed(sio) { return MbValue::none(); }
+    if check_closed(sio) {
+        return MbValue::none();
+    }
     let (buf, pos) = stringio_chars_pos(sio);
     let avail = buf.len().saturating_sub(pos);
     let take = match n.as_int() {
@@ -399,7 +493,11 @@ pub fn mb_stringio_read_n(sio: MbValue, n: MbValue) -> MbValue {
         _ => avail,
     };
     let end = pos + take;
-    let result: String = if pos < buf.len() { buf[pos..end].iter().collect() } else { String::new() };
+    let result: String = if pos < buf.len() {
+        buf[pos..end].iter().collect()
+    } else {
+        String::new()
+    };
     field_set(sio, "_pos", MbValue::from_int(end as i64));
     new_str(result)
 }
@@ -410,7 +508,9 @@ pub fn mb_stringio_read(sio: MbValue) -> MbValue {
 
 /// readline(): next line including trailing '\n'.
 pub fn mb_stringio_readline(sio: MbValue) -> MbValue {
-    if check_closed(sio) { return MbValue::none(); }
+    if check_closed(sio) {
+        return MbValue::none();
+    }
     let (buf, pos) = stringio_chars_pos(sio);
     if pos >= buf.len() {
         return new_str(String::new());
@@ -419,7 +519,9 @@ pub fn mb_stringio_readline(sio: MbValue) -> MbValue {
     while end < buf.len() {
         let c = buf[end];
         end += 1;
-        if c == '\n' { break; }
+        if c == '\n' {
+            break;
+        }
     }
     let line: String = buf[pos..end].iter().collect();
     field_set(sio, "_pos", MbValue::from_int(end as i64));
@@ -428,7 +530,9 @@ pub fn mb_stringio_readline(sio: MbValue) -> MbValue {
 
 /// readlines(): list of all remaining lines.
 pub fn mb_stringio_readlines(sio: MbValue) -> MbValue {
-    if check_closed(sio) { return MbValue::none(); }
+    if check_closed(sio) {
+        return MbValue::none();
+    }
     let mut lines: Vec<MbValue> = Vec::new();
     loop {
         let line = mb_stringio_readline(sio);
@@ -436,7 +540,9 @@ pub fn mb_stringio_readlines(sio: MbValue) -> MbValue {
             return MbValue::none();
         }
         let empty = extract_str(line).map(|s| s.is_empty()).unwrap_or(true);
-        if empty { break; }
+        if empty {
+            break;
+        }
         lines.push(line);
     }
     MbValue::from_ptr(MbObject::new_list(lines))
@@ -445,18 +551,23 @@ pub fn mb_stringio_readlines(sio: MbValue) -> MbValue {
 /// __iter__(): list-iterator over remaining lines (CPython iterates a file
 /// object line by line). Returns a known iterator handle.
 pub extern "C" fn dispatch_stringio_iter(sio: MbValue) -> MbValue {
-    if check_closed(sio) { return MbValue::none(); }
+    if check_closed(sio) {
+        return MbValue::none();
+    }
     let lines = mb_stringio_readlines(sio);
     super::super::iter::mb_iter(lines)
 }
 
 pub fn mb_stringio_getvalue(sio: MbValue) -> MbValue {
-    if check_closed(sio) { return MbValue::none(); }
+    if check_closed(sio) {
+        return MbValue::none();
+    }
     if let Some(ptr) = sio.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                let buf = f.get("_buffer")
+                let buf = f
+                    .get("_buffer")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_default();
                 return new_str(buf);
@@ -467,7 +578,9 @@ pub fn mb_stringio_getvalue(sio: MbValue) -> MbValue {
 }
 
 pub fn mb_stringio_seek_whence(sio: MbValue, pos: MbValue, whence: MbValue) -> MbValue {
-    if check_closed(sio) { return MbValue::none(); }
+    if check_closed(sio) {
+        return MbValue::none();
+    }
     let p = pos.as_int().unwrap_or(0);
     let w = whence.as_int().unwrap_or(0);
     let (buf, cur) = stringio_chars_pos(sio);
@@ -492,7 +605,10 @@ pub fn mb_stringio_seek_whence(sio: MbValue, pos: MbValue, whence: MbValue) -> M
             buf.len() as i64
         }
         _ => {
-            return raise("ValueError", format!("invalid whence ({w}, should be 0, 1 or 2)"));
+            return raise(
+                "ValueError",
+                format!("invalid whence ({w}, should be 0, 1 or 2)"),
+            );
         }
     };
     field_set(sio, "_pos", MbValue::from_int(new_pos));
@@ -504,14 +620,18 @@ pub fn mb_stringio_seek(sio: MbValue, pos: MbValue) -> MbValue {
 }
 
 pub fn mb_stringio_tell(sio: MbValue) -> MbValue {
-    if check_closed(sio) { return MbValue::none(); }
+    if check_closed(sio) {
+        return MbValue::none();
+    }
     let (_buf, pos) = stringio_chars_pos(sio);
     MbValue::from_int(pos as i64)
 }
 
 /// truncate([size]): drop everything after `size` (default: current position).
 pub fn mb_stringio_truncate(sio: MbValue, size: MbValue) -> MbValue {
-    if check_closed(sio) { return MbValue::none(); }
+    if check_closed(sio) {
+        return MbValue::none();
+    }
     let (mut buf, pos) = stringio_chars_pos(sio);
     let n = match size.as_int() {
         Some(nn) if nn >= 0 => nn as usize,
@@ -539,18 +659,25 @@ pub fn mb_bytesio_new() -> MbValue {
 
 pub fn mb_bytesio_new_with(initial: Vec<u8>) -> MbValue {
     let mut f = FxHashMap::default();
-    f.insert("_buffer".into(),
-        MbValue::from_ptr(MbObject::new_bytes(initial)));
+    f.insert(
+        "_buffer".into(),
+        MbValue::from_ptr(MbObject::new_bytes(initial)),
+    );
     f.insert("_pos".into(), MbValue::from_int(0));
     make_instance("BytesIO", f)
 }
 
 pub fn mb_bytesio_write(bio: MbValue, data: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     if !is_bytes_like(data) {
         // CPython: a bytes-like object is required, not 'str'/'int'/...
         let tn = type_name_of(data);
-        return raise("TypeError", format!("a bytes-like object is required, not '{tn}'"));
+        return raise(
+            "TypeError",
+            format!("a bytes-like object is required, not '{tn}'"),
+        );
     }
     let new_bytes = extract_bytes(data).unwrap_or_default();
     let written = new_bytes.len() as i64;
@@ -559,16 +686,17 @@ pub fn mb_bytesio_write(bio: MbValue, data: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut f = fields.write().unwrap();
-                let existing = f.get("_buffer").and_then(|v| {
-                    v.as_ptr().map(|p| match &(*p).data {
-                        ObjData::Bytes(b) => b.clone(),
-                        ObjData::ByteArray(ref lock) => lock.read().unwrap().clone(),
-                        _ => Vec::new(),
+                let existing = f
+                    .get("_buffer")
+                    .and_then(|v| {
+                        v.as_ptr().map(|p| match &(*p).data {
+                            ObjData::Bytes(b) => b.clone(),
+                            ObjData::ByteArray(ref lock) => lock.read().unwrap().clone(),
+                            _ => Vec::new(),
+                        })
                     })
-                }).unwrap_or_default();
-                let pos = f.get("_pos")
-                    .and_then(|v| v.as_int())
-                    .unwrap_or(0) as usize;
+                    .unwrap_or_default();
+                let pos = f.get("_pos").and_then(|v| v.as_int()).unwrap_or(0) as usize;
                 let mut buf = existing;
                 if pos >= buf.len() {
                     if pos > buf.len() {
@@ -583,8 +711,10 @@ pub fn mb_bytesio_write(bio: MbValue, data: MbValue) -> MbValue {
                     buf[pos..pos + new_bytes.len()].copy_from_slice(&new_bytes);
                 }
                 let new_pos = pos + new_bytes.len();
-                f.insert("_buffer".into(),
-                    MbValue::from_ptr(MbObject::new_bytes(buf)));
+                f.insert(
+                    "_buffer".into(),
+                    MbValue::from_ptr(MbObject::new_bytes(buf)),
+                );
                 f.insert("_pos".into(), MbValue::from_int(new_pos as i64));
             }
         }
@@ -598,11 +728,16 @@ pub fn mb_bytesio_read(bio: MbValue) -> MbValue {
 
 /// readline([size]): next line up to and including '\n', capped at size.
 pub fn mb_bytesio_readline(bio: MbValue, size: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     // A non-integer (e.g. float) size is a TypeError, like CPython.
     if !size.is_none() && size.as_int().is_none() {
         let tn = type_name_of(size);
-        return raise("TypeError", format!("'{tn}' object cannot be interpreted as an integer"));
+        return raise(
+            "TypeError",
+            format!("'{tn}' object cannot be interpreted as an integer"),
+        );
     }
     let buf = bytesio_buffer(bio);
     let pos = bytesio_pos(bio);
@@ -616,11 +751,15 @@ pub fn mb_bytesio_readline(bio: MbValue, size: MbValue) -> MbValue {
     let mut end = pos;
     while end < buf.len() {
         if let Some(c) = cap {
-            if end - pos >= c { break; }
+            if end - pos >= c {
+                break;
+            }
         }
         let b = buf[end];
         end += 1;
-        if b == b'\n' { break; }
+        if b == b'\n' {
+            break;
+        }
     }
     let line = buf[pos..end].to_vec();
     bytesio_set_pos(bio, end as i64);
@@ -629,12 +768,16 @@ pub fn mb_bytesio_readline(bio: MbValue, size: MbValue) -> MbValue {
 
 /// readlines(): list of all remaining lines.
 pub fn mb_bytesio_readlines(bio: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     let mut lines: Vec<MbValue> = Vec::new();
     loop {
         let line = mb_bytesio_readline(bio, MbValue::none());
         let empty = extract_bytes(line).map(|b| b.is_empty()).unwrap_or(true);
-        if empty { break; }
+        if empty {
+            break;
+        }
         lines.push(line);
     }
     MbValue::from_ptr(MbObject::new_list(lines))
@@ -642,14 +785,18 @@ pub fn mb_bytesio_readlines(bio: MbValue) -> MbValue {
 
 /// __iter__(): list-iterator over remaining lines.
 pub extern "C" fn dispatch_bytesio_iter(bio: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     let lines = mb_bytesio_readlines(bio);
     super::super::iter::mb_iter(lines)
 }
 
 /// truncate([size]): drop bytes after `size` (default: current position).
 pub fn mb_bytesio_truncate(bio: MbValue, size: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     let mut buf = bytesio_buffer(bio);
     let pos = bytesio_pos(bio);
     let n = match size.as_int() {
@@ -670,18 +817,23 @@ pub fn mb_bytesio_close(bio: MbValue) -> MbValue {
 }
 
 pub fn mb_bytesio_getvalue(bio: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     if let Some(ptr) = bio.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                let buf = f.get("_buffer").and_then(|v| {
-                    v.as_ptr().map(|p| match &(*p).data {
-                        ObjData::Bytes(b) => b.clone(),
-                        ObjData::ByteArray(ref lock) => lock.read().unwrap().clone(),
-                        _ => Vec::new(),
+                let buf = f
+                    .get("_buffer")
+                    .and_then(|v| {
+                        v.as_ptr().map(|p| match &(*p).data {
+                            ObjData::Bytes(b) => b.clone(),
+                            ObjData::ByteArray(ref lock) => lock.read().unwrap().clone(),
+                            _ => Vec::new(),
+                        })
                     })
-                }).unwrap_or_default();
+                    .unwrap_or_default();
                 return MbValue::from_ptr(MbObject::new_bytes(buf));
             }
         }
@@ -694,13 +846,16 @@ fn bytesio_buffer(bio: MbValue) -> Vec<u8> {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                return f.get("_buffer").and_then(|v| {
-                    v.as_ptr().map(|p| match &(*p).data {
-                        ObjData::Bytes(b) => b.clone(),
-                        ObjData::ByteArray(ref lock) => lock.read().unwrap().clone(),
-                        _ => Vec::new(),
+                return f
+                    .get("_buffer")
+                    .and_then(|v| {
+                        v.as_ptr().map(|p| match &(*p).data {
+                            ObjData::Bytes(b) => b.clone(),
+                            ObjData::ByteArray(ref lock) => lock.read().unwrap().clone(),
+                            _ => Vec::new(),
+                        })
                     })
-                }).unwrap_or_default();
+                    .unwrap_or_default();
             }
         }
     }
@@ -731,9 +886,14 @@ fn bytesio_set_pos(bio: MbValue, pos: i64) {
 }
 
 pub fn mb_bytesio_seek_with_whence(bio: MbValue, pos: MbValue, whence: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     let p = pos.as_int().unwrap_or(0);
-    let w = whence.is_none().then_some(0).unwrap_or_else(|| whence.as_int().unwrap_or(0));
+    let w = whence
+        .is_none()
+        .then_some(0)
+        .unwrap_or_else(|| whence.as_int().unwrap_or(0));
     let buf_len = bytesio_buffer(bio).len() as i64;
     let cur = bytesio_pos(bio) as i64;
     let new_pos = match w {
@@ -745,7 +905,12 @@ pub fn mb_bytesio_seek_with_whence(bio: MbValue, pos: MbValue, whence: MbValue) 
         }
         1 => cur + p,
         2 => buf_len + p,
-        _ => return raise("ValueError", format!("invalid whence ({w}, should be 0, 1 or 2)")),
+        _ => {
+            return raise(
+                "ValueError",
+                format!("invalid whence ({w}, should be 0, 1 or 2)"),
+            )
+        }
     };
     if new_pos < 0 {
         return raise("ValueError", "negative seek value");
@@ -759,27 +924,41 @@ pub fn mb_bytesio_seek(bio: MbValue, pos: MbValue) -> MbValue {
 }
 
 pub fn mb_bytesio_tell(bio: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     MbValue::from_int(bytesio_pos(bio) as i64)
 }
 
 pub fn mb_bytesio_read_n(bio: MbValue, n: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     let buf = bytesio_buffer(bio);
     let pos = bytesio_pos(bio);
     let take = if let Some(nn) = n.as_int() {
-        if nn < 0 { buf.len().saturating_sub(pos) } else { (nn as usize).min(buf.len().saturating_sub(pos)) }
+        if nn < 0 {
+            buf.len().saturating_sub(pos)
+        } else {
+            (nn as usize).min(buf.len().saturating_sub(pos))
+        }
     } else {
         buf.len().saturating_sub(pos)
     };
     let end = pos + take;
-    let result: Vec<u8> = if pos < buf.len() { buf[pos..end].to_vec() } else { Vec::new() };
+    let result: Vec<u8> = if pos < buf.len() {
+        buf[pos..end].to_vec()
+    } else {
+        Vec::new()
+    };
     bytesio_set_pos(bio, end as i64);
     MbValue::from_ptr(MbObject::new_bytes(result))
 }
 
 pub fn mb_bytesio_readinto(bio: MbValue, dst: MbValue) -> MbValue {
-    if check_closed(bio) { return MbValue::none(); }
+    if check_closed(bio) {
+        return MbValue::none();
+    }
     let buf = bytesio_buffer(bio);
     let pos = bytesio_pos(bio);
     if let Some(ptr) = dst.as_ptr() {
@@ -867,12 +1046,21 @@ fn decode_utf16_units(units: &[u8], be: bool) -> String {
     String::from_utf16_lossy(&u16s)
 }
 
-pub fn mb_textiowrapper_new(underlying: MbValue, encoding: String, _newline: Option<String>, _write_through: bool) -> MbValue {
+pub fn mb_textiowrapper_new(
+    underlying: MbValue,
+    encoding: String,
+    _newline: Option<String>,
+    _write_through: bool,
+) -> MbValue {
     let mut f = FxHashMap::default();
-    unsafe { super::super::rc::retain_if_ptr(underlying); }
+    unsafe {
+        super::super::rc::retain_if_ptr(underlying);
+    }
     f.insert("_buffer".into(), underlying);
-    f.insert("encoding".into(),
-        MbValue::from_ptr(MbObject::new_str(encoding)));
+    f.insert(
+        "encoding".into(),
+        MbValue::from_ptr(MbObject::new_str(encoding)),
+    );
     make_instance("TextIOWrapper", f)
 }
 
@@ -881,7 +1069,9 @@ fn textiowrapper_underlying(tio: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                if let Some(v) = f.get("_buffer").copied() { return v; }
+                if let Some(v) = f.get("_buffer").copied() {
+                    return v;
+                }
             }
         }
     }
@@ -894,7 +1084,9 @@ fn textiowrapper_encoding(tio: MbValue) -> String {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
                 if let Some(v) = f.get("encoding").copied() {
-                    if let Some(s) = extract_str(v) { return s; }
+                    if let Some(s) = extract_str(v) {
+                        return s;
+                    }
                 }
             }
         }
@@ -917,7 +1109,11 @@ pub fn mb_textiowrapper_read(tio: MbValue) -> MbValue {
     let under = textiowrapper_underlying(tio);
     let buf = bytesio_buffer(under);
     let pos = bytesio_pos(under);
-    let remaining: Vec<u8> = if pos < buf.len() { buf[pos..].to_vec() } else { Vec::new() };
+    let remaining: Vec<u8> = if pos < buf.len() {
+        buf[pos..].to_vec()
+    } else {
+        Vec::new()
+    };
     bytesio_set_pos(under, buf.len() as i64);
     let decoded = decode_bytes(&remaining, &enc);
     MbValue::from_ptr(MbObject::new_str(decoded))
@@ -931,7 +1127,9 @@ pub fn mb_textiowrapper_flush(_tio: MbValue) -> MbValue {
 
 pub fn mb_bufferedreader_new(underlying: MbValue, buffer_size: i64) -> MbValue {
     let mut f = FxHashMap::default();
-    unsafe { super::super::rc::retain_if_ptr(underlying); }
+    unsafe {
+        super::super::rc::retain_if_ptr(underlying);
+    }
     f.insert("_buffer".into(), underlying);
     f.insert("_buffer_size".into(), MbValue::from_int(buffer_size.max(1)));
     make_instance("BufferedReader", f)
@@ -942,7 +1140,9 @@ fn bufferedreader_underlying(br: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                if let Some(v) = f.get("_buffer").copied() { return v; }
+                if let Some(v) = f.get("_buffer").copied() {
+                    return v;
+                }
             }
         }
     }
@@ -963,7 +1163,11 @@ pub fn mb_bufferedreader_peek(br: MbValue, _n: MbValue) -> MbValue {
     let under = bufferedreader_underlying(br);
     let buf = bytesio_buffer(under);
     let pos = bytesio_pos(under);
-    let rest: Vec<u8> = if pos < buf.len() { buf[pos..].to_vec() } else { Vec::new() };
+    let rest: Vec<u8> = if pos < buf.len() {
+        buf[pos..].to_vec()
+    } else {
+        Vec::new()
+    };
     MbValue::from_ptr(MbObject::new_bytes(rest))
 }
 
@@ -978,7 +1182,9 @@ pub fn mb_bufferedreader_readline(br: MbValue) -> MbValue {
     while end < buf.len() {
         let b = buf[end];
         end += 1;
-        if b == b'\n' { break; }
+        if b == b'\n' {
+            break;
+        }
     }
     let line = buf[pos..end].to_vec();
     bytesio_set_pos(under, end as i64);
@@ -987,17 +1193,30 @@ pub fn mb_bufferedreader_readline(br: MbValue) -> MbValue {
 
 // ── BufferedWriter ──
 
-unsafe extern "C" fn dispatch_bufferedwriter_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_bufferedwriter_new(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
-    let positional_end = if kw.is_some() { a.len().saturating_sub(1) } else { a.len() };
-    let underlying = if positional_end >= 1 { a[0] } else { MbValue::none() };
+    let positional_end = if kw.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
+    let underlying = if positional_end >= 1 {
+        a[0]
+    } else {
+        MbValue::none()
+    };
     mb_bufferedwriter_new(underlying)
 }
 
 pub fn mb_bufferedwriter_new(underlying: MbValue) -> MbValue {
     let mut f = FxHashMap::default();
-    unsafe { super::super::rc::retain_if_ptr(underlying); }
+    unsafe {
+        super::super::rc::retain_if_ptr(underlying);
+    }
     f.insert("_buffer".into(), underlying);
     make_instance("BufferedWriter", f)
 }
@@ -1007,7 +1226,9 @@ fn bufferedwriter_underlying(bw: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                if let Some(v) = f.get("_buffer").copied() { return v; }
+                if let Some(v) = f.get("_buffer").copied() {
+                    return v;
+                }
             }
         }
     }
@@ -1031,8 +1252,7 @@ mod tests {
     #[test]
     fn test_stringio_write_and_getvalue() {
         let sio = mb_stringio_new();
-        let data = MbValue::from_ptr(
-            MbObject::new_str("hello world".to_string()));
+        let data = MbValue::from_ptr(MbObject::new_str("hello world".to_string()));
         let written = mb_stringio_write(sio, data);
         assert_eq!(written.as_int(), Some(11));
 
@@ -1049,8 +1269,7 @@ mod tests {
     #[test]
     fn test_stringio_read_with_position() {
         let sio = mb_stringio_new();
-        let data = MbValue::from_ptr(
-            MbObject::new_str("abcdef".to_string()));
+        let data = MbValue::from_ptr(MbObject::new_str("abcdef".to_string()));
         mb_stringio_write(sio, data);
         // After writing, pos is at end. Seek 0 to read all.
         mb_stringio_seek(sio, MbValue::from_int(0));

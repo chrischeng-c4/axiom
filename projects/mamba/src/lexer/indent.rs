@@ -81,7 +81,9 @@ impl IndentProcessor {
         // Walk backward from token.start to find the preceding newline
         // The indent is the number of spaces between the newline and token start.
         // We find the last Newline in output and compute offset from there.
-        let last_newline_end = output.iter().rev()
+        let last_newline_end = output
+            .iter()
+            .rev()
             .find(|t| t.kind == TokenKind::Newline)
             .map(|t| t.end)
             .unwrap_or(0);

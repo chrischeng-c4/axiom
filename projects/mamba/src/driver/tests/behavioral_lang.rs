@@ -17,7 +17,6 @@
 ///
 /// Tests marked `#[ignore]` require features not yet implemented (tracked as xfail
 /// in the fixture-based harness). Remove `#[ignore]` as features land.
-
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -98,7 +97,12 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
+                diff.push_str(&format!(
+                    "  line {}: expected {:?}, got {:?}\n",
+                    i + 1,
+                    e,
+                    a
+                ));
             }
         }
         panic!(
@@ -702,15 +706,15 @@ print(f())
 #[test]
 fn test_regression_builtins_parse() {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(crate::conformance::FIXTURES_ROOT).join("builtin-libs/builtins");
+        .join(crate::conformance::FIXTURES_ROOT)
+        .join("builtin-libs/builtins");
     verify_all_parse(&base);
 }
 
 /// Regression: Verify existing stdlib fixtures parse successfully.
 #[test]
 fn test_regression_stdlib_parse() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/stdlib");
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/stdlib");
     verify_all_parse(&base);
 }
 
@@ -718,7 +722,8 @@ fn test_regression_stdlib_parse() {
 #[test]
 fn test_regression_language_parse() {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(crate::conformance::FIXTURES_ROOT).join("core/language");
+        .join(crate::conformance::FIXTURES_ROOT)
+        .join("core/language");
     verify_all_parse(&base);
 }
 
@@ -726,7 +731,8 @@ fn test_regression_language_parse() {
 #[test]
 fn test_regression_class_system_parse() {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(crate::conformance::FIXTURES_ROOT).join("core/class_system");
+        .join(crate::conformance::FIXTURES_ROOT)
+        .join("core/class_system");
     verify_all_parse(&base);
 }
 
@@ -734,7 +740,8 @@ fn test_regression_class_system_parse() {
 #[test]
 fn test_regression_exceptions_parse() {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(crate::conformance::FIXTURES_ROOT).join("core/exceptions");
+        .join(crate::conformance::FIXTURES_ROOT)
+        .join("core/exceptions");
     verify_all_parse(&base);
 }
 

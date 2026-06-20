@@ -89,7 +89,10 @@ fn pkgmgr_dev_dependency_dependencies_block_pins_distinct_runtime_and_dev() {
         .get("dev_version")
         .and_then(|v| v.as_str())
         .expect("`[dependencies].dev_version` must be set");
-    assert!(!runtime_version.is_empty(), "runtime version must be non-empty");
+    assert!(
+        !runtime_version.is_empty(),
+        "runtime version must be non-empty"
+    );
     assert!(!dev_version.is_empty(), "dev version must be non-empty");
 }
 
@@ -132,7 +135,9 @@ fn pkgmgr_dev_dependency_add_dev_action_uses_dev_flag() {
         "`[add_dev_action].expected_outcome` must be \"pass\""
     );
     assert_eq!(
-        action.get("expected_exit_code").and_then(|v| v.as_integer()),
+        action
+            .get("expected_exit_code")
+            .and_then(|v| v.as_integer()),
         Some(0),
         "`[add_dev_action].expected_exit_code` must be 0"
     );
@@ -146,10 +151,13 @@ fn pkgmgr_dev_dependency_add_dev_action_uses_dev_flag() {
 #[test]
 fn pkgmgr_dev_dependency_lockfile_separates_runtime_from_dev() {
     let doc = crate::common::load_toml(&manifest_path());
-    let lock = doc.get("lockfile_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[lockfile_assertion]` block \
+    let lock = doc
+        .get("lockfile_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[lockfile_assertion]` block \
          (acceptance: \"Dev dependency is recorded distinctly from runtime dependency.\")",
-    );
+        );
 
     let runtime_name = doc
         .get("dependencies")
@@ -168,7 +176,8 @@ fn pkgmgr_dev_dependency_lockfile_separates_runtime_from_dev() {
         "`[lockfile_assertion].must_contain_runtime_dependency` must equal `[dependencies].runtime_name`"
     );
     assert_eq!(
-        lock.get("must_contain_dev_dependency").and_then(|v| v.as_str()),
+        lock.get("must_contain_dev_dependency")
+            .and_then(|v| v.as_str()),
         Some(dev_name),
         "`[lockfile_assertion].must_contain_dev_dependency` must equal `[dependencies].dev_name`"
     );
@@ -239,22 +248,26 @@ fn pkgmgr_dev_dependency_runtime_only_sync_excludes_dev_dep() {
         "`[runtime_only_sync_case].expected_exit_code` must be 0"
     );
     assert_eq!(
-        case.get("must_install_runtime_dependency").and_then(|v| v.as_bool()),
+        case.get("must_install_runtime_dependency")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[runtime_only_sync_case].must_install_runtime_dependency` must be true"
     );
     assert_eq!(
-        case.get("must_not_install_dev_dependency").and_then(|v| v.as_bool()),
+        case.get("must_not_install_dev_dependency")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[runtime_only_sync_case].must_not_install_dev_dependency` must be true"
     );
     assert_eq!(
-        case.get("runtime_expected_import_outcome").and_then(|v| v.as_str()),
+        case.get("runtime_expected_import_outcome")
+            .and_then(|v| v.as_str()),
         Some("import_ok"),
         "`[runtime_only_sync_case].runtime_expected_import_outcome` must be \"import_ok\""
     );
     assert_eq!(
-        case.get("dev_expected_import_outcome").and_then(|v| v.as_str()),
+        case.get("dev_expected_import_outcome")
+            .and_then(|v| v.as_str()),
         Some("module_not_found"),
         "`[runtime_only_sync_case].dev_expected_import_outcome` must be \"module_not_found\""
     );
@@ -289,17 +302,20 @@ fn pkgmgr_dev_dependency_dev_sync_case_uses_dev_flag() {
         "`[dev_sync_case].supported` must be true — opt-in dev install is part of MVP"
     );
     assert_eq!(
-        case.get("must_install_runtime_dependency").and_then(|v| v.as_bool()),
+        case.get("must_install_runtime_dependency")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[dev_sync_case].must_install_runtime_dependency` must be true"
     );
     assert_eq!(
-        case.get("must_install_dev_dependency").and_then(|v| v.as_bool()),
+        case.get("must_install_dev_dependency")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[dev_sync_case].must_install_dev_dependency` must be true"
     );
     assert_eq!(
-        case.get("dev_expected_import_outcome").and_then(|v| v.as_str()),
+        case.get("dev_expected_import_outcome")
+            .and_then(|v| v.as_str()),
         Some("import_ok"),
         "`[dev_sync_case].dev_expected_import_outcome` must be \"import_ok\""
     );
@@ -314,11 +330,16 @@ fn pkgmgr_dev_dependency_unsupported_behavior_forbids_silent_pass() {
     );
 
     assert_eq!(
-        con.get("when_dev_sync_unsupported_outcome").and_then(|v| v.as_str()),
+        con.get("when_dev_sync_unsupported_outcome")
+            .and_then(|v| v.as_str()),
         Some("blocked"),
         "`[unsupported_behavior_contract].when_dev_sync_unsupported_outcome` must be \"blocked\""
     );
-    for flag in &["must_emit_blocker_diagnostic", "must_link_tracking_issue", "forbid_silent_pass"] {
+    for flag in &[
+        "must_emit_blocker_diagnostic",
+        "must_link_tracking_issue",
+        "forbid_silent_pass",
+    ] {
         assert_eq!(
             con.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -420,7 +441,8 @@ fn pkgmgr_dev_dependency_pins_out_of_scope_per_issue_2852() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("full_dependency_group_ux").and_then(|v| v.as_bool()),
+        oos.get("full_dependency_group_ux")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].full_dependency_group_ux` must be true \
          (issue text: \"Out of scope: full dependency group UX.\")"

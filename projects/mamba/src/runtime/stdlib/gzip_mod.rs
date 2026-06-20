@@ -33,13 +33,13 @@
 
 //! @codegen-skip: handwrite-pre-standardize
 
-use std::collections::HashMap;
-use flate2::Compression;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::collections::HashMap;
 use std::io::{Read, Write};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -92,7 +92,11 @@ unsafe extern "C" fn dispatch_gzip_ctor(args_ptr: *const MbValue, nargs: usize) 
     let mut mode = "r".to_string();
     if let Some(m) = args.get(1).filter(|v| !is_kwargs_dict(**v)).and_then(|v| {
         v.as_ptr().and_then(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*p).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
     }) {
         mode = m;
@@ -144,12 +148,12 @@ pub fn register() {
 
     // Real callables.
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("compress",   dispatch_compress   as usize),
+        ("compress", dispatch_compress as usize),
         ("decompress", dispatch_decompress as usize),
         // `open` and `GzipFile` construct real streaming files through the
         // shared compressed-file layer (Codec::Gzip).
-        ("open",       dispatch_gzip_ctor  as usize),
-        ("GzipFile",   dispatch_gzip_ctor  as usize),
+        ("open", dispatch_gzip_ctor as usize),
+        ("GzipFile", dispatch_gzip_ctor as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -184,7 +188,7 @@ pub fn register() {
     let bad_gzip_file = MbValue::from_ptr(MbObject::new_str("BadGzipFile".to_string()));
     attrs.insert("BadGzipFile".to_string(), bad_gzip_file);
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("FCOMMENT".into(), MbValue::from_int(16));
     attrs.insert("FEXTRA".into(), MbValue::from_int(4));
     attrs.insert("FHCRC".into(), MbValue::from_int(2));
@@ -397,14 +401,21 @@ mod tests {
 
     fn get_bytes_val(val: MbValue) -> Option<Vec<u8>> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
+            if let ObjData::Bytes(ref b) = (*ptr).data {
+                Some(b.clone())
+            } else {
+                None
+            }
         })
     }
 
     #[test]
     fn test_with_bytes_variants() {
         let bytes_val = MbValue::from_ptr(MbObject::new_bytes(vec![1u8, 2, 3]));
-        assert_eq!(super::with_bytes(bytes_val, |b| b.to_vec()), vec![1u8, 2, 3]);
+        assert_eq!(
+            super::with_bytes(bytes_val, |b| b.to_vec()),
+            vec![1u8, 2, 3]
+        );
 
         let ba = MbValue::from_ptr(MbObject::new_bytearray(vec![4u8, 5, 6]));
         assert_eq!(super::with_bytes(ba, |b| b.to_vec()), vec![4u8, 5, 6]);
@@ -412,7 +423,10 @@ mod tests {
         let s = MbValue::from_ptr(MbObject::new_str("abc".to_string()));
         assert_eq!(super::with_bytes(s, |b| b.to_vec()), vec![97u8, 98, 99]);
 
-        assert_eq!(super::with_bytes(MbValue::none(), |b| b.to_vec()), Vec::<u8>::new());
+        assert_eq!(
+            super::with_bytes(MbValue::none(), |b| b.to_vec()),
+            Vec::<u8>::new()
+        );
     }
 
     #[test]
@@ -421,10 +435,26 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec()));
         let result = mb_gzip_compress(input);
         let b = get_bytes_val(result).expect("compressed bytes");
-        assert!(b.len() >= 10, "gzip output too short to contain header: {} bytes", b.len());
-        assert_eq!(b[0], 0x1F, "gzip magic byte 0 should be 0x1F, got {:#x}", b[0]);
-        assert_eq!(b[1], 0x8B, "gzip magic byte 1 should be 0x8B, got {:#x}", b[1]);
-        assert_eq!(b[2], 0x08, "gzip CM byte (compression method DEFLATE=8), got {:#x}", b[2]);
+        assert!(
+            b.len() >= 10,
+            "gzip output too short to contain header: {} bytes",
+            b.len()
+        );
+        assert_eq!(
+            b[0], 0x1F,
+            "gzip magic byte 0 should be 0x1F, got {:#x}",
+            b[0]
+        );
+        assert_eq!(
+            b[1], 0x8B,
+            "gzip magic byte 1 should be 0x8B, got {:#x}",
+            b[1]
+        );
+        assert_eq!(
+            b[2], 0x08,
+            "gzip CM byte (compression method DEFLATE=8), got {:#x}",
+            b[2]
+        );
     }
 
     #[test]
@@ -445,7 +475,12 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(payload.clone()));
         let compressed = mb_gzip_compress(input);
         let cb = get_bytes_val(compressed).expect("compressed bytes");
-        assert!(cb.len() < payload.len(), "compressed >= payload: {} >= {}", cb.len(), payload.len());
+        assert!(
+            cb.len() < payload.len(),
+            "compressed >= payload: {} >= {}",
+            cb.len(),
+            payload.len()
+        );
         let dec = mb_gzip_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
         assert_eq!(get_bytes_val(dec), Some(payload));
     }
@@ -480,12 +515,17 @@ mod tests {
         // well below the 256 MiB sanity cap. The capacity hint must
         // round-trip that exact value.
         let payload: Vec<u8> = (0u8..200).cycle().take(8192).collect();
-        let compressed_mb = mb_gzip_compress(MbValue::from_ptr(MbObject::new_bytes(payload.clone())));
+        let compressed_mb =
+            mb_gzip_compress(MbValue::from_ptr(MbObject::new_bytes(payload.clone())));
         let compressed_bytes = get_bytes_val(compressed_mb).expect("compressed bytes");
         let hint = super::decompress_capacity_hint(&compressed_bytes);
-        assert_eq!(hint, payload.len(),
+        assert_eq!(
+            hint,
+            payload.len(),
             "ISIZE-derived hint should equal uncompressed length, got {} expected {}",
-            hint, payload.len());
+            hint,
+            payload.len()
+        );
     }
 
     #[test]

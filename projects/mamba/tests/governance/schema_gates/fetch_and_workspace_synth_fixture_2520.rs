@@ -92,10 +92,7 @@ fn fetch_sources_cover_git_and_registry() {
         .iter()
         .map(|v| v.as_str().expect("string"))
         .collect();
-    assert_eq!(
-        kinds,
-        vec!["git", "registry", "frozen_local_source_index"]
-    );
+    assert_eq!(kinds, vec!["git", "registry", "frozen_local_source_index"]);
     assert_eq!(
         c["unknown_fetch_source_failure_kind"].as_str(),
         Some("mambalibs_fetch_source_unknown_kind")
@@ -184,10 +181,7 @@ fn example_external_crate_importable_from_mamba_script_after_mamba_build() {
         c["example_external_crate_name"].as_str(),
         Some("mamba_external_demo_dep")
     );
-    assert_eq!(
-        c["example_external_crate_version"].as_str(),
-        Some("0.1.0")
-    );
+    assert_eq!(c["example_external_crate_version"].as_str(), Some("0.1.0"));
     assert_eq!(
         c["example_external_crate_python_import"].as_str(),
         Some("from mambalibs import mamba_external_demo_dep")

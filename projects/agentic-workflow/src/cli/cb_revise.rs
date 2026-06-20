@@ -1,12 +1,12 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/cb_revise.md#source
 // CODEGEN-BEGIN
-//! `aw cb revise` — fourth-of-four CB CRRR verbs.
+//! `aw td code-revise` — fourth-of-four code-artifact CRRR verbs.
 //!
 //! Brief mode reads the prior review payload's flagged markers and dispatches
 //! `score-cb-reviser` to re-fill them. Apply mode validates that the reviser
 //! produced a `cb_revise.md` payload covering all flagged markers, commits a
 //! `Lifecycle-Stage: Cb-Revise` trailer, advances phase to `cb_revised`, and
-//! dispatches `aw cb review` for round 2.
+//! dispatches `aw td code-review` for round 2.
 //!
 //! @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
 
@@ -19,7 +19,7 @@ use clap::Args;
 use crate::cli::cb_review::extract_flagged_markers_from;
 use crate::cli::remote_push::maybe_push_remote;
 
-// Args for `aw cb revise <slug>`.
+// Args for `aw td code-revise <slug>`.
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
 #[derive(Debug, Args)]
@@ -67,11 +67,11 @@ fn cb_revise_payload_rel(slug: &str) -> String {
 }
 
 fn cb_revise_apply_command(slug: &str) -> String {
-    format!("aw cb revise {} --apply", slug)
+    format!("aw td code-revise {} --apply", slug)
 }
 
 fn cb_review_command(slug: &str) -> String {
-    format!("aw cb review {}", slug)
+    format!("aw td code-review {}", slug)
 }
 
 fn next_for_revise_apply(slug: &str, payload_path: &str) -> serde_json::Value {
@@ -216,7 +216,7 @@ async fn run_revise_brief(args: CbReviseArgs) -> Result<()> {
         "next": next_for_revise_apply(&slug, &payload_path),
         "payload_initialized": payload_created,
         "invoke": {
-            "command": "aw cb revise",
+            "command": "aw td code-revise",
             "args": {
                 "slug": slug,
                 "flagged_markers": flagged,
@@ -321,7 +321,7 @@ async fn run_revise_apply(args: CbReviseArgs) -> Result<()> {
         "slug": slug,
         "next": next_for_cb_review(&slug),
         "invoke": {
-            "command": "aw cb review",
+            "command": "aw td code-review",
             "args": { "slug": slug },
         },
     });
@@ -338,7 +338,7 @@ mod tests {
     fn cb_revise_next_command_omits_legacy_json() {
         let next = next_for_revise_apply("4124", ".aw/payloads/4124/cb_revise.md");
 
-        assert_eq!(next["command"], "aw cb revise 4124 --apply");
+        assert_eq!(next["command"], "aw td code-revise 4124 --apply");
         assert!(!next["command"].as_str().unwrap().contains("--json"));
         assert_eq!(next["payload_path"], ".aw/payloads/4124/cb_revise.md");
     }

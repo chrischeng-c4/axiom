@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Broker, TaskError};
 use super::{Group, GroupResult, TaskOptions, TaskSignature};
+use crate::{Broker, TaskError};
 
 /// Map: Apply a task to each item in an iterable
 ///
@@ -48,13 +48,12 @@ impl Map {
 
     /// Convert to a Group for execution
     pub fn to_group(&self) -> Group {
-        let tasks: Vec<TaskSignature> = self.items
+        let tasks: Vec<TaskSignature> = self
+            .items
             .iter()
             .map(|item| {
-                TaskSignature::new(
-                    self.task_name.clone(),
-                    Value::Array(vec![item.clone()])
-                ).with_options(self.options.clone())
+                TaskSignature::new(self.task_name.clone(), Value::Array(vec![item.clone()]))
+                    .with_options(self.options.clone())
             })
             .collect();
 
@@ -62,10 +61,7 @@ impl Map {
     }
 
     /// Execute the map as a group (convenience method)
-    pub async fn apply_async<B: Broker>(
-        &self,
-        broker: &B,
-    ) -> Result<GroupResult, TaskError> {
+    pub async fn apply_async<B: Broker>(&self, broker: &B) -> Result<GroupResult, TaskError> {
         self.to_group().apply_async(broker).await
     }
 }

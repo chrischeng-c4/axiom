@@ -1,8 +1,8 @@
+use super::ast::TypeExpr;
+use super::Parser;
 use crate::error::MambaError;
 use crate::lexer::token::TokenKind;
 use crate::source::span::{Span, Spanned};
-use super::ast::TypeExpr;
-use super::Parser;
 
 impl<'a> Parser<'a> {
     /// Parse a type annotation expression.
@@ -16,7 +16,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 types.push(self.parse_type_atom()?);
             }
-            let span = types.first().unwrap().span.merge(types.last().unwrap().span);
+            let span = types
+                .first()
+                .unwrap()
+                .span
+                .merge(types.last().unwrap().span);
             ty = Spanned::new(TypeExpr::Union(types), span);
         }
 
@@ -31,14 +35,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_atom(&mut self) -> crate::error::Result<Spanned<TypeExpr>> {
-        let token = self.peek().ok_or_else(|| {
-            MambaError::syntax(Span::dummy(), "expected type expression")
-        })?;
+        let token = self
+            .peek()
+            .ok_or_else(|| MambaError::syntax(Span::dummy(), "expected type expression"))?;
         let start = token.start;
 
         match &token.kind {
             // Built-in type keywords
-            TokenKind::IntType | TokenKind::FloatType | TokenKind::BoolType
+            TokenKind::IntType
+            | TokenKind::FloatType
+            | TokenKind::BoolType
             | TokenKind::StrType => {
                 let name = self.current_text().to_string();
                 self.advance();
@@ -113,7 +119,10 @@ impl<'a> Parser<'a> {
                     let ret = self.parse_type_expr()?;
                     let span = self.span_from(start);
                     Ok(Spanned::new(
-                        TypeExpr::Fn { params, ret: Box::new(ret) },
+                        TypeExpr::Fn {
+                            params,
+                            ret: Box::new(ret),
+                        },
                         span,
                     ))
                 } else if params.len() == 1 {
@@ -131,7 +140,10 @@ impl<'a> Parser<'a> {
             }
             TokenKind::None_ => {
                 self.advance();
-                Ok(Spanned::new(TypeExpr::Named("None".to_string()), self.span_from(start)))
+                Ok(Spanned::new(
+                    TypeExpr::Named("None".to_string()),
+                    self.span_from(start),
+                ))
             }
             // `type` used as a type expression (e.g. `type[BaseModel]`).
             // Python's `type[X]` is the builtin generic for the class-object of X.
@@ -147,11 +159,17 @@ impl<'a> Parser<'a> {
                     }
                     self.expect(TokenKind::RBracket)?;
                     Ok(Spanned::new(
-                        TypeExpr::Generic { name: "type".to_string(), args },
+                        TypeExpr::Generic {
+                            name: "type".to_string(),
+                            args,
+                        },
                         self.span_from(start),
                     ))
                 } else {
-                    Ok(Spanned::new(TypeExpr::Named("type".to_string()), self.span_from(start)))
+                    Ok(Spanned::new(
+                        TypeExpr::Named("type".to_string()),
+                        self.span_from(start),
+                    ))
                 }
             }
             // TypeVarTuple spread: `*Ts` used in type position (e.g. `tuple[*Ts]`)
@@ -178,9 +196,11 @@ impl<'a> Parser<'a> {
                 let lit_name = match &expr.node {
                     super::ast::Expr::IntLit(v) => Some(v.to_string()),
                     super::ast::Expr::FloatLit(v) => Some(v.to_string()),
-                    super::ast::Expr::BoolLit(b) => {
-                        Some(if *b { "True".to_string() } else { "False".to_string() })
-                    }
+                    super::ast::Expr::BoolLit(b) => Some(if *b {
+                        "True".to_string()
+                    } else {
+                        "False".to_string()
+                    }),
                     _ => None,
                 };
                 Ok(Spanned::new(
@@ -198,7 +218,9 @@ mod tests {
     use crate::parser::ast::*;
     use crate::source::span::FileId;
 
-    fn fid() -> FileId { FileId(0) }
+    fn fid() -> FileId {
+        FileId(0)
+    }
     /// Parse `x: <type> = 0` and return the TypeExpr.
     fn parse_type(ty_src: &str) -> TypeExpr {
         let src = format!("x: {ty_src} = 0\n");

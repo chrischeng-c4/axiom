@@ -2,19 +2,20 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-search-security-result-leak
-// @capability search
+// @capability security-auth
 // @claim score-confidentiality
 // @contract search-security-result-leak
 // @category security
 // @required_for_production true
-// @command cargo test -p lumen --test security_lumen_search_security_result_leak -- --ignored
+// @command cargo test -p lumen --test coverage_gaps_e2e search_security_result_leak_respects_collection_boundaries -- --nocapture
 // AW-EC-END
 
-// Contract: GAP (C3): relevance scores and hit existence do not leak documents across collection / RBAC boundaries. Confidentiality contract + test not yet written.
+// Contract: C3: relevance scores and hit existence do not leak documents across collection boundaries; RBAC denial coverage remains pinned by the authz matrix case.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_search_security_result_leak() {
-    let command = "cargo test -p lumen --test security_lumen_search_security_result_leak -- --ignored";
+    let command =
+        "cargo test -p lumen --test coverage_gaps_e2e search_security_result_leak_respects_collection_boundaries -- --nocapture";
     let id = "lumen-search-security-result-leak";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

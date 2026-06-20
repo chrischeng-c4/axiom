@@ -1,13 +1,12 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 /// http and urllib modules for Mamba (#418).
 ///
 /// Provides a native implementation of the most-used APIs from Python 3.12's
 /// `urllib.parse`, `urllib.request`, `urllib.error`, and `http` modules, with
 /// `http.client` stubs for import compatibility.
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Dispatch wrappers: native ABI (args_ptr, nargs) to match mb_call_spread ──
 
@@ -64,12 +63,16 @@ unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) 
     // argument) is the kwargs dict.
     let kwargs = if a.len() >= 2 {
         a.last().copied().filter(|v| {
-            v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+            v.as_ptr()
+                .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+                .unwrap_or(false)
         })
     } else {
         None
     };
-    let mut doseq = a.get(1).copied()
+    let mut doseq = a
+        .get(1)
+        .copied()
         .filter(|v| v.as_bool().is_some())
         .unwrap_or_else(MbValue::none);
     let mut safe = String::new();
@@ -82,7 +85,11 @@ unsafe extern "C" fn dispatch_urlencode(args_ptr: *const MbValue, nargs: usize) 
                 MbValue::from_ptr(MbObject::new_str(name.to_string())),
                 sentinel,
             );
-            if v.to_bits() == u64::MAX { None } else { Some(v) }
+            if v.to_bits() == u64::MAX {
+                None
+            } else {
+                Some(v)
+            }
         };
         if let Some(v) = get("doseq") {
             doseq = v;
@@ -136,9 +143,9 @@ unsafe extern "C" fn dispatch_urlunparse(args_ptr: *const MbValue, nargs: usize)
         };
         if let Some(items) = items {
             let any_bytes = items.iter().any(|v| input_is_bytes(*v));
-            let any_str = items.iter().any(|v| {
-                extract_str(*v).map(|s| !s.is_empty()).unwrap_or(false)
-            });
+            let any_str = items
+                .iter()
+                .any(|v| extract_str(*v).map(|s| !s.is_empty()).unwrap_or(false));
             if any_bytes && any_str {
                 return raise_type_error("Cannot mix str and non-str arguments");
             }
@@ -160,7 +167,9 @@ unsafe extern "C" fn dispatch_urljoin(args_ptr: *const MbValue, nargs: usize) ->
 fn qs_options(a: &[MbValue]) -> QsOptions {
     let mut opts = QsOptions::default();
     let kwargs = a.iter().copied().find(|v| {
-        v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+        v.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .unwrap_or(false)
     });
     // Second positional (after the kwargs dict is excluded) is
     // keep_blank_values.
@@ -177,7 +186,11 @@ fn qs_options(a: &[MbValue]) -> QsOptions {
                 MbValue::from_ptr(MbObject::new_str(name.to_string())),
                 sentinel,
             );
-            if v.to_bits() == u64::MAX { None } else { Some(v) }
+            if v.to_bits() == u64::MAX {
+                None
+            } else {
+                Some(v)
+            }
         };
         if let Some(v) = get("keep_blank_values") {
             opts.keep_blank = super::super::builtins::mb_bool(v).as_bool() == Some(true);
@@ -245,7 +258,10 @@ unsafe extern "C" fn dispatch_unquote_to_bytes(args_ptr: *const MbValue, nargs: 
 /// POSIX `pathname2url(p)` == `quote(p)` (slashes preserved).
 unsafe extern "C" fn dispatch_pathname2url(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    mb_urllib_quote(a.get(0).copied().unwrap_or_else(MbValue::none), MbValue::none())
+    mb_urllib_quote(
+        a.get(0).copied().unwrap_or_else(MbValue::none),
+        MbValue::none(),
+    )
 }
 
 /// POSIX `url2pathname(u)` == `unquote(u)`.
@@ -284,10 +300,16 @@ pub fn register() {
     let parse_dispatchers: &[(&str, usize)] = &[
         ("quote", dispatch_quote as *const () as usize),
         ("quote_plus", dispatch_quote_plus as *const () as usize),
-        ("quote_from_bytes", dispatch_quote_from_bytes as *const () as usize),
+        (
+            "quote_from_bytes",
+            dispatch_quote_from_bytes as *const () as usize,
+        ),
         ("unquote", dispatch_unquote as *const () as usize),
         ("unquote_plus", dispatch_unquote_plus as *const () as usize),
-        ("unquote_to_bytes", dispatch_unquote_to_bytes as *const () as usize),
+        (
+            "unquote_to_bytes",
+            dispatch_unquote_to_bytes as *const () as usize,
+        ),
         ("urlencode", dispatch_urlencode as *const () as usize),
         ("urlparse", dispatch_urlparse as *const () as usize),
         ("urlunparse", dispatch_urlunparse as *const () as usize),
@@ -304,7 +326,11 @@ pub fn register() {
     }
 
     // urllib.parse.unwrap(url) → strips `<URL:...>` wrappers; callable.
-    add_dispatch(&mut parse_attrs, "unwrap", dispatch_unwrap as *const () as usize);
+    add_dispatch(
+        &mut parse_attrs,
+        "unwrap",
+        dispatch_unwrap as *const () as usize,
+    );
 
     // Result named-tuple classes. Mamba's urlparse/urlsplit/urldefrag return
     // Instance shells rather than these concrete subclasses, so these are
@@ -319,7 +345,11 @@ pub fn register() {
         "DefragResultBytes",
     ];
     for n in parse_classes {
-        add_dispatch(&mut parse_attrs, n, dispatch_class_shell as *const () as usize);
+        add_dispatch(
+            &mut parse_attrs,
+            n,
+            dispatch_class_shell as *const () as usize,
+        );
     }
 
     // urllib.parse module-level constants (per typeshed Final[list[str]]
@@ -336,46 +366,66 @@ pub fn register() {
     parse_attrs.insert(
         "uses_relative".into(),
         list_of_strs(&[
-            "", "ftp", "http", "gopher", "nntp", "imap", "wais", "file",
-            "https", "shttp", "mms", "prospero", "rtsp", "rtspu", "sftp",
-            "svn", "svn+ssh", "ws", "wss",
+            "", "ftp", "http", "gopher", "nntp", "imap", "wais", "file", "https", "shttp", "mms",
+            "prospero", "rtsp", "rtspu", "sftp", "svn", "svn+ssh", "ws", "wss",
         ]),
     );
     parse_attrs.insert(
         "uses_netloc".into(),
         list_of_strs(&[
-            "", "ftp", "http", "gopher", "nntp", "telnet", "imap", "wais",
-            "file", "mms", "https", "shttp", "snews", "prospero", "rtsp",
-            "rtspu", "rsync", "svn", "svn+ssh", "sftp", "nfs", "git",
-            "git+ssh", "ws", "wss", "itms-services",
+            "",
+            "ftp",
+            "http",
+            "gopher",
+            "nntp",
+            "telnet",
+            "imap",
+            "wais",
+            "file",
+            "mms",
+            "https",
+            "shttp",
+            "snews",
+            "prospero",
+            "rtsp",
+            "rtspu",
+            "rsync",
+            "svn",
+            "svn+ssh",
+            "sftp",
+            "nfs",
+            "git",
+            "git+ssh",
+            "ws",
+            "wss",
+            "itms-services",
         ]),
     );
     parse_attrs.insert(
         "uses_params".into(),
         list_of_strs(&[
-            "", "ftp", "hdl", "prospero", "http", "imap", "https", "shttp",
-            "rtsp", "rtspu", "sip", "sips", "mms", "sftp", "tel",
+            "", "ftp", "hdl", "prospero", "http", "imap", "https", "shttp", "rtsp", "rtspu", "sip",
+            "sips", "mms", "sftp", "tel",
         ]),
     );
     parse_attrs.insert(
         "non_hierarchical".into(),
         list_of_strs(&[
-            "gopher", "hdl", "mailto", "news", "telnet", "wais", "imap",
-            "snews", "sip", "sips",
+            "gopher", "hdl", "mailto", "news", "telnet", "wais", "imap", "snews", "sip", "sips",
         ]),
     );
     parse_attrs.insert(
         "uses_query".into(),
         list_of_strs(&[
-            "", "http", "wais", "imap", "https", "shttp", "mms", "gopher",
-            "rtsp", "rtspu", "sip", "sips",
+            "", "http", "wais", "imap", "https", "shttp", "mms", "gopher", "rtsp", "rtspu", "sip",
+            "sips",
         ]),
     );
     parse_attrs.insert(
         "uses_fragment".into(),
         list_of_strs(&[
-            "", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais",
-            "https", "shttp", "snews", "file", "prospero",
+            "", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais", "https", "shttp", "snews",
+            "file", "prospero",
         ]),
     );
     parse_attrs.insert(
@@ -385,11 +435,13 @@ pub fn register() {
         )),
     );
 
-        // Result types behave as 6-/5-field named tuples (index, slice, len,
+    // Result types behave as 6-/5-field named tuples (index, slice, len,
     // tuple equality) over their ordered `_entries` backing list.
     for cls in [
-        "urllib.parse.ParseResult", "urllib.parse.ParseResultBytes",
-        "urllib.parse.SplitResult", "urllib.parse.SplitResultBytes",
+        "urllib.parse.ParseResult",
+        "urllib.parse.ParseResultBytes",
+        "urllib.parse.SplitResult",
+        "urllib.parse.SplitResultBytes",
     ] {
         super::sys_mod::register_struct_seq_class(cls);
     }
@@ -411,16 +463,35 @@ pub fn register() {
     let req_shell = dispatch_class_shell as *const () as usize;
     let req_str = dispatch_empty_str as *const () as usize;
     let req_class_shells: &[&str] = &[
-        "Request", "OpenerDirector", "BaseHandler", "HTTPDefaultErrorHandler",
-        "HTTPRedirectHandler", "HTTPCookieProcessor", "ProxyHandler",
-        "HTTPPasswordMgr", "HTTPPasswordMgrWithDefaultRealm",
-        "HTTPPasswordMgrWithPriorAuth", "AbstractBasicAuthHandler",
-        "HTTPBasicAuthHandler", "ProxyBasicAuthHandler",
-        "AbstractDigestAuthHandler", "HTTPDigestAuthHandler",
-        "ProxyDigestAuthHandler", "HTTPHandler", "HTTPSHandler",
-        "FileHandler", "DataHandler", "FTPHandler", "CacheFTPHandler",
-        "UnknownHandler", "build_opener", "install_opener",
-        "getproxies", "URLopener", "FancyURLopener", "HTTPErrorProcessor",
+        "Request",
+        "OpenerDirector",
+        "BaseHandler",
+        "HTTPDefaultErrorHandler",
+        "HTTPRedirectHandler",
+        "HTTPCookieProcessor",
+        "ProxyHandler",
+        "HTTPPasswordMgr",
+        "HTTPPasswordMgrWithDefaultRealm",
+        "HTTPPasswordMgrWithPriorAuth",
+        "AbstractBasicAuthHandler",
+        "HTTPBasicAuthHandler",
+        "ProxyBasicAuthHandler",
+        "AbstractDigestAuthHandler",
+        "HTTPDigestAuthHandler",
+        "ProxyDigestAuthHandler",
+        "HTTPHandler",
+        "HTTPSHandler",
+        "FileHandler",
+        "DataHandler",
+        "FTPHandler",
+        "CacheFTPHandler",
+        "UnknownHandler",
+        "build_opener",
+        "install_opener",
+        "getproxies",
+        "URLopener",
+        "FancyURLopener",
+        "HTTPErrorProcessor",
     ];
     for name in req_class_shells {
         request_attrs.insert((*name).into(), MbValue::from_func(req_shell));
@@ -434,10 +505,16 @@ pub fn register() {
     // to "type". Surface only: no real handler behavior is attached.
     request_attrs.insert("HTTPHandler".into(), make_type_object("HTTPHandler"));
     // pathname2url / url2pathname have real (POSIX) implementations.
-    add_dispatch(&mut request_attrs, "pathname2url",
-        dispatch_pathname2url as *const () as usize);
-    add_dispatch(&mut request_attrs, "url2pathname",
-        dispatch_url2pathname as *const () as usize);
+    add_dispatch(
+        &mut request_attrs,
+        "pathname2url",
+        dispatch_pathname2url as *const () as usize,
+    );
+    add_dispatch(
+        &mut request_attrs,
+        "url2pathname",
+        dispatch_url2pathname as *const () as usize,
+    );
     // urlretrieve returns ("filename", HTTPMessage()); shim returns ("", {}).
     request_attrs.insert("urlretrieve".into(), MbValue::from_func(req_shell));
     request_attrs.insert("urlcleanup".into(), MbValue::from_func(req_str));
@@ -488,10 +565,14 @@ pub fn register() {
     super::super::module::MODULES.with(|mods| {
         let values: Vec<(String, MbValue)> = {
             let mods_ref = mods.borrow();
-            ["parse", "request", "error", "response", "robotparser"].iter().filter_map(|sub| {
-                mods_ref.get(&format!("urllib.{sub}"))
-                    .map(|m| (sub.to_string(), super::super::module::module_to_value(m)))
-            }).collect()
+            ["parse", "request", "error", "response", "robotparser"]
+                .iter()
+                .filter_map(|sub| {
+                    mods_ref
+                        .get(&format!("urllib.{sub}"))
+                        .map(|m| (sub.to_string(), super::super::module::module_to_value(m)))
+                })
+                .collect()
         };
         if let Some(urllib_mod) = mods.borrow_mut().get_mut("urllib") {
             for (k, v) in values {
@@ -550,18 +631,31 @@ pub fn register() {
     let mut client_attrs = HashMap::new();
     let client_addr = dispatch_class_shell as *const () as usize;
     for name in &[
-        "HTTPConnection", "HTTPSConnection", "HTTPResponse", "HTTPMessage",
-        "HTTPException", "NotConnected", "BadStatusLine", "IncompleteRead",
-        "InvalidURL", "UnknownProtocol", "UnknownTransferEncoding",
-        "UnimplementedFileMode", "LineTooLong", "RemoteDisconnected",
-        "ResponseNotReady", "ImproperConnectionState", "CannotSendRequest",
+        "HTTPConnection",
+        "HTTPSConnection",
+        "HTTPResponse",
+        "HTTPMessage",
+        "HTTPException",
+        "NotConnected",
+        "BadStatusLine",
+        "IncompleteRead",
+        "InvalidURL",
+        "UnknownProtocol",
+        "UnknownTransferEncoding",
+        "UnimplementedFileMode",
+        "LineTooLong",
+        "RemoteDisconnected",
+        "ResponseNotReady",
+        "ImproperConnectionState",
+        "CannotSendRequest",
         "CannotSendHeader",
         // `error` is CPython's module-level alias for `HTTPException` (a class);
         // `parse_headers` is a module-level function. Both must be callable for
         // the surface fixtures (`hasattr(...,"error")`,
         // `callable(...parse_headers)`), so register them as func stubs that
         // resolve through `client_addr` (already in NATIVE_FUNC_ADDRS).
-        "error", "parse_headers",
+        "error",
+        "parse_headers",
     ] {
         client_attrs.insert(name.to_string(), MbValue::from_func(client_addr));
     }
@@ -572,19 +666,22 @@ pub fn register() {
         client_attrs.insert(name.to_string(), MbValue::from_int(code as i64));
     }
     // Default HTTP/S ports.
-    client_attrs.insert("HTTP_PORT".into(),  MbValue::from_int(80));
+    client_attrs.insert("HTTP_PORT".into(), MbValue::from_int(80));
     client_attrs.insert("HTTPS_PORT".into(), MbValue::from_int(443));
     // `http.client.responses` maps each status code (int) to its reason
     // phrase (str), e.g. `responses[404] == 'Not Found'`.
-    client_attrs.insert("responses".into(),  make_responses_dict());
+    client_attrs.insert("responses".into(), make_responses_dict());
     super::register_module("http.client", client_attrs);
 
     // http.server — same callable-shell treatment.
     let mut server_attrs = HashMap::new();
     let server_addr = dispatch_class_shell as *const () as usize;
     for name in &[
-        "HTTPServer", "BaseHTTPRequestHandler", "SimpleHTTPRequestHandler",
-        "CGIHTTPRequestHandler", "ThreadingHTTPServer",
+        "HTTPServer",
+        "BaseHTTPRequestHandler",
+        "SimpleHTTPRequestHandler",
+        "CGIHTTPRequestHandler",
+        "ThreadingHTTPServer",
     ] {
         server_attrs.insert(name.to_string(), MbValue::from_func(server_addr));
     }
@@ -640,7 +737,8 @@ pub fn register() {
              <p>Message: %(message)s.</p>\n        \
              <p>Error code explanation: %(code)s - %(explain)s.</p>\n    \
              </body>\n\
-             </html>\n".to_string(),
+             </html>\n"
+                .to_string(),
         )),
     );
     super::register_module("http.server", server_attrs);
@@ -648,8 +746,10 @@ pub fn register() {
     // http.cookies stub
     let mut cookies_attrs = HashMap::new();
     for name in &["BaseCookie", "SimpleCookie", "CookieError", "Morsel"] {
-        cookies_attrs.insert(name.to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())));
+        cookies_attrs.insert(
+            name.to_string(),
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        );
     }
     super::register_module("http.cookies", cookies_attrs);
 
@@ -657,10 +757,14 @@ pub fn register() {
     super::super::module::MODULES.with(|mods| {
         let values: Vec<(String, MbValue)> = {
             let mods_ref = mods.borrow();
-            ["client", "server", "cookies"].iter().filter_map(|sub| {
-                mods_ref.get(&format!("http.{sub}"))
-                    .map(|m| (sub.to_string(), super::super::module::module_to_value(m)))
-            }).collect()
+            ["client", "server", "cookies"]
+                .iter()
+                .filter_map(|sub| {
+                    mods_ref
+                        .get(&format!("http.{sub}"))
+                        .map(|m| (sub.to_string(), super::super::module::module_to_value(m)))
+                })
+                .collect()
         };
         if let Some(http_mod) = mods.borrow_mut().get_mut("http") {
             for (k, v) in values {
@@ -797,7 +901,10 @@ fn value_as_query_string(v: MbValue) -> String {
     extract_str(v)
         .or_else(|| v.as_int().map(|i| format!("{i}")))
         .or_else(|| v.as_float().map(|f| format!("{f}")))
-        .or_else(|| v.as_bool().map(|b| if b { "True".into() } else { "False".into() }))
+        .or_else(|| {
+            v.as_bool()
+                .map(|b| if b { "True".into() } else { "False".into() })
+        })
         .unwrap_or_default()
 }
 
@@ -882,7 +989,11 @@ pub fn mb_urllib_quote(val: MbValue, safe: MbValue) -> MbValue {
     } else {
         extract_safe_bytes(safe, b"/")
     };
-    MbValue::from_ptr(MbObject::new_str(percent_encode_bytes(&bytes, &safe_bytes, false)))
+    MbValue::from_ptr(MbObject::new_str(percent_encode_bytes(
+        &bytes,
+        &safe_bytes,
+        false,
+    )))
 }
 
 /// urllib.parse.quote_from_bytes(bytes, safe='/') -> percent-encoded string.
@@ -891,7 +1002,11 @@ pub fn mb_urllib_quote_from_bytes(val: MbValue, safe: MbValue) -> MbValue {
         return raise_type_error("quote_from_bytes() expected bytes");
     };
     let safe_bytes = extract_safe_bytes(safe, b"/");
-    MbValue::from_ptr(MbObject::new_str(percent_encode_bytes(&bytes, &safe_bytes, false)))
+    MbValue::from_ptr(MbObject::new_str(percent_encode_bytes(
+        &bytes,
+        &safe_bytes,
+        false,
+    )))
 }
 
 /// urllib.parse.quote_plus(string, safe='') → spaces become '+', rest %-encoded.
@@ -905,7 +1020,11 @@ pub fn mb_urllib_quote_plus(val: MbValue, safe: MbValue) -> MbValue {
     // back? No — quote_plus replaces spaces with '+' and %-encodes the rest
     // with the caller's safe set (default empty).
     let safe_bytes = extract_safe_bytes(safe, b"");
-    MbValue::from_ptr(MbObject::new_str(percent_encode_bytes(&bytes, &safe_bytes, true)))
+    MbValue::from_ptr(MbObject::new_str(percent_encode_bytes(
+        &bytes,
+        &safe_bytes,
+        true,
+    )))
 }
 
 /// urllib.parse.unquote(string) → decode %XX sequences; leave '+' untouched.
@@ -914,7 +1033,9 @@ pub fn mb_urllib_unquote(val: MbValue) -> MbValue {
         return raise_type_error("unquote() argument must be str or bytes");
     };
     let decoded = percent_decode_to_bytes(&input, false);
-    MbValue::from_ptr(MbObject::new_str(decode_bytes(&decoded, "utf-8", "replace")))
+    MbValue::from_ptr(MbObject::new_str(decode_bytes(
+        &decoded, "utf-8", "replace",
+    )))
 }
 
 /// urllib.parse.unquote_plus(string) → decode %XX and '+' → ' '.
@@ -923,7 +1044,9 @@ pub fn mb_urllib_unquote_plus(val: MbValue) -> MbValue {
         return raise_type_error("unquote_plus() argument must be str or bytes");
     };
     let decoded = percent_decode_to_bytes(&input, true);
-    MbValue::from_ptr(MbObject::new_str(decode_bytes(&decoded, "utf-8", "replace")))
+    MbValue::from_ptr(MbObject::new_str(decode_bytes(
+        &decoded, "utf-8", "replace",
+    )))
 }
 
 /// urllib.parse.urlencode(params) → "k1=v1&k2=v2" — accepts dict or list of 2-tuples.
@@ -1010,11 +1133,13 @@ fn sequence_elements(v: MbValue) -> Option<Vec<MbValue>> {
             ObjData::Tuple(ref t) => Some(t.to_vec()),
             ObjData::Dict(ref lock) => {
                 let map = lock.read().unwrap();
-                Some(map.keys().map(super::super::dict_ops::dict_key_to_mbvalue).collect())
+                Some(
+                    map.keys()
+                        .map(super::super::dict_ops::dict_key_to_mbvalue)
+                        .collect(),
+                )
             }
-            ObjData::Set(ref lock) => {
-                Some(lock.read().unwrap().iter().copied().collect())
-            }
+            ObjData::Set(ref lock) => Some(lock.read().unwrap().iter().copied().collect()),
             _ => None,
         }
     }
@@ -1024,7 +1149,9 @@ fn sequence_elements(v: MbValue) -> Option<Vec<MbValue>> {
 /// be a dict (insertion order) or a list/tuple of 2-element tuples/lists.
 fn urlencode_pairs(params: MbValue) -> Vec<(MbValue, MbValue)> {
     let mut out = Vec::new();
-    let Some(ptr) = params.as_ptr() else { return out };
+    let Some(ptr) = params.as_ptr() else {
+        return out;
+    };
     unsafe {
         match &(*ptr).data {
             ObjData::Dict(ref lock) => {
@@ -1062,7 +1189,11 @@ fn two_elem(item: MbValue) -> Option<(MbValue, MbValue)> {
             ObjData::Tuple(ref t) if t.len() == 2 => Some((t[0], t[1])),
             ObjData::List(ref lock) => {
                 let v = lock.read().unwrap();
-                if v.len() == 2 { Some((v[0], v[1])) } else { None }
+                if v.len() == 2 {
+                    Some((v[0], v[1]))
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -1108,12 +1239,18 @@ fn split_netloc_part(rest: &str) -> (String, String) {
 /// embedded tab/newline/CR removed from the whole URL.
 fn urlsplit_parts(url: &str) -> (String, String, String, String, String) {
     let trimmed = url.trim_start_matches(|c: char| c <= ' ');
-    let cleaned: String = trimmed.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+    let cleaned: String = trimmed
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect();
     let url = cleaned.as_str();
     let (scheme, rest) = split_scheme(url);
     let (netloc, path_query_frag) = split_netloc_part(&rest);
     let (path_query, fragment) = match path_query_frag.find('#') {
-        Some(i) => (path_query_frag[..i].to_string(), path_query_frag[i + 1..].to_string()),
+        Some(i) => (
+            path_query_frag[..i].to_string(),
+            path_query_frag[i + 1..].to_string(),
+        ),
         None => (path_query_frag, String::new()),
     };
     let (path, query) = match path_query.find('?') {
@@ -1124,9 +1261,9 @@ fn urlsplit_parts(url: &str) -> (String, String, String, String, String) {
 }
 
 fn input_is_bytes(val: MbValue) -> bool {
-    val.as_ptr().map(|p| unsafe {
-        matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
-    }).unwrap_or(false)
+    val.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+        .unwrap_or(false)
 }
 
 fn url_input_str(val: MbValue) -> String {
@@ -1163,14 +1300,27 @@ pub fn mb_urllib_urlparse(val: MbValue) -> MbValue {
     let (path, params) = match full_path[last_seg_start..].find(';') {
         Some(i) => {
             let cut = last_seg_start + i;
-            (full_path[..cut].to_string(), full_path[cut + 1..].to_string())
+            (
+                full_path[..cut].to_string(),
+                full_path[cut + 1..].to_string(),
+            )
         }
         None => (full_path, String::new()),
     };
     make_result_instance(
-        if as_bytes { "urllib.parse.ParseResultBytes" } else { "urllib.parse.ParseResult" },
-        &[("scheme", scheme), ("netloc", netloc), ("path", path),
-          ("params", params), ("query", query), ("fragment", fragment)],
+        if as_bytes {
+            "urllib.parse.ParseResultBytes"
+        } else {
+            "urllib.parse.ParseResult"
+        },
+        &[
+            ("scheme", scheme),
+            ("netloc", netloc),
+            ("path", path),
+            ("params", params),
+            ("query", query),
+            ("fragment", fragment),
+        ],
         as_bytes,
     )
 }
@@ -1184,9 +1334,18 @@ pub fn mb_urllib_urlsplit(val: MbValue) -> MbValue {
         return MbValue::none();
     }
     make_result_instance(
-        if as_bytes { "urllib.parse.SplitResultBytes" } else { "urllib.parse.SplitResult" },
-        &[("scheme", scheme), ("netloc", netloc), ("path", path),
-          ("query", query), ("fragment", fragment)],
+        if as_bytes {
+            "urllib.parse.SplitResultBytes"
+        } else {
+            "urllib.parse.SplitResult"
+        },
+        &[
+            ("scheme", scheme),
+            ("netloc", netloc),
+            ("path", path),
+            ("query", query),
+            ("fragment", fragment),
+        ],
         as_bytes,
     )
 }
@@ -1234,7 +1393,10 @@ fn urljoin_impl(base: &str, url: &str) -> String {
     }
     // Absolute URL: return as-is.
     if let Some(i) = url.find("://") {
-        if url[..i].chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
+        if url[..i]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+        {
             return url.to_string();
         }
     }
@@ -1301,7 +1463,11 @@ fn resolve_dot_segments(path: &str) -> String {
             other => out.push(other),
         }
     }
-    let mut result = if leading_slash { "/".to_string() } else { String::new() };
+    let mut result = if leading_slash {
+        "/".to_string()
+    } else {
+        String::new()
+    };
     result.push_str(&out.join("/"));
     if trailing_slash && !result.ends_with('/') {
         result.push('/');
@@ -1313,10 +1479,7 @@ fn resolve_dot_segments(path: &str) -> String {
 /// once collect all their values in insertion order.
 /// Core query-string splitter honoring keep_blank_values / encoding /
 /// errors, with bytes-in → bytes-out pairs.
-fn parse_qsl_core(
-    val: MbValue,
-    opts: &QsOptions,
-) -> Vec<(MbValue, MbValue)> {
+fn parse_qsl_core(val: MbValue, opts: &QsOptions) -> Vec<(MbValue, MbValue)> {
     let keep_blank = opts.keep_blank;
     let encoding = opts.encoding.as_str();
     let errors = opts.errors.as_str();
@@ -1336,7 +1499,9 @@ fn parse_qsl_core(
         if n > max {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                MbValue::from_ptr(MbObject::new_str("Max number of fields exceeded".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "Max number of fields exceeded".to_string(),
+                )),
             );
             return Vec::new();
         }
@@ -1352,9 +1517,7 @@ fn parse_qsl_core(
                 if opts.strict_parsing {
                     super::super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "bad query field: {pair:?}"
-                        ))),
+                        MbValue::from_ptr(MbObject::new_str(format!("bad query field: {pair:?}"))),
                     );
                     return Vec::new();
                 }
@@ -1433,7 +1596,12 @@ pub fn mb_urllib_parse_qs_opts(val: MbValue, opts: &QsOptions) -> MbValue {
 }
 
 /// urllib.parse.parse_qsl(qs, ...) → ordered (key, value) 2-tuples.
-pub fn mb_urllib_parse_qsl(val: MbValue, keep_blank: bool, encoding: &str, errors: &str) -> MbValue {
+pub fn mb_urllib_parse_qsl(
+    val: MbValue,
+    keep_blank: bool,
+    encoding: &str,
+    errors: &str,
+) -> MbValue {
     let opts = QsOptions {
         keep_blank,
         encoding: encoding.to_string(),
@@ -1464,7 +1632,10 @@ pub fn mb_urllib_urldefrag(val: MbValue) -> MbValue {
     };
     let mut fields = FxHashMap::with_capacity_and_hasher(2, Default::default());
     fields.insert("url".into(), MbValue::from_ptr(MbObject::new_str(url)));
-    fields.insert("fragment".into(), MbValue::from_ptr(MbObject::new_str(fragment)));
+    fields.insert(
+        "fragment".into(),
+        MbValue::from_ptr(MbObject::new_str(fragment)),
+    );
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -1504,10 +1675,7 @@ pub fn mb_urllib_urlopen(url: MbValue) -> MbValue {
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
-            map.insert(
-                "url".into(),
-                MbValue::from_ptr(MbObject::new_str(u)),
-            );
+            map.insert("url".into(), MbValue::from_ptr(MbObject::new_str(u)));
             map.insert("status".into(), MbValue::from_int(0));
             map.insert(
                 "data".into(),
@@ -1537,18 +1705,29 @@ fn make_result_instance(class_name: &str, parts: &[(&str, String)], as_bytes: bo
         fields.insert((*name).to_string(), v);
         entries.push(v);
     }
-    fields.insert("_entries".into(), MbValue::from_ptr(MbObject::new_list(entries)));
+    fields.insert(
+        "_entries".into(),
+        MbValue::from_ptr(MbObject::new_list(entries)),
+    );
     // Derived authority fields (username/password/hostname/port), computed the
     // way CPython's _NetlocResultMixinStr does from netloc.
     let (username, password, hostname, port) = split_netloc(&netloc);
-    fields.insert("username".into(),
-        username.map(|s| mk(&s)).unwrap_or_else(MbValue::none));
-    fields.insert("password".into(),
-        password.map(|s| mk(&s)).unwrap_or_else(MbValue::none));
-    fields.insert("hostname".into(),
-        hostname.map(|s| mk(&s)).unwrap_or_else(MbValue::none));
-    fields.insert("port".into(),
-        port.map(MbValue::from_int).unwrap_or_else(MbValue::none));
+    fields.insert(
+        "username".into(),
+        username.map(|s| mk(&s)).unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "password".into(),
+        password.map(|s| mk(&s)).unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "hostname".into(),
+        hostname.map(|s| mk(&s)).unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "port".into(),
+        port.map(MbValue::from_int).unwrap_or_else(MbValue::none),
+    );
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -1611,7 +1790,11 @@ fn split_netloc(netloc: &str) -> (Option<String>, Option<String>, Option<String>
     let hostname = if bare.is_empty() {
         None
     } else if let Some(pi) = bare.find('%') {
-        Some(format!("{}{}", bare[..pi].to_ascii_lowercase(), &bare[pi..]))
+        Some(format!(
+            "{}{}",
+            bare[..pi].to_ascii_lowercase(),
+            &bare[pi..]
+        ))
     } else {
         Some(bare.to_ascii_lowercase())
     };
@@ -1625,9 +1808,7 @@ fn split_netloc(netloc: &str) -> (Option<String>, Option<String>, Option<String>
                 // CPython raises on .port access; mamba validates eagerly.
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(format!(
-                        "Port out of range 0-65535: {n}"
-                    ))),
+                    MbValue::from_ptr(MbObject::new_str(format!("Port out of range 0-65535: {n}"))),
                 );
                 None
             }
@@ -1654,23 +1835,35 @@ fn extract_parse_tuple(v: MbValue) -> (String, String, String, String, String, S
             match &(*ptr).data {
                 ObjData::Tuple(items) => {
                     return (
-                        gi(items, 0), gi(items, 1), gi(items, 2),
-                        gi(items, 3), gi(items, 4), gi(items, 5),
+                        gi(items, 0),
+                        gi(items, 1),
+                        gi(items, 2),
+                        gi(items, 3),
+                        gi(items, 4),
+                        gi(items, 5),
                     );
                 }
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
                     return (
-                        gi(&items, 0), gi(&items, 1), gi(&items, 2),
-                        gi(&items, 3), gi(&items, 4), gi(&items, 5),
+                        gi(&items, 0),
+                        gi(&items, 1),
+                        gi(&items, 2),
+                        gi(&items, 3),
+                        gi(&items, 4),
+                        gi(&items, 5),
                     );
                 }
                 ObjData::Instance { ref fields, .. } => {
                     let f = fields.read().unwrap();
                     let gf = |k: &str| f.get(k).and_then(|v| extract_str(*v)).unwrap_or_default();
                     return (
-                        gf("scheme"), gf("netloc"), gf("path"),
-                        gf("params"), gf("query"), gf("fragment"),
+                        gf("scheme"),
+                        gf("netloc"),
+                        gf("path"),
+                        gf("params"),
+                        gf("query"),
+                        gf("fragment"),
                     );
                 }
                 _ => {}
@@ -1721,10 +1914,7 @@ fn percent_decode_to_bytes(bytes: &[u8], plus_for_space: bool) -> Vec<u8> {
         if c == b'%' && i + 3 <= bytes.len() {
             let h = &bytes[i + 1..i + 3];
             if h.iter().all(|b| b.is_ascii_hexdigit()) {
-                if let Ok(byte) = u8::from_str_radix(
-                    std::str::from_utf8(h).unwrap_or(""),
-                    16,
-                ) {
+                if let Ok(byte) = u8::from_str_radix(std::str::from_utf8(h).unwrap_or(""), 16) {
                     out.push(byte);
                     i += 3;
                     continue;
@@ -1996,15 +2186,25 @@ unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> Mb
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
             let mut f = fields.write().unwrap();
-            f.insert("full_url".into(), MbValue::from_ptr(MbObject::new_str(url.clone())));
+            f.insert(
+                "full_url".into(),
+                MbValue::from_ptr(MbObject::new_str(url.clone())),
+            );
             f.insert("host".into(), MbValue::from_ptr(MbObject::new_str(host)));
             f.insert("type".into(), MbValue::from_ptr(MbObject::new_str(scheme)));
             // selector: path+query (no fragment); "/" for a bare host URL.
             let selector = {
                 let p = path.split('#').next().unwrap_or("");
-                if p.is_empty() { "/".to_string() } else { p.to_string() }
+                if p.is_empty() {
+                    "/".to_string()
+                } else {
+                    p.to_string()
+                }
             };
-            f.insert("selector".into(), MbValue::from_ptr(MbObject::new_str(selector)));
+            f.insert(
+                "selector".into(),
+                MbValue::from_ptr(MbObject::new_str(selector)),
+            );
             f.insert("data".into(), data);
             f.insert("method".into(), method);
             f.insert("unverifiable".into(), MbValue::from_bool(false));
@@ -2141,7 +2341,10 @@ pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
         ("get_header", rm_get_header as *const () as usize),
         ("has_header", rm_has_header as *const () as usize),
         ("add_header", rm_add_header as *const () as usize),
-        ("add_unredirected_header", rm_add_header as *const () as usize),
+        (
+            "add_unredirected_header",
+            rm_add_header as *const () as usize,
+        ),
         ("header_items", rm_header_items as *const () as usize),
     ];
     let mut map: Map<String, MbValue> = Map::new();
@@ -2150,7 +2353,10 @@ pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
     }
     super::super::class::mb_class_register(REQUEST_CLASS, vec!["object".to_string()], map);
 
-    attrs.insert("Request".to_string(), MbValue::from_func(d_request_new as *const () as usize));
+    attrs.insert(
+        "Request".to_string(),
+        MbValue::from_func(d_request_new as *const () as usize),
+    );
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(d_request_new as *const () as u64);
     });

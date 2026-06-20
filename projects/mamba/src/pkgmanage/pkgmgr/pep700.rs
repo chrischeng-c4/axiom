@@ -131,19 +131,14 @@ pub fn parse_file_metadata(value: &serde_json::Value) -> Result<FileMetadata, In
             None => {
                 return Err(IndexError::ParseError {
                     url: String::new(),
-                    detail: format!(
-                        "PEP 700 `size` must be a non-negative integer, got {n}"
-                    ),
+                    detail: format!("PEP 700 `size` must be a non-negative integer, got {n}"),
                 });
             }
         },
         Some(other) => {
             return Err(IndexError::ParseError {
                 url: String::new(),
-                detail: format!(
-                    "PEP 700 `size` must be a number, got {}",
-                    json_kind(other)
-                ),
+                detail: format!("PEP 700 `size` must be a number, got {}", json_kind(other)),
             });
         }
     };
@@ -206,7 +201,10 @@ mod tests {
         let meta = parse_file_metadata(&v).unwrap();
         assert_eq!(meta.requires_python.as_deref(), Some(">=3.8,<3.13"));
         assert_eq!(meta.size, Some(1234567));
-        assert_eq!(meta.upload_time.as_deref(), Some("2025-01-15T10:30:00.000000Z"));
+        assert_eq!(
+            meta.upload_time.as_deref(),
+            Some("2025-01-15T10:30:00.000000Z")
+        );
         assert!(!meta.is_empty());
     }
 

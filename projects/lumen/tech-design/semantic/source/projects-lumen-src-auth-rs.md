@@ -29,12 +29,15 @@ Public API manifest for `projects/lumen/src/auth.rs` captured as a per-file rust
 | `AuthContext` | projects/lumen/src/auth.rs | enum | pub |
 | `ensure` | projects/lumen/src/auth.rs | function | pub |
 | `subject` | projects/lumen/src/auth.rs | function | pub |
+| `auth_middleware` | projects/lumen/src/auth.rs | function | pub |
 | `AuthErr` | projects/lumen/src/auth.rs | enum | pub |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Bearer-token auth + per-collection RBAC.
 //!
 //! v1 keeps the verifier behind a trait so the static config-driven
@@ -75,12 +78,14 @@ const WILDCARD_COLLECTION: &str = "*";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 pub enum Role {
     Read,
     Write,
     Admin,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 impl Role {
     pub fn covers(self, needed: Role) -> bool {
         self >= needed
@@ -88,6 +93,7 @@ impl Role {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 pub struct TokenClaims {
     pub subject: String,
     /// `collection_id` → `Role`. The literal key `*` is a wildcard.
@@ -96,11 +102,13 @@ pub struct TokenClaims {
 }
 
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 pub struct AuthConfig {
     pub required: bool,
     pub tokens: HashMap<String, TokenClaims>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 impl AuthConfig {
     pub fn open() -> Self {
         Self {
@@ -129,6 +137,7 @@ impl AuthConfig {
 
 /// Resolved auth state attached to every request as an axum extension.
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 pub enum AuthContext {
     /// `LUMEN_AUTH=off` and no token was presented. Treated as full
     /// admin in development; production should set `required=true`.
@@ -136,6 +145,7 @@ pub enum AuthContext {
     Token(TokenClaims),
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 impl AuthContext {
     pub fn ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> {
         match self {
@@ -170,6 +180,7 @@ impl AuthContext {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 pub async fn auth_middleware(
     State(cfg): State<Arc<AuthConfig>>,
     mut req: Request,
@@ -201,6 +212,7 @@ pub async fn auth_middleware(
 }
 
 #[derive(Debug)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 pub enum AuthErr {
     Unauthenticated,
     Forbidden {
@@ -210,6 +222,7 @@ pub enum AuthErr {
     },
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-auth-rs.md#source
 impl IntoResponse for AuthErr {
     fn into_response(self) -> Response {
         match self {
@@ -377,6 +390,8 @@ mod tests {
         }
     }
 }
+// CODEGEN-END
+
 ````
 
 ## Changes

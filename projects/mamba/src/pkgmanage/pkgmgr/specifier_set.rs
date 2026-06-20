@@ -85,9 +85,7 @@ impl SpecifierSet {
     /// matches the `Pep440Version` type — external callers use
     /// [`SpecifierSet::matches`] which takes a `&str`.
     pub(crate) fn contains(&self, candidate: &Pep440Version) -> bool {
-        self.clauses
-            .iter()
-            .all(|c| clause_matches(c, candidate))
+        self.clauses.iter().all(|c| clause_matches(c, candidate))
     }
 
     /// Parse `candidate` and test it. Unparseable versions never match.
@@ -157,9 +155,8 @@ fn finalize_clause(op: Op, rhs: &str) -> Result<Clause, IndexError> {
 
     // Approximate (`~=`) requires at least two release segments per PEP 440
     // §"Compatible release". `~=1` is invalid; `~=1.0` is the floor case.
-    let parsed = parse_pep440(rhs).ok_or_else(|| {
-        parse_err(format!("version `{rhs}` is not PEP 440 parseable"))
-    })?;
+    let parsed = parse_pep440(rhs)
+        .ok_or_else(|| parse_err(format!("version `{rhs}` is not PEP 440 parseable")))?;
     if matches!(op, Op::Approx) && parsed.release_segments().len() < 2 {
         return Err(parse_err(format!(
             "`~=` requires at least two release segments, got `{rhs}`"
@@ -219,10 +216,7 @@ fn wildcard_prefix_matches(c: &Clause, v: &Pep440Version) -> bool {
     if segs.len() < prefix.len() {
         return false;
     }
-    prefix
-        .iter()
-        .zip(segs.iter())
-        .all(|(a, b)| a == b)
+    prefix.iter().zip(segs.iter()).all(|(a, b)| a == b)
 }
 
 #[cfg(test)]

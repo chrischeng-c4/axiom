@@ -16,10 +16,10 @@ pub mod pytest_runner;
 pub const FIXTURES_ROOT: &str = "tests/cpython";
 
 use crate::codegen::cranelift::jit::CraneliftJitBackend;
+use crate::codegen::cranelift::jit::JIT_LOCK;
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
 use crate::parser;
-use crate::codegen::cranelift::jit::JIT_LOCK;
 use crate::runtime::cleanup_all_runtime_state;
 use crate::runtime::output::{begin_capture, end_capture};
 use crate::source::span::FileId;
@@ -124,8 +124,8 @@ fn run_and_capture(src: &str, path: &Path, timeout_secs: u64) -> Result<String, 
         .map_err(|errs| format!("{}: HIR error: {:?}", path.display(), errs))?;
     let mir = lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
 
-    let mut backend = CraneliftJitBackend::new()
-        .map_err(|e| format!("{}: JIT init: {e}", path.display()))?;
+    let mut backend =
+        CraneliftJitBackend::new().map_err(|e| format!("{}: JIT init: {e}", path.display()))?;
     let output = backend
         .codegen(&mir, &checker.tcx)
         .map_err(|e| format!("{}: codegen: {e}", path.display()))?;
@@ -172,11 +172,15 @@ fn run_and_capture(src: &str, path: &Path, timeout_secs: u64) -> Result<String, 
             let handle = thread::spawn(move || {
                 // HANDWRITE-BEGIN gap="standardize:projects-mamba-src-conformance-mod-rs" tracker="standardize-gap-projects-mamba-src-conformance-mod-rs" reason="introspection-builtins."
                 crate::runtime::closure::set_module_sym_info(sym_info);
-                let func_info_thread: std::collections::HashMap<String, crate::runtime::value::MbValue> =
-                    func_info_addrs
-                        .into_iter()
-                        .map(|(name, bits)| (name, crate::runtime::value::MbValue::from_bits(bits as u64)))
-                        .collect();
+                let func_info_thread: std::collections::HashMap<
+                    String,
+                    crate::runtime::value::MbValue,
+                > = func_info_addrs
+                    .into_iter()
+                    .map(|(name, bits)| {
+                        (name, crate::runtime::value::MbValue::from_bits(bits as u64))
+                    })
+                    .collect();
                 crate::runtime::closure::set_module_func_info(func_info_thread);
                 // HANDWRITE-END
                 let prev = begin_capture();
@@ -189,9 +193,9 @@ fn run_and_capture(src: &str, path: &Path, timeout_secs: u64) -> Result<String, 
 
             let result = match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
                 Ok(captured) => Ok(captured),
-                Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
-                    "{path_str}: timed out after {timeout_secs}s"
-                )),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    Err(format!("{path_str}: timed out after {timeout_secs}s"))
+                }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     Err(format!("{path_str}: JIT execution thread panicked"))
                 }
@@ -243,7 +247,9 @@ pub fn discover_fixtures(root: &Path, category: Option<&str>) -> Vec<PathBuf> {
     let mut fixtures = Vec::new();
 
     fn walk(dir: &Path, fixtures: &mut Vec<PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
@@ -470,7 +476,10 @@ mod tests {
         let expected = "line1\nline2\nline3\n";
         let actual = "line1\nLINE2\nline3\n";
         let diff = format_diff(expected, actual);
-        assert!(diff.contains("line 2"), "diff should mention line 2: {diff}");
+        assert!(
+            diff.contains("line 2"),
+            "diff should mention line 2: {diff}"
+        );
         assert!(diff.contains("line2"), "diff should show expected: {diff}");
         assert!(diff.contains("LINE2"), "diff should show actual: {diff}");
     }
@@ -514,7 +523,11 @@ mod tests {
         write_file(root, "cat2/d.expected", ""); // ignored — not .py
 
         let fixtures = discover_fixtures(root, None);
-        assert_eq!(fixtures.len(), 3, "expected 3 .py fixtures, got {fixtures:?}");
+        assert_eq!(
+            fixtures.len(),
+            3,
+            "expected 3 .py fixtures, got {fixtures:?}"
+        );
     }
 
     /// TC-R5.3: category filter restricts discovery to the matching subdirectory.
@@ -532,7 +545,11 @@ mod tests {
             .iter()
             .map(|p| p.file_name().unwrap().to_str().unwrap())
             .collect();
-        assert_eq!(names.len(), 2, "expected 2 builtins fixtures, got {names:?}");
+        assert_eq!(
+            names.len(),
+            2,
+            "expected 2 builtins fixtures, got {names:?}"
+        );
         assert!(names.contains(&"numeric.py"), "numeric.py not found");
         assert!(names.contains(&"sequence.py"), "sequence.py not found");
     }
@@ -570,7 +587,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_file(tmp.path(), "builtins/numeric.py", "");
         let fixtures = discover_fixtures(tmp.path(), Some("does_not_exist"));
-        assert!(fixtures.is_empty(), "expected empty list for missing category");
+        assert!(
+            fixtures.is_empty(),
+            "expected empty list for missing category"
+        );
     }
 
     /// Fixtures are returned in sorted order (deterministic test runs).
@@ -699,7 +719,10 @@ mod tests {
             xfailed: 1,
             errors: 0,
         };
-        assert!(s.failed + s.errors > 0, "should have non-zero failure count");
+        assert!(
+            s.failed + s.errors > 0,
+            "should have non-zero failure count"
+        );
     }
 
     /// TC-R5.5: exit logic — exit 1 when any fixture errored (e.g. MissingGolden).

@@ -381,11 +381,7 @@ fn first_import_module(text: &str) -> Option<String> {
             }
         }
         if let Some(rest) = line.strip_prefix("from ") {
-            let module = rest
-                .split(" import ")
-                .next()
-                .unwrap_or(rest)
-                .trim();
+            let module = rest.split(" import ").next().unwrap_or(rest).trim();
             if !module.is_empty() && !module.starts_with('.') {
                 return Some(module.to_string());
             }
@@ -577,7 +573,10 @@ fn main() {
     println!("  invalid metadata: {}", fixtures.invalid_metadata);
     println!("  xfail empty/pass-intended: {}", fixtures.xfail_empty);
     println!("  xfail nonempty/mamba-gap: {}", fixtures.xfail_nonempty);
-    println!("  stale CPython subjects: {}", fixtures.stale_cpython_subjects);
+    println!(
+        "  stale CPython subjects: {}",
+        fixtures.stale_cpython_subjects
+    );
     println!("  by bucket: {:?}", fixtures.by_bucket);
     println!("  by dimension: {:?}", fixtures.by_dimension);
     println!("  perf pins: {}", perf.pins);

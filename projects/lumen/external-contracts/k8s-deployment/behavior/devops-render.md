@@ -18,7 +18,7 @@ production. Live deploy bring-up (kind + NATS) stays infra-gated under stability
 e2e_tests:
   - id: lumen-devops-operator-render
     capability_id: k8s-deployment
-    claim_id: operator-renders-managed-child-set-incl-nats
+    claim_id: lumen-crd-reconcile-loop-kube-rs-operator
     contract_id: devops-operator-render-golden
     category: behavior
     command: "cargo test -p lumen --features operator --test operator_render -- --nocapture"

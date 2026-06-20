@@ -1,3 +1,6 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use crate::source::FileId;
 /// compileall module for Mamba (#1261).
 ///
 /// Minimal callable-dispatcher shim covering four top-level
@@ -11,11 +14,7 @@
 /// surface) is tracked separately under #1261; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the
 /// stub-only conversion long-tail has closed against.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use crate::source::FileId;
 
 fn raise_exc(exc: &str, msg: &str) -> MbValue {
     super::super::exception::mb_raise(
@@ -79,14 +78,20 @@ unsafe extern "C" fn dispatch_compile_dir(args_ptr: *const MbValue, nargs: usize
     }
     let ddir_given = kwarg(a, "ddir").map(|v| !v.is_none()).unwrap_or(false);
     let strip_or_prepend = kwarg(a, "stripdir").map(|v| !v.is_none()).unwrap_or(false)
-        || kwarg(a, "prependdir").map(|v| !v.is_none()).unwrap_or(false);
+        || kwarg(a, "prependdir")
+            .map(|v| !v.is_none())
+            .unwrap_or(false);
     if ddir_given && strip_or_prepend {
         return raise_exc(
             "ValueError",
             "Destination dir (ddir) cannot be used in combination with stripdir or prependdir",
         );
     }
-    let dir = a.first().copied().and_then(extract_str_v).unwrap_or_default();
+    let dir = a
+        .first()
+        .copied()
+        .and_then(extract_str_v)
+        .unwrap_or_default();
     let mut ok = true;
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -107,14 +112,20 @@ unsafe extern "C" fn dispatch_compile_file(args_ptr: *const MbValue, nargs: usiz
     };
     let ddir_given = kwarg(a, "ddir").map(|v| !v.is_none()).unwrap_or(false);
     let strip_or_prepend = kwarg(a, "stripdir").map(|v| !v.is_none()).unwrap_or(false)
-        || kwarg(a, "prependdir").map(|v| !v.is_none()).unwrap_or(false);
+        || kwarg(a, "prependdir")
+            .map(|v| !v.is_none())
+            .unwrap_or(false);
     if ddir_given && strip_or_prepend {
         return raise_exc(
             "ValueError",
             "Destination dir (ddir) cannot be used in combination with stripdir or prependdir",
         );
     }
-    let path = a.first().copied().and_then(extract_str_v).unwrap_or_default();
+    let path = a
+        .first()
+        .copied()
+        .and_then(extract_str_v)
+        .unwrap_or_default();
     MbValue::from_bool(compile_one(&path))
 }
 

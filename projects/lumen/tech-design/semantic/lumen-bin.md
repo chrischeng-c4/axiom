@@ -49,6 +49,10 @@ element UT_SOURCE_TESTS {
 coverage_kind: semantic
 changes:
   - action: annotate
+    section: schema
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the schema section."
+  - action: annotate
     section: unit-test
     impl_mode: hand-written
     description: "Traceability metadata edge for the unit-test section."

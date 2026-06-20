@@ -17,16 +17,14 @@
 //! deliberately omitted — they require a stream-protocol pass that's
 //! out of scope for the per-lib brute-force sweep.
 
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
-const B64_CHARS: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-const B64_URL_CHARS: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const B64_URL_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -303,7 +301,7 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("MAXBINSIZE".into(), MbValue::from_int(57));
     attrs.insert("MAXLINESIZE".into(), MbValue::from_int(76));
     super::register_module("base64", attrs);
@@ -500,7 +498,11 @@ fn b64_decode_checked(src: &[u8], table: &[u8], strict: bool) -> Result<Vec<u8>,
     let b64_value = |c: u8| -> u8 {
         if (c as usize) < 128 {
             let v = decode_table[c as usize];
-            if v != 0xFF { v } else { 64 }
+            if v != 0xFF {
+                v
+            } else {
+                64
+            }
         } else {
             64
         }
@@ -596,10 +598,26 @@ fn b64_decode_checked(src: &[u8], table: &[u8], strict: bool) -> Result<Vec<u8>,
 /// `b64_decode_with`.
 #[inline]
 fn emit_b64_quartet(q: &[u8; 4], decode_table: &[u8; 128], out: &mut Vec<u8>) {
-    let a = if q[0] != b'=' { decode_table[q[0] as usize] as u32 } else { 0 };
-    let b = if q[1] != b'=' { decode_table[q[1] as usize] as u32 } else { 0 };
-    let c = if q[2] != b'=' { decode_table[q[2] as usize] as u32 } else { 0 };
-    let d = if q[3] != b'=' { decode_table[q[3] as usize] as u32 } else { 0 };
+    let a = if q[0] != b'=' {
+        decode_table[q[0] as usize] as u32
+    } else {
+        0
+    };
+    let b = if q[1] != b'=' {
+        decode_table[q[1] as usize] as u32
+    } else {
+        0
+    };
+    let c = if q[2] != b'=' {
+        decode_table[q[2] as usize] as u32
+    } else {
+        0
+    };
+    let d = if q[3] != b'=' {
+        decode_table[q[3] as usize] as u32
+    } else {
+        0
+    };
 
     let triple = (a << 18) | (b << 12) | (c << 6) | d;
 
@@ -648,11 +666,7 @@ pub fn mb_base64_b64decode(data: MbValue) -> MbValue {
 /// before decoding. With `validate=True` a byte outside the (post-altchars)
 /// standard alphabet raises a `binascii.Error`. Incorrect padding always raises
 /// a `binascii.Error`, matching CPython 3.12 `binascii.a2b_base64`.
-pub fn mb_base64_b64decode_full(
-    data: MbValue,
-    altchars: Option<&[u8]>,
-    validate: bool,
-) -> MbValue {
+pub fn mb_base64_b64decode_full(data: MbValue, altchars: Option<&[u8]>, validate: bool) -> MbValue {
     let encoded_bytes = match unsafe { decode_data_bytes(&data) } {
         Ok(b) => b,
         Err(()) => {
@@ -931,9 +945,7 @@ fn a85_decode_bytes(data: &[u8], adobe: bool, ignorechars: &[u8]) -> Result<Vec<
     let mut body: &[u8] = data;
     if adobe {
         if !body.ends_with(b"~>") {
-            return Err(
-                "Ascii85 encoded byte sequences must end with b'~>'".to_string(),
-            );
+            return Err("Ascii85 encoded byte sequences must end with b'~>'".to_string());
         }
         if body.starts_with(b"<~") {
             body = &body[2..body.len() - 2];
@@ -1271,7 +1283,9 @@ fn reads_text(fileobj: MbValue) -> bool {
     let name = MbValue::from_ptr(MbObject::new_str("read".to_string()));
     let args = MbValue::from_ptr(MbObject::new_list(vec![]));
     let result = super::super::class::mb_call_method(fileobj, name, args);
-    result.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+    result
+        .as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
 }
 
 pub fn mb_base64_encode_stream(input: MbValue, output: MbValue) -> MbValue {
