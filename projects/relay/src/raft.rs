@@ -12,7 +12,8 @@
 //! @spec projects/relay/tech-design/logic/single-shard-raft-consensus-core-self-contained-rsm-auto-voter-l.md#logic
 
 pub use raftcore::{
-    auto_membership, AppendReq, AppendResp, Index, Membership, NodeId, Outgoing, PersistedState,
-    RaftEntry, RaftMsg, RaftNode, RaftTransport, Role, Term, VoteReq, VoteResp,
+    auto_membership, AppendReq, AppendResp, Index, InstallSnapshotReq, InstallSnapshotResp,
+    Membership, NodeId, Outgoing, PersistedState, RaftEntry, RaftMsg, RaftNode, RaftTransport,
+    Role, Term, VoteReq, VoteResp,
 };
 // HANDWRITE-END
