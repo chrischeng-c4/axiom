@@ -3350,31 +3350,28 @@ impl<'a> HirToMir<'a> {
                                         });
                                     }
                                     raise_emitted = true;
-                                } else if (class_name == "ExceptionGroup"
-                                    || class_name == "BaseExceptionGroup")
-                                    && args.len() >= 2
-                                {
-                                    // ExceptionGroup / BaseExceptionGroup:
-                                    // raise ExceptionGroup(msg, excs)
-                                    let msg_vreg = {
-                                        let v = self.lower_expr(&args[0]);
-                                        self.box_operand(v, args[0].ty())
-                                    };
-                                    let excs_vreg = {
-                                        let v = self.lower_expr(&args[1]);
-                                        self.box_operand(v, args[1].ty())
-                                    };
-                                    let group = self.fresh_vreg();
-                                    self.current_stmts.push(MirInst::CallExtern {
-                                        dest: Some(group),
-                                        name: "mb_exception_group_new".to_string(),
-                                        args: vec![msg_vreg, excs_vreg],
+                                } else if class_name == "ExceptionGroup"
+                                    || class_name == "BaseExceptionGroup" {
+                                    // raise (Base)ExceptionGroup(...): pass ALL
+                                    // positional args so the constructor can
+                                    // validate the arity and argument types
+                                    // (CPython raises TypeError/ValueError on bad
+                                    // shape) before raising the group.
+                                    let boxed: Vec<VReg> = args.iter().map(|a| {
+                                        let v = self.lower_expr(a);
+                                        self.box_operand(v, a.ty())
+                                    }).collect();
+                                    let args_list = self.fresh_vreg();
+                                    self.current_stmts.push(MirInst::MakeList {
+                                        dest: args_list,
+                                        elements: boxed,
                                         ty: self.tcx.any(),
                                     });
+                                    let cn_vreg = self.emit_str_const(&class_name);
                                     self.current_stmts.push(MirInst::CallExtern {
                                         dest: None,
-                                        name: "mb_raise_instance".to_string(),
-                                        args: vec![group],
+                                        name: "mb_exception_group_construct_and_raise".to_string(),
+                                        args: vec![args_list, cn_vreg],
                                         ty: self.tcx.none(),
                                     });
                                     raise_emitted = true;
@@ -6994,17 +6991,26 @@ impl<'a> HirToMir<'a> {
                     && !self.builtin_syms.contains_key(&func_sym.0)
                 {
                     if let Some(class_name) = self.class_syms.get(&func_sym.0).cloned() {
-                        // Special case: ExceptionGroup(msg, excs) /
-                        // BaseExceptionGroup(msg, excs)
-                        if (class_name == "ExceptionGroup" || class_name == "BaseExceptionGroup")
-                            && args.len() >= 2
-                        {
-                            let msg_vreg = self.box_operand(arg_vregs[0], args[0].ty());
-                            let excs_vreg = self.box_operand(arg_vregs[1], args[1].ty());
+                        // ExceptionGroup(...) / BaseExceptionGroup(...) as an
+                        // expression: pass ALL positional args so the constructor
+                        // validates arity + argument types (CPython raises
+                        // TypeError/ValueError on a bad shape).
+                        if class_name == "ExceptionGroup"
+                            || class_name == "BaseExceptionGroup" {
+                            let boxed: Vec<VReg> = args.iter().zip(arg_vregs.iter())
+                                .map(|(a, &v)| self.box_operand(v, a.ty()))
+                                .collect();
+                            let args_list = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::MakeList {
+                                dest: args_list,
+                                elements: boxed,
+                                ty: self.tcx.any(),
+                            });
+                            let cn_vreg = self.emit_str_const(&class_name);
                             self.current_stmts.push(MirInst::CallExtern {
                                 dest: Some(dest),
-                                name: "mb_exception_group_new".to_string(),
-                                args: vec![msg_vreg, excs_vreg],
+                                name: "mb_exception_group_construct".to_string(),
+                                args: vec![args_list, cn_vreg],
                                 ty: *ty,
                             });
                             return dest;

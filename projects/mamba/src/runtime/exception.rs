@@ -863,6 +863,109 @@ pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue 
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+/// True if `v` is an exception *instance* (an Instance whose class is in the
+/// exception tree) — not an exception *type* (a name-string) nor a plain value.
+fn is_exception_instance(v: MbValue) -> bool {
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                return is_builtin_exception_name(class_name)
+                    || super::class::class_mro_any(class_name, is_builtin_exception_name)
+                    || is_subclass_of(class_name, "BaseException");
+            }
+        }
+    }
+    false
+}
+
+/// `(Base)ExceptionGroup(message, exceptions)` constructor with full CPython
+/// argument validation. Returns the group, or None with a pending TypeError/
+/// ValueError on a bad argument. `args_list` is the list of positional args;
+/// `class_name` is "ExceptionGroup" / "BaseExceptionGroup".
+pub fn mb_exception_group_construct(args_list: MbValue, class_name: MbValue) -> MbValue {
+    let cn = extract_str(class_name).unwrap_or_else(|| "ExceptionGroup".to_string());
+    let items = super::builtins::extract_items(args_list);
+    // Exactly two positional arguments.
+    if items.len() != 2 {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{cn}() takes exactly 2 arguments ({} given)",
+                items.len()
+            ))),
+        );
+        return MbValue::none();
+    }
+    let message = items[0];
+    let exceptions = items[1];
+    // 1. message must be a str.
+    let msg_is_str = message
+        .as_ptr()
+        .map(|p| matches!(unsafe { &(*p).data }, ObjData::Str(_)))
+        .unwrap_or(false);
+    if !msg_is_str {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "argument 1 must be str, not {}",
+                super::builtins::value_type_name(message)
+            ))),
+        );
+        return MbValue::none();
+    }
+    // 2. exceptions must be a sequence (list or tuple).
+    let seq: Option<Vec<MbValue>> = exceptions.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::List(ref lock) => Some(lock.read().unwrap().to_vec()),
+            ObjData::Tuple(ref items) => Some(items.clone()),
+            _ => None,
+        }
+    });
+    let Some(seq) = seq else {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "second argument (exceptions) must be a sequence".to_string(),
+            )),
+        );
+        return MbValue::none();
+    };
+    // 3. non-empty.
+    if seq.is_empty() {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "second argument (exceptions) must be a non-empty sequence".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    // 4. every element must be an exception instance.
+    for (i, it) in seq.iter().enumerate() {
+        if !is_exception_instance(*it) {
+            mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "Item {i} of second argument (exceptions) is not an exception"
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
+    mb_exception_group_new(message, exceptions)
+}
+
+/// `raise (Base)ExceptionGroup(...)` path: validate + build via
+/// mb_exception_group_construct, then raise the group. A validation failure
+/// leaves its TypeError/ValueError pending and is not overwritten.
+pub fn mb_exception_group_construct_and_raise(args_list: MbValue, class_name: MbValue) -> MbValue {
+    let group = mb_exception_group_construct(args_list, class_name);
+    if !group.is_none() {
+        super::class::mb_raise_instance(group);
+    }
+    MbValue::none()
+}
+
 /// except* handler: match exceptions in a group by type.
 /// Returns (matched, rest) tuple — matched is an ExceptionGroup of matching
 /// exceptions, rest is an ExceptionGroup of non-matching (or None if all matched).
