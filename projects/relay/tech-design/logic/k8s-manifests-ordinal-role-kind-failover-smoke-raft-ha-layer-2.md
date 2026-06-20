@@ -120,12 +120,3 @@ changes:
     impl_mode: hand-written
     reason: "Tests: ordinal_from_hostname parses relay-<n> and rejects others; peer_urls builds the headless-Service DNS URLs for all peers except self; membership marks the trailing even ordinal a learner."
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] relay-raft bin reads downward-API env (hostname relay-<ordinal>, N, subject, data dir, port), derives auto_membership + headless-Service peer URLs (pure config), opens RaftStore on PVC, serves RaftDriver over h2c; StatefulSet + headless Service + PDB + Dockerfile + kind smoke. Applicable.
-- [unit-test] ordinal_from_hostname, peer_urls excludes self, membership learner for trailing even ordinal; kind smoke documented manual/CI. Applicable.
-- [changes] raft_config.rs, bin/relay_raft.rs, lib re-export, Cargo [[bin]], test; manifests/Dockerfile/script created directly. Applicable.
