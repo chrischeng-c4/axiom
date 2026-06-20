@@ -820,6 +820,86 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/httpmock/mod.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "ca"
+            kind: "module"
+            public: true
+          - name: "cassette"
+            kind: "module"
+            public: true
+          - name: "stub"
+            kind: "module"
+            public: true
+          - name: "Proxy"
+            kind: "struct"
+            public: false
+          - name: "serve"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/httpmock"
+      - path: "projects/vat/src/emulator/httpmock/ca.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "CaStore"
+            kind: "struct"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/httpmock"
+      - path: "projects/vat/src/emulator/httpmock/cassette.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "Recording"
+            kind: "struct"
+            public: true
+          - name: "Cassettes"
+            kind: "struct"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/httpmock"
+      - path: "projects/vat/src/emulator/httpmock/stub.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "Matcher"
+            kind: "struct"
+            public: true
+          - name: "StubResponse"
+            kind: "struct"
+            public: true
+          - name: "Stub"
+            kind: "struct"
+            public: true
+          - name: "Registry"
+            kind: "struct"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/httpmock"
 ```
 
 ## Changes
