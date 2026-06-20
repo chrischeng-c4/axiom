@@ -145,6 +145,10 @@ crc32fast = "1"
 # the 3rd cross-family data point under the perf-is-the-product framing.
 rust_decimal = "1"
 
+# Real SQLite backend for the `sqlite3` stdlib module (bundled = compiled
+# from source, no system lib dependency). Drives sqlite3 conformance.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
 # Coroutine stack allocation for generators (#1187)
 libc = "0.2"
 
