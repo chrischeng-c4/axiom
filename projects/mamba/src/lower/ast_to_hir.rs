@@ -4916,9 +4916,12 @@ impl<'a> AstLowerer<'a> {
                             };
                             let encoding = kw("encoding", 3);
                             let errors = kw("errors", 4);
+                            // closefd is positional 6 (after newline at 5); None
+                            // means the default True (no borrowed-fd guard).
+                            let closefd = kw("closefd", 6);
                             return Some(HirExpr::Call {
                                 func: Box::new(HirExpr::StrLit("mb_open_ex".to_string(), any_ty)),
-                                args: vec![path, mode, encoding, errors],
+                                args: vec![path, mode, encoding, errors, closefd],
                                 ty: any_ty,
                             });
                         }

@@ -283,11 +283,29 @@ pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
     }
 }
 
-/// open(path, mode, encoding, errors) — like `mb_open`, but records the text
-/// codec / error-handler the caller passed so `f.encoding` / `f.errors`
-/// reflect them. None args keep `mb_open`'s text defaults (UTF-8 / strict);
-/// binary streams ignore both (they expose neither attribute).
-pub fn mb_open_ex(path: MbValue, mode: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
+/// open(path, mode, encoding, errors, closefd) — like `mb_open`, but records
+/// the text codec / error-handler the caller passed so `f.encoding` /
+/// `f.errors` reflect them. None args keep `mb_open`'s text defaults (UTF-8 /
+/// strict); binary streams ignore both (they expose neither attribute).
+/// `closefd=False` with a filename raises ValueError (CPython).
+pub fn mb_open_ex(
+    path: MbValue,
+    mode: MbValue,
+    encoding: MbValue,
+    errors: MbValue,
+    closefd: MbValue,
+) -> MbValue {
+    // closefd=False is only meaningful for an existing fd; with a filename
+    // (a str path) CPython raises ValueError.
+    if closefd.as_bool() == Some(false) && extract_str_opt(path).is_some() {
+        crate::runtime::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "Cannot use closefd=False with file name".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     let handle = mb_open(path, mode);
     if let Some(id) = handle.as_int() {
         let enc = extract_str_opt(encoding);
