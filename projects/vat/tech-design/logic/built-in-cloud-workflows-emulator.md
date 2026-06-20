@@ -176,3 +176,63 @@ commands:
       - "Executes the Core + try/retry + subworkflow step set with a ${...} expression evaluator; call: http.* steps deliver via the shared dispatcher so a workflow can drive vat's other emulators or any HTTP endpoint."
       - "Built without the emulator feature, the verb errors cleanly (no panic). An unsupported expression/step fails the execution rather than panicking."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-built-in-cloud-workflows-emulator-unit-tests
+---
+requirementDiagram
+    requirement preset_parses_builtin {
+      id: UT1
+      text: "ServicePreset round-trips cloud-workflows, and it classifies as built-in and built-in-only (validate rejects an explicit runtime)."
+      risk: medium
+      verifymethod: test
+    }
+    requirement expr_evaluates {
+      id: UT2
+      text: "The ${...} evaluator handles literals, var/member/index, arithmetic, comparison, logic, string concat/interpolation, and builtins; unsupported input yields an error, never a panic."
+      risk: high
+      verifymethod: test
+    }
+    requirement interp_core_steps {
+      id: UT3
+      text: "The interpreter runs assign + switch + for + return to the expected result with no network."
+      risk: high
+      verifymethod: test
+    }
+    requirement interp_try_and_subworkflow {
+      id: UT4
+      text: "A try block whose body errors falls through to except; a named subworkflow call binds args to params and returns its value."
+      risk: high
+      verifymethod: test
+    }
+    requirement workflow_http_dispatch {
+      id: UT5
+      text: "An execution whose main calls http.post to a local sink delivers the call and returns a SUCCEEDED execution with the expected result."
+      risk: high
+      verifymethod: test
+    }
+    test config_cloud_workflows_tests {
+      type: functional
+      verifies: preset_parses_builtin
+    }
+    test expr_evaluator_tests {
+      type: functional
+      verifies: expr_evaluates
+    }
+    test interp_core_tests {
+      type: functional
+      verifies: interp_core_steps
+    }
+    test interp_try_subworkflow_tests {
+      type: functional
+      verifies: interp_try_and_subworkflow
+    }
+    test workflows_dispatch_tests {
+      type: functional
+      verifies: workflow_http_dispatch
+    }
+```
