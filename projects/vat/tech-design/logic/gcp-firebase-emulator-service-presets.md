@@ -85,3 +85,32 @@ flowchart TD
     record --> teardown[stop service and docker rm -f if container]
     teardown --> done([return exit code])
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-emulator-evidence.schema.json"
+title: "Vat emulator service evidence"
+type: object
+description: "Service-evidence additions for GCP / Firebase emulator presets."
+properties:
+  emulator_preset:
+    type: string
+    enum: [firestore, pubsub, datastore, bigtable, spanner, firebase]
+  prepare_mode:
+    type: string
+    enum: [direct_start, docker_run, firebase_emulators]
+    description: "How the emulator service was provided: native binary, docker image, or the firebase suite."
+  exported_env:
+    type: array
+    items: { type: string }
+    description: >
+      Host env var names exported to the runner, e.g. FIRESTORE_EMULATOR_HOST,
+      PUBSUB_EMULATOR_HOST, DATASTORE_EMULATOR_HOST, BIGTABLE_EMULATOR_HOST,
+      SPANNER_EMULATOR_HOST, and for the firebase bundle additionally
+      FIREBASE_AUTH_EMULATOR_HOST, FIREBASE_DATABASE_EMULATOR_HOST,
+      FIREBASE_STORAGE_EMULATOR_HOST.
+additionalProperties: true
+```
