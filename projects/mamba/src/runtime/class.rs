@@ -1926,7 +1926,45 @@ fn instance_new_with_init_impl(
                 false
             }
         });
-        if is_exception {
+        // A user subclass of (Base)ExceptionGroup must carry the EG shape
+        // (`message` + `exceptions` tuple) so str()/repr()/split() work — the
+        // generic exception init below would only store `args`.
+        let is_eg = name == "ExceptionGroup" || name == "BaseExceptionGroup"
+            || CLASS_REGISTRY.with(|reg| {
+                reg.borrow().get(&name).map(|cls| {
+                    cls.mro.iter().any(|c| c == "BaseExceptionGroup" || c == "ExceptionGroup")
+                }).unwrap_or(false)
+            });
+        if is_eg {
+            if let Some(ptr) = args_list.as_ptr() {
+                unsafe {
+                    if let ObjData::List(ref lock) = (*ptr).data {
+                        let items = lock.read().unwrap();
+                        let message = items.first().copied().unwrap_or_else(MbValue::none);
+                        let excs = items.get(1).copied().unwrap_or_else(MbValue::none);
+                        let msg_str = super::builtins::mb_str(message);
+                        mb_setattr(instance,
+                            MbValue::from_ptr(MbObject::new_str("message".to_string())), msg_str);
+                        mb_setattr(instance,
+                            MbValue::from_ptr(MbObject::new_str("__type__".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(name.clone())));
+                        let exc_tuple = if let Some(ep) = excs.as_ptr() {
+                            match &(*ep).data {
+                                ObjData::List(ref el) => MbValue::from_ptr(
+                                    MbObject::new_tuple_borrowed(el.read().unwrap().to_vec())),
+                                _ => excs,
+                            }
+                        } else { excs };
+                        mb_setattr(instance,
+                            MbValue::from_ptr(MbObject::new_str("exceptions".to_string())), exc_tuple);
+                        let args_tuple = MbValue::from_ptr(
+                            MbObject::new_tuple_borrowed(items.to_vec()));
+                        mb_setattr(instance,
+                            MbValue::from_ptr(MbObject::new_str("args".to_string())), args_tuple);
+                    }
+                }
+            }
+        } else if is_exception {
             // Store args attribute and message
             if let Some(ptr) = args_list.as_ptr() {
                 unsafe {
