@@ -281,7 +281,6 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; the http-mock emulator verb then errors cleanly, never a panic."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
