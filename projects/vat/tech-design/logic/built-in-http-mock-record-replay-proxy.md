@@ -420,3 +420,16 @@ changes:
       - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#e2e-test"
     summary: "Add tests/vat_emulator_httpmock.rs integration test (stub-over-proxy, HTTPS-MITM stub, record/replay)."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] The Mermaid Plus flow captures the builtin/self-spawn + CA mint, the three request forms (admin / CONNECT-MITM / absolute-form), and the core resolution (stub > cassette > forward-record) — the transparent mock-killer path.
+- [schema] Evidence covers the multi-env export set, stub, and cassette records — consistent with run evidence.
+- [config] The http-mock builtin-only preset and its env SET (proxy + NO_PROXY + CA trust) are unambiguous.
+- [cli] The vat emulator http-mock verb with --ca-path/--cassette-dir and the admin/CONNECT/forward routing is clear, including no-panic guarantees.
+- [unit-test] UT1..UT7 cover preset+env, CA mint, cassette, stub matcher, stub-over-proxy, HTTPS MITM, and record/replay — the MITM and record/replay paths are exercised deterministically.
+- [e2e-test] Self-contained proxy smoke + a preset-run smoke + lean-build check.
+- [changes] Bounded list mapping Cargo, the four httpmock files, cli/run/config wiring, docs, and the test to their driving sections.
