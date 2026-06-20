@@ -7148,12 +7148,24 @@ fn mb_inplace(
 }
 
 pub fn mb_iadd(a: MbValue, b: MbValue) -> MbValue {
+    // bytearray += : extend in place and preserve object identity (CPython).
+    if a.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::ByteArray(_)) }).unwrap_or(false) {
+        super::bytes_ops::mb_bytearray_extend(a, b);
+        unsafe { super::rc::retain_if_ptr(a); }
+        return a;
+    }
     mb_inplace(a, b, "__iadd__", 0, super::builtins::mb_add)
 }
 pub fn mb_isub(a: MbValue, b: MbValue) -> MbValue {
     mb_inplace(a, b, "__isub__", 1, super::builtins::mb_sub)
 }
 pub fn mb_imul(a: MbValue, b: MbValue) -> MbValue {
+    // bytearray *= n : repeat in place and preserve object identity (CPython).
+    if a.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::ByteArray(_)) }).unwrap_or(false) {
+        super::bytes_ops::mb_bytearray_imul(a, b);
+        unsafe { super::rc::retain_if_ptr(a); }
+        return a;
+    }
     mb_inplace(a, b, "__imul__", 2, super::builtins::mb_mul)
 }
 pub fn mb_ipow(a: MbValue, b: MbValue) -> MbValue {
@@ -9699,6 +9711,9 @@ pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
             match &(*ptr).data {
                 super::rc::ObjData::List(_) => {
                     super::list_ops::mb_list_delitem(obj, key);
+                }
+                super::rc::ObjData::ByteArray(_) => {
+                    super::bytes_ops::mb_bytearray_delitem(obj, key);
                 }
                 super::rc::ObjData::Dict(_) => {
                     super::dict_ops::mb_dict_delitem(obj, key);
