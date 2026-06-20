@@ -1,0 +1,6 @@
+target
+target-linux
+.git
+**/node_modules
+**/*.md
+pkg
