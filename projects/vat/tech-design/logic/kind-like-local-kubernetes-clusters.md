@@ -482,3 +482,16 @@ changes:
       - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#e2e-test"
     summary: "Add cluster unavailable, run-scoped KUBECONFIG, and standalone lifecycle smoke coverage (gated on a real backend)."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Run-scoped and standalone cluster lifecycles are captured as a single Mermaid Plus flow with explicit error terminals (cluster_backend_unavailable, cluster_create_timeout) and a keep-policy teardown branch; entry and node kinds are well-formed.
+- [schema] ClusterRunRecord (backend enum, name, kubeconfig, node_count, optional ready_ms) and the standalone registry record are precise and additionalProperties false; consistent with surfacing through ServiceRunRecord and vat state.
+- [config] The cluster/k8s_version/nodes service additions extend the existing service contract as a fourth backing without disturbing cmd/preset/image; nodes is bounded 1..9 and the export {kubeconfig} token plus always-on KUBECONFIG export are documented.
+- [cli] vat cluster create/ls/delete/kubeconfig forms cover backend auto-resolution, isolated kubeconfig, registry reconciliation, and structured unavailable failure; flags match the standalone registry design.
+- [unit-test] UT1..UT5 cover exclusivity, backend serde, knob rejection, name sanitization, and no-panic backend resolution, all deterministic and runnable without Docker.
+- [e2e-test] Smoke set covers the always-run unavailable path plus gated run-scoped and standalone lifecycles that skip gracefully without a backend; commands and assertions are concrete.
+- [changes] The source change list is bounded and scoped: config.rs, new cluster.rs, run.rs, new commands/cluster.rs, cli.rs, commands/mod.rs, state.rs, paths.rs, lib.rs, llm.rs, README, and tests, each ref-linked to its driving section.
