@@ -173,3 +173,83 @@ commands:
       - "Each request resolves stub > cassette replay > (auto/record) forward-and-record to the real upstream; cassettes persist under --cassette-dir across runs."
       - "Built without the emulator feature, the verb errors cleanly (no panic); a malformed request never panics the proxy."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-built-in-http-mock-record-replay-proxy-unit-tests
+---
+requirementDiagram
+    requirement preset_parses_builtin {
+      id: UT1
+      text: "ServicePreset round-trips http-mock and classifies as built-in and built-in-only; prepare_builtin_service exports the proxy + CA-trust env set including NO_PROXY."
+      risk: high
+      verifymethod: test
+    }
+    requirement ca_mints_trusted_leaf {
+      id: UT2
+      text: "ca.rs mints a CA and a per-host leaf signed by it that parses as a rustls certificate."
+      risk: high
+      verifymethod: test
+    }
+    requirement cassette_roundtrip {
+      id: UT3
+      text: "cassette.rs keys a request and round-trips a stored response (including non-UTF8 body) on disk."
+      risk: medium
+      verifymethod: test
+    }
+    requirement stub_matcher {
+      id: UT4
+      text: "stub.rs matches by method/host/path and returns the registered response, else no match."
+      risk: medium
+      verifymethod: test
+    }
+    requirement stub_over_proxy {
+      id: UT5
+      text: "A stubbed plain-HTTP request through the proxy returns the stub body with no network."
+      risk: high
+      verifymethod: test
+    }
+    requirement https_mitm_stub {
+      id: UT6
+      text: "A client trusting the minted CA and using the proxy GETs a stubbed https URL via CONNECT+MITM and receives the stub (no real upstream)."
+      risk: high
+      verifymethod: test
+    }
+    requirement record_then_replay {
+      id: UT7
+      text: "With no stub, a first request to a local upstream records+forwards; a second request replays from the cassette with the upstream down."
+      risk: high
+      verifymethod: test
+    }
+    test config_http_mock_tests {
+      type: functional
+      verifies: preset_parses_builtin
+    }
+    test ca_mint_tests {
+      type: functional
+      verifies: ca_mints_trusted_leaf
+    }
+    test cassette_store_tests {
+      type: functional
+      verifies: cassette_roundtrip
+    }
+    test stub_matcher_tests {
+      type: functional
+      verifies: stub_matcher
+    }
+    test stub_over_proxy_tests {
+      type: functional
+      verifies: stub_over_proxy
+    }
+    test https_mitm_stub_tests {
+      type: functional
+      verifies: https_mitm_stub
+    }
+    test record_replay_tests {
+      type: functional
+      verifies: record_then_replay
+    }
+```
