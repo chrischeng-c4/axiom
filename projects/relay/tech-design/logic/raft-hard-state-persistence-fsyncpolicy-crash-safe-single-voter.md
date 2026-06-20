@@ -113,12 +113,3 @@ changes:
     impl_mode: hand-written
     reason: "Tests: PersistedState save/load round-trip; a sole-voter node persisted then restored via from_persisted keeps its committed log; votedFor is remembered across restore (no double-vote); loading an empty dir returns None."
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Persist (term, votedFor, log) via node.persisted() + file-backed RaftStore.save (fsync per FsyncPolicy) BEFORE flushing outbox => no vote/ack before durable; from_persisted restores. Pure step-driven core untouched. Applicable.
-- [unit-test] round-trip, sole-voter restore keeps committed log, votedFor remembered, empty-dir None. Applicable.
-- [changes] raft.rs serde+PersistedState, raft_store.rs, lib re-export, test. No external dep. Applicable.
