@@ -85,7 +85,6 @@ flowchart TD
     record --> teardown[stop service and docker rm -f if container]
     teardown --> done([return exit code])
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
