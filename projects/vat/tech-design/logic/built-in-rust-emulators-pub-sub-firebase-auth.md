@@ -245,3 +245,144 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; `vat emulator ...` then exits non-zero with a clear 'built without emulator feature' message, never a panic."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md
+    action: create
+    section: changes
+    impl_mode: hand-written
+    reason: "Define the built-in Rust emulators TD."
+  - path: projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md
+    action: validate
+    section: logic
+    impl_mode: hand-written
+    reason: "Record built-in resolution and the auth/pubsub emulator lifecycle."
+  - path: projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md
+    action: validate
+    section: schema
+    impl_mode: hand-written
+    reason: "Record the built-in emulator evidence and exported env."
+  - path: projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md
+    action: validate
+    section: config
+    impl_mode: hand-written
+    reason: "Record the firebase-auth preset and built-in runtime semantics."
+  - path: projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md
+    action: validate
+    section: cli
+    impl_mode: hand-written
+    reason: "Record the hidden vat emulator subcommand."
+  - path: projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Record preset parsing, builtin resolution, export, auth-mint, and pubsub publish/pull coverage."
+  - path: projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md
+    action: validate
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Record auth REST, pubsub gRPC, builtin-preset run, and lean-build coverage."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config"
+    summary: "Add the default-on emulator feature and tokio/tonic/prost/prost-types/axum/jsonwebtoken/async-trait deps plus tonic-build/protoc-bin-vendored build-deps."
+  - path: projects/vat/build.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic"
+    summary: "Compile the vendored google.pubsub.v1 proto with tonic-build + protoc-bin-vendored when the emulator feature is enabled."
+  - path: projects/vat/proto/google/pubsub/v1/pubsub.proto
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic"
+    summary: "Vendored trimmed google.pubsub.v1 Publisher/Subscriber services and messages with official field numbers."
+  - path: projects/vat/src/emulator/mod.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic"
+    summary: "Emulator module entry: serve dispatch + generated pubsub proto module."
+  - path: projects/vat/src/emulator/auth.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic"
+    summary: "Firebase Auth REST emulator (axum): Identity Toolkit endpoints + JWT idToken mint, in-memory users."
+  - path: projects/vat/src/emulator/pubsub.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic"
+    summary: "Pub/Sub gRPC emulator (tonic): Publisher/Subscriber, Publish/Pull/StreamingPull/Acknowledge, in-memory."
+  - path: projects/vat/src/commands/emulator.rs
+    action: add
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#cli"
+    summary: "vat emulator subcommand: build a tokio runtime and run the selected emulator (feature-gated stub otherwise)."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#cli"
+    summary: "Add the hidden Emulator verb and dispatch."
+  - path: projects/vat/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic"
+    summary: "Expose the emulator module behind the emulator feature."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config"
+    summary: "Add the FirebaseAuth ServicePreset and built-in-only runtime validation."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic"
+    summary: "Add ResolvedRuntime::Builtin, preset_builtin, prepare_builtin_service, and the auto->builtin resolution; fill the new exhaustive preset arms."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config"
+    summary: "Document the built-in pubsub/firebase-auth emulators in the agent usage guide."
+  - path: projects/vat/README.md
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config"
+    summary: "Document the built-in Rust emulators and the firebase-auth preset."
+  - path: projects/vat/tests
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#unit-test"
+      - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#e2e-test"
+    summary: "Add tests/vat_emulator_auth.rs and tests/vat_emulator_pubsub.rs self-contained integration tests."
+```
