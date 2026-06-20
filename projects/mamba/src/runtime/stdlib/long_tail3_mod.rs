@@ -755,16 +755,24 @@ fn register_xml_subs() {
 /// `zoneinfo.available_timezones()` → a set of IANA zone-name strings. mamba
 /// has no full tz database, but CPython guarantees a non-empty set containing
 /// "UTC"; expose the common-zone subset so consumers see a realistic set.
+/// The common IANA zone names mamba recognises (identity/key surface only; no
+/// tz-transition data without chrono-tz).
+pub const IANA_ZONES: &[&str] = &[
+    "UTC", "GMT", "America/New_York", "America/Chicago", "America/Denver",
+    "America/Los_Angeles", "America/Sao_Paulo", "America/Toronto",
+    "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Moscow",
+    "Asia/Tokyo", "Asia/Shanghai", "Asia/Kolkata", "Asia/Dubai",
+    "Asia/Singapore", "Australia/Sydney", "Pacific/Auckland",
+    "Africa/Cairo", "Africa/Johannesburg",
+];
+
+/// Is `key` a zone name mamba recognises as valid (so ZoneInfo accepts it)?
+pub fn is_known_zone(key: &str) -> bool {
+    IANA_ZONES.contains(&key)
+}
+
 unsafe extern "C" fn dispatch_available_timezones(_a: *const MbValue, _n: usize) -> MbValue {
-    const ZONES: &[&str] = &[
-        "UTC", "GMT", "America/New_York", "America/Chicago", "America/Denver",
-        "America/Los_Angeles", "America/Sao_Paulo", "America/Toronto",
-        "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Moscow",
-        "Asia/Tokyo", "Asia/Shanghai", "Asia/Kolkata", "Asia/Dubai",
-        "Asia/Singapore", "Australia/Sydney", "Pacific/Auckland",
-        "Africa/Cairo", "Africa/Johannesburg",
-    ];
-    let elems: Vec<MbValue> = ZONES
+    let elems: Vec<MbValue> = IANA_ZONES
         .iter()
         .map(|z| MbValue::from_ptr(MbObject::new_str((*z).to_string())))
         .collect();
