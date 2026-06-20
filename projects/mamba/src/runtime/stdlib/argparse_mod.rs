@@ -584,6 +584,9 @@ unsafe extern "C" fn method_add_subparsers(self_v: MbValue, args: MbValue) -> Mb
             if let Some(dest) = dict_get(kw, "dest") {
                 set_field(subs, "dest", dest);
             }
+            if let Some(required) = dict_get(kw, "required") {
+                set_field(subs, "required", required);
+            }
         }
     }
     set_field(self_v, "_subparsers", subs);
@@ -1030,6 +1033,22 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
 
     // Assign collected positionals to positional actions.
     assign_positionals(ns, &positionals, &positional_values, &mut extras, parser);
+
+    // Check if required subcommand was provided.
+    if let Some(subs) = get_field(parser, "_subparsers") {
+        if !subs.is_none() {
+            if get_field(subs, "required").and_then(|v| v.as_bool()) == Some(true) {
+                if let Some(dest_v) = get_field(subs, "dest") {
+                    if let Some(dest) = extract_str(dest_v) {
+                        if get_field(ns, &dest).is_none() {
+                            raise_exit(2);
+                            return (ns, extras);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Required-optional check.
     for act in &optionals {
