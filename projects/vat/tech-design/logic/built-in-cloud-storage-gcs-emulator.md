@@ -157,7 +157,6 @@ commands:
       - "Object names with slashes are percent-decoded; size and md5Hash are reported so SDK integrity checks pass. The runner reaches it through STORAGE_EMULATOR_HOST."
       - "Built without the emulator feature, the verb errors cleanly (no panic); an unknown object returns a structured 404."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
