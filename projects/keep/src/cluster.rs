@@ -83,7 +83,12 @@ impl ClusterConfig {
             owned_shards: self.owned_shards().len(),
             peers: self.peers.clone(),
             // Phase A has no consensus: every node is its own (single-shard-group) leader.
-            mode: if self.node_count > 1 { "sharded" } else { "single" }.to_string(),
+            mode: if self.node_count > 1 {
+                "sharded"
+            } else {
+                "single"
+            }
+            .to_string(),
         }
     }
 }
@@ -117,11 +122,16 @@ mod tests {
     #[test]
     fn sharding_partitions_keys_across_nodes() {
         // 3 nodes, 12 shards. Each node owns a disjoint subset; union = all keys.
-        let nodes: Vec<ClusterConfig> =
-            (0..3).map(|i| ClusterConfig::new(i, 3, 12, vec![])).collect();
+        let nodes: Vec<ClusterConfig> = (0..3)
+            .map(|i| ClusterConfig::new(i, 3, 12, vec![]))
+            .collect();
         for k in ["a", "b", "user:1", "result:job-42", "x"] {
             let owners: Vec<bool> = nodes.iter().map(|n| n.owns(k)).collect();
-            assert_eq!(owners.iter().filter(|&&o| o).count(), 1, "key {k} must have exactly one owner");
+            assert_eq!(
+                owners.iter().filter(|&&o| o).count(),
+                1,
+                "key {k} must have exactly one owner"
+            );
         }
         // Ownership is stable + disjoint.
         let total: usize = nodes.iter().map(|n| n.owned_shards().len()).sum();

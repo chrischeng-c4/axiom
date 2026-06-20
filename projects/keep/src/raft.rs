@@ -1,409 +1,162 @@
-//! openraft-backed consensus (HA phase C). **Single-node integration** behind
-//! the `raft` feature: it wires keep's engine as a raft state machine so writes
-//! go through the raft log (propose → commit → apply). Multi-node networking
-//! over HTTP/2 + k8s discovery + having the raft log subsume the on-disk WAL are
-//! the staged remainder (see HA.md). The default server is unaffected.
+//! raftcore-backed consensus (HA phase C). keep's engine is wired as a Raft
+//! state machine so writes go through the log (propose → commit → apply) using
+//! the shared [`raftcore`] crate (`libs/raftcore`) — the same verified engine
+//! relay uses, replacing the earlier openraft integration.
 //!
-//! Structure mirrors openraft's `raft-kv-memstore` example: an in-memory
-//! `LogStore`, an engine-backed `StateMachineStore`, and a stub `Network`
-//! (a single node never sends RPCs).
+//! - [`RaftKv`] is **one** Raft group fronting the engine. For a single node it
+//!   is a sole voter that commits locally; the command is a [`WalOp`] (the same
+//!   type the WAL + recovery already use) and apply reuses the WAL-replay path.
+//! - [`ShardedRaft`] runs **one group per owned shard** (HA phase A's keyspace
+//!   split, now each shard independently replicated), routing a write to its
+//!   key's shard.
+//!
+//! Multi-node networking (an h2c driver feeding `handle`/`take_outgoing` across
+//! pods, mirroring relay's driver) is the remaining slice; the consensus core,
+//! per-shard structure, snapshot/compaction and apply path are all here. See
+//! HA.md.
 
-use std::collections::BTreeMap;
-use std::fmt::Debug;
-use std::io::Cursor;
-use std::ops::RangeBounds;
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use openraft::storage::{LogFlushed, LogState, RaftLogStorage, RaftStateMachine, Snapshot};
-use openraft::{
-    BasicNode, Entry, EntryPayload, LogId, OptionalSend, RaftLogReader, RaftSnapshotBuilder,
-    SnapshotMeta, StorageError, StorageIOError, StoredMembership, Vote,
-};
 use parking_lot::Mutex;
+use raftcore::{Membership, NodeId, RaftNode};
 use serde::{Deserialize, Serialize};
 
+use crate::cluster::ClusterConfig;
 use crate::engine::KvEngine;
 use crate::persistence::format::WalOp;
+use crate::persistence::recovery::RecoveryManager;
+use crate::types::KvValue;
 
-/// App response for a committed command (the engine result isn't threaded back
-/// for v1 — the command's own HTTP handler already has it).
+/// App response for a committed command (the engine result isn't threaded back —
+/// the command's own HTTP handler already has it).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Response {
     pub applied: bool,
 }
 
-openraft::declare_raft_types!(
-    /// keep's raft type config: the app command is a logical mutation (`WalOp`,
-    /// the same type the WAL + recovery already use).
-    pub TypeConfig:
-        D = WalOp,
-        R = Response,
-        Node = BasicNode,
-);
-
-type NodeId = <TypeConfig as openraft::RaftTypeConfig>::NodeId;
-
-// ---------------------------------------------------------------------------
-// Log store (in-memory; the durable raft log = WAL subsumption is staged)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Default)]
-struct LogStoreInner {
-    vote: Option<Vote<NodeId>>,
-    log: BTreeMap<u64, Entry<TypeConfig>>,
-    committed: Option<LogId<NodeId>>,
-    last_purged: Option<LogId<NodeId>>,
-}
-
-#[derive(Clone, Default)]
-pub struct LogStore {
-    inner: Arc<Mutex<LogStoreInner>>,
-}
-
-impl RaftLogReader<TypeConfig> for LogStore {
-    async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(
-        &mut self,
-        range: RB,
-    ) -> Result<Vec<Entry<TypeConfig>>, StorageError<NodeId>> {
-        let inner = self.inner.lock();
-        Ok(inner.log.range(range).map(|(_, e)| e.clone()).collect())
+/// A one-member voter set for a single-node group.
+fn solo(node_id: NodeId) -> Membership {
+    Membership {
+        voters: vec![node_id],
+        learners: vec![],
     }
 }
 
-impl RaftLogStorage<TypeConfig> for LogStore {
-    type LogReader = Self;
-
-    async fn get_log_state(&mut self) -> Result<LogState<TypeConfig>, StorageError<NodeId>> {
-        let inner = self.inner.lock();
-        let last = inner.log.iter().next_back().map(|(_, e)| e.log_id);
-        let last_purged = inner.last_purged;
-        let last = last.or(last_purged);
-        Ok(LogState {
-            last_purged_log_id: last_purged,
-            last_log_id: last,
-        })
-    }
-
-    async fn get_log_reader(&mut self) -> Self::LogReader {
-        self.clone()
-    }
-
-    async fn save_vote(&mut self, vote: &Vote<NodeId>) -> Result<(), StorageError<NodeId>> {
-        self.inner.lock().vote = Some(*vote);
-        Ok(())
-    }
-
-    async fn read_vote(&mut self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
-        Ok(self.inner.lock().vote)
-    }
-
-    async fn save_committed(
-        &mut self,
-        committed: Option<LogId<NodeId>>,
-    ) -> Result<(), StorageError<NodeId>> {
-        self.inner.lock().committed = committed;
-        Ok(())
-    }
-
-    async fn read_committed(&mut self) -> Result<Option<LogId<NodeId>>, StorageError<NodeId>> {
-        Ok(self.inner.lock().committed)
-    }
-
-    async fn append<I>(
-        &mut self,
-        entries: I,
-        callback: LogFlushed<TypeConfig>,
-    ) -> Result<(), StorageError<NodeId>>
-    where
-        I: IntoIterator<Item = Entry<TypeConfig>> + OptionalSend,
-    {
-        {
-            let mut inner = self.inner.lock();
-            for e in entries {
-                inner.log.insert(e.log_id.index, e);
-            }
+/// Tick a node until it wins its (sole-voter) election.
+fn drive_to_leader(node: &mut RaftNode) {
+    for _ in 0..1000 {
+        if node.is_leader() {
+            return;
         }
-        // In-memory: the entries are durable as soon as they're inserted.
-        callback.log_io_completed(Ok(()));
-        Ok(())
-    }
-
-    async fn truncate(&mut self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
-        let mut inner = self.inner.lock();
-        inner.log.split_off(&log_id.index);
-        Ok(())
-    }
-
-    async fn purge(&mut self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
-        let mut inner = self.inner.lock();
-        inner.last_purged = Some(log_id);
-        let keep = inner.log.split_off(&(log_id.index + 1));
-        inner.log = keep;
-        Ok(())
+        node.tick();
+        let _ = node.take_outgoing();
     }
 }
 
-// ---------------------------------------------------------------------------
-// State machine (engine-backed)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredSnapshot {
-    meta: SnapshotMeta<NodeId, BasicNode>,
-    data: Vec<u8>,
-}
-
-struct SmInner {
-    last_applied: Option<LogId<NodeId>>,
-    last_membership: StoredMembership<NodeId, BasicNode>,
-    snapshot: Option<StoredSnapshot>,
-    snapshot_idx: u64,
-}
-
-#[derive(Clone)]
-pub struct StateMachineStore {
-    engine: Arc<KvEngine>,
-    inner: Arc<Mutex<SmInner>>,
-}
-
-impl StateMachineStore {
-    pub fn new(engine: Arc<KvEngine>) -> Self {
-        Self {
-            engine,
-            inner: Arc::new(Mutex::new(SmInner {
-                last_applied: None,
-                last_membership: StoredMembership::default(),
-                snapshot: None,
-                snapshot_idx: 0,
-            })),
+/// Apply any received snapshot, then newly committed commands, to the engine.
+fn apply(node: &mut RaftNode, engine: &KvEngine) {
+    if let Some(snap) = node.take_installed_snapshot() {
+        if let Ok(dump) = serde_json::from_slice::<Vec<(String, KvValue)>>(&snap) {
+            engine.load_values(dump);
+        }
+    }
+    for e in node.take_committed() {
+        if let Ok(op) = serde_json::from_slice::<WalOp>(&e.command) {
+            // Reuse the exact WAL-replay apply path.
+            let _ = RecoveryManager::apply_one(engine, &op);
         }
     }
 }
 
-impl RaftSnapshotBuilder<TypeConfig> for StateMachineStore {
-    async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, StorageError<NodeId>> {
-        let (last_applied, last_membership) = {
-            let g = self.inner.lock();
-            (g.last_applied, g.last_membership.clone())
-        };
-        // Serialize the full engine contents (key→value; TTL dropped — see
-        // KvEngine::dump_values).
-        let dump = self.engine.dump_values();
-        let data = serde_json::to_vec(&dump)
-            .map_err(|e| StorageIOError::read_state_machine(&e))?;
-
-        let snapshot_id = {
-            let mut g = self.inner.lock();
-            g.snapshot_idx += 1;
-            format!(
-                "{}-{}",
-                last_applied.map(|l| l.index).unwrap_or(0),
-                g.snapshot_idx
-            )
-        };
-        let meta = SnapshotMeta {
-            last_log_id: last_applied,
-            last_membership,
-            snapshot_id,
-        };
-        self.inner.lock().snapshot = Some(StoredSnapshot {
-            meta: meta.clone(),
-            data: data.clone(),
-        });
-        Ok(Snapshot {
-            meta,
-            snapshot: Box::new(Cursor::new(data)),
-        })
-    }
-}
-
-impl RaftStateMachine<TypeConfig> for StateMachineStore {
-    type SnapshotBuilder = Self;
-
-    async fn applied_state(
-        &mut self,
-    ) -> Result<(Option<LogId<NodeId>>, StoredMembership<NodeId, BasicNode>), StorageError<NodeId>>
-    {
-        let g = self.inner.lock();
-        Ok((g.last_applied, g.last_membership.clone()))
-    }
-
-    async fn apply<I>(&mut self, entries: I) -> Result<Vec<Response>, StorageError<NodeId>>
-    where
-        I: IntoIterator<Item = Entry<TypeConfig>> + OptionalSend,
-    {
-        let mut res = Vec::new();
-        for entry in entries {
-            {
-                self.inner.lock().last_applied = Some(entry.log_id);
-            }
-            match entry.payload {
-                EntryPayload::Blank => res.push(Response { applied: false }),
-                EntryPayload::Normal(op) => {
-                    // Reuse the exact WAL-replay apply path.
-                    let _ = crate::persistence::recovery::RecoveryManager::apply_one(&self.engine, &op);
-                    res.push(Response { applied: true });
-                }
-                EntryPayload::Membership(m) => {
-                    self.inner.lock().last_membership =
-                        StoredMembership::new(Some(entry.log_id), m);
-                    res.push(Response { applied: false });
-                }
-            }
-        }
-        Ok(res)
-    }
-
-    async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
-        self.clone()
-    }
-
-    async fn begin_receiving_snapshot(
-        &mut self,
-    ) -> Result<Box<Cursor<Vec<u8>>>, StorageError<NodeId>> {
-        Ok(Box::new(Cursor::new(Vec::new())))
-    }
-
-    async fn install_snapshot(
-        &mut self,
-        meta: &SnapshotMeta<NodeId, BasicNode>,
-        snapshot: Box<Cursor<Vec<u8>>>,
-    ) -> Result<(), StorageError<NodeId>> {
-        let data = snapshot.into_inner();
-        let dump: Vec<(String, crate::types::KvValue)> = serde_json::from_slice(&data)
-            .map_err(|e| StorageIOError::read_snapshot(Some(meta.signature()), &e))?;
-        self.engine.load_values(dump);
-        let mut g = self.inner.lock();
-        g.last_applied = meta.last_log_id;
-        g.last_membership = meta.last_membership.clone();
-        g.snapshot = Some(StoredSnapshot {
-            meta: meta.clone(),
-            data,
-        });
-        Ok(())
-    }
-
-    async fn get_current_snapshot(
-        &mut self,
-    ) -> Result<Option<Snapshot<TypeConfig>>, StorageError<NodeId>> {
-        Ok(self.inner.lock().snapshot.clone().map(|s| Snapshot {
-            meta: s.meta,
-            snapshot: Box::new(Cursor::new(s.data)),
-        }))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Network (stub: a single node never sends RPCs; multi-node = HTTP/2, staged)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone)]
-pub struct Network;
-
-impl openraft::RaftNetworkFactory<TypeConfig> for Network {
-    type Network = NetworkConn;
-    async fn new_client(&mut self, target: NodeId, _node: &BasicNode) -> Self::Network {
-        NetworkConn { _target: target }
-    }
-}
-
-pub struct NetworkConn {
-    _target: NodeId,
-}
-
-impl openraft::RaftNetwork<TypeConfig> for NetworkConn {
-    async fn append_entries(
-        &mut self,
-        _rpc: openraft::raft::AppendEntriesRequest<TypeConfig>,
-        _option: openraft::network::RPCOption,
-    ) -> Result<
-        openraft::raft::AppendEntriesResponse<NodeId>,
-        openraft::error::RPCError<NodeId, BasicNode, openraft::error::RaftError<NodeId>>,
-    > {
-        Err(unreachable_rpc())
-    }
-
-    async fn install_snapshot(
-        &mut self,
-        _rpc: openraft::raft::InstallSnapshotRequest<TypeConfig>,
-        _option: openraft::network::RPCOption,
-    ) -> Result<
-        openraft::raft::InstallSnapshotResponse<NodeId>,
-        openraft::error::RPCError<
-            NodeId,
-            BasicNode,
-            openraft::error::RaftError<NodeId, openraft::error::InstallSnapshotError>,
-        >,
-    > {
-        Err(unreachable_rpc())
-    }
-
-    async fn vote(
-        &mut self,
-        _rpc: openraft::raft::VoteRequest<NodeId>,
-        _option: openraft::network::RPCOption,
-    ) -> Result<
-        openraft::raft::VoteResponse<NodeId>,
-        openraft::error::RPCError<NodeId, BasicNode, openraft::error::RaftError<NodeId>>,
-    > {
-        Err(unreachable_rpc())
-    }
-}
-
-fn unreachable_rpc<E: std::error::Error + 'static>(
-) -> openraft::error::RPCError<NodeId, BasicNode, E> {
-    openraft::error::RPCError::Unreachable(openraft::error::Unreachable::new(
-        &std::io::Error::new(std::io::ErrorKind::Other, "multi-node RPC not wired (staged)"),
-    ))
-}
-
-// ---------------------------------------------------------------------------
-// RaftKv: single-node bring-up + a write path through consensus
-// ---------------------------------------------------------------------------
-
-pub type KeepRaft = openraft::Raft<TypeConfig>;
-
-/// A single-node raft fronting a keep engine. Writes go through the raft log.
+/// A single raftcore group fronting a keep engine; writes go through consensus.
 pub struct RaftKv {
-    pub raft: KeepRaft,
+    node: Mutex<RaftNode>,
     pub engine: Arc<KvEngine>,
 }
 
 impl RaftKv {
-    /// Build a single-node raft and initialize it as a one-member cluster.
+    /// Build a single-node group and elect it (a one-member cluster).
     pub async fn single_node(node_id: NodeId, engine: Arc<KvEngine>) -> anyhow::Result<Self> {
-        let config = Arc::new(
-            openraft::Config {
-                heartbeat_interval: 250,
-                election_timeout_min: 500,
-                election_timeout_max: 1000,
-                ..Default::default()
-            }
-            .validate()?,
-        );
-        let raft = openraft::Raft::new(
-            node_id,
-            config,
-            Network,
-            LogStore::default(),
-            StateMachineStore::new(engine.clone()),
-        )
-        .await?;
-
-        let mut members = BTreeMap::new();
-        members.insert(node_id, BasicNode::default());
-        raft.initialize(members).await?;
-        // A single-node cluster elects itself; wait so the first write doesn't
-        // race leadership.
-        raft.wait(Some(std::time::Duration::from_secs(5)))
-            .state(openraft::ServerState::Leader, "single-node leader")
-            .await?;
-        Ok(Self { raft, engine })
+        let mut node = RaftNode::new(node_id, &solo(node_id));
+        drive_to_leader(&mut node);
+        if !node.is_leader() {
+            anyhow::bail!("single-node group failed to elect a leader");
+        }
+        Ok(Self {
+            node: Mutex::new(node),
+            engine,
+        })
     }
 
-    /// Propose a mutation through raft; resolves once committed + applied.
+    /// Propose a mutation through Raft; resolves once committed + applied.
     pub async fn write(&self, op: WalOp) -> anyhow::Result<Response> {
-        let r = self.raft.client_write(op).await?;
-        Ok(r.data)
+        let bytes = serde_json::to_vec(&op)?;
+        let mut node = self.node.lock();
+        let idx = node
+            .propose(bytes)
+            .ok_or_else(|| anyhow::anyhow!("not the leader"))?;
+        // A sole voter commits immediately; apply what committed.
+        apply(&mut node, &self.engine);
+        Ok(Response {
+            applied: node.commit_index() >= idx,
+        })
+    }
+
+    /// Snapshot the engine into the Raft log, compacting entries up to the
+    /// commit point (so a lagging/new replica is shipped state, not full history).
+    pub async fn snapshot(&self) -> anyhow::Result<()> {
+        let dump = self.engine.dump_values();
+        let data = serde_json::to_vec(&dump)?;
+        let mut node = self.node.lock();
+        let up_to = node.commit_index();
+        node.compact(up_to, data);
+        Ok(())
+    }
+
+    pub fn is_leader(&self) -> bool {
+        self.node.lock().is_leader()
+    }
+}
+
+/// One Raft group per owned shard; a write routes to its key's shard.
+pub struct ShardedRaft {
+    cluster: ClusterConfig,
+    groups: HashMap<u32, RaftKv>,
+    pub engine: Arc<KvEngine>,
+}
+
+impl ShardedRaft {
+    /// Spin up one group per shard this node owns (`cluster.owned_shards()`).
+    pub async fn new(cluster: ClusterConfig, engine: Arc<KvEngine>) -> anyhow::Result<Self> {
+        let mut groups = HashMap::new();
+        for shard in cluster.owned_shards() {
+            let group = RaftKv::single_node(cluster.node_id as NodeId, engine.clone()).await?;
+            groups.insert(shard, group);
+        }
+        Ok(Self {
+            cluster,
+            groups,
+            engine,
+        })
+    }
+
+    /// Route `op` to the group owning `key`'s shard, proposing it through Raft.
+    pub async fn write(&self, key: &str, op: WalOp) -> anyhow::Result<Response> {
+        let shard = self.cluster.shard_for(key);
+        let group = self.groups.get(&shard).ok_or_else(|| {
+            anyhow::anyhow!("shard {shard} for key '{key}' not owned by this node")
+        })?;
+        group.write(op).await
+    }
+
+    /// Whether this node owns `key`'s shard.
+    pub fn owns(&self, key: &str) -> bool {
+        self.cluster.owns(key)
+    }
+
+    /// Number of per-shard groups this node runs.
+    pub fn group_count(&self) -> usize {
+        self.groups.len()
     }
 }

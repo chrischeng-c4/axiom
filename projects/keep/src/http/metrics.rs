@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use axum::extract::{MatchedPath, State};
 use axum::extract::Request;
+use axum::extract::{MatchedPath, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use parking_lot::Mutex;
@@ -39,7 +39,9 @@ pub struct HttpMetrics {
 impl HttpMetrics {
     fn record(&self, method: &str, route: &str, status: u16, secs: f64) {
         let mut g = self.inner.lock();
-        let stat = g.entry((method.to_string(), route.to_string())).or_default();
+        let stat = g
+            .entry((method.to_string(), route.to_string()))
+            .or_default();
         *stat.status.entry(status).or_insert(0) += 1;
         let idx = BUCKETS
             .iter()
@@ -67,9 +69,7 @@ impl HttpMetrics {
                 ));
             }
         }
-        out.push_str(
-            "# HELP keep_http_request_duration_seconds HTTP request latency by route.\n",
-        );
+        out.push_str("# HELP keep_http_request_duration_seconds HTTP request latency by route.\n");
         out.push_str("# TYPE keep_http_request_duration_seconds histogram\n");
         for ((method, route), stat) in g.iter() {
             let r = esc(route);
@@ -101,7 +101,9 @@ impl HttpMetrics {
 
 /// Escape a Prometheus label value (backslash, quote, newline).
 fn esc(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 /// `route_layer` middleware: time the request and record it against its matched
@@ -119,6 +121,11 @@ pub async fn track(
         .unwrap_or_else(|| req.uri().path().to_string());
     let start = Instant::now();
     let resp = next.run(req).await;
-    metrics.record(&method, &route, resp.status().as_u16(), start.elapsed().as_secs_f64());
+    metrics.record(
+        &method,
+        &route,
+        resp.status().as_u16(),
+        start.elapsed().as_secs_f64(),
+    );
     resp
 }
