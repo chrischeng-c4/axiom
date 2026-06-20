@@ -189,6 +189,43 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_auth.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "post"
+            kind: "function"
+            public: false
+          - name: "firebase_auth_emulator_signup_signin_lookup"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_pubsub.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "pubsub_emulator_publish_pull_ack_and_stream"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
 ```
 
 ## Unit Test
@@ -209,6 +246,8 @@ evidence:
     - path: "projects/vat/tests/behavior_vat_host_process_gpu_visibility.rs"
     - path: "projects/vat/tests/vat_cluster.rs"
     - path: "projects/vat/tests/vat_emulators.rs"
+    - path: "projects/vat/tests/vat_emulator_auth.rs"
+    - path: "projects/vat/tests/vat_emulator_pubsub.rs"
 ---
 requirementDiagram
 
