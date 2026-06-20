@@ -327,3 +327,15 @@ changes:
       - "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#e2e-test"
     summary: "Add emulator config unit tests and gated integration smokes (firestore native, pubsub docker, firebase bundle, unavailable)."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] The Mermaid Plus flow cleanly splits the firebase bundle path (firebase.json gating, native-or-docker resolve) from the single-service GCP path (component-aware native vs docker), with a shared export/readiness/runner/teardown tail and an explicit unavailable terminal — no panic.
+- [schema] The emulator evidence shape (preset enum, prepare_mode native/docker/firebase, exported_env host vars) is precise and matches how ServiceRunRecord surfaces through vat state.
+- [config] The preset enum extension keeps the existing six and adds the five GCP emulators plus the firebase bundle; the firebase.json requirement and runtime=auto semantics are unambiguous.
+- [unit-test] UT1..UT5 cover serde parsing, firebase.json validation, the gcloud-component native-availability decision, export var derivation, and the no-panic unavailable path — all deterministic and Docker-free.
+- [e2e-test] The smoke set pairs an always-run unavailable assertion with gated native-firestore, docker-pubsub, and firebase-bundle lifecycles that skip without their tooling; commands and assertions are concrete.
+- [changes] The source change list is bounded and scoped: config.rs, run.rs, llm.rs, README, and tests, each ref-linked to its driving section, with no unrelated scope.
