@@ -632,6 +632,78 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/dispatch.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "Target"
+            kind: "struct"
+            public: true
+          - name: "Oidc"
+            kind: "struct"
+            public: true
+          - name: "dispatch_http"
+            kind: "function"
+            public: true
+          - name: "mint_oidc"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/tasks.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "create_task"
+            kind: "function"
+            public: false
+          - name: "deliver"
+            kind: "function"
+            public: false
+          - name: "task_target"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/scheduler.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "create_job"
+            kind: "function"
+            public: false
+          - name: "job_action"
+            kind: "function"
+            public: false
+          - name: "fire"
+            kind: "function"
+            public: false
+          - name: "tick"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
 ```
 
 ## Changes
