@@ -141,7 +141,6 @@ commands:
       - "pubsub serves the google.pubsub.v1 gRPC API; firebase-auth serves the Firebase Auth (Identity Toolkit) REST API."
       - "When vat is built with --no-default-features (no emulator feature), the verb exits with a clear 'built without emulator feature' error, never a panic."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
