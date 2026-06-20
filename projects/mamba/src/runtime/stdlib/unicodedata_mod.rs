@@ -536,6 +536,15 @@ pub fn mb_unicodedata_is_normalized(form: MbValue, s: MbValue) -> MbValue {
 /// on lowercase queries like 'unknown', but never on a validly-formed name.
 pub fn mb_unicodedata_lookup(name: MbValue) -> MbValue {
     let n = extract_str(name).unwrap_or_default();
+    // `name()` synthesizes "UNICODE CHAR XXXX" (hex codepoint); invert exactly
+    // that format so name()/lookup() round-trip on any character.
+    if let Some(hex) = n.strip_prefix("UNICODE CHAR ") {
+        if let Ok(cp) = u32::from_str_radix(hex.trim(), 16) {
+            if let Some(ch) = char::from_u32(cp) {
+                return MbValue::from_ptr(MbObject::new_str(ch.to_string()));
+            }
+        }
+    }
     let well_formed = !n.is_empty()
         && n.chars()
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ' ' || c == '-');
