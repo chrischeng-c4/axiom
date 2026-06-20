@@ -144,3 +144,63 @@ commands:
       - "pubsub serves the google.pubsub.v1 gRPC API; firebase-auth serves the Firebase Auth (Identity Toolkit) REST API."
       - "When vat is built with --no-default-features (no emulator feature), the verb exits with a clear 'built without emulator feature' error, never a panic."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-built-in-rust-emulators-pub-sub-firebase-auth-unit-tests
+---
+requirementDiagram
+    requirement firebase_auth_preset_parses {
+      id: UT1
+      text: "ServicePreset round-trips firebase-auth via serde, and is_emulator/is_builtin classify pubsub and firebase-auth as built-in."
+      risk: medium
+      verifymethod: test
+    }
+    requirement builtin_resolves_under_auto {
+      id: UT2
+      text: "resolve_preset_runtime returns Builtin for a built-in preset under runtime=auto, and firebase-auth rejects a non-auto runtime in validation."
+      risk: high
+      verifymethod: test
+    }
+    requirement builtin_exports_host_var {
+      id: UT3
+      text: "prepare_builtin_service exports PUBSUB_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST and builds the self-exec emulator command."
+      risk: medium
+      verifymethod: test
+    }
+    requirement auth_emulator_mints_token {
+      id: UT4
+      text: "The Firebase Auth emulator signUp creates a user and mints a decodable JWT idToken; signInWithPassword and lookup round-trip."
+      risk: high
+      verifymethod: test
+    }
+    requirement pubsub_emulator_publish_pull {
+      id: UT5
+      text: "The Pub/Sub emulator accepts CreateTopic/CreateSubscription/Publish and returns the message on Pull, removing it on Acknowledge."
+      risk: high
+      verifymethod: test
+    }
+    test config_builtin_emulator_tests {
+      type: functional
+      verifies: firebase_auth_preset_parses
+    }
+    test resolve_builtin_runtime_tests {
+      type: functional
+      verifies: builtin_resolves_under_auto
+    }
+    test prepare_builtin_service_tests {
+      type: functional
+      verifies: builtin_exports_host_var
+    }
+    test firebase_auth_emulator_tests {
+      type: functional
+      verifies: auth_emulator_mints_token
+    }
+    test pubsub_emulator_tests {
+      type: functional
+      verifies: pubsub_emulator_publish_pull
+    }
+```
