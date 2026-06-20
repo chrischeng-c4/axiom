@@ -173,7 +173,6 @@ commands:
       - "Executes the Core + try/retry + subworkflow step set with a ${...} expression evaluator; call: http.* steps deliver via the shared dispatcher so a workflow can drive vat's other emulators or any HTTP endpoint."
       - "Built without the emulator feature, the verb errors cleanly (no panic). An unsupported expression/step fails the execution rather than panicking."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
