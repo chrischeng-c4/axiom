@@ -85,3 +85,12 @@ changes:
     impl_mode: hand-written
     reason: "Integration test (feature relay-wal): publish WalRecords to an in-process relay and tail them back through RelayWal, asserting in-order delivery."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] RelayWal (WalLog over relay broadcast): publish->relay /publish (seq+1), subscribe->decode_frames(LogEntry)->WalRecord; lumen folds the ordered log (derived index, no consensus). Plaintext h2c, feature-gated. Sound.
+- [unit-test] in-process relay round-trip (publish 3, tail in order).
+- [changes] wal_relay.rs + lib mod + bin wiring + Cargo feature + test.
