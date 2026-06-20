@@ -393,3 +393,16 @@ changes:
 - [unit-test] UT1..UT5 cover parsing/classification, builtin resolution + firebase-auth runtime guard, export+command, auth JWT mint, and pubsub publish/pull — deterministic and dependency-free.
 - [e2e-test] Self-contained auth REST + pubsub gRPC integration plus a builtin-preset run and a lean-build check; runnable without external tooling.
 - [changes] Bounded, scope-controlled list mapping Cargo/build.rs/proto/emulator/run.rs/cli/docs/tests to their driving sections.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic is codegen-ready: built-in vs gcloud/docker branch, self-spawned tokio runtime, pubsub gRPC + firebase-auth REST, shared readiness/export/teardown.
+- [schema] Built-in emulator evidence fully specified and consistent with run evidence.
+- [config] firebase-auth preset + built-in runtime semantics unambiguous; pubsub keeps fallback paths.
+- [cli] Hidden vat emulator verb contract is clear including the lean-build error.
+- [unit-test] UT1..UT5 give deterministic, dependency-free coverage of parsing, resolution, export, JWT mint, and publish/pull.
+- [e2e-test] Self-contained auth/pubsub integration + builtin-preset run + lean-build check.
+- [changes] Bounded change list mapping every artifact to its driving section.
