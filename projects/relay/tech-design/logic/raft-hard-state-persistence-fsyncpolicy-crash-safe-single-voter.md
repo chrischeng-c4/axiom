@@ -87,7 +87,6 @@ flowchart TD
     suite --> t_vote[grant vote + restore] --> a_vote([votedFor remembered])
     suite --> t_empty[load empty dir] --> a_empty([None, no error])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
