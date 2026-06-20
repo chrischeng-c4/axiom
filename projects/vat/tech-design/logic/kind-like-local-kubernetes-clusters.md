@@ -96,3 +96,38 @@ flowchart TD
     sa_kubeconfig --> done
     sa_delete --> done
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-cluster-evidence.schema.json"
+title: "Vat cluster evidence"
+type: object
+description: "Cluster additions to vat run evidence and the standalone cluster registry."
+properties:
+  service_cluster:
+    description: "ClusterRunRecord attached to a service evidence item when the service is a local Kubernetes cluster. Null for non-cluster services."
+    type: [object, "null"]
+    required: [backend, name, kubeconfig, node_count]
+    properties:
+      backend: { type: string, enum: [kind, k3d, minikube] }
+      name: { type: string }
+      kubeconfig: { type: string }
+      node_count: { type: integer }
+      ready_ms: { type: [integer, "null"] }
+    additionalProperties: false
+  cluster_registry_record:
+    description: "Standalone cluster registry entry under .vat/clusters/<name>/cluster.json."
+    type: object
+    required: [backend, name, kubeconfig, node_count, created_at]
+    properties:
+      backend: { type: string, enum: [kind, k3d, minikube] }
+      name: { type: string }
+      kubeconfig: { type: string }
+      node_count: { type: integer }
+      created_at: { type: string }
+    additionalProperties: false
+additionalProperties: false
+```
