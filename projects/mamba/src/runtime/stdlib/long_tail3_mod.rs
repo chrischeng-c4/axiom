@@ -1024,7 +1024,7 @@ fn register_importlib_subs() {
             ),
             (
                 "cache_from_source",
-                dispatch_empty_str as *const () as usize,
+                super::compileall_mod::cache_from_source_addr(),
             ),
             ("source_hash", dispatch_empty_str as *const () as usize),
             ("decode_source", dispatch_empty_str as *const () as usize),
