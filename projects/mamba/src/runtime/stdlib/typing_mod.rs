@@ -1174,6 +1174,80 @@ pub fn mb_typing_get_type_hints(obj: MbValue) -> MbValue {
     dict
 }
 
+/// Parse subscript arguments from an annotation string like "int" or "str, int".
+/// Recursively resolves each argument.
+fn parse_subscript_args(s: &str) -> Option<Vec<MbValue>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+    
+    for ch in s.chars() {
+        match ch {
+            '[' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ']' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                let arg_str = current.trim();
+                if let Some(arg) = resolve_annotation(arg_str) {
+                    args.push(arg);
+                    current.clear();
+                } else {
+                    return None;
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    
+    if !current.is_empty() {
+        let arg_str = current.trim();
+        if let Some(arg) = resolve_annotation(arg_str) {
+            args.push(arg);
+        } else {
+            return None;
+        }
+    }
+    
+    if args.is_empty() {
+        return None;
+    }
+    
+    Some(args)
+}
+
+/// Parse generic alias patterns like "typing.List[int]" or "List[int]".
+fn parse_generic_alias(s: &str) -> Option<MbValue> {
+    if let Some(bracket_pos) = s.find('[') {
+        if !s.ends_with(']') {
+            return None;
+        }
+        
+        let base = s[..bracket_pos].trim();
+        let subscript = &s[bracket_pos + 1..s.len() - 1];
+        
+        let name = if let Some(dot_pos) = base.rfind('.') {
+            &base[dot_pos + 1..]
+        } else {
+            base
+        };
+        
+        if let Some(args) = parse_subscript_args(subscript) {
+            let key = if args.len() == 1 {
+                args[0]
+            } else {
+                MbValue::from_ptr(MbObject::new_tuple(args))
+            };
+            return Some(special_form_subscript(name, key));
+        }
+    }
+    None
+}
+
 /// Resolve a textual annotation to a runtime type object. Known builtin
 /// scalar/container names resolve to the cached type singletons; unknown
 /// names return None (the caller raises NameError, matching CPython's
@@ -1181,20 +1255,23 @@ pub fn mb_typing_get_type_hints(obj: MbValue) -> MbValue {
 fn resolve_annotation(anno: &str) -> Option<MbValue> {
     let name = anno.trim();
     let name = name.trim_matches(|c| c == '"' || c == '\'');
+    
+    // Try parsing as a generic alias first (e.g., "typing.List[int]")
+    if name.contains('[') {
+        if let Some(result) = parse_generic_alias(name) {
+            return Some(result);
+        }
+    }
+    
     match name {
         "int" | "float" | "str" | "bool" | "bytes" | "bytearray" | "list" | "dict" | "set"
         | "frozenset" | "tuple" | "type" | "object" | "complex" | "range" | "memoryview"
         | "slice" => Some(super::super::builtins::make_type_object(name)),
         "None" | "NoneType" => Some(super::super::builtins::make_type_object("NoneType")),
         "Any" | "typing.Any" => Some(special_form("Any")),
-        // Generic aliases (`List[int]`, `Optional[str]`, `dict[str, int]`),
-        // unions (`int | str`), and bare typing special-form names are valid
-        // annotations that evaluate without error in CPython. We don't model the
-        // full construct, but they must NOT raise NameError — only genuinely
-        // undefined bare names do (preserving get_type_hints_bad_forward_ref).
-        // The Any sentinel is a stand-in so the key is still recorded.
-        s if s.contains('[')
-            || s.contains('|')
+        // Generic aliases with parsing failed, unions, and bare typing special-form names.
+        // unions (`int | str`) are not yet supported; bare typing names return Any sentinel.
+        s if s.contains('|')
             || matches!(
                 s,
                 "Optional" | "List" | "Dict" | "Set" | "Tuple" | "FrozenSet"
