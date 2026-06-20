@@ -20,9 +20,10 @@ use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use walkdir::WalkDir;
 
+use crate::cluster::{self, ClusterSpec, ResolvedBackend};
 use crate::config::{
-    self, PortSpec, RetentionPolicy, RunnerConfig, ServiceConfig, ServicePreset, ServiceRuntime,
-    VatConfig,
+    self, ClusterBackend, PortSpec, RetentionPolicy, RunnerConfig, ServiceConfig, ServicePreset,
+    ServiceRuntime, VatConfig,
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
@@ -30,8 +31,8 @@ use crate::overlay;
 use crate::sandbox;
 use crate::spec::{Base, EnvSpec, GpuRequest, Isolation};
 use crate::state::{
-    ArtifactRecord, ConfigRef, ProcessStatus, RunRecord, RunnerRunRecord, ServiceRunRecord, Status,
-    TestRunEvidence,
+    ArtifactRecord, ClusterRunRecord, ConfigRef, ProcessStatus, RunRecord, RunnerRunRecord,
+    ServiceRunRecord, Status, TestRunEvidence,
 };
 use crate::{id, store};
 
@@ -456,7 +457,10 @@ fn run_configured(
         let handle = match start_service(vat, plan, &cwd, logs_dir, &run_env) {
             Ok(handle) => handle,
             Err(err) => {
-                stop_services(&mut services);
+                stop_services(
+                    &mut services,
+                    should_delete_clusters(&cfg.workspace.keep, -1),
+                );
                 persist_services(vat, &services)?;
                 return Err(err);
             }
@@ -464,7 +468,10 @@ fn run_configured(
         services.push(handle);
         let last = services.len() - 1;
         if let Err(err) = wait_for_services(vat, &mut services[last..]) {
-            stop_services(&mut services);
+            stop_services(
+                &mut services,
+                should_delete_clusters(&cfg.workspace.keep, -1),
+            );
             persist_services(vat, &services)?;
             return Err(err);
         }
@@ -511,7 +518,10 @@ fn run_configured(
         test_run.artifacts = artifacts;
     }
     vat.save()?;
-    stop_services(&mut services);
+    stop_services(
+        &mut services,
+        should_delete_clusters(&cfg.workspace.keep, code),
+    );
     persist_services(vat, &services)?;
     let summary = records
         .iter()
@@ -690,6 +700,9 @@ struct ServicePlan {
     docker_name: Option<String>,
     /// The Docker image, when this service runs as a container.
     image: Option<String>,
+    /// Set when the service is a local Kubernetes cluster; carries the cluster
+    /// evidence so teardown can delete it and `vat state` can surface it.
+    cluster: Option<ClusterRunRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -707,6 +720,9 @@ struct ServiceHandle {
     ready_probe: ReadyProbe,
     /// `docker --name` when the service is a container; force-removed on stop.
     docker_name: Option<String>,
+    /// Cluster evidence when the service is a local Kubernetes cluster; the
+    /// cluster is deleted on stop subject to the `keep` policy.
+    cluster: Option<ClusterRunRecord>,
 }
 
 fn prepare_service(
@@ -715,7 +731,11 @@ fn prepare_service(
     service: &ServiceConfig,
 ) -> Result<ServicePlan> {
     let started = Instant::now();
-    let plan = if let Some(image) = &service.image {
+    let plan = if let Some(backend) = service.cluster {
+        // Cluster: an ephemeral local Kubernetes cluster (kind / k3d / minikube).
+        // Created here in the prepare phase; the runner reaches it via KUBECONFIG.
+        prepare_cluster_service(vat, service, backend)?
+    } else if let Some(image) = &service.image {
         // Explicit image: a Docker-only service (e.g. AlloyDB) with no native
         // equivalent. Always a container.
         prepare_image_service(vat, service, image)?
@@ -743,11 +763,14 @@ fn prepare_service(
             env,
             docker_name: None,
             image: None,
+            cluster: None,
         }
     };
     let mut plan = plan;
     plan.prepare_duration_ms = started.elapsed().as_millis() as u64;
-    if plan.prepare_mode != "direct_start" {
+    // Cluster services emit their own prepare checkpoint inside
+    // `prepare_cluster_service`; the container/preset note below does not apply.
+    if plan.prepare_mode != "direct_start" && plan.cluster.is_none() {
         let is_docker = plan.docker_name.is_some();
         let note = if is_docker {
             "running service via `docker run` (ephemeral, --rm)"
@@ -768,6 +791,122 @@ fn prepare_service(
         }))?;
     }
     Ok(plan)
+}
+
+/// Prepare a `cluster` service: resolve a backend, create an ephemeral local
+/// Kubernetes cluster with an isolated kubeconfig, and model it as a run-scoped
+/// service whose readiness is `kubectl get nodes`. The cluster is created here
+/// (a one-shot, minutes-long operation) and kept alive by a trivial child so it
+/// slots into the existing service start/stop machinery; the runner reaches it
+/// through the exported `KUBECONFIG`.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#logic
+fn prepare_cluster_service(
+    vat: &store::Vat,
+    service: &ServiceConfig,
+    backend: ClusterBackend,
+) -> Result<ServicePlan> {
+    let resolved = match cluster::resolve_backend(backend) {
+        Ok(resolved) => resolved,
+        Err(unavailable) => {
+            emit_jsonl(serde_json::json!({
+                "type": "error",
+                "code": "cluster_backend_unavailable",
+                "service": service.id.as_str(),
+                "requested": unavailable.requested_name(),
+                "installed": unavailable.installed,
+                "docker": unavailable.docker,
+            }))?;
+            bail!(
+                "service `{}` cluster: {}",
+                service.id,
+                unavailable.message()
+            );
+        }
+    };
+
+    let name = cluster::cluster_name(&vat.meta.id, &service.id);
+    let kubeconfig = vat
+        .dir
+        .join("services")
+        .join(&service.id)
+        .join("kubeconfig");
+    let nodes = service.nodes.unwrap_or(1);
+
+    emit_jsonl(serde_json::json!({
+        "type": "prepare",
+        "service": service.id.as_str(),
+        "kind": "cluster",
+        "backend": resolved.name(),
+        "note": "creating local Kubernetes cluster (may take minutes)",
+    }))?;
+
+    let spec = ClusterSpec {
+        name: &name,
+        k8s_version: service.k8s_version.as_deref(),
+        nodes,
+        kubeconfig: &kubeconfig,
+    };
+    let info = match resolved.create(&spec, Duration::from_secs(service.timeout_s)) {
+        Ok(info) => info,
+        Err(err) => {
+            // Best-effort cleanup so a half-created cluster does not leak.
+            let _ = resolved.delete(&name);
+            emit_jsonl(serde_json::json!({
+                "type": "error",
+                "code": "cluster_create_failed",
+                "service": service.id.as_str(),
+                "backend": resolved.name(),
+                "reason": err.to_string(),
+            }))?;
+            return Err(err)
+                .with_context(|| format!("create cluster for service `{}`", service.id));
+        }
+    };
+
+    let kubeconfig_str = info.kubeconfig.to_string_lossy().into_owned();
+    let mut env = BTreeMap::new();
+    for (key, template) in &service.export {
+        env.insert(
+            key.clone(),
+            template.replace("{kubeconfig}", &kubeconfig_str),
+        );
+    }
+    env.insert("KUBECONFIG".to_string(), kubeconfig_str.clone());
+    let upper = service.id.to_uppercase().replace(['-', '.'], "_");
+    env.insert(
+        format!("VAT_SERVICE_{upper}_KUBECONFIG"),
+        kubeconfig_str.clone(),
+    );
+
+    let record = ClusterRunRecord {
+        backend: info.backend.to_string(),
+        name: info.name.clone(),
+        kubeconfig: kubeconfig_str,
+        node_count: info.node_count,
+        ready_ms: None,
+    };
+
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command: vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "while :; do sleep 3600; done".to_string(),
+        ],
+        ready_http: None,
+        ready_probe: ReadyProbe::Cmd(resolved.ready_argv(&info.kubeconfig)),
+        timeout_s: service.timeout_s,
+        preset: None,
+        port: None,
+        prepare_mode: "cluster_create".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: None,
+        image: None,
+        cluster: Some(record),
+    })
 }
 
 fn start_service(
@@ -795,6 +934,7 @@ fn start_service(
         pid: Some(child.id()),
         exit_code: None,
         ready_http: plan.ready_http.clone(),
+        cluster: plan.cluster.clone(),
         stdout_log: stdout.to_string_lossy().into_owned(),
         stderr_log: stderr.to_string_lossy().into_owned(),
     };
@@ -808,6 +948,7 @@ fn start_service(
         timeout_s: plan.timeout_s,
         ready_probe: plan.ready_probe.clone(),
         docker_name: plan.docker_name.clone(),
+        cluster: plan.cluster.clone(),
     })
 }
 
@@ -874,6 +1015,7 @@ fn prepare_preset_service(
         env,
         docker_name: None,
         image: None,
+        cluster: None,
     })
 }
 
@@ -962,6 +1104,7 @@ fn prepare_preset_docker_service(
         env,
         docker_name: Some(name),
         image: Some(image),
+        cluster: None,
     })
 }
 
@@ -997,6 +1140,7 @@ fn prepare_image_service(
         env,
         docker_name: Some(name),
         image: Some(image.to_string()),
+        cluster: None,
     })
 }
 
@@ -1711,7 +1855,11 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
         loop {
             if readiness_ready(&ready_probe).unwrap_or(false) {
                 service.record.status = ProcessStatus::Ready;
-                service.record.ready_duration_ms = Some(started.elapsed().as_millis() as u64);
+                let ms = started.elapsed().as_millis() as u64;
+                service.record.ready_duration_ms = Some(ms);
+                if let Some(cluster) = service.record.cluster.as_mut() {
+                    cluster.ready_ms = Some(ms);
+                }
                 break;
             }
             if let Some(status) = service.child.try_wait()? {
@@ -1772,7 +1920,7 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
     vat.save()
 }
 
-fn stop_services(services: &mut [ServiceHandle]) {
+fn stop_services(services: &mut [ServiceHandle], delete_clusters: bool) {
     for service in services.iter_mut().rev() {
         if service.child.try_wait().ok().flatten().is_none() {
             kill_child(&mut service.child);
@@ -1792,6 +1940,27 @@ fn stop_services(services: &mut [ServiceHandle]) {
                 .stderr(Stdio::null())
                 .status();
         }
+        // A cluster is an external object, so removing the vat dir does NOT
+        // remove it. Delete it explicitly when the run policy says to; keep it
+        // for `kubectl` diagnosis otherwise.
+        if delete_clusters {
+            if let Some(record) = &service.cluster {
+                if let Some(backend) = ResolvedBackend::from_name(&record.backend) {
+                    let _ = backend.delete(&record.name);
+                }
+            }
+        }
+    }
+}
+
+/// Whether run-scoped clusters should be deleted at teardown, mirroring the
+/// workspace removal decision: removed → delete the cluster; kept → keep it for
+/// diagnosis. `code < 0` (an error before a clean exit) is treated as failure.
+fn should_delete_clusters(keep: &RetentionPolicy, code: i32) -> bool {
+    match keep {
+        RetentionPolicy::Always => false,
+        RetentionPolicy::Never => true,
+        RetentionPolicy::Failed => code == 0,
     }
 }
 
@@ -1810,7 +1979,7 @@ mod tests {
         ];
 
         std::thread::sleep(Duration::from_millis(100));
-        stop_services(&mut services);
+        stop_services(&mut services, false);
 
         let order = std::fs::read_to_string(&order_path).expect("stop order");
         assert_eq!(
@@ -2076,6 +2245,9 @@ mod tests {
             container_port: None,
             image_env: BTreeMap::new(),
             runtime: ServiceRuntime::default(),
+            cluster: None,
+            k8s_version: None,
+            nodes: None,
             version: None,
             port: PortSpec::default(),
             seed: Vec::new(),
@@ -2096,6 +2268,9 @@ mod tests {
             container_port: Some(container_port),
             image_env: BTreeMap::new(),
             runtime: ServiceRuntime::default(),
+            cluster: None,
+            k8s_version: None,
+            nodes: None,
             version: None,
             port: PortSpec::default(),
             seed: Vec::new(),
@@ -2240,6 +2415,7 @@ mod tests {
                 pid: Some(child.id()),
                 exit_code: None,
                 ready_http: None,
+                cluster: None,
                 stdout_log: stdout.to_string_lossy().into_owned(),
                 stderr_log: stderr.to_string_lossy().into_owned(),
             },
@@ -2247,6 +2423,7 @@ mod tests {
             timeout_s: 1,
             ready_probe: ReadyProbe::None,
             docker_name: None,
+            cluster: None,
         }
     }
 }
