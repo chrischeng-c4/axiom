@@ -204,3 +204,44 @@ requirementDiagram
       verifies: pubsub_emulator_publish_pull
     }
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-emulator-auth-rest-smoke
+    name: "Firebase Auth emulator serves signUp/signIn/lookup"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_emulator_auth -- --nocapture"
+    assertions:
+      - "spawning `vat emulator firebase-auth` and driving signUp -> signInWithPassword -> lookup over HTTP returns a JWT idToken and the created user."
+      - "no Java / firebase-tools required; the emulator starts in well under a second."
+  - id: vat-emulator-pubsub-grpc-smoke
+    name: "Pub/Sub emulator serves publish/pull over gRPC"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_emulator_pubsub -- --nocapture"
+    assertions:
+      - "a tonic client generated from the same proto can CreateTopic -> CreateSubscription -> Publish -> Pull -> Acknowledge against `vat emulator pubsub`."
+      - "no gcloud / Java required."
+  - id: vat-builtin-preset-run-smoke
+    name: "builtin preset exports the host var to the runner"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat builtin_preset_exports_host -- --nocapture --ignored"
+    assertions:
+      - "a `preset = \"firebase-auth\"` or `preset = \"pubsub\"` vat.toml run exports FIREBASE_AUTH_EMULATOR_HOST / PUBSUB_EMULATOR_HOST and the runner reaches the emulator; nothing remains after teardown."
+  - id: vat-emulator-lean-build
+    name: "lean build compiles and emulator verb errors cleanly"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo build -p vat --no-default-features"
+    assertions:
+      - "vat compiles without the emulator feature; `vat emulator ...` then exits non-zero with a clear 'built without emulator feature' message, never a panic."
+```
