@@ -71,6 +71,20 @@ fn encode_str_with_encoding(s: &str, encoding: &str) -> Option<Vec<u8>> {
             raise_type_error("'ascii' codec can't encode character");
             None
         }
+        "raw-unicode-escape" => {
+            let mut out: Vec<u8> = Vec::new();
+            for c in s.chars() {
+                let cp = c as u32;
+                if cp <= 0xFF {
+                    out.push(cp as u8);
+                } else if cp <= 0xFFFF {
+                    out.extend_from_slice(format!("\\u{:04x}", cp).as_bytes());
+                } else {
+                    out.extend_from_slice(format!("\\U{:08x}", cp).as_bytes());
+                }
+            }
+            Some(out)
+        }
         _ => {
             raise_lookup_error(&format!("unknown encoding: {encoding}"));
             None
