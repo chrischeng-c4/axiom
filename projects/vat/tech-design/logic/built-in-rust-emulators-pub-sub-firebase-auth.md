@@ -386,3 +386,16 @@ changes:
       - "projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#e2e-test"
     summary: "Add tests/vat_emulator_auth.rs and tests/vat_emulator_pubsub.rs self-contained integration tests."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] The Mermaid Plus flow cleanly branches built-in (auto) from the #143 gcloud/docker paths, then splits pubsub gRPC vs firebase-auth REST under a self-spawned tokio runtime, with a shared readiness/export/runner/teardown tail.
+- [schema] The built-in evidence shape (preset, prepare_mode builtin_emulator, exported host var, self-exec command) is precise and consistent with ServiceRunRecord.
+- [config] The firebase-auth preset and built-in runtime semantics (auto -> built-in; pubsub keeps native/docker fallback; firebase-auth built-in only) are unambiguous.
+- [cli] The hidden vat emulator verb contract (tokio runtime, bind host-port, lean-build error) is clear.
+- [unit-test] UT1..UT5 cover parsing/classification, builtin resolution + firebase-auth runtime guard, export+command, auth JWT mint, and pubsub publish/pull — deterministic and dependency-free.
+- [e2e-test] Self-contained auth REST + pubsub gRPC integration plus a builtin-preset run and a lean-build check; runnable without external tooling.
+- [changes] Bounded, scope-controlled list mapping Cargo/build.rs/proto/emulator/run.rs/cli/docs/tests to their driving sections.
