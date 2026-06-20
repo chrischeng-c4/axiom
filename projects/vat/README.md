@@ -256,16 +256,21 @@ preferred**:
   `call: http.*` steps **orchestrate the other emulators** or any HTTP endpoint;
   `cloud-storage` is a GCS JSON API v1 server over an in-memory object store
   (bucket CRUD, media/multipart upload, `alt=media` download, list with prefix,
-  delete; reports size + md5Hash). Each exports its host var
-  (`PUBSUB_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`,
+  delete; reports size + md5Hash); `http-mock` is a **transparent HTTP stub +
+  record/replay proxy with HTTPS MITM** — the mock-killer for third-party APIs.
+  Each exports its host var (`PUBSUB_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`,
   `CLOUD_TASKS_EMULATOR_HOST`, `CLOUD_SCHEDULER_EMULATOR_HOST`,
   `CLOUD_WORKFLOWS_EMULATOR_HOST`, `STORAGE_EMULATOR_HOST` — point your client's
   base URL at `http://$HOST`; the GCS SDKs read `STORAGE_EMULATOR_HOST`
-  automatically). `pubsub` still accepts `runtime = native` (gcloud) /
-  `runtime = docker` (the cloud-cli image) as a full-fidelity fallback; the
-  others are built-in only (no official emulator exists). The async emulator
-  stack sits behind a default-on `emulator` Cargo feature (`--no-default-features`
-  drops it).
+  automatically). `http-mock` instead exports `HTTP(S)_PROXY` + a CA-trust bundle
+  (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, …) so the runner's
+  outbound HTTP/HTTPS — even hardcoded `https://api.example.com` — is intercepted
+  with **no app code change**: register stubs at `$VAT_HTTP_MOCK_HOST/__admin/stubs`,
+  and unstubbed calls record to a cassette once then replay offline forever.
+  `pubsub` still accepts `runtime = native` (gcloud) / `runtime = docker` (the
+  cloud-cli image) as a full-fidelity fallback; the others are built-in only (no
+  official emulator exists). The async emulator stack sits behind a default-on
+  `emulator` Cargo feature (`--no-default-features` drops it).
   ```toml
   [[services]]
   id = "ps"

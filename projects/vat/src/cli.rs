@@ -115,6 +115,12 @@ enum Cmd {
         /// host:port to bind, e.g. 127.0.0.1:8085.
         #[arg(long)]
         host_port: String,
+        /// CA pem path (http-mock only).
+        #[arg(long)]
+        ca_path: Option<String>,
+        /// Cassette dir (http-mock only).
+        #[arg(long)]
+        cassette_dir: Option<String>,
     },
 }
 
@@ -128,6 +134,7 @@ pub enum EmulatorKind {
     CloudScheduler,
     CloudWorkflows,
     CloudStorage,
+    HttpMock,
 }
 
 /// Standalone `vat cluster` verbs. Clusters created here outlive a single run;
@@ -230,7 +237,12 @@ pub fn run() -> Result<ExitCode> {
             ClusterCmd::Kubeconfig { name, json } => commands::cluster::kubeconfig(name, json),
             ClusterCmd::Delete { name, json } => commands::cluster::delete(name, json),
         },
-        Cmd::Emulator { kind, host_port } => commands::emulator::exec(kind, host_port),
+        Cmd::Emulator {
+            kind,
+            host_port,
+            ca_path,
+            cassette_dir,
+        } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir),
     }
 }
 // CODEGEN-END

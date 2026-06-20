@@ -105,9 +105,17 @@ artifacts = ["test-results/**", "playwright-report/**"]
   (v1 REST) runs a subset Workflows interpreter whose `call: http.*` steps can
   orchestrate the other emulators; `cloud-storage` (GCS JSON API v1) is an
   in-memory object store (bucket CRUD, media/multipart upload, `alt=media`
-  download, list, delete). `pubsub` still accepts `runtime = native` (gcloud) /
-  `runtime = docker` (image) as a fidelity fallback; the others are built-in
-  only (no official emulator exists).
+  download, list, delete); `http-mock` is a transparent HTTP stub + record/replay
+  proxy with HTTPS MITM — `preset = "http-mock"` exports `HTTP(S)_PROXY` + a
+  CA-trust bundle so the runner's outbound third-party API calls (even hardcoded
+  `https://`) are intercepted with no code change. Register stubs at
+  `$VAT_HTTP_MOCK_HOST/__admin/stubs`; unstubbed calls record once then replay
+  offline. `pubsub` still accepts `runtime = native` (gcloud) / `runtime =
+  docker` (image) as a fidelity fallback; the others are built-in only (no
+  official emulator exists).
+- Removing mocks: declare the emulator presets your code touches (the runner hits
+  real local services) and add `http-mock` for arbitrary third-party HTTP — tests
+  then need no hand-rolled service or HTTP-client mocks.
 - A `cluster` service spins up an ephemeral local Kubernetes cluster (kind, k3d,
   or minikube; `auto` picks the first installed). vat creates it before the
   runner, exports `KUBECONFIG` (the `{kubeconfig}` token) plus

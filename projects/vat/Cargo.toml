@@ -19,7 +19,7 @@ path = "src/main.rs"
 # shipped binary always has them; `--no-default-features` drops the async stack
 # for a lean build (the `vat emulator` verb then errors cleanly).
 default = ["emulator"]
-emulator = ["dep:tokio", "dep:axum", "dep:jsonwebtoken", "dep:tonic", "dep:prost", "dep:prost-types", "dep:async-trait", "dep:tokio-stream", "dep:async-stream", "dep:reqwest", "dep:cron", "dep:base64", "dep:serde_yaml", "dep:percent-encoding", "dep:md-5"]
+emulator = ["dep:tokio", "dep:axum", "dep:jsonwebtoken", "dep:tonic", "dep:prost", "dep:prost-types", "dep:async-trait", "dep:tokio-stream", "dep:async-stream", "dep:reqwest", "dep:cron", "dep:base64", "dep:serde_yaml", "dep:percent-encoding", "dep:md-5", "dep:rcgen", "dep:rustls", "dep:tokio-rustls", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 
 [dependencies]
 clap = { workspace = true, features = ["derive", "color"] }
@@ -50,6 +50,12 @@ base64 = { version = "0.22", optional = true }
 serde_yaml = { version = "0.9", optional = true }
 percent-encoding = { version = "2", optional = true }
 md-5 = { version = "0.10", optional = true }
+rcgen = { version = "0.13", optional = true }
+rustls = { version = "0.23", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+hyper = { version = "1", optional = true, features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", optional = true, features = ["tokio"] }
+http-body-util = { version = "0.1", optional = true }
 
 [build-dependencies]
 tonic-build = "0.12"
@@ -85,4 +91,8 @@ required-features = ["emulator"]
 
 [[test]]
 name = "vat_emulator_storage"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_httpmock"
 required-features = ["emulator"]
