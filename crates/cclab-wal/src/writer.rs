@@ -118,12 +118,7 @@ impl<T: Serialize> WalWriter<T> {
         // Flush and close current file
         self.flush()?;
 
-        // Get timestamp for rotated file
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let rotated_path = self.data_dir.join(format!("wal-{}.log", timestamp));
+        let rotated_path = rotated_path_for_now(&self.data_dir);
 
         // Create new WAL file first (before renaming old one)
         let new_path = self.data_dir.join("wal-current-new.log");
@@ -174,6 +169,21 @@ impl<T: Serialize> WalWriter<T> {
     /// Get unflushed bytes count
     pub fn unflushed_bytes(&self) -> usize {
         self.unflushed_bytes
+    }
+}
+
+fn rotated_path_for_now(data_dir: &Path) -> PathBuf {
+    let mut token = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos().min(u64::MAX as u128) as u64)
+        .unwrap_or(0);
+
+    loop {
+        let path = data_dir.join(format!("wal-{}.log", token));
+        if !path.exists() {
+            return path;
+        }
+        token = token.saturating_add(1);
     }
 }
 
@@ -274,5 +284,16 @@ mod tests {
             files.len() > 1,
             "Expected multiple WAL files after rotation"
         );
+    }
+
+    #[test]
+    fn test_rotation_path_avoids_existing_archive_name() {
+        let temp_dir = TempDir::new().unwrap();
+        let first = rotated_path_for_now(temp_dir.path());
+        File::create(&first).unwrap();
+
+        let second = rotated_path_for_now(temp_dir.path());
+        assert_ne!(first, second);
+        assert!(!second.exists());
     }
 }

@@ -14,6 +14,12 @@ capability_refs:
     claim: cb-generation-and-standardize-scan-defaults
     coverage: full
     rationale: "Standardize scans and writes semantic TDs under the configured project TD root, defaulting to `<project.path>/tech-design`."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: project-dirty-scope-protection
+    claim: project-dirty-scope-protection
+    coverage: full
+    rationale: "Standardize and health project scopes protect project-local source, TD, and generated artifact boundaries during takeover scans."
 command_refs:
   - command: aw standardize
   - command: aw standardize managed

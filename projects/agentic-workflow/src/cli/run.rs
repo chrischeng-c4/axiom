@@ -1476,6 +1476,9 @@ fn capability_action_envelope_with_planning_base(
         CapabilityActionKind::CreateWi | CapabilityActionKind::LinkClaimVerification => {
             ("epicize", format!("aw wi epicize --project {project}"))
         }
+        CapabilityActionKind::ReconcileWiRefs => {
+            ("reconcile_wi_refs", agent_command(&action.command))
+        }
         CapabilityActionKind::AtomizeWi => {
             ("atomize", format!("aw wi atomize --project {project}"))
         }
@@ -1483,15 +1486,20 @@ fn capability_action_envelope_with_planning_base(
             ("execute_change", agent_command(&action.command))
         }
         CapabilityActionKind::RunVerify => ("verify", agent_command(&action.command)),
-        CapabilityActionKind::HumanConfirmRequired
+        CapabilityActionKind::DefineCapabilityMap
+        | CapabilityActionKind::HumanConfirmRequired
         | CapabilityActionKind::UpdateCapabilityStatus
         | CapabilityActionKind::EnvBlocked
-        | CapabilityActionKind::DefineVerificationContract => {
-            ("hitl", agent_command(&action.command))
-        }
+        | CapabilityActionKind::StaleProjectConfig
+        | CapabilityActionKind::DefineVerificationContract
+        | CapabilityActionKind::AssignCapabilityType => ("hitl", agent_command(&action.command)),
         CapabilityActionKind::None => ("inspect_parent", String::new()),
     };
-    let blocked = action.requires_hitl || matches!(action.kind, CapabilityActionKind::EnvBlocked);
+    let blocked = action.requires_hitl
+        || matches!(
+            action.kind,
+            CapabilityActionKind::EnvBlocked | CapabilityActionKind::StaleProjectConfig
+        );
     WorkflowEnvelope {
         action: if blocked { "blocked" } else { "dispatch" }.to_string(),
         root,
@@ -3527,6 +3535,40 @@ review_status: pending
 
         assert_eq!(envelope.action, "dispatch");
         assert_eq!(envelope.next.kind, "epicize");
+        assert!(!envelope.requires_hitl);
+    }
+
+    #[test]
+    fn reconcile_wi_refs_dispatches_capability_plan_not_epicize() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = WorkflowNode {
+            kind: "project".to_string(),
+            id: "jet".to_string(),
+        };
+        let action = CapabilityAction {
+            kind: CapabilityActionKind::ReconcileWiRefs,
+            capability_id: Some("package-manager".to_string()),
+            gap_id: Some("lockfile-parity".to_string()),
+            claim_id: None,
+            target: "Package Manager".to_string(),
+            command: "aw wi plan --project jet".to_string(),
+            reason: "active WI reference is not present in project issue inventory".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        };
+
+        let envelope = capability_action_envelope_with_planning_base(
+            root.clone(),
+            root,
+            "jet",
+            &action,
+            project_completion(false, vec![action.reason.clone()]),
+            tmp.path(),
+        );
+
+        assert_eq!(envelope.action, "dispatch");
+        assert_eq!(envelope.next.kind, "reconcile_wi_refs");
+        assert_eq!(envelope.next.command, "aw wi plan --project jet");
         assert!(!envelope.requires_hitl);
     }
 

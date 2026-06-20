@@ -195,7 +195,7 @@ pub struct PersistenceHandle {
     wal_position: Arc<AtomicU64>,
     /// Running observability counters. See [`PersistenceStats`].
     stats: Arc<StatsInner>,
-    /// Maximum unix-second timestamp among WAL files that have been rotated-out
+    /// Maximum timestamp token among WAL files that have been rotated-out
     /// so far. `0` if no rotation has happened yet. On rotation, the background
     /// thread updates this BEFORE resetting `wal_position` to the header size
     /// of the freshly-opened `wal-current.log`, so readers that grab both
@@ -367,8 +367,8 @@ impl PersistenceHandle {
         self.wal_position.load(Ordering::Relaxed)
     }
 
-    /// Returns the maximum unix-second timestamp among WAL files that have
-    /// been rotated-out so far (best-effort, eventually consistent). `0` if no
+    /// Returns the maximum timestamp token among WAL files that have been
+    /// rotated-out so far (best-effort, eventually consistent). `0` if no
     /// rotation has happened yet.
     ///
     /// Pairs with [`Self::wal_position`] to form a rotation-safe replay
@@ -456,7 +456,7 @@ impl PersistenceHandle {
         let mut wal_writer = WalWriter::<GraphOp>::new(&config.data_dir, wal_config)?;
         wal_position.store(wal_writer.position(), Ordering::Relaxed);
 
-        // Initialise max-rotated-timestamp from any pre-existing rotated WAL
+        // Initialise max-rotated-token from any pre-existing rotated WAL
         // files in the data directory. Restart-after-rotation must not lose
         // the ordering information captured in filenames.
         let initial_max_ts = Self::max_rotated_wal_ts(&config.data_dir);
@@ -490,17 +490,17 @@ impl PersistenceHandle {
 
                     if wal_writer.should_rotate() {
                         debug!("WAL rotation triggered");
-                        // Pre-compute the rotation timestamp using the same
-                        // `SystemTime::now().as_secs()` formula the WAL writer
-                        // uses. Publish it BEFORE calling `rotate()` (which
-                        // resets the per-file position) so readers can never
-                        // observe (old_ts, new_position=32). After rotate,
+                        // Pre-compute a conservative rotation token using the
+                        // same monotonic wall-clock scale as the WAL writer.
+                        // Publish it BEFORE calling `rotate()` (which resets
+                        // the per-file position) so readers can never observe
+                        // (old_token, new_position=32). After rotate,
                         // reconcile against what's actually on disk — the
-                        // writer may have rounded differently, but our
-                        // `max_rotated_wal_ts` scan is authoritative.
+                        // writer may have incremented to avoid a collision,
+                        // but our `max_rotated_wal_ts` scan is authoritative.
                         let predicted_ts = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
-                            .map(|d| d.as_secs())
+                            .map(|d| d.as_nanos().min(u64::MAX as u128) as u64)
                             .unwrap_or(0);
                         let prev_max = wal_file_timestamp.load(Ordering::Relaxed);
                         wal_file_timestamp.store(predicted_ts.max(prev_max), Ordering::Relaxed);
@@ -626,8 +626,8 @@ impl PersistenceHandle {
         Ok(())
     }
 
-    /// Scan `data_dir` for `wal-<unix-sec>.log` files and return the maximum
-    /// parsed timestamp. `0` if no rotated files exist (`wal-current.log` is
+    /// Scan `data_dir` for `wal-<timestamp-token>.log` files and return the
+    /// maximum parsed token. `0` if no rotated files exist (`wal-current.log` is
     /// excluded — it has no embedded timestamp and is treated as `u64::MAX`
     /// during replay). Used during startup and after rotation to keep
     /// `wal_file_timestamp` aligned with on-disk reality.
@@ -640,7 +640,7 @@ impl PersistenceHandle {
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            // wal-<unix-sec>.log — exclude wal-current.log explicitly.
+            // wal-<timestamp-token>.log — exclude wal-current.log explicitly.
             if let Some(stripped) = name
                 .strip_prefix("wal-")
                 .and_then(|s| s.strip_suffix(".log"))

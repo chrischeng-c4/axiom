@@ -71,6 +71,22 @@ function matchesPattern(actual, expected) {
   return actual === expected;
 }
 
+function containsPattern(actual, expected) {
+  if (expected instanceof RegExp) {
+    if (typeof actual !== "string") return false;
+    expected.lastIndex = 0;
+    return expected.test(actual);
+  }
+  return typeof actual === "string" && actual.includes(String(expected));
+}
+
+function describeLocator(locator) {
+  if (locator && typeof locator.toString === "function") {
+    return locator.toString();
+  }
+  return "locator";
+}
+
 // ── Page matchers ────────────────────────────────────────────────────────────
 
 /**
@@ -129,7 +145,7 @@ export async function toBeVisibleLocator(locator, opts) {
     (_lastValue, lastError) => {
       const msg = lastError
         ? `toBeVisible: ${lastError.message ?? String(lastError)}`
-        : `Expected element to be visible within ${timeout}ms`;
+        : `Expected ${describeLocator(locator)} to be visible within ${timeout}ms`;
       return new AssertionError(msg);
     },
   );
@@ -171,6 +187,24 @@ export async function toHaveTextLocator(locator, expected, opts) {
         ? `toHaveText: ${lastError.message ?? String(lastError)}`
         : `Expected element text to match ${displayPattern(expected)}, got ${JSON.stringify(lastValue)}`;
       return new AssertionError(msg, `- expected: ${displayPattern(expected)}\n+ actual:   ${JSON.stringify(lastValue)}`);
+    },
+  );
+}
+
+/**
+ * expect(locator).toContainText(string|regex, opts?) — polls locator.innerText().
+ */
+export async function toContainTextLocator(locator, expected, opts) {
+  const timeout = (opts && opts.timeout) != null ? opts.timeout : 5000;
+  return pollUntil(
+    () => locator.innerText(),
+    (text) => containsPattern(text, expected),
+    timeout,
+    (lastValue, lastError) => {
+      const msg = lastError
+        ? `toContainText: ${lastError.message ?? String(lastError)}`
+        : `Expected element text to contain ${displayPattern(expected)}, got ${JSON.stringify(lastValue)}`;
+      return new AssertionError(msg, `- expected contains: ${displayPattern(expected)}\n+ actual:            ${JSON.stringify(lastValue)}`);
     },
   );
 }

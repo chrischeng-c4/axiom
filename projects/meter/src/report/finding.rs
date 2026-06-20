@@ -131,7 +131,7 @@ impl Severity {
 #[serde(rename_all = "snake_case")]
 /// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 pub enum Kind {
-    /// `meter profile` capture — `{symbol,self_ns,total_ns,pct,samples,rank}` (C1 contract).
+    /// `meter measure --level sample` — `{symbol,self_ns,total_ns,pct,samples,rank}` (C1 contract).
     Hotspot,
     /// `meter profile` embed (BoundaryTracer) — `{phase,self_ns,total_ns,pct,samples}`.
     BoundaryCost,
@@ -147,9 +147,8 @@ pub enum Kind {
     Injection,
     /// `meter test` — `{name,stdout_tail}` (delegated, informational).
     TestFailure,
-    /// `meter profile`/`run` capture vitals — `{cpu_time_ms,wall_time_ms,peak_rss_bytes}`
-    /// (Info), or `{gate,limit,observed,unit}` for a breached meter.toml `[gate]`
-    /// ceiling (High => exit 1).
+    /// `meter measure`/`run` capture vitals — `{cpu_time_ms,wall_time_ms,peak_rss_bytes}`
+    /// as informational per-run evidence.
     Vital,
 }
 

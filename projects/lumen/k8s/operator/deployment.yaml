@@ -1,5 +1,7 @@
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
+# CODEGEN-BEGIN
 # The operator: a controller that watches Lumen objects cluster-wide. Ships in
-# the same `lumen` image (the `lumen-operator` binary, built with
+# the same `lumen` image (run as `lumen k8s operator`, built with
 # --features operator). HA-safe: a coordination.k8s.io Lease elects one active
 # reconciler, so this can be scaled to replicas > 1 (the others stand by).
 apiVersion: apps/v1
@@ -35,7 +37,7 @@ spec:
         - name: operator
           image: lumen:latest
           imagePullPolicy: IfNotPresent
-          command: ["/usr/bin/tini", "--", "/usr/local/bin/lumen-operator"]
+          command: ["/usr/local/bin/lumen", "k8s", "operator"]
           env:
             - name: RUST_LOG
               value: "info"
@@ -63,3 +65,4 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+# CODEGEN-END

@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-engine-exec-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,14 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/engine/exec.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/engine/exec.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ExecOutcome` | projects/rig/src/engine/exec.rs | struct | pub | 15 |  |
+| `execute` | projects/rig/src/engine/exec.rs | function | pub | 24 | execute(step: &ExecStep, vars: &VarStore) -> Result<ExecOutcome, String> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-consumer-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Consumer adapter glue.
 //!
@@ -20,14 +20,14 @@
 
 use crate::routing::shard_index;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-consumer-rs.md#source
 pub struct ShardRouter {
     pub shard_count: u32,
     pub lumen_host: String,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-consumer-rs.md#source
 impl ShardRouter {
     /// URL of the `POST /index` endpoint for `collection_id` on the
     /// correct shard. Any replica of that shard is fine — a write is

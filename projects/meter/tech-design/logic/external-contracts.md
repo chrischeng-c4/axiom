@@ -21,6 +21,12 @@ capability_refs:
     claim: benchmark-regression-api
     coverage: full
     rationale: "The EC gate verifies meter's benchmark and regression API coverage."
+  - id: runtime-resource-attribution
+    role: primary
+    gap: capture-vitals-and-measurement-contract
+    claim: capture-vitals-and-measurement-contract
+    coverage: full
+    rationale: "The EC gate verifies meter's single-knob vitals capture contract and resource gate evidence."
   - id: agent-use-first-cli
     role: primary
     gap: json-default-report-envelope-and-findings
@@ -56,6 +62,7 @@ capability_refs:
 e2e_tests:
   - id: meter-profile-phase-boundary-cost-report
     capability_id: runtime-resource-attribution
+    claim_id: profile-phase-boundary-cost-report
     contract_id: profile-phase-boundary-cost-report
     category: performance
     command: "cargo run -p meter-cli --bin meter -- profile --phases projects/meter/tests/fixtures/profile_phase_breakdown.json"
@@ -71,6 +78,7 @@ e2e_tests:
 e2e_tests:
   - id: meter-embedded-profiler-api
     capability_id: runtime-resource-attribution
+    claim_id: embedded-profiler-api
     contract_id: embedded-profiler-api
     category: performance
     command: "cargo test -p meter performance::profiler"
@@ -86,12 +94,29 @@ e2e_tests:
 e2e_tests:
   - id: meter-benchmark-regression-api
     capability_id: runtime-resource-attribution
+    claim_id: benchmark-regression-api
     contract_id: benchmark-regression-api
     category: performance
     command: "cargo test -p meter benchmark::"
     assertions:
       - "benchmark tests pass"
       - "adaptive benchmark and percentile contracts remain stable"
+```
+
+## Capture Vitals Measurement Contract EC
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: meter-capture-vitals-and-measurement-contract
+    capability_id: runtime-resource-attribution
+    claim_id: capture-vitals-and-measurement-contract
+    contract_id: capture-vitals-and-measurement-contract
+    category: performance
+    command: "cargo test -p meter capture::vitals"
+    assertions:
+      - "capture vitals tests pass"
+      - "cpu time, wall time, and peak RSS remain available as the L1 measurement contract"
 ```
 
 ## JSON Default Report Envelope And Findings EC
@@ -101,6 +126,7 @@ e2e_tests:
 e2e_tests:
   - id: meter-json-default-report-envelope-and-findings
     capability_id: agent-use-first-cli
+    claim_id: json-default-report-envelope-and-findings
     contract_id: json-default-report-envelope-and-findings
     category: behavior
     command: "cargo test -p meter report::"
@@ -116,6 +142,7 @@ e2e_tests:
 e2e_tests:
   - id: meter-offline-schema-and-catalog-self-description
     capability_id: agent-use-first-cli
+    claim_id: offline-schema-and-catalog-self-description
     contract_id: offline-schema-and-catalog-self-description
     category: behavior
     command: "cargo run -p meter-cli --bin meter -- spec --catalog --compact"
@@ -131,6 +158,7 @@ e2e_tests:
 e2e_tests:
   - id: meter-delegated-runner-exit-code-contract
     capability_id: agent-use-first-cli
+    claim_id: delegated-runner-exit-code-contract
     contract_id: delegated-runner-exit-code-contract
     category: behavior
     command: "cargo test -p meter report::builder::tests::forward_exit_overrides_natural_code"
@@ -146,6 +174,7 @@ e2e_tests:
 e2e_tests:
   - id: meter-llm-usage-guide
     capability_id: agent-use-first-cli
+    claim_id: llm-usage-guide
     contract_id: llm-usage-guide
     category: behavior
     command: "cargo run -p meter-cli --bin meter -- llm guide"

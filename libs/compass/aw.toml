@@ -1,0 +1,11 @@
+[project]
+name = "compass"
+aliases = ["cclab-compass"]
+cap_path = "README.md"
+label = "project:compass"
+
+[[workspaces]]
+name = "compass"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p cclab-compass"

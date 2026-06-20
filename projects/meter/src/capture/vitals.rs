@@ -1,16 +1,15 @@
 // SPEC-MANAGED: projects/meter/tech-design/semantic/source/projects-meter-src-capture-vitals-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! L1 vitals capture + the `meter.toml` per-project measurement contract (WI #3).
+//! L1 vitals capture + the `meter.toml` profiling-level contract (WI #3).
 //!
 //! @spec projects/meter/tech-design/logic/single-knob-meter-toml-level-gate-l1-vitals-in-capture-until-exi.md
 //!
-//! This module owns the four charter pieces of the single-knob contract:
+//! This module owns the three charter pieces of the measurement contract:
 //!
-//! - **`meter.toml` parsing** — one `level` knob (`off | vitals | sample |
-//!   hooks | deep`) plus an optional `[gate]` table (`max_peak_rss_mb`,
-//!   `max_cpu_time_ms`). Precedence: CLI flag > meter.toml > built-in default
-//!   (`vitals`). Unknown keys are rejected (`deny_unknown_fields`) so traffic
-//!   knobs can never creep in.
+//! - **`meter.toml` parsing** — one optional `level` knob (`off | vitals |
+//!   sample | hooks | deep`) for profiling policy. Unknown keys are rejected
+//!   (`deny_unknown_fields`) so traffic or project-specific threshold knobs can
+//!   never creep in.
 //! - **L1 vitals** — after the spawned child is reaped via `wait4(2)`, its
 //!   `rusage` becomes a `Finding{kind:vital}` carrying `cpu_time_ms`,
 //!   `wall_time_ms`, and `peak_rss_bytes`. Zero injection, zero sampler.
@@ -18,9 +17,6 @@
 //!   self-terminating target is never killed mid-run); `duration_cap_secs`
 //!   optionally bounds it; an opaque `drive` command's lifetime bounds the
 //!   window for server-shaped targets (meter never interprets the driver).
-//! - **Gate adjudication** — `[gate]` ceilings breached => severity High
-//!   findings that ride the existing exit ladder, with an escalation
-//!   `agent_prompt` pointing at `--level sample`.
 //!
 //! meter NEVER generates load: the only traffic-adjacent surface here is the
 //! opaque `drive` command, which meter spawns verbatim and only borrows the
@@ -85,37 +81,20 @@ impl Level {
     }
 }
 
-/// The optional `[gate]` table: per-project resource ceilings. `0` disables a
-/// gate. These are the only per-project facts not derivable from `level`.
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-vitals-rs.md#source
-pub struct GateConfig {
-    /// Peak RSS ceiling in MiB for the measured child; 0 = no gate.
-    #[serde(default)]
-    pub max_peak_rss_mb: u64,
-    /// Total cpu time (user+sys) ceiling in milliseconds; 0 = no gate.
-    #[serde(default)]
-    pub max_cpu_time_ms: u64,
-}
-
 /// The parsed `meter.toml` measurement contract.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 /// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-vitals-rs.md#source
 pub struct MeterConfig {
     /// The declared resting-state level, if any.
     pub level: Option<Level>,
-    /// Gate ceilings (all-zero when absent).
-    pub gate: GateConfig,
 }
 
-/// Raw serde shape for `meter.toml`. Unknown keys (and any future traffic key)
-/// are hard errors by charter.
+/// Raw serde shape for `meter.toml`. Unknown keys, including project-specific
+/// gates or traffic knobs, are hard errors by charter.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawMeterToml {
     level: Option<String>,
-    gate: Option<GateConfig>,
 }
 
 /// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-vitals-rs.md#source
@@ -136,10 +115,7 @@ impl MeterConfig {
             Some(s) => Some(Level::parse(&s).map_err(|e| format!("meter.toml: {e}"))?),
             None => None,
         };
-        Ok(Some(MeterConfig {
-            level,
-            gate: parsed.gate.unwrap_or_default(),
-        }))
+        Ok(Some(MeterConfig { level }))
     }
 }
 
@@ -567,24 +543,17 @@ fn write_collapsed_in(
     Ok(path)
 }
 
-/// Produce the `kind=vital` findings for one capture window: one Info finding
-/// carrying the vitals evidence, plus one High finding per breached `[gate]`
-/// ceiling. `escalate_command` is the literal next command suggested when a
-/// gate breach needs root-causing (the `--level sample` escalation funnel).
+/// Produce the `kind=vital` finding for one capture window: one Info finding
+/// carrying the measured per-run vitals evidence.
 /// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-vitals-rs.md#source
-pub fn vitals_findings(
-    vitals: &Vitals,
-    label: &str,
-    gate: &GateConfig,
-    escalate_command: &str,
-) -> Vec<Finding> {
+pub fn vitals_findings(vitals: &Vitals, label: &str) -> Vec<Finding> {
     let slug = safe_slug(label);
     let evidence = serde_json::json!({
         "cpu_time_ms": vitals.cpu_time_ms,
         "wall_time_ms": vitals.wall_time_ms,
         "peak_rss_bytes": vitals.peak_rss_bytes,
     });
-    let mut out = vec![Finding {
+    vec![Finding {
         id: finding_id(Kind::Vital, &slug),
         severity: Severity::Info,
         kind: Kind::Vital,
@@ -597,65 +566,7 @@ pub fn vitals_findings(
         invoke: Invoke::command("meter report"),
         evidence,
         location: None,
-    }];
-
-    if gate.max_peak_rss_mb > 0 {
-        let limit_bytes = gate.max_peak_rss_mb * 1024 * 1024;
-        if vitals.peak_rss_bytes > limit_bytes {
-            out.push(gate_breach_finding(
-                &slug,
-                label,
-                "max_peak_rss_mb",
-                limit_bytes,
-                vitals.peak_rss_bytes,
-                "bytes",
-                escalate_command,
-            ));
-        }
-    }
-    if gate.max_cpu_time_ms > 0 && vitals.cpu_time_ms > gate.max_cpu_time_ms {
-        out.push(gate_breach_finding(
-            &slug,
-            label,
-            "max_cpu_time_ms",
-            gate.max_cpu_time_ms,
-            vitals.cpu_time_ms,
-            "ms",
-            escalate_command,
-        ));
-    }
-    out
-}
-
-/// One breached-gate finding (severity High => exit ladder rung 1).
-fn gate_breach_finding(
-    slug: &str,
-    label: &str,
-    gate_key: &str,
-    limit: u64,
-    observed: u64,
-    unit: &str,
-    escalate_command: &str,
-) -> Finding {
-    Finding {
-        id: finding_id(Kind::Vital, format!("{slug}:{gate_key}")),
-        severity: Severity::High,
-        kind: Kind::Vital,
-        title: format!("[gate] {gate_key} breached for {label}"),
-        detail: format!("observed {observed} {unit} > declared ceiling {limit} {unit} (meter.toml [gate].{gate_key})"),
-        remediation: format!(
-            "The run exceeded the declared resource ceiling. Locate the cost by escalating one \
-             level: `{escalate_command}`."
-        ),
-        invoke: Invoke::command(escalate_command),
-        evidence: serde_json::json!({
-            "gate": gate_key,
-            "limit": limit,
-            "observed": observed,
-            "unit": unit,
-        }),
-        location: None,
-    }
+    }]
 }
 
 #[cfg(test)]
@@ -684,29 +595,23 @@ mod tests {
         std::fs::write(dir.join("meter.toml"), "level = \"vitals\"\n").unwrap();
         let cfg = MeterConfig::load(&dir).unwrap().unwrap();
         assert_eq!(cfg.level, Some(Level::Vitals));
-        assert_eq!(cfg.gate, GateConfig::default());
 
         let empty = tmp_dir("cfg-absent");
         assert!(MeterConfig::load(&empty).unwrap().is_none());
     }
 
     #[test]
-    fn config_gate_table_parses_and_unknown_keys_are_rejected() {
-        let dir = tmp_dir("cfg-gate");
-        std::fs::write(
-            dir.join("meter.toml"),
-            "level = \"sample\"\n[gate]\nmax_peak_rss_mb = 512\nmax_cpu_time_ms = 2000\n",
-        )
-        .unwrap();
+    fn config_rejects_gate_table_and_unknown_keys() {
+        let dir = tmp_dir("cfg-strict");
+        std::fs::write(dir.join("meter.toml"), "level = \"sample\"\n").unwrap();
         let cfg = MeterConfig::load(&dir).unwrap().unwrap();
         assert_eq!(cfg.level, Some(Level::Sample));
-        assert_eq!(cfg.gate.max_peak_rss_mb, 512);
-        assert_eq!(cfg.gate.max_cpu_time_ms, 2000);
 
-        // Traffic keys (or any unknown key) must be hard errors, per charter.
+        // Project-specific gates, traffic keys, or any unknown key must be
+        // hard errors. Threshold policy belongs to EC/arena, not meter.toml.
         std::fs::write(
             dir.join("meter.toml"),
-            "level = \"vitals\"\n[gate]\nmax_latency_p99_ms = 5\n",
+            "level = \"vitals\"\n[gate]\nmax_peak_rss_mb = 512\n",
         )
         .unwrap();
         assert!(MeterConfig::load(&dir).is_err());
@@ -718,7 +623,6 @@ mod tests {
     fn level_precedence_is_cli_then_toml_then_default() {
         let toml_cfg = MeterConfig {
             level: Some(Level::Sample),
-            gate: GateConfig::default(),
         };
         // CLI wins over meter.toml.
         assert_eq!(
@@ -803,46 +707,19 @@ mod tests {
     }
 
     #[test]
-    fn gate_breach_produces_high_finding_with_escalation() {
+    fn vitals_findings_are_informational_only() {
         let vitals = Vitals {
             cpu_time_ms: 5000,
             wall_time_ms: 6000,
             peak_rss_bytes: 600 * 1024 * 1024,
         };
-        let gate = GateConfig {
-            max_peak_rss_mb: 512,
-            max_cpu_time_ms: 2000,
-        };
-        let findings = vitals_findings(
-            &vitals,
-            "exec:/x",
-            &gate,
-            "meter profile --exec /x --level sample",
-        );
-        // 1 info vital + 2 gate breaches.
-        assert_eq!(findings.len(), 3);
-        assert!(findings.iter().all(|f| f.kind == Kind::Vital));
-        let breaches: Vec<_> = findings
-            .iter()
-            .filter(|f| f.severity == Severity::High)
-            .collect();
-        assert_eq!(breaches.len(), 2);
-        assert!(breaches
-            .iter()
-            .all(|f| f.invoke.command.contains("--level sample")));
-        assert!(breaches.iter().any(|f| f.id.contains("max_peak_rss_mb")));
-    }
-
-    #[test]
-    fn gate_zero_means_disabled() {
-        let vitals = Vitals {
-            cpu_time_ms: 999_999,
-            wall_time_ms: 1,
-            peak_rss_bytes: u64::MAX / 2,
-        };
-        let findings = vitals_findings(&vitals, "x", &GateConfig::default(), "meter report");
+        let findings = vitals_findings(&vitals, "exec:/x");
         assert_eq!(findings.len(), 1);
+        assert!(findings.iter().all(|f| f.kind == Kind::Vital));
         assert_eq!(findings[0].severity, Severity::Info);
+        assert_eq!(findings[0].evidence["cpu_time_ms"], 5000);
+        assert_eq!(findings[0].evidence["wall_time_ms"], 6000);
+        assert_eq!(findings[0].evidence["peak_rss_bytes"], 600 * 1024 * 1024);
     }
 
     #[test]

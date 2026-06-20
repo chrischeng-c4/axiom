@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-report-envelope-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,23 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/report/envelope.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/report/envelope.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Completion` | projects/rig/src/report/envelope.rs | struct | pub | 86 |  |
+| `EnvBlock` | projects/rig/src/report/envelope.rs | struct | pub | 95 |  |
+| `OverallStatus` | projects/rig/src/report/envelope.rs | enum | pub | 23 |  |
+| `RigReport` | projects/rig/src/report/envelope.rs | struct | pub | 115 |  |
+| `SCHEMA_VERSION` | projects/rig/src/report/envelope.rs | constant | pub | 16 |  |
+| `ScenarioCounts` | projects/rig/src/report/envelope.rs | struct | pub | 73 |  |
+| `Summary` | projects/rig/src/report/envelope.rs | struct | pub | 59 |  |
+| `current` | projects/rig/src/report/envelope.rs | function | pub | 103 | current() -> Self |
+| `exit_code` | projects/rig/src/report/envelope.rs | function | pub | 32 | exit_code(&self) -> i32 |
+| `is_clean` | projects/rig/src/report/envelope.rs | function | pub | 41 | is_clean(&self) -> bool |
+| `rank` | projects/rig/src/report/envelope.rs | function | pub | 46 | rank(&self) -> u8 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

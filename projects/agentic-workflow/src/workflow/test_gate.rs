@@ -173,7 +173,9 @@ pub fn run_test_gate(
 
 /// Execute a shell command and return error on non-zero exit.
 fn run_shell_command(cmd: &str, working_dir: &Path) -> Result<()> {
-    let output = Command::new("sh")
+    let mut command_process = Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let output = command_process
         .arg("-c")
         .arg(cmd)
         .current_dir(working_dir)

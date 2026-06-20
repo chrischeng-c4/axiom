@@ -8,13 +8,13 @@
 //!     `FromPoint { wal_file_timestamp, wal_position_in_file }`; v1: graceful
 //!     fallback to `FullReplay`; no snapshot: `FullReplay`).
 //!  4. Find all WAL files; for each one (in `find_wal_files` sort order):
-//!     - If its parsed filename timestamp is `<= wal_file_timestamp`, skip it
+//!     - If its parsed filename timestamp token is `<= wal_file_timestamp`, skip it
 //!       entirely — those ops are already captured in the snapshot.
-//!     - If its parsed filename timestamp is `> wal_file_timestamp` and this
+//!     - If its parsed filename timestamp token is `> wal_file_timestamp` and this
 //!       is the FIRST such file encountered, apply a byte-offset skip at
 //!       `wal_position_in_file` — this is the file that was active at
 //!       snapshot-time (now possibly rotated-out).
-//!     - If its parsed filename timestamp is `> wal_file_timestamp` and a
+//!     - If its parsed filename timestamp token is `> wal_file_timestamp` and a
 //!       boundary file has already been handled, replay in full.
 //!     - `wal-current.log` is treated as having timestamp `u64::MAX`.
 //!  5. Skip corrupted entries (log warning); stop on first unrecoverable read
@@ -33,7 +33,7 @@ use crate::engine::CtxInfEngine;
 use crate::error::{CtxInfError, Result};
 
 /// `wal-current.log` has no embedded timestamp — treat it as strictly-newest
-/// so it sorts after every rotated `wal-<unix-sec>.log` during replay.
+/// so it sorts after every rotated `wal-<timestamp-token>.log` during replay.
 const WAL_CURRENT_SENTINEL_TS: u64 = u64::MAX;
 
 /// Sentinel: WAL entries predating the bitemporal extension default this field to epoch.
@@ -457,10 +457,10 @@ impl RecoveryManager {
     }
 }
 
-/// Parse the unix-second timestamp from a WAL filename.
+/// Parse the numeric timestamp token from a WAL filename.
 ///
 /// - `wal-current.log` → [`WAL_CURRENT_SENTINEL_TS`] (= `u64::MAX`).
-/// - `wal-<unix-sec>.log` → the parsed number.
+/// - `wal-<timestamp-token>.log` → the parsed number.
 /// - Anything else (shouldn't happen — `find_wal_files` already filtered) →
 ///   `0`, treating the file as pre-snapshot to be safe.
 fn parse_wal_file_timestamp(path: &Path) -> u64 {
@@ -491,6 +491,12 @@ mod tests {
     fn test_parse_wal_file_timestamp_rotated() {
         let p = PathBuf::from("/data/wal-1700000000.log");
         assert_eq!(parse_wal_file_timestamp(&p), 1_700_000_000);
+    }
+
+    #[test]
+    fn test_parse_wal_file_timestamp_rotated_nanosecond_token() {
+        let p = PathBuf::from("/data/wal-1781800000123456789.log");
+        assert_eq!(parse_wal_file_timestamp(&p), 1_781_800_000_123_456_789);
     }
 
     #[test]

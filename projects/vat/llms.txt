@@ -16,8 +16,8 @@
 ## Agent Workflow
 
 - Continue: `aw run --project vat`.
-- Next managed step: `aw standardize managed next vat`.
-- Readiness: `aw health vat`.
+- Next managed step: `aw standardize managed next --project vat`.
+- Readiness: `aw health --project vat`.
 
 ## Commands
 

@@ -17,7 +17,8 @@ use crate::services::issue_parser::{validate_structured_issue, ValidationError};
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 // Top-level args for `aw wi`.
@@ -3339,8 +3340,12 @@ async fn run_find(args: FindArgs) -> Result<()> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CapabilityRow {
     capability: String,
+    capability_type: String,
+    surfaces: String,
+    ec_dimensions: String,
     current_state: String,
     gaps: String,
+    root_wi: String,
     active_wi: String,
     evidence: String,
     claim_id: Option<String>,
@@ -3349,8 +3354,29 @@ struct CapabilityRow {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CapabilityMap {
+    capability_count: usize,
     rows: Vec<CapabilityRow>,
     health_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityWiPlanReport {
+    pub action: &'static str,
+    pub kind: &'static str,
+    pub project: String,
+    pub backend: String,
+    pub path: PathBuf,
+    pub cap_path: PathBuf,
+    pub capability_count: usize,
+    pub planning_row_count: usize,
+    pub issue_count: usize,
+    pub candidate_count: usize,
+    pub reconciliation_count: usize,
+    pub resolved_wi_ref_count: usize,
+    pub warnings: Vec<String>,
+    pub agent_review_required: bool,
+    pub review_status: &'static str,
+    pub plan_command: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -3375,6 +3401,16 @@ pub(crate) async fn load_project_open_issues(
     project: &str,
     repo: Option<String>,
 ) -> Result<(String, String, Vec<Issue>)> {
+    let (backend_name, project, issues, _) =
+        load_project_open_issues_with_backend(project_root, project, repo).await?;
+    Ok((backend_name, project, issues))
+}
+
+async fn load_project_open_issues_with_backend(
+    project_root: &Path,
+    project: &str,
+    repo: Option<String>,
+) -> Result<(String, String, Vec<Issue>, Box<dyn IssueBackend>)> {
     let project_label = resolve_project_label(project_root, project)
         .map_err(|e| anyhow::anyhow!("{}", e.to_envelope_message()))?;
     let (kind, repo, host) = resolve_backend(repo, project_root)?;
@@ -3388,10 +3424,29 @@ pub(crate) async fn load_project_open_issues(
     };
     let mut issues = backend.list(&filter).await?;
     sort_work_items_for_planning(&mut issues);
-    Ok((backend.name().to_string(), project.to_string(), issues))
+    Ok((
+        backend.name().to_string(),
+        project.to_string(),
+        issues,
+        backend,
+    ))
 }
 
 async fn run_plan(args: PlanArgs) -> Result<()> {
+    let json = args.json;
+    let report = build_capability_wi_plan_report(args).await?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("{}", report.path.display());
+    }
+    Ok(())
+}
+
+pub(crate) async fn build_capability_wi_plan_report(
+    args: PlanArgs,
+) -> Result<CapabilityWiPlanReport> {
     let project_root = crate::find_project_root()?;
     let project = resolve_single_project_name(&project_root, args.project.as_deref())
         .map_err(|e| anyhow::anyhow!("{}", e.to_envelope_message()))?;
@@ -3408,40 +3463,66 @@ async fn run_plan(args: PlanArgs) -> Result<()> {
         &capability_document,
     )
     .unwrap_or_default();
-    let capability_rows =
-        crate::cli::capability::capability_rows_for_wi_plan(&capability_document, &td_refs)?;
+    let capability_report = crate::cli::capability::build_capability_report(
+        &project,
+        args.cap_path.as_deref(),
+        false,
+        false,
+    )
+    .await?;
+    let capability_rows = crate::cli::capability::capability_rows_for_wi_plan(
+        &capability_document,
+        &td_refs,
+        &capability_report.capabilities,
+    )?;
     let capability_map = CapabilityMap {
+        capability_count: capability_document.capabilities.len(),
         rows: capability_rows
             .into_iter()
-            .map(
-                |(
-                    capability,
-                    current_state,
-                    gaps,
-                    active_wi,
-                    evidence,
-                    claim_id,
-                    claim_user_story,
-                )| CapabilityRow {
-                    capability,
-                    current_state,
-                    gaps,
-                    active_wi,
-                    evidence,
-                    claim_id,
-                    claim_user_story,
-                },
-            )
+            .map(|row| CapabilityRow {
+                capability: row.capability,
+                capability_type: row.capability_type,
+                surfaces: row.surfaces,
+                ec_dimensions: row.ec_dimensions,
+                current_state: row.current_state,
+                gaps: row.gaps,
+                root_wi: row.root_wi,
+                active_wi: row.active_wi,
+                evidence: row.evidence,
+                claim_id: row.claim_id,
+                claim_user_story: row.claim_user_story,
+            })
             .collect(),
         health_note: extract_project_health_note(&cap_body),
     };
-    let (backend_name, project, issues) =
-        load_project_open_issues(&project_root, &project, args.repo.clone()).await?;
+    let (backend_name, project, issues, backend, warnings) =
+        match load_project_open_issues_with_backend(&project_root, &project, args.repo.clone())
+            .await
+        {
+            Ok((backend_name, project, issues, backend)) => {
+                (backend_name, project, issues, Some(backend), Vec::new())
+            }
+            Err(err) => (
+                "unavailable".to_string(),
+                project.clone(),
+                Vec::new(),
+                None,
+                vec![format!("issue inventory unavailable: {err:#}")],
+            ),
+        };
     let title = args
         .title
         .clone()
         .unwrap_or_else(|| format!("{} capability WI plan", project));
     let candidates = capability_wi_candidates(&capability_map.rows, &issues);
+    let resolved_wi_refs = match backend.as_deref() {
+        Some(backend) => {
+            resolve_capability_tracker_ref_lookups(&capability_map.rows, &issues, backend).await
+        }
+        None => BTreeMap::new(),
+    };
+    let reconciliations =
+        capability_tracker_reconciliations(&capability_map.rows, &issues, &resolved_wi_refs);
     let body = render_capability_wi_plan(
         &project,
         &title,
@@ -3450,6 +3531,8 @@ async fn run_plan(args: PlanArgs) -> Result<()> {
         &capability_map,
         &issues,
         &candidates,
+        &resolved_wi_refs,
+        &warnings,
     );
     let path = write_planning_artifact(
         &project,
@@ -3459,27 +3542,38 @@ async fn run_plan(args: PlanArgs) -> Result<()> {
         &body,
     )?;
 
-    if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "action": "planned",
-                "kind": "capability_plan",
-                "project": project,
-                "backend": backend_name,
-                "path": path,
-                "cap_path": cap_path,
-                "capability_count": capability_map.rows.len(),
-                "issue_count": issues.len(),
-                "candidate_count": candidates.len(),
-                "agent_review_required": true,
-                "review_status": "pending",
-            }))?
-        );
-    } else {
-        println!("{}", path.display());
+    let plan_command = capability_wi_plan_command(&project, args.cap_path.as_deref());
+    Ok(CapabilityWiPlanReport {
+        action: "planned",
+        kind: "capability_plan",
+        project: project.clone(),
+        backend: backend_name,
+        path,
+        cap_path,
+        capability_count: capability_map.capability_count,
+        planning_row_count: capability_map.rows.len(),
+        issue_count: issues.len(),
+        candidate_count: candidates.len(),
+        reconciliation_count: reconciliations.len(),
+        resolved_wi_ref_count: resolved_wi_refs.len(),
+        warnings,
+        agent_review_required: true,
+        review_status: "pending",
+        plan_command,
+    })
+}
+
+fn capability_wi_plan_command(project: &str, cap_path_override: Option<&Path>) -> String {
+    let mut command = format!("aw wi plan --project {project}");
+    if let Some(path) = cap_path_override {
+        command.push_str(" --cap-path ");
+        command.push_str(&shell_quote(&path.display().to_string()));
     }
-    Ok(())
+    command
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 async fn run_epicize(args: EpicizeArgs) -> Result<()> {
@@ -3960,9 +4054,40 @@ struct CapabilityCandidate {
     first_gate: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityTrackerReconciliation {
+    capability: String,
+    claim: String,
+    active_wi: String,
+    tracker_lookup: String,
+    capability_gap: String,
+    next_action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityTrackerRefLookup {
+    reference: String,
+    status: String,
+    title: String,
+    labels: String,
+    url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityPlanSummaryRow {
+    capability: String,
+    candidate_count: usize,
+    existing_wi_refs: Vec<String>,
+    next_operator: String,
+    first_action: String,
+}
+
 #[cfg(test)]
 struct CapabilityColumnIndices {
     capability: usize,
+    capability_type: Option<usize>,
+    surfaces: Option<usize>,
+    ec_dimensions: Option<usize>,
     current_state: usize,
     gaps: usize,
     active_wi: usize,
@@ -4046,8 +4171,21 @@ fn parse_capability_map(body: &str) -> Result<CapabilityMap> {
             }
             rows.push(CapabilityRow {
                 capability: table_cell(&cells, indices.capability),
+                capability_type: indices
+                    .capability_type
+                    .map(|idx| table_cell(&cells, idx))
+                    .unwrap_or_else(|| "-".to_string()),
+                surfaces: indices
+                    .surfaces
+                    .map(|idx| table_cell(&cells, idx))
+                    .unwrap_or_else(|| "-".to_string()),
+                ec_dimensions: indices
+                    .ec_dimensions
+                    .map(|idx| table_cell(&cells, idx))
+                    .unwrap_or_else(|| "-".to_string()),
                 current_state: table_cell(&cells, indices.current_state),
                 gaps: table_cell(&cells, indices.gaps),
+                root_wi: "-".to_string(),
                 active_wi: table_cell(&cells, indices.active_wi),
                 evidence: table_cell(&cells, indices.evidence),
                 claim_id: None,
@@ -4060,6 +4198,7 @@ fn parse_capability_map(body: &str) -> Result<CapabilityMap> {
             anyhow::bail!("capability map table is present but contains no capability rows");
         }
         return Ok(CapabilityMap {
+            capability_count: rows.len(),
             rows,
             health_note: extract_project_health_note(body),
         });
@@ -4097,12 +4236,18 @@ fn table_cell(cells: &[String], idx: usize) -> String {
 #[cfg(test)]
 fn capability_column_indices(cells: &[String]) -> Option<CapabilityColumnIndices> {
     let capability = find_table_column(cells, &["capability"])?;
+    let capability_type = find_table_column(cells, &["type", "capabilitytype"]);
+    let surfaces = find_table_column(cells, &["surface", "surfaces"]);
+    let ec_dimensions = find_table_column(cells, &["ecdimensions", "dimensions"]);
     let current_state = find_table_column(cells, &["currentstate", "state"])?;
     let gaps = find_table_column(cells, &["gaps", "gap"])?;
     let active_wi = find_table_column(cells, &["activewi", "activeworkitem", "activeworkitems"])?;
     let evidence = find_table_column(cells, &["evidence", "progress", "proof"])?;
     Some(CapabilityColumnIndices {
         capability,
+        capability_type,
+        surfaces,
+        ec_dimensions,
         current_state,
         gaps,
         active_wi,
@@ -4164,10 +4309,147 @@ fn extract_project_health_note(body: &str) -> Option<String> {
     }
 }
 
+fn has_active_wi_ref(row: &CapabilityRow) -> bool {
+    !capability_wi_summary_refs(row).is_empty()
+}
+
+fn active_wi_refs_text(row: &CapabilityRow) -> String {
+    let refs = capability_wi_summary_refs(row);
+    if refs.is_empty() {
+        review_summary_cell(&row.active_wi)
+    } else {
+        refs.join(", ")
+    }
+}
+
+fn capability_tracker_reconciliations(
+    rows: &[CapabilityRow],
+    issues: &[Issue],
+    resolved_wi_refs: &BTreeMap<String, CapabilityTrackerRefLookup>,
+) -> Vec<CapabilityTrackerReconciliation> {
+    rows.iter()
+        .filter_map(|row| {
+            let missing_refs = missing_wi_refs_for_row(row, issues);
+            if !(has_actionable_gap(row) && !missing_refs.is_empty()) {
+                return None;
+            }
+            Some(CapabilityTrackerReconciliation {
+                capability: row.capability.clone(),
+                claim: row
+                    .claim_id
+                    .as_deref()
+                    .or(row.claim_user_story.as_deref())
+                    .unwrap_or("-")
+                    .to_string(),
+                active_wi: missing_refs.join(", "),
+                tracker_lookup: tracker_lookup_summary(&missing_refs, resolved_wi_refs),
+                capability_gap: row.gaps.clone(),
+                next_action:
+                    "resolve whether the README WI ref is closed, moved, mislabeled, or should be replaced after human review"
+                        .to_string(),
+            })
+        })
+        .collect()
+}
+
+async fn resolve_capability_tracker_ref_lookups(
+    rows: &[CapabilityRow],
+    issues: &[Issue],
+    backend: &dyn IssueBackend,
+) -> BTreeMap<String, CapabilityTrackerRefLookup> {
+    let mut refs = BTreeSet::new();
+    for row in rows {
+        if !has_actionable_gap(row) {
+            continue;
+        }
+        for reference in missing_wi_refs_for_row(row, issues) {
+            refs.insert(reference);
+        }
+    }
+
+    let mut lookups = BTreeMap::new();
+    for reference in refs {
+        let lookup = match tracker_ref_lookup_id(&reference) {
+            Some(id) => match backend.get(&id).await {
+                Ok(Some(issue)) => CapabilityTrackerRefLookup {
+                    reference: reference.clone(),
+                    status: issue.state.as_str().to_string(),
+                    title: issue.title,
+                    labels: if issue.labels.is_empty() {
+                        "-".to_string()
+                    } else {
+                        issue.labels.join(", ")
+                    },
+                    url: issue.url.unwrap_or_else(|| "-".to_string()),
+                },
+                Ok(None) => CapabilityTrackerRefLookup {
+                    reference: reference.clone(),
+                    status: "not_found".to_string(),
+                    title: "-".to_string(),
+                    labels: "-".to_string(),
+                    url: "-".to_string(),
+                },
+                Err(err) => CapabilityTrackerRefLookup {
+                    reference: reference.clone(),
+                    status: "lookup_error".to_string(),
+                    title: review_summary_cell(&err.to_string()),
+                    labels: "-".to_string(),
+                    url: "-".to_string(),
+                },
+            },
+            None => CapabilityTrackerRefLookup {
+                reference: reference.clone(),
+                status: "unparsed".to_string(),
+                title: "-".to_string(),
+                labels: "-".to_string(),
+                url: "-".to_string(),
+            },
+        };
+        lookups.insert(reference, lookup);
+    }
+    lookups
+}
+
+fn tracker_ref_lookup_id(reference: &str) -> Option<String> {
+    let trimmed = reference.trim().trim_start_matches('#').trim();
+    if trimmed.chars().all(|ch| ch.is_ascii_digit()) && !trimmed.is_empty() {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+fn tracker_lookup_summary(
+    references: &[String],
+    resolved_wi_refs: &BTreeMap<String, CapabilityTrackerRefLookup>,
+) -> String {
+    let summaries = references
+        .iter()
+        .map(|reference| match resolved_wi_refs.get(reference) {
+            Some(lookup) => {
+                if lookup.title == "-" {
+                    format!("{}: {}", reference, lookup.status)
+                } else {
+                    format!("{}: {} - {}", reference, lookup.status, lookup.title)
+                }
+            }
+            None => format!("{}: lookup skipped", reference),
+        })
+        .collect::<Vec<_>>();
+    if summaries.is_empty() {
+        "-".to_string()
+    } else {
+        summaries.join("<br>")
+    }
+}
+
 fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<CapabilityCandidate> {
     let mut candidates = Vec::new();
     for row in rows {
-        if !has_actionable_gap(row) || !matching_issues_for_capability(row, issues).is_empty() {
+        if !has_actionable_gap(row)
+            || has_active_wi_ref(row)
+            || !matching_issues_for_capability(row, issues).is_empty()
+        {
             continue;
         }
         candidates.push(CapabilityCandidate {
@@ -4192,6 +4474,177 @@ fn capability_wi_candidates(rows: &[CapabilityRow], issues: &[Issue]) -> Vec<Cap
         });
     }
     candidates
+}
+
+fn capability_plan_summary_rows(
+    rows: &[CapabilityRow],
+    issues: &[Issue],
+    candidates: &[CapabilityCandidate],
+) -> Vec<CapabilityPlanSummaryRow> {
+    let mut summaries: Vec<CapabilityPlanSummaryRow> = Vec::new();
+    for row in rows {
+        let matches = matching_issues_for_capability(row, issues);
+        let row_candidates = candidates
+            .iter()
+            .filter(|candidate| {
+                candidate.source_capability == row.capability
+                    && candidate.capability_gap == row.gaps
+            })
+            .collect::<Vec<_>>();
+        if row_candidates.is_empty() && matches.is_empty() && !has_actionable_gap(row) {
+            continue;
+        }
+
+        let position = summaries
+            .iter()
+            .position(|summary| summary.capability == row.capability)
+            .unwrap_or_else(|| {
+                summaries.push(CapabilityPlanSummaryRow {
+                    capability: row.capability.clone(),
+                    candidate_count: 0,
+                    existing_wi_refs: Vec::new(),
+                    next_operator: "monitor".to_string(),
+                    first_action: "monitor".to_string(),
+                });
+                summaries.len() - 1
+            });
+        let summary = &mut summaries[position];
+        summary.candidate_count += row_candidates.len();
+        for reference in capability_wi_summary_refs(row) {
+            if !summary.existing_wi_refs.contains(&reference) {
+                summary.existing_wi_refs.push(reference);
+            }
+        }
+        for issue in &matches {
+            let reference = issue_ref(issue);
+            if !summary.existing_wi_refs.contains(&reference) {
+                summary.existing_wi_refs.push(reference);
+            }
+        }
+        let operator = suggested_capability_operator(row, issues);
+        summary.next_operator = merge_capability_plan_operator(&summary.next_operator, operator);
+        if summary.first_action == "monitor" {
+            if let Some(candidate) = row_candidates.first() {
+                summary.first_action = candidate.title.clone();
+            } else {
+                let missing_refs = missing_wi_refs_for_row(row, issues);
+                if has_actionable_gap(row) && !missing_refs.is_empty() {
+                    summary.first_action =
+                        format!("Reconcile WI reference: {}", missing_refs.join(", "));
+                } else if has_actionable_gap(row) {
+                    summary.first_action = row.gaps.clone();
+                } else if !summary.existing_wi_refs.is_empty() {
+                    summary.first_action = "review existing WI linkage".to_string();
+                }
+            }
+        }
+    }
+    summaries
+}
+
+fn capability_wi_summary_refs(row: &CapabilityRow) -> Vec<String> {
+    let mut refs = wi_summary_refs_from_text(&row.root_wi);
+    for reference in wi_summary_refs_from_text(&row.active_wi) {
+        if !refs.contains(&reference) {
+            refs.push(reference);
+        }
+    }
+    refs
+}
+
+fn missing_wi_refs_for_row(row: &CapabilityRow, issues: &[Issue]) -> Vec<String> {
+    capability_wi_summary_refs(row)
+        .into_iter()
+        .filter(|reference| {
+            !issues
+                .iter()
+                .any(|issue| issue_matches_wi_reference(reference, issue))
+        })
+        .collect()
+}
+
+fn issue_matches_wi_reference(reference: &str, issue: &Issue) -> bool {
+    if let Some(id) = tracker_ref_lookup_id(reference).and_then(|id| id.parse::<u64>().ok()) {
+        return issue.github_id.or(issue.gitlab_id) == Some(id);
+    }
+    let reference_lower = reference.to_ascii_lowercase();
+    let issue_ref = issue_ref(issue).to_ascii_lowercase();
+    let issue_slug = issue.slug.to_ascii_lowercase();
+    let title = issue.title.to_ascii_lowercase();
+    reference_lower.contains(&issue_ref)
+        || reference_lower.contains(&issue_slug)
+        || (!title.is_empty() && reference_lower.contains(&title))
+}
+
+fn wi_summary_refs_from_text(text: &str) -> Vec<String> {
+    if is_empty_active_wi(&text.to_ascii_lowercase()) {
+        return Vec::new();
+    }
+    let mut numbers = extract_hash_numbers(text).into_iter().collect::<Vec<_>>();
+    if numbers.is_empty() {
+        numbers = extract_active_wi_numbers(text);
+    }
+    numbers.sort_unstable();
+    if numbers.is_empty() {
+        vec![review_summary_cell(text)]
+    } else {
+        numbers
+            .into_iter()
+            .map(|number| format!("#{number}"))
+            .collect()
+    }
+}
+
+fn extract_active_wi_numbers(text: &str) -> Vec<u64> {
+    let mut numbers = std::collections::HashSet::new();
+    let mut digits = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            continue;
+        }
+        if !digits.is_empty() {
+            if let Ok(number) = digits.parse::<u64>() {
+                numbers.insert(number);
+            }
+            digits.clear();
+        }
+    }
+    if !digits.is_empty() {
+        if let Ok(number) = digits.parse::<u64>() {
+            numbers.insert(number);
+        }
+    }
+    let mut sorted = numbers.into_iter().collect::<Vec<_>>();
+    sorted.sort_unstable();
+    sorted
+}
+
+fn merge_capability_plan_operator(current: &str, next: &str) -> String {
+    let priority = |operator: &str| match operator {
+        "epicize -> atomize" => 4,
+        "atomize -> prioritize" => 3,
+        "prioritize" => 2,
+        "reconcile tracker ref" => 2,
+        "monitor" => 1,
+        _ => 0,
+    };
+    if priority(next) > priority(current) {
+        next.to_string()
+    } else {
+        current.to_string()
+    }
+}
+
+fn review_summary_cell(text: &str) -> String {
+    const LIMIT: usize = 140;
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= LIMIT {
+        return trimmed.to_string();
+    }
+    let mut truncated = trimmed.chars().take(LIMIT).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn has_actionable_gap(row: &CapabilityRow) -> bool {
@@ -4222,8 +4675,12 @@ fn infer_candidate_issue_type(gap: &str) -> &'static str {
 }
 
 fn matching_issues_for_capability<'a>(row: &CapabilityRow, issues: &'a [Issue]) -> Vec<&'a Issue> {
-    let explicit_numbers = extract_hash_numbers(&row.active_wi);
+    let mut explicit_numbers = extract_hash_numbers(&row.active_wi);
+    explicit_numbers.extend(extract_active_wi_numbers(&row.active_wi));
+    explicit_numbers.extend(extract_hash_numbers(&row.root_wi));
+    explicit_numbers.extend(extract_active_wi_numbers(&row.root_wi));
     let active_wi_lower = row.active_wi.to_ascii_lowercase();
+    let root_wi_lower = row.root_wi.to_ascii_lowercase();
     let keywords = capability_keywords(row);
 
     issues
@@ -4237,12 +4694,15 @@ fn matching_issues_for_capability<'a>(row: &CapabilityRow, issues: &'a [Issue]) 
                 return true;
             }
 
-            if !is_empty_active_wi(&active_wi_lower) {
+            if !is_empty_active_wi(&active_wi_lower) || !is_empty_active_wi(&root_wi_lower) {
                 let issue_ref = issue_ref(issue).to_ascii_lowercase();
                 let title = issue.title.to_ascii_lowercase();
                 if active_wi_lower.contains(&issue_ref)
                     || active_wi_lower.contains(&issue.slug.to_ascii_lowercase())
                     || (!title.is_empty() && active_wi_lower.contains(&title))
+                    || root_wi_lower.contains(&issue_ref)
+                    || root_wi_lower.contains(&issue.slug.to_ascii_lowercase())
+                    || (!title.is_empty() && root_wi_lower.contains(&title))
                 {
                     return true;
                 }
@@ -4339,9 +4799,12 @@ fn capability_keywords(row: &CapabilityRow) -> Vec<String> {
     keywords
 }
 
-fn suggested_capability_operator(row: &CapabilityRow, matches: &[&Issue]) -> &'static str {
+fn suggested_capability_operator(row: &CapabilityRow, issues: &[Issue]) -> &'static str {
+    let matches = matching_issues_for_capability(row, issues);
     if !has_actionable_gap(row) {
         "monitor"
+    } else if !missing_wi_refs_for_row(row, issues).is_empty() {
+        "reconcile tracker ref"
     } else if matches.is_empty() {
         "epicize -> atomize"
     } else if matches
@@ -4394,8 +4857,12 @@ fn render_capability_wi_plan(
     capability_map: &CapabilityMap,
     issues: &[Issue],
     candidates: &[CapabilityCandidate],
+    resolved_wi_refs: &BTreeMap<String, CapabilityTrackerRefLookup>,
+    warnings: &[String],
 ) -> String {
     let mut out = String::new();
+    let reconciliations =
+        capability_tracker_reconciliations(&capability_map.rows, issues, resolved_wi_refs);
     out.push_str("---\n");
     out.push_str("draft: true\n");
     out.push_str("kind: capability_plan\n");
@@ -4408,10 +4875,28 @@ fn render_capability_wi_plan(
     ));
     out.push_str(&format!(
         "capability_count: {}\n",
+        capability_map.capability_count
+    ));
+    out.push_str(&format!(
+        "planning_row_count: {}\n",
         capability_map.rows.len()
     ));
     out.push_str(&format!("issue_count: {}\n", issues.len()));
     out.push_str(&format!("candidate_count: {}\n", candidates.len()));
+    out.push_str(&format!(
+        "reconciliation_count: {}\n",
+        reconciliations.len()
+    ));
+    out.push_str(&format!(
+        "resolved_wi_ref_count: {}\n",
+        resolved_wi_refs.len()
+    ));
+    if !warnings.is_empty() {
+        out.push_str("warnings:\n");
+        for warning in warnings {
+            out.push_str(&format!("  - {}\n", yaml_quote(warning)));
+        }
+    }
     out.push_str("agent_review_required: true\n");
     out.push_str("review_status: pending\n");
     out.push_str("---\n\n");
@@ -4425,6 +4910,13 @@ fn render_capability_wi_plan(
     out.push_str(&format!("- Capability map: `{}`\n", cap_path.display()));
     out.push_str(&format!("- Issue backend: `{}`\n", backend_name));
     out.push_str(&format!("- Open work-items scanned: `{}`\n", issues.len()));
+    if !warnings.is_empty() {
+        out.push_str("\n### Planning Warnings\n\n");
+        for warning in warnings {
+            out.push_str(&format!("- {}\n", warning));
+        }
+        out.push('\n');
+    }
     if let Some(note) = &capability_map.health_note {
         out.push_str("\n### Project Health Note\n\n");
         out.push_str(note);
@@ -4433,14 +4925,83 @@ fn render_capability_wi_plan(
         out.push('\n');
     }
 
+    out.push_str("## Review Summary\n\n");
+    out.push_str("| Capability | Candidate WIs | Existing WI | Next operator | First action |\n");
+    out.push_str("|------------|--------------:|-------------|---------------|--------------|\n");
+    let summary_rows = capability_plan_summary_rows(&capability_map.rows, issues, candidates);
+    if summary_rows.is_empty() {
+        out.push_str("| none | 0 | none | monitor | monitor |\n\n");
+    } else {
+        for row in summary_rows {
+            let refs = if row.existing_wi_refs.is_empty() {
+                "none".to_string()
+            } else {
+                row.existing_wi_refs.join(", ")
+            };
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                markdown_table_cell(&row.capability),
+                row.candidate_count,
+                markdown_table_cell(&refs),
+                row.next_operator,
+                markdown_table_cell(&review_summary_cell(&row.first_action))
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !reconciliations.is_empty() {
+        out.push_str("## Existing WI Refs Not In Open Inventory\n\n");
+        out.push_str("These rows already have README WI references, but the current open issue inventory did not contain those IDs. Treat them as tracker reconciliation work, not automatic new WI candidates.\n\n");
+        out.push_str(
+            "| Capability | Claim | Active WI | Tracker lookup | Capability gap | Next action |\n",
+        );
+        out.push_str(
+            "|------------|-------|-----------|----------------|----------------|-------------|\n",
+        );
+        for reconciliation in &reconciliations {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} |\n",
+                markdown_table_cell(&reconciliation.capability),
+                markdown_table_cell(&reconciliation.claim),
+                markdown_table_cell(&reconciliation.active_wi),
+                markdown_table_cell(&reconciliation.tracker_lookup),
+                markdown_table_cell(&reconciliation.capability_gap),
+                markdown_table_cell(&reconciliation.next_action)
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !resolved_wi_refs.is_empty() {
+        out.push_str("## Tracker WI Ref Lookups\n\n");
+        out.push_str("These lookups resolve README WI refs that were absent from the current open issue inventory. `not_found` and `lookup_error` entries still need human review before README refs or tracker state are changed.\n\n");
+        out.push_str("| WI | Lookup status | Title | Labels | URL |\n");
+        out.push_str("|----|---------------|-------|--------|-----|\n");
+        for lookup in resolved_wi_refs.values() {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                markdown_table_cell(&lookup.reference),
+                markdown_table_cell(&lookup.status),
+                markdown_table_cell(&lookup.title),
+                markdown_table_cell(&lookup.labels),
+                markdown_table_cell(&lookup.url)
+            ));
+        }
+        out.push('\n');
+    }
+
     out.push_str("## Capability Planning Matrix\n\n");
-    out.push_str("| Capability | Claim | Current state | Gap | Active WI | Matching open WI | Next planning operator | Evidence |\n");
-    out.push_str("|------------|-------|---------------|-----|-----------|------------------|------------------------|----------|\n");
+    out.push_str("| Capability | Type | Surfaces | EC Dimensions | Claim | Current state | Gap | Active WI | Matching open WI | Next planning operator | Evidence |\n");
+    out.push_str("|------------|------|----------|---------------|-------|---------------|-----|-----------|------------------|------------------------|----------|\n");
     for row in &capability_map.rows {
         let matches = matching_issues_for_capability(row, issues);
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             markdown_table_cell(&row.capability),
+            markdown_table_cell(&row.capability_type),
+            markdown_table_cell(&row.surfaces),
+            markdown_table_cell(&row.ec_dimensions),
             markdown_table_cell(
                 row.claim_id
                     .as_deref()
@@ -4449,9 +5010,9 @@ fn render_capability_wi_plan(
             ),
             markdown_table_cell(&row.current_state),
             markdown_table_cell(&row.gaps),
-            markdown_table_cell(&row.active_wi),
+            markdown_table_cell(&active_wi_refs_text(row)),
             markdown_table_cell(&issue_refs(&matches)),
-            suggested_capability_operator(row, &matches),
+            suggested_capability_operator(row, issues),
             markdown_table_cell(&row.evidence)
         ));
     }
@@ -4471,6 +5032,14 @@ fn render_capability_wi_plan(
                 markdown_table_cell(&candidate.capability_gap),
                 markdown_table_cell(&candidate.first_gate)
             ));
+        }
+    }
+
+    if !candidates.is_empty() {
+        out.push_str("\n## Candidate WI Drafts\n\n");
+        out.push_str("Review these local draft bodies before publishing tracker issues. They are generated from the capability map and still need human acceptance.\n\n");
+        for (index, candidate) in candidates.iter().enumerate() {
+            render_capability_candidate_wi_draft(&mut out, project, cap_path, index + 1, candidate);
         }
     }
 
@@ -4494,28 +5063,150 @@ fn render_capability_wi_plan(
     }
 
     out.push_str("\n## Recommended CLI Sequence\n\n");
-    out.push_str(&format!(
-        "1. `aw wi epicize --project {} --title \"{} epics\"`\n",
-        project, project
-    ));
-    out.push_str(&format!(
-        "2. `aw wi atomize --project {} --title \"{} bounded WI candidates\"`\n",
-        project, project
-    ));
-    out.push_str(&format!(
-        "3. `aw wi prioritize --project {} --title \"{} priority review\"`\n",
-        project, project
-    ));
-    out.push_str(&format!(
-        "4. `aw run --project {} --max-ticks 1`\n",
-        project
-    ));
+    if candidates.is_empty() && !reconciliations.is_empty() {
+        out.push_str("1. Review `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref is closed, moved, mislabeled, or should be replaced.\n");
+        out.push_str("2. Update README WI refs or tracker state only after HITL reconciliation.\n");
+        out.push_str(&format!("3. `aw wi plan --project {}`\n", project));
+        out.push_str(&format!(
+            "4. `aw run --project {} --max-ticks 1`\n",
+            project
+        ));
+    } else if candidates.is_empty() {
+        out.push_str(
+            "1. Review the capability planning matrix; no new WI candidates were generated.\n",
+        );
+        out.push_str(&format!(
+            "2. `aw run --project {} --max-ticks 1`\n",
+            project
+        ));
+    } else {
+        out.push_str(&format!(
+            "1. `aw wi epicize --project {} --title \"{} epics\"`\n",
+            project, project
+        ));
+        out.push_str(&format!(
+            "2. `aw wi atomize --project {} --title \"{} bounded WI candidates\"`\n",
+            project, project
+        ));
+        out.push_str(&format!(
+            "3. `aw wi prioritize --project {} --title \"{} priority review\"`\n",
+            project, project
+        ));
+        out.push_str(&format!(
+            "4. `aw run --project {} --max-ticks 1`\n",
+            project
+        ));
+    }
 
     out.push_str("\n## Review Guardrails\n\n");
     out.push_str("- Treat README capability rows as the confirmed anchor; if the direction changed, rerun `/aw:capability` before publishing WIs.\n");
     out.push_str("- Convert each accepted candidate through `aw wi draft init` / `aw wi create`; this artifact does not mutate the tracker.\n");
+    out.push_str(
+        "- Reconcile existing WI refs before replacing README links or reopening tracker work.\n",
+    );
     out.push_str("- Non-epic WIs still need Capability Alignment, Scope, Acceptance Criteria, and Reference Context before `aw td`.\n");
     out
+}
+
+fn render_capability_candidate_wi_draft(
+    out: &mut String,
+    project: &str,
+    cap_path: &Path,
+    index: usize,
+    candidate: &CapabilityCandidate,
+) {
+    out.push_str(&format!(
+        "### Candidate {}: {}\n\n",
+        index,
+        candidate.title.trim()
+    ));
+    out.push_str(&format!("- Type: `{}`\n", candidate.issue_type));
+    out.push_str(&format!(
+        "- Source capability: `{}`\n",
+        candidate.source_capability.trim()
+    ));
+    out.push_str(&format!(
+        "- Capability gap: `{}`\n\n",
+        candidate.capability_gap.trim()
+    ));
+    out.push_str("```md\n");
+    out.push_str(&format!("# {}\n\n", candidate.title.trim()));
+    out.push_str("## Problem\n\n");
+    out.push_str(&format!(
+        "The `{}` capability has a confirmed gap or claim that is not backed by a bounded active work item in the current issue inventory.\n\n",
+        candidate.source_capability.trim()
+    ));
+    out.push_str("## Capability Alignment\n\n");
+    out.push_str(&format!(
+        "Capability: {}\n",
+        candidate.source_capability.trim()
+    ));
+    out.push_str(&format!(
+        "Capability Gap: {}\n",
+        candidate.capability_gap.trim()
+    ));
+    out.push_str(&format!(
+        "Progress Evidence: {}\n\n",
+        candidate.first_gate.trim()
+    ));
+    out.push_str("## Requirements\n\n");
+    out.push_str(
+        "- R1: Close the capability gap with implementation, linkage, or verified evidence.\n",
+    );
+    out.push_str(
+        "- R2: Keep the README capability contract, work item, and TD/CB evidence aligned.\n\n",
+    );
+    out.push_str("## Scope\n\n");
+    out.push_str("### In Scope\n\n");
+    out.push_str("- Resolve this specific capability gap or claim.\n");
+    out.push_str(
+        "- Add, repair, or link the required verification evidence from the capability map.\n\n",
+    );
+    out.push_str("### Out of Scope\n\n");
+    out.push_str("- Unrelated capability promise changes.\n");
+    out.push_str("- Publishing README status changes without passing the declared gates or recording HITL approval.\n\n");
+    out.push_str("## Acceptance Criteria\n\n");
+    out.push_str(&format!(
+        "- AC1: `aw capability check --project {}` no longer reports this candidate as a planning blocker.\n",
+        project
+    ));
+    out.push_str("- AC2: The work item links to TD/CB evidence or a documented verification artifact for the capability gap.\n");
+    out.push_str("- AC3: Required verification passes, or the README claim is downgraded/deferred with HITL approval.\n\n");
+    out.push_str("## Reference Context\n\n");
+    out.push_str("### Related Specs\n\n");
+    out.push_str("| Spec | Relevance |\n");
+    out.push_str("|------|-----------|\n");
+    out.push_str(&format!(
+        "| {} | capability source anchor |\n\n",
+        cap_path.display()
+    ));
+    out.push_str("### Spec Plan\n\n");
+    out.push_str("| Spec ID | Action | Main Spec Ref |\n");
+    out.push_str("|---------|--------|---------------|\n");
+    out.push_str(&format!(
+        "| {} | create | {} |\n",
+        capability_candidate_spec_id(candidate),
+        cap_path.display()
+    ));
+    out.push_str("```\n\n");
+}
+
+fn capability_candidate_spec_id(candidate: &CapabilityCandidate) -> String {
+    let mut slug = candidate
+        .title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while slug.contains("--") {
+        slug = slug.replace("--", "-");
+    }
+    slug.trim_matches('-').to_string()
 }
 
 fn render_epicize_plan(
@@ -5736,11 +6427,16 @@ Generator ownership is complete; package-manager roadmap remains open.
     #[test]
     fn capability_plan_marks_unmatched_gaps_as_wi_candidates() {
         let map = CapabilityMap {
+            capability_count: 2,
             rows: vec![
                 CapabilityRow {
                     capability: "Package manager".to_string(),
+                    capability_type: "DeveloperTool".to_string(),
+                    surfaces: "CLI: `jet install` - install dependencies".to_string(),
+                    ec_dimensions: "behavior: `jet test` - package manager conformance<br>efficiency: `meter` - install profile".to_string(),
                     current_state: "Works for lockfile installs".to_string(),
                     gaps: "peer dependency roadmap missing".to_string(),
+                    root_wi: "none".to_string(),
                     active_wi: "none".to_string(),
                     evidence: "README".to_string(),
                     claim_id: None,
@@ -5748,8 +6444,12 @@ Generator ownership is complete; package-manager roadmap remains open.
                 },
                 CapabilityRow {
                     capability: "Dev server".to_string(),
+                    capability_type: "-".to_string(),
+                    surfaces: "-".to_string(),
+                    ec_dimensions: "-".to_string(),
                     current_state: "HMR works".to_string(),
                     gaps: "none".to_string(),
+                    root_wi: "none".to_string(),
                     active_wi: "none".to_string(),
                     evidence: "tests".to_string(),
                     claim_id: None,
@@ -5769,19 +6469,214 @@ Generator ownership is complete; package-manager roadmap remains open.
             &map,
             &[],
             &candidates,
+            &BTreeMap::new(),
+            &[],
         );
         assert!(body.contains("kind: capability_plan"));
+        assert!(body.contains("capability_count: 2"));
+        assert!(body.contains("planning_row_count: 2"));
+        assert!(body.contains("reconciliation_count: 0"));
+        assert!(body.contains("## Review Summary"));
+        assert!(body.contains("| Package manager | 1 | none | epicize -> atomize | Close capability gap: Package manager |"));
+        assert!(body.contains("| Capability | Type | Surfaces | EC Dimensions | Claim |"));
+        assert!(body.contains("DeveloperTool"));
+        assert!(body.contains("CLI: `jet install` - install dependencies"));
+        assert!(body.contains("efficiency: `meter` - install profile"));
         assert!(body.contains("Close capability gap: Package manager"));
+        assert!(body.contains("## Candidate WI Drafts"));
+        assert!(body.contains("### Candidate 1: Close capability gap: Package manager"));
+        assert!(body.contains("## Capability Alignment"));
+        assert!(body.contains("Capability: Package manager"));
+        assert!(body.contains("Capability Gap: peer dependency roadmap missing"));
+        assert!(body.contains("## Acceptance Criteria"));
+        assert!(body.contains("aw capability check --project jet"));
+        assert!(body.contains("## Reference Context"));
         assert!(body.contains("## Recommended CLI Sequence"));
         assert!(body.contains("does not mutate the tracker"));
+
+        let warned = render_capability_wi_plan(
+            "jet",
+            "Jet capability plan",
+            "unavailable",
+            Path::new("/repo/projects/jet/README.md"),
+            &map,
+            &[],
+            &candidates,
+            &BTreeMap::new(),
+            &["issue inventory unavailable: gh auth missing".to_string()],
+        );
+        assert!(warned.contains("warnings:"));
+        assert!(warned.contains("## Source"));
+        assert!(warned.contains("### Planning Warnings"));
+        assert!(warned.contains("issue inventory unavailable: gh auth missing"));
+    }
+
+    #[test]
+    fn capability_plan_summary_groups_stale_active_wi_refs_as_reconciliations() {
+        let rows = vec![
+            CapabilityRow {
+                capability: "Package Manager".to_string(),
+                capability_type: "DeveloperTool".to_string(),
+                surfaces: "CLI: `jet install`".to_string(),
+                ec_dimensions: "behavior: `jet test`".to_string(),
+                current_state: "Install surface exists".to_string(),
+                gaps: "claim package-manager-readiness: package readiness needs proof".to_string(),
+                root_wi: "none".to_string(),
+                active_wi: "#3779".to_string(),
+                evidence: "claim gate: cargo test -p jet --lib pkg_manager".to_string(),
+                claim_id: Some("package-manager-readiness".to_string()),
+                claim_user_story: None,
+            },
+            CapabilityRow {
+                capability: "Package Manager".to_string(),
+                capability_type: "DeveloperTool".to_string(),
+                surfaces: "CLI: `jet install`".to_string(),
+                ec_dimensions: "behavior: `jet test`".to_string(),
+                current_state: "Workspace support exists".to_string(),
+                gaps: "claim package-manager-workspace-parity: workspace parity needs proof"
+                    .to_string(),
+                root_wi: "none".to_string(),
+                active_wi: "3780".to_string(),
+                evidence: "claim gate: cargo test -p jet --lib pkg_manager::workspace".to_string(),
+                claim_id: Some("package-manager-workspace-parity".to_string()),
+                claim_user_story: None,
+            },
+        ];
+
+        let candidates = capability_wi_candidates(&rows, &[]);
+        let mut resolved_wi_refs = BTreeMap::new();
+        resolved_wi_refs.insert(
+            "#3779".to_string(),
+            CapabilityTrackerRefLookup {
+                reference: "#3779".to_string(),
+                status: "closed".to_string(),
+                title: "jet package manager readiness".to_string(),
+                labels: "project:jet, type:epic".to_string(),
+                url: "https://github.example/issues/3779".to_string(),
+            },
+        );
+        let reconciliations = capability_tracker_reconciliations(&rows, &[], &resolved_wi_refs);
+        let summary = capability_plan_summary_rows(&rows, &[], &candidates);
+
+        assert!(candidates.is_empty());
+        assert_eq!(reconciliations.len(), 2);
+        assert_eq!(summary.len(), 1);
+        assert_eq!(summary[0].capability, "Package Manager");
+        assert_eq!(summary[0].candidate_count, 0);
+        assert_eq!(summary[0].existing_wi_refs, vec!["#3779", "#3780"]);
+        assert_eq!(summary[0].next_operator, "reconcile tracker ref");
+        assert_eq!(summary[0].first_action, "Reconcile WI reference: #3779");
+
+        let map = CapabilityMap {
+            capability_count: 1,
+            rows,
+            health_note: None,
+        };
+        let body = render_capability_wi_plan(
+            "jet",
+            "Jet capability plan",
+            "github",
+            Path::new("/repo/projects/jet/README.md"),
+            &map,
+            &[],
+            &candidates,
+            &resolved_wi_refs,
+            &[],
+        );
+        assert!(body.contains("candidate_count: 0"));
+        assert!(body.contains("reconciliation_count: 2"));
+        assert!(body.contains("resolved_wi_ref_count: 1"));
+        assert!(body.contains("## Existing WI Refs Not In Open Inventory"));
+        assert!(body.contains("| Package Manager | package-manager-readiness | #3779 | #3779: closed - jet package manager readiness |"));
+        assert!(body.contains("## Tracker WI Ref Lookups"));
+        assert!(body.contains("| #3779 | closed | jet package manager readiness | project:jet, type:epic | https://github.example/issues/3779 |"));
+        assert!(!body.contains("## Candidate WI Drafts"));
+        assert!(body.contains(
+            "Review `Existing WI Refs Not In Open Inventory` and decide whether each README WI ref"
+        ));
+        assert!(body.contains("`aw wi plan --project jet`"));
+        assert!(!body.contains("`aw wi epicize --project jet"));
+    }
+
+    #[test]
+    fn capability_plan_reconciles_stale_root_wi_refs() {
+        let row = CapabilityRow {
+            capability: "C1. Py3.12 functional parity".to_string(),
+            capability_type: "RuntimeTool".to_string(),
+            surfaces: "CLI: `mamba test`".to_string(),
+            ec_dimensions: "behavior: `cargo test -p mamba`".to_string(),
+            current_state: "Root WI: #3331; Gate inventory: cargo test -p mamba".to_string(),
+            gaps: "claim python-3-12-parity-gate: Python 3.12 parity gate".to_string(),
+            root_wi: "#3331".to_string(),
+            active_wi: "#31, #33".to_string(),
+            evidence: "claim gate: cargo test -p mamba".to_string(),
+            claim_id: Some("python-3-12-parity-gate".to_string()),
+            claim_user_story: None,
+        };
+        let issues = vec![
+            planning_issue(
+                IssueType::Enhancement,
+                "mamba: collections.abc mixin 方法合成",
+                Some("p1"),
+                31,
+            ),
+            planning_issue(
+                IssueType::Enhancement,
+                "mamba: 動態 dispatch 的 user-function kwargs binding",
+                Some("p2"),
+                33,
+            ),
+        ];
+        let candidates = capability_wi_candidates(std::slice::from_ref(&row), &issues);
+        let mut resolved_wi_refs = BTreeMap::new();
+        resolved_wi_refs.insert(
+            "#3331".to_string(),
+            CapabilityTrackerRefLookup {
+                reference: "#3331".to_string(),
+                status: "not_found".to_string(),
+                title: "-".to_string(),
+                labels: "-".to_string(),
+                url: "-".to_string(),
+            },
+        );
+        let reconciliations = capability_tracker_reconciliations(
+            std::slice::from_ref(&row),
+            &issues,
+            &resolved_wi_refs,
+        );
+        let summary =
+            capability_plan_summary_rows(std::slice::from_ref(&row), &issues, &candidates);
+
+        assert!(candidates.is_empty());
+        assert_eq!(reconciliations.len(), 1);
+        assert_eq!(reconciliations[0].active_wi, "#3331");
+        assert_eq!(reconciliations[0].tracker_lookup, "#3331: not_found");
+        assert_eq!(summary[0].existing_wi_refs, vec!["#3331", "#31", "#33"]);
+        assert_eq!(summary[0].next_operator, "reconcile tracker ref");
+        assert_eq!(summary[0].first_action, "Reconcile WI reference: #3331");
+    }
+
+    #[test]
+    fn capability_wi_plan_command_preserves_cap_path_override() {
+        let command =
+            capability_wi_plan_command("lumen", Some(Path::new("/tmp/aw plan/lumen README.md")));
+
+        assert_eq!(
+            command,
+            "aw wi plan --project lumen --cap-path '/tmp/aw plan/lumen README.md'"
+        );
     }
 
     #[test]
     fn capability_matching_uses_active_wi_reference_before_creating_candidate() {
         let row = CapabilityRow {
             capability: "Package manager".to_string(),
+            capability_type: "DeveloperTool".to_string(),
+            surfaces: "CLI: `jet install`".to_string(),
+            ec_dimensions: "behavior: `jet test`".to_string(),
             current_state: "Works for lockfile installs".to_string(),
             gaps: "peer dependency roadmap missing".to_string(),
+            root_wi: "none".to_string(),
             active_wi: "#42".to_string(),
             evidence: "README".to_string(),
             claim_id: None,
@@ -5797,11 +6692,39 @@ Generator ownership is complete; package-manager roadmap remains open.
     }
 
     #[test]
+    fn capability_matching_uses_plain_numeric_active_wi_reference() {
+        let row = CapabilityRow {
+            capability: "Service query path".to_string(),
+            capability_type: "Service".to_string(),
+            surfaces: "API: `/query`".to_string(),
+            ec_dimensions: "behavior: `rig`".to_string(),
+            current_state: "Query path exists".to_string(),
+            gaps: "deep-page chain needs proof".to_string(),
+            root_wi: "none".to_string(),
+            active_wi: "4141".to_string(),
+            evidence: "README".to_string(),
+            claim_id: None,
+            claim_user_story: None,
+        };
+        let issue = planning_issue(IssueType::Enhancement, "deep-page proof", None, 4141);
+        let issues = vec![issue];
+
+        let matches = matching_issues_for_capability(&row, &issues);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].github_id, Some(4141));
+        assert!(capability_wi_candidates(&[row], &issues).is_empty());
+    }
+
+    #[test]
     fn capability_claim_rows_do_not_match_broad_epic_by_keywords_only() {
         let row = CapabilityRow {
             capability: "Package Manager".to_string(),
+            capability_type: "DeveloperTool".to_string(),
+            surfaces: "CLI: `jet install`".to_string(),
+            ec_dimensions: "behavior: `jet test`".to_string(),
             current_state: "Install surface exists".to_string(),
             gaps: "claim package-manager-workspace-parity: workspace package discovery needs a bounded verification WI".to_string(),
+            root_wi: "none".to_string(),
             active_wi: "#3779".to_string(),
             evidence: "claim gate: cargo test -p jet pkg_manager::workspace".to_string(),
             claim_id: Some("package-manager-workspace-parity".to_string()),
@@ -5820,13 +6743,12 @@ Generator ownership is complete; package-manager roadmap remains open.
         let issues = vec![epic];
 
         assert!(matching_issues_for_capability(&row, &issues).is_empty());
-        let candidates = capability_wi_candidates(&[row], &issues);
+        let candidates = capability_wi_candidates(&[row.clone()], &issues);
+        let reconciliations = capability_tracker_reconciliations(&[row], &issues, &BTreeMap::new());
 
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(
-            candidates[0].title,
-            "Close capability claim: Package Manager / package-manager-workspace-parity"
-        );
+        assert!(candidates.is_empty());
+        assert_eq!(reconciliations.len(), 1);
+        assert_eq!(reconciliations[0].active_wi, "#3779");
     }
 
     #[test]
@@ -6205,10 +7127,7 @@ path = "crates/no-label"
         )
         .unwrap();
         let labels = read_known_project_labels(tmp.path());
-        assert_eq!(
-            labels,
-            vec!["project:agentic-workflow", "project:agentic-workflow"]
-        );
+        assert_eq!(labels, vec!["project:agentic-workflow", "project:no-label"]);
     }
 
     // -- score-wi-cli-redesign: typed-flag tests ----------------------------

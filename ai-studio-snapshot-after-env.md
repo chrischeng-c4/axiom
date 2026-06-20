@@ -1,0 +1,11 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - complementary [ref=e5]:
+      - generic [ref=e7]
+    - main [ref=e21]:
+      - alert [ref=e22]
+      - generic [ref=e28]
+  - generic:
+    - generic: "* *"
+  - generic:
+    - generic: "*"

@@ -15,18 +15,27 @@ use walkdir::WalkDir;
 const EC_MANIFEST_VERSION: u8 = 1;
 const EC_MANIFEST_REL: &str = "tests/aw-ec.toml";
 const EC_DOC_REL: &str = "docs/aw-ec-manual.md";
-const EXTERNAL_CONTRACTS_REL: &str = "external-contracts";
+const EC_SOURCE_REL: &str = "external-contracts";
 const PROJECT_AW_REL: &str = "aw.toml";
 const EC_AW_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 const EC_AW_END_MARKER: &str = "AW-EC-END";
 const EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 const EC_END_MARKER: &str = "AW-EC-END";
+const EC_TOOL_BEGIN_MARKER: &str = "AW-EC-TOOL-BEGIN";
+const EC_TOOL_END_MARKER: &str = "AW-EC-TOOL-END";
 const EC_DOC_BEGIN_MARKER: &str = "AW-EC-DOC-BEGIN";
 const EC_DOC_END_MARKER: &str = "AW-EC-DOC-END";
 const EC_CATEGORIES: [&str; 4] = ["behavior", "efficiency", "security", "stability"];
 
+/// The canonical EC dimension/category names. The single source of truth shared
+/// with capability-type required-dimension derivation.
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+pub fn ec_categories() -> &'static [&'static str] {
+    &EC_CATEGORIES
+}
+
 #[derive(Debug, Args)]
-/// External-contract lifecycle: generate, check, and verify project external contracts.
+/// External-contract lifecycle: draft/fill EC markdown, then generate/check/verify artifacts.
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub struct EcArgs {
     /// Project name or alias from .aw/config.toml.
@@ -39,7 +48,11 @@ pub struct EcArgs {
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Subcommand)]
 pub enum EcCommand {
-    /// Generate manifest, tests, and tool configs from external-contracts.
+    /// Create a project-local EC markdown draft under external-contracts/.
+    Draft(EcDraftArgs),
+    /// Fill one section in an EC markdown draft.
+    Fill(EcFillArgs),
+    /// Generate manifest, tests, and tool configs from ec/ markdown.
     Gen(EcGenArgs),
     /// Check EC manifest/list drift and generated test-file presence.
     Check(EcCheckArgs),
@@ -47,6 +60,56 @@ pub enum EcCommand {
     Verify(EcVerifyArgs),
     /// Generate, check, or preview EC-derived product documentation.
     Doc(EcDocArgs),
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcDraftArgs {
+    /// Contract id / file slug.
+    pub id: String,
+    /// Contract category: behavior, efficiency, security, or stability.
+    #[arg(long, default_value = "behavior")]
+    pub category: String,
+    /// Human title for the markdown heading.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// README capability id protected by this contract.
+    #[arg(long)]
+    pub capability_id: Option<String>,
+    /// Capability claim id protected by this contract.
+    #[arg(long)]
+    pub claim_id: Option<String>,
+    /// Contract id exposed in the generated EC manifest.
+    #[arg(long)]
+    pub contract_id: Option<String>,
+    /// Verification command for the generated manifest case.
+    #[arg(long)]
+    pub command: Option<String>,
+    /// Also scaffold a tool-contract section for this native integration tool.
+    #[arg(long)]
+    pub tool: Vec<String>,
+    /// Overwrite an existing draft.
+    #[arg(long)]
+    pub force: bool,
+    /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcFillArgs {
+    /// EC markdown file to update.
+    pub path: PathBuf,
+    /// Section type to replace or append, for example e2e-test or tool-contract.
+    #[arg(long)]
+    pub section: String,
+    /// Markdown fragment containing the complete replacement section.
+    #[arg(long)]
+    pub body_file: PathBuf,
+    /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -170,6 +233,16 @@ pub struct EcEvidenceArtifact {
     pub label: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub locator: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub format: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub highlights: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<String>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -277,7 +350,7 @@ pub struct EcProjectContext {
     pub project_root: PathBuf,
     pub project: String,
     pub source_root: PathBuf,
-    pub external_contracts_root: PathBuf,
+    pub ec_root: PathBuf,
     pub td_root: PathBuf,
     pub tests_root: PathBuf,
     pub manifest_path: PathBuf,
@@ -303,15 +376,21 @@ struct E2eYamlCase {
     #[serde(default)]
     command: Option<String>,
     #[serde(default)]
+    test_path: Option<String>,
+    #[serde(default)]
     assertions: Option<StringOrList>,
     #[serde(default)]
     asserts: Option<StringOrList>,
     #[serde(default)]
     capability_id: Option<String>,
     #[serde(default)]
+    claim_id: Option<String>,
+    #[serde(default)]
     contract_id: Option<String>,
     #[serde(default)]
     category: Option<String>,
+    #[serde(default)]
+    required_for_production: Option<bool>,
     #[serde(default)]
     evidence: Option<E2eEvidenceYaml>,
     #[serde(default, alias = "evals", alias = "agent_evals")]
@@ -342,6 +421,16 @@ struct E2eArtifactYaml {
     label: Option<String>,
     #[serde(default)]
     locator: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    screenshots: Option<StringOrList>,
+    #[serde(default)]
+    highlights: Option<StringOrList>,
+    #[serde(default)]
+    steps: Option<StringOrList>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -388,75 +477,6 @@ struct ToolContractYamlItem {
     native_toml: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct ExternalContractDocument {
-    #[serde(default)]
-    contract: Option<ExternalContractToml>,
-    #[serde(default)]
-    contracts: Vec<ExternalContractToml>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ExternalContractToml {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    capability_id: Option<String>,
-    #[serde(default)]
-    claim_id: Option<String>,
-    #[serde(default)]
-    contract_id: Option<String>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tool: Option<String>,
-    #[serde(default)]
-    command: Option<String>,
-    #[serde(default)]
-    test_path: Option<String>,
-    #[serde(default)]
-    assertions: Option<StringOrList>,
-    #[serde(default)]
-    asserts: Option<StringOrList>,
-    #[serde(default)]
-    required_for_production: Option<bool>,
-    #[serde(default)]
-    evidence: Option<E2eEvidenceYaml>,
-    #[serde(default, alias = "evals", alias = "agent_evals")]
-    evaluators: Vec<E2eEvaluatorYaml>,
-    #[serde(default)]
-    tool_manifest: Option<ExternalToolManifestToml>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ExternalToolManifestToml {
-    #[serde(default)]
-    path: Option<String>,
-    #[serde(default)]
-    command: Option<String>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default, alias = "native_toml", alias = "toml")]
-    content: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AwEcGeneratedDocument {
-    aw: AwEcGeneratedRoot,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AwEcGeneratedRoot {
-    ec: AwEcGeneratedTable,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AwEcGeneratedTable {
-    generated: EcManifest,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum StringOrList {
@@ -488,6 +508,8 @@ pub fn run(args: EcArgs) -> Result<()> {
         .project
         .ok_or_else(|| anyhow::anyhow!("ec requires --project <project>"))?;
     match args.command {
+        EcCommand::Draft(args) => run_draft(&project, args),
+        EcCommand::Fill(args) => run_fill(&project, args),
         EcCommand::Gen(args) => run_gen(&project, args),
         EcCommand::Check(args) => run_check(&project, args),
         EcCommand::Verify(args) => run_verify(&project, args),
@@ -507,6 +529,272 @@ pub fn load_project_ec_manifest(project: &str) -> Result<Option<(PathBuf, EcMani
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
     load_ec_manifest(&ctx)
+}
+
+fn run_draft(project: &str, args: EcDraftArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    let id = slugify(&args.id);
+    if id.is_empty() {
+        bail!("EC draft id cannot be empty");
+    }
+    let category = normalize_external_category(Some(&args.category), "behavior")?;
+    let path = ctx.ec_root.join(&category).join(format!("{id}.md"));
+    if path.exists() && !args.force {
+        bail!(
+            "{} already exists; pass --force to overwrite",
+            relative_to(&ctx.project_root, &path)
+        );
+    }
+    let title = args.title.clone().unwrap_or_else(|| title_case(&id));
+    let content = render_ec_draft(&ctx, &id, &category, &title, &args);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(&path, content).with_context(|| format!("write {}", path.display()))?;
+    let rel = relative_to(&ctx.project_root, &path);
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "project": ctx.project,
+                "path": rel,
+                "id": id,
+                "category": category,
+            }))?
+        );
+    } else {
+        println!("ec draft {}: wrote {}", ctx.project, rel);
+        println!(
+            "next: aw ec fill --project {} {} --section e2e-test --body-file <file>",
+            ctx.project, rel
+        );
+        println!("then: aw ec gen --project {} --verify", ctx.project);
+    }
+    Ok(())
+}
+
+fn run_fill(project: &str, args: EcFillArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, project)?;
+    let path = if args.path.is_absolute() {
+        args.path.clone()
+    } else {
+        ctx.project_root.join(&args.path)
+    };
+    if !path.starts_with(&ctx.ec_root) {
+        bail!(
+            "EC fill target must be under {}; got {}",
+            relative_to(&ctx.project_root, &ctx.ec_root),
+            relative_to(&ctx.project_root, &path)
+        );
+    }
+    let existing = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let payload = fs::read_to_string(&args.body_file)
+        .with_context(|| format!("read {}", args.body_file.display()))?;
+    let merged = merge_ec_section(&existing, &args.section, &payload)?;
+    fs::write(&path, merged).with_context(|| format!("write {}", path.display()))?;
+    let rel = relative_to(&ctx.project_root, &path);
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "project": ctx.project,
+                "path": rel,
+                "section": args.section,
+                "action": "filled",
+            }))?
+        );
+    } else {
+        println!(
+            "ec fill {}: filled {} in {}",
+            ctx.project, args.section, rel
+        );
+        println!("next: aw ec gen --project {} --verify", ctx.project);
+    }
+    Ok(())
+}
+
+fn render_ec_draft(
+    ctx: &EcProjectContext,
+    id: &str,
+    category: &str,
+    title: &str,
+    args: &EcDraftArgs,
+) -> String {
+    let capability_id = args.capability_id.as_deref().unwrap_or("unmapped");
+    let claim_id = args.claim_id.as_deref().unwrap_or(id);
+    let contract_id = args.contract_id.as_deref().unwrap_or(id);
+    let command = args.command.as_deref().unwrap_or("");
+    let mut fill_sections = vec!["e2e-test"];
+    if !args.tool.is_empty() {
+        fill_sections.push("tool-contract");
+    }
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str(&format!("id: {id}\n"));
+    out.push_str(&format!("summary: External contract for {title}.\n"));
+    out.push_str(&format!("fill_sections: [{}]\n", fill_sections.join(", ")));
+    out.push_str("---\n\n");
+    out.push_str(&format!("# EC: {title}\n\n"));
+    out.push_str("## External Contract\n");
+    out.push_str("<!-- type: e2e-test lang: yaml -->\n\n");
+    out.push_str("```yaml\n");
+    out.push_str("e2e_tests:\n");
+    out.push_str(&format!("  - id: {id}\n"));
+    out.push_str(&format!("    capability_id: {capability_id}\n"));
+    out.push_str(&format!("    claim_id: {claim_id}\n"));
+    out.push_str(&format!("    contract_id: {contract_id}\n"));
+    out.push_str(&format!("    category: {category}\n"));
+    if !command.is_empty() {
+        out.push_str(&format!("    command: {command:?}\n"));
+    }
+    out.push_str("    assertions:\n");
+    out.push_str("      - \"Describe the externally observable guarantee.\"\n");
+    out.push_str("```\n");
+    if !args.tool.is_empty() {
+        out.push_str("\n## Tool Contracts\n");
+        out.push_str("<!-- type: tool-contract lang: yaml -->\n\n");
+        out.push_str("```yaml\n");
+        out.push_str("tool_contracts:\n");
+        for tool in &args.tool {
+            let tool = slugify(tool);
+            if tool.is_empty() {
+                continue;
+            }
+            let manifest = default_tool_contract_manifest_rel(&tool);
+            out.push_str(&format!("  - id: {id}-{tool}\n"));
+            out.push_str(&format!("    tool: {tool}\n"));
+            out.push_str(&format!("    manifest: {manifest}\n"));
+            out.push_str(&format!("    category: {category}\n"));
+            out.push_str(&format!(
+                "    command: {}\n",
+                default_tool_command(ctx, &tool, &ctx.project_root.join(&manifest), id)
+            ));
+            out.push_str("    native:\n");
+            out.push_str("      version: 1\n");
+            out.push_str(&format!("      id: {id:?}\n"));
+            out.push_str(&format!("      project: {:?}\n", ctx.project));
+        }
+        out.push_str("```\n");
+    }
+    out
+}
+
+fn default_tool_contract_manifest_rel(tool: &str) -> String {
+    match tool {
+        "rig" => "rig.toml".to_string(),
+        "meter" => "meter.toml".to_string(),
+        "arena" => "arena.toml".to_string(),
+        "guard" => "guard.toml".to_string(),
+        "vat" => "vat.toml".to_string(),
+        _ => format!("{tool}.toml"),
+    }
+}
+
+fn merge_ec_section(base_body: &str, section_type: &str, payload_body: &str) -> Result<String> {
+    let payload_norm = {
+        let trimmed = payload_body.trim_end_matches('\n');
+        format!("{trimmed}\n")
+    };
+    let lines: Vec<&str> = base_body.split_inclusive('\n').collect();
+    let mut matches: Vec<(usize, usize)> = Vec::new();
+    for i in 0..lines.len() {
+        if !lines[i].starts_with("## ") {
+            continue;
+        }
+        let Some(next) = lines.get(i + 1) else {
+            continue;
+        };
+        let Some(ann) = parse_ec_annotation(next.trim_end()) else {
+            continue;
+        };
+        if ann.section_type != section_type {
+            continue;
+        }
+        let mut end = lines.len();
+        for j in (i + 1)..lines.len() {
+            if lines[j].starts_with("## ") {
+                end = j;
+                break;
+            }
+        }
+        matches.push((i, end));
+    }
+
+    let merged = if let Some((first_start, first_end)) = matches.first().copied() {
+        let mut out: String = lines[..first_start].concat();
+        out.push_str(&payload_norm);
+        let mut cursor = first_end;
+        for (dup_start, dup_end) in matches.iter().skip(1).copied() {
+            out.push_str(&lines[cursor..dup_start].concat());
+            cursor = dup_end;
+        }
+        out.push_str(&lines[cursor..].concat());
+        out
+    } else {
+        let mut out = ensure_ec_fill_sections_has_section(base_body, section_type);
+        if !out.ends_with("\n\n") {
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+        out.push_str(&payload_norm);
+        out
+    };
+    Ok(ensure_ec_fill_sections_has_section(&merged, section_type))
+}
+
+fn ensure_ec_fill_sections_has_section(content: &str, section_type: &str) -> String {
+    let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+    if lines.first().map(|line| line.trim()) != Some("---") {
+        return content.to_string();
+    }
+    let Some(frontmatter_end) = lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find_map(|(idx, line)| (line.trim() == "---").then_some(idx))
+    else {
+        return content.to_string();
+    };
+    for idx in 1..frontmatter_end {
+        let trimmed = lines[idx].trim_start();
+        let Some(rest) = trimmed.strip_prefix("fill_sections:") else {
+            continue;
+        };
+        let indent_len = lines[idx].len() - trimmed.len();
+        let indent = " ".repeat(indent_len);
+        let inside = rest.trim().trim_start_matches('[').trim_end_matches(']');
+        let mut sections = inside
+            .split(',')
+            .map(|part| part.trim().trim_matches('"').to_string())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        if !sections.iter().any(|section| section == section_type) {
+            sections.push(section_type.to_string());
+            lines[idx] = format!("{indent}fill_sections: [{}]", sections.join(", "));
+        }
+        return ensure_trailing_newline(&lines.join("\n"));
+    }
+    lines.insert(frontmatter_end, format!("fill_sections: [{section_type}]"));
+    ensure_trailing_newline(&lines.join("\n"))
+}
+
+struct EcSectionAnnotation {
+    section_type: String,
+}
+
+fn parse_ec_annotation(line: &str) -> Option<EcSectionAnnotation> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix("<!--")?.strip_suffix("-->")?.trim();
+    let section_type = inner
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find_map(|window| (window[0] == "type:").then(|| window[1].to_string()))?;
+    Some(EcSectionAnnotation { section_type })
 }
 
 fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
@@ -547,6 +835,7 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
             write_generated_ec_test(&path, &content)?;
         }
         write_generated_tool_manifests(&ctx, &manifest)?;
+        generate_case_skeletons(&ctx, &manifest)?;
         if args.json {
             println!(
                 "{}",
@@ -804,7 +1093,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         crate::services::project_registry::resolve_project_config_row(project_root, requested)
             .with_context(|| format!("resolve project `{requested}`"))?;
     let source_root = project_root.join(&row.path);
-    let external_contracts_root = source_root.join(EXTERNAL_CONTRACTS_REL);
+    let ec_root = source_root.join(EC_SOURCE_REL);
     let td_root =
         crate::services::project_registry::resolve_td_root_from_config(project_root, &row.name)
             .map(|resolved| PathBuf::from(resolved.root))
@@ -812,11 +1101,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
     let tests_root = source_root.join("tests");
     let legacy_manifest_path = source_root.join(EC_MANIFEST_REL);
     let project_aw_path = source_root.join(PROJECT_AW_REL);
-    let manifest_path = if project_aw_path.is_file() {
-        project_aw_path.clone()
-    } else {
-        legacy_manifest_path.clone()
-    };
+    let manifest_path = legacy_manifest_path.clone();
     let doc_path = source_root.join(EC_DOC_REL);
     let project_model = crate::services::project_registry::load_projects(project_root)?
         .into_iter()
@@ -834,7 +1119,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         project_root: project_root.to_path_buf(),
         project: row.name,
         source_root,
-        external_contracts_root,
+        ec_root,
         td_root,
         tests_root,
         manifest_path,
@@ -867,11 +1152,12 @@ fn language_target_name(language: crate::models::tech_stack::Language) -> &'stat
 }
 
 fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
-    let (mut cases, mut tool_manifests) = extract_external_contracts(ctx)?;
+    let (mut cases, mut tool_manifests) = extract_ec_markdown_contracts(ctx)?;
     if cases.is_empty() && tool_manifests.is_empty() {
         cases = extract_td_e2e_cases(ctx)?;
         tool_manifests = extract_td_tool_manifests(ctx)?;
     }
+    derive_required_for_production(ctx, &mut cases)?;
     cases.sort_by(|left, right| left.id.cmp(&right.id));
     tool_manifests.sort_by(|left, right| left.id.cmp(&right.id));
     let digest = digest_manifest_inputs(&cases, &tool_manifests);
@@ -884,142 +1170,71 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
     })
 }
 
-fn extract_external_contracts(
+/// Derive each declared case's `required_for_production` from its capability
+/// type ceiling.
+///
+/// A manifest case is already dimension content; the capability type decides
+/// whether that declared category is production-required. When a case's
+/// capability has a type assigned in README or `.aw/capability-types.toml`, the
+/// derived value (`case.category` is in the type's required dimensions) wins.
+/// Otherwise the value already parsed from the YAML flag
+/// (`required_for_production`, defaulting to `true`) is left untouched so
+/// existing projects don't break.
+///
+/// The type binding is loaded ONCE per generation, not per case. Maturity/env
+/// (vat) deliberately plays no part here: it gates whether a contract is
+/// verified/runnable, never whether it is required for production.
+fn derive_required_for_production(
+    ctx: &EcProjectContext,
+    cases: &mut [EcManifestCase],
+) -> Result<()> {
+    // The README Capability Index / explicit Type field is the primary source
+    // of a capability's type. The sidecar is only a migration fallback and must
+    // not override README because README is the agent-facing contract.
+    let readme_path = ctx.source_root.join("README.md");
+    let mut types = crate::cli::capability_type::load_capability_types_from_readme(&readme_path)?;
+    for (id, ty) in crate::cli::capability_type::load_capability_types(&ctx.project_root)? {
+        types.entry(id).or_insert(ty);
+    }
+    if types.is_empty() {
+        return Ok(());
+    }
+    for case in cases.iter_mut() {
+        if let Some(capability_type) = types.get(&case.capability_id) {
+            case.required_for_production =
+                crate::cli::capability_type::category_is_required_for_type(
+                    capability_type,
+                    &case.category,
+                );
+        }
+    }
+    Ok(())
+}
+
+fn extract_ec_markdown_contracts(
     ctx: &EcProjectContext,
 ) -> Result<(Vec<EcManifestCase>, Vec<EcToolManifest>)> {
-    if !ctx.external_contracts_root.is_dir() {
+    if !ctx.ec_root.is_dir() {
         return Ok((Vec::new(), Vec::new()));
     }
 
     let mut cases = Vec::new();
     let mut tool_manifests = Vec::new();
-    for entry in WalkDir::new(&ctx.external_contracts_root)
+    for entry in WalkDir::new(&ctx.ec_root)
         .into_iter()
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().is_file())
     {
         let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
             continue;
         }
         let content =
             fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-        let document: ExternalContractDocument =
-            toml::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
-        let mut contracts = document.contracts;
-        if let Some(contract) = document.contract {
-            contracts.push(contract);
-        }
-        let fallback_category = external_contract_category_from_path(ctx, path);
-        for (idx, contract) in contracts.into_iter().enumerate() {
-            let (case, tool_manifest) =
-                external_contract_to_manifest_items(ctx, path, &fallback_category, idx, contract)?;
-            cases.push(case);
-            if let Some(tool_manifest) = tool_manifest {
-                tool_manifests.push(tool_manifest);
-            }
-        }
+        cases.extend(extract_e2e_cases_from_markdown(ctx, path, &content)?);
+        tool_manifests.extend(extract_tool_manifests_from_markdown(ctx, path, &content)?);
     }
     Ok((cases, tool_manifests))
-}
-
-fn external_contract_to_manifest_items(
-    ctx: &EcProjectContext,
-    path: &Path,
-    fallback_category: &str,
-    idx: usize,
-    raw: ExternalContractToml,
-) -> Result<(EcManifestCase, Option<EcToolManifest>)> {
-    let raw_id = raw.id.clone().or(raw.name.clone()).unwrap_or_else(|| {
-        format!(
-            "{}-{}",
-            path.file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or("external-contract"),
-            idx + 1
-        )
-    });
-    let id = slugify(&raw_id);
-    let category = normalize_external_category(raw.category.as_deref(), fallback_category)?;
-    let tool = raw
-        .tool
-        .as_deref()
-        .map(slugify)
-        .filter(|value| !value.is_empty());
-    let tool_manifest = tool
-        .as_deref()
-        .map(|tool| build_external_tool_manifest(ctx, path, &id, tool, &category, &raw))
-        .transpose()?;
-    let capability_id = raw
-        .capability_id
-        .as_deref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "unmapped".to_string());
-    let claim_id = raw
-        .claim_id
-        .as_deref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| id.clone());
-    let contract_id = raw
-        .contract_id
-        .as_deref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| id.clone());
-    let test_path = raw
-        .test_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| normalize_project_relative_path(ctx, value))
-        .unwrap_or_else(|| relative_to(&ctx.project_root, &ec_test_path(ctx, &category, &id)));
-    let assertions = raw
-        .assertions
-        .clone()
-        .or(raw.asserts)
-        .clone()
-        .map(StringOrList::into_vec)
-        .unwrap_or_default();
-    let evidence = raw
-        .evidence
-        .map(evidence_artifacts_from_yaml)
-        .unwrap_or_default();
-    let evaluators = raw
-        .evaluators
-        .into_iter()
-        .map(evaluator_from_yaml)
-        .filter(|evaluator| !evaluator.id.is_empty())
-        .collect::<Vec<_>>();
-    let command = raw
-        .command
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            tool_manifest
-                .as_ref()
-                .and_then(default_command_from_tool_manifest)
-        })
-        .unwrap_or_else(|| default_ec_command(ctx, &ctx.project_root.join(&test_path)));
-
-    Ok((
-        EcManifestCase {
-            id: id.clone(),
-            capability_id,
-            claim_id,
-            contract_id,
-            category,
-            td_ref: format!("{}#{}", relative_to(&ctx.project_root, path), id),
-            test_path,
-            command,
-            required_for_production: raw.required_for_production.unwrap_or(true),
-            assertions,
-            evidence,
-            evaluators,
-        },
-        tool_manifest,
-    ))
 }
 
 fn extract_td_e2e_cases(ctx: &EcProjectContext) -> Result<Vec<EcManifestCase>> {
@@ -1076,7 +1291,7 @@ fn extract_e2e_cases_from_markdown(
     let mut idx = 0usize;
     while idx < lines.len() {
         let line = lines[idx];
-        if line.contains("type: e2e-test") {
+        if is_section_annotation(line, "e2e-test") {
             let Some((yaml, next_idx)) = fenced_yaml_after(&lines, idx + 1) else {
                 idx += 1;
                 continue;
@@ -1098,18 +1313,29 @@ fn extract_e2e_cases_from_markdown(
                         )
                     });
                 let id = slugify(&raw_id);
-                let category = raw
-                    .category
+                let category = if path.starts_with(&ctx.ec_root) {
+                    let fallback_category = external_contract_category_from_path(ctx, path);
+                    normalize_external_category(raw.category.as_deref(), &fallback_category)?
+                } else {
+                    raw.category
+                        .as_deref()
+                        .map(slugify)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| "behavior".to_string())
+                };
+                let default_test_path = ec_test_path(ctx, &category, &id);
+                let test_path = raw
+                    .test_path
                     .as_deref()
-                    .map(slugify)
+                    .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| "behavior".to_string());
-                let test_path = ec_test_path(ctx, &category, &id);
+                    .map(|value| normalize_project_relative_path(ctx, value))
+                    .unwrap_or_else(|| relative_to(&ctx.project_root, &default_test_path));
                 let command = raw
                     .command
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| default_ec_command(ctx, &test_path));
+                    .unwrap_or_else(|| default_ec_command(ctx, &ctx.project_root.join(&test_path)));
                 let assertions = raw
                     .assertions
                     .or(raw.asserts)
@@ -1118,6 +1344,14 @@ fn extract_e2e_cases_from_markdown(
                 let evidence = raw
                     .evidence
                     .map(evidence_artifacts_from_yaml)
+                    .transpose()
+                    .with_context(|| {
+                        format!(
+                            "parse evidence artifacts for case '{}' in {}",
+                            id,
+                            path.display()
+                        )
+                    })?
                     .unwrap_or_default();
                 let evaluators = raw
                     .evaluators
@@ -1132,7 +1366,11 @@ fn extract_e2e_cases_from_markdown(
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| "unmapped".to_string()),
-                    claim_id: id.clone(),
+                    claim_id: raw
+                        .claim_id
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| id.clone()),
                     contract_id: raw
                         .contract_id
                         .map(|value| value.trim().to_string())
@@ -1140,9 +1378,9 @@ fn extract_e2e_cases_from_markdown(
                         .unwrap_or_else(|| id.clone()),
                     category,
                     td_ref: format!("{}#{}", relative_to(&ctx.project_root, path), id),
-                    test_path: relative_to(&ctx.project_root, &test_path),
+                    test_path,
                     command,
-                    required_for_production: true,
+                    required_for_production: raw.required_for_production.unwrap_or(true),
                     assertions,
                     evidence,
                     evaluators,
@@ -1166,7 +1404,7 @@ fn extract_tool_manifests_from_markdown(
     let mut idx = 0usize;
     while idx < lines.len() {
         let line = lines[idx];
-        if line.contains("type: tool-contract") {
+        if is_section_annotation(line, "tool-contract") {
             let Some((yaml, next_idx)) = fenced_yaml_after(&lines, idx + 1) else {
                 idx += 1;
                 continue;
@@ -1201,12 +1439,14 @@ fn extract_tool_manifests_from_markdown(
                 let path_abs = native_manifest_path(ctx, &manifest_rel);
                 let generated_toml = render_tool_contract_toml(raw.native_toml, raw.native)
                     .with_context(|| format!("render native tool manifest `{id}`"))?;
+                let td_ref = format!("{}#{}", relative_to(&ctx.project_root, path), raw_id);
+                let generated_toml = wrap_generated_tool_manifest(&td_ref, &generated_toml);
                 let content_digest = digest_string(&generated_toml);
                 out.push(EcToolManifest {
                     id,
                     tool,
                     path: relative_to(&ctx.project_root, &path_abs),
-                    td_ref: format!("{}#{}", relative_to(&ctx.project_root, path), raw_id),
+                    td_ref,
                     content_digest,
                     command: raw
                         .command
@@ -1227,6 +1467,13 @@ fn extract_tool_manifests_from_markdown(
     Ok(out)
 }
 
+fn is_section_annotation(line: &str, section_type: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("<!--")
+        && trimmed.ends_with("-->")
+        && trimmed.contains(&format!("type: {section_type}"))
+}
+
 fn native_manifest_path(ctx: &EcProjectContext, manifest_rel: &str) -> PathBuf {
     let manifest = Path::new(manifest_rel);
     if manifest.is_absolute()
@@ -1242,12 +1489,18 @@ fn native_manifest_path(ctx: &EcProjectContext, manifest_rel: &str) -> PathBuf {
 }
 
 fn external_contract_category_from_path(ctx: &EcProjectContext, path: &Path) -> String {
-    path.strip_prefix(&ctx.external_contracts_root)
+    // Scan all path components for the dimension dir, so both the flat
+    // `external-contracts/<dimension>/` and the capability-first
+    // `external-contracts/<capability>/<dimension>/` layouts derive correctly.
+    path.strip_prefix(&ctx.ec_root)
         .ok()
-        .and_then(|relative| relative.components().next())
-        .and_then(|component| component.as_os_str().to_str())
-        .map(slugify)
-        .filter(|value| EC_CATEGORIES.contains(&value.as_str()))
+        .and_then(|relative| {
+            relative
+                .components()
+                .filter_map(|component| component.as_os_str().to_str())
+                .map(slugify)
+                .find(|value| EC_CATEGORIES.contains(&value.as_str()))
+        })
         .unwrap_or_else(|| "behavior".to_string())
 }
 
@@ -1279,107 +1532,14 @@ fn normalize_project_relative_path(ctx: &EcProjectContext, value: &str) -> Strin
     }
 }
 
-fn build_external_tool_manifest(
-    ctx: &EcProjectContext,
-    source_path: &Path,
-    id: &str,
-    tool: &str,
-    category: &str,
-    raw: &ExternalContractToml,
-) -> Result<EcToolManifest> {
-    let configured = raw.tool_manifest.as_ref();
-    let manifest_rel = configured
-        .and_then(|manifest| manifest.path.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| default_tool_manifest_rel(tool, category, id));
-    let path_abs = native_manifest_path(ctx, &manifest_rel);
-    let generated_toml = configured
-        .and_then(|manifest| manifest.content.as_deref())
-        .map(|content| ensure_trailing_newline(content.trim()))
-        .unwrap_or_else(|| render_default_tool_manifest_toml(ctx, id, tool, category, raw));
-    let command = configured
-        .and_then(|manifest| manifest.command.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| default_tool_command(ctx, tool, &path_abs, id));
-    Ok(EcToolManifest {
-        id: format!("{}-{}", id, tool),
-        tool: tool.to_string(),
-        path: relative_to(&ctx.project_root, &path_abs),
-        td_ref: format!("{}#{}", relative_to(&ctx.project_root, source_path), id),
-        content_digest: digest_string(&generated_toml),
-        command,
-        category: configured
-            .and_then(|manifest| manifest.category.as_deref())
-            .map(slugify)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| category.to_string()),
-        generated_toml,
-    })
-}
-
-fn default_tool_manifest_rel(tool: &str, category: &str, id: &str) -> String {
-    match tool {
-        "rig" => format!("tests/rig/scenarios/{category}/{id}.toml"),
-        "meter" => format!("tests/meter/{id}.toml"),
-        "arena" => format!("tests/arena/{id}.toml"),
-        "guard" => format!("tests/guard/{id}.toml"),
-        "vat" => format!("tests/vat/{id}.toml"),
-        _ => format!("tests/{tool}/{id}.toml"),
-    }
-}
-
-fn render_default_tool_manifest_toml(
-    ctx: &EcProjectContext,
-    id: &str,
-    tool: &str,
-    category: &str,
-    raw: &ExternalContractToml,
-) -> String {
-    let capability_id = raw.capability_id.as_deref().unwrap_or("unmapped");
-    let claim_id = raw.claim_id.as_deref().unwrap_or(id);
-    let assertions = raw
-        .assertions
-        .as_ref()
-        .or(raw.asserts.as_ref())
-        .map(render_assertions_array)
-        .unwrap_or_else(|| "[]".to_string());
-    format!(
-        "version = 1\nid = {id:?}\ntool = {tool:?}\ncategory = {category:?}\ncapability_id = {capability_id:?}\nclaim_id = {claim_id:?}\nproject = {:?}\nassertions = {assertions}\n",
-        ctx.project
-    )
-}
-
-fn render_assertions_array(assertions: &StringOrList) -> String {
-    let values = match assertions {
-        StringOrList::List(values) => values.clone(),
-        StringOrList::String(value) => value
-            .lines()
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty())
-            .collect(),
-    };
-    format!(
-        "[{}]",
-        values
-            .iter()
-            .map(|value| format!("{value:?}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
 fn default_tool_command(ctx: &EcProjectContext, tool: &str, path: &Path, id: &str) -> String {
     let rel = relative_to(&ctx.project_root, path);
     match tool {
         "arena" => format!("arena run --spec {rel}"),
         "rig" => path
             .parent()
-            .map(|parent| format!("rig run --dir {}", relative_to(&ctx.project_root, parent)))
-            .unwrap_or_else(|| format!("rig run --dir {rel}")),
+            .map(|parent| format!("rig test --dir {}", relative_to(&ctx.project_root, parent)))
+            .unwrap_or_else(|| format!("rig test --dir {rel}")),
         "meter" => format!("meter run --target {rel}"),
         "guard" => format!(
             "guard scan {} --compact --no-persist",
@@ -1390,12 +1550,169 @@ fn default_tool_command(ctx: &EcProjectContext, tool: &str, path: &Path, id: &st
     }
 }
 
-fn default_command_from_tool_manifest(manifest: &EcToolManifest) -> Option<String> {
-    if manifest.command.trim().is_empty() {
-        None
+/// Which executable artifact `aw ec gen` should skeleton for a claim, dispatched
+/// on the gate command: `rig test` -> a lifecycle case TOML (mode-1, rig DSL);
+/// `cargo test` -> a native Rust `#[test]` body (mode-2); anything else -> none.
+#[derive(Debug, PartialEq, Eq)]
+enum CaseGenMode {
+    Rig,
+    NativeRust,
+    Other,
+}
+
+fn case_gen_mode(case: &EcManifestCase) -> CaseGenMode {
+    let cmd = case.command.trim_start();
+    if cmd.starts_with("rig test") {
+        CaseGenMode::Rig
+    } else if cmd.starts_with("cargo test") {
+        CaseGenMode::NativeRust
     } else {
-        Some(manifest.command.clone())
+        CaseGenMode::Other
     }
+}
+
+fn rig_dir_from_command(cmd: &str) -> Option<&str> {
+    cmd.split("--dir ")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+}
+
+fn cargo_test_target(cmd: &str) -> Option<&str> {
+    cmd.split("--test ")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+}
+
+fn sanitize_ident(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Mode-1: a lifecycle case-TOML skeleton from a rig-integrated claim. The
+/// `[exercise]` is a placeholder for the author; `source_contract` back-links to
+/// the EC claim (the bidirectional link).
+fn render_case_toml_skeleton(
+    case: &EcManifestCase,
+    suite: &str,
+    dimension: &str,
+    stem: &str,
+) -> String {
+    let subject = case
+        .assertions
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or("fill: the behavior under test");
+    format!(
+        "# SPEC-MANAGED: generated by `aw ec gen` from EC claim `{contract}` — fill [exercise].\n\
+[case]\n\
+id = \"{stem}\"\n\
+suite = \"{suite}\"\n\
+dimension = \"{dimension}\"\n\
+subject = \"{subject}\"\n\
+expected = \"pass\"\n\
+required = {required}\n\
+source_contract = \"{contract}\"\n\
+\n\
+[prepare]\n\
+needs = []\n\
+\n\
+[exercise]\n\
+# n = 200   # uncomment + set for a load case\n\
+[exercise.request]\n\
+method = \"GET\"\n\
+url = \"http://{{{{upstream}}}}/REPLACE_ME\"\n\
+[exercise.request.expect]\n\
+status = 200\n\
+\n\
+[clean]\n\
+delegate = \"vat-cow\"\n",
+        contract = case.contract_id,
+        stem = stem,
+        suite = suite,
+        dimension = dimension,
+        subject = subject,
+        required = case.required_for_production,
+    )
+}
+
+/// Mode-2: a native Rust `#[test]` body skeleton from a non-rig claim. The author
+/// fills the in-process drive + assertions (goes beyond a gate wrapper).
+fn render_native_rust_skeleton(case: &EcManifestCase, fn_name: &str) -> String {
+    let asserts: String = case
+        .assertions
+        .iter()
+        .map(|a| format!("    // contract: {a}\n"))
+        .collect();
+    format!(
+        "// SPEC-MANAGED: generated by `aw ec gen` from EC claim `{contract}` — fill the body.\n\
+// @ec {id}\n\
+// @capability {cap}\n\
+#[test]\n\
+fn {fn_name}() {{\n\
+{asserts}    // fill: drive the in-process target and assert the contract above.\n\
+    todo!(\"implement EC claim {contract}\");\n\
+}}\n",
+        contract = case.contract_id,
+        id = case.id,
+        cap = case.capability_id,
+        fn_name = fn_name,
+        asserts = asserts,
+    )
+}
+
+/// Generate an executable skeleton per claim: rig-integrated -> case TOML;
+/// native rust -> a `#[test]` body. Skips any file that already exists (same
+/// guard as gate tests) so hand-authored cases are never clobbered.
+fn generate_case_skeletons(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
+    for case in &manifest.cases {
+        match case_gen_mode(case) {
+            CaseGenMode::Rig => {
+                let Some(dir) = rig_dir_from_command(&case.command) else {
+                    continue;
+                };
+                let dimension = Path::new(dir)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("behavior");
+                let stem = sanitize_ident(&case.contract_id);
+                let path = ctx.project_root.join(dir).join(format!("{stem}.toml"));
+                let body = render_case_toml_skeleton(case, &ctx.project, dimension, &stem);
+                write_skeleton_if_absent(&path, &body)?;
+            }
+            CaseGenMode::NativeRust => {
+                let Some(target) = cargo_test_target(&case.command) else {
+                    continue;
+                };
+                let test_dir = Path::new(&case.test_path)
+                    .parent()
+                    .unwrap_or_else(|| Path::new("tests"));
+                let path = ctx.project_root.join(test_dir).join(format!("{target}.rs"));
+                let fn_name = sanitize_ident(target);
+                let body = render_native_rust_skeleton(case, &fn_name);
+                write_skeleton_if_absent(&path, &body)?;
+            }
+            CaseGenMode::Other => {}
+        }
+    }
+    Ok(())
+}
+
+fn write_skeleton_if_absent(path: &Path, body: &str) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, body)?;
+    Ok(())
 }
 
 fn render_tool_contract_toml(
@@ -1411,6 +1728,13 @@ fn render_tool_contract_toml(
     let toml_value = yaml_value_to_toml(native)?;
     let content = toml::to_string_pretty(&toml_value).context("serializing native TOML")?;
     Ok(ensure_trailing_newline(content.trim()))
+}
+
+fn wrap_generated_tool_manifest(td_ref: &str, content: &str) -> String {
+    format!(
+        "# SPEC-MANAGED: {td_ref}\n# CODEGEN-BEGIN\n# {EC_TOOL_BEGIN_MARKER}\n{}# {EC_TOOL_END_MARKER}\n# CODEGEN-END\n",
+        ensure_trailing_newline(content.trim())
+    )
 }
 
 fn yaml_value_to_toml(value: serde_yaml::Value) -> Result<toml::Value> {
@@ -1481,34 +1805,34 @@ fn evaluator_from_yaml(raw: E2eEvaluatorYaml) -> EcEvaluator {
     }
 }
 
-fn evidence_artifacts_from_yaml(evidence: E2eEvidenceYaml) -> Vec<EcEvidenceArtifact> {
+fn evidence_artifacts_from_yaml(evidence: E2eEvidenceYaml) -> Result<Vec<EcEvidenceArtifact>> {
     let mut artifacts = Vec::new();
     for item in evidence.screenshots {
-        push_evidence_artifact(&mut artifacts, "screenshot", item);
+        push_evidence_artifact(&mut artifacts, "screenshot", item)?;
     }
     for item in evidence.reports {
-        push_evidence_artifact(&mut artifacts, "report", item);
+        push_evidence_artifact(&mut artifacts, "report", item)?;
     }
     for item in evidence.docs {
-        push_evidence_artifact(&mut artifacts, "doc", item);
+        push_evidence_artifact(&mut artifacts, "doc", item)?;
     }
     if let Some(item) = evidence.eval {
-        push_evidence_artifact(&mut artifacts, "eval", item);
+        push_evidence_artifact(&mut artifacts, "eval", item)?;
     }
-    artifacts
+    Ok(artifacts)
 }
 
 fn push_evidence_artifact(
     artifacts: &mut Vec<EcEvidenceArtifact>,
     default_kind: &str,
     item: E2eArtifactYaml,
-) {
+) -> Result<()> {
     let Some(path) = item
         .path
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     else {
-        return;
+        return Ok(());
     };
     let kind = item
         .kind
@@ -1516,6 +1840,27 @@ fn push_evidence_artifact(
         .map(|value| slugify(&value))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default_kind.to_string());
+    let format = item
+        .format
+        .map(|value| normalize_manual_format(&value))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| infer_manual_format_from_path(&path));
+    let command = item
+        .command
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+    let screenshots = item
+        .screenshots
+        .map(StringOrList::into_vec)
+        .unwrap_or_default();
+    let highlights = item
+        .highlights
+        .map(StringOrList::into_vec)
+        .unwrap_or_default();
+    let steps = item.steps.map(StringOrList::into_vec).unwrap_or_default();
+    if kind == "generated-manual" {
+        validate_generated_manual_artifact(&path, &format, &command)?;
+    }
     artifacts.push(EcEvidenceArtifact {
         kind,
         path,
@@ -1527,7 +1872,61 @@ fn push_evidence_artifact(
             .locator
             .map(|value| value.trim().to_string())
             .unwrap_or_default(),
+        format,
+        command,
+        screenshots,
+        highlights,
+        steps,
     });
+    Ok(())
+}
+
+fn validate_generated_manual_artifact(path: &str, format: &str, command: &str) -> Result<()> {
+    if command.trim().is_empty() {
+        anyhow::bail!("generated-manual evidence requires a non-empty command");
+    }
+    if !is_safe_project_relative_path(path) {
+        anyhow::bail!("generated-manual evidence path must be project-local: {path}");
+    }
+    if !matches!(format, "markdown" | "html") {
+        anyhow::bail!(
+            "generated-manual evidence format must be markdown or html: {}",
+            if format.is_empty() {
+                "<missing>"
+            } else {
+                format
+            }
+        );
+    }
+    Ok(())
+}
+
+fn normalize_manual_format(value: &str) -> String {
+    match slugify(value).as_str() {
+        "md" | "markdown" => "markdown".to_string(),
+        "htm" | "html" => "html".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn infer_manual_format_from_path(path: &str) -> String {
+    match Path::new(path).extension().and_then(|ext| ext.to_str()) {
+        Some("md") | Some("markdown") => "markdown".to_string(),
+        Some("htm") | Some("html") => "html".to_string(),
+        _ => String::new(),
+    }
+}
+
+fn is_safe_project_relative_path(path: &str) -> bool {
+    let path = Path::new(path);
+    !path.as_os_str().is_empty()
+        && !path.is_absolute()
+        && path.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
 }
 
 fn markdown_heading_title(line: &str) -> Option<String> {
@@ -1690,18 +2089,6 @@ fn default_required_for_production() -> bool {
 }
 
 fn load_ec_manifest(ctx: &EcProjectContext) -> Result<Option<(PathBuf, EcManifest)>> {
-    if ctx.project_aw_path.is_file() {
-        let content = fs::read_to_string(&ctx.project_aw_path)
-            .with_context(|| format!("read {}", ctx.project_aw_path.display()))?;
-        if let Some(block) = extract_aw_ec_generated_block(&content) {
-            let document: AwEcGeneratedDocument = toml::from_str(&block)
-                .with_context(|| format!("parse {}", ctx.project_aw_path.display()))?;
-            return Ok(Some((
-                ctx.project_aw_path.clone(),
-                document.aw.ec.generated,
-            )));
-        }
-    }
     if !ctx.legacy_manifest_path.is_file() {
         return Ok(None);
     }
@@ -1863,7 +2250,7 @@ fn check_manifest_against_expected(
     for actual_case in &actual_cases {
         if !expected_by_id.contains_key(actual_case.id.as_str()) {
             findings.push(format!(
-                "manifest has orphan EC case `{}` not present in external-contracts or legacy TD EC sections",
+                "manifest has orphan EC case `{}` not present in ec/ markdown or legacy TD EC sections",
                 actual_case.id
             ));
         }
@@ -1983,7 +2370,7 @@ fn check_manifest_against_expected(
     for actual_manifest in &actual_tool_manifests {
         if !expected_tool_by_id.contains_key(actual_manifest.id.as_str()) {
             findings.push(format!(
-                "manifest has orphan tool contract `{}` not present in external-contracts or legacy TD tool-contract sections",
+                "manifest has orphan tool contract `{}` not present in ec/ markdown or legacy TD tool-contract sections",
                 actual_manifest.id
             ));
         }
@@ -2209,11 +2596,8 @@ fn generated_ec_test_paths(ctx: &EcProjectContext) -> Result<Vec<String>> {
 }
 
 fn write_ec_manifest(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
-    if ctx.project_aw_path.is_file() {
-        write_ec_manifest_to_aw_toml(ctx, manifest)
-    } else {
-        write_ec_manifest_to_legacy_file(ctx, manifest)
-    }
+    write_ec_manifest_to_legacy_file(ctx, manifest)?;
+    remove_aw_ec_generated_block(ctx)
 }
 
 fn write_ec_manifest_to_legacy_file(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
@@ -2221,7 +2605,7 @@ fn write_ec_manifest_to_legacy_file(ctx: &EcProjectContext, manifest: &EcManifes
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let body = format!(
-        "# SPEC-MANAGED: generated by `aw ec gen --project {}` from external-contracts or legacy TD EC sections.\n# CODEGEN-BEGIN\n{}# CODEGEN-END\n",
+        "# SPEC-MANAGED: generated by `aw ec gen --project {}` from ec/ markdown or legacy TD EC sections.\n# CODEGEN-BEGIN\n{}# CODEGEN-END\n",
         ctx.project,
         toml::to_string_pretty(manifest)?
     );
@@ -2229,66 +2613,38 @@ fn write_ec_manifest_to_legacy_file(ctx: &EcProjectContext, manifest: &EcManifes
         .with_context(|| format!("write {}", ctx.legacy_manifest_path.display()))
 }
 
-fn write_ec_manifest_to_aw_toml(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
+fn remove_aw_ec_generated_block(ctx: &EcProjectContext) -> Result<()> {
+    if !ctx.project_aw_path.is_file() {
+        return Ok(());
+    }
     let existing = fs::read_to_string(&ctx.project_aw_path)
         .with_context(|| format!("read {}", ctx.project_aw_path.display()))?;
-    let document = AwEcGeneratedDocument {
-        aw: AwEcGeneratedRoot {
-            ec: AwEcGeneratedTable {
-                generated: manifest.clone(),
-            },
-        },
+    let Some(next) = strip_aw_ec_generated_block(&existing) else {
+        return Ok(());
     };
-    let block = toml::to_string_pretty(&document)?;
-    let next = splice_aw_ec_generated_block(&existing, &block);
     fs::write(&ctx.project_aw_path, next)
         .with_context(|| format!("write {}", ctx.project_aw_path.display()))
 }
 
-fn extract_aw_ec_generated_block(content: &str) -> Option<String> {
-    let begin = content.find(EC_AW_BEGIN_MARKER)?;
-    let after_begin = content[begin..].find('\n').map(|idx| begin + idx + 1)?;
-    let end = content[after_begin..].find(EC_AW_END_MARKER)? + after_begin;
-    Some(content[after_begin..end].trim().to_string())
-}
-
-fn splice_aw_ec_generated_block(existing: &str, block: &str) -> String {
+fn strip_aw_ec_generated_block(existing: &str) -> Option<String> {
     let begin_line = format!("# {EC_AW_BEGIN_MARKER}");
     let end_line = format!("# {EC_AW_END_MARKER}");
     let lines: Vec<&str> = existing.lines().collect();
-    let begin_idx = lines.iter().position(|line| line.trim() == begin_line);
-    let end_idx = lines.iter().position(|line| line.trim() == end_line);
-    let mut replacement = String::new();
-    replacement.push_str(&begin_line);
-    replacement.push('\n');
-    replacement.push_str(block.trim_end());
-    replacement.push('\n');
-    replacement.push_str(&end_line);
-    replacement.push('\n');
-
-    if let (Some(begin_idx), Some(end_idx)) = (begin_idx, end_idx) {
-        let mut out = String::new();
-        for line in &lines[..begin_idx] {
-            out.push_str(line);
-            out.push('\n');
-        }
-        out.push_str(&replacement);
-        for line in &lines[(end_idx + 1)..] {
-            out.push_str(line);
-            out.push('\n');
-        }
-        return out;
+    let begin_idx = lines.iter().position(|line| line.trim() == begin_line)?;
+    let end_idx = lines.iter().position(|line| line.trim() == end_line)?;
+    if begin_idx > end_idx {
+        return None;
     }
-
-    let mut out = existing.to_string();
-    if !out.ends_with('\n') {
+    let mut out = String::new();
+    for line in &lines[..begin_idx] {
+        out.push_str(line);
         out.push('\n');
     }
-    if !out.ends_with("\n\n") {
+    for line in &lines[(end_idx + 1)..] {
+        out.push_str(line);
         out.push('\n');
     }
-    out.push_str(&replacement);
-    out
+    Some(out)
 }
 
 fn write_ec_doc(ctx: &EcProjectContext, content: &str) -> Result<()> {
@@ -2320,7 +2676,7 @@ fn render_ec_doc(ctx: &EcProjectContext, manifest: &EcManifest) -> String {
         relative_to(&ctx.project_root, &ctx.manifest_path),
         manifest.generated_from_td_digest
     ));
-    out.push_str("This document is generated from AW external-contract definitions. Do not edit the generated block directly; update `external-contracts/` or rerun `aw ec doc gen`.\n\n");
+    out.push_str("This document is generated from AW external-contract definitions. Do not edit the generated block directly; update `ec/` or rerun `aw ec doc gen`.\n\n");
     out.push_str("## Verification Summary\n\n");
     out.push_str(&format!("- Project: `{}`\n", ctx.project));
     out.push_str(&format!(
@@ -2405,6 +2761,29 @@ fn render_artifact_suffix(artifact: &EcEvidenceArtifact) -> String {
     if !artifact.locator.is_empty() {
         parts.push(format!("locator: `{}`", artifact.locator));
     }
+    if !artifact.format.is_empty() {
+        parts.push(format!("format: `{}`", artifact.format));
+    }
+    if !artifact.command.is_empty() {
+        parts.push(format!("command: `{}`", artifact.command));
+    }
+    if !artifact.screenshots.is_empty() {
+        parts.push(format!(
+            "screenshots: {}",
+            artifact
+                .screenshots
+                .iter()
+                .map(|path| format!("`{path}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !artifact.highlights.is_empty() {
+        parts.push(format!("highlights: {}", artifact.highlights.join("; ")));
+    }
+    if !artifact.steps.is_empty() {
+        parts.push(format!("steps: {}", artifact.steps.join("; ")));
+    }
     if parts.is_empty() {
         String::new()
     } else {
@@ -2480,18 +2859,67 @@ fn write_generated_tool_manifests(ctx: &EcProjectContext, manifest: &EcManifest)
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
+        if path.is_file() {
+            let existing =
+                fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+            if existing != item.generated_toml && !existing.contains(EC_TOOL_BEGIN_MARKER) {
+                bail!(
+                    "refusing to overwrite non-generated tool manifest {}; move it or add AW-EC-TOOL markers",
+                    path.display()
+                );
+            }
+        }
         fs::write(&path, &item.generated_toml)
             .with_context(|| format!("write {}", path.display()))?;
     }
     Ok(())
 }
 
+// Real EC gate test: runs the contract `command` from the project root (the dir
+// containing `.aw/`, where EC commands are defined to run) and asserts success.
+// `#[ignore]` keeps it out of the default `cargo test` (EC commands are heavy and
+// may themselves invoke cargo test); run via `cargo test -- --ignored` or
+// `aw health --verify-ec`. `__FN__`/`__CMD__`/`__ID__` are substituted, not
+// `format!`-interpolated, so the template's own `{...}` stay literal.
+const EC_RUST_COMMAND_TEMPLATE: &str = r#"#[test]
+#[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
+fn __FN__() {
+    let command = __CMD__;
+    let id = __ID__;
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !root.join(".aw").is_dir() {
+        assert!(
+            root.pop(),
+            "AW EC {id}: no .aw/ project root above {}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+    }
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&root)
+        .status()
+        .unwrap_or_else(|e| panic!("AW EC {id}: failed to spawn `{command}`: {e}"));
+    assert!(
+        status.success(),
+        "AW EC {id} FAILED (exit {:?}): {command}",
+        status.code()
+    );
+}
+"#;
+
+const EC_RUST_NO_COMMAND_TEMPLATE: &str = r#"#[test]
+#[ignore = "AW EC placeholder: no command bound to this contract"]
+fn __FN__() {
+    panic!("AW EC {}: no command bound to this contract", __ID__);
+}
+"#;
+
 fn render_rust_ec_test(case: &EcManifestCase) -> String {
     let fn_name = rust_ident(&case.id);
-    let placeholder = rust_string_literal(&format!("AW EC placeholder for {}", case.id));
     let evaluator_markers = render_evaluator_marker_lines("//", case);
-    format!(
-        "// SPEC-MANAGED: {}\n// CODEGEN-BEGIN\n// {EC_BEGIN_MARKER}\n// @ec {}\n// @capability {}\n// @claim {}\n// @contract {}\n// @category {}\n// @required_for_production {}\n// @command {}\n{}// {EC_END_MARKER}\n\n#[test]\n#[ignore = \"AW EC placeholder: implement this external contract test or keep the manifest command authoritative\"]\nfn {fn_name}() {{\n    panic!({});\n}}\n// CODEGEN-END\n",
+    let header = format!(
+        "// SPEC-MANAGED: {}\n// CODEGEN-BEGIN\n// {EC_BEGIN_MARKER}\n// @ec {}\n// @capability {}\n// @claim {}\n// @contract {}\n// @category {}\n// @required_for_production {}\n// @command {}\n{}// {EC_END_MARKER}\n\n",
         case.td_ref,
         case.id,
         case.capability_id,
@@ -2501,8 +2929,25 @@ fn render_rust_ec_test(case: &EcManifestCase) -> String {
         case.required_for_production,
         case.command,
         evaluator_markers,
-        placeholder
-    )
+    );
+    // Preserve the contract's English assertions as leading doc comments.
+    let mut contract_doc = String::new();
+    for assertion in &case.assertions {
+        contract_doc.push_str("// Contract: ");
+        contract_doc.push_str(assertion);
+        contract_doc.push('\n');
+    }
+    let body = if case.command.trim().is_empty() {
+        EC_RUST_NO_COMMAND_TEMPLATE
+            .replace("__FN__", &fn_name)
+            .replace("__ID__", &rust_string_literal(&case.id))
+    } else {
+        EC_RUST_COMMAND_TEMPLATE
+            .replace("__FN__", &fn_name)
+            .replace("__CMD__", &rust_string_literal(&case.command))
+            .replace("__ID__", &rust_string_literal(&case.id))
+    };
+    format!("{header}{contract_doc}{body}// CODEGEN-END\n")
 }
 
 fn render_python_ec_test(case: &EcManifestCase) -> String {
@@ -2704,6 +3149,19 @@ e2e_tests:
         - path: e2e-results/demo/report.json
           kind: agent-eval
           label: Agent eval report
+      docs:
+        - path: docs/user-manual/index.md
+          kind: generated-manual
+          label: User manual
+          format: markdown
+          command: "jet e2e manual --output docs/user-manual"
+          screenshots:
+            - docs/user-manual/screenshots/home.png
+          highlights:
+            - main navigation
+          steps:
+            - open dashboard
+            - verify summary
     evaluators:
       - id: Demo agent judge
         tool: codex
@@ -2721,6 +3179,156 @@ e2e_tests:
         .unwrap();
         let ctx = resolve_ec_project_context(tmp.path(), "d").unwrap();
         (tmp, ctx)
+    }
+
+    fn ctx_with_root(project_root: &Path) -> EcProjectContext {
+        EcProjectContext {
+            project_root: project_root.to_path_buf(),
+            project: "demo".to_string(),
+            source_root: project_root.join("projects/demo"),
+            ec_root: project_root.join("projects/demo/external-contracts"),
+            td_root: project_root.join(".aw/tech-design/projects/demo"),
+            tests_root: project_root.join("projects/demo/tests"),
+            manifest_path: project_root.join("projects/demo/tests/aw-ec.toml"),
+            legacy_manifest_path: project_root.join("projects/demo/tests/aw-ec.toml"),
+            project_aw_path: project_root.join("projects/demo/aw.toml"),
+            doc_path: project_root.join("projects/demo/docs/aw-ec-manual.md"),
+            target: "rust".to_string(),
+            package_name: "demo-crate".to_string(),
+        }
+    }
+
+    fn case(id: &str, capability_id: &str, category: &str) -> EcManifestCase {
+        EcManifestCase {
+            id: id.to_string(),
+            capability_id: capability_id.to_string(),
+            claim_id: id.to_string(),
+            contract_id: id.to_string(),
+            category: category.to_string(),
+            td_ref: format!("td#{id}"),
+            test_path: format!("tests/{id}.rs"),
+            command: "cargo test".to_string(),
+            // Start from the YAML default (true) so we can observe derivation flip it.
+            required_for_production: true,
+            assertions: Vec::new(),
+            evidence: Vec::new(),
+            evaluators: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn case_gen_mode_dispatches_on_command() {
+        let mut c = case("x", "search", "stability");
+        c.command = "rig test --dir cases/resilience".into();
+        assert_eq!(case_gen_mode(&c), CaseGenMode::Rig);
+        c.command = "cargo test -p lumen --test api_e2e".into();
+        assert_eq!(case_gen_mode(&c), CaseGenMode::NativeRust);
+        c.command = "pytest x".into();
+        assert_eq!(case_gen_mode(&c), CaseGenMode::Other);
+    }
+
+    #[test]
+    fn rig_skeleton_has_case_and_source_contract() {
+        let mut c = case("search-stability-fault-resilience", "search", "stability");
+        c.assertions = vec!["search p99 stays bounded".into()];
+        let s = render_case_toml_skeleton(
+            &c,
+            "lumen",
+            "resilience",
+            "search_stability_fault_resilience",
+        );
+        assert!(s.contains("[case]"));
+        assert!(s.contains("source_contract = \"search-stability-fault-resilience\""));
+        assert!(s.contains("[exercise.request]"));
+        assert!(s.contains("dimension = \"resilience\""));
+        assert!(s.contains("subject = \"search p99 stays bounded\""));
+    }
+
+    #[test]
+    fn native_skeleton_has_test_fn_and_ec_marker() {
+        let c = case("lumen-x", "search", "behavior");
+        let s = render_native_rust_skeleton(&c, "api_e2e");
+        assert!(s.contains("#[test]"));
+        assert!(s.contains("fn api_e2e()"));
+        assert!(s.contains("@ec lumen-x"));
+    }
+
+    #[test]
+    fn command_parsers_extract_dir_and_target() {
+        assert_eq!(
+            rig_dir_from_command("rig test --dir cases/load"),
+            Some("cases/load")
+        );
+        assert_eq!(
+            cargo_test_target("cargo test -p lumen --test api_e2e -- --ignored"),
+            Some("api_e2e")
+        );
+    }
+
+    #[test]
+    fn derive_required_for_production_uses_type_ceiling_for_declared_ec_cases() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".aw")).unwrap();
+        fs::write(
+            tmp.path().join(".aw/capability-types.toml"),
+            "[capability_types]\nsvc-cap = \"Service\"\nagent-cap = \"AgentFirst\"\n",
+        )
+        .unwrap();
+        let ctx = ctx_with_root(tmp.path());
+
+        let mut cases = vec![
+            // Service capability: declared security + stability cases are production-required.
+            case("svc-sec", "svc-cap", "security"),
+            case("svc-stab", "svc-cap", "stability"),
+            // AgentFirst capability: only behavior is required; efficiency is not.
+            case("agent-eff", "agent-cap", "efficiency"),
+            case("agent-beh", "agent-cap", "behavior"),
+            // Untyped capability: falls back to the YAML flag (default true).
+            case("other", "no-type-cap", "security"),
+        ];
+        derive_required_for_production(&ctx, &mut cases).unwrap();
+
+        let by_id = |id: &str| {
+            cases
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .required_for_production
+        };
+        assert!(by_id("svc-sec"), "Service/security is production-required");
+        assert!(
+            by_id("svc-stab"),
+            "Service/stability is production-required"
+        );
+        assert!(
+            !by_id("agent-eff"),
+            "AgentFirst/efficiency is NOT production-required"
+        );
+        assert!(
+            by_id("agent-beh"),
+            "AgentFirst/behavior is production-required"
+        );
+        assert!(
+            by_id("other"),
+            "untyped capability keeps the YAML fallback (true)"
+        );
+    }
+
+    #[test]
+    fn derive_required_for_production_no_binding_keeps_yaml_flag() {
+        // No .aw/capability-types.toml at all -> values untouched.
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = ctx_with_root(tmp.path());
+        let mut cases = vec![{
+            let mut c = case("c1", "cap", "security");
+            c.required_for_production = false; // simulate a YAML-set false
+            c
+        }];
+        derive_required_for_production(&ctx, &mut cases).unwrap();
+        assert!(
+            !cases[0].required_for_production,
+            "with no binding the YAML flag (false) is preserved"
+        );
     }
 
     #[test]
@@ -2781,12 +3389,23 @@ edition = "2021"
             "cargo test -p demo-crate demo_happy_path -- --nocapture"
         );
         assert_eq!(case.assertions.len(), 2);
-        assert_eq!(case.evidence.len(), 2);
+        assert_eq!(case.evidence.len(), 3);
         assert_eq!(case.evidence[0].kind, "screenshot");
         assert_eq!(case.evidence[0].path, "e2e-results/demo/happy-path.png");
         assert_eq!(case.evidence[0].label, "Demo happy path");
         assert_eq!(case.evidence[0].locator, "[data-testid=demo-happy-path]");
         assert_eq!(case.evidence[1].kind, "agent-eval");
+        assert_eq!(case.evidence[2].kind, "generated-manual");
+        assert_eq!(case.evidence[2].path, "docs/user-manual/index.md");
+        assert_eq!(case.evidence[2].format, "markdown");
+        assert_eq!(
+            case.evidence[2].command,
+            "jet e2e manual --output docs/user-manual"
+        );
+        assert_eq!(
+            case.evidence[2].screenshots,
+            vec!["docs/user-manual/screenshots/home.png"]
+        );
         assert_eq!(case.evaluators.len(), 1);
         assert_eq!(case.evaluators[0].id, "demo-agent-judge");
         assert_eq!(case.evaluators[0].tool, "codex");
@@ -2806,19 +3425,41 @@ edition = "2021"
     }
 
     #[test]
-    fn external_contracts_take_priority_and_generate_tool_manifest() {
+    fn ec_markdown_takes_priority_and_generates_tool_manifest() {
         let (tmp, ctx) = write_demo_repo();
         fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
         fs::write(
             tmp.path()
-                .join("projects/demo/external-contracts/behavior/static.toml"),
+                .join("projects/demo/external-contracts/behavior/static.md"),
             r#"
-[[contracts]]
-id = "static http"
-capability_id = "serve"
-claim_id = "serve-static-http"
-tool = "rig"
-assertions = ["GET /index.html returns 200"]
+## Static HTTP
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: static http
+    capability_id: serve
+    claim_id: serve-static-http
+    category: behavior
+    command: "rig run --dir projects/demo/tests/rig/scenarios/behavior"
+    assertions:
+      - "GET /index.html returns 200"
+```
+
+## Static Tool
+<!-- type: tool-contract lang: yaml -->
+
+```yaml
+tool_contracts:
+  - id: static http rig
+    tool: rig
+    manifest: rig.toml
+    category: behavior
+    command: "rig run --dir projects/demo/tests/rig/scenarios/behavior"
+    native:
+      version: 1
+      scenario: static-http
+```
 "#,
         )
         .unwrap();
@@ -2832,13 +3473,10 @@ assertions = ["GET /index.html returns 200"]
         assert_eq!(manifest.cases[0].category, "behavior");
         assert!(manifest.cases[0]
             .td_ref
-            .ends_with("external-contracts/behavior/static.toml#static-http"));
+            .ends_with("external-contracts/behavior/static.md#static-http"));
         assert_eq!(manifest.tool_manifests.len(), 1);
         assert_eq!(manifest.tool_manifests[0].tool, "rig");
-        assert_eq!(
-            manifest.tool_manifests[0].path,
-            "projects/demo/tests/rig/scenarios/behavior/static-http.toml"
-        );
+        assert_eq!(manifest.tool_manifests[0].path, "projects/demo/rig.toml");
         assert_eq!(
             manifest.cases[0].command,
             "rig run --dir projects/demo/tests/rig/scenarios/behavior"
@@ -2846,16 +3484,168 @@ assertions = ["GET /index.html returns 200"]
     }
 
     #[test]
+    fn ec_draft_fill_markdown_drives_manifest() {
+        let (tmp, ctx) = write_demo_repo();
+        let args = EcDraftArgs {
+            id: "search-indexing".to_string(),
+            category: "efficiency".to_string(),
+            title: Some("Search Indexing".to_string()),
+            capability_id: Some("search-indexing".to_string()),
+            claim_id: Some("indexing-speed".to_string()),
+            contract_id: None,
+            command: None,
+            tool: vec!["meter".to_string()],
+            force: false,
+            json: false,
+        };
+        let draft = render_ec_draft(
+            &ctx,
+            "search-indexing",
+            "efficiency",
+            "Search Indexing",
+            &args,
+        );
+        let filled = merge_ec_section(
+            &draft,
+            "e2e-test",
+            r#"## Indexing Speed
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: indexing speed
+    capability_id: search-indexing
+    claim_id: indexing-speed
+    category: efficiency
+    test_path: projects/demo/tests/benchmark_indexing_speed.rs
+    command: "cargo test -p demo-crate indexing_speed -- --nocapture"
+    assertions:
+      - "indexes under target latency"
+```
+"#,
+        )
+        .unwrap();
+        let filled = merge_ec_section(
+            &filled,
+            "tool-contract",
+            r#"## Meter Contract
+<!-- type: tool-contract lang: yaml -->
+
+```yaml
+tool_contracts:
+  - id: indexing speed meter
+    tool: meter
+    manifest: meter.toml
+    category: efficiency
+    command: "meter run --target projects/demo/meter.toml"
+    native:
+      version: 1
+      benchmark: indexing-speed
+```
+"#,
+        )
+        .unwrap();
+        let path = tmp
+            .path()
+            .join("projects/demo/external-contracts/efficiency/search-indexing.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, filled).unwrap();
+
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        assert_eq!(manifest.cases.len(), 1);
+        let case = &manifest.cases[0];
+        assert_eq!(case.id, "indexing-speed");
+        assert_eq!(case.capability_id, "search-indexing");
+        assert_eq!(case.claim_id, "indexing-speed");
+        assert_eq!(case.category, "efficiency");
+        assert_eq!(
+            case.test_path,
+            "projects/demo/tests/benchmark_indexing_speed.rs"
+        );
+        assert!(case
+            .td_ref
+            .ends_with("external-contracts/efficiency/search-indexing.md#indexing-speed"));
+        assert_eq!(manifest.tool_manifests.len(), 1);
+        assert_eq!(manifest.tool_manifests[0].tool, "meter");
+        assert_eq!(manifest.tool_manifests[0].path, "projects/demo/meter.toml");
+    }
+
+    #[test]
+    fn ec_generated_manual_artifact_preserves_metadata() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        let artifact = manifest.cases[0]
+            .evidence
+            .iter()
+            .find(|artifact| artifact.kind == "generated-manual")
+            .expect("generated manual evidence is present");
+
+        assert_eq!(artifact.path, "docs/user-manual/index.md");
+        assert_eq!(artifact.label, "User manual");
+        assert_eq!(artifact.format, "markdown");
+        assert_eq!(artifact.command, "jet e2e manual --output docs/user-manual");
+        assert_eq!(
+            artifact.screenshots,
+            vec!["docs/user-manual/screenshots/home.png"]
+        );
+        assert_eq!(artifact.highlights, vec!["main navigation"]);
+        assert_eq!(artifact.steps, vec!["open dashboard", "verify summary"]);
+    }
+
+    #[test]
+    fn ec_generated_manual_artifact_reports_invalid_contracts() {
+        let (_tmp, ctx) = write_demo_repo();
+        let contract_path = ctx.td_root.join("specs/invalid-manual.md");
+        let invalid_contract = r#"
+## Invalid Manual
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: invalid manual
+    evidence:
+      docs:
+        - path: ../manual/index.pdf
+          kind: generated-manual
+          format: pdf
+```
+"#;
+        fs::write(&contract_path, invalid_contract).unwrap();
+
+        let err = build_expected_manifest(&ctx).expect_err("invalid generated manual is rejected");
+        let message = format!("{err:#}");
+
+        assert!(message.contains("generated-manual evidence requires a non-empty command"));
+
+        let unsupported =
+            validate_generated_manual_artifact("docs/user-manual/index.pdf", "pdf", "jet manual")
+                .expect_err("unsupported manual format is rejected");
+        assert!(unsupported
+            .to_string()
+            .contains("format must be markdown or html"));
+
+        let escaped = validate_generated_manual_artifact("../manual.md", "markdown", "jet manual")
+            .expect_err("path escape is rejected");
+        assert!(escaped.to_string().contains("path must be project-local"));
+    }
+
+    #[test]
     fn external_contracts_reject_unknown_category() {
         let (tmp, ctx) = write_demo_repo();
-        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/other")).unwrap();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
         fs::write(
             tmp.path()
-                .join("projects/demo/external-contracts/other/static.toml"),
+                .join("projects/demo/external-contracts/behavior/static.md"),
             r#"
-[[contracts]]
-id = "bad"
-category = "usability"
+## Bad Contract
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: bad
+    category: usability
+```
 "#,
         )
         .unwrap();
@@ -2865,18 +3655,50 @@ category = "usability"
     }
 
     #[test]
+    fn ec_extractors_ignore_type_mentions_inside_source_snapshots() {
+        let (tmp, ctx) = write_demo_repo();
+        fs::write(
+            tmp.path()
+                .join(".aw/tech-design/projects/demo/specs/source-snapshot.md"),
+            r#"
+## Source
+<!-- type: source lang: rust -->
+
+```rust
+let message = "section 'Example' (type: e2e-test) requires a YAML fence";
+```
+
+```yaml
+bad: value: nope
+```
+"#,
+        )
+        .unwrap();
+
+        let manifest = build_expected_manifest(&ctx).unwrap();
+
+        assert_eq!(manifest.cases.len(), 1);
+        assert_eq!(manifest.cases[0].id, "demo-happy-path");
+    }
+
+    #[test]
     fn ec_verify_runs_manifest_commands() {
         let (tmp, ctx) = write_demo_repo();
         fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
         fs::write(
             tmp.path()
-                .join("projects/demo/external-contracts/behavior/smoke.toml"),
+                .join("projects/demo/external-contracts/behavior/smoke.md"),
             r#"
-[[contracts]]
-id = "smoke"
-capability_id = "demo"
-claim_id = "demo-smoke"
-command = "true"
+## Smoke
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: smoke
+    capability_id: demo
+    claim_id: demo-smoke
+    command: "true"
+```
 "#,
         )
         .unwrap();
@@ -2925,7 +3747,7 @@ command = "true"
     }
 
     #[test]
-    fn generated_manifest_can_live_in_project_aw_toml() {
+    fn generated_manifest_lives_outside_project_aw_toml() {
         let (tmp, _ctx) = write_demo_repo();
         fs::write(
             tmp.path().join("projects/demo/aw.toml"),
@@ -2940,6 +3762,13 @@ name = "demo"
 paths = ["**"]
 target = "rust"
 test_cmd = "cargo test -p demo"
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "demo"
+generated_from_td_digest = "stale"
+# AW-EC-END
 "#,
         )
         .unwrap();
@@ -2951,14 +3780,12 @@ test_cmd = "cargo test -p demo"
         }
 
         let aw_toml = fs::read_to_string(&ctx.project_aw_path).unwrap();
-        assert!(aw_toml.contains(EC_AW_BEGIN_MARKER));
-        assert!(aw_toml.contains("[aw.ec.generated]"));
-        assert!(aw_toml.contains("[[aw.ec.generated.cases]]"));
-        assert!(!ctx.legacy_manifest_path.exists());
+        assert!(!aw_toml.contains(EC_AW_BEGIN_MARKER));
+        assert!(ctx.legacy_manifest_path.exists());
 
         let summary = check_ec_context(&ctx).unwrap();
         assert!(summary.clean, "{:?}", summary.findings);
-        assert_eq!(summary.manifest_path, "projects/demo/aw.toml");
+        assert_eq!(summary.manifest_path, "projects/demo/tests/aw-ec.toml");
     }
 
     #[test]
@@ -3076,6 +3903,12 @@ tool_contracts:
         assert!(written.contains("### Demo Happy Path"));
         assert!(written.contains("e2e-results/demo/happy-path.png"));
         assert!(written.contains("Agent eval report"));
+        assert!(written.contains("docs/user-manual/index.md"));
+        assert!(written.contains("format: `markdown`"));
+        assert!(written.contains("command: `jet e2e manual --output docs/user-manual`"));
+        assert!(written.contains("screenshots: `docs/user-manual/screenshots/home.png`"));
+        assert!(written.contains("highlights: main navigation"));
+        assert!(written.contains("steps: open dashboard; verify summary"));
         assert!(written.contains("Agent evaluators"));
         assert!(written.contains("demo-agent-judge"));
         assert!(written.contains("score >= 4"));

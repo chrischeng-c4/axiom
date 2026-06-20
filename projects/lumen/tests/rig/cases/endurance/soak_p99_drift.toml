@@ -1,0 +1,42 @@
+# Lifecycle case (migrated from scenarios/endurance/soak_p99_drift.toml). The
+# sustained soak is the repeated exercise; window-over-window p99-drift analysis
+# is delegated to the efficiency-EC pin on p99_ms.
+[case]
+id = "soak_p99_drift"
+suite = "lumen"
+dimension = "endurance"
+subject = "search p99 does not drift up across a bounded-keyspace soak"
+expected = "pass"
+required = true
+source_contract = "lumen-search-stability-resilience"
+
+[env]
+upstream = "127.0.0.1:7373"
+collection = "users"
+
+[prepare]
+needs = ["lumen"]
+runner = "rig-load"
+[[prepare.step]]
+type = "http"
+name = "collection_exists"
+method = "PUT"
+url = "http://{{upstream}}/collections/{{collection}}"
+body = '{"fields": {"bio": {"type": "text"}}}'
+expect = { statuses = [200, 201, 400, 409] }
+
+[exercise]
+n = 4000
+[exercise.request]
+method = "POST"
+url = "http://{{upstream}}/collections/{{collection}}/search"
+body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
+[exercise.request.expect]
+status = 200
+timeout_ms = 2000
+
+[load]
+metric = "p99_ms"
+
+[clean]
+delegate = "vat-cow"

@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Runtime config — sourced from env so it can be wired through the K8s
 //! ConfigMap without any rebuild.
@@ -14,8 +14,8 @@
 use anyhow::{Context, Result};
 use std::env;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
 pub struct ClusterConfig {
     pub shard_count: u32,
     pub replicas_per_shard: u32,
@@ -23,7 +23,7 @@ pub struct ClusterConfig {
     pub pod_name: String,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-config-rs.md#source
 impl ClusterConfig {
     pub fn from_env() -> Result<Self> {
         Ok(Self {

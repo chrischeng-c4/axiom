@@ -227,6 +227,7 @@ impl WorkerPool {
                         shard_index: None,
                         shard_total: None,
                         artifacts: Vec::new(),
+                        steps: Vec::new(),
                     });
                 }
                 Err(join_err) => {
@@ -249,6 +250,7 @@ impl WorkerPool {
                         shard_index: None,
                         shard_total: None,
                         artifacts: Vec::new(),
+                        steps: Vec::new(),
                     });
                 }
             }
@@ -295,6 +297,7 @@ impl WorkerPool {
                         shard_index: None,
                         shard_total: None,
                         artifacts: Vec::new(),
+                        steps: Vec::new(),
                     });
                 }
             }

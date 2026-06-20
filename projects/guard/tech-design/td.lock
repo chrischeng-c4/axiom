@@ -1,8 +1,8 @@
 version = 1
 project = "guard"
 td_path = "projects/guard/tech-design"
-generated_at = "2026-06-13T04:08:16.456155+00:00"
-digest = "sha256:8cb8a856d2dc44b0570381c8229ae7f533b21580382668f9f5d078bfd232badc"
+generated_at = "2026-06-14T08:10:48.187869+00:00"
+digest = "sha256:900097ebb7e040cef927a50955ece72189e317315e13630a9c83a07680abe8e8"
 
 [[files]]
 path = "semantic/guard-build-script.md"
@@ -10,7 +10,7 @@ digest = "sha256:aa666bd92ef8f43bda01ae450bf7d0201aee35a45b3fe7a70998f2cc085f1de
 
 [[files]]
 path = "semantic/guard-ec-static-security-smoke.md"
-digest = "sha256:95b494eb5a96cfaaf3a5219c0f365e63b52013c60ea61e7c7c3299784ef30051"
+digest = "sha256:8dac05537370c1fd961b1108df60a46e43f2f3b60c57487bdad4696475a58033"
 
 [[files]]
 path = "semantic/guard-guard-cli-src-bin.md"

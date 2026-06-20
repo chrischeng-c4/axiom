@@ -15,8 +15,25 @@ capability_refs:
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Lossless rust-source-unit coverage for `projects/meter/src/capture/vitals.rs`, preserving the L1 vitals capture and meter.toml measurement contract implementation as TD-owned CST-backed source.
+Public API manifest for `projects/meter/src/capture/vitals.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `CaptureOutcome` | projects/meter/src/capture/vitals.rs | struct | pub | 184 |  |
+| `GateConfig` | projects/meter/src/capture/vitals.rs | struct | pub | 93 |  |
+| `Level` | projects/meter/src/capture/vitals.rs | enum | pub | 47 |  |
+| `MeterConfig` | projects/meter/src/capture/vitals.rs | struct | pub | 105 |  |
+| `Vitals` | projects/meter/src/capture/vitals.rs | struct | pub | 156 |  |
+| `WindowOpts` | projects/meter/src/capture/vitals.rs | struct | pub | 169 |  |
+| `as_str` | projects/meter/src/capture/vitals.rs | function | pub | 77 | as_str(&self) -> &'static str |
+| `capture_window` | projects/meter/src/capture/vitals.rs | function | pub | 209 | capture_window(     target: &Target,     extra_args: &[String],     opts: &WindowOpts, ) -> Result<CaptureOutcome, SampleError> |
+| `load` | projects/meter/src/capture/vitals.rs | function | pub | 126 | load(dir: &Path) -> Result<Option<MeterConfig>, String> |
+| `parse` | projects/meter/src/capture/vitals.rs | function | pub | 63 | parse(s: &str) -> Result<Level, String> |
+| `resolve_level` | projects/meter/src/capture/vitals.rs | function | pub | 148 | resolve_level(cli: Option<Level>, config: Option<&MeterConfig>) -> Level |
+| `vitals_findings` | projects/meter/src/capture/vitals.rs | function | pub | 575 | vitals_findings(     vitals: &Vitals,     label: &str,     gate: &GateConfig,     escalate_command: &str, ) -> Vec<Finding> |
+| `write_collapsed` | projects/meter/src/capture/vitals.rs | function | pub | 548 | write_collapsed(stacks: &[FoldedStack], label: &str) -> std::io::Result<PathBuf> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

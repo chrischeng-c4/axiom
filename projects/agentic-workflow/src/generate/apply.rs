@@ -3359,6 +3359,61 @@ changes:
     }
 
     #[test]
+    fn deployment_artifact_apply_writes_whole_yaml_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/k8s-operator.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: k8s-operator
+fill_sections: [deployment, changes]
+---
+
+## Deployment
+<!-- type: deployment lang: yaml -->
+
+```yaml
+deployment:
+  artifacts:
+    - path: k8s/operator/deployment.yaml
+      kind: kubernetes-deployment
+      content: |
+        apiVersion: apps/v1
+        kind: Deployment
+        spec:
+          template:
+            spec:
+              containers:
+                - name: operator
+                  command: ["/usr/local/bin/lumen-operator"]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: k8s/operator/deployment.yaml
+    action: modify
+    section: deployment
+    impl_mode: codegen
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply_scoped_targets(&spec_path, root, false, &[root.join("k8s")]).unwrap();
+
+        let generated = std::fs::read_to_string(root.join("k8s/operator/deployment.yaml")).unwrap();
+        assert!(generated.contains("# SPEC-MANAGED: tech-design/k8s-operator.md#deployment"));
+        assert_eq!(generated.matches("# CODEGEN-BEGIN").count(), 1);
+        assert!(generated.contains("command: [\"/usr/local/bin/lumen-operator\"]"));
+        assert!(!generated.contains("/usr/bin/tini"));
+    }
+
+    #[test]
     fn test_source_template_can_read_target_and_strip_handwrite() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();

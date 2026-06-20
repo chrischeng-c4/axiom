@@ -1,15 +1,69 @@
 # cclab-server
 
-Unified HTTP Server for cclab
+## Brief
+
+Cclab Server is the local HTTP dashboard and plan-viewer service for registered
+cclab projects.
+
+It owns the `cc server ...` lifecycle commands, the persisted
+`~/.cclab/registry.json` project registry, the Axum dashboard and plan-viewer
+routes, and the per-project Lens handler pool. The legacy MCP transport/tool
+surface has been removed from the active server contract; Agentic Workflow and
+SDD behavior is now routed through CLI commands instead.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Server CLI And Project Registry | - | implemented | verified | smoke | not_ready | registry and CLI lifecycle smoke gate passes |
+| Dashboard Plan Viewer And Lens Pool | - | implemented | verified | smoke | not_ready | Lens pool integration and HTTP route smoke gates pass |
+
+### Server CLI And Project Registry
+
+ID: server-cli-and-project-registry
+Type: Service
+Surfaces: CLI: `cc server start`, `cc server ensure`, `cc server register`, `cc server unregister`, `cc server list`, `cc server view`, `cc server shutdown`; Registry: `~/.cclab/registry.json`
+EC Dimensions: behavior: `cargo test -p cclab-server`
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+Cclab Server provides local CLI lifecycle commands and a persistent project registry for starting or ensuring the server, registering projects, listing status, opening plan-viewer URLs, and shutting down the daemonized server process.
+Gate Inventory: `cargo test -p cclab-server`; crates/cclab-server/src/cli.rs; crates/cclab-server/src/registry.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Server CLI lifecycle and registry persistence contract | epic | - | implemented | verified | smoke | `cargo test -p cclab-server`; crates/cclab-server/src/cli.rs; crates/cclab-server/src/registry.rs |
+
+### Dashboard Plan Viewer And Lens Pool
+
+ID: dashboard-plan-viewer-and-lens-pool
+Type: Service
+Surfaces: HTTP UI/API: `/`, `/api/dashboard`, `/view/{project}`, `/view/{project}/{change}`, `/health`; Rust API: `build_router`, `start_server`, `UnifiedAppState`, `LensHandlerPool`
+EC Dimensions: behavior: `cargo test -p cclab-server --test unified_server`
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+Cclab Server hosts a local Axum dashboard and plan-viewer server for registered projects, with health checks, project/change listing APIs, file viewers, and Lens handler pooling that keeps per-project analysis state isolated and supports unsaved document overrides.
+Gate Inventory: `cargo test -p cclab-server --test unified_server`; crates/cclab-server/src/http_server.rs; crates/cclab-server/src/lens_pool.rs; crates/cclab-server/tests/unified_server.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Lens handler pool and document override contract | epic | - | implemented | verified | conformance | `cargo test -p cclab-server --test unified_server`; crates/cclab-server/src/http_server.rs; crates/cclab-server/src/lens_pool.rs; crates/cclab-server/tests/unified_server.rs |
+| Dashboard and plan-viewer HTTP route smoke | epic | - | implemented | verified | smoke | `cargo test -p cclab-server --test unified_server`; crates/cclab-server/src/http_server.rs; crates/cclab-server/tests/unified_server.rs |
 
 ## Overview
 
-cclab-server provides a unified HTTP server that combines:
+cclab-server combines:
 
-- **SDD MCP Tools** (21 tools): Spec-driven development workflow
-- **Lens MCP Tools** (26 tools): Code analysis and diagram generation
-- **Dashboard UI**: Project listing and management
-- **Plan Viewer UI**: Interactive change review interface
+- **Server CLI**: start, ensure, register, unregister, list, view, and shutdown.
+- **Project registry**: persisted server and project state in `~/.cclab`.
+- **Dashboard UI/API**: project and change listing for registered projects.
+- **Plan Viewer UI**: change and project file views.
+- **Lens pool**: per-project analysis handlers with unsaved document overrides.
 
 ## Architecture
 
@@ -21,8 +75,8 @@ cc server start --port 3456
 │         Unified HTTP Server (Axum)           │
 ├──────────────────────────────────────────────┤
 │  /              Dashboard (all projects)     │
+│  /api/dashboard Dashboard JSON API           │
 │  /view/*        Plan Viewer UI               │
-│  /mcp           Combined MCP (47 tools)      │
 │  /health        Health check                 │
 └──────────────────────────────────────────────┘
        │
@@ -32,33 +86,21 @@ cc server start --port 3456
 └──────────────────────────────────────────────┘
 ```
 
-## MCP Tools (47 total)
-
-### SDD Tools (21)
-Workflow management, file operations, knowledge base.
-
-### Lens Tools (26)
-| Category | Count | Tools |
-|----------|-------|-------|
-| Analysis | 9 | check, type_at, symbols, diagnostics, hover, definition, references, index_status, invalidate |
-| Spec Generation | 3 | generate_from_spec, spec_to_mermaid, code_to_mermaid |
-| State Machine | 2 | validate_state_machine, generate_state_machine |
-| Mermaid Diagrams | 8 | flowchart, sequence, class, state, erd, mindmap, requirement, journey |
-| API Specs | 4 | openapi, asyncapi, openrpc, serverless_workflow |
-
 ## Usage
 
 ### Start Server
 
 ```bash
-# Start in foreground
 cc server start --port 3456
 
 # Start as daemon
 cc server start --daemon
 
-# Start with auto-open browser
-cc server start --open
+# Start and update supported client configuration files
+cc server start --update-clients
+
+# Ensure a daemon is running
+cc server ensure --port 3456
 ```
 
 ### Project Management
@@ -79,9 +121,6 @@ cc server unregister myproject
 ```bash
 # Open change in viewer
 cc server view myproject change-1
-
-# Open dashboard
-cc server dashboard
 ```
 
 ### Shutdown
@@ -107,36 +146,13 @@ Projects are stored in `~/.cclab/registry.json`:
 }
 ```
 
-### MCP Client Configuration
+## Retired MCP Surface
 
-For Claude Code:
-```json
-{
-  "mcpServers": {
-    "cclab": {
-      "url": "http://localhost:3456/mcp"
-    }
-  }
-}
-```
-
-## Stage-Specific Tool Filtering
-
-Different workflow stages can use filtered tool sets:
-
-```bash
-# Implement stage (4 tools)
-cc server start --tools implement
-
-# Review stage (3 tools)
-cc server start --tools review
-
-# All tools (default)
-cc server start
-```
+The old server-hosted SDD/Lens MCP tool surface is no longer part of
+cclab-server. Agentic Workflow operations should use the active CLI surfaces
+instead of an HTTP MCP endpoint.
 
 ## Related Crates
 
-- **sdd**: Workflow tools
-- **cclab-lens**: Analysis and diagram tools
-- **cclab-cli**: CLI commands
+- **agentic-workflow**: workflow CLI and UI support used by the server.
+- **cclab-cli**: top-level CLI command registration.
