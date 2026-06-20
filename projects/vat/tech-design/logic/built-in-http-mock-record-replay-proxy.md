@@ -286,3 +286,137 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; the http-mock emulator verb then errors cleanly, never a panic."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md
+    action: create
+    section: changes
+    impl_mode: hand-written
+    reason: "Define the HTTP mock proxy TD."
+  - path: projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md
+    action: validate
+    section: logic
+    impl_mode: hand-written
+    reason: "Record the forward-proxy + CONNECT MITM + stub/cassette lifecycle."
+  - path: projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md
+    action: validate
+    section: schema
+    impl_mode: hand-written
+    reason: "Record the proxy/CA/cassette evidence and exported env set."
+  - path: projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md
+    action: validate
+    section: config
+    impl_mode: hand-written
+    reason: "Record the http-mock builtin-only preset and its multi-env export."
+  - path: projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md
+    action: validate
+    section: cli
+    impl_mode: hand-written
+    reason: "Record the vat emulator http-mock verb and its ca-path/cassette-dir args."
+  - path: projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Record preset/CA/cassette/stub/stub-over-proxy/MITM/record-replay coverage."
+  - path: projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md
+    action: validate
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Record proxy-smoke, preset-run, and lean-build coverage."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#config"
+    summary: "Add rcgen to the emulator feature (CA + leaf cert gen) plus the integration test entry."
+  - path: projects/vat/src/emulator/httpmock/ca.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#logic"
+    summary: "rcgen CA + per-host leaf cert cache, converted to rustls cert/key for the TLS acceptor; write the CA pem."
+  - path: projects/vat/src/emulator/httpmock/cassette.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#logic"
+    summary: "On-disk cassette store: key requests by method+host+path+query+body, persist/replay responses across runs."
+  - path: projects/vat/src/emulator/httpmock/stub.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#logic"
+    summary: "Stub registry + matcher (method/host/path/query/header/body) returning canned responses."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#logic"
+    summary: "hyper conn-level proxy: CONNECT->upgrade->tokio-rustls MITM, absolute-form forward, /__admin/* admin API; core handler resolving stub>cassette>forward via reqwest."
+  - path: projects/vat/src/emulator/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#logic"
+    summary: "Register the httpmock module and the HttpMock serve arm (carrying ca_path + cassette_dir)."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#cli"
+    summary: "Add the HttpMock EmulatorKind and optional --ca-path/--cassette-dir args on the hidden Emulator verb."
+  - path: projects/vat/src/commands/emulator.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#cli"
+    summary: "Pass ca-path/cassette-dir through and map HttpMock to the emulator serve dispatch."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#config"
+    summary: "Add the HttpMock ServicePreset and include it in is_emulator/is_builtin/is_builtin_only."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#logic"
+    summary: "Generalize the builtin env export to a map (builtin_emulator_env); prepare_builtin_service for HttpMock allocates the CA path + cassette dir and builds the command; extend builtin_emulator_info/service_preset_name and fill the new exhaustive preset arm."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#config"
+    summary: "Document the built-in HTTP mock proxy and its transparent interception."
+  - path: projects/vat/README.md
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#config"
+    summary: "Document the http-mock preset (stub + record/replay + HTTPS MITM)."
+  - path: projects/vat/tests
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#unit-test"
+      - "projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#e2e-test"
+    summary: "Add tests/vat_emulator_httpmock.rs integration test (stub-over-proxy, HTTPS-MITM stub, record/replay)."
+```
