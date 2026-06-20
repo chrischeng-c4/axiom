@@ -6478,12 +6478,14 @@ pub fn mb_delattr(obj: MbValue, attr: MbValue) {
                     return;
                 }
                 let removed = fields.write().unwrap().remove(&attr_name).is_some();
-                // types.SimpleNamespace mirrors object.__delattr__: deleting an
-                // attribute that does not exist raises AttributeError. (#654)
-                if !removed && class_name == "SimpleNamespace" {
+                // object.__delattr__: deleting an attribute that does not exist
+                // raises AttributeError (CPython). (#654)
+                if !removed {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(attr_name.clone())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{class_name}' object has no attribute '{attr_name}'"
+                        ))),
                     );
                 }
             }
