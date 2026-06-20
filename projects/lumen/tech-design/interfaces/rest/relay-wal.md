@@ -31,7 +31,6 @@ flowchart TD
     tail --> fold[map -> WalRecord; fold into index]
     fold --> done([pods converge; no consensus])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
