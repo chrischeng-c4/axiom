@@ -2137,6 +2137,33 @@ impl KvEngine {
         self.shards[shard_id].import_all(entries);
         true
     }
+
+    /// Dump every live (non-expired) key→value across all shards. Snapshot
+    /// helper — TTL metadata is dropped (snapshots restore values without
+    /// expiry; a timestamped Entry serialization is a follow-on).
+    pub fn dump_values(&self) -> Vec<(String, KvValue)> {
+        let mut out = Vec::new();
+        for s in 0..self.num_shards {
+            if let Some(map) = self.export_shard(s) {
+                for (k, e) in map {
+                    if !e.is_expired() {
+                        out.push((k, e.value));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Restore key→value pairs (snapshot install). Overwrites existing keys; no
+    /// TTL is set.
+    pub fn load_values(&self, items: Vec<(String, KvValue)>) {
+        for (k, v) in items {
+            if let Ok(key) = KvKey::new(k) {
+                let _ = self.set(&key, v, None);
+            }
+        }
+    }
 }
 
 impl Default for KvEngine {
