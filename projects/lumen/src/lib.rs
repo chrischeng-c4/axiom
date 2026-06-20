@@ -65,4 +65,6 @@ pub mod types;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
+#[cfg(feature = "relay-wal")]
+pub mod wal_relay;
 // CODEGEN-END
