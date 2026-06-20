@@ -216,7 +216,6 @@ requirementDiagram
       verifies: slashed_names
     }
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
