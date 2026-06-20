@@ -334,3 +334,15 @@ changes:
 - [unit-test] UT1..UT5 cover serde parsing, firebase.json validation, the gcloud-component native-availability decision, export var derivation, and the no-panic unavailable path — all deterministic and Docker-free.
 - [e2e-test] The smoke set pairs an always-run unavailable assertion with gated native-firestore, docker-pubsub, and firebase-bundle lifecycles that skip without their tooling; commands and assertions are concrete.
 - [changes] The source change list is bounded and scoped: config.rs, run.rs, llm.rs, README, and tests, each ref-linked to its driving section, with no unrelated scope.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic is codegen-ready: one Mermaid Plus flow binds the firebase-bundle and single-service GCP paths with component-aware native-vs-docker resolution, shared readiness/export/teardown, and an explicit unavailable terminal.
+- [schema] Emulator evidence (preset enum, prepare_mode, exported_env host vars) is fully specified and consistent with ServiceRunRecord / vat state.
+- [config] The preset enum extension and firebase.json requirement are unambiguous; runtime=auto semantics carry over from the existing preset model.
+- [unit-test] UT1..UT5 give deterministic, Docker-free coverage of parsing, firebase validation, native-availability, export derivation, and the no-panic unavailable path.
+- [e2e-test] The smoke set is runnable: always-run unavailable plus gated native/docker/firebase lifecycles that skip without tooling.
+- [changes] Bounded, scope-controlled change list mapping each source file to its driving section.
