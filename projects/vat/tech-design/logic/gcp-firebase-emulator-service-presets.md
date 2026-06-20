@@ -150,3 +150,63 @@ properties:
       additionalProperties: true
 additionalProperties: true
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-gcp-firebase-emulator-service-presets-unit-tests
+---
+requirementDiagram
+    requirement emulator_preset_parses {
+      id: UT1
+      text: "ServicePreset round-trips firestore/pubsub/datastore/bigtable/spanner/firebase via serde from vat.toml preset values."
+      risk: medium
+      verifymethod: test
+    }
+    requirement firebase_requires_json {
+      id: UT2
+      text: "validate() rejects a firebase preset service when the workspace has no firebase.json."
+      risk: high
+      verifymethod: test
+    }
+    requirement native_available_checks_component {
+      id: UT3
+      text: "The native-availability decision treats a GCP emulator as native-unavailable when its gcloud component is not installed, even if gcloud is on PATH."
+      risk: high
+      verifymethod: test
+    }
+    requirement emulator_exports_host_var {
+      id: UT4
+      text: "preset_exports yields the correct EMULATOR_HOST variable for each GCP emulator preset, honoring export overrides."
+      risk: medium
+      verifymethod: test
+    }
+    requirement emulator_unavailable_no_panic {
+      id: UT5
+      text: "An emulator preset with neither native tooling nor docker emits a structured unavailable error and never panics."
+      risk: high
+      verifymethod: test
+    }
+    test config_emulator_preset_tests {
+      type: functional
+      verifies: emulator_preset_parses
+    }
+    test config_firebase_requires_json_tests {
+      type: functional
+      verifies: firebase_requires_json
+    }
+    test preset_native_available_tests {
+      type: functional
+      verifies: native_available_checks_component
+    }
+    test preset_exports_emulator_tests {
+      type: functional
+      verifies: emulator_exports_host_var
+    }
+    test emulator_unavailable_jsonl_tests {
+      type: functional
+      verifies: emulator_unavailable_no_panic
+    }
+```
