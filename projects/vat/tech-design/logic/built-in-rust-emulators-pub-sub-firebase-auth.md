@@ -130,3 +130,17 @@ properties:
       additionalProperties: true
 additionalProperties: true
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat emulator
+    usage: "vat emulator <pubsub|firebase-auth> --host-port 127.0.0.1:<PORT>"
+    behavior:
+      - "Hidden verb (hide = true): not for human use — vat spawns itself as the service process for a built-in emulator preset."
+      - "Builds a tokio runtime and runs the in-process emulator server bound to the host-port until the process is killed."
+      - "pubsub serves the google.pubsub.v1 gRPC API; firebase-auth serves the Firebase Auth (Identity Toolkit) REST API."
+      - "When vat is built with --no-default-features (no emulator feature), the verb exits with a clear 'built without emulator feature' error, never a panic."
+```
