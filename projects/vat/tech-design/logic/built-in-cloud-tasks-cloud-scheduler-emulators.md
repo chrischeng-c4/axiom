@@ -106,3 +106,38 @@ properties:
     additionalProperties: true
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-config-cloud-tasks-scheduler.schema.json"
+title: "vat.toml (Cloud Tasks / Scheduler preset additions)"
+type: object
+properties:
+  services:
+    type: array
+    items:
+      type: object
+      required: [id]
+      properties:
+        preset:
+          type: string
+          enum: [postgres, redis, nats, rabbitmq, mysql, mongo, firestore, pubsub, datastore, bigtable, spanner, firebase, firebase-auth, cloud-tasks, cloud-scheduler]
+          description: >
+            cloud-tasks and cloud-scheduler run vat's built-in Rust emulator under
+            runtime=auto (no gcloud/Java/Docker — these services have no official
+            emulator). They export CLOUD_TASKS_EMULATOR_HOST /
+            CLOUD_SCHEDULER_EMULATOR_HOST; point your client's base URL at
+            http://$HOST. Built-in only: runtime must stay auto.
+        runtime:
+          type: string
+          enum: [auto, native, docker]
+          default: auto
+        export:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+additionalProperties: true
+```
