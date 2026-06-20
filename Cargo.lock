@@ -6476,6 +6476,7 @@ dependencies = [
  "cclab-qc-mamba",
  "cclab-schema-mamba",
  "chrono",
+ "chrono-tz",
  "clap",
  "cranelift-codegen",
  "cranelift-frontend",
