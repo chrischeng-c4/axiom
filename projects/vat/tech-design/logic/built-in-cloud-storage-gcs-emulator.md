@@ -247,7 +247,6 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; the cloud-storage emulator verb then errors cleanly, never a panic."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
