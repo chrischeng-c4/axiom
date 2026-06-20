@@ -2,7 +2,7 @@
 id: relay-raft-core
 summary: Self-contained single-shard Raft consensus core (no external dep). Step-driven RaftNode (tick + message handlers, deterministic) doing leader election, log replication with log-matching + truncate-conflicting-suffix, commit-by-majority over voters only, and apply of committed command entries. Auto voter/learner membership from N and ordinal — voters = largest-odd<=N, the trailing even node is a non-voting learner. RSM model — committed entries are surfaced for the relay layer to apply to its engine, while relay's append-only durable log is untouched. RaftTransport trait + in-process impl for deterministic tests.
 capability_refs:
-  - id: ha-replication
+  - id: competitor-feature-parity
     role: primary
     gap: in-process-raft-convergence
     claim: in-process-raft-convergence

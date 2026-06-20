@@ -14,110 +14,77 @@ domain model.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Durable Log & Broadcast | - | implemented | passing | conformance | ready | per-subject/shard ordered append and broadcast replay |
-| Work Queue Delivery | - | implemented | passing | conformance | ready | lease, heartbeat, ack, and redelivery contract |
-| HTTP/2 OpenAPI Worker Surface | 108 | implemented | passing | conformance | ready | h2c worker-facing API and served OpenAPI document |
-| HA Replication | - | implemented | planned | dogfood | not_ready | raftcore and h2c failover pass; release proof still needs kind/k8s failover smoke |
-| Competitive Broker Benchmark | 125 | implemented | planned | dogfood | not_ready | arena comparison against NATS/RabbitMQ/Redpanda is configured but external-adapter dependent |
+| CLI Interface | 108 | implemented | passing | conformance | not_ready | relay-server and relay-raft expose the binary surfaces; install/build artifacts still need standardization |
+| Competitive Broker Feature Parity | - | implemented | planned | dogfood | not_ready | durable log, queue lifecycle, OpenAPI worker flow, and raft failover are implemented; kind failover remains the dogfood gap |
+| Competitive Broker Performance | 125 | implemented | planned | dogfood | not_ready | local throughput and ratchet logic exist; external NATS/RabbitMQ/Redpanda arena comparison remains dogfood |
 
-### Durable Log & Broadcast
+### CLI Interface
 
-ID: durable-log
+ID: cli-interface
 Type: RuntimeTool
-Surfaces: Rust API: `Relay` - append and read ordered entries.; HTTP: `POST /v1/{subject}/publish`, `GET /v1/{subject}/subscribe` - publish and broadcast replay over h2c.
-EC Dimensions: behavior: `cargo test -p relay --test relay_core` - ordered append and broadcast replay conformance
-Root WI: -
+Surfaces: CLI: `relay-server` - single-node h2c broker process.; CLI: `relay-raft` - raft-backed Kubernetes node process.; HTTP: `/openapi.json` - machine-readable worker contract served by the binary.
+EC Dimensions: behavior: `cargo test -p relay --test worker_loop --test raft_config --test raft_cluster` - binary-facing contract and raft node smoke
+Root WI: 108
 Status: auditing
 Required Verification: conformance
 Promise:
-Append opaque messages into a durable, ordered log per subject/shard and replay
-that order to every broadcast subscriber.
+Expose relay as runnable binaries with stable process entrypoints for local h2c
+workers and Kubernetes raft nodes, including a served OpenAPI contract for
+non-Rust clients.
 Gate Inventory:
-- projects/relay/tests/relay_core.rs
+- projects/relay/tests/worker_loop.rs; projects/relay/tests/raft_config.rs; projects/relay/tests/raft_cluster.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Relay server process interface | epic | - | implemented | passing | conformance | projects/relay/src/bin/relay_server.rs; projects/relay/tests/worker_loop.rs |
+| Relay raft process interface | epic | - | implemented | passing | conformance | projects/relay/src/bin/relay_raft.rs; projects/relay/tests/raft_config.rs; projects/relay/tests/raft_cluster.rs |
+| Served OpenAPI contract | epic | 108 | implemented | passing | conformance | projects/relay/tests/worker_loop.rs; projects/relay/docs/worker-protocol.md |
+
+### Competitive Broker Feature Parity
+
+ID: competitor-feature-parity
+Type: RuntimeTool
+Surfaces: Rust API: `Relay` - durable ordered log, broadcast, queue lease, and ack primitives.; HTTP: `publish`, `subscribe`, `lease`, `heartbeat`, `ack` - NATS/RabbitMQ-style broker workflows over h2c.; CLI: `relay-raft` - failover-capable broker node.
+EC Dimensions: behavior: `cargo test -p relay --test relay_core --test work_queue_api --test worker_loop --test raft_core --test raft_persistence --test raft_cluster` - functional parity conformance for core broker workflows
+Root WI: -
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Cover the core broker functions Relay needs to compete with NATS, RabbitMQ, and
+Redpanda in Axiom workloads: ordered publish/replay, competing-worker delivery,
+polyglot worker access, and failover without losing committed entries.
+Gate Inventory:
+- projects/relay/tests/relay_core.rs; projects/relay/tests/http2_transport.rs; projects/relay/tests/work_queue_api.rs; projects/relay/tests/worker_loop.rs; projects/relay/tests/raft_core.rs; projects/relay/tests/raft_persistence.rs; projects/relay/tests/raft_cluster.rs; projects/relay/scripts/kind-failover-smoke.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Per-subject/shard append ordering | epic | - | implemented | passing | conformance | projects/relay/tests/relay_core.rs |
 | Broadcast replay model | epic | - | implemented | passing | conformance | projects/relay/tests/relay_core.rs; projects/relay/tests/http2_transport.rs |
-
-### Work Queue Delivery
-
-ID: work-queue
-Type: RuntimeTool
-Surfaces: HTTP: `lease`, `heartbeat`, `ack` - worker delivery lifecycle.; Rust API: `Relay` - queue lease and acknowledgement primitives.
-EC Dimensions: behavior: `cargo test -p relay --test work_queue_api` - queue lifecycle conformance
-Root WI: -
-Status: auditing
-Required Verification: conformance
-Promise:
-Offer competing-worker delivery on top of the same ordered log through bounded
-lease, heartbeat, ack, and redelivery semantics.
-Gate Inventory:
-- projects/relay/tests/work_queue_api.rs; projects/relay/tests/work_queue_throughput.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
 | Lease / heartbeat / ack lifecycle | epic | - | implemented | passing | conformance | projects/relay/tests/work_queue_api.rs |
-| O(1) lease cursor throughput | epic | - | implemented | passing | conformance | projects/relay/tests/work_queue_throughput.rs |
-
-### HTTP/2 OpenAPI Worker Surface
-
-ID: http2-openapi
-Type: RuntimeTool
-Surfaces: HTTP: `/openapi.json` and h2c routes - polyglot worker contract.; Test worker: `projects/relay/tests/worker_loop.rs` - reference loop over HTTP only.
-EC Dimensions: behavior: `cargo test -p relay --test worker_loop` - reference worker and OpenAPI conformance
-Root WI: 108
-Status: auditing
-Required Verification: conformance
-Promise:
-Expose relay's worker contract over HTTP/2 cleartext with enough OpenAPI shape
-for non-Rust workers to lease, heartbeat, ack, and inspect the route contract.
-Gate Inventory:
-- projects/relay/tests/worker_loop.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| Reference worker over h2c | epic | 108 | implemented | passing | conformance | projects/relay/tests/worker_loop.rs |
-| Served OpenAPI worker verbs | epic | 108 | implemented | passing | conformance | projects/relay/tests/worker_loop.rs |
-
-### HA Replication
-
-ID: ha-replication
-Type: RuntimeTool
-Surfaces: Rust API: `raftcore` integration - replicated log state machine.; CLI: `relay-raft` - k8s-oriented raft node.
-EC Dimensions: behavior: `cargo test -p relay --test raft_core --test raft_persistence --test raft_cluster` - raft and failover conformance
-Root WI: -
-Status: auditing
-Required Verification: conformance, dogfood
-Promise:
-Replicate relay log commands through raftcore so committed broker entries
-survive leader failover without duplicate or lost committed entries.
-Gate Inventory:
-- projects/relay/tests/raft_core.rs; projects/relay/tests/raft_persistence.rs; projects/relay/tests/raft_cluster.rs; projects/relay/scripts/kind-failover-smoke.sh
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
+| HTTP worker protocol parity | epic | 108 | implemented | passing | conformance | projects/relay/tests/worker_loop.rs; projects/relay/docs/worker-protocol.md |
 | In-process raft convergence | epic | - | implemented | passing | conformance | projects/relay/tests/raft_core.rs |
 | Durable raft hard-state restore | epic | - | implemented | passing | conformance | projects/relay/tests/raft_persistence.rs |
 | Real h2c raft cluster smoke | epic | - | implemented | passing | dogfood | projects/relay/tests/raft_cluster.rs |
 | Kubernetes kind failover smoke | epic | - | implemented | planned | dogfood | projects/relay/scripts/kind-failover-smoke.sh; projects/relay/k8s |
 
-### Competitive Broker Benchmark
+### Competitive Broker Performance
 
-ID: broker-benchmark
+ID: competitor-performance
 Type: RuntimeTool
-Surfaces: Arena: `projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml` - competitor comparison spec.
-EC Dimensions: efficiency: `arena` - compare and ratchet against NATS, RabbitMQ, and Redpanda
+Surfaces: Arena: `projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml` - external broker comparison spec.; Rust bench: `relay_bench` - local broker throughput baseline.
+EC Dimensions: efficiency: `arena` - compare and ratchet against NATS, RabbitMQ, and Redpanda; behavior: `cargo test -p relay --test work_queue_throughput --test perf_gate` - throughput model and ratchet conformance
 Root WI: 125
 Status: auditing
 Required Verification: dogfood
 Promise:
-Keep relay's broker performance claims tied to an external competitor benchmark
-instead of local-only throughput anecdotes.
+Keep Relay's performance claims tied to repeatable throughput tests and an
+external competitor arena against NATS, RabbitMQ, and Redpanda instead of
+local-only anecdotes.
 Gate Inventory:
-- projects/relay/src/perf_gate.rs; projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml
+- projects/relay/tests/work_queue_throughput.rs; projects/relay/tests/perf_gate.rs; projects/relay/src/perf_gate.rs; projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
+| O(1) lease cursor throughput | epic | - | implemented | passing | conformance | projects/relay/tests/work_queue_throughput.rs |
 | Normalized win/ratchet decision model | epic | 125 | implemented | passing | conformance | projects/relay/tests/perf_gate.rs |
 | External broker comparison | epic | 125 | implemented | planned | dogfood | projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml |
