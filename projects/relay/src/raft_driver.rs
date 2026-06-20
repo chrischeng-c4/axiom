@@ -1,0 +1,3 @@
+// HANDWRITE-BEGIN gap="missing-generator:logic:1fbb47da" tracker="pending-tracker" reason="RaftDriver: Arc<RaftShared{ async-mutex RaftNode, RaftStore, peers, reqwest h2c client, Arc<Relay>, subject, id }>. spawn() runs a tick task; helpers persist-before-flush, apply committed commands to the Relay, and flush the outbox by POSTing RequestVote/AppendEntries to peers and feeding responses back. handle_request_vote/handle_append_entries return the node's reply. propose(command) on the leader. leader_hint(). A raft_router(driver) exposes POST /raft/request-vote, POST /raft/append-entries, POST /v1/{subject}/publish (redirect-to-leader else propose), GET /raftz, GET /healthz."
+// TODO: hand-write content for `projects/relay/src/raft_driver.rs`.
+// HANDWRITE-END
