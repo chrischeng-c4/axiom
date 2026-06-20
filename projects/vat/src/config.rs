@@ -176,6 +176,7 @@ pub enum ServicePreset {
     Bigtable,
     Spanner,
     Firebase,
+    FirebaseAuth,
 }
 
 impl ServicePreset {
@@ -190,7 +191,22 @@ impl ServicePreset {
                 | ServicePreset::Bigtable
                 | ServicePreset::Spanner
                 | ServicePreset::Firebase
+                | ServicePreset::FirebaseAuth
         )
+    }
+
+    /// Whether vat ships a built-in Rust emulator for this preset. Built-in
+    /// presets run vat's own in-process server under `runtime = auto`.
+    /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
+    pub fn is_builtin(self) -> bool {
+        matches!(self, ServicePreset::Pubsub | ServicePreset::FirebaseAuth)
+    }
+
+    /// Built-in presets that have *only* the built-in path (no gcloud/Docker
+    /// equivalent), so `runtime` must stay `auto`.
+    /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
+    pub fn is_builtin_only(self) -> bool {
+        matches!(self, ServicePreset::FirebaseAuth)
     }
 }
 
@@ -366,6 +382,15 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
                  image services are always Docker and cmd services are always native",
                 service.id
             );
+        }
+        if let Some(preset) = service.preset {
+            if preset.is_builtin_only() && service.runtime != ServiceRuntime::Auto {
+                bail!(
+                    "service `{}` preset `{preset:?}` only has vat's built-in emulator; \
+                     leave `runtime` at the default `auto`",
+                    service.id
+                );
+            }
         }
         if let PortSpec::Auto(value) = &service.port {
             if value != "auto" {
@@ -993,6 +1018,30 @@ artifacts = ["out.txt"]
             );
             assert!(preset.is_emulator());
         }
+    }
+
+    #[test]
+    fn accepts_firebase_auth_preset_and_classifies_builtin() {
+        let parsed: ServicePreset =
+            serde_json::from_value(serde_json::Value::String("firebase-auth".into())).unwrap();
+        assert_eq!(parsed, ServicePreset::FirebaseAuth);
+        assert!(ServicePreset::FirebaseAuth.is_builtin());
+        assert!(ServicePreset::FirebaseAuth.is_builtin_only());
+        assert!(ServicePreset::Pubsub.is_builtin());
+        assert!(!ServicePreset::Pubsub.is_builtin_only());
+        assert!(!ServicePreset::Firestore.is_builtin());
+
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::FirebaseAuth);
+        assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn rejects_firebase_auth_with_explicit_runtime() {
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::FirebaseAuth);
+        svc.runtime = ServiceRuntime::Docker;
+        assert!(validate(&cfg_with_service(svc)).is_err());
     }
 }
 // CODEGEN-END

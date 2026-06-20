@@ -749,6 +749,7 @@ fn prepare_service(
         match resolve_preset_runtime(service, preset)? {
             ResolvedRuntime::Native => prepare_preset_service(vat, cfg, service, preset)?,
             ResolvedRuntime::Docker => prepare_preset_docker_service(vat, service, preset)?,
+            ResolvedRuntime::Builtin => prepare_builtin_service(service, preset)?,
         }
     } else {
         let env = export_command_service_env(service);
@@ -1026,6 +1027,8 @@ fn prepare_preset_service(
 enum ResolvedRuntime {
     Native,
     Docker,
+    /// vat's own in-process Rust emulator (the `vat emulator` subcommand).
+    Builtin,
 }
 
 /// Resolve a preset service's `runtime` against the host. `auto` prefers the
@@ -1039,6 +1042,9 @@ fn resolve_preset_runtime(
     match service.runtime {
         ServiceRuntime::Native => Ok(ResolvedRuntime::Native),
         ServiceRuntime::Docker => Ok(ResolvedRuntime::Docker),
+        // A preset with a built-in Rust emulator runs vat's own server under
+        // `auto` — always available, no external tooling.
+        ServiceRuntime::Auto if preset.is_builtin() => Ok(ResolvedRuntime::Builtin),
         ServiceRuntime::Auto => {
             // Native means more than "binary on PATH" for emulators: the gcloud
             // component must also be installed, else native would be chosen and
@@ -1230,6 +1236,67 @@ fn firebase_emulator_host_var(emulator: &str) -> Option<&'static str> {
     }
 }
 
+/// The `vat emulator` kind name and the host env var for a built-in preset.
+/// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
+fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) {
+    match preset {
+        ServicePreset::Pubsub => ("pubsub", "PUBSUB_EMULATOR_HOST"),
+        ServicePreset::FirebaseAuth => ("firebase-auth", "FIREBASE_AUTH_EMULATOR_HOST"),
+        // Non-built-in presets never reach this path.
+        _ => ("", ""),
+    }
+}
+
+/// Prepare a built-in emulator service: vat spawns *itself* (`vat emulator
+/// <kind> --host-port`) as the service process — a pure Rust in-process server
+/// with no external tooling. The runner reaches it via the exported host var.
+/// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic
+fn prepare_builtin_service(service: &ServiceConfig, preset: ServicePreset) -> Result<ServicePlan> {
+    let port = resolve_service_port(&service.port)?;
+    let exe =
+        std::env::current_exe().context("resolve the vat executable for the built-in emulator")?;
+    let (kind, default_var) = builtin_emulator_info(preset);
+    let host_port = format!("127.0.0.1:{port}");
+
+    let command = vec![
+        exe.to_string_lossy().into_owned(),
+        "emulator".to_string(),
+        kind.to_string(),
+        "--host-port".to_string(),
+        host_port.clone(),
+    ];
+
+    let mut env = BTreeMap::new();
+    if service.export.is_empty() {
+        env.insert(default_var.to_string(), host_port.clone());
+    } else {
+        for target in service.export.values() {
+            env.insert(target.clone(), host_port.clone());
+        }
+    }
+
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command,
+        ready_http: service.ready_http.clone(),
+        ready_probe: ReadyProbe::Tcp {
+            host: "127.0.0.1".to_string(),
+            port,
+        },
+        timeout_s: service.timeout_s,
+        preset: Some(preset),
+        port: Some(port),
+        prepare_mode: "builtin_emulator".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: None,
+        image: None,
+        cluster: None,
+    })
+}
+
 /// Run a Docker-only custom service (e.g. AlloyDB) declared with `image`.
 /// `export` values are templates: `{host}`/`{port}` are substituted with the
 /// mapped host endpoint. `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
@@ -1341,7 +1408,7 @@ fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
         // Spanner ships its own emulator image, not the cloud-cli one.
         ServicePreset::Spanner => ("gcr.io/cloud-spanner-emulator/emulator", "latest"),
         // Firebase is routed through prepare_firebase_service, never here.
-        ServicePreset::Firebase => ("node", "20-slim"),
+        ServicePreset::Firebase | ServicePreset::FirebaseAuth => ("node", "20-slim"),
     };
     format!("{repo}:{}", version.unwrap_or(default_tag))
 }
@@ -1360,7 +1427,7 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
         ServicePreset::Pubsub => 8085,
         ServicePreset::Bigtable => 8086,
         ServicePreset::Spanner => 9010,
-        ServicePreset::Firebase => 4400,
+        ServicePreset::Firebase | ServicePreset::FirebaseAuth => 4400,
     }
 }
 
@@ -1412,7 +1479,8 @@ fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase => {}
+        | ServicePreset::Firebase
+        | ServicePreset::FirebaseAuth => {}
     }
     env
 }
@@ -1510,7 +1578,7 @@ fn cold_prepare_service_image(
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase => {}
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth => {}
     }
     Ok(())
 }
@@ -1555,7 +1623,7 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         | ServicePreset::Spanner => &["gcloud", "java"],
         // The Firebase Emulator Suite runs under firebase-tools (+ a JVM for
         // its Firestore/Database emulators).
-        ServicePreset::Firebase => &["firebase", "java"],
+        ServicePreset::Firebase | ServicePreset::FirebaseAuth => &["firebase", "java"],
     }
 }
 
@@ -1739,7 +1807,9 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
         ServicePreset::Bigtable => gcloud_emulator_command(true, "bigtable", port, &[]),
         ServicePreset::Spanner => gcloud_emulator_command(false, "spanner", port, &[]),
         // Firebase is routed through prepare_firebase_service, never here.
-        ServicePreset::Firebase => vec!["firebase".to_string(), "emulators:start".to_string()],
+        ServicePreset::Firebase | ServicePreset::FirebaseAuth => {
+            vec!["firebase".to_string(), "emulators:start".to_string()]
+        }
     }
 }
 
@@ -1788,7 +1858,7 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase => ReadyProbe::Tcp {
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth => ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
             port,
         },
@@ -1820,7 +1890,9 @@ fn preset_exports(
         ServicePreset::Bigtable => ("BIGTABLE_EMULATOR_HOST", format!("127.0.0.1:{port}")),
         ServicePreset::Spanner => ("SPANNER_EMULATOR_HOST", format!("127.0.0.1:{port}")),
         // Firebase is routed through prepare_firebase_service, never here.
-        ServicePreset::Firebase => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
+        ServicePreset::Firebase | ServicePreset::FirebaseAuth => {
+            ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}"))
+        }
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -1881,6 +1953,7 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::Bigtable => "bigtable",
         ServicePreset::Spanner => "spanner",
         ServicePreset::Firebase => "firebase",
+        ServicePreset::FirebaseAuth => "firebase-auth",
     }
 }
 
@@ -2267,6 +2340,41 @@ mod tests {
         );
         // Spanner's dedicated image starts via its own entrypoint.
         assert!(preset_docker_command(ServicePreset::Spanner, 9010).is_empty());
+    }
+
+    #[test]
+    fn builtin_presets_resolve_to_builtin_under_auto() {
+        let svc = test_service("svc", &[]);
+        assert!(matches!(
+            resolve_preset_runtime(&svc, ServicePreset::Pubsub).unwrap(),
+            ResolvedRuntime::Builtin
+        ));
+        assert!(matches!(
+            resolve_preset_runtime(&svc, ServicePreset::FirebaseAuth).unwrap(),
+            ResolvedRuntime::Builtin
+        ));
+    }
+
+    #[test]
+    fn prepare_builtin_service_exports_host_and_self_command() {
+        let svc = test_service("auth", &[]);
+        let plan = prepare_builtin_service(&svc, ServicePreset::FirebaseAuth).unwrap();
+        assert_eq!(plan.prepare_mode, "builtin_emulator");
+        assert!(plan
+            .exported_env
+            .iter()
+            .any(|k| k == "FIREBASE_AUTH_EMULATOR_HOST"));
+        assert_eq!(plan.command[1], "emulator");
+        assert_eq!(plan.command[2], "firebase-auth");
+        assert_eq!(plan.command[3], "--host-port");
+
+        let plan =
+            prepare_builtin_service(&test_service("ps", &[]), ServicePreset::Pubsub).unwrap();
+        assert!(plan
+            .exported_env
+            .iter()
+            .any(|k| k == "PUBSUB_EMULATOR_HOST"));
+        assert_eq!(plan.command[2], "pubsub");
     }
 
     #[test]

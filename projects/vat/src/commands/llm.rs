@@ -91,6 +91,12 @@ artifacts = ["test-results/**", "playwright-report/**"]
   no native binary (e.g. AlloyDB). It requires `container_port`; `image_env` is
   passed into the container; in `export`, `{host}`/`{port}` resolve to the mapped
   host endpoint, and `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
+- Built-in emulators: `preset = "pubsub"` and `preset = "firebase-auth"` run
+  vat's OWN in-process Rust emulator under `runtime = auto` — no gcloud, Java,
+  firebase-tools, or Docker, and instant start. They export `PUBSUB_EMULATOR_HOST`
+  / `FIREBASE_AUTH_EMULATOR_HOST`. `pubsub` still accepts `runtime = native`
+  (gcloud) or `runtime = docker` (image) as a full-fidelity fallback;
+  `firebase-auth` is built-in only.
 - A `cluster` service spins up an ephemeral local Kubernetes cluster (kind, k3d,
   or minikube; `auto` picks the first installed). vat creates it before the
   runner, exports `KUBECONFIG` (the `{kubeconfig}` token) plus
