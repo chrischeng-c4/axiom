@@ -142,6 +142,34 @@ unsafe extern "C" fn d_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbV
             return MbValue::none();
         }
     }
+    // Functional form `NamedTuple("P", [("x", int), ("y", int)])`: delegate to
+    // collections.namedtuple, which already builds a working tuple subclass.
+    // typing's fields are (name, type) pairs — extract just the names.
+    use super::super::rc::ObjData;
+    let name = a.first().copied().unwrap_or_else(MbValue::none);
+    let fields_v = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if !name.is_none() && is_seq(fields_v) {
+        let items: Vec<MbValue> = fields_v.as_ptr().map(|p| unsafe {
+            match &(*p).data {
+                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
+                ObjData::Tuple(ref t) => t.to_vec(),
+                _ => Vec::new(),
+            }
+        }).unwrap_or_default();
+        let names: Vec<MbValue> = items.iter().map(|item| {
+            item.as_ptr().and_then(|p| unsafe {
+                match &(*p).data {
+                    // (name, type) pair → name; plain string → itself.
+                    ObjData::Tuple(ref t) => t.first().copied(),
+                    ObjData::List(ref l) => l.read().unwrap().first().copied(),
+                    ObjData::Str(_) => Some(*item),
+                    _ => None,
+                }
+            }).unwrap_or(*item)
+        }).collect();
+        let names_list = MbValue::from_ptr(MbObject::new_list(names));
+        return super::collections_mod::mb_namedtuple(name, names_list, MbValue::none());
+    }
     MbValue::none()
 }
 disp_unary!(d_identity, mb_typing_identity);

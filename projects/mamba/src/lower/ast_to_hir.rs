@@ -5552,8 +5552,10 @@ impl<'a> AstLowerer<'a> {
                     ast::Expr::Ident(name) if matches!(
                         name.as_str(),
                         "Counter" | "OrderedDict" | "deque" | "defaultdict" | "dict"
-                            // namedtuple takes rename= / defaults= / module=
-                            | "namedtuple"
+                            // namedtuple takes rename= / defaults= / module=;
+                            // typing.NamedTuple's keyword field form / mixed-form
+                            // TypeError check reads a trailing kwargs dict.
+                            | "namedtuple" | "NamedTuple"
                             // UserDict seeds its payload from kwargs
                             | "UserDict"
                             // unittest.mock factories take config kwargs
