@@ -162,3 +162,17 @@ properties:
       additionalProperties: true
 additionalProperties: true
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat emulator
+    usage: "vat emulator cloud-workflows --host-port 127.0.0.1:<PORT>"
+    behavior:
+      - "Hidden verb: vat spawns itself as the service process for the cloud-workflows preset."
+      - "Serves the Workflows v1 REST API subset: create/get a workflow (YAML or JSON sourceContents), createExecution (runs the workflow to completion), getExecution (terminal state + result)."
+      - "Executes the Core + try/retry + subworkflow step set with a ${...} expression evaluator; call: http.* steps deliver via the shared dispatcher so a workflow can drive vat's other emulators or any HTTP endpoint."
+      - "Built without the emulator feature, the verb errors cleanly (no panic). An unsupported expression/step fails the execution rather than panicking."
+```
