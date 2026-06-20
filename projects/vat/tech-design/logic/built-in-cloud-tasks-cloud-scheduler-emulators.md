@@ -390,3 +390,16 @@ changes:
 - [unit-test] UT1..UT5 cover parsing/classification, builtin resolution + runtime guard, export+command, and tasks/scheduler dispatch — deterministic and dependency-free.
 - [e2e-test] Self-contained tasks-dispatch + scheduler-:run integration, builtin-preset run, and lean-build check.
 - [changes] Bounded list mapping Cargo, dispatch/tasks/scheduler, cli/run/config, docs, tests to their driving sections.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic is codegen-ready: both emulators behind the builtin framework, with the shared dispatch core (scheduleTime/cron/:run -> dispatch_http).
+- [schema] Dispatch evidence fully specified and consistent with run evidence.
+- [config] builtin-only cloud-tasks/cloud-scheduler presets unambiguous.
+- [cli] vat emulator cloud-tasks/cloud-scheduler contract clear including OIDC + lean-build error.
+- [unit-test] UT1..UT5 deterministic, dependency-free coverage of parsing, resolution, export, and dispatch.
+- [e2e-test] Self-contained dispatch integration + builtin-preset run + lean-build check.
+- [changes] Bounded change list mapping every artifact to its driving section.
