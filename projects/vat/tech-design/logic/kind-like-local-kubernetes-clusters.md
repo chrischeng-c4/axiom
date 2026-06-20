@@ -131,3 +131,99 @@ properties:
     additionalProperties: false
 additionalProperties: false
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-config-cluster.schema.json"
+title: "vat.toml (cluster service additions)"
+type: object
+required: [version, runners]
+properties:
+  version:
+    type: integer
+    const: 1
+  services:
+    type: array
+    items:
+      type: object
+      required: [id]
+      description: >
+        A run-scoped dependency service backed by exactly one of: cmd (an
+        explicit native command), preset (a built-in service whose runtime
+        decides native-binary vs official Docker image), image (a Docker-only
+        service), or cluster (an ephemeral local Kubernetes cluster). The runner
+        that requires the service is always a host process — only the service
+        may be a container or cluster — so the host GPU story is unaffected.
+      properties:
+        id: { type: string }
+        requires:
+          type: array
+          items: { type: string }
+        cmd:
+          type: array
+          items: { type: string }
+          minItems: 1
+        preset: { type: string, enum: [postgres, redis, nats, rabbitmq, mysql, mongo] }
+        image: { type: string }
+        container_port: { type: integer }
+        image_env:
+          type: object
+          additionalProperties: { type: string }
+        runtime: { type: string, enum: [auto, native, docker], default: auto }
+        cluster:
+          type: string
+          enum: [auto, kind, k3d, minikube]
+          description: >
+            Declares this service as an ephemeral local Kubernetes cluster.
+            Mutually exclusive with cmd/preset/image. auto resolves to the first
+            installed of kind -> k3d -> minikube whose Docker daemon is reachable.
+        k8s_version:
+          type: string
+          description: "Optional Kubernetes version for the cluster node image, e.g. 1.30."
+        nodes:
+          type: integer
+          minimum: 1
+          maximum: 9
+          description: "Cluster node count. Defaults to a single node."
+        version: { type: string }
+        port:
+          oneOf:
+            - { type: string, const: auto }
+            - { type: integer }
+        seed:
+          type: array
+          items: { type: string }
+        export:
+          type: object
+          additionalProperties: { type: string }
+          description: >
+            For a cluster service the token {kubeconfig} resolves to the isolated
+            kubeconfig path; KUBECONFIG and VAT_SERVICE_<ID>_KUBECONFIG are always
+            exported to the runner regardless of explicit export entries.
+        ready_http: { type: string }
+        timeout_s: { type: integer, default: 60 }
+      additionalProperties: false
+  runners:
+    type: array
+    items:
+      type: object
+      required: [id, cmd]
+      properties:
+        id: { type: string }
+        requires:
+          type: array
+          items: { type: string }
+        cmd:
+          type: array
+          items: { type: string }
+          minItems: 1
+        timeout_s: { type: integer }
+        artifacts:
+          type: array
+          items: { type: string }
+      additionalProperties: false
+additionalProperties: false
+```
