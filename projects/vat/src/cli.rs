@@ -124,6 +124,8 @@ enum Cmd {
 pub enum EmulatorKind {
     Pubsub,
     FirebaseAuth,
+    CloudTasks,
+    CloudScheduler,
 }
 
 /// Standalone `vat cluster` verbs. Clusters created here outlive a single run;
