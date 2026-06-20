@@ -251,7 +251,6 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; the cloud-tasks/cloud-scheduler emulator verbs then error cleanly, never a panic."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
