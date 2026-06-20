@@ -351,6 +351,8 @@ test_cmd = "true"
 [[projects]]
 name = "relay"
 path = "projects/relay"
+td_path = "projects/relay/tech-design"
+cap_path = "projects/relay/README.md"
 label = "project:relay"
 # Competitor perf-gate (#125): arena compare-N + ratchet vs NATS / RabbitMQ /
 # Redpanda. `aw health --verify-ec` drives the benchmark dimension through arena;
@@ -362,6 +364,21 @@ name = "relay"
 paths = ["projects/relay/**"]
 target = "rust"
 test_cmd = "cargo test -p relay"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+[[projects]]
+name = "keep"
+path = "projects/keep"
+td_path = "projects/keep/tech-design"
+cap_path = "projects/keep/README.md"
+label = "project:keep"
+
+[[projects.workspaces]]
+name = "keep"
+paths = ["projects/keep/**"]
+target = "rust"
+test_cmd = "cargo test -p keep"
 verify_cold = true
 codegen.profile = "rust/score-crate"
 

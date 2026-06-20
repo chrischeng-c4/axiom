@@ -1,0 +1,73 @@
+version = 1
+project = "relay"
+td_path = "projects/relay/tech-design"
+generated_at = "2026-06-20T12:56:31.992011+00:00"
+digest = "sha256:9e8227a0b002c313d3ce7cf79c897512b4dac0ce487774ec37c6b65b2aa6bcd7"
+
+[[files]]
+path = "interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md"
+digest = "sha256:14709bdd4b3a883424cd06acea8cbacde8472248f721463bdbe3f8a40b0c339b"
+
+[[files]]
+path = "interfaces/rest/relay-keep-worker-facing-openapi-contract-polyglot-worker-integr.md"
+digest = "sha256:d493c8a70714771f7d692d3e25413bf3dd51e57c8a26b35327fa51c577173c4e"
+
+[[files]]
+path = "interfaces/rest/work-queue-api-lease-ack-heartbeat.md"
+digest = "sha256:ad5b200f2ca4e344e6c3cb2e5244b8c3a2497f63eef067b927b45db2267c5f5b"
+
+[[files]]
+path = "logic/bounded-ram-durable-log-entry-eviction-offset-index-disk-backed.md"
+digest = "sha256:45c7f0701704886bff0ed25db7ee531aa18e53b116eee40f0693f096c0c5e7db"
+
+[[files]]
+path = "logic/competitor-perf-gate-vs-nats-rabbitmq-redpanda-arena-ratchet.md"
+digest = "sha256:c2e69fdf3a733f577eea348469a6904c003bb7f69af187d2e4175db9798fbcc3"
+
+[[files]]
+path = "logic/core-durable-log-single-multi-broadcast-delivery-model.md"
+digest = "sha256:ca650f61111995227d5717b5d571efdb4af894e42a7efb9aa6cf2c207035b845"
+
+[[files]]
+path = "logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md"
+digest = "sha256:f0519c61d62313ff24e2c3d50374d613831ebfc588ef198c1bef45cbecda99b4"
+
+[[files]]
+path = "logic/h2c-raft-transport-driver-producer-redirect-to-leader.md"
+digest = "sha256:da629f414755c7ceec772386287653cbd81dea157fbab5aac8f23830ca92386b"
+
+[[files]]
+path = "logic/ha-via-leader-follower-log-replication-async-primary-backup.md"
+digest = "sha256:d961955ef2bc9a4e258a43d117f799f4d30e391501dc5eda1a698c63e58f3eb6"
+
+[[files]]
+path = "logic/k8s-manifests-ordinal-role-kind-failover-smoke-raft-ha-layer-2.md"
+digest = "sha256:5352b6c3a281667fa41c8f9415ff41abeb5f7010fe59bbc4d32fe755e0e09343"
+
+[[files]]
+path = "logic/log-segment-rotation-retention-full-log-lifecycle.md"
+digest = "sha256:02b9489702059bccb093e32ed5aacb58bdedd52bb4be95536213c32fb329cfe0"
+
+[[files]]
+path = "logic/multi-shard-per-subject-server-side-sharding-horizontal-scale.md"
+digest = "sha256:a4557b5a2cfebd2a0e48d319b08e98b39fcac11982781009e6257d18e90013f4"
+
+[[files]]
+path = "logic/raft-hard-state-persistence-fsyncpolicy-crash-safe-single-voter.md"
+digest = "sha256:2b44b5b2fa41f3e2524ab901843918929b9d0fcee342643e279dd97c385df4d4"
+
+[[files]]
+path = "logic/reconciler-lease-reclaim-redeliver-liveness.md"
+digest = "sha256:22e29a69065e5e574bd0d987cdf75165eba2db3930a8aac38ca3017cc7210285"
+
+[[files]]
+path = "logic/single-shard-raft-consensus-core-self-contained-rsm-auto-voter-l.md"
+digest = "sha256:c3ca81f66e1b4c4a878a20366e1a69cddb99a3c7f5f5e74591b4dc5cd85482f1"
+
+[[files]]
+path = "logic/sparse-offset-index-scale-the-log-to-billions-of-entries.md"
+digest = "sha256:b568c5d90a8a57a1fe2ba861a5344ae9656b05e5108b23b78e9f9c0a37d54dee"
+
+[[files]]
+path = "logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md"
+digest = "sha256:bc00573959b18edecb6ee1d1b5a643c3dff02767c6dc9b4c4fe254d0b64b8cd3"

@@ -328,19 +328,20 @@ Gate Inventory:
 
 ID: resilience
 Type: Service
-Surfaces: CLI: `lumen serve` - NATS JetStream log tailing and serving-node rebuild path.; K8s: `projects/lumen/scripts/kind-e2e.sh` - broker/pod survival scenario.
+Surfaces: CLI: `lumen serve` - NATS JetStream log tailing and optional relay broadcast WAL path.; K8s: `projects/lumen/scripts/kind-e2e.sh` - broker/pod survival scenario.
 EC Dimensions: stability: `rig` - broker kill, pod kill, and recovery behavior over the service deployment
 Root WI: -
 Status: auditing
 Required Verification: conformance, dogfood
 Promise:
-Writes publish to a NATS JetStream log; every serving node tails and folds it into its own index. Serving nodes are stateless and rebuild from the log + the caller. Survives broker kill and pod kill with byte-identical post-recovery results.
+Writes publish to a broker log; every serving node tails and folds it into its own index. NATS JetStream is the default deployed broker, and `relay-wal` is the feature-gated relay broadcast backend. Serving nodes are stateless and rebuild from the log + the caller. Survives broker kill and pod kill with byte-identical post-recovery results.
 Gate Inventory:
 - projects/lumen/scripts/kind-e2e.sh; projects/lumen/scripts/chaos.sh; projects/lumen/scripts/soak.sh
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Log fan-out + rebuild-from-log | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
+| Relay broadcast WAL backend (`--wal relay`, feature `relay-wal`) | epic | 124 | implemented | passing | conformance | projects/lumen/tests/wal_relay.rs |
 | Broker-kill / pod-kill survival | epic | - | implemented | passing | dogfood | projects/lumen/scripts/chaos.sh; projects/lumen/scripts/soak.sh |
 
 ### Kubernetes-Native Deployment

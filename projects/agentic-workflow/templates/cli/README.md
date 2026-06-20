@@ -69,5 +69,5 @@ aw init
 /aw:cb-claim <path>
 
 # Existing-project takeover
-/aw:standardize <project>
+/aw:standardize --project <project>
 ```

@@ -1,0 +1,15 @@
+[project]
+name = "relay"
+cap_path = "README.md"
+label = "project:relay"
+
+[ec.benchmark]
+tool = "arena"
+spec = "projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml"
+
+[[workspaces]]
+name = "relay"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p relay"
+codegen.profile = "rust/score-crate"

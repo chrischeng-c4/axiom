@@ -2011,6 +2011,8 @@ fn project_health_ec_gen_axis(report: &ProjectHealthReport) -> serde_json::Value
     let missing_units = expected_units.saturating_sub(generated_units);
     let status = if !report.ec.evaluated {
         "not_evaluated"
+    } else if expected_units == 0 {
+        "not_configured"
     } else if report.ec.check_clean
         && report.ec.case_count == report.ec.expected_case_count
         && report.ec.tool_manifest_count == report.ec.expected_tool_manifest_count
@@ -2484,7 +2486,9 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
             .cloned()
             .unwrap_or_else(|| "EC inventory/check is blocked".to_string());
     }
-    if matches!(report.ec.status, ProjectEcGateStatus::NotConfigured) {
+    if matches!(report.ec.status, ProjectEcGateStatus::NotConfigured)
+        && (report.ec.expected_case_count > 0 || report.ec.expected_tool_manifest_count > 0)
+    {
         return report
             .ec
             .note
