@@ -3431,31 +3431,6 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64],
             I64
         ),
-        rt_sym!(
-            "mb_sqlite3_execute",
-            super::stdlib::sqlite3_mod::mb_sqlite3_execute
-                as fn(super::MbValue, super::MbValue) -> super::MbValue,
-            [I64, I64],
-            I64
-        ),
-        rt_sym!(
-            "mb_sqlite3_fetchall",
-            super::stdlib::sqlite3_mod::mb_sqlite3_fetchall as fn(super::MbValue) -> super::MbValue,
-            [I64],
-            I64
-        ),
-        rt_sym!(
-            "mb_sqlite3_commit",
-            super::stdlib::sqlite3_mod::mb_sqlite3_commit as fn(super::MbValue) -> super::MbValue,
-            [I64],
-            I64
-        ),
-        rt_sym!(
-            "mb_sqlite3_close",
-            super::stdlib::sqlite3_mod::mb_sqlite3_close as fn(super::MbValue) -> super::MbValue,
-            [I64],
-            I64
-        ),
         // ── Stdlib: gzip (#445) ──
         rt_sym!(
             "mb_gzip_compress",
