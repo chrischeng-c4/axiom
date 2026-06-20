@@ -27,7 +27,13 @@ fn test_function_def() {
     let module = parse("def add(a: int, b: int) -> int:\n    return a + b\n");
     assert_eq!(module.stmts.len(), 1);
     match &module.stmts[0].node {
-        Stmt::FnDef { name, params, return_ty, body, .. } => {
+        Stmt::FnDef {
+            name,
+            params,
+            return_ty,
+            body,
+            ..
+        } => {
             assert_eq!(name, "add");
             assert_eq!(params.len(), 2);
             assert_eq!(params[0].name, "a");
@@ -46,7 +52,11 @@ fn test_if_elif_else() {
     let module = parse(src);
     assert_eq!(module.stmts.len(), 1);
     match &module.stmts[0].node {
-        Stmt::If { elif_clauses, else_body, .. } => {
+        Stmt::If {
+            elif_clauses,
+            else_body,
+            ..
+        } => {
             assert_eq!(elif_clauses.len(), 1);
             assert!(else_body.is_some());
         }
@@ -121,7 +131,7 @@ fn test_case_as_attribute_name() {
         "class C:\n\
          \x20   def setUp(self):\n\
          \x20       self.case = \"empty set\"\n\
-         \x20       self.match = \"ok\"\n"
+         \x20       self.match = \"ok\"\n",
     );
     assert_eq!(module.stmts.len(), 1, "class def should parse");
 }
@@ -135,7 +145,7 @@ fn test_lambda_in_call_arg_list_terminated_by_comma() {
         "def chain(*args): return None\n\
          def map(fn, x): return None\n\
          def R(x): return x\n\
-         result = chain(map(lambda x:x, R([1,2,3])))\n"
+         result = chain(map(lambda x:x, R([1,2,3])))\n",
     );
     assert_eq!(module.stmts.len(), 4);
 }
@@ -146,9 +156,13 @@ fn test_lambda_in_call_arg_list_terminated_by_comma() {
 fn test_case_as_expression_ident() {
     let module = parse(
         "def f(case):\n\
-         \x20   return case\n"
+         \x20   return case\n",
     );
-    assert_eq!(module.stmts.len(), 1, "function with case parameter should parse");
+    assert_eq!(
+        module.stmts.len(),
+        1,
+        "function with case parameter should parse"
+    );
 }
 
 #[test]
@@ -159,7 +173,11 @@ fn test_binary_operators() {
         Stmt::ExprStmt(expr) => {
             // Should be Add(1, Mul(2, 3)) due to precedence
             match &expr.node {
-                Expr::BinOp { op: BinOp::Add, lhs, rhs } => {
+                Expr::BinOp {
+                    op: BinOp::Add,
+                    lhs,
+                    rhs,
+                } => {
                     assert!(matches!(&lhs.node, Expr::IntLit(1)));
                     assert!(matches!(&rhs.node, Expr::BinOp { op: BinOp::Mul, .. }));
                 }
@@ -175,15 +193,13 @@ fn test_function_call() {
     let module = parse("print(42)\n");
     assert_eq!(module.stmts.len(), 1);
     match &module.stmts[0].node {
-        Stmt::ExprStmt(expr) => {
-            match &expr.node {
-                Expr::Call { func, args } => {
-                    assert!(matches!(&func.node, Expr::Ident(n) if n == "print"));
-                    assert_eq!(args.len(), 1);
-                }
-                _ => panic!("expected Call"),
+        Stmt::ExprStmt(expr) => match &expr.node {
+            Expr::Call { func, args } => {
+                assert!(matches!(&func.node, Expr::Ident(n) if n == "print"));
+                assert_eq!(args.len(), 1);
             }
-        }
+            _ => panic!("expected Call"),
+        },
         _ => panic!("expected ExprStmt"),
     }
 }
@@ -193,12 +209,10 @@ fn test_list_literal() {
     let module = parse("[1, 2, 3]\n");
     assert_eq!(module.stmts.len(), 1);
     match &module.stmts[0].node {
-        Stmt::ExprStmt(expr) => {
-            match &expr.node {
-                Expr::ListLit(elems) => assert_eq!(elems.len(), 3),
-                _ => panic!("expected ListLit"),
-            }
-        }
+        Stmt::ExprStmt(expr) => match &expr.node {
+            Expr::ListLit(elems) => assert_eq!(elems.len(), 3),
+            _ => panic!("expected ListLit"),
+        },
         _ => panic!("expected ExprStmt"),
     }
 }
@@ -220,15 +234,13 @@ fn test_generic_type() {
     let module = parse("x: list[int] = [1]\n");
     assert_eq!(module.stmts.len(), 1);
     match &module.stmts[0].node {
-        Stmt::VarDecl { ty, .. } => {
-            match &ty.node {
-                TypeExpr::Generic { name, args } => {
-                    assert_eq!(name, "list");
-                    assert_eq!(args.len(), 1);
-                }
-                _ => panic!("expected Generic type"),
+        Stmt::VarDecl { ty, .. } => match &ty.node {
+            TypeExpr::Generic { name, args } => {
+                assert_eq!(name, "list");
+                assert_eq!(args.len(), 1);
             }
-        }
+            _ => panic!("expected Generic type"),
+        },
         _ => panic!("expected VarDecl"),
     }
 }
@@ -237,7 +249,9 @@ fn test_generic_type() {
 fn test_import() {
     let module = parse("import math\n");
     match &module.stmts[0].node {
-        Stmt::Import { module: m, names, .. } => {
+        Stmt::Import {
+            module: m, names, ..
+        } => {
             assert_eq!(m, &["math"]);
             assert!(names.is_none());
         }
@@ -249,7 +263,9 @@ fn test_import() {
 fn test_from_import() {
     let module = parse("from math import sqrt, pi\n");
     match &module.stmts[0].node {
-        Stmt::Import { module: m, names, .. } => {
+        Stmt::Import {
+            module: m, names, ..
+        } => {
             assert_eq!(m, &["math"]);
             let names = names.as_ref().unwrap();
             assert_eq!(names.len(), 2);
@@ -290,7 +306,13 @@ fn test_unary_neg() {
     let module = parse("-42\n");
     match &module.stmts[0].node {
         Stmt::ExprStmt(expr) => {
-            assert!(matches!(&expr.node, Expr::UnaryOp { op: UnaryOp::Neg, .. }));
+            assert!(matches!(
+                &expr.node,
+                Expr::UnaryOp {
+                    op: UnaryOp::Neg,
+                    ..
+                }
+            ));
         }
         _ => panic!("expected UnaryOp"),
     }
@@ -309,8 +331,11 @@ fn test_class_def_with_metaclass_keyword() {
         Stmt::ClassDef { name, bases, .. } => {
             assert_eq!(name, "Foo");
             // Only positional base 'object' should appear; metaclass= must be filtered out
-            assert_eq!(bases.len(), 1,
-                "metaclass= keyword arg must not appear in bases, got {bases:?}");
+            assert_eq!(
+                bases.len(),
+                1,
+                "metaclass= keyword arg must not appear in bases, got {bases:?}"
+            );
             assert!(matches!(&bases[0].node, Expr::Ident(n) if n == "object"));
         }
         other => panic!("expected ClassDef for Foo, got {other:?}"),
@@ -325,8 +350,10 @@ fn test_class_def_metaclass_only() {
     match &module.stmts[0].node {
         Stmt::ClassDef { name, bases, .. } => {
             assert_eq!(name, "Foo");
-            assert!(bases.is_empty(),
-                "metaclass= should not appear in bases, got {bases:?}");
+            assert!(
+                bases.is_empty(),
+                "metaclass= should not appear in bases, got {bases:?}"
+            );
         }
         other => panic!("expected ClassDef, got {other:?}"),
     }
@@ -341,8 +368,11 @@ fn test_fstring_simple_expression() {
     let module = parse(src);
     match &module.stmts[1].node {
         Stmt::VarDecl { value: val, .. } => {
-            assert!(matches!(&val.node, Expr::FString(_)),
-                "expected FString, got {:?}", val.node);
+            assert!(
+                matches!(&val.node, Expr::FString(_)),
+                "expected FString, got {:?}",
+                val.node
+            );
             if let Expr::FString(parts) = &val.node {
                 assert_eq!(parts.len(), 1, "should have one Expr part");
                 assert!(matches!(&parts[0], FStringPart::Expr(_, None)));
@@ -381,12 +411,19 @@ fn test_chained_assign_in_class_body_does_not_leak() {
     let src = "class C:\n    a = 1\n    b = c = d = a\n";
     let module = parse(src);
     // Exactly one top-level stmt — the class def. No leaked `b = ...` etc.
-    assert_eq!(module.stmts.len(), 1, "chained-assign tail must not leak out of class body");
+    assert_eq!(
+        module.stmts.len(),
+        1,
+        "chained-assign tail must not leak out of class body"
+    );
     match &module.stmts[0].node {
         Stmt::ClassDef { body, .. } => {
             // body holds: a=1, __chained=a, b=__chained, c=__chained, d=__chained
-            assert!(body.len() >= 4,
-                "class body should hold the chained-assign continuations, got {} stmts", body.len());
+            assert!(
+                body.len() >= 4,
+                "class body should hold the chained-assign continuations, got {} stmts",
+                body.len()
+            );
         }
         other => panic!("expected ClassDef, got {other:?}"),
     }
@@ -425,18 +462,22 @@ fn test_with_paren_tuple_target() {
     let module = parse(
         "def make(): return (1, 2)\n\
          with make() as (a, b):\n\
-         \x20   pass\n"
+         \x20   pass\n",
     );
     match &module.stmts[1].node {
         Stmt::With { items, body } => {
             assert_eq!(items.len(), 1);
             let alias = items[0].alias.as_deref().expect("alias must be set");
-            assert!(alias.starts_with("__with_target_"),
-                "expected synthetic alias, got {alias:?}");
+            assert!(
+                alias.starts_with("__with_target_"),
+                "expected synthetic alias, got {alias:?}"
+            );
             // First body stmt must be the unpack assign.
             assert!(!body.is_empty());
-            assert!(matches!(&body[0].node, Stmt::Assign { .. }),
-                "expected prepended unpack assign as first body stmt");
+            assert!(
+                matches!(&body[0].node, Stmt::Assign { .. }),
+                "expected prepended unpack assign as first body stmt"
+            );
         }
         other => panic!("expected With, got {other:?}"),
     }
@@ -449,16 +490,21 @@ fn test_with_paren_tuple_target() {
 fn test_for_nested_paren_target() {
     let module = parse(
         "for (a, b), c in items:\n\
-         \x20   pass\n"
+         \x20   pass\n",
     );
     match &module.stmts[0].node {
         Stmt::For { targets, body, .. } => {
             assert_eq!(targets.len(), 2);
-            assert!(targets[0].starts_with("__for_target_"),
-                "first target must be synthetic, got {:?}", targets[0]);
+            assert!(
+                targets[0].starts_with("__for_target_"),
+                "first target must be synthetic, got {:?}",
+                targets[0]
+            );
             assert_eq!(targets[1], "c");
-            assert!(matches!(&body[0].node, Stmt::Assign { .. }),
-                "expected prepended unpack assign as first body stmt");
+            assert!(
+                matches!(&body[0].node, Stmt::Assign { .. }),
+                "expected prepended unpack assign as first body stmt"
+            );
         }
         _ => panic!("expected For"),
     }
@@ -468,15 +514,19 @@ fn test_for_nested_paren_target() {
 fn test_for_doubly_nested_paren_target() {
     let module = parse(
         "for (a, b), (c, d) in items:\n\
-         \x20   pass\n"
+         \x20   pass\n",
     );
     match &module.stmts[0].node {
         Stmt::For { targets, body, .. } => {
             assert_eq!(targets.len(), 2);
             assert!(targets[0].starts_with("__for_target_"));
             assert!(targets[1].starts_with("__for_target_"));
-            assert_eq!(body.len(), 3,
-                "expected 2 prepended unpacks + pass body stmt, got {}", body.len());
+            assert_eq!(
+                body.len(),
+                3,
+                "expected 2 prepended unpacks + pass body stmt, got {}",
+                body.len()
+            );
         }
         _ => panic!("expected For"),
     }
@@ -488,14 +538,18 @@ fn test_subscript_with_comma_tuple_index() {
     // tuple inside the subscript. Common with dict-with-tuple-key access.
     let module = parse(
         "m = {}\n\
-         x = m[0, 1]\n"
+         x = m[0, 1]\n",
     );
     match &module.stmts[1].node {
         Stmt::Assign { value, .. } => match &value.node {
             Expr::Index { index, .. } => match &index.node {
                 Expr::TupleLit(elems) => {
-                    assert_eq!(elems.len(), 2,
-                        "expected 2-element tuple index, got {} elems", elems.len());
+                    assert_eq!(
+                        elems.len(),
+                        2,
+                        "expected 2-element tuple index, got {} elems",
+                        elems.len()
+                    );
                 }
                 other => panic!("expected TupleLit subscript index, got {other:?}"),
             },
@@ -510,7 +564,7 @@ fn test_subscript_with_three_comma_indices() {
     // `arr[a, b, c]` — generalize past 2-element case.
     let module = parse(
         "m = {}\n\
-         x = m[1, 2, 3]\n"
+         x = m[1, 2, 3]\n",
     );
     match &module.stmts[1].node {
         Stmt::Assign { value, .. } => match &value.node {
@@ -531,37 +585,50 @@ fn test_chained_tuple_unpack_assign() {
     // temp-assign stmt and queues the per-target assignments via pending_stmts.
     let module = parse(
         "def f():\n\
-         \x20   ka, va = ta = (1, 2)\n"
+         \x20   ka, va = ta = (1, 2)\n",
     );
     match &module.stmts[0].node {
         Stmt::FnDef { body, .. } => {
             // Expect 3 stmts in the desugared body: __chained = (1,2);
             // (ka, va) = __chained; ta = __chained.
-            assert_eq!(body.len(), 3,
+            assert_eq!(
+                body.len(),
+                3,
                 "expected 3 desugared stmts, got {}: {:?}",
-                body.len(), body);
+                body.len(),
+                body
+            );
             // First stmt: __chained_N__ = (1, 2)
             match &body[0].node {
                 Stmt::Assign { target, .. } => {
                     if let Expr::Ident(n) = &target.node {
-                        assert!(n.starts_with("__chained_"), "expected chained temp, got {n}");
-                    } else { panic!("expected ident target on temp assign, got {target:?}"); }
+                        assert!(
+                            n.starts_with("__chained_"),
+                            "expected chained temp, got {n}"
+                        );
+                    } else {
+                        panic!("expected ident target on temp assign, got {target:?}");
+                    }
                 }
                 other => panic!("expected Assign, got {other:?}"),
             }
             // Second stmt: (ka, va) = __chained
             match &body[1].node {
                 Stmt::Assign { target, .. } => {
-                    assert!(matches!(&target.node, Expr::TupleLit(_)),
-                        "expected TupleLit target, got {target:?}");
+                    assert!(
+                        matches!(&target.node, Expr::TupleLit(_)),
+                        "expected TupleLit target, got {target:?}"
+                    );
                 }
                 other => panic!("expected Assign, got {other:?}"),
             }
             // Third stmt: ta = __chained
             match &body[2].node {
                 Stmt::Assign { target, .. } => {
-                    assert!(matches!(&target.node, Expr::Ident(_)),
-                        "expected Ident target, got {target:?}");
+                    assert!(
+                        matches!(&target.node, Expr::Ident(_)),
+                        "expected Ident target, got {target:?}"
+                    );
                 }
                 other => panic!("expected Assign, got {other:?}"),
             }
@@ -576,15 +643,22 @@ fn test_aug_assign_trailing_comma_tuple_rhs() {
     // trailing comma. Symmetric with plain `x = (a, b),` which already works.
     let module = parse(
         "success_cases = []\n\
-         success_cases += (1, 2),\n"
+         success_cases += (1, 2),\n",
     );
     match &module.stmts[1].node {
         Stmt::AugAssign { value, .. } => match &value.node {
             Expr::TupleLit(elems) => {
-                assert_eq!(elems.len(), 1,
-                    "expected single-element wrapper tuple, got {} elems", elems.len());
-                assert!(matches!(&elems[0].node, Expr::TupleLit(_)),
-                    "expected inner (1, 2) tuple, got {:?}", elems[0].node);
+                assert_eq!(
+                    elems.len(),
+                    1,
+                    "expected single-element wrapper tuple, got {} elems",
+                    elems.len()
+                );
+                assert!(
+                    matches!(&elems[0].node, Expr::TupleLit(_)),
+                    "expected inner (1, 2) tuple, got {:?}",
+                    elems[0].node
+                );
             }
             other => panic!("expected TupleLit RHS, got {other:?}"),
         },
@@ -597,7 +671,7 @@ fn test_aug_assign_bare_tuple_rhs() {
     // `x += a, b` — bare-tuple form (no parens) on aug-assign RHS.
     let module = parse(
         "x = ()\n\
-         x += 1, 2\n"
+         x += 1, 2\n",
     );
     match &module.stmts[1].node {
         Stmt::AugAssign { value, .. } => match &value.node {

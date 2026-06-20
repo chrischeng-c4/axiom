@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// tomllib module for Mamba (#1261).
 ///
 /// Backs `tomllib.loads` with the workspace `toml` crate so a TOML
@@ -7,10 +9,7 @@
 /// not yet wired). `TOMLDecodeError` remains a sentinel callable; on
 /// malformed TOML, `loads` raises `ValueError` with the parser
 /// diagnostic so a plain `except Exception:` catches it.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 || args_ptr.is_null() {
@@ -74,10 +73,7 @@ fn parse_toml_string(source: &str) -> MbValue {
         Err(e) => {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(format!(
-                    "tomllib.loads: {}",
-                    e
-                ))),
+                MbValue::from_ptr(MbObject::new_str(format!("tomllib.loads: {}", e))),
             );
             MbValue::none()
         }
@@ -134,10 +130,7 @@ unsafe extern "C" fn dispatch_load(args_ptr: *const MbValue, nargs: usize) -> Mb
             Err(e) => {
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(format!(
-                        "tomllib.load: {}: {}",
-                        path, e
-                    ))),
+                    MbValue::from_ptr(MbObject::new_str(format!("tomllib.load: {}: {}", path, e))),
                 );
                 MbValue::none()
             }
@@ -147,7 +140,10 @@ unsafe extern "C" fn dispatch_load(args_ptr: *const MbValue, nargs: usize) -> Mb
     }
 }
 
-unsafe extern "C" fn dispatch_toml_decode_error(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_toml_decode_error(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
@@ -195,9 +191,11 @@ mod tests {
             let ptr = d.as_ptr().expect("dict ptr");
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
-                map.get(&super::super::super::dict_ops::DictKey::Str(key.to_string()))
-                    .copied()
-                    .unwrap_or_else(MbValue::none)
+                map.get(&super::super::super::dict_ops::DictKey::Str(
+                    key.to_string(),
+                ))
+                .copied()
+                .unwrap_or_else(MbValue::none)
             } else {
                 MbValue::none()
             }

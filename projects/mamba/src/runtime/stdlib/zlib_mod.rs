@@ -20,13 +20,13 @@
 
 //! @codegen-skip: handwrite-pre-standardize
 
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
+use flate2::Compression;
+use flate2::{Compress, Decompress, FlushCompress, FlushDecompress, Status};
 use std::collections::HashMap;
 use std::io::Write;
-use flate2::Compression;
-use flate2::write::{DeflateEncoder, ZlibEncoder, GzEncoder};
-use flate2::{Compress, Decompress, FlushCompress, FlushDecompress, Status};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 const ZDICT_MARKER: &[u8] = b"MBZDICT\0";
 
@@ -108,9 +108,9 @@ unsafe extern "C" fn dispatch_decompress(args_ptr: *const MbValue, nargs: usize)
     let framing = decompress_framing(wbits);
     match with_bytes(arg, |b| replay_decompress(framing, b)) {
         Ok(d) if d.eof => MbValue::from_ptr(MbObject::new_bytes(d.output)),
-        Ok(_) => raise_zlib_error(
-            "Error -5 while decompressing data: incomplete or truncated stream",
-        ),
+        Ok(_) => {
+            raise_zlib_error("Error -5 while decompressing data: incomplete or truncated stream")
+        }
         Err(()) => raise_zlib_error("Error -3 while decompressing data: invalid window size"),
     }
 }
@@ -161,7 +161,11 @@ unsafe extern "C" fn dispatch_compress(args_ptr: *const MbValue, nargs: usize) -
     if !valid_compress_wbits(wbits) {
         return raise_value_error("Invalid initialization option");
     }
-    match replay_compress(compress_framing(wbits), level, &[(with_bytes(arg, |b| b.to_vec()), Z_FINISH)]) {
+    match replay_compress(
+        compress_framing(wbits),
+        level,
+        &[(with_bytes(arg, |b| b.to_vec()), Z_FINISH)],
+    ) {
         Ok(out) => MbValue::from_ptr(MbObject::new_bytes(out)),
         Err(()) => raise_zlib_error("Error while compressing data"),
     }
@@ -213,7 +217,11 @@ unsafe extern "C" fn dispatch_decompressobj(args_ptr: *const MbValue, nargs: usi
 // suffix. `_finished` guards against post-Z_FINISH use.
 
 fn ev_append(self_obj: MbValue, data: Vec<u8>, flush_mode: i64) {
-    push_list_field(self_obj, "_ev_data", MbValue::from_ptr(MbObject::new_bytes(data)));
+    push_list_field(
+        self_obj,
+        "_ev_data",
+        MbValue::from_ptr(MbObject::new_bytes(data)),
+    );
     push_list_field(self_obj, "_ev_flush", MbValue::from_int(flush_mode));
 }
 
@@ -301,8 +309,16 @@ fn compressobj_fork(self_obj: MbValue) -> MbValue {
     );
     copy_list_field(self_obj, copied, "_ev_data");
     copy_list_field(self_obj, copied, "_ev_flush");
-    set_instance_field(copied, "_emitted", MbValue::from_int(get_instance_int(self_obj, "_emitted", 0)));
-    set_instance_field(copied, "_finished", MbValue::from_int(get_instance_int(self_obj, "_finished", 0)));
+    set_instance_field(
+        copied,
+        "_emitted",
+        MbValue::from_int(get_instance_int(self_obj, "_emitted", 0)),
+    );
+    set_instance_field(
+        copied,
+        "_finished",
+        MbValue::from_int(get_instance_int(self_obj, "_finished", 0)),
+    );
     copied
 }
 
@@ -380,7 +396,11 @@ extern "C" fn mb_zlib_decompressobj_decompress(self_obj: MbValue, args: MbValue)
         }
     });
     input.extend_from_slice(&new_bytes);
-    set_instance_field(self_obj, "_input", MbValue::from_ptr(MbObject::new_bytes(input.clone())));
+    set_instance_field(
+        self_obj,
+        "_input",
+        MbValue::from_ptr(MbObject::new_bytes(input.clone())),
+    );
 
     let (_, wbits, emitted) = decompressobj_state(self_obj);
     let zdict = get_instance_bytes(self_obj, "_zdict");
@@ -389,7 +409,11 @@ extern "C" fn mb_zlib_decompressobj_decompress(self_obj: MbValue, args: MbValue)
         Err(()) => return raise_zlib_error("Error while decompressing data"),
     };
     let marker_off = input.len() - body.len();
-    let cap = if max_length > 0 { emitted + max_length as usize } else { NO_CAP };
+    let cap = if max_length > 0 {
+        emitted + max_length as usize
+    } else {
+        NO_CAP
+    };
 
     match replay_decompress_capped(decompress_framing(wbits), &body, cap) {
         Ok(d) => {
@@ -398,12 +422,20 @@ extern "C" fn mb_zlib_decompressobj_decompress(self_obj: MbValue, args: MbValue)
             } else {
                 Vec::new()
             };
-            set_instance_field(self_obj, "_emitted", MbValue::from_int(d.output.len() as i64));
+            set_instance_field(
+                self_obj,
+                "_emitted",
+                MbValue::from_int(d.output.len() as i64),
+            );
             let consumed_total = marker_off + d.consumed;
             if d.capped {
                 // Output was limited; leftover input is unconsumed.
                 set_instance_field(self_obj, "eof", MbValue::from_bool(false));
-                set_instance_field(self_obj, "unused_data", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+                set_instance_field(
+                    self_obj,
+                    "unused_data",
+                    MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+                );
                 set_instance_field(
                     self_obj,
                     "unconsumed_tail",
@@ -416,12 +448,24 @@ extern "C" fn mb_zlib_decompressobj_decompress(self_obj: MbValue, args: MbValue)
                     "unused_data",
                     MbValue::from_ptr(MbObject::new_bytes(input[consumed_total..].to_vec())),
                 );
-                set_instance_field(self_obj, "unconsumed_tail", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+                set_instance_field(
+                    self_obj,
+                    "unconsumed_tail",
+                    MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+                );
             } else {
                 // Incomplete stream: more input needed.
                 set_instance_field(self_obj, "eof", MbValue::from_bool(false));
-                set_instance_field(self_obj, "unused_data", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
-                set_instance_field(self_obj, "unconsumed_tail", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+                set_instance_field(
+                    self_obj,
+                    "unused_data",
+                    MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+                );
+                set_instance_field(
+                    self_obj,
+                    "unconsumed_tail",
+                    MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+                );
             }
             MbValue::from_ptr(MbObject::new_bytes(new_out))
         }
@@ -456,7 +500,11 @@ extern "C" fn mb_zlib_decompressobj_flush(self_obj: MbValue, args: MbValue) -> M
             } else {
                 Vec::new()
             };
-            set_instance_field(self_obj, "_emitted", MbValue::from_int(d.output.len() as i64));
+            set_instance_field(
+                self_obj,
+                "_emitted",
+                MbValue::from_int(d.output.len() as i64),
+            );
             if d.eof {
                 set_instance_field(self_obj, "eof", MbValue::from_bool(true));
                 let consumed_total = marker_off + d.consumed;
@@ -466,7 +514,11 @@ extern "C" fn mb_zlib_decompressobj_flush(self_obj: MbValue, args: MbValue) -> M
                     MbValue::from_ptr(MbObject::new_bytes(input[consumed_total..].to_vec())),
                 );
             }
-            set_instance_field(self_obj, "unconsumed_tail", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+            set_instance_field(
+                self_obj,
+                "unconsumed_tail",
+                MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+            );
             MbValue::from_ptr(MbObject::new_bytes(new_out))
         }
         Err(()) => MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
@@ -478,11 +530,37 @@ fn decompressobj_fork(self_obj: MbValue) -> MbValue {
         get_instance_int(self_obj, "_wbits", 15),
         get_instance_bytes(self_obj, "_zdict"),
     );
-    set_instance_field(copied, "_input", MbValue::from_ptr(MbObject::new_bytes(get_instance_bytes(self_obj, "_input"))));
-    set_instance_field(copied, "_emitted", MbValue::from_int(get_instance_int(self_obj, "_emitted", 0)));
-    set_instance_field(copied, "eof", MbValue::from_bool(get_instance_field_bool(self_obj, "eof")));
-    set_instance_field(copied, "unused_data", MbValue::from_ptr(MbObject::new_bytes(get_instance_bytes(self_obj, "unused_data"))));
-    set_instance_field(copied, "unconsumed_tail", MbValue::from_ptr(MbObject::new_bytes(get_instance_bytes(self_obj, "unconsumed_tail"))));
+    set_instance_field(
+        copied,
+        "_input",
+        MbValue::from_ptr(MbObject::new_bytes(get_instance_bytes(self_obj, "_input"))),
+    );
+    set_instance_field(
+        copied,
+        "_emitted",
+        MbValue::from_int(get_instance_int(self_obj, "_emitted", 0)),
+    );
+    set_instance_field(
+        copied,
+        "eof",
+        MbValue::from_bool(get_instance_field_bool(self_obj, "eof")),
+    );
+    set_instance_field(
+        copied,
+        "unused_data",
+        MbValue::from_ptr(MbObject::new_bytes(get_instance_bytes(
+            self_obj,
+            "unused_data",
+        ))),
+    );
+    set_instance_field(
+        copied,
+        "unconsumed_tail",
+        MbValue::from_ptr(MbObject::new_bytes(get_instance_bytes(
+            self_obj,
+            "unconsumed_tail",
+        ))),
+    );
     copied
 }
 
@@ -552,13 +630,21 @@ unsafe extern "C" fn dispatch_zlib_decompressor(args_ptr: *const MbValue, nargs:
         return raise_type_error("function takes at most 2 arguments");
     }
     let obj = MbValue::from_ptr(MbObject::new_instance("zlib._ZlibDecompressor".to_string()));
-    set_instance_field(obj, "_input", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+    set_instance_field(
+        obj,
+        "_input",
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+    );
     set_instance_field(obj, "_emitted", MbValue::from_int(0));
     set_instance_field(obj, "_wbits", MbValue::from_int(wbits));
     set_instance_field(obj, "_zdict", MbValue::from_ptr(MbObject::new_bytes(zdict)));
     set_instance_field(obj, "eof", MbValue::from_bool(false));
     set_instance_field(obj, "needs_input", MbValue::from_bool(true));
-    set_instance_field(obj, "unused_data", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+    set_instance_field(
+        obj,
+        "unused_data",
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+    );
     obj
 }
 
@@ -567,7 +653,9 @@ extern "C" fn mb_zlib_decompressor_decompress(self_obj: MbValue, args: MbValue) 
     // Calling with no positional data is a TypeError (data is required).
     let data = match args.first().copied().filter(|v| !is_kwargs_dict(*v)) {
         Some(v) => v,
-        None => return raise_type_error("decompress() missing 1 required positional argument: 'data'"),
+        None => {
+            return raise_type_error("decompress() missing 1 required positional argument: 'data'")
+        }
     };
     if !is_bytes_like(data) {
         return raise_type_error("decompress() argument must be bytes-like");
@@ -586,7 +674,11 @@ extern "C" fn mb_zlib_decompressor_decompress(self_obj: MbValue, args: MbValue) 
 
     let mut input = get_instance_bytes(self_obj, "_input");
     with_bytes(data, |b| input.extend_from_slice(b));
-    set_instance_field(self_obj, "_input", MbValue::from_ptr(MbObject::new_bytes(input.clone())));
+    set_instance_field(
+        self_obj,
+        "_input",
+        MbValue::from_ptr(MbObject::new_bytes(input.clone())),
+    );
 
     let wbits = get_instance_int(self_obj, "_wbits", 15);
     let emitted = get_instance_int(self_obj, "_emitted", 0) as usize;
@@ -596,7 +688,11 @@ extern "C" fn mb_zlib_decompressor_decompress(self_obj: MbValue, args: MbValue) 
         Err(()) => return raise_zlib_error("Error while decompressing data"),
     };
     let marker_off = input.len() - body.len();
-    let cap = if max_length >= 0 { emitted + max_length as usize } else { NO_CAP };
+    let cap = if max_length >= 0 {
+        emitted + max_length as usize
+    } else {
+        NO_CAP
+    };
 
     match replay_decompress_capped(decompress_framing(wbits), &body, cap) {
         Ok(d) => {
@@ -605,7 +701,11 @@ extern "C" fn mb_zlib_decompressor_decompress(self_obj: MbValue, args: MbValue) 
             } else {
                 Vec::new()
             };
-            set_instance_field(self_obj, "_emitted", MbValue::from_int(d.output.len() as i64));
+            set_instance_field(
+                self_obj,
+                "_emitted",
+                MbValue::from_int(d.output.len() as i64),
+            );
             if d.capped {
                 // Output was limited; more is available without new input.
                 set_instance_field(self_obj, "needs_input", MbValue::from_bool(false));
@@ -626,7 +726,9 @@ extern "C" fn mb_zlib_decompressor_decompress(self_obj: MbValue, args: MbValue) 
             }
             MbValue::from_ptr(MbObject::new_bytes(new_out))
         }
-        Err(()) => raise_zlib_error("Error -3 while decompressing data: invalid stored block lengths"),
+        Err(()) => {
+            raise_zlib_error("Error -3 while decompressing data: invalid stored block lengths")
+        }
     }
 }
 
@@ -654,9 +756,7 @@ fn valid_decompress_wbits(wbits: i64) -> bool {
 }
 
 fn valid_compress_wbits(wbits: i64) -> bool {
-    (9..=15).contains(&wbits)
-        || (-15..=-9).contains(&wbits)
-        || (25..=31).contains(&wbits)
+    (9..=15).contains(&wbits) || (-15..=-9).contains(&wbits) || (25..=31).contains(&wbits)
 }
 
 pub fn register() {
@@ -677,17 +777,35 @@ pub fn register() {
     }
     let mut compressor_methods = HashMap::new();
     let compressobj_compress_addr = mb_zlib_compressobj_compress as usize;
-    compressor_methods.insert("compress".to_string(), MbValue::from_func(compressobj_compress_addr));
+    compressor_methods.insert(
+        "compress".to_string(),
+        MbValue::from_func(compressobj_compress_addr),
+    );
     let compressobj_flush_addr = mb_zlib_compressobj_flush as usize;
-    compressor_methods.insert("flush".to_string(), MbValue::from_func(compressobj_flush_addr));
+    compressor_methods.insert(
+        "flush".to_string(),
+        MbValue::from_func(compressobj_flush_addr),
+    );
     let compressobj_copy_addr = mb_zlib_compressobj_copy as usize;
-    compressor_methods.insert("copy".to_string(), MbValue::from_func(compressobj_copy_addr));
+    compressor_methods.insert(
+        "copy".to_string(),
+        MbValue::from_func(compressobj_copy_addr),
+    );
     let compressobj_dunder_copy_addr = mb_zlib_compressobj_dunder_copy as usize;
-    compressor_methods.insert("__copy__".to_string(), MbValue::from_func(compressobj_dunder_copy_addr));
+    compressor_methods.insert(
+        "__copy__".to_string(),
+        MbValue::from_func(compressobj_dunder_copy_addr),
+    );
     let compressobj_deepcopy_addr = mb_zlib_compressobj_deepcopy as usize;
-    compressor_methods.insert("__deepcopy__".to_string(), MbValue::from_func(compressobj_deepcopy_addr));
+    compressor_methods.insert(
+        "__deepcopy__".to_string(),
+        MbValue::from_func(compressobj_deepcopy_addr),
+    );
     let uncopyable_reduce_addr = mb_zlib_uncopyable_reduce as usize;
-    compressor_methods.insert("__reduce__".to_string(), MbValue::from_func(uncopyable_reduce_addr));
+    compressor_methods.insert(
+        "__reduce__".to_string(),
+        MbValue::from_func(uncopyable_reduce_addr),
+    );
     super::super::module::register_variadic_func(compressobj_flush_addr as u64);
     super::super::module::register_variadic_func(compressobj_dunder_copy_addr as u64);
     super::super::module::register_variadic_func(compressobj_deepcopy_addr as u64);
@@ -695,19 +813,34 @@ pub fn register() {
     super::super::class::mb_class_register("zlib.Compress", Vec::new(), compressor_methods);
     let mut decompressor_methods = HashMap::new();
     let decompressobj_decompress_addr = mb_zlib_decompressobj_decompress as usize;
-    decompressor_methods.insert("decompress".to_string(), MbValue::from_func(decompressobj_decompress_addr));
+    decompressor_methods.insert(
+        "decompress".to_string(),
+        MbValue::from_func(decompressobj_decompress_addr),
+    );
     let decompressobj_flush_addr = mb_zlib_decompressobj_flush as usize;
     decompressor_methods.insert(
         "flush".to_string(),
         MbValue::from_func(decompressobj_flush_addr),
     );
     let decompressobj_copy_addr = mb_zlib_decompressobj_copy as usize;
-    decompressor_methods.insert("copy".to_string(), MbValue::from_func(decompressobj_copy_addr));
+    decompressor_methods.insert(
+        "copy".to_string(),
+        MbValue::from_func(decompressobj_copy_addr),
+    );
     let decompressobj_dunder_copy_addr = mb_zlib_decompressobj_dunder_copy as usize;
-    decompressor_methods.insert("__copy__".to_string(), MbValue::from_func(decompressobj_dunder_copy_addr));
+    decompressor_methods.insert(
+        "__copy__".to_string(),
+        MbValue::from_func(decompressobj_dunder_copy_addr),
+    );
     let decompressobj_deepcopy_addr = mb_zlib_decompressobj_deepcopy as usize;
-    decompressor_methods.insert("__deepcopy__".to_string(), MbValue::from_func(decompressobj_deepcopy_addr));
-    decompressor_methods.insert("__reduce__".to_string(), MbValue::from_func(mb_zlib_uncopyable_reduce as usize));
+    decompressor_methods.insert(
+        "__deepcopy__".to_string(),
+        MbValue::from_func(decompressobj_deepcopy_addr),
+    );
+    decompressor_methods.insert(
+        "__reduce__".to_string(),
+        MbValue::from_func(mb_zlib_uncopyable_reduce as usize),
+    );
     super::super::module::register_variadic_func(decompressobj_decompress_addr as u64);
     super::super::module::register_variadic_func(decompressobj_flush_addr as u64);
     super::super::module::register_variadic_func(decompressobj_dunder_copy_addr as u64);
@@ -718,17 +851,30 @@ pub fn register() {
     // module-level callable returning an instance; the instance carries a
     // variadic `decompress` method).
     let zlib_decompressor_ctor = dispatch_zlib_decompressor as usize;
-    attrs.insert("_ZlibDecompressor".to_string(), MbValue::from_func(zlib_decompressor_ctor));
+    attrs.insert(
+        "_ZlibDecompressor".to_string(),
+        MbValue::from_func(zlib_decompressor_ctor),
+    );
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(zlib_decompressor_ctor as u64);
     });
     let mut zlib_decompressor_methods = HashMap::new();
     let zd_decompress_addr = mb_zlib_decompressor_decompress as usize;
-    zlib_decompressor_methods.insert("decompress".to_string(), MbValue::from_func(zd_decompress_addr));
-    zlib_decompressor_methods.insert("__reduce__".to_string(), MbValue::from_func(mb_zlib_uncopyable_reduce as usize));
+    zlib_decompressor_methods.insert(
+        "decompress".to_string(),
+        MbValue::from_func(zd_decompress_addr),
+    );
+    zlib_decompressor_methods.insert(
+        "__reduce__".to_string(),
+        MbValue::from_func(mb_zlib_uncopyable_reduce as usize),
+    );
     super::super::module::register_variadic_func(zd_decompress_addr as u64);
     super::super::module::register_variadic_func(mb_zlib_uncopyable_reduce as usize as u64);
-    super::super::class::mb_class_register("zlib._ZlibDecompressor", Vec::new(), zlib_decompressor_methods);
+    super::super::class::mb_class_register(
+        "zlib._ZlibDecompressor",
+        Vec::new(),
+        zlib_decompressor_methods,
+    );
 
     // `zlib.error` is raised as a string-typed exception ("zlib.error"), which
     // already matches `except zlib.error`. Register it as a real class deriving
@@ -777,8 +923,16 @@ pub fn register() {
 
 fn make_compressobj_stub(level: i64, wbits: i64, zdict: Vec<u8>) -> MbValue {
     let obj = MbValue::from_ptr(MbObject::new_instance("zlib.Compress".to_string()));
-    set_instance_field(obj, "_ev_data", MbValue::from_ptr(MbObject::new_list(Vec::new())));
-    set_instance_field(obj, "_ev_flush", MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    set_instance_field(
+        obj,
+        "_ev_data",
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
+    set_instance_field(
+        obj,
+        "_ev_flush",
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
     set_instance_field(obj, "_emitted", MbValue::from_int(0));
     set_instance_field(obj, "_finished", MbValue::from_int(0));
     set_instance_field(obj, "_level", MbValue::from_int(level));
@@ -789,13 +943,25 @@ fn make_compressobj_stub(level: i64, wbits: i64, zdict: Vec<u8>) -> MbValue {
 
 fn make_decompressobj_stub(wbits: i64, zdict: Vec<u8>) -> MbValue {
     let obj = MbValue::from_ptr(MbObject::new_instance("zlib.Decompress".to_string()));
-    set_instance_field(obj, "_input", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+    set_instance_field(
+        obj,
+        "_input",
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+    );
     set_instance_field(obj, "_emitted", MbValue::from_int(0));
     set_instance_field(obj, "_wbits", MbValue::from_int(wbits));
     set_instance_field(obj, "_zdict", MbValue::from_ptr(MbObject::new_bytes(zdict)));
     set_instance_field(obj, "eof", MbValue::from_bool(false));
-    set_instance_field(obj, "unused_data", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
-    set_instance_field(obj, "unconsumed_tail", MbValue::from_ptr(MbObject::new_bytes(Vec::new())));
+    set_instance_field(
+        obj,
+        "unused_data",
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+    );
+    set_instance_field(
+        obj,
+        "unconsumed_tail",
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+    );
     obj
 }
 
@@ -820,9 +986,7 @@ fn with_bytes<R>(val: MbValue, f: impl FnOnce(&[u8]) -> R) -> R {
 
 fn is_bytes_like(val: MbValue) -> bool {
     match val.as_ptr() {
-        Some(ptr) => unsafe {
-            matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
-        },
+        Some(ptr) => unsafe { matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) },
         None => false,
     }
 }
@@ -851,11 +1015,22 @@ fn dict_get(kwargs: Option<MbValue>, name: &str) -> Option<MbValue> {
     }
 }
 
-fn arg_value(args: &[MbValue], kwargs: Option<MbValue>, index: usize, name: &str) -> Option<MbValue> {
+fn arg_value(
+    args: &[MbValue],
+    kwargs: Option<MbValue>,
+    index: usize,
+    name: &str,
+) -> Option<MbValue> {
     args.get(index).copied().or_else(|| dict_get(kwargs, name))
 }
 
-fn arg_int(args: &[MbValue], kwargs: Option<MbValue>, index: usize, name: &str, default: i64) -> i64 {
+fn arg_int(
+    args: &[MbValue],
+    kwargs: Option<MbValue>,
+    index: usize,
+    name: &str,
+    default: i64,
+) -> i64 {
     arg_value(args, kwargs, index, name)
         .and_then(|v| v.as_int())
         .unwrap_or(default)
@@ -1068,11 +1243,7 @@ fn decompress_framing(wbits: i64) -> Framing {
 /// then hand back only the suffix the caller has not seen yet (`emitted..`).
 /// This sidesteps the need to persist opaque Rust state inside an MbValue
 /// instance: the replay is O(total²) but conformance payloads are small.
-fn replay_compress(
-    framing: Framing,
-    level: i64,
-    events: &[(Vec<u8>, i64)],
-) -> Result<Vec<u8>, ()> {
+fn replay_compress(framing: Framing, level: i64, events: &[(Vec<u8>, i64)]) -> Result<Vec<u8>, ()> {
     let compression = if level < 0 {
         Compression::default()
     } else {
@@ -1238,7 +1409,11 @@ fn capped(cap: usize) -> bool {
 /// deflate input cursor so the caller can populate `unconsumed_tail` (input not
 /// yet consumed) and `unused_data` (input after stream end). Gzip/auto framings
 /// ignore the cap (decoded whole).
-fn replay_decompress_capped(framing: Framing, input: &[u8], cap: usize) -> Result<DecodeCapped, ()> {
+fn replay_decompress_capped(
+    framing: Framing,
+    input: &[u8],
+    cap: usize,
+) -> Result<DecodeCapped, ()> {
     let eff = match framing {
         Framing::Auto => {
             if input.len() >= 2 && input[0] == 0x1f && input[1] == 0x8b {
@@ -1342,7 +1517,12 @@ fn replay_decompress_capped(framing: Framing, input: &[u8], cap: usize) -> Resul
         eof = false;
     }
     let consumed = dec.total_in() as usize;
-    Ok(DecodeCapped { output: buf, consumed, eof, capped: was_capped })
+    Ok(DecodeCapped {
+        output: buf,
+        consumed,
+        eof,
+        capped: was_capped,
+    })
 }
 
 /// Decompress a complete gzip frame (header + deflate + trailer) at once.
@@ -1375,7 +1555,9 @@ fn decode_gzip_full(input: &[u8]) -> Result<DecodeFull, ()> {
 pub fn mb_zlib_decompress(data: MbValue) -> MbValue {
     match with_bytes(data, decode_zlib_stream) {
         Ok(DecodeResult::Complete { output, .. }) => MbValue::from_ptr(MbObject::new_bytes(output)),
-        Ok(DecodeResult::Incomplete) | Err(()) => raise_zlib_error("Error while decompressing data"),
+        Ok(DecodeResult::Incomplete) | Err(()) => {
+            raise_zlib_error("Error while decompressing data")
+        }
     }
 }
 
@@ -1498,20 +1680,27 @@ fn mb_zlib_adler32_seed(data: MbValue, seed: u32) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::super::value::MbValue;
     use super::super::super::rc::{MbObject, ObjData};
+    use super::super::super::value::MbValue;
+    use super::*;
 
     fn get_bytes_val(val: MbValue) -> Option<Vec<u8>> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
+            if let ObjData::Bytes(ref b) = (*ptr).data {
+                Some(b.clone())
+            } else {
+                None
+            }
         })
     }
 
     #[test]
     fn test_with_bytes_variants() {
         let bytes_val = MbValue::from_ptr(MbObject::new_bytes(vec![1u8, 2, 3]));
-        assert_eq!(super::with_bytes(bytes_val, |b| b.to_vec()), vec![1u8, 2, 3]);
+        assert_eq!(
+            super::with_bytes(bytes_val, |b| b.to_vec()),
+            vec![1u8, 2, 3]
+        );
 
         let ba = MbValue::from_ptr(MbObject::new_bytearray(vec![4u8, 5, 6]));
         assert_eq!(super::with_bytes(ba, |b| b.to_vec()), vec![4u8, 5, 6]);
@@ -1522,7 +1711,10 @@ mod tests {
         let d = MbValue::from_ptr(MbObject::new_dict());
         assert_eq!(super::with_bytes(d, |b| b.to_vec()), Vec::<u8>::new());
 
-        assert_eq!(super::with_bytes(MbValue::none(), |b| b.to_vec()), Vec::<u8>::new());
+        assert_eq!(
+            super::with_bytes(MbValue::none(), |b| b.to_vec()),
+            Vec::<u8>::new()
+        );
     }
 
     #[test]
@@ -1533,7 +1725,12 @@ mod tests {
         let compressed = mb_zlib_compress(input);
         let compressed_bytes = get_bytes_val(compressed).expect("compressed bytes");
         // Compression actually shrinks repeating data.
-        assert!(compressed_bytes.len() < payload.len(), "compressed >= payload: {} >= {}", compressed_bytes.len(), payload.len());
+        assert!(
+            compressed_bytes.len() < payload.len(),
+            "compressed >= payload: {} >= {}",
+            compressed_bytes.len(),
+            payload.len()
+        );
         // zlib magic byte 0x78 (zlib stream header).
         assert_eq!(compressed_bytes[0], 0x78);
 
@@ -1564,10 +1761,16 @@ mod tests {
     fn test_crc32_known() {
         // CRC32 of a single zero byte = 0xD202EF8D
         let single_zero = MbValue::from_ptr(MbObject::new_bytes(vec![0x00u8]));
-        assert_eq!(mb_zlib_crc32(single_zero).as_int(), Some(0xD202EF8D_u32 as i64));
+        assert_eq!(
+            mb_zlib_crc32(single_zero).as_int(),
+            Some(0xD202EF8D_u32 as i64)
+        );
         // CRC32 of b"123456789" = 0xCBF43926 (canonical test vector).
         let canonical = MbValue::from_ptr(MbObject::new_bytes(b"123456789".to_vec()));
-        assert_eq!(mb_zlib_crc32(canonical).as_int(), Some(0xCBF43926_u32 as i64));
+        assert_eq!(
+            mb_zlib_crc32(canonical).as_int(),
+            Some(0xCBF43926_u32 as i64)
+        );
     }
 
     #[test]

@@ -2,26 +2,26 @@
 //!
 //! Chain, Group, and Chord implementations for composing task workflows.
 
-pub mod signature;
 pub mod chain;
-pub mod group;
 pub mod chord;
-pub mod map;
-pub mod starmap;
 pub mod chunks;
 pub mod engine;
+pub mod group;
+pub mod map;
+pub mod signature;
+pub mod starmap;
 
-pub use signature::{TaskSignature, TaskOptions};
-pub use chain::{Chain, AsyncChainResult};
-pub use group::{Group, GroupResult};
-pub use chord::{Chord, AsyncChordResult};
-pub use map::{Map, xmap};
-pub use starmap::{Starmap, starmap};
-pub use chunks::{Chunks, chunks};
+pub use chain::{AsyncChainResult, Chain};
+pub use chord::{AsyncChordResult, Chord};
+pub use chunks::{chunks, Chunks};
 pub use engine::WorkflowEngine;
+pub use group::{Group, GroupResult};
+pub use map::{xmap, Map};
+pub use signature::{TaskOptions, TaskSignature};
+pub use starmap::{starmap, Starmap};
 
-use serde::{Deserialize, Serialize};
 use crate::TaskId;
+use serde::{Deserialize, Serialize};
 
 /// Metadata stored in Redis for chain tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,10 +114,7 @@ impl ChordMeta {
 
     /// Get all results (for callback)
     pub fn collect_results(&self) -> Vec<serde_json::Value> {
-        self.results
-            .iter()
-            .filter_map(|r| r.clone())
-            .collect()
+        self.results.iter().filter_map(|r| r.clone()).collect()
     }
 }
 

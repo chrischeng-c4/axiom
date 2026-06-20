@@ -119,7 +119,10 @@ pub fn parse_accept_encoding(header: &str) -> Result<Vec<AcceptEncoding>, IndexE
         }
         let mut q = 1.0f32;
         for param in params {
-            if let Some(qv) = param.strip_prefix("q=").or_else(|| param.strip_prefix("Q=")) {
+            if let Some(qv) = param
+                .strip_prefix("q=")
+                .or_else(|| param.strip_prefix("Q="))
+            {
                 q = qv.parse::<f32>().map_err(|_| IndexError::ParseError {
                     url: String::new(),
                     detail: format!("Accept-Encoding q-value not numeric: {qv:?}"),
@@ -138,7 +141,9 @@ pub fn parse_accept_encoding(header: &str) -> Result<Vec<AcceptEncoding>, IndexE
 
     // Sort descending by q, breaking ties by declaration index.
     entries.sort_by(|a, b| {
-        b.1.q.partial_cmp(&a.1.q).unwrap_or(std::cmp::Ordering::Equal)
+        b.1.q
+            .partial_cmp(&a.1.q)
+            .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.0.cmp(&b.0))
     });
     Ok(entries.into_iter().map(|(_, e)| e).collect())
@@ -164,9 +169,7 @@ pub fn parse_content_encoding(header: &str) -> Result<Vec<String>, IndexError> {
         if part.contains(';') || part.contains(' ') {
             return Err(IndexError::ParseError {
                 url: String::new(),
-                detail: format!(
-                    "Content-Encoding coding must not contain parameters: {part:?}"
-                ),
+                detail: format!("Content-Encoding coding must not contain parameters: {part:?}"),
             });
         }
         out.push(part.to_ascii_lowercase());
@@ -244,8 +247,7 @@ mod tests {
 
     #[test]
     fn parse_multiple_codings_sorts_by_q_desc() {
-        let entries =
-            parse_accept_encoding("gzip;q=0.5, br;q=1.0, identity;q=0").unwrap();
+        let entries = parse_accept_encoding("gzip;q=0.5, br;q=1.0, identity;q=0").unwrap();
         assert_eq!(
             entries,
             vec![

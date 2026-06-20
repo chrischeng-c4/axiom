@@ -233,8 +233,12 @@ mod tests {
     fn inflate_roundtrip_short_text() {
         let original = b"Metadata-Version: 2.1\nName: example\nVersion: 1.0\n";
         let compressed = deflate_raw(original);
-        let result = inflate_raw(&compressed, Some(original.len() as u64), DEFAULT_METADATA_CAP)
-            .unwrap();
+        let result = inflate_raw(
+            &compressed,
+            Some(original.len() as u64),
+            DEFAULT_METADATA_CAP,
+        )
+        .unwrap();
         assert_eq!(result, original);
     }
 
@@ -252,8 +256,12 @@ mod tests {
         // the multi-chunk inner loop.
         let original = "ABCDEFGH".repeat(8 * 1024);
         let compressed = deflate_raw(original.as_bytes());
-        let result =
-            inflate_raw(&compressed, Some(original.len() as u64), DEFAULT_METADATA_CAP).unwrap();
+        let result = inflate_raw(
+            &compressed,
+            Some(original.len() as u64),
+            DEFAULT_METADATA_CAP,
+        )
+        .unwrap();
         assert_eq!(result, original.as_bytes());
     }
 
@@ -266,8 +274,12 @@ mod tests {
             original.push((i % 251) as u8); // 251 is prime — poor compressibility
         }
         let compressed = deflate_raw(&original);
-        let result =
-            inflate_raw(&compressed, Some(original.len() as u64), DEFAULT_METADATA_CAP).unwrap();
+        let result = inflate_raw(
+            &compressed,
+            Some(original.len() as u64),
+            DEFAULT_METADATA_CAP,
+        )
+        .unwrap();
         assert_eq!(result, original);
     }
 
@@ -338,8 +350,8 @@ mod tests {
     fn inflate_metadata_deflate_method() {
         let original = b"Metadata-Version: 2.1\nName: deflated-pkg\n";
         let compressed = deflate_raw(original);
-        let out = inflate_metadata(METHOD_DEFLATE, &compressed, Some(original.len() as u64))
-            .unwrap();
+        let out =
+            inflate_metadata(METHOD_DEFLATE, &compressed, Some(original.len() as u64)).unwrap();
         assert_eq!(out, original);
     }
 
@@ -381,12 +393,8 @@ Requires-Dist: certifi (>=2017.4.17)
         // on the fixture itself).
         assert!(compressed.len() < metadata.len());
 
-        let out = inflate_metadata(
-            METHOD_DEFLATE,
-            &compressed,
-            Some(metadata.len() as u64),
-        )
-        .unwrap();
+        let out =
+            inflate_metadata(METHOD_DEFLATE, &compressed, Some(metadata.len() as u64)).unwrap();
         assert_eq!(out, metadata.as_bytes());
 
         // Smoke-test the first line so the test fails loudly if we

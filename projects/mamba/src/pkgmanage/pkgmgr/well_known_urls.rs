@@ -112,9 +112,7 @@ pub fn classify(label: &str) -> WellKnownLabel {
 /// the same table) are preserved as separate entries — PEP 753 is
 /// a classifier, not a deduplicator. Downstream tools decide whether
 /// to fold or warn on duplicates.
-pub fn classify_urls(
-    urls: &BTreeMap<String, String>,
-) -> Vec<(WellKnownLabel, String, String)> {
+pub fn classify_urls(urls: &BTreeMap<String, String>) -> Vec<(WellKnownLabel, String, String)> {
     urls.iter()
         .map(|(k, v)| (classify(k), k.clone(), v.clone()))
         .collect()
@@ -275,10 +273,7 @@ mod tests {
     fn classify_urls_keeps_duplicates_distinct() {
         // Two labels that both normalize to "homepage" — PEP 753 says
         // classifier; not deduplicator. Both entries survive.
-        let urls = map([
-            ("Homepage", "https://a"),
-            ("Home Page", "https://b"),
-        ]);
+        let urls = map([("Homepage", "https://a"), ("Home Page", "https://b")]);
         let classified = classify_urls(&urls);
         assert_eq!(classified.len(), 2);
         assert_eq!(classified[0].0, WellKnownLabel::Homepage);
@@ -302,14 +297,14 @@ mod tests {
         ]);
         let classified = classify_urls(&urls);
         // Count well-known matches.
-        let well_known_count = classified.iter().filter(|(l, _, _)| l.is_well_known()).count();
+        let well_known_count = classified
+            .iter()
+            .filter(|(l, _, _)| l.is_well_known())
+            .count();
         // All except "Chat" should be well-known.
         assert_eq!(well_known_count, 6);
         // Chat is the lone Other.
-        let chat = classified
-            .iter()
-            .find(|(_, k, _)| k == "Chat")
-            .unwrap();
+        let chat = classified.iter().find(|(_, k, _)| k == "Chat").unwrap();
         assert_eq!(chat.0, WellKnownLabel::Other("Chat".to_string()));
     }
 }

@@ -1,7 +1,10 @@
 //! Google Cloud Pub/Sub pull-based broker implementation
 
 use crate::{
-    broker::{Broker, BrokerCapabilities, BrokerMessage, DeliveryModel, MessageHandler, PullBroker, SubscriptionHandle},
+    broker::{
+        Broker, BrokerCapabilities, BrokerMessage, DeliveryModel, MessageHandler, PullBroker,
+        SubscriptionHandle,
+    },
     error::TaskError,
     message::TaskMessage,
 };
@@ -87,9 +90,7 @@ impl Broker for PubSubPullBroker {
 
     async fn publish(&self, queue: &str, message: TaskMessage) -> Result<(), TaskError> {
         let client = self.client.read().await;
-        let client = client
-            .as_ref()
-            .ok_or(TaskError::NotConnected)?;
+        let client = client.as_ref().ok_or(TaskError::NotConnected)?;
 
         let topic = client.topic(&self.config.topic_name);
         let publisher = topic.new_publisher(None);
@@ -123,9 +124,7 @@ impl Broker for PubSubPullBroker {
         );
 
         // Publish and await result
-        let awaiter = publisher
-            .publish(pubsub_msg)
-            .await;
+        let awaiter = publisher.publish(pubsub_msg).await;
 
         awaiter
             .get()
@@ -167,9 +166,7 @@ impl PullBroker for PubSubPullBroker {
         handler: Arc<H>,
     ) -> Result<SubscriptionHandle, TaskError> {
         let client = self.client.read().await;
-        let client = client
-            .as_ref()
-            .ok_or(TaskError::NotConnected)?;
+        let client = client.as_ref().ok_or(TaskError::NotConnected)?;
 
         let subscription = client.subscription(&self.config.subscription_name);
         let cancel_token = CancellationToken::new();
@@ -414,7 +411,10 @@ mod integration_tests {
         let message = TaskMessage::new("test_task", serde_json::json!({"key": "value"}));
 
         // Publish should succeed
-        broker.publish("default", message).await.expect("Failed to publish");
+        broker
+            .publish("default", message)
+            .await
+            .expect("Failed to publish");
 
         broker.disconnect().await.ok();
     }
@@ -453,14 +453,22 @@ mod integration_tests {
             }
         }
 
-        let handler = Arc::new(TestHandler { count: received_clone });
+        let handler = Arc::new(TestHandler {
+            count: received_clone,
+        });
 
         // Subscribe
-        let handle = broker.subscribe("default", handler).await.expect("Failed to subscribe");
+        let handle = broker
+            .subscribe("default", handler)
+            .await
+            .expect("Failed to subscribe");
 
         // Publish a message
         let message = TaskMessage::new("test_task", serde_json::json!({"test": true}));
-        broker.publish("default", message).await.expect("Failed to publish");
+        broker
+            .publish("default", message)
+            .await
+            .expect("Failed to publish");
 
         // Wait for message to be received
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -469,7 +477,10 @@ mod integration_tests {
         handle.cancel();
 
         // Verify message was received
-        assert!(received.load(Ordering::SeqCst) >= 1, "Expected at least 1 message");
+        assert!(
+            received.load(Ordering::SeqCst) >= 1,
+            "Expected at least 1 message"
+        );
 
         broker.disconnect().await.ok();
     }

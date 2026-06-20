@@ -83,10 +83,19 @@ fn surface_pins_the_five_required_acceptance_axes() {
     let m = manifest();
     let s = get_table(&m, "surface");
     assert!(get_bool(s, "must_cover_generator_mbobject_variant_added"));
-    assert!(get_bool(s, "must_cover_class_rs_iter_next_dispatches_on_generator"));
-    assert!(get_bool(s, "must_cover_csv_reader_retrofit_as_worked_example"));
+    assert!(get_bool(
+        s,
+        "must_cover_class_rs_iter_next_dispatches_on_generator"
+    ));
+    assert!(get_bool(
+        s,
+        "must_cover_csv_reader_retrofit_as_worked_example"
+    ));
     assert!(get_bool(s, "must_cover_phase_2_followons_enumerated"));
-    assert!(get_bool(s, "must_cover_design_alternatives_b_and_c_refused"));
+    assert!(get_bool(
+        s,
+        "must_cover_design_alternatives_b_and_c_refused"
+    ));
     assert!(get_bool(s, "must_be_offline_or_loopback_only"));
     assert!(get_bool(s, "must_be_deterministic"));
 }
@@ -104,13 +113,21 @@ fn r1_generator_mbobject_variant_added_contract_is_shaped() {
     assert!(get_bool(r1, "must_pin_closure_based_shape"));
     assert!(get_bool(r1, "must_carry_next_fn_field"));
     assert!(get_bool(r1, "must_carry_boxed_state_field"));
-    assert!(get_bool(r1, "forbid_replacing_list_aliased_with_other_runtime_shape"));
-    assert!(get_bool(r1, "forbid_adding_generator_variant_without_next_fn_field"));
+    assert!(get_bool(
+        r1,
+        "forbid_replacing_list_aliased_with_other_runtime_shape"
+    ));
+    assert!(get_bool(
+        r1,
+        "forbid_adding_generator_variant_without_next_fn_field"
+    ));
     assert_eq!(get_str(r1, "expected_mbobject_variant"), "Generator");
     let shapes = get_array(r1, "allowed_generator_shape_values");
     assert!(shapes.iter().any(|v| v.as_str() == Some("closure_based")));
     assert!(shapes.iter().any(|v| v.as_str() == Some("coroutine_based")));
-    assert!(shapes.iter().any(|v| v.as_str() == Some("iterator_trait_object")));
+    assert!(shapes
+        .iter()
+        .any(|v| v.as_str() == Some("iterator_trait_object")));
     assert_eq!(get_str(r1, "expected_generator_shape"), "closure_based");
     assert_eq!(get_str(r1, "expected_next_fn_field"), "next_fn");
     assert_eq!(get_str(r1, "expected_state_field"), "state");
@@ -134,13 +151,23 @@ fn r2_class_rs_iter_next_dispatches_on_generator_contract_is_shaped() {
     assert_eq!(get_str(r2, "requirement_id"), "R2");
     assert!(get_bool(r2, "must_dispatch_mb_iter_next_on_generator"));
     assert!(get_bool(r2, "must_invoke_next_fn_per_step"));
-    assert!(get_bool(r2, "forbid_materializing_full_list_in_for_loop_lowering"));
-    assert!(get_bool(r2, "forbid_silently_falling_back_to_list_iter_dispatch"));
+    assert!(get_bool(
+        r2,
+        "forbid_materializing_full_list_in_for_loop_lowering"
+    ));
+    assert!(get_bool(
+        r2,
+        "forbid_silently_falling_back_to_list_iter_dispatch"
+    ));
     assert_eq!(get_str(r2, "expected_dispatch_entrypoint"), "mb_iter_next");
     let kinds = get_array(r2, "allowed_dispatch_kind_values");
     assert!(kinds.iter().any(|v| v.as_str() == Some("per_step_next_fn")));
-    assert!(kinds.iter().any(|v| v.as_str() == Some("materialize_full_list")));
-    assert!(kinds.iter().any(|v| v.as_str() == Some("silent_fallback_to_list_iter")));
+    assert!(kinds
+        .iter()
+        .any(|v| v.as_str() == Some("materialize_full_list")));
+    assert!(kinds
+        .iter()
+        .any(|v| v.as_str() == Some("silent_fallback_to_list_iter")));
     assert_eq!(get_str(r2, "expected_dispatch_kind"), "per_step_next_fn");
     assert_eq!(get_int(r2, "materialization_in_lowering_exit_code"), 456);
     assert_eq!(get_int(r2, "dispatch_missing_exit_code"), 457);
@@ -190,7 +217,10 @@ fn r4_phase_2_followons_enumerated_contract_is_shaped() {
     );
     assert_eq!(get_str(r4, "requirement_id"), "R4");
     assert!(get_bool(r4, "must_pin_phase_2_followon_set"));
-    assert!(get_bool(r4, "must_mark_phase_2_followons_out_of_scope_for_this_issue"));
+    assert!(get_bool(
+        r4,
+        "must_mark_phase_2_followons_out_of_scope_for_this_issue"
+    ));
     assert!(get_bool(r4, "forbid_silently_dropping_followon_from_set"));
     let followons = get_array(r4, "phase_2_followons");
     let names: Vec<&str> = followons.iter().filter_map(|v| v.as_str()).collect();
@@ -202,7 +232,10 @@ fn r4_phase_2_followons_enumerated_contract_is_shaped() {
     assert!(names.contains(&"os.walk"));
     assert!(names.contains(&"mmap.find_iterator_mode"));
     assert_eq!(get_int(r4, "followon_dropped_exit_code"), 461);
-    assert_eq!(get_int(r4, "followon_implemented_in_phase_1_exit_code"), 462);
+    assert_eq!(
+        get_int(r4, "followon_implemented_in_phase_1_exit_code"),
+        462
+    );
     assert!(get_bool(
         r4,
         "must_distinguish_followon_dropped_from_followon_pulled_into_phase_1"
@@ -220,8 +253,14 @@ fn r5_design_alternatives_b_and_c_refused_contract_is_shaped() {
     assert_eq!(get_str(r5, "requirement_id"), "R5");
     assert!(get_bool(r5, "must_refuse_coroutine_based_design"));
     assert!(get_bool(r5, "must_refuse_iterator_trait_object_design"));
-    assert!(get_bool(r5, "must_record_refusal_reason_for_each_alternative"));
-    assert!(get_bool(r5, "forbid_silently_switching_to_alternative_b_or_c"));
+    assert!(get_bool(
+        r5,
+        "must_record_refusal_reason_for_each_alternative"
+    ));
+    assert!(get_bool(
+        r5,
+        "forbid_silently_switching_to_alternative_b_or_c"
+    ));
     let refused = get_array(r5, "refused_designs");
     let names: Vec<&str> = refused.iter().filter_map(|v| v.as_str()).collect();
     assert!(names.contains(&"coroutine_based"));
@@ -235,7 +274,10 @@ fn r5_design_alternatives_b_and_c_refused_contract_is_shaped() {
         "box_dyn_allocation_per_generator_costs_dominate_short_iter_streams"
     );
     assert_eq!(get_int(r5, "silently_switched_to_coroutine_exit_code"), 463);
-    assert_eq!(get_int(r5, "silently_switched_to_iterator_trait_exit_code"), 464);
+    assert_eq!(
+        get_int(r5, "silently_switched_to_iterator_trait_exit_code"),
+        464
+    );
     assert_eq!(get_int(r5, "refusal_reason_missing_exit_code"), 465);
     assert!(get_bool(
         r5,
@@ -270,7 +312,10 @@ fn runner_contract_declares_keys_and_cases() {
         "failure_kind",
         "exit_code",
     ] {
-        assert!(key_names.contains(expected), "missing runner_contract key: {expected}");
+        assert!(
+            key_names.contains(expected),
+            "missing runner_contract key: {expected}"
+        );
     }
     let outcomes = get_array(rc, "outcome_values");
     let outcome_names: Vec<&str> = outcomes.iter().filter_map(|v| v.as_str()).collect();

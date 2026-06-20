@@ -1,12 +1,11 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 /// collections module for Mamba (#391).
 ///
 /// Provides: Counter, counter.most_common, deque operations, OrderedDict.
 /// Backed by existing MbValue list/dict primitives.
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 /// Extract a String from an MbValue that wraps a heap Str.
 fn extract_str(val: MbValue) -> Option<String> {
@@ -55,7 +54,10 @@ unsafe extern "C" fn dispatch_counter_new(args_ptr: *const MbValue, nargs: usize
     mb_counter_new(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
-unsafe extern "C" fn dispatch_counter_most_common(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_counter_most_common(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
     mb_counter_most_common(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -69,7 +71,10 @@ fn dict_get_str_key(v: MbValue, key: &str) -> Option<MbValue> {
     let ptr = v.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(&DictKey::Str(key.to_string())).copied()
+            lock.read()
+                .unwrap()
+                .get(&DictKey::Str(key.to_string()))
+                .copied()
         } else {
             None
         }
@@ -115,7 +120,10 @@ unsafe extern "C" fn dispatch_deque_new(args_ptr: *const MbValue, nargs: usize) 
     let items_list = MbValue::from_ptr(MbObject::new_list(data));
     let mut fields = FxHashMap::default();
     fields.insert("_items".into(), items_list);
-    fields.insert("_maxlen".into(), maxlen.map(MbValue::from_int).unwrap_or(MbValue::none()));
+    fields.insert(
+        "_maxlen".into(),
+        maxlen.map(MbValue::from_int).unwrap_or(MbValue::none()),
+    );
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -252,17 +260,35 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: [(&str, usize); 16] = [
-        ("_count_elements", dispatch_count_elements as *const () as usize),
+        (
+            "_count_elements",
+            dispatch_count_elements as *const () as usize,
+        ),
         ("Counter", dispatch_counter_new as *const () as usize),
-        ("counter_most_common", dispatch_counter_most_common as *const () as usize),
+        (
+            "counter_most_common",
+            dispatch_counter_most_common as *const () as usize,
+        ),
         ("deque", dispatch_deque_new as *const () as usize),
-        ("deque_appendleft", dispatch_deque_appendleft as *const () as usize),
-        ("deque_popleft", dispatch_deque_popleft as *const () as usize),
+        (
+            "deque_appendleft",
+            dispatch_deque_appendleft as *const () as usize,
+        ),
+        (
+            "deque_popleft",
+            dispatch_deque_popleft as *const () as usize,
+        ),
         ("deque_append", dispatch_deque_append as *const () as usize),
         ("deque_pop", dispatch_deque_pop as *const () as usize),
         ("deque_rotate", dispatch_deque_rotate as *const () as usize),
-        ("OrderedDict", dispatch_ordereddict_new as *const () as usize),
-        ("defaultdict", dispatch_defaultdict_new as *const () as usize),
+        (
+            "OrderedDict",
+            dispatch_ordereddict_new as *const () as usize,
+        ),
+        (
+            "defaultdict",
+            dispatch_defaultdict_new as *const () as usize,
+        ),
         ("namedtuple", dispatch_namedtuple as *const () as usize),
         ("ChainMap", dispatch_chainmap_new as *const () as usize),
         ("UserDict", dispatch_userdict_new as *const () as usize),
@@ -270,8 +296,14 @@ pub fn register() {
         ("UserString", dispatch_userstring_new as *const () as usize),
     ];
     const COLLECTIONS_TYPES: &[&str] = &[
-        "Counter", "deque", "OrderedDict", "defaultdict",
-        "ChainMap", "UserDict", "UserList", "UserString",
+        "Counter",
+        "deque",
+        "OrderedDict",
+        "defaultdict",
+        "ChainMap",
+        "UserDict",
+        "UserList",
+        "UserString",
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -440,7 +472,9 @@ pub fn mb_counter_new(iterable: MbValue) -> MbValue {
 }
 
 /// Extract the internal IndexMap from a Counter (Instance or dict).
-fn counter_data(counter: MbValue) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
+fn counter_data(
+    counter: MbValue,
+) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
     if let Some(ptr) = counter.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -465,10 +499,7 @@ fn counter_data(counter: MbValue) -> indexmap::IndexMap<crate::runtime::dict_ops
 /// collections.Counter.most_common(n) -> list of (key, count) tuples
 ///
 /// Returns the n most common elements as a list of tuples (Python semantics).
-pub fn mb_counter_most_common(
-    counter: MbValue,
-    n: MbValue,
-) -> MbValue {
+pub fn mb_counter_most_common(counter: MbValue, n: MbValue) -> MbValue {
     use crate::runtime::dict_ops::DictKey;
     let map = counter_data(counter);
     // CPython: most_common(None) returns all; most_common(n) is nlargest(n),
@@ -491,10 +522,7 @@ pub fn mb_counter_most_common(
         .take(limit)
         .map(|(key, count)| {
             let key_val = super::super::dict_ops::dict_key_to_mbvalue(&key);
-            MbValue::from_ptr(MbObject::new_tuple(vec![
-                key_val,
-                MbValue::from_int(count),
-            ]))
+            MbValue::from_ptr(MbObject::new_tuple(vec![key_val, MbValue::from_int(count)]))
         })
         .collect();
 
@@ -566,7 +594,9 @@ fn counter_merge(counter: MbValue, arg: MbValue, sign: i64) {
     if arg.is_none() {
         return;
     }
-    let Some(data) = counter_backing(counter) else { return };
+    let Some(data) = counter_backing(counter) else {
+        return;
+    };
     // Collect (key, delta) pairs from the argument first so we never hold
     // two locks at once (arg may share the backing dict).
     let mut deltas: Vec<(DictKey, i64)> = Vec::new();
@@ -659,8 +689,11 @@ pub fn mb_counter_unary(counter: MbValue, negate: bool) -> MbValue {
 pub fn counter_eq(a: MbValue, b: MbValue) -> bool {
     let ca = counter_int_counts(a);
     let cb = counter_int_counts(b);
-    ca.iter().all(|(k, v)| cb.get(k).copied().unwrap_or(0) == *v)
-        && cb.iter().all(|(k, v)| ca.get(k).copied().unwrap_or(0) == *v)
+    ca.iter()
+        .all(|(k, v)| cb.get(k).copied().unwrap_or(0) == *v)
+        && cb
+            .iter()
+            .all(|(k, v)| ca.get(k).copied().unwrap_or(0) == *v)
 }
 
 /// Counter <= Counter — multiset inclusion: every count in `a` is <= the
@@ -668,8 +701,11 @@ pub fn counter_eq(a: MbValue, b: MbValue) -> bool {
 pub fn counter_le_multiset(a: MbValue, b: MbValue) -> bool {
     let ca = counter_int_counts(a);
     let cb = counter_int_counts(b);
-    ca.iter().all(|(k, v)| *v <= cb.get(k).copied().unwrap_or(0))
-        && cb.iter().all(|(k, v)| ca.get(k).copied().unwrap_or(0) <= *v)
+    ca.iter()
+        .all(|(k, v)| *v <= cb.get(k).copied().unwrap_or(0))
+        && cb
+            .iter()
+            .all(|(k, v)| ca.get(k).copied().unwrap_or(0) <= *v)
 }
 
 /// Counter + Counter — CPython multiset semantics: per-key sum, drop <= 0.
@@ -769,7 +805,11 @@ pub fn defaultdict_repr(dd: MbValue) -> String {
                             let r = super::super::builtins::mb_repr(factory);
                             r.as_ptr()
                                 .and_then(|p| {
-                                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                                    if let ObjData::Str(ref s) = (*p).data {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
                                 })
                                 .unwrap_or_else(|| "None".to_string())
                         }
@@ -779,7 +819,11 @@ pub fn defaultdict_repr(dd: MbValue) -> String {
                         let r = super::super::builtins::mb_repr(factory);
                         r.as_ptr()
                             .and_then(|p| {
-                                if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
                             })
                             .unwrap_or_else(|| "None".to_string())
                     };
@@ -826,29 +870,64 @@ pub fn deque_repr(dq: MbValue) -> String {
 pub fn namedtuple_repr(v: MbValue) -> Option<String> {
     let ptr = v.as_ptr()?;
     unsafe {
-        let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data else {
+        let ObjData::Instance {
+            ref class_name,
+            ref fields,
+            ..
+        } = (*ptr).data
+        else {
             return None;
         };
         let f = fields.read().ok()?;
         let nt_fields = f.get("_namedtuple_fields")?;
-        let nt_name = f.get("_namedtuple_name")
+        let nt_name = f
+            .get("_namedtuple_name")
             .and_then(|v| v.as_ptr())
-            .and_then(|p| if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None })
+            .and_then(|p| {
+                if let ObjData::Str(ref s) = (*p).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
             .unwrap_or_else(|| class_name.clone());
-        let field_names: Vec<String> = nt_fields.as_ptr()
-            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
-                Some(lk.read().unwrap().iter()
-                    .filter_map(|fv| fv.as_ptr().and_then(|pp| {
-                        if let ObjData::Str(ref s) = (*pp).data { Some(s.clone()) } else { None }
-                    })).collect())
-            } else { None })
+        let field_names: Vec<String> = nt_fields
+            .as_ptr()
+            .and_then(|p| {
+                if let ObjData::List(ref lk) = (*p).data {
+                    Some(
+                        lk.read()
+                            .unwrap()
+                            .iter()
+                            .filter_map(|fv| {
+                                fv.as_ptr().and_then(|pp| {
+                                    if let ObjData::Str(ref s) = (*pp).data {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                }
+            })
             .unwrap_or_default();
         let mut parts = Vec::with_capacity(field_names.len());
         for fname in &field_names {
             let val = f.get(fname).copied().unwrap_or(MbValue::none());
             let r = super::super::builtins::mb_repr(val);
-            let rs = r.as_ptr()
-                .and_then(|p| if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None })
+            let rs = r
+                .as_ptr()
+                .and_then(|p| {
+                    if let ObjData::Str(ref s) = (*p).data {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_else(|| "None".to_string());
             parts.push(format!("{fname}={rs}"));
         }
@@ -868,16 +947,33 @@ pub fn namedtuple_values(v: MbValue) -> Option<Vec<MbValue>> {
         };
         let f = fields.read().ok()?;
         let nt_fields = f.get("_namedtuple_fields")?;
-        let names: Vec<String> = nt_fields.as_ptr()
-            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
-                Some(lk.read().unwrap().iter()
-                    .filter_map(|fv| fv.as_ptr().and_then(|pp| {
-                        if let ObjData::Str(ref s) = (*pp).data { Some(s.clone()) } else { None }
-                    })).collect())
-            } else { None })?;
-        Some(names.iter()
-            .map(|n| f.get(n).copied().unwrap_or(MbValue::none()))
-            .collect())
+        let names: Vec<String> = nt_fields.as_ptr().and_then(|p| {
+            if let ObjData::List(ref lk) = (*p).data {
+                Some(
+                    lk.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|fv| {
+                            fv.as_ptr().and_then(|pp| {
+                                if let ObjData::Str(ref s) = (*pp).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })?;
+        Some(
+            names
+                .iter()
+                .map(|n| f.get(n).copied().unwrap_or(MbValue::none()))
+                .collect(),
+        )
     }
 }
 
@@ -891,9 +987,9 @@ pub fn namedtuple_is_field(v: MbValue, attr: &str) -> bool {
                 if let Some(nt) = f.get("_namedtuple_fields").and_then(|x| x.as_ptr()) {
                     if let ObjData::List(ref lk) = (*nt).data {
                         return lk.read().unwrap().iter().any(|fv| {
-                            fv.as_ptr().is_some_and(|pp| {
-                                matches!(&(*pp).data, ObjData::Str(s) if s == attr)
-                            })
+                            fv.as_ptr().is_some_and(
+                                |pp| matches!(&(*pp).data, ObjData::Str(s) if s == attr),
+                            )
                         });
                     }
                 }
@@ -972,7 +1068,11 @@ pub fn user_wrapper_kind(class_name: &str) -> Option<&'static str> {
 pub fn user_wrapper_data(v: MbValue) -> Option<(&'static str, MbValue)> {
     let ptr = v.as_ptr()?;
     unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             let kind = user_wrapper_kind(class_name)?;
             let data = fields.read().unwrap().get("_data").copied()?;
             return Some((kind, data));
@@ -1001,7 +1101,9 @@ pub fn user_wrapper_rewrap_like(template: MbValue, raw: MbValue) -> MbValue {
 fn userdict_backing_from_args(args: &[MbValue]) -> MbValue {
     let backing = super::super::dict_ops::mb_dict_new();
     for arg in args {
-        if arg.is_none() { continue; }
+        if arg.is_none() {
+            continue;
+        }
         if let Some(ptr) = arg.as_ptr() {
             unsafe {
                 if matches!((*ptr).data, ObjData::Dict(_) | ObjData::Instance { .. }) {
@@ -1044,7 +1146,10 @@ fn register_userdict_class() {
         MbValue::from_func(addr)
     };
     let mut m: Map<String, MbValue> = Map::new();
-    m.insert("__init__".to_string(), var(userdict_init as *const () as usize));
+    m.insert(
+        "__init__".to_string(),
+        var(userdict_init as *const () as usize),
+    );
     super::super::class::mb_class_register("collections.UserDict", vec![], m.clone());
     super::super::class::mb_class_register("UserDict", vec![], m);
 }
@@ -1062,7 +1167,10 @@ pub fn mb_userlist_new(initlist: MbValue) -> MbValue {
             })
             .collect()
     };
-    user_wrapper_make("collections.UserList", MbValue::from_ptr(MbObject::new_list(data)))
+    user_wrapper_make(
+        "collections.UserList",
+        MbValue::from_ptr(MbObject::new_list(data)),
+    )
 }
 
 /// collections.UserString(seq) -> UserString Instance
@@ -1079,7 +1187,10 @@ pub fn mb_userstring_new(seq: MbValue) -> MbValue {
     } else {
         extract_str(super::super::builtins::mb_str(seq)).unwrap_or_default()
     };
-    user_wrapper_make("collections.UserString", MbValue::from_ptr(MbObject::new_str(s)))
+    user_wrapper_make(
+        "collections.UserString",
+        MbValue::from_ptr(MbObject::new_str(s)),
+    )
 }
 
 /// collections.deque_appendleft(deque, val) -> None
@@ -1199,7 +1310,9 @@ pub fn mb_ordereddict_new(args: &[MbValue]) -> MbValue {
     // convention.
     let backing = super::super::dict_ops::mb_dict_new();
     for arg in args {
-        if arg.is_none() { continue; }
+        if arg.is_none() {
+            continue;
+        }
         if let Some(ptr) = arg.as_ptr() {
             unsafe {
                 match &(*ptr).data {
@@ -1252,8 +1365,9 @@ pub fn mb_ordereddict_move_to_end(data: MbValue, key: MbValue, last: bool) -> Mb
                 drop(guard);
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        super::super::dict_ops::dict_key_raw_str(&dk))),
+                    MbValue::from_ptr(MbObject::new_str(super::super::dict_ops::dict_key_raw_str(
+                        &dk,
+                    ))),
                 );
                 return MbValue::none();
             }
@@ -1314,8 +1428,7 @@ pub fn ordereddict_repr(od: MbValue) -> String {
 /// auto-vivification by calling the factory when a key is missing.
 pub fn mb_defaultdict_new(factory: MbValue) -> MbValue {
     // CPython: the first argument must be callable or None.
-    if !factory.is_none()
-        && crate::runtime::builtins::mb_callable(factory).as_bool() != Some(true)
+    if !factory.is_none() && crate::runtime::builtins::mb_callable(factory).as_bool() != Some(true)
     {
         return raise_type_error("first argument must be callable or None");
     }
@@ -1346,14 +1459,18 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue, kwargs: MbValue) -> MbValue
     let field_names: Vec<String> = if let Some(ptr) = fields.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::List(ref lock) => lock.read().unwrap().iter()
+                ObjData::List(ref lock) => lock
+                    .read()
+                    .unwrap()
+                    .iter()
                     .filter_map(|v| extract_str(*v))
                     .collect(),
-                ObjData::Tuple(ref items) => items.iter()
-                    .filter_map(|v| extract_str(*v))
+                ObjData::Tuple(ref items) => items.iter().filter_map(|v| extract_str(*v)).collect(),
+                ObjData::Str(ref s) => s
+                    .replace(',', " ")
+                    .split_whitespace()
+                    .map(|f| f.to_string())
                     .collect(),
-                ObjData::Str(ref s) => s.replace(',', " ").split_whitespace()
-                    .map(|f| f.to_string()).collect(),
                 _ => vec![],
             }
         }
@@ -1372,24 +1489,31 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue, kwargs: MbValue) -> MbValue
     // leading underscores or duplicates; violations raise ValueError —
     // unless rename=True, which replaces each offender with `_<index>`.
     const PY_KEYWORDS: &[&str] = &[
-        "False", "None", "True", "and", "as", "assert", "async", "await",
-        "break", "class", "continue", "def", "del", "elif", "else", "except",
-        "finally", "for", "from", "global", "if", "import", "in", "is",
-        "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
-        "while", "with", "yield",
+        "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class",
+        "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
+        "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return",
+        "try", "while", "with", "yield",
     ];
     let mut seen = std::collections::HashSet::new();
     let mut field_names_fixed: Vec<String> = Vec::with_capacity(field_names.len());
     for (i, f) in field_names.iter().enumerate() {
         let valid_ident = !f.is_empty()
-            && f.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+            && f.chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
             && f.chars().all(|c| c.is_alphanumeric() || c == '_');
         let offending = if !valid_ident {
-            Some(format!("Type names and field names must be valid identifiers: {f:?}"))
+            Some(format!(
+                "Type names and field names must be valid identifiers: {f:?}"
+            ))
         } else if PY_KEYWORDS.contains(&f.as_str()) {
-            Some(format!("Type names and field names cannot be a keyword: {f:?}"))
+            Some(format!(
+                "Type names and field names cannot be a keyword: {f:?}"
+            ))
         } else if f.starts_with('_') {
-            Some(format!("Field names cannot start with an underscore: {f:?}"))
+            Some(format!(
+                "Field names cannot start with an underscore: {f:?}"
+            ))
         } else if seen.contains(f.as_str()) {
             Some(format!("Encountered duplicate field name: {f:?}"))
         } else {
@@ -1413,20 +1537,30 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue, kwargs: MbValue) -> MbValue
     }
     let tuple_name = extract_str(name).unwrap_or_else(|| "namedtuple".to_string());
     let mut factory_fields = FxHashMap::default();
-    factory_fields.insert("_tuple_name".into(),
-        MbValue::from_ptr(MbObject::new_str(tuple_name)));
-    let field_vals: Vec<MbValue> = field_names.iter()
+    factory_fields.insert(
+        "_tuple_name".into(),
+        MbValue::from_ptr(MbObject::new_str(tuple_name)),
+    );
+    let field_vals: Vec<MbValue> = field_names
+        .iter()
         .map(|f| MbValue::from_ptr(MbObject::new_str(f.clone())))
         .collect();
-    factory_fields.insert("_field_names".into(),
-        MbValue::from_ptr(MbObject::new_list(field_vals)));
+    factory_fields.insert(
+        "_field_names".into(),
+        MbValue::from_ptr(MbObject::new_list(field_vals)),
+    );
     // Defaults align RIGHTMOST: defaults[j] belongs to field n-d+j.
-    let default_vals: Vec<MbValue> = defaults.iter().map(|v| {
-        unsafe { super::super::rc::retain_if_ptr(*v) };
-        *v
-    }).collect();
-    factory_fields.insert("_defaults".into(),
-        MbValue::from_ptr(MbObject::new_list(default_vals)));
+    let default_vals: Vec<MbValue> = defaults
+        .iter()
+        .map(|v| {
+            unsafe { super::super::rc::retain_if_ptr(*v) };
+            *v
+        })
+        .collect();
+    factory_fields.insert(
+        "_defaults".into(),
+        MbValue::from_ptr(MbObject::new_list(default_vals)),
+    );
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -1444,21 +1578,28 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue, kwargs: MbValue) -> MbValue
 pub(crate) fn namedtuple_factory_fields(factory: MbValue) -> Option<Vec<String>> {
     let ptr = factory.as_ptr()?;
     unsafe {
-        let ObjData::Instance { ref class_name, ref fields } = (*ptr).data else {
+        let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        else {
             return None;
         };
         if class_name != "collections.namedtuple_factory" {
             return None;
         }
         let f = fields.read().ok()?;
-        let names = f.get("_field_names").and_then(|v| v.as_ptr())
-            .map(|p| {
-                if let ObjData::List(ref lock) = (*p).data {
-                    lock.read().unwrap().iter()
-                        .filter_map(|v| extract_str(*v))
-                        .collect()
-                } else { vec![] }
-            })?;
+        let names = f.get("_field_names").and_then(|v| v.as_ptr()).map(|p| {
+            if let ObjData::List(ref lock) = (*p).data {
+                lock.read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|v| extract_str(*v))
+                    .collect()
+            } else {
+                vec![]
+            }
+        })?;
         Some(names)
     }
 }
@@ -1470,7 +1611,8 @@ pub fn namedtuple_factory_getattr(factory: MbValue, attr: &str) -> Option<MbValu
     let names = namedtuple_factory_fields(factory)?;
     match attr {
         "_fields" | "__match_args__" => {
-            let vals: Vec<MbValue> = names.iter()
+            let vals: Vec<MbValue> = names
+                .iter()
                 .map(|n| MbValue::from_ptr(MbObject::new_str(n.clone())))
                 .collect();
             Some(MbValue::from_ptr(MbObject::new_tuple(vals)))
@@ -1480,7 +1622,10 @@ pub fn namedtuple_factory_getattr(factory: MbValue, attr: &str) -> Option<MbValu
             let ptr = factory.as_ptr()?;
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                    let tn = fields.read().ok()?.get("_tuple_name")
+                    let tn = fields
+                        .read()
+                        .ok()?
+                        .get("_tuple_name")
                         .and_then(|v| extract_str(*v))?;
                     return Some(MbValue::from_ptr(MbObject::new_str(tn)));
                 }
@@ -1530,7 +1675,9 @@ pub fn mb_namedtuple_make(factory: MbValue, iterable: MbValue) -> MbValue {
     let items = super::super::builtins::extract_items(iterable);
     if items.len() != names.len() {
         return raise_type_error(&format!(
-            "Expected {} arguments, got {}", names.len(), items.len()
+            "Expected {} arguments, got {}",
+            names.len(),
+            items.len()
         ));
     }
     mb_namedtuple_create(factory, &items)
@@ -1542,16 +1689,23 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                let tn = f.get("_tuple_name").and_then(|v| extract_str(*v))
+                let tn = f
+                    .get("_tuple_name")
+                    .and_then(|v| extract_str(*v))
                     .unwrap_or_else(|| "namedtuple".to_string());
-                let fns: Vec<String> = f.get("_field_names")
+                let fns: Vec<String> = f
+                    .get("_field_names")
                     .and_then(|v| v.as_ptr())
                     .map(|p| {
                         if let ObjData::List(ref lock) = (*p).data {
-                            lock.read().unwrap().iter()
+                            lock.read()
+                                .unwrap()
+                                .iter()
                                 .filter_map(|v| extract_str(*v))
                                 .collect()
-                        } else { vec![] }
+                        } else {
+                            vec![]
+                        }
                     })
                     .unwrap_or_default();
                 (tn, fns)
@@ -1580,13 +1734,18 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
         return MbValue::none();
     }
     let mut inst_fields = FxHashMap::default();
-    inst_fields.insert("_namedtuple_name".into(),
-        MbValue::from_ptr(MbObject::new_str(tuple_name.clone())));
-    let ordered: Vec<MbValue> = field_names.iter()
+    inst_fields.insert(
+        "_namedtuple_name".into(),
+        MbValue::from_ptr(MbObject::new_str(tuple_name.clone())),
+    );
+    let ordered: Vec<MbValue> = field_names
+        .iter()
         .map(|f| MbValue::from_ptr(MbObject::new_str(f.clone())))
         .collect();
-    inst_fields.insert("_namedtuple_fields".into(),
-        MbValue::from_ptr(MbObject::new_list(ordered)));
+    inst_fields.insert(
+        "_namedtuple_fields".into(),
+        MbValue::from_ptr(MbObject::new_list(ordered)),
+    );
     for (i, fname) in field_names.iter().enumerate() {
         let val = if i < args.len() {
             args[i]
@@ -1623,10 +1782,16 @@ fn namedtuple_instance_fields(inst: MbValue) -> Option<Vec<String>> {
         let nt_fields = f.get("_namedtuple_fields")?;
         nt_fields.as_ptr().and_then(|p| {
             if let ObjData::List(ref lock) = (*p).data {
-                Some(lock.read().unwrap().iter()
-                    .filter_map(|v| extract_str(*v))
-                    .collect())
-            } else { None }
+                Some(
+                    lock.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|v| extract_str(*v))
+                        .collect(),
+                )
+            } else {
+                None
+            }
         })
     }
 }
@@ -1680,8 +1845,15 @@ pub fn mb_namedtuple_replace(inst: MbValue, kwargs: MbValue) -> MbValue {
     }
     let (class_name, tuple_name) = if let Some(ptr) = inst.as_ptr() {
         unsafe {
-            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
-                let tn = fields.read().unwrap().get("_namedtuple_name")
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
+                let tn = fields
+                    .read()
+                    .unwrap()
+                    .get("_namedtuple_name")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_else(|| class_name.clone());
                 (class_name.clone(), tn)
@@ -1693,19 +1865,25 @@ pub fn mb_namedtuple_replace(inst: MbValue, kwargs: MbValue) -> MbValue {
         return MbValue::none();
     };
     let mut inst_fields = FxHashMap::default();
-    inst_fields.insert("_namedtuple_name".into(),
-        MbValue::from_ptr(MbObject::new_str(tuple_name)));
-    let ordered: Vec<MbValue> = names.iter()
+    inst_fields.insert(
+        "_namedtuple_name".into(),
+        MbValue::from_ptr(MbObject::new_str(tuple_name)),
+    );
+    let ordered: Vec<MbValue> = names
+        .iter()
         .map(|f| MbValue::from_ptr(MbObject::new_str(f.clone())))
         .collect();
-    inst_fields.insert("_namedtuple_fields".into(),
-        MbValue::from_ptr(MbObject::new_list(ordered)));
+    inst_fields.insert(
+        "_namedtuple_fields".into(),
+        MbValue::from_ptr(MbObject::new_list(ordered)),
+    );
     if let Some(ptr) = inst.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
                 for n in &names {
-                    let val = replacements.iter()
+                    let val = replacements
+                        .iter()
                         .find(|(rn, _)| rn == n)
                         .map(|(_, v)| *v)
                         .unwrap_or_else(|| f.get(n).copied().unwrap_or(MbValue::none()));
@@ -1797,7 +1975,11 @@ fn chainmap_class_of(cm: MbValue) -> Option<String> {
 fn chainmap_maps(cm: MbValue) -> Option<Vec<MbValue>> {
     let ptr = cm.as_ptr()?;
     unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             if is_chainmap_class(class_name) {
                 let maps = fields.read().unwrap().get("maps").copied()?;
                 if let Some(mp) = maps.as_ptr() {
@@ -1871,7 +2053,12 @@ fn cm_first_arg(args: MbValue) -> MbValue {
     if let Some(ptr) = args.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                return lock.read().unwrap().first().copied().unwrap_or_else(MbValue::none);
+                return lock
+                    .read()
+                    .unwrap()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(MbValue::none);
             }
         }
     }
@@ -1905,7 +2092,9 @@ fn cm_key_repr(key: MbValue) -> String {
 
 unsafe extern "C" fn cm_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let key = cm_first_arg(args);
-    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
     if super::super::dict_ops::mb_dict_contains(flat, key).as_bool() == Some(true) {
         return super::super::dict_ops::mb_dict_getitem(flat, key);
     }
@@ -1928,7 +2117,9 @@ unsafe extern "C" fn cm_get(self_v: MbValue, args: MbValue) -> MbValue {
     } else {
         (args, MbValue::none())
     };
-    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
     if super::super::dict_ops::mb_dict_contains(flat, key).as_bool() == Some(true) {
         return super::super::dict_ops::mb_dict_getitem(flat, key);
     }
@@ -1973,24 +2164,35 @@ unsafe extern "C" fn cm_delitem(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn cm_contains(self_v: MbValue, args: MbValue) -> MbValue {
     let key = cm_first_arg(args);
-    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::from_bool(false) };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::from_bool(false);
+    };
     super::super::dict_ops::mb_dict_contains(flat, key)
 }
 
 unsafe extern "C" fn cm_len(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::from_int(0) };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::from_int(0);
+    };
     super::super::dict_ops::mb_dict_len(flat)
 }
 
 unsafe extern "C" fn cm_bool(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::from_bool(false) };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::from_bool(false);
+    };
     MbValue::from_bool(
-        super::super::dict_ops::mb_dict_len(flat).as_int().unwrap_or(0) > 0,
+        super::super::dict_ops::mb_dict_len(flat)
+            .as_int()
+            .unwrap_or(0)
+            > 0,
     )
 }
 
 unsafe extern "C" fn cm_iter(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
     let keys = super::super::dict_ops::mb_dict_keys(flat);
     super::super::iter::mb_iter(keys)
 }
@@ -2033,7 +2235,10 @@ unsafe extern "C" fn cm_init(self_v: MbValue, args: MbValue) -> MbValue {
     if let Some(ptr) = self_v.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let old = fields.write().unwrap().insert("maps".to_string(), maps_list);
+                let old = fields
+                    .write()
+                    .unwrap()
+                    .insert("maps".to_string(), maps_list);
                 if let Some(prev) = old {
                     super::super::rc::release_if_ptr(prev);
                 }
@@ -2067,8 +2272,7 @@ unsafe extern "C" fn cm_or(self_v: MbValue, raw: MbValue) -> MbValue {
     let mut new_maps = vec![new_front];
     new_maps.extend_from_slice(&maps[1.min(maps.len())..]);
     // Result type follows the LEFT operand (CPython: Sub() | cm -> Sub).
-    let cls = chainmap_class_of(self_v)
-        .unwrap_or_else(|| "collections.ChainMap".to_string());
+    let cls = chainmap_class_of(self_v).unwrap_or_else(|| "collections.ChainMap".to_string());
     chainmap_make_with_class(new_maps, &cls)
 }
 
@@ -2093,17 +2297,23 @@ unsafe extern "C" fn cm_ror(self_v: MbValue, raw: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn cm_items(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
     super::super::dict_ops::mb_dict_items(flat)
 }
 
 unsafe extern "C" fn cm_keys(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
     super::super::dict_ops::mb_dict_keys(flat)
 }
 
 unsafe extern "C" fn cm_values(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    let Some(flat) = chainmap_flatten(self_v) else {
+        return MbValue::none();
+    };
     super::super::dict_ops::mb_dict_values(flat)
 }
 
@@ -2260,7 +2470,9 @@ mod tests {
     }
 
     /// Helper: extract the _data dict from a Counter Instance.
-    fn counter_get_data(counter: MbValue) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
+    fn counter_get_data(
+        counter: MbValue,
+    ) -> indexmap::IndexMap<crate::runtime::dict_ops::DictKey, MbValue> {
         super::counter_data(counter)
     }
 
@@ -2376,9 +2588,7 @@ mod tests {
 
     #[test]
     fn test_counter_most_common_all() {
-        let items = MbValue::from_ptr(MbObject::new_list(vec![
-            s("x"), s("y"), s("x"),
-        ]));
+        let items = MbValue::from_ptr(MbObject::new_list(vec![s("x"), s("y"), s("x")]));
         let counter = mb_counter_new(items);
         // Pass no limit (use None to get all)
         let top = mb_counter_most_common(counter, MbValue::none());
@@ -2421,7 +2631,11 @@ mod tests {
     #[test]
     fn test_py312_counter_counts_correctly() {
         let items = MbValue::from_ptr(MbObject::new_list(vec![
-            s("a"), s("b"), s("a"), s("c"), s("a"),
+            s("a"),
+            s("b"),
+            s("a"),
+            s("c"),
+            s("a"),
         ]));
         let counter = mb_counter_new(items);
         assert!(counter.is_ptr());
@@ -2434,7 +2648,11 @@ mod tests {
     #[test]
     fn test_py312_counter_most_common_limited() {
         let items = MbValue::from_ptr(MbObject::new_list(vec![
-            s("x"), s("x"), s("y"), s("z"), s("x"),
+            s("x"),
+            s("x"),
+            s("y"),
+            s("z"),
+            s("x"),
         ]));
         let counter = mb_counter_new(items);
         let top = mb_counter_most_common(counter, MbValue::from_int(1));
@@ -2626,7 +2844,9 @@ mod tests {
     #[test]
     fn test_userlist_copies_initial() {
         let src = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]));
         let l = mb_userlist_new(src);
         let backing = wrapper_backing(l);

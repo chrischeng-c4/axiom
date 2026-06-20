@@ -60,7 +60,14 @@ impl SvgRenderer {
         self.elements.clear();
 
         // Background
-        self.rect(0.0, 0.0, self.width, self.height, &style.background.to_hex(), 1.0);
+        self.rect(
+            0.0,
+            0.0,
+            self.width,
+            self.height,
+            &style.background.to_hex(),
+            1.0,
+        );
 
         // Title
         if let Some(t) = title {
@@ -77,25 +84,49 @@ impl SvgRenderer {
         // Render each series
         for s in series {
             match s {
-                DataSeries::Line { x, y, style: ls, .. } => {
+                DataSeries::Line {
+                    x, y, style: ls, ..
+                } => {
                     self.render_line(x, y, &ls.color, ls.width, style);
                 }
-                DataSeries::Bar { labels, values, style: bs, .. } => {
+                DataSeries::Bar {
+                    labels,
+                    values,
+                    style: bs,
+                    ..
+                } => {
                     self.render_bar(labels, values, &bs.color, bs.opacity, style);
                 }
-                DataSeries::Scatter { x, y, style: ps, .. } => {
+                DataSeries::Scatter {
+                    x, y, style: ps, ..
+                } => {
                     self.render_scatter(x, y, &ps.color, ps.radius, ps.opacity, style);
                 }
-                DataSeries::Histogram { data, bins, style: bs, .. } => {
+                DataSeries::Histogram {
+                    data,
+                    bins,
+                    style: bs,
+                    ..
+                } => {
                     self.render_histogram(data, *bins, &bs.color, bs.opacity, style);
                 }
-                DataSeries::BoxPlot { data, labels, style: bs } => {
+                DataSeries::BoxPlot {
+                    data,
+                    labels,
+                    style: bs,
+                } => {
                     self.render_box_plot(data, labels, &bs.color, style);
                 }
-                DataSeries::Heatmap { data, x_labels, y_labels } => {
+                DataSeries::Heatmap {
+                    data,
+                    x_labels,
+                    y_labels,
+                } => {
                     self.render_heatmap(data, x_labels, y_labels, style);
                 }
-                DataSeries::Area { x, y, style: ls, .. } => {
+                DataSeries::Area {
+                    x, y, style: ls, ..
+                } => {
                     self.render_area(x, y, &ls.color, ls.width, style);
                 }
                 DataSeries::Pie { labels, values } => {
@@ -107,10 +138,17 @@ impl SvgRenderer {
                 DataSeries::Violin { data, labels } => {
                     self.render_violin(data, labels, style);
                 }
-                DataSeries::Polar { axis_labels, datasets } => {
+                DataSeries::Polar {
+                    axis_labels,
+                    datasets,
+                } => {
                     self.render_polar(axis_labels, datasets, style);
                 }
-                DataSeries::Donut { labels, values, hole_ratio } => {
+                DataSeries::Donut {
+                    labels,
+                    values,
+                    hole_ratio,
+                } => {
                     self.render_donut(labels, values, *hole_ratio, style);
                 }
                 DataSeries::Surface3D { x, y, z } => {
@@ -209,7 +247,8 @@ impl SvgRenderer {
             self.margin.top + self.plot_height(),
             self.margin.left + self.plot_width(),
             self.margin.top + self.plot_height(),
-            color, 1.0,
+            color,
+            1.0,
         );
         // Y-axis
         self.line(
@@ -217,18 +256,30 @@ impl SvgRenderer {
             self.margin.top,
             self.margin.left,
             self.margin.top + self.plot_height(),
-            color, 1.0,
+            color,
+            1.0,
         );
 
         // X ticks
         for &tick in x_tick_vals {
             let px = self.map_x(tick, x_info.min, x_info.max);
             if style.show_grid {
-                self.line(px, self.margin.top, px, self.margin.top + self.plot_height(), grid_color, 0.5);
+                self.line(
+                    px,
+                    self.margin.top,
+                    px,
+                    self.margin.top + self.plot_height(),
+                    grid_color,
+                    0.5,
+                );
             }
             self.text(
-                px, self.margin.top + self.plot_height() + 15.0,
-                &format_tick(tick), color, style.font_size, "middle",
+                px,
+                self.margin.top + self.plot_height() + 15.0,
+                &format_tick(tick),
+                color,
+                style.font_size,
+                "middle",
             );
         }
 
@@ -236,11 +287,22 @@ impl SvgRenderer {
         for &tick in y_tick_vals {
             let py = self.map_y(tick, y_info.min, y_info.max);
             if style.show_grid {
-                self.line(self.margin.left, py, self.margin.left + self.plot_width(), py, grid_color, 0.5);
+                self.line(
+                    self.margin.left,
+                    py,
+                    self.margin.left + self.plot_width(),
+                    py,
+                    grid_color,
+                    0.5,
+                );
             }
             self.text(
-                self.margin.left - 5.0, py + 4.0,
-                &format_tick(tick), color, style.font_size, "end",
+                self.margin.left - 5.0,
+                py + 4.0,
+                &format_tick(tick),
+                color,
+                style.font_size,
+                "end",
             );
         }
     }
@@ -284,7 +346,15 @@ impl SvgRenderer {
         ));
     }
 
-    pub(crate) fn text(&mut self, x: f64, y: f64, content: &str, fill: &str, size: f64, anchor: &str) {
+    pub(crate) fn text(
+        &mut self,
+        x: f64,
+        y: f64,
+        content: &str,
+        fill: &str,
+        size: f64,
+        anchor: &str,
+    ) {
         self.elements.push(format!(
             r#"<text x="{:.1}" y="{:.1}" fill="{}" font-size="{:.1}" text-anchor="{}" font-family="sans-serif">{}</text>"#,
             x, y, fill, size, anchor, escape_xml(content)
@@ -385,7 +455,13 @@ pub(crate) fn box_stats(data: &[f64]) -> BoxStats {
         .find(|&v| v <= q3 + 1.5 * iqr)
         .unwrap_or(sorted[n - 1]);
 
-    BoxStats { median, q1, q3, whisker_low, whisker_high }
+    BoxStats {
+        median,
+        q1,
+        q3,
+        whisker_low,
+        whisker_high,
+    }
 }
 
 pub(crate) fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
@@ -429,10 +505,7 @@ mod tests {
 
     #[test]
     fn test_escape_xml_all_special() {
-        assert_eq!(
-            escape_xml(r#"<a & "b">"#),
-            "&lt;a &amp; &quot;b&quot;&gt;"
-        );
+        assert_eq!(escape_xml(r#"<a & "b">"#), "&lt;a &amp; &quot;b&quot;&gt;");
     }
 
     #[test]
@@ -576,5 +649,4 @@ mod tests {
         let svg = r.render(&Some("My Chart".into()), &series, &style);
         assert!(svg.contains("My Chart"));
     }
-
 }

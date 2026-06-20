@@ -43,8 +43,5 @@ print("{:^10}|".format("mid"))
 print("{:*^9}".format("hi"))
 "#,
     );
-    assert_output(
-        &out,
-        "     right\nleft      |\n   mid    |\n***hi****\n",
-    );
+    assert_output(&out, "     right\nleft      |\n   mid    |\n***hi****\n");
 }

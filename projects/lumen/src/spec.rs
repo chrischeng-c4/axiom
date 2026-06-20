@@ -8,7 +8,7 @@
 //! server and no network. This module is the single source for that surface;
 //! the CLI and the (legacy) `lumen-openapi-dump` binary both call into it.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// The full OpenAPI 3 document as pretty JSON (every route + schema).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source

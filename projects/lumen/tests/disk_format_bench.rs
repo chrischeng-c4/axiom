@@ -74,7 +74,10 @@ fn disk_format_size_and_decode_speed() {
 
     let engine = Engine::new();
     let mut fields = BTreeMap::new();
-    fields.insert("embedding".to_string(), vec_field(DIM, VectorMetric::Cosine));
+    fields.insert(
+        "embedding".to_string(),
+        vec_field(DIM, VectorMetric::Cosine),
+    );
     fields.insert("title".to_string(), scalar_field(FieldType::Text));
     fields.insert("category".to_string(), scalar_field(FieldType::Keyword));
     engine

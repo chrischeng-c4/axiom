@@ -18,10 +18,7 @@ impl Color {
     }
 
     pub fn with_opacity(&self, opacity: f64) -> String {
-        format!(
-            "rgba({},{},{},{:.2})",
-            self.r, self.g, self.b, opacity
-        )
+        format!("rgba({},{},{},{:.2})", self.r, self.g, self.b, opacity)
     }
 }
 

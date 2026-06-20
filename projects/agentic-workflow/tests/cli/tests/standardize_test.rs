@@ -387,10 +387,51 @@ fn standardize_project_health_gate_verifies_ec_cases() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(json["health"]["ec_status"], "passed");
-    assert_eq!(json["health"]["ec_verify_evaluated"].as_bool(), Some(true));
-    assert_eq!(json["health"]["ec"]["command_count"].as_u64(), Some(1));
-    assert_eq!(json["health"]["ec"]["passed_count"].as_u64(), Some(1));
+    assert_eq!(json["health"]["axes"]["ec"]["status"], "passed");
+    assert_eq!(
+        json["health"]["axes"]["ec"]["verified"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        json["health"]["axes"]["ec"]["command_count"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(
+        json["health"]["axes"]["ec"]["passed_commands"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(
+        json["health"]["axes"]["ec_gen"]["document_kind"].as_str(),
+        Some("ec")
+    );
+    assert_eq!(
+        json["health"]["axes"]["ec_gen"]["generated_units"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(
+        json["health"]["axes"]["ec_gen"]["expected_units"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(
+        json["health"]["axes"]["ec_gen"]["generated_percent"].as_f64(),
+        Some(100.0)
+    );
+    assert!(json["health"]["axes"]["ec_gen"].get("case_count").is_none());
+    assert_eq!(
+        json["health"]["axes"]["td_gen"]["document_kind"].as_str(),
+        Some("td")
+    );
+    assert!(json["health"]["axes"]["td_gen"]
+        .get("generated_units")
+        .is_some());
+    assert!(json["health"]["axes"]["td_gen"]
+        .get("expected_units")
+        .is_some());
+    assert!(json["health"]["axes"]["td_gen"]
+        .get("codegen_files")
+        .is_none());
+    assert!(json["health"].get("codegen_percent").is_none());
+    assert!(json["health"].get("cb_verify_clean").is_none());
 }
 
 // The previous `standardize_codegen_reports_handwrite_blockers` test exercised

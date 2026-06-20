@@ -1,10 +1,10 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// importlib module for Mamba (#655).
 ///
 /// Exposes Mamba's module import machinery as a Python-compatible API.
 /// Wraps the runtime/module.rs functions: import_module, reload, find_spec.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -115,14 +115,19 @@ pub fn mb_importlib_reload(module: MbValue) -> MbValue {
 /// Returns a ModuleSpec if the module can be found, None otherwise.
 pub fn mb_importlib_find_spec(name: MbValue) -> MbValue {
     use super::super::rc::ObjData;
-    let module_name = name.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
-    }).unwrap_or_default();
+    let module_name = name
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
 
     // Check if module is registered
-    let found = super::super::module::MODULES.with(|mods| {
-        mods.borrow().contains_key(&module_name)
-    });
+    let found = super::super::module::MODULES.with(|mods| mods.borrow().contains_key(&module_name));
 
     if found {
         // Return a ModuleSpec-like dict
@@ -217,8 +222,12 @@ mod tests {
         let m = MbValue::from_ptr(MbObject::new_str("anything".to_string()));
         assert!(mb_importlib_reload(m).is_ptr());
         assert!(mb_importlib_find_loader(m).is_none());
-        for submod in [mb_importlib_util(), mb_importlib_abc(),
-                       mb_importlib_machinery(), mb_importlib_resources()] {
+        for submod in [
+            mb_importlib_util(),
+            mb_importlib_abc(),
+            mb_importlib_machinery(),
+            mb_importlib_resources(),
+        ] {
             assert!(submod.is_ptr(), "submodule stub should return a Dict ptr");
         }
     }

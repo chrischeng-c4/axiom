@@ -81,11 +81,17 @@ async fn test_release_leader_returns_ok() {
 async fn test_leader_election_full_cycle() {
     let backend = test_backend();
     // All three operations should succeed as no-ops
-    assert!(backend.acquire_leader(Duration::from_secs(10)).await.unwrap());
+    assert!(backend
+        .acquire_leader(Duration::from_secs(10))
+        .await
+        .unwrap());
     assert!(backend.renew_leader(Duration::from_secs(10)).await.unwrap());
     backend.release_leader().await.unwrap();
     // After release, acquire should still return true (cloud manages scheduling)
-    assert!(backend.acquire_leader(Duration::from_secs(10)).await.unwrap());
+    assert!(backend
+        .acquire_leader(Duration::from_secs(10))
+        .await
+        .unwrap());
 }
 
 // ---------------------------------------------------------------------------
@@ -193,14 +199,13 @@ fn test_job_deserialization_minimal() {
     assert!(job.state.is_none());
     assert!(job.http_target.body.is_none());
     assert!(job.http_target.headers.is_empty());
-    assert!(
-        job.http_target
-            .oidc_token
-            .as_ref()
-            .unwrap()
-            .audience
-            .is_none()
-    );
+    assert!(job
+        .http_target
+        .oidc_token
+        .as_ref()
+        .unwrap()
+        .audience
+        .is_none());
 }
 
 #[test]
@@ -512,8 +517,7 @@ fn test_map_gcp_error_401_authentication() {
 
 #[test]
 fn test_map_gcp_error_403_authentication() {
-    let err =
-        CloudSchedulerBackend::map_gcp_error(reqwest::StatusCode::FORBIDDEN, "Access denied");
+    let err = CloudSchedulerBackend::map_gcp_error(reqwest::StatusCode::FORBIDDEN, "Access denied");
     match err {
         TaskError::Authentication(msg) => {
             assert!(msg.contains("403"));
@@ -568,8 +572,7 @@ fn test_map_gcp_error_503_backend() {
 
 #[test]
 fn test_map_gcp_error_502_backend() {
-    let err =
-        CloudSchedulerBackend::map_gcp_error(reqwest::StatusCode::BAD_GATEWAY, "Bad gateway");
+    let err = CloudSchedulerBackend::map_gcp_error(reqwest::StatusCode::BAD_GATEWAY, "Bad gateway");
     match err {
         TaskError::Backend(msg) => {
             assert!(msg.contains("502"));
@@ -580,10 +583,8 @@ fn test_map_gcp_error_502_backend() {
 
 #[test]
 fn test_map_gcp_error_unknown_status() {
-    let err = CloudSchedulerBackend::map_gcp_error(
-        reqwest::StatusCode::BAD_REQUEST,
-        "Bad request body",
-    );
+    let err =
+        CloudSchedulerBackend::map_gcp_error(reqwest::StatusCode::BAD_REQUEST, "Bad request body");
     match err {
         TaskError::Backend(msg) => {
             assert!(msg.contains("400"));

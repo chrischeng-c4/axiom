@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// quopri module for Mamba (#1261 long-tail).
 ///
 /// RFC 1521 quoted-printable encoding. Provides byte-exact ports of CPython's
@@ -10,10 +12,7 @@
 /// line-based processing, soft-line-break splitting at the 76th column (which
 /// may cut an `=XX` escape), trailing-whitespace quoting, the lone-`.` rule,
 /// and the `==` decode shortcut.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 const ESCAPE: u8 = b'=';
 const MAXLINESIZE: usize = 76;
@@ -300,7 +299,11 @@ fn file_read_remaining(file: MbValue) -> Vec<u8> {
                     .and_then(|v| read_bytes_field(v))
                     .unwrap_or_default();
                 let pos = f.get("_pos").and_then(|v| v.as_int()).unwrap_or(0) as usize;
-                let out = if pos < buf.len() { buf[pos..].to_vec() } else { Vec::new() };
+                let out = if pos < buf.len() {
+                    buf[pos..].to_vec()
+                } else {
+                    Vec::new()
+                };
                 f.insert("_pos".to_string(), MbValue::from_int(buf.len() as i64));
                 return out;
             }
@@ -332,7 +335,10 @@ fn file_write_bytes(file: MbValue, data: &[u8]) {
                     buf[pos..pos + data.len()].copy_from_slice(data);
                 }
                 let new_pos = pos + data.len();
-                f.insert("_buffer".to_string(), MbValue::from_ptr(MbObject::new_bytes(buf)));
+                f.insert(
+                    "_buffer".to_string(),
+                    MbValue::from_ptr(MbObject::new_bytes(buf)),
+                );
                 f.insert("_pos".to_string(), MbValue::from_int(new_pos as i64));
             }
         }

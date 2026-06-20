@@ -1,3 +1,6 @@
+use super::super::dict_ops::DictKey;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// netrc module for Mamba (#1261 long-tail).
 ///
 /// Real CPython-3.12 `netrc` parity. The public API is the
@@ -31,11 +34,7 @@
 ///     not the first char of a token (e.g. `pa#ss`) or a `#`-leading value
 ///     consumed as the argument of `login`/`account`/`password` is kept
 ///     verbatim.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::dict_ops::DictKey;
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 || args_ptr.is_null() {
@@ -77,7 +76,12 @@ struct Lexer {
 
 impl Lexer {
     fn new(text: &str) -> Self {
-        Lexer { chars: text.chars().collect(), pos: 0, lineno: 1, pushback: Vec::new() }
+        Lexer {
+            chars: text.chars().collect(),
+            pos: 0,
+            lineno: 1,
+            pushback: Vec::new(),
+        }
     }
 
     /// Read a single char; "" (None) at EOF. Mirrors `_read_char`, which
@@ -112,7 +116,9 @@ impl Lexer {
         }
         let mut token = String::new();
         loop {
-            let Some(ch) = self.read_char() else { return token };
+            let Some(ch) = self.read_char() else {
+                return token;
+            };
             if WHITESPACE.contains(&ch) {
                 continue;
             }
@@ -120,7 +126,9 @@ impl Lexer {
                 // Quoted segment: read until the closing quote, with `\`
                 // escaping the next char.
                 loop {
-                    let Some(mut qch) = self.read_char() else { return token };
+                    let Some(mut qch) = self.read_char() else {
+                        return token;
+                    };
                     if qch == '"' {
                         return token;
                     } else if qch == '\\' {
@@ -137,18 +145,26 @@ impl Lexer {
                 if first == '\\' {
                     match self.read_char() {
                         Some(c) => first = c,
-                        None => { token.push('\\'); return token; }
+                        None => {
+                            token.push('\\');
+                            return token;
+                        }
                     }
                 }
                 token.push(first);
                 loop {
-                    let Some(mut nch) = self.read_char() else { return token };
+                    let Some(mut nch) = self.read_char() else {
+                        return token;
+                    };
                     if WHITESPACE.contains(&nch) {
                         return token;
                     } else if nch == '\\' {
                         match self.read_char() {
                             Some(c) => nch = c,
-                            None => { token.push('\\'); return token; }
+                            None => {
+                                token.push('\\');
+                                return token;
+                            }
                         }
                     }
                     token.push(nch);
@@ -219,7 +235,8 @@ fn parse_netrc(text: &str) -> ParseOutcome {
             continue;
         } else {
             return ParseOutcome::Err(format!(
-                "bad toplevel token {:?} (line {})", tt, lexer.lineno
+                "bad toplevel token {:?} (line {})",
+                tt, lexer.lineno
             ));
         }
 
@@ -241,7 +258,10 @@ fn parse_netrc(text: &str) -> ParseOutcome {
                 continue;
             }
             if ftt.is_empty() || ftt == "machine" || ftt == "default" || ftt == "macdef" {
-                hosts.push((entryname.clone(), [login.clone(), account.clone(), password.clone()]));
+                hosts.push((
+                    entryname.clone(),
+                    [login.clone(), account.clone(), password.clone()],
+                ));
                 lexer.push_token(ftt);
                 break;
             } else if ftt == "login" || ftt == "user" {
@@ -252,7 +272,8 @@ fn parse_netrc(text: &str) -> ParseOutcome {
                 password = lexer.get_token();
             } else {
                 return ParseOutcome::Err(format!(
-                    "bad follower token {:?} (line {})", ftt, lexer.lineno
+                    "bad follower token {:?} (line {})",
+                    ftt, lexer.lineno
                 ));
             }
         }
@@ -322,8 +343,7 @@ fn parsed_to_instance(p: Parsed) -> MbValue {
         if let ObjData::Dict(lock) = &(*macros_dict).data {
             let mut g = lock.write().unwrap();
             for (name, lines) in &p.macros {
-                let line_vs: Vec<MbValue> =
-                    lines.iter().map(|l| new_str(l)).collect();
+                let line_vs: Vec<MbValue> = lines.iter().map(|l| new_str(l)).collect();
                 g.insert(
                     DictKey::Str(name.clone()),
                     MbValue::from_ptr(MbObject::new_list(line_vs)),
@@ -357,14 +377,16 @@ fn security_check(path: &str, login: &str) -> Result<(), String> {
     if meta.uid() != uid {
         return Err(format!(
             "~/.netrc file owner (uid {}, uid {}) does not match current user",
-            meta.uid(), uid
+            meta.uid(),
+            uid
         ));
     }
     // S_IRWXG | S_IRWXO == 0o077
     if meta.mode() & 0o077 != 0 {
         return Err(
             "~/.netrc access too permissive: access permissions must restrict \
-             access to only the owner".to_string(),
+             access to only the owner"
+                .to_string(),
         );
     }
     Ok(())
@@ -409,7 +431,10 @@ unsafe extern "C" fn dispatch_netrc(args_ptr: *const MbValue, nargs: usize) -> M
             // FileNotFoundError. With nothing to open, return an empty
             // netrc instance.
             None => {
-                return parsed_to_instance(Parsed { hosts: vec![], macros: vec![] });
+                return parsed_to_instance(Parsed {
+                    hosts: vec![],
+                    macros: vec![],
+                });
             }
         },
     };
@@ -418,9 +443,10 @@ unsafe extern "C" fn dispatch_netrc(args_ptr: *const MbValue, nargs: usize) -> M
         Ok(t) => t,
         Err(_) => {
             // CPython raises FileNotFoundError here; emit a catchable one.
-            return raise_named("FileNotFoundError", &format!(
-                "[Errno 2] No such file or directory: {:?}", path
-            ));
+            return raise_named(
+                "FileNotFoundError",
+                &format!("[Errno 2] No such file or directory: {:?}", path),
+            );
         }
     };
 
@@ -474,7 +500,12 @@ mod tests {
     }
 
     fn host<'a>(p: &'a Parsed, name: &str) -> Vec<&'a str> {
-        let v = p.hosts.iter().find(|(h, _)| h == name).map(|(_, v)| v).expect("host");
+        let v = p
+            .hosts
+            .iter()
+            .find(|(h, _)| h == name)
+            .map(|(_, v)| v)
+            .expect("host");
         vec![v[0].as_str(), v[1].as_str(), v[2].as_str()]
     }
 

@@ -164,7 +164,9 @@ pub fn parse_pypirc(src: &str) -> BTreeMap<String, PypiRepository> {
         }
         // New `key = value` (or `key: value`).
         flush_kv(&mut current_repo, &mut pending_key, &mut pending_value);
-        let split = line.splitn(2, |c: char| c == '=' || c == ':').collect::<Vec<_>>();
+        let split = line
+            .splitn(2, |c: char| c == '=' || c == ':')
+            .collect::<Vec<_>>();
         if split.len() != 2 {
             continue;
         }
@@ -326,19 +328,26 @@ impl ArtifactKind {
 /// Build the RFC 7578 multipart/form-data body that the legacy PyPI
 /// upload endpoint expects, along with the matching `Content-Type`
 /// header value. The returned `body` is ready to PUT/POST as-is.
-pub fn build_upload_multipart(
-    artifact: &UploadArtifact,
-    boundary: &str,
-) -> (String, Vec<u8>) {
+pub fn build_upload_multipart(artifact: &UploadArtifact, boundary: &str) -> (String, Vec<u8>) {
     let content_type = format!("multipart/form-data; boundary={boundary}");
 
     let mut out: Vec<u8> = Vec::with_capacity(artifact.data.len() + 1024);
     push_text_field(&mut out, boundary, ":action", "file_upload");
     push_text_field(&mut out, boundary, "protocol_version", "1");
-    push_text_field(&mut out, boundary, "metadata_version", &artifact.metadata_version);
+    push_text_field(
+        &mut out,
+        boundary,
+        "metadata_version",
+        &artifact.metadata_version,
+    );
     push_text_field(&mut out, boundary, "name", &artifact.name);
     push_text_field(&mut out, boundary, "version", &artifact.version);
-    push_text_field(&mut out, boundary, "filetype", artifact.file_type.form_value());
+    push_text_field(
+        &mut out,
+        boundary,
+        "filetype",
+        artifact.file_type.form_value(),
+    );
     if let Some(tag) = &artifact.python_tag {
         push_text_field(&mut out, boundary, "pyversion", tag);
     } else {
@@ -407,7 +416,14 @@ mod tests {
             version: version.into(),
             metadata_version: "2.1".into(),
             file_type: kind,
-            filename: format!("{name}-{version}.{}", if matches!(kind, ArtifactKind::Wheel) { "whl" } else { "tar.gz" }),
+            filename: format!(
+                "{name}-{version}.{}",
+                if matches!(kind, ArtifactKind::Wheel) {
+                    "whl"
+                } else {
+                    "tar.gz"
+                }
+            ),
             data: data.to_vec(),
             sha256_hex: "deadbeef".into(),
             summary: None,
@@ -630,7 +646,9 @@ password = x
     fn default_pypirc_path_uses_home_dir() {
         // SAFETY: single-threaded test, restores HOME after.
         let prev = std::env::var("HOME").ok();
-        unsafe { std::env::set_var("HOME", "/h"); }
+        unsafe {
+            std::env::set_var("HOME", "/h");
+        }
         assert_eq!(default_pypirc_path().unwrap(), PathBuf::from("/h/.pypirc"));
         match prev {
             Some(v) => unsafe { std::env::set_var("HOME", v) },

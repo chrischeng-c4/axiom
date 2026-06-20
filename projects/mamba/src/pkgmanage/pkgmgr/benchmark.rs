@@ -176,11 +176,7 @@ pub enum ComparisonVerdict {
 ///
 /// `parity_band` is fractional, e.g. 0.05 = ±5%. If `|ratio - 1| <=
 /// parity_band`, the verdict is `ParityWith`.
-pub fn compare(
-    mamba: BenchSummary,
-    baseline: BenchSummary,
-    parity_band: f64,
-) -> Comparison {
+pub fn compare(mamba: BenchSummary, baseline: BenchSummary, parity_band: f64) -> Comparison {
     let (m_median, b_median) = (mamba.median(), baseline.median());
     let (Some(m), Some(b)) = (m_median, b_median) else {
         return Comparison {
@@ -393,8 +389,7 @@ mod tests {
     }
 
     fn mk_summary(label: &str, walls: &[(u64, bool)]) -> BenchSummary {
-        let samples: Vec<BenchSample> =
-            walls.iter().map(|(ms, ok)| mk_sample(*ms, *ok)).collect();
+        let samples: Vec<BenchSample> = walls.iter().map(|(ms, ok)| mk_sample(*ms, *ok)).collect();
         let failures = samples.iter().filter(|s| !s.succeeded()).count();
         BenchSummary {
             label: label.into(),
@@ -407,7 +402,13 @@ mod tests {
     fn summary_stats_basic() {
         let s = mk_summary(
             "x",
-            &[(100, true), (200, true), (300, true), (400, true), (500, true)],
+            &[
+                (100, true),
+                (200, true),
+                (300, true),
+                (400, true),
+                (500, true),
+            ],
         );
         assert_eq!(s.count(), 5);
         assert_eq!(s.min(), Some(Duration::from_millis(100)));
@@ -573,7 +574,11 @@ mod tests {
         };
         let summary = run_bench(&cmd, &opts).expect("spawn should succeed");
         assert_eq!(summary.failures, 2);
-        assert_eq!(summary.count(), 0, "exit-3 runs must not contribute to stats");
+        assert_eq!(
+            summary.count(),
+            0,
+            "exit-3 runs must not contribute to stats"
+        );
     }
 
     #[test]

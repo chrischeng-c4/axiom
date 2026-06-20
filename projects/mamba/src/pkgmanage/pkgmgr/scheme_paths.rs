@@ -242,14 +242,8 @@ mod tests {
     #[test]
     fn nt_user_scheme_uses_python_version_nodot() {
         let rendered = render_scheme(&SchemeKind::NtUser.template(), &ctx_nt());
-        assert_eq!(
-            rendered.purelib,
-            "C:/Python312/Python312/site-packages"
-        );
-        assert_eq!(
-            rendered.scripts,
-            "C:/Python312/Python312/Scripts"
-        );
+        assert_eq!(rendered.purelib, "C:/Python312/Python312/site-packages");
+        assert_eq!(rendered.scripts, "C:/Python312/Python312/Scripts");
     }
 
     #[test]

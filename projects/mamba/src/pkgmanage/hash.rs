@@ -15,7 +15,7 @@
 // envelopes; the primitive here is the byte-deterministic digest
 // shape it will consume.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fs::File;
@@ -69,17 +69,20 @@ pub fn cmd_hash(sub: &ArgMatches) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     for raw in raw_paths {
         let path = PathBuf::from(raw);
-        let digest = hash_file(&path, algo)
-            .with_context(|| format!("hash {}", path.display()))?;
-        writeln!(stdout, "{algo}:{digest}  {path}", algo = algo.label(), path = path.display())
-            .context("write hash line")?;
+        let digest = hash_file(&path, algo).with_context(|| format!("hash {}", path.display()))?;
+        writeln!(
+            stdout,
+            "{algo}:{digest}  {path}",
+            algo = algo.label(),
+            path = path.display()
+        )
+        .context("write hash line")?;
     }
     Ok(())
 }
 
 pub fn hash_file(path: &std::path::Path, algo: HashAlgo) -> Result<String> {
-    let f = File::open(path)
-        .with_context(|| format!("open {}", path.display()))?;
+    let f = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut reader = BufReader::with_capacity(BUF_BYTES, f);
     match algo {
         HashAlgo::Sha256 => stream_hash(&mut reader, Sha256::new()),

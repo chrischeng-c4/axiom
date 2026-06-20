@@ -27,12 +27,16 @@ pub struct SafeWrapper {
 pub fn generate_panic_wrapper(wrapper: &SafeWrapper) -> String {
     let mut out = String::new();
 
-    let param_list: String = wrapper.params.iter()
+    let param_list: String = wrapper
+        .params
+        .iter()
         .map(|(name, ty)| format!("{name}: {ty}"))
         .collect::<Vec<_>>()
         .join(", ");
 
-    let arg_list: String = wrapper.params.iter()
+    let arg_list: String = wrapper
+        .params
+        .iter()
         .map(|(name, _)| name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
@@ -60,7 +64,9 @@ pub fn generate_panic_wrapper(wrapper: &SafeWrapper) -> String {
             out.push_str("        Err(_) => std::ptr::null_mut(),\n");
         }
         ResultConvention::ThreadLocalFlag => {
-            out.push_str("        Ok(Ok(val)) => { LAST_ERROR.with(|e| *e.borrow_mut() = None); val }\n");
+            out.push_str(
+                "        Ok(Ok(val)) => { LAST_ERROR.with(|e| *e.borrow_mut() = None); val }\n",
+            );
             out.push_str("        Ok(Err(err)) => { LAST_ERROR.with(|e| *e.borrow_mut() = Some(err.to_string())); Default::default() }\n");
             out.push_str("        Err(panic) => {\n");
             out.push_str("            let msg = panic.downcast_ref::<String>()\n");
@@ -180,7 +186,10 @@ mod tests {
     #[test]
     fn test_result_convention_eq() {
         assert_eq!(ResultConvention::ErrorCode, ResultConvention::ErrorCode);
-        assert_ne!(ResultConvention::ErrorCode, ResultConvention::NullablePointer);
+        assert_ne!(
+            ResultConvention::ErrorCode,
+            ResultConvention::NullablePointer
+        );
         assert_ne!(
             ResultConvention::NullablePointer,
             ResultConvention::ThreadLocalFlag

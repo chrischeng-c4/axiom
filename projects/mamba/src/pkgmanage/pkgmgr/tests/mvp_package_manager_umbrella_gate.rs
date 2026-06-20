@@ -214,10 +214,7 @@ fn r3_wheel_install_path() {
         c["install_outside_env_failure_kind"].as_str(),
         Some("mvp_package_manager_install_outside_project_env")
     );
-    assert_eq!(
-        c["install_outside_env_exit_code"].as_integer(),
-        Some(382)
-    );
+    assert_eq!(c["install_outside_env_exit_code"].as_integer(), Some(382));
     assert_eq!(
         c["non_pep_427_wheel_failure_kind"].as_str(),
         Some("mvp_package_manager_non_pep_427_wheel")
@@ -331,10 +328,7 @@ fn r5_pep_405_venv_and_verb_workflow() {
         c["venv_creation_skipped_failure_kind"].as_str(),
         Some("mvp_package_manager_venv_creation_skipped")
     );
-    assert_eq!(
-        c["venv_creation_skipped_exit_code"].as_integer(),
-        Some(389)
-    );
+    assert_eq!(c["venv_creation_skipped_exit_code"].as_integer(), Some(389));
 }
 
 #[test]

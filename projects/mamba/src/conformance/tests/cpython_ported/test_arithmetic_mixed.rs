@@ -22,10 +22,7 @@ print(10 / 5)
 print(10 // 5)
 "#,
     );
-    assert_output(
-        &out,
-        "3.3333333333333335\n3\n1\n-4\n2\n2.0\n2\n",
-    );
+    assert_output(&out, "3.3333333333333335\n3\n1\n-4\n2\n2.0\n2\n");
 }
 
 #[test]

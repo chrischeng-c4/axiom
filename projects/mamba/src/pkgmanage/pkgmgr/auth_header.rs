@@ -152,8 +152,7 @@ fn is_valid_bearer_token(token: &str) -> bool {
     //   "-" / "." / "_" / "~" / "+" / "/" ) *"="
     // We accept `=` anywhere (some IdPs emit non-canonical padding).
     token.bytes().all(|b| {
-        b.is_ascii_alphanumeric()
-            || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=')
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=')
     })
 }
 
@@ -194,10 +193,7 @@ mod tests {
     fn basic_auth_password_with_colon_allowed() {
         // RFC 7617 §2: the FIRST colon is the separator; password may
         // contain further colons.
-        assert_eq!(
-            basic_auth("u", "p:q:r").unwrap(),
-            "Basic dTpwOnE6cg=="
-        );
+        assert_eq!(basic_auth("u", "p:q:r").unwrap(), "Basic dTpwOnE6cg==");
     }
 
     #[test]

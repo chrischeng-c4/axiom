@@ -933,8 +933,11 @@ fn test_skew() {
 #[test]
 fn test_kurtosis() {
     // Normal-like distribution should have excess kurtosis near 0
-    let arr: NdArray<f64> =
-        NdArray::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0], vec![10]).unwrap();
+    let arr: NdArray<f64> = NdArray::new(
+        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+        vec![10],
+    )
+    .unwrap();
     assert!(arr.kurtosis().abs() < 2.0);
 }
 
@@ -969,8 +972,11 @@ fn test_harmonic_mean() {
 
 #[test]
 fn test_trim_mean() {
-    let arr: NdArray<f64> =
-        NdArray::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0], vec![10]).unwrap();
+    let arr: NdArray<f64> = NdArray::new(
+        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+        vec![10],
+    )
+    .unwrap();
     let tm = arr.trim_mean(0.1);
     // Should remove 1 element from each end
     assert!((tm - 5.5).abs() < 0.5);

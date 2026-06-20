@@ -370,10 +370,7 @@ fn runner_contract_declares_keys_and_cases() {
         .iter()
         .map(|v| v.as_str().expect("string"))
         .collect();
-    assert_eq!(
-        outcomes,
-        vec!["pass", "fail", "missing", "skip", "blocked"]
-    );
+    assert_eq!(outcomes, vec!["pass", "fail", "missing", "skip", "blocked"]);
     let cases: Vec<_> = r["case_values"]
         .as_array()
         .expect("case_values")

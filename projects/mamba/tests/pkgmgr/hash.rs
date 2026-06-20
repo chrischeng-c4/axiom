@@ -20,7 +20,10 @@ fn mamba_bin() -> PathBuf {
 }
 
 fn run(args: &[&str]) -> std::process::Output {
-    Command::new(mamba_bin()).args(args).output().expect("spawn mamba")
+    Command::new(mamba_bin())
+        .args(args)
+        .output()
+        .expect("spawn mamba")
 }
 
 fn write_blob(body: &[u8]) -> tempfile::NamedTempFile {
@@ -45,16 +48,18 @@ fn hash_default_sha256_matches_pinned() {
         ),
         "wrong sha256 line: {stdout}"
     );
-    assert!(
-        stdout.ends_with('\n'),
-        "line ends in newline: {stdout:?}"
-    );
+    assert!(stdout.ends_with('\n'), "line ends in newline: {stdout:?}");
 }
 
 #[test]
 fn hash_sha384_label_and_length() {
     let blob = write_blob(b"hello\n");
-    let out = run(&["hash", "--algorithm", "sha384", blob.path().to_str().unwrap()]);
+    let out = run(&[
+        "hash",
+        "--algorithm",
+        "sha384",
+        blob.path().to_str().unwrap(),
+    ]);
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -85,7 +90,11 @@ fn hash_sha512_label_and_length() {
 fn hash_multiple_paths_one_line_each() {
     let a = write_blob(b"alpha\n");
     let b = write_blob(b"beta\n");
-    let out = run(&["hash", a.path().to_str().unwrap(), b.path().to_str().unwrap()]);
+    let out = run(&[
+        "hash",
+        a.path().to_str().unwrap(),
+        b.path().to_str().unwrap(),
+    ]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();

@@ -37,12 +37,12 @@
 //!   wired in `tokio_exec` only insofar as tasks run on pool threads with
 //!   their own thread-local context.
 
+use super::super::rc::{InstanceFields, MbObject, MbObjectHeader, MbRwLock, ObjData, ObjKind};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind, InstanceFields, MbRwLock};
 
 thread_local! {
     /// The thread's current context: var_id → value.
@@ -67,7 +67,10 @@ fn extract_str(val: MbValue) -> Option<String> {
 
 fn new_instance(class_name: &str, fields: InstanceFields) -> MbValue {
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: MbRwLock::new(fields),
@@ -166,7 +169,9 @@ unsafe extern "C" fn dispatch_contextvar_new(args_ptr: *const MbValue, nargs: us
 }
 
 fn var_id(var: MbValue) -> u64 {
-    inst_field(var, "_var_id").and_then(|v| v.as_int()).unwrap_or(0) as u64
+    inst_field(var, "_var_id")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0) as u64
 }
 
 /// `var.get()` / `var.get(default)`.
@@ -272,8 +277,14 @@ pub fn mb_contextvars_copy_context() -> MbValue {
         (ids, vals)
     });
     let mut fields = InstanceFields::default();
-    fields.insert("_ids".to_string(), MbValue::from_ptr(MbObject::new_list(ids)));
-    fields.insert("_vals".to_string(), MbValue::from_ptr(MbObject::new_list(vals)));
+    fields.insert(
+        "_ids".to_string(),
+        MbValue::from_ptr(MbObject::new_list(ids)),
+    );
+    fields.insert(
+        "_vals".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vals)),
+    );
     new_instance("Context", fields)
 }
 
@@ -327,17 +338,20 @@ pub fn mb_context_copy(ctx: MbValue) -> MbValue {
         unsafe { super::super::rc::retain_if_ptr(*v) };
     }
     let mut fields = InstanceFields::default();
-    fields.insert("_ids".to_string(), MbValue::from_ptr(MbObject::new_list(ids)));
-    fields.insert("_vals".to_string(), MbValue::from_ptr(MbObject::new_list(vals)));
+    fields.insert(
+        "_ids".to_string(),
+        MbValue::from_ptr(MbObject::new_list(ids)),
+    );
+    fields.insert(
+        "_vals".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vals)),
+    );
     new_instance("Context", fields)
 }
 
 // ── Module registration ───────────────────────────────────────────
 
-unsafe extern "C" fn dispatch_copy_context(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_copy_context(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     mb_contextvars_copy_context()
 }
 

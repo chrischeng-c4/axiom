@@ -64,15 +64,9 @@ pub enum UvSourcesError {
         field: &'static str,
     },
     /// Entry is missing a required field.
-    MissingField {
-        package: String,
-        detail: String,
-    },
+    MissingField { package: String, detail: String },
     /// More than one source kind is set on the same entry, or none.
-    ConflictingKind {
-        package: String,
-        detail: String,
-    },
+    ConflictingKind { package: String, detail: String },
 }
 
 impl std::fmt::Display for UvSourcesError {
@@ -109,12 +103,10 @@ pub fn parse_uv_sources(toml_src: &str) -> Result<BTreeMap<String, UvSource>, Uv
         return Ok(BTreeMap::new());
     };
 
-    let table = table
-        .as_table()
-        .ok_or_else(|| UvSourcesError::WrongType {
-            package: String::new(),
-            field: "sources",
-        })?;
+    let table = table.as_table().ok_or_else(|| UvSourcesError::WrongType {
+        package: String::new(),
+        field: "sources",
+    })?;
 
     let mut out = BTreeMap::new();
     for (name, value) in table {
@@ -127,10 +119,7 @@ pub fn parse_uv_sources(toml_src: &str) -> Result<BTreeMap<String, UvSource>, Uv
     Ok(out)
 }
 
-fn decode_entry(
-    name: &str,
-    entry: &toml::value::Table,
-) -> Result<UvSource, UvSourcesError> {
+fn decode_entry(name: &str, entry: &toml::value::Table) -> Result<UvSource, UvSourcesError> {
     let has_git = entry.contains_key("git");
     let has_path = entry.contains_key("path");
     let has_url = entry.contains_key("url");
@@ -243,10 +232,12 @@ fn required_string(
     entry: &toml::value::Table,
     field: &'static str,
 ) -> Result<String, UvSourcesError> {
-    let v = entry.get(field).ok_or_else(|| UvSourcesError::MissingField {
-        package: package.into(),
-        detail: field.into(),
-    })?;
+    let v = entry
+        .get(field)
+        .ok_or_else(|| UvSourcesError::MissingField {
+            package: package.into(),
+            detail: field.into(),
+        })?;
     let s = v.as_str().ok_or_else(|| UvSourcesError::WrongType {
         package: package.into(),
         field,
@@ -334,7 +325,10 @@ pkg = { git = "https://example.com/repo", rev = "abc123", subdirectory = "subdir
                 subdirectory,
             } => {
                 assert_eq!(url, "https://example.com/repo");
-                assert_eq!(reference.as_ref(), Some(&GitReference::Rev("abc123".into())));
+                assert_eq!(
+                    reference.as_ref(),
+                    Some(&GitReference::Rev("abc123".into()))
+                );
                 assert_eq!(subdirectory.as_deref(), Some("subdir"));
             }
             other => panic!("unexpected: {other:?}"),
@@ -478,7 +472,10 @@ pkg = { git = "https://example.com/r", path = "../local" }
 pkg = { git = 42 }
 "#;
         let err = parse_uv_sources(src).unwrap_err();
-        assert!(matches!(err, UvSourcesError::WrongType { field: "git", .. }));
+        assert!(matches!(
+            err,
+            UvSourcesError::WrongType { field: "git", .. }
+        ));
     }
 
     #[test]

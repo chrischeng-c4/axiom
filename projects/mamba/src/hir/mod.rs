@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use crate::resolve::SymbolId;
-use crate::types::TypeId;
 use crate::source::span::Span;
+use crate::types::TypeId;
+use std::collections::HashMap;
 
 /// HIR Module — desugared, all names resolved to SymbolId, types resolved to TypeId.
 #[derive(Debug, Clone)]
@@ -151,15 +151,50 @@ pub struct HirExceptHandler {
 
 #[derive(Debug, Clone)]
 pub enum HirStmt {
-    Let { target: SymbolId, ty: TypeId, value: HirExpr, span: Span },
-    Assign { target: HirLValue, value: HirExpr, span: Span },
-    Return { value: Option<HirExpr>, span: Span },
-    Expr { expr: HirExpr, span: Span },
-    If { cond: HirExpr, then_body: Vec<HirStmt>, else_body: Vec<HirStmt>, span: Span },
-    While { cond: HirExpr, body: Vec<HirStmt>, else_body: Vec<HirStmt>, span: Span },
-    For { var: SymbolId, iter: HirExpr, body: Vec<HirStmt>, else_body: Vec<HirStmt>, span: Span },
-    Break { span: Span },
-    Continue { span: Span },
+    Let {
+        target: SymbolId,
+        ty: TypeId,
+        value: HirExpr,
+        span: Span,
+    },
+    Assign {
+        target: HirLValue,
+        value: HirExpr,
+        span: Span,
+    },
+    Return {
+        value: Option<HirExpr>,
+        span: Span,
+    },
+    Expr {
+        expr: HirExpr,
+        span: Span,
+    },
+    If {
+        cond: HirExpr,
+        then_body: Vec<HirStmt>,
+        else_body: Vec<HirStmt>,
+        span: Span,
+    },
+    While {
+        cond: HirExpr,
+        body: Vec<HirStmt>,
+        else_body: Vec<HirStmt>,
+        span: Span,
+    },
+    For {
+        var: SymbolId,
+        iter: HirExpr,
+        body: Vec<HirStmt>,
+        else_body: Vec<HirStmt>,
+        span: Span,
+    },
+    Break {
+        span: Span,
+    },
+    Continue {
+        span: Span,
+    },
     /// try/except/finally (#283)
     Try {
         body: Vec<HirStmt>,
@@ -169,23 +204,51 @@ pub enum HirStmt {
         span: Span,
     },
     /// raise expression (#283)
-    Raise { value: Option<HirExpr>, from: Option<HirExpr>, span: Span },
+    Raise {
+        value: Option<HirExpr>,
+        from: Option<HirExpr>,
+        span: Span,
+    },
     /// import statement (#292)
-    Import { import: HirImport, span: Span },
+    Import {
+        import: HirImport,
+        span: Span,
+    },
     /// with statement (context manager). `is_async` is true for `async with`,
     /// which dispatches `__aenter__`/`__aexit__` and awaits the coroutine
     /// returned by each.
-    With { items: Vec<(HirExpr, Option<SymbolId>)>, body: Vec<HirStmt>, is_async: bool, span: Span },
+    With {
+        items: Vec<(HirExpr, Option<SymbolId>)>,
+        body: Vec<HirStmt>,
+        is_async: bool,
+        span: Span,
+    },
     /// assert statement
-    Assert { test: HirExpr, msg: Option<HirExpr>, span: Span },
+    Assert {
+        test: HirExpr,
+        msg: Option<HirExpr>,
+        span: Span,
+    },
     /// del statement
-    Del { target: HirLValue, span: Span },
+    Del {
+        target: HirLValue,
+        span: Span,
+    },
     /// global/nonlocal declarations
-    Global { names: Vec<SymbolId>, span: Span },
-    Nonlocal { names: Vec<SymbolId>, span: Span },
+    Global {
+        names: Vec<SymbolId>,
+        span: Span,
+    },
+    Nonlocal {
+        names: Vec<SymbolId>,
+        span: Span,
+    },
     /// Placeholder for a function definition in the top-level order.
     /// Used to emit decorator applications at the correct position (#decorder).
-    FuncDefPlaceholder { name: SymbolId, span: Span },
+    FuncDefPlaceholder {
+        name: SymbolId,
+        span: Span,
+    },
     /// Placeholder for a decorated class definition in the top-level order.
     /// Class registration itself happens at the top of the module body
     /// regardless, but decorator application runs at the textual position so
@@ -193,20 +256,36 @@ pub enum HirStmt {
     /// declared above, and (b) later top-level statements observe the
     /// post-decorator class. Only emitted for classes with decorators
     /// (#1690 — proper fix for #1686 trade-off).
-    ClassDefPlaceholder { name: SymbolId, span: Span },
+    ClassDefPlaceholder {
+        name: SymbolId,
+        span: Span,
+    },
     /// match/case statement (#309)
-    Match { subject: HirExpr, cases: Vec<HirMatchCase>, span: Span },
+    Match {
+        subject: HirExpr,
+        cases: Vec<HirMatchCase>,
+        span: Span,
+    },
 }
 
 /// L-value for assignments (variable, attribute, index, unpack).
 #[derive(Debug, Clone)]
 pub enum HirLValue {
     Var(SymbolId),
-    Attr { object: Box<HirExpr>, attr: String },
-    Index { object: Box<HirExpr>, index: Box<HirExpr> },
+    Attr {
+        object: Box<HirExpr>,
+        attr: String,
+    },
+    Index {
+        object: Box<HirExpr>,
+        index: Box<HirExpr>,
+    },
     /// Tuple unpacking: `a, b, c = ...` or `a, *rest, b = ...` (#409).
     /// `star_index` is the position of the `*rest` element, if any.
-    Unpack { targets: Vec<HirLValue>, star_index: Option<usize> },
+    Unpack {
+        targets: Vec<HirLValue>,
+        star_index: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -218,44 +297,124 @@ pub enum HirExpr {
     BoolLit(bool, TypeId),
     NoneLit(TypeId),
     Var(SymbolId, TypeId),
-    BinOp { op: HirBinOp, lhs: Box<HirExpr>, rhs: Box<HirExpr>, ty: TypeId },
-    UnaryOp { op: HirUnaryOp, operand: Box<HirExpr>, ty: TypeId },
-    Call { func: Box<HirExpr>, args: Vec<HirExpr>, ty: TypeId },
-    Attr { object: Box<HirExpr>, attr: String, ty: TypeId },
-    Index { object: Box<HirExpr>, index: Box<HirExpr>, ty: TypeId },
-    List { elements: Vec<HirExpr>, ty: TypeId },
-    Set { elements: Vec<HirExpr>, ty: TypeId },
-    Tuple { elements: Vec<HirExpr>, ty: TypeId },
-    Dict { entries: Vec<(HirExpr, HirExpr)>, ty: TypeId },
+    BinOp {
+        op: HirBinOp,
+        lhs: Box<HirExpr>,
+        rhs: Box<HirExpr>,
+        ty: TypeId,
+    },
+    UnaryOp {
+        op: HirUnaryOp,
+        operand: Box<HirExpr>,
+        ty: TypeId,
+    },
+    Call {
+        func: Box<HirExpr>,
+        args: Vec<HirExpr>,
+        ty: TypeId,
+    },
+    Attr {
+        object: Box<HirExpr>,
+        attr: String,
+        ty: TypeId,
+    },
+    Index {
+        object: Box<HirExpr>,
+        index: Box<HirExpr>,
+        ty: TypeId,
+    },
+    List {
+        elements: Vec<HirExpr>,
+        ty: TypeId,
+    },
+    Set {
+        elements: Vec<HirExpr>,
+        ty: TypeId,
+    },
+    Tuple {
+        elements: Vec<HirExpr>,
+        ty: TypeId,
+    },
+    Dict {
+        entries: Vec<(HirExpr, HirExpr)>,
+        ty: TypeId,
+    },
     /// Slice expression: obj[start:stop:step]
-    Slice { start: Option<Box<HirExpr>>, stop: Option<Box<HirExpr>>,
-            step: Option<Box<HirExpr>>, ty: TypeId },
+    Slice {
+        start: Option<Box<HirExpr>>,
+        stop: Option<Box<HirExpr>>,
+        step: Option<Box<HirExpr>>,
+        ty: TypeId,
+    },
     /// Ternary: value if cond else other
-    IfExpr { cond: Box<HirExpr>, then_val: Box<HirExpr>,
-             else_val: Box<HirExpr>, ty: TypeId },
+    IfExpr {
+        cond: Box<HirExpr>,
+        then_val: Box<HirExpr>,
+        else_val: Box<HirExpr>,
+        ty: TypeId,
+    },
     /// Lambda expression. `defaults` carries the default-arg expressions
     /// (one slot per parameter, `None` when the parameter has no default).
     /// Defaults are evaluated at closure creation time per Python semantics.
-    Lambda { params: Vec<(SymbolId, TypeId)>, defaults: Vec<Option<Box<HirExpr>>>, body: Box<HirExpr>, ty: TypeId, span: Span },
+    Lambda {
+        params: Vec<(SymbolId, TypeId)>,
+        defaults: Vec<Option<Box<HirExpr>>>,
+        body: Box<HirExpr>,
+        ty: TypeId,
+        span: Span,
+    },
     /// Yield expression (#290)
-    Yield { value: Option<Box<HirExpr>>, ty: TypeId },
+    Yield {
+        value: Option<Box<HirExpr>>,
+        ty: TypeId,
+    },
     /// Yield from expression (#290)
-    YieldFrom { iter: Box<HirExpr>, ty: TypeId },
+    YieldFrom {
+        iter: Box<HirExpr>,
+        ty: TypeId,
+    },
     /// Await expression (#293)
-    Await { value: Box<HirExpr>, ty: TypeId },
+    Await {
+        value: Box<HirExpr>,
+        ty: TypeId,
+    },
     /// List comprehension (#291)
-    ListComp { element: Box<HirExpr>, generators: Vec<HirComprehension>, ty: TypeId },
+    ListComp {
+        element: Box<HirExpr>,
+        generators: Vec<HirComprehension>,
+        ty: TypeId,
+    },
     /// Lazy all()/any() over a generator expression.
-    AnyAllComp { is_all: bool, element: Box<HirExpr>, generators: Vec<HirComprehension>, ty: TypeId },
+    AnyAllComp {
+        is_all: bool,
+        element: Box<HirExpr>,
+        generators: Vec<HirComprehension>,
+        ty: TypeId,
+    },
     /// Set comprehension (#291)
-    SetComp { element: Box<HirExpr>, generators: Vec<HirComprehension>, ty: TypeId },
+    SetComp {
+        element: Box<HirExpr>,
+        generators: Vec<HirComprehension>,
+        ty: TypeId,
+    },
     /// Dict comprehension (#291)
-    DictComp { key: Box<HirExpr>, value: Box<HirExpr>,
-               generators: Vec<HirComprehension>, ty: TypeId },
+    DictComp {
+        key: Box<HirExpr>,
+        value: Box<HirExpr>,
+        generators: Vec<HirComprehension>,
+        ty: TypeId,
+    },
     /// F-string
-    FString { parts: Vec<HirFStringPart>, ty: TypeId },
+    FString {
+        parts: Vec<HirFStringPart>,
+        ty: TypeId,
+    },
     /// Walrus operator := (PEP 572)
-    Walrus { target: SymbolId, value: Box<HirExpr>, ty: TypeId },
+    Walrus {
+        target: SymbolId,
+        value: Box<HirExpr>,
+        ty: TypeId,
+    },
 }
 
 /// Comprehension clause: for var in iter if cond
@@ -295,7 +454,11 @@ pub enum HirPattern {
     /// Sequence pattern: `case [a, b, c]:`
     Sequence(Vec<HirPattern>),
     /// Class pattern: `case Point(x=0, y=0):`
-    Class { class: SymbolId, class_name: String, args: Vec<(String, HirPattern)> },
+    Class {
+        class: SymbolId,
+        class_name: String,
+        args: Vec<(String, HirPattern)>,
+    },
     /// Mapping pattern: `case {"key": val, **rest}:` (#827)
     /// Checks for each key's presence and matches the associated value pattern.
     /// `rest` binds remaining key-value pairs to a new dict variable.
@@ -326,19 +489,33 @@ pub enum HirFStringPart {
 impl HirExpr {
     pub fn ty(&self) -> TypeId {
         match self {
-            HirExpr::IntLit(_, t) | HirExpr::FloatLit(_, t)
-            | HirExpr::StrLit(_, t) | HirExpr::BytesLit(_, t) | HirExpr::BoolLit(_, t)
-            | HirExpr::NoneLit(t) | HirExpr::Var(_, t)
-            | HirExpr::BinOp { ty: t, .. } | HirExpr::UnaryOp { ty: t, .. }
-            | HirExpr::Call { ty: t, .. } | HirExpr::Attr { ty: t, .. }
-            | HirExpr::Index { ty: t, .. } | HirExpr::List { ty: t, .. }
-            | HirExpr::Set { ty: t, .. } | HirExpr::Tuple { ty: t, .. } | HirExpr::Dict { ty: t, .. }
-            | HirExpr::Slice { ty: t, .. } | HirExpr::IfExpr { ty: t, .. }
-            | HirExpr::Lambda { ty: t, .. } | HirExpr::Yield { ty: t, .. }
-            | HirExpr::YieldFrom { ty: t, .. } | HirExpr::Await { ty: t, .. }
-            | HirExpr::ListComp { ty: t, .. } | HirExpr::AnyAllComp { ty: t, .. }
+            HirExpr::IntLit(_, t)
+            | HirExpr::FloatLit(_, t)
+            | HirExpr::StrLit(_, t)
+            | HirExpr::BytesLit(_, t)
+            | HirExpr::BoolLit(_, t)
+            | HirExpr::NoneLit(t)
+            | HirExpr::Var(_, t)
+            | HirExpr::BinOp { ty: t, .. }
+            | HirExpr::UnaryOp { ty: t, .. }
+            | HirExpr::Call { ty: t, .. }
+            | HirExpr::Attr { ty: t, .. }
+            | HirExpr::Index { ty: t, .. }
+            | HirExpr::List { ty: t, .. }
+            | HirExpr::Set { ty: t, .. }
+            | HirExpr::Tuple { ty: t, .. }
+            | HirExpr::Dict { ty: t, .. }
+            | HirExpr::Slice { ty: t, .. }
+            | HirExpr::IfExpr { ty: t, .. }
+            | HirExpr::Lambda { ty: t, .. }
+            | HirExpr::Yield { ty: t, .. }
+            | HirExpr::YieldFrom { ty: t, .. }
+            | HirExpr::Await { ty: t, .. }
+            | HirExpr::ListComp { ty: t, .. }
+            | HirExpr::AnyAllComp { ty: t, .. }
             | HirExpr::SetComp { ty: t, .. }
-            | HirExpr::DictComp { ty: t, .. } | HirExpr::FString { ty: t, .. }
+            | HirExpr::DictComp { ty: t, .. }
+            | HirExpr::FString { ty: t, .. }
             | HirExpr::Walrus { ty: t, .. } => *t,
         }
     }
@@ -346,11 +523,30 @@ impl HirExpr {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirBinOp {
-    Add, Sub, Mul, Div, FloorDiv, Mod, Pow,
-    Eq, NotEq, Lt, Gt, LtEq, GtEq,
-    And, Or,
-    BitAnd, BitOr, BitXor, LShift, RShift,
-    Is, IsNot, In, NotIn,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
+    Is,
+    IsNot,
+    In,
+    NotIn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -364,9 +560,9 @@ pub enum HirUnaryOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::TypeContext;
     use crate::resolve::SymbolId;
     use crate::source::span::Span;
+    use crate::types::TypeContext;
 
     fn make_tcx() -> TypeContext {
         TypeContext::new()
@@ -396,9 +592,30 @@ mod tests {
         assert_eq!(HirExpr::BoolLit(true, bool_ty).ty(), bool_ty);
         assert_eq!(HirExpr::NoneLit(none_ty).ty(), none_ty);
         assert_eq!(HirExpr::Var(SymbolId(0), int_ty).ty(), int_ty);
-        assert_eq!(HirExpr::List { elements: vec![], ty: any_ty }.ty(), any_ty);
-        assert_eq!(HirExpr::Tuple { elements: vec![], ty: any_ty }.ty(), any_ty);
-        assert_eq!(HirExpr::Dict { entries: vec![], ty: any_ty }.ty(), any_ty);
+        assert_eq!(
+            HirExpr::List {
+                elements: vec![],
+                ty: any_ty
+            }
+            .ty(),
+            any_ty
+        );
+        assert_eq!(
+            HirExpr::Tuple {
+                elements: vec![],
+                ty: any_ty
+            }
+            .ty(),
+            any_ty
+        );
+        assert_eq!(
+            HirExpr::Dict {
+                entries: vec![],
+                ty: any_ty
+            }
+            .ty(),
+            any_ty
+        );
     }
 
     #[test]
@@ -512,7 +729,11 @@ mod tests {
             ],
             star_index: Some(1),
         };
-        if let HirLValue::Unpack { targets, star_index } = &lv {
+        if let HirLValue::Unpack {
+            targets,
+            star_index,
+        } = &lv
+        {
             assert_eq!(targets.len(), 3);
             assert_eq!(*star_index, Some(1));
         } else {

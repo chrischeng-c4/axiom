@@ -10,7 +10,6 @@
 /// T3: Decorator return value propagation (R3)
 /// T4: Nested f-string evaluation (R4)
 /// T5: json.dumps return value (R5)
-
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -91,7 +90,12 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
+                diff.push_str(&format!(
+                    "  line {}: expected {:?}, got {:?}\n",
+                    i + 1,
+                    e,
+                    a
+                ));
             }
         }
         panic!(
@@ -103,7 +107,10 @@ fn assert_output(actual: &str, expected: &str) {
 /// Assert that parsing a given source fails (returns Err).
 fn assert_parse_error(src: &str) {
     let result = parser::parse(src, FileId(0));
-    assert!(result.is_err(), "expected parse error, but parsing succeeded");
+    assert!(
+        result.is_err(),
+        "expected parse error, but parsing succeeded"
+    );
 }
 
 // =============================================================================

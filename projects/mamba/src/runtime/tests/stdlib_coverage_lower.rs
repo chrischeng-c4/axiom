@@ -1,13 +1,10 @@
 #![cfg(test)]
 
+use crate::runtime::stdlib::queue_mod::{mb_queue_Queue, mb_queue_get, mb_queue_put};
 /// Integration tests for the 10 lowest-coverage stdlib modules.
 /// Covers: queue_mod, statistics_mod, shlex_mod, calendar_mod, locale_mod,
 ///         lzma_mod, zlib_mod, secrets_mod, bisect_mod, abc_mod.
-
 use crate::runtime::value::MbValue;
-use crate::runtime::stdlib::queue_mod::{
-    mb_queue_Queue, mb_queue_put, mb_queue_get,
-};
 
 /// Concurrent producer-consumer: producer puts 100 items; main thread gets 100 items.
 /// Asserts total non-none results == 100 and no panic / deadlock occurs.

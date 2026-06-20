@@ -39,13 +39,18 @@ pub fn cmd_init(sub: &ArgMatches) -> Result<()> {
     let project_name = project_name_from_dir(&project_dir);
 
     write_new(&manifest_path, &render_manifest(&project_name))?;
-    write_new(&project_dir.join(".python-version"), DEFAULT_PYTHON_VERSION_FILE)?;
+    write_new(
+        &project_dir.join(".python-version"),
+        DEFAULT_PYTHON_VERSION_FILE,
+    )?;
     write_new(&project_dir.join(".gitignore"), DEFAULT_GITIGNORE)?;
-    write_new(&project_dir.join("README.md"), &render_readme(&project_name))?;
+    write_new(
+        &project_dir.join("README.md"),
+        &render_readme(&project_name),
+    )?;
 
     let src_dir = project_dir.join("src");
-    fs::create_dir_all(&src_dir)
-        .with_context(|| format!("create {}", src_dir.display()))?;
+    fs::create_dir_all(&src_dir).with_context(|| format!("create {}", src_dir.display()))?;
     write_new(&src_dir.join("__init__.py"), "")?;
 
     Ok(())

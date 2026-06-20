@@ -69,15 +69,21 @@ impl SvgRenderer {
             let py = self.map_y(tick, y_ticks.min, y_ticks.max);
             if style.show_grid {
                 self.line(
-                    self.margin.left, py,
-                    self.margin.left + self.plot_width(), py,
-                    &style.grid_color.to_hex(), 1.0,
+                    self.margin.left,
+                    py,
+                    self.margin.left + self.plot_width(),
+                    py,
+                    &style.grid_color.to_hex(),
+                    1.0,
                 );
             }
             self.text(
-                self.margin.left - 5.0, py + 4.0,
+                self.margin.left - 5.0,
+                py + 4.0,
                 &format_tick(tick),
-                &style.text_color.to_hex(), style.font_size, "end",
+                &style.text_color.to_hex(),
+                style.font_size,
+                "end",
             );
         }
 
@@ -94,7 +100,9 @@ impl SvgRenderer {
                 bx + bar_width / 2.0,
                 self.margin.top + self.plot_height() + 15.0,
                 label,
-                &style.text_color.to_hex(), style.font_size * 0.9, "middle",
+                &style.text_color.to_hex(),
+                style.font_size * 0.9,
+                "middle",
             );
         }
     }
@@ -201,14 +209,21 @@ impl SvgRenderer {
             let py = self.map_y(tick, y_ticks.min, y_ticks.max);
             if style.show_grid {
                 self.line(
-                    self.margin.left, py,
-                    self.margin.left + self.plot_width(), py,
-                    &style.grid_color.to_hex(), 1.0,
+                    self.margin.left,
+                    py,
+                    self.margin.left + self.plot_width(),
+                    py,
+                    &style.grid_color.to_hex(),
+                    1.0,
                 );
             }
             self.text(
-                self.margin.left - 5.0, py + 4.0,
-                &format_tick(tick), &style.text_color.to_hex(), style.font_size, "end",
+                self.margin.left - 5.0,
+                py + 4.0,
+                &format_tick(tick),
+                &style.text_color.to_hex(),
+                style.font_size,
+                "end",
             );
         }
 
@@ -238,13 +253,31 @@ impl SvgRenderer {
             // Whiskers
             self.line(cx, y_q3, cx, y_wh, &color.to_hex(), 1.5);
             self.line(cx, y_q1, cx, y_wl, &color.to_hex(), 1.5);
-            self.line(cx - box_w * 0.3, y_wh, cx + box_w * 0.3, y_wh, &color.to_hex(), 1.5);
-            self.line(cx - box_w * 0.3, y_wl, cx + box_w * 0.3, y_wl, &color.to_hex(), 1.5);
+            self.line(
+                cx - box_w * 0.3,
+                y_wh,
+                cx + box_w * 0.3,
+                y_wh,
+                &color.to_hex(),
+                1.5,
+            );
+            self.line(
+                cx - box_w * 0.3,
+                y_wl,
+                cx + box_w * 0.3,
+                y_wl,
+                &color.to_hex(),
+                1.5,
+            );
 
             // Label
             self.text(
-                cx, self.margin.top + self.plot_height() + 15.0,
-                label, &style.text_color.to_hex(), style.font_size * 0.9, "middle",
+                cx,
+                self.margin.top + self.plot_height() + 15.0,
+                label,
+                &style.text_color.to_hex(),
+                style.font_size * 0.9,
+                "middle",
             );
         }
     }
@@ -293,7 +326,10 @@ impl SvgRenderer {
                 self.text(
                     self.margin.left + (j as f64 + 0.5) * cell_w,
                     self.margin.top + self.plot_height() + 15.0,
-                    label, &style.text_color.to_hex(), style.font_size * 0.8, "middle",
+                    label,
+                    &style.text_color.to_hex(),
+                    style.font_size * 0.8,
+                    "middle",
                 );
             }
         }
@@ -303,7 +339,10 @@ impl SvgRenderer {
                 self.text(
                     self.margin.left - 5.0,
                     self.margin.top + (i as f64 + 0.5) * cell_h + 4.0,
-                    label, &style.text_color.to_hex(), style.font_size * 0.8, "end",
+                    label,
+                    &style.text_color.to_hex(),
+                    style.font_size * 0.8,
+                    "end",
                 );
             }
         }
@@ -355,12 +394,7 @@ impl SvgRenderer {
         ));
     }
 
-    pub(crate) fn render_pie(
-        &mut self,
-        labels: &[String],
-        values: &[f64],
-        style: &ChartStyle,
-    ) {
+    pub(crate) fn render_pie(&mut self, labels: &[String], values: &[f64], style: &ChartStyle) {
         if values.is_empty() {
             return;
         }
@@ -395,9 +429,12 @@ impl SvgRenderer {
             let ly = cy + r * 0.65 * mid.sin();
             if i < labels.len() {
                 self.text(
-                    lx, ly + 4.0,
-                    &labels[i], &style.text_color.to_hex(),
-                    style.font_size * 0.85, "middle",
+                    lx,
+                    ly + 4.0,
+                    &labels[i],
+                    &style.text_color.to_hex(),
+                    style.font_size * 0.85,
+                    "middle",
                 );
             }
 
@@ -419,7 +456,10 @@ impl SvgRenderer {
         let n = labels.len();
         let mut max_total = 0.0_f64;
         for i in 0..n {
-            let total: f64 = datasets.iter().map(|(_, vals)| vals.get(i).copied().unwrap_or(0.0)).sum();
+            let total: f64 = datasets
+                .iter()
+                .map(|(_, vals)| vals.get(i).copied().unwrap_or(0.0))
+                .sum();
             max_total = max_total.max(total);
         }
 
@@ -430,15 +470,21 @@ impl SvgRenderer {
             let py = self.map_y(tick, y_ticks.min, y_ticks.max);
             if style.show_grid {
                 self.line(
-                    self.margin.left, py,
-                    self.margin.left + self.plot_width(), py,
-                    &style.grid_color.to_hex(), 1.0,
+                    self.margin.left,
+                    py,
+                    self.margin.left + self.plot_width(),
+                    py,
+                    &style.grid_color.to_hex(),
+                    1.0,
                 );
             }
             self.text(
-                self.margin.left - 5.0, py + 4.0,
+                self.margin.left - 5.0,
+                py + 4.0,
                 &format_tick(tick),
-                &style.text_color.to_hex(), style.font_size, "end",
+                &style.text_color.to_hex(),
+                style.font_size,
+                "end",
             );
         }
 
@@ -472,7 +518,9 @@ impl SvgRenderer {
                 bx + bar_width / 2.0,
                 self.margin.top + self.plot_height() + 15.0,
                 &labels[i],
-                &style.text_color.to_hex(), style.font_size * 0.9, "middle",
+                &style.text_color.to_hex(),
+                style.font_size * 0.9,
+                "middle",
             );
         }
     }
@@ -508,14 +556,21 @@ impl SvgRenderer {
             let py = self.map_y(tick, y_ticks.min, y_ticks.max);
             if style.show_grid {
                 self.line(
-                    self.margin.left, py,
-                    self.margin.left + self.plot_width(), py,
-                    &style.grid_color.to_hex(), 1.0,
+                    self.margin.left,
+                    py,
+                    self.margin.left + self.plot_width(),
+                    py,
+                    &style.grid_color.to_hex(),
+                    1.0,
                 );
             }
             self.text(
-                self.margin.left - 5.0, py + 4.0,
-                &format_tick(tick), &style.text_color.to_hex(), style.font_size, "end",
+                self.margin.left - 5.0,
+                py + 4.0,
+                &format_tick(tick),
+                &style.text_color.to_hex(),
+                style.font_size,
+                "end",
             );
         }
 
@@ -575,9 +630,12 @@ impl SvgRenderer {
             // Label
             if gi < labels.len() {
                 self.text(
-                    cx, self.margin.top + self.plot_height() + 15.0,
-                    &labels[gi], &style.text_color.to_hex(),
-                    style.font_size * 0.9, "middle",
+                    cx,
+                    self.margin.top + self.plot_height() + 15.0,
+                    &labels[gi],
+                    &style.text_color.to_hex(),
+                    style.font_size * 0.9,
+                    "middle",
                 );
             }
         }
@@ -602,10 +660,13 @@ fn kernel_density(data: &[f64], min_val: f64, max_val: f64, n_points: usize) -> 
         let t = i as f64 / (n_points - 1) as f64;
         let x = min_val + t * (max_val - min_val);
 
-        let sum: f64 = data.iter().map(|&xi| {
-            let u = (x - xi) / bandwidth;
-            (-0.5 * u * u).exp() / (2.0 * std::f64::consts::PI).sqrt()
-        }).sum();
+        let sum: f64 = data
+            .iter()
+            .map(|&xi| {
+                let u = (x - xi) / bandwidth;
+                (-0.5 * u * u).exp() / (2.0 * std::f64::consts::PI).sqrt()
+            })
+            .sum();
 
         density.push(sum / (n * bandwidth));
     }

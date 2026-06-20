@@ -83,11 +83,7 @@ impl Connection {
     }
 
     /// Fetches the first row, if present, through the driver executor.
-    pub fn fetch_optional_row(
-        &self,
-        sql: &str,
-        params: &[ExtractedValue],
-    ) -> Result<Option<Row>> {
+    pub fn fetch_optional_row(&self, sql: &str, params: &[ExtractedValue]) -> Result<Option<Row>> {
         self.rt.block_on(self.inner.fetch_optional_row(sql, params))
     }
 }

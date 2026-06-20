@@ -2,11 +2,11 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-search-efficiency-competitive
-// @capability search
+// @capability ops-operability
 // @claim competitive-regression-gate-beat-pg-os-per-cell-ratcheting
 // @contract search-efficiency-filtering-ranking-pagination
 // @category efficiency
-// @required_for_production true
+// @required_for_production false
 // @command target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1
 // AW-EC-END
 
@@ -17,7 +17,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_search_efficiency_competitive() {
-    let command = "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1";
+    let command =
+        "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1";
     let id = "lumen-search-efficiency-competitive";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

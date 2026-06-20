@@ -1,13 +1,19 @@
 use super::c_types::*;
-use crate::types::ty::{Ty, TypeId};
 use crate::types::context::TypeContext;
+use crate::types::ty::{Ty, TypeId};
 
 /// Map a C type to a Mamba type (#257).
 pub fn c_type_to_mamba(ct: &CType, tcx: &mut TypeContext) -> TypeId {
     match ct {
         CType::Void => tcx.none(),
-        CType::Int8 | CType::Int16 | CType::Int32 | CType::Int64
-        | CType::UInt8 | CType::UInt16 | CType::UInt32 | CType::UInt64 => tcx.int(),
+        CType::Int8
+        | CType::Int16
+        | CType::Int32
+        | CType::Int64
+        | CType::UInt8
+        | CType::UInt16
+        | CType::UInt32
+        | CType::UInt64 => tcx.int(),
         CType::Float | CType::Double => tcx.float(),
         CType::Bool => tcx.bool(),
         CType::ConstChar | CType::MutChar => tcx.str(),
@@ -30,7 +36,9 @@ pub fn c_type_to_mamba(ct: &CType, tcx: &mut TypeContext) -> TypeId {
 
 /// Generate a Mamba class from a C struct (#258).
 pub fn struct_to_class(s: &CStruct, tcx: &mut TypeContext) -> TypeId {
-    let fields: Vec<(String, TypeId)> = s.fields.iter()
+    let fields: Vec<(String, TypeId)> = s
+        .fields
+        .iter()
         .map(|f| (f.name.clone(), c_type_to_mamba(&f.ty, tcx)))
         .collect();
     tcx.intern(Ty::Class {
@@ -43,7 +51,9 @@ pub fn struct_to_class(s: &CStruct, tcx: &mut TypeContext) -> TypeId {
 /// Generate a Mamba enum-like class from a C enum (#259).
 pub fn enum_to_class(e: &CEnum, tcx: &mut TypeContext) -> TypeId {
     let int_ty = tcx.int();
-    let fields: Vec<(String, TypeId)> = e.variants.iter()
+    let fields: Vec<(String, TypeId)> = e
+        .variants
+        .iter()
         .map(|v| {
             let clean_name = clean_variant_name(&v.name, &e.name);
             (clean_name, int_ty)
@@ -97,11 +107,17 @@ pub fn map_header_types(header: &CHeader, tcx: &mut TypeContext) -> MappedTypes 
     }
 
     for f in &header.functions {
-        let param_types: Vec<TypeId> = f.params.iter()
+        let param_types: Vec<TypeId> = f
+            .params
+            .iter()
             .map(|p| c_type_to_mamba(&p.ty, tcx))
             .collect();
         let ret = c_type_to_mamba(&f.return_type, tcx);
-        let fn_ty = tcx.intern(Ty::Fn { params: param_types, ret, variadic: false });
+        let fn_ty = tcx.intern(Ty::Fn {
+            params: param_types,
+            ret,
+            variadic: false,
+        });
         mapped.functions.push((f.name.clone(), fn_ty));
     }
 
@@ -135,8 +151,14 @@ mod tests {
         let s = CStruct {
             name: "Point".into(),
             fields: vec![
-                CField { name: "x".into(), ty: CType::Int32 },
-                CField { name: "y".into(), ty: CType::Int32 },
+                CField {
+                    name: "x".into(),
+                    ty: CType::Int32,
+                },
+                CField {
+                    name: "y".into(),
+                    ty: CType::Int32,
+                },
             ],
         };
         let ty = struct_to_class(&s, &mut tcx);
@@ -155,8 +177,14 @@ mod tests {
         let e = CEnum {
             name: "Color".into(),
             variants: vec![
-                CEnumVariant { name: "ColorRed".into(), value: Some(0) },
-                CEnumVariant { name: "ColorGreen".into(), value: Some(1) },
+                CEnumVariant {
+                    name: "ColorRed".into(),
+                    value: Some(0),
+                },
+                CEnumVariant {
+                    name: "ColorGreen".into(),
+                    value: Some(1),
+                },
             ],
         };
         let ty = enum_to_class(&e, &mut tcx);
@@ -259,10 +287,22 @@ mod tests {
         let s = CStruct {
             name: "Data".into(),
             fields: vec![
-                CField { name: "count".into(), ty: CType::Int32 },
-                CField { name: "value".into(), ty: CType::Double },
-                CField { name: "name".into(), ty: CType::ConstChar },
-                CField { name: "active".into(), ty: CType::Bool },
+                CField {
+                    name: "count".into(),
+                    ty: CType::Int32,
+                },
+                CField {
+                    name: "value".into(),
+                    ty: CType::Double,
+                },
+                CField {
+                    name: "name".into(),
+                    ty: CType::ConstChar,
+                },
+                CField {
+                    name: "active".into(),
+                    ty: CType::Bool,
+                },
             ],
         };
         let ty = struct_to_class(&s, &mut tcx);
@@ -302,10 +342,22 @@ mod tests {
         let e = CEnum {
             name: "Direction".into(),
             variants: vec![
-                CEnumVariant { name: "Up".into(), value: Some(0) },
-                CEnumVariant { name: "Down".into(), value: Some(1) },
-                CEnumVariant { name: "Left".into(), value: Some(2) },
-                CEnumVariant { name: "Right".into(), value: Some(3) },
+                CEnumVariant {
+                    name: "Up".into(),
+                    value: Some(0),
+                },
+                CEnumVariant {
+                    name: "Down".into(),
+                    value: Some(1),
+                },
+                CEnumVariant {
+                    name: "Left".into(),
+                    value: Some(2),
+                },
+                CEnumVariant {
+                    name: "Right".into(),
+                    value: Some(3),
+                },
             ],
         };
         let ty = enum_to_class(&e, &mut tcx);
@@ -346,22 +398,40 @@ mod tests {
             structs: vec![CStruct {
                 name: "Vec2".into(),
                 fields: vec![
-                    CField { name: "x".into(), ty: CType::Float },
-                    CField { name: "y".into(), ty: CType::Float },
+                    CField {
+                        name: "x".into(),
+                        ty: CType::Float,
+                    },
+                    CField {
+                        name: "y".into(),
+                        ty: CType::Float,
+                    },
                 ],
             }],
             enums: vec![CEnum {
                 name: "Axis".into(),
                 variants: vec![
-                    CEnumVariant { name: "X".into(), value: Some(0) },
-                    CEnumVariant { name: "Y".into(), value: Some(1) },
+                    CEnumVariant {
+                        name: "X".into(),
+                        value: Some(0),
+                    },
+                    CEnumVariant {
+                        name: "Y".into(),
+                        value: Some(1),
+                    },
                 ],
             }],
             functions: vec![CFunction {
                 name: "dot".into(),
                 params: vec![
-                    CParam { name: "a".into(), ty: CType::Float },
-                    CParam { name: "b".into(), ty: CType::Float },
+                    CParam {
+                        name: "a".into(),
+                        ty: CType::Float,
+                    },
+                    CParam {
+                        name: "b".into(),
+                        ty: CType::Float,
+                    },
                 ],
                 return_type: CType::Float,
             }],

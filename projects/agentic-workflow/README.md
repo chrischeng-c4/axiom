@@ -53,14 +53,13 @@ AW uses canonical agent-facing command names for the main lifecycle:
 |---|---|---|
 | `aw capability` | Product capabilities | Define the project capability tree, claims, maturity, release scope, and required external contracts. |
 | `aw ec` | External Contracts | Define behavior, efficiency, security, and stability contracts; generate tests and tool configs. |
-| `aw td` | Tech Design | Describe implementation design, source mapping, APIs, data, and control flow. |
-| `aw cb` | Code artifact lifecycle | Generate, check, and fill source artifacts from TD. |
+| `aw td` | Tech Design + code artifacts | Describe implementation design and own generated-code verbs: `gen`, `gen-source`, `fill`, `code-check`, and `code-claim`. TD output is a candidate implementation that iterates until EC and health gates pass. |
 | `aw health` | Project health | Aggregate capabilities, EC, TD, CB, tests, claim closure, locks, and blocker status. |
 
 The canonical flow for greenfield projects is:
 
 ```text
-aw capability report/next/migrate/check -> aw ec draft/fill -> aw ec gen -> aw td -> aw cb -> aw health
+aw capability report/next/migrate/check -> aw ec draft/fill -> aw ec gen -> aw td create/gen/fill/code-check/merge -> aw health
 ```
 
 Greenfield starts by defining capabilities and required external contracts. EC
@@ -70,7 +69,7 @@ tool manifests first, then TD/CB/code work drives those contracts green.
 The canonical flow for brownfield projects is:
 
 ```text
-aw capability check -> aw ec check/gen -> aw td claim -> aw cb claim/gen/fill -> aw health
+aw capability check -> aw ec check/gen -> aw td claim/code-claim/gen/fill -> aw health
 ```
 
 Brownfield starts by adding capabilities around existing behavior, then
@@ -137,7 +136,7 @@ Markdown capability headings and tables below are machine-readable input for `aw
 ID: aw-core-client-model-workitem-first-artifact-lifecycle
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw wi` + `aw td` + `aw cb` + `aw run` - standalone AW Core client entrypoints over the shared workflow protocol.
+- CLI: `aw wi` + `aw td` + `aw run` - standalone AW Core client entrypoints over the shared workflow protocol.
 EC Dimensions:
 - behavior: shared WorkItem-first artifact admission, client boundary, and rollup semantics from the AW Core TD set.
 Root WI: #3894
@@ -204,7 +203,7 @@ Gate Inventory:
 ID: work-item-planning
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw wi` - inventory, CRRR drafting, epicization, atomization, prioritization, and issue updates.
+- CLI: `aw wi` - inventory, validation drafting, epicization, atomization, prioritization, and issue updates.
 EC Dimensions:
 - behavior: `cargo test -p agentic-workflow epicize_artifact_includes_markdown_capability_roots` - capability-to-WI planning projection.
 Root WI: -
@@ -225,7 +224,7 @@ Gate Inventory:
 ID: td-cb-lifecycle-automation
 Type: DeveloperTool
 Surfaces:
-- CLI: `aw td` + `aw cb` - tech-design lifecycle and code-artifact lifecycle commands.
+- CLI: `aw td` - tech-design lifecycle plus inherited code-artifact lifecycle commands.
 EC Dimensions:
 - behavior: `cargo test -p agentic-workflow td_branch_activation_only_uses_main` - TD/CB lifecycle command dispatch and phase rules.
 Root WI: -
@@ -248,13 +247,13 @@ Type: DeveloperTool
 Surfaces:
 - CLI: `aw ec` + `aw td check` - project-local external-contract, generated gate, and TD validation commands.
 EC Dimensions:
-- behavior: `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_manifest` - EC markdown source and generated tool manifest contract.
+- behavior: `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_inventory` - EC markdown source, aw.toml inventory, and generated tool manifest contract.
 - stability: `cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design` - project-local TD root resolution and dirty-scope protection.
 Root WI: #13
 Status: verified
 Required Verification: smoke
 Promise:
-AW-managed projects keep their README, external contracts, tech designs, source, tests, and generated tool configs under the project tree by default: `td_path` is only an override, EC contracts live under `<project.path>/external-contracts`, and generated EC state does not mutate `aw.toml`.
+AW-managed projects keep their README, external contracts, tech designs, source, tests, and generated tool configs under the project tree by default: `td_path` is only an override, EC contracts live under `<project.path>/external-contracts`, and the generated EC inventory lives in the project `aw.toml` AW-EC block.
 Gate Inventory:
 - `cargo test -p agentic-workflow --lib falls_back_to_project_tech_design`; `cargo test -p agentic-workflow --lib ec_context_defaults_td_root_to_project_tech_design`; `cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design`; `cargo test -p agentic-workflow --lib semantic_coverage_excludes_aw_ec_generated_wrappers`; `cargo test -p agentic-workflow --lib ec_doc`; `aw td check projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md`; `aw td check projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md`
 
@@ -265,7 +264,7 @@ Gate Inventory:
 | CB generation and standardize scan defaults | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib cb_gen_force_regen_defaults_td_root_to_project_tech_design`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md` |
 | Project dirty-scope protection | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib semantic_coverage_excludes_aw_ec_generated_wrappers`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md` |
 | EC evidence documentation | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_doc` |
-| EC external-contract source | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_manifest`; aw ec draft/fill authors project-local external-contract markdown and aw ec gen generates tests plus rig/meter/guard/vat tool configs without writing aw.toml; arena is retained as a legacy compatibility import |
+| EC external-contract source | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_draft_fill_markdown_drives_inventory`; aw ec draft/fill authors project-local external-contract markdown and aw ec gen writes the project `aw.toml` EC inventory plus generated tests and rig/meter/guard/vat tool configs; arena is retained as a legacy compatibility import |
 | EC tool binding dispatch | change | #13 | implemented | verified | smoke | `cargo test -p agentic-workflow --lib ec_binding_command`; `cargo test -p agentic-workflow --lib resolve_ec_command_dispatches_bound_category`; projects/agentic-workflow/tech-design/config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md; projects/agentic-workflow/tech-design/logic/aw-ec-add-vat-binding-command-support.md |
 
 ### Manual Evidence Artifacts
@@ -274,7 +273,7 @@ ID: manual-evidence-artifacts
 Type: DeveloperTool
 Surfaces:
 - CLI: `aw ec doc` - generated, checked, or previewed EC-derived product documentation evidence.
-EC Dimensions: behavior: `cargo test -p agentic-workflow ec_doc_gen_writes_manual_from_manifest` - generated manual artifact schema and output convention
+EC Dimensions: behavior: `cargo test -p agentic-workflow ec_doc_gen_writes_manual_from_inventory` - generated manual artifact schema and output convention
 Root WI: #57
 Status: verified
 Required Verification: smoke
@@ -286,7 +285,7 @@ Gate Inventory:
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Generated manual EC evidence schema | change | #57 | implemented | verified | smoke | `cargo test -p agentic-workflow ec_generated_manual_artifact` |
-| Manual runner output convention | change | #57 | implemented | verified | smoke | `cargo test -p agentic-workflow ec_doc_gen_writes_manual_from_manifest`; projects/agentic-workflow/src/tools/common_change_spec.rs |
+| Manual runner output convention | change | #57 | implemented | verified | smoke | `cargo test -p agentic-workflow ec_doc_gen_writes_manual_from_inventory`; projects/agentic-workflow/src/tools/common_change_spec.rs |
 
 ### Existing Project Standardization
 

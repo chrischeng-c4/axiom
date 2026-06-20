@@ -1,3 +1,6 @@
+use super::super::module::{register_variadic_func, NATIVE_FUNC_ADDRS, NATIVE_TYPE_NAMES};
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// email module + submodules for Mamba (#1422, #1261 long-tail).
 ///
 /// Real native behavior matching CPython 3.12 for the most-used surface:
@@ -21,11 +24,7 @@
 /// through the runtime's generic `self`-first path; constructors are native
 /// dispatchers that build Instances and are mapped in NATIVE_TYPE_NAMES so
 /// `isinstance` works.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::module::{register_variadic_func, NATIVE_FUNC_ADDRS, NATIVE_TYPE_NAMES};
 
 // ── Small local helpers (self-contained module) ──
 
@@ -43,7 +42,9 @@ fn new_tuple(v: Vec<MbValue>) -> MbValue {
 }
 
 fn retain(val: MbValue) {
-    unsafe { super::super::rc::retain_if_ptr(val); }
+    unsafe {
+        super::super::rc::retain_if_ptr(val);
+    }
 }
 
 fn raise(kind: &str, msg: impl Into<String>) -> MbValue {
@@ -53,7 +54,11 @@ fn raise(kind: &str, msg: impl Into<String>) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -113,10 +118,18 @@ fn positional(items: &[MbValue]) -> Vec<MbValue> {
 }
 
 fn truthy(val: MbValue) -> bool {
-    if val.is_none() { return false; }
-    if let Some(b) = val.as_bool() { return b; }
-    if let Some(i) = val.as_int() { return i != 0; }
-    if let Some(s) = extract_str(val) { return !s.is_empty(); }
+    if val.is_none() {
+        return false;
+    }
+    if let Some(b) = val.as_bool() {
+        return b;
+    }
+    if let Some(i) = val.as_int() {
+        return i != 0;
+    }
+    if let Some(s) = extract_str(val) {
+        return !s.is_empty();
+    }
     true
 }
 
@@ -126,7 +139,9 @@ fn field_get(inst: MbValue, key: &str) -> Option<MbValue> {
     inst.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             fields.read().unwrap().get(key).copied()
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
@@ -145,14 +160,19 @@ fn instance_class_name(inst: MbValue) -> Option<String> {
     inst.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
             Some(class_name.clone())
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
 fn make_instance(class_name: &str, fields: Vec<(&str, MbValue)>) -> MbValue {
     let inst = MbObject::new_instance(class_name.to_string());
     unsafe {
-        if let ObjData::Instance { fields: ref iflds, .. } = (*inst).data {
+        if let ObjData::Instance {
+            fields: ref iflds, ..
+        } = (*inst).data
+        {
             let mut g = iflds.write().unwrap();
             for (k, v) in fields {
                 retain(v);
@@ -193,14 +213,17 @@ fn headers_vec(inst: MbValue) -> Vec<(String, String, MbValue)> {
 }
 
 fn value_to_string(v: MbValue) -> String {
-    if let Some(s) = extract_str(v) { return s; }
+    if let Some(s) = extract_str(v) {
+        return s;
+    }
     // Header instances stringify via str(); fall back to runtime str.
     let s = super::super::builtins::mb_str(v);
     extract_str(s).unwrap_or_default()
 }
 
 fn set_headers(inst: MbValue, hdrs: Vec<(String, MbValue)>) {
-    let list: Vec<MbValue> = hdrs.into_iter()
+    let list: Vec<MbValue> = hdrs
+        .into_iter()
         .map(|(k, v)| new_tuple(vec![new_str(k), v]))
         .collect();
     field_set(inst, "_headers", new_list(list));
@@ -218,7 +241,9 @@ fn header_get_first(inst: MbValue, name: &str) -> Option<MbValue> {
 
 fn header_append(inst: MbValue, name: &str, value: MbValue) {
     let mut hdrs: Vec<(String, MbValue)> = headers_vec(inst)
-        .into_iter().map(|(n, _s, v)| (n, v)).collect();
+        .into_iter()
+        .map(|(n, _s, v)| (n, v))
+        .collect();
     hdrs.push((name.to_string(), value));
     set_headers(inst, hdrs);
 }
@@ -245,12 +270,19 @@ fn parse_param_list(value: &str) -> Vec<(String, String)> {
     let mut chars = value.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '"' => { in_quote = !in_quote; cur.push(c); }
+            '"' => {
+                in_quote = !in_quote;
+                cur.push(c);
+            }
             '\\' if in_quote => {
                 cur.push(c);
-                if let Some(nc) = chars.next() { cur.push(nc); }
+                if let Some(nc) = chars.next() {
+                    cur.push(nc);
+                }
             }
-            ';' if !in_quote => { parts.push(std::mem::take(&mut cur)); }
+            ';' if !in_quote => {
+                parts.push(std::mem::take(&mut cur));
+            }
             _ => cur.push(c),
         }
     }
@@ -263,7 +295,9 @@ fn parse_param_list(value: &str) -> Vec<(String, String)> {
             out.push((String::new(), p.to_string()));
             continue;
         }
-        if p.is_empty() { continue; }
+        if p.is_empty() {
+            continue;
+        }
         if let Some(eq) = p.find('=') {
             let name = p[..eq].trim().to_string();
             let val = p[eq + 1..].trim().to_string();
@@ -279,7 +313,9 @@ fn parse_param_list(value: &str) -> Vec<(String, String)> {
 fn email_unquote(s: &str) -> String {
     if s.len() > 1 {
         if s.starts_with('"') && s.ends_with('"') {
-            return s[1..s.len() - 1].replace("\\\\", "\\").replace("\\\"", "\"");
+            return s[1..s.len() - 1]
+                .replace("\\\\", "\\")
+                .replace("\\\"", "\"");
         }
         if s.starts_with('<') && s.ends_with('>') {
             return s[1..s.len() - 1].to_string();
@@ -317,7 +353,10 @@ fn content_type(inst: MbValue) -> String {
 extern "C" fn m_getitem(this: MbValue, name: MbValue) -> MbValue {
     let n = extract_str(name).unwrap_or_default();
     match header_get_first(this, &n) {
-        Some(v) => { retain(v); v }
+        Some(v) => {
+            retain(v);
+            v
+        }
         None => MbValue::none(),
     }
 }
@@ -342,18 +381,30 @@ extern "C" fn m_contains(this: MbValue, name: MbValue) -> MbValue {
 unsafe extern "C" fn m_get(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let name = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let name = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let failobj = pos.get(1).copied().unwrap_or_else(MbValue::none);
     match header_get_first(this, &name) {
-        Some(v) => { retain(v); v }
-        None => { retain(failobj); failobj }
+        Some(v) => {
+            retain(v);
+            v
+        }
+        None => {
+            retain(failobj);
+            failobj
+        }
     }
 }
 
 unsafe extern "C" fn m_get_all(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let name = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let name = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let failobj = pos.get(1).copied().unwrap_or_else(MbValue::none);
     let lname = name.to_lowercase();
     let mut out = Vec::new();
@@ -371,20 +422,32 @@ unsafe extern "C" fn m_get_all(this: MbValue, args: MbValue) -> MbValue {
 }
 
 extern "C" fn m_keys(this: MbValue) -> MbValue {
-    let out: Vec<MbValue> = headers_vec(this).into_iter()
-        .map(|(n, _s, _v)| new_str(n)).collect();
+    let out: Vec<MbValue> = headers_vec(this)
+        .into_iter()
+        .map(|(n, _s, _v)| new_str(n))
+        .collect();
     new_list(out)
 }
 
 extern "C" fn m_values(this: MbValue) -> MbValue {
-    let out: Vec<MbValue> = headers_vec(this).into_iter()
-        .map(|(_n, _s, v)| { retain(v); v }).collect();
+    let out: Vec<MbValue> = headers_vec(this)
+        .into_iter()
+        .map(|(_n, _s, v)| {
+            retain(v);
+            v
+        })
+        .collect();
     new_list(out)
 }
 
 extern "C" fn m_items(this: MbValue) -> MbValue {
-    let out: Vec<MbValue> = headers_vec(this).into_iter()
-        .map(|(n, _s, v)| { retain(v); new_tuple(vec![new_str(n), v]) }).collect();
+    let out: Vec<MbValue> = headers_vec(this)
+        .into_iter()
+        .map(|(n, _s, v)| {
+            retain(v);
+            new_tuple(vec![new_str(n), v])
+        })
+        .collect();
     new_list(out)
 }
 
@@ -392,7 +455,10 @@ unsafe extern "C" fn m_add_header(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let kwdict = items.last().copied();
     let pos = positional(&items);
-    let name = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let name = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let value = pos.get(1).and_then(|v| extract_str(*v));
     // Build header value: _value; param1="v1"; param2="v2"
     let mut parts: Vec<String> = Vec::new();
@@ -416,8 +482,8 @@ unsafe extern "C" fn m_add_header(this: MbValue, args: MbValue) -> MbValue {
                     } else {
                         let vs = value_to_string(*v);
                         // quote if needs quoting
-                        let needs_quote = vs.is_empty()
-                            || vs.chars().any(|c| " \t()<>@,;:\\\"/[]?=".contains(c));
+                        let needs_quote =
+                            vs.is_empty() || vs.chars().any(|c| " \t()<>@,;:\\\"/[]?=".contains(c));
                         if needs_quote {
                             let escaped = vs.replace('\\', "\\\\").replace('"', "\\\"");
                             parts.push(format!("{key}=\"{escaped}\""));
@@ -438,7 +504,9 @@ unsafe extern "C" fn m_replace_header(this: MbValue, name: MbValue, value: MbVal
     let n = extract_str(name).unwrap_or_default();
     let lname = n.to_lowercase();
     let mut hdrs: Vec<(String, MbValue)> = headers_vec(this)
-        .into_iter().map(|(hn, _s, hv)| (hn, hv)).collect();
+        .into_iter()
+        .map(|(hn, _s, hv)| (hn, hv))
+        .collect();
     let mut replaced = false;
     for (hn, hv) in hdrs.iter_mut() {
         if hn.to_lowercase() == lname {
@@ -520,7 +588,10 @@ unsafe extern "C" fn m_get_params(this: MbValue, args: MbValue) -> MbValue {
         .unwrap_or_else(|| "content-type".to_string());
     let hv = match header_get_first(this, &header) {
         Some(v) => value_to_string(v),
-        None => { retain(failobj); return failobj; }
+        None => {
+            retain(failobj);
+            return failobj;
+        }
     };
     let params = parse_param_list(&hv);
     let mut out = Vec::new();
@@ -534,7 +605,10 @@ unsafe extern "C" fn m_get_params(this: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn m_get_param(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let param = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let param = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let failobj = pos.get(1).copied().unwrap_or_else(MbValue::none);
     let header = kwarg(&items, "header")
         .and_then(extract_str)
@@ -542,7 +616,10 @@ unsafe extern "C" fn m_get_param(this: MbValue, args: MbValue) -> MbValue {
     let do_unquote = kwarg(&items, "unquote").map(truthy).unwrap_or(true);
     let hv = match header_get_first(this, &header) {
         Some(v) => value_to_string(v),
-        None => { retain(failobj); return failobj; }
+        None => {
+            retain(failobj);
+            return failobj;
+        }
     };
     let params = parse_param_list(&hv);
     let lparam = param.to_lowercase();
@@ -562,8 +639,13 @@ unsafe extern "C" fn m_get_param(this: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn m_del_param(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let param = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
-    let header = pos.get(1).and_then(|v| extract_str(*v))
+    let param = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
+    let header = pos
+        .get(1)
+        .and_then(|v| extract_str(*v))
         .unwrap_or_else(|| "content-type".to_string());
     let lparam = param.to_lowercase();
     let hv = match header_get_first(this, &header) {
@@ -577,7 +659,9 @@ unsafe extern "C" fn m_del_param(this: MbValue, args: MbValue) -> MbValue {
             newparts.push(val.clone());
             continue;
         }
-        if name.to_lowercase() == lparam { continue; }
+        if name.to_lowercase() == lparam {
+            continue;
+        }
         if val.is_empty() {
             newparts.push(name.clone());
         } else {
@@ -588,7 +672,9 @@ unsafe extern "C" fn m_del_param(this: MbValue, args: MbValue) -> MbValue {
     // replace the header value
     let lheader = header.to_lowercase();
     let mut hdrs: Vec<(String, MbValue)> = headers_vec(this)
-        .into_iter().map(|(hn, _s, hv)| (hn, hv)).collect();
+        .into_iter()
+        .map(|(hn, _s, hv)| (hn, hv))
+        .collect();
     for (hn, hv) in hdrs.iter_mut() {
         if hn.to_lowercase() == lheader {
             *hv = new_str(combined.clone());
@@ -602,8 +688,13 @@ unsafe extern "C" fn m_del_param(this: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn m_set_type(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let ctype = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
-    let header = pos.get(1).and_then(|v| extract_str(*v))
+    let ctype = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
+    let header = pos
+        .get(1)
+        .and_then(|v| extract_str(*v))
         .unwrap_or_else(|| "Content-Type".to_string());
     let lheader = header.to_lowercase();
     // rewrite only the type token, preserving params
@@ -625,7 +716,9 @@ unsafe extern "C" fn m_set_type(this: MbValue, args: MbValue) -> MbValue {
     };
     let mut found = false;
     let mut hdrs: Vec<(String, MbValue)> = headers_vec(this)
-        .into_iter().map(|(hn, _s, hv)| (hn, hv)).collect();
+        .into_iter()
+        .map(|(hn, _s, hv)| (hn, hv))
+        .collect();
     for (hn, hv) in hdrs.iter_mut() {
         if hn.to_lowercase() == lheader {
             *hv = new_str(new_value.clone());
@@ -662,9 +755,10 @@ extern "C" fn m_get_filename(this: MbValue) -> MbValue {
 
 extern "C" fn m_is_multipart(this: MbValue) -> MbValue {
     let payload = field_get(this, "_payload").unwrap_or_else(MbValue::none);
-    let is_list = payload.as_ptr().map(|p| unsafe {
-        matches!((*p).data, ObjData::List(_))
-    }).unwrap_or(false);
+    let is_list = payload
+        .as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::List(_)) })
+        .unwrap_or(false);
     MbValue::from_bool(is_list)
 }
 
@@ -694,13 +788,18 @@ fn set_charset_impl(this: MbValue, charset: MbValue) {
         String::new()
     };
     field_set(this, "_charset", charset);
-    if name.is_empty() { return; }
+    if name.is_empty() {
+        return;
+    }
     // Ensure a Content-Type header reflects the charset.
     let ct = header_get_first(this, "content-type").map(value_to_string);
     let new_ct = match ct {
         Some(v) => {
             let params = parse_param_list(&v);
-            let base = params.first().map(|(_, v)| v.clone()).unwrap_or_else(|| "text/plain".to_string());
+            let base = params
+                .first()
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| "text/plain".to_string());
             let mut parts = vec![base];
             let mut has_cs = false;
             for (n, val) in params.iter().skip(1) {
@@ -722,7 +821,9 @@ fn set_charset_impl(this: MbValue, charset: MbValue) {
     };
     // replace or append content-type
     let mut hdrs: Vec<(String, MbValue)> = headers_vec(this)
-        .into_iter().map(|(hn, _s, hv)| (hn, hv)).collect();
+        .into_iter()
+        .map(|(hn, _s, hv)| (hn, hv))
+        .collect();
     let mut found = false;
     for (hn, hv) in hdrs.iter_mut() {
         if hn.to_lowercase() == "content-type" {
@@ -740,7 +841,10 @@ fn set_charset_impl(this: MbValue, charset: MbValue) {
 
 extern "C" fn m_get_charset(this: MbValue) -> MbValue {
     match field_get(this, "_charset") {
-        Some(v) if !v.is_none() => { retain(v); v }
+        Some(v) if !v.is_none() => {
+            retain(v);
+            v
+        }
         _ => MbValue::none(),
     }
 }
@@ -766,7 +870,10 @@ unsafe extern "C" fn m_get_payload(this: MbValue, args: MbValue) -> MbValue {
     }
     let payload = field_get(this, "_payload").unwrap_or_else(MbValue::none);
     // Multipart: payload is a list
-    let is_list = payload.as_ptr().map(|p| matches!((*p).data, ObjData::List(_))).unwrap_or(false);
+    let is_list = payload
+        .as_ptr()
+        .map(|p| matches!((*p).data, ObjData::List(_)))
+        .unwrap_or(false);
     if is_list {
         if let Some(i) = idx {
             let lst = args_items(payload);
@@ -781,10 +888,7 @@ unsafe extern "C" fn m_get_payload(this: MbValue, args: MbValue) -> MbValue {
     }
     if let Some(_i) = idx {
         // Non-multipart with an index: CPython raises.
-        return raise(
-            "TypeError",
-            "Expected list, got <class 'str'>".to_string(),
-        );
+        return raise("TypeError", "Expected list, got <class 'str'>".to_string());
     }
     if !decode {
         retain(payload);
@@ -823,13 +927,18 @@ unsafe extern "C" fn m_get_payload(this: MbValue, args: MbValue) -> MbValue {
 // Minimal byte-buffer wrapper for qp decode output (we already work in bytes).
 struct ByteString(Vec<u8>);
 impl ByteString {
-    fn into_bytes_lossy(self) -> Vec<u8> { self.0 }
+    fn into_bytes_lossy(self) -> Vec<u8> {
+        self.0
+    }
 }
 
 unsafe extern "C" fn m_attach(this: MbValue, payload: MbValue) -> MbValue {
     // ensure _payload is a list, append
     let cur = field_get(this, "_payload").unwrap_or_else(MbValue::none);
-    let is_list = cur.as_ptr().map(|p| matches!((*p).data, ObjData::List(_))).unwrap_or(false);
+    let is_list = cur
+        .as_ptr()
+        .map(|p| matches!((*p).data, ObjData::List(_)))
+        .unwrap_or(false);
     if is_list {
         if let Some(ptr) = cur.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
@@ -875,7 +984,11 @@ unsafe extern "C" fn m_set_content(this: MbValue, args: MbValue) -> MbValue {
     field_set(this, "_payload", body);
     // EmailMessage.set_content defaults to text/plain; charset utf-8; CTE 7bit/qp.
     if header_get_first(this, "content-type").is_none() {
-        header_append(this, "Content-Type", new_str("text/plain; charset=\"utf-8\""));
+        header_append(
+            this,
+            "Content-Type",
+            new_str("text/plain; charset=\"utf-8\""),
+        );
     }
     if header_get_first(this, "content-transfer-encoding").is_none() {
         header_append(this, "Content-Transfer-Encoding", new_str("7bit"));
@@ -922,11 +1035,14 @@ extern "C" fn m_str(this: MbValue) -> MbValue {
 // ════════════════════════════════════════════════════════════════════════
 
 fn new_message(class_name: &str) -> MbValue {
-    make_instance(class_name, vec![
-        ("_headers", new_list(Vec::new())),
-        ("_payload", new_str("")),
-        ("_charset", MbValue::none()),
-    ])
+    make_instance(
+        class_name,
+        vec![
+            ("_headers", new_list(Vec::new())),
+            ("_payload", new_str("")),
+            ("_charset", MbValue::none()),
+        ],
+    )
 }
 
 unsafe extern "C" fn dispatch_message(_a: *const MbValue, _n: usize) -> MbValue {
@@ -942,13 +1058,20 @@ unsafe extern "C" fn dispatch_mimepart(_a: *const MbValue, _n: usize) -> MbValue
 }
 
 fn args_slice<'a>(a: *const MbValue, n: usize) -> &'a [MbValue] {
-    if a.is_null() || n == 0 { &[] } else { unsafe { std::slice::from_raw_parts(a, n) } }
+    if a.is_null() || n == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(a, n) }
+    }
 }
 
 unsafe extern "C" fn dispatch_mimebase(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let maintype = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let maintype = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let subtype = pos.get(1).and_then(|v| extract_str(*v)).unwrap_or_default();
     let m = new_message("MIMEBase");
     header_append(m, "MIME-Version", new_str("1.0"));
@@ -960,16 +1083,23 @@ unsafe extern "C" fn dispatch_mimetext(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
     let text = pos.first().copied().unwrap_or_else(|| new_str(""));
-    let subtype = pos.get(1).and_then(|v| extract_str(*v))
+    let subtype = pos
+        .get(1)
+        .and_then(|v| extract_str(*v))
         .or_else(|| kwarg(items, "_subtype").and_then(extract_str))
         .unwrap_or_else(|| "plain".to_string());
-    let charset = pos.get(2).and_then(|v| extract_str(*v))
+    let charset = pos
+        .get(2)
+        .and_then(|v| extract_str(*v))
         .or_else(|| kwarg(items, "_charset").and_then(extract_str))
         .unwrap_or_else(|| "us-ascii".to_string());
     let m = new_message("MIMEText");
     header_append(m, "MIME-Version", new_str("1.0"));
-    header_append(m, "Content-Type",
-        new_str(format!("text/{subtype}; charset=\"{charset}\"")));
+    header_append(
+        m,
+        "Content-Type",
+        new_str(format!("text/{subtype}; charset=\"{charset}\"")),
+    );
     header_append(m, "Content-Transfer-Encoding", new_str("7bit"));
     retain(text);
     field_set(m, "_payload", text);
@@ -980,13 +1110,14 @@ unsafe extern "C" fn dispatch_mimetext(a: *const MbValue, n: usize) -> MbValue {
 unsafe extern "C" fn dispatch_mimemultipart(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let subtype = pos.first().and_then(|v| extract_str(*v))
+    let subtype = pos
+        .first()
+        .and_then(|v| extract_str(*v))
         .or_else(|| kwarg(items, "_subtype").and_then(extract_str))
         .unwrap_or_else(|| "mixed".to_string());
     let m = new_message("MIMEMultipart");
     header_append(m, "MIME-Version", new_str("1.0"));
-    header_append(m, "Content-Type",
-        new_str(format!("multipart/{subtype}")));
+    header_append(m, "Content-Type", new_str(format!("multipart/{subtype}")));
     field_set(m, "_payload", new_list(Vec::new()));
     m
 }
@@ -994,14 +1125,18 @@ unsafe extern "C" fn dispatch_mimemultipart(a: *const MbValue, n: usize) -> MbVa
 unsafe extern "C" fn dispatch_mimeapplication(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let data = pos.first().copied().unwrap_or_else(|| new_bytes(Vec::new()));
-    let subtype = pos.get(1).and_then(|v| extract_str(*v))
+    let data = pos
+        .first()
+        .copied()
+        .unwrap_or_else(|| new_bytes(Vec::new()));
+    let subtype = pos
+        .get(1)
+        .and_then(|v| extract_str(*v))
         .or_else(|| kwarg(items, "_subtype").and_then(extract_str))
         .unwrap_or_else(|| "octet-stream".to_string());
     let m = new_message("MIMEApplication");
     header_append(m, "MIME-Version", new_str("1.0"));
-    header_append(m, "Content-Type",
-        new_str(format!("application/{subtype}")));
+    header_append(m, "Content-Type", new_str(format!("application/{subtype}")));
     retain(data);
     field_set(m, "_payload", data);
     m
@@ -1010,7 +1145,10 @@ unsafe extern "C" fn dispatch_mimeapplication(a: *const MbValue, n: usize) -> Mb
 unsafe extern "C" fn dispatch_mimeimage(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let data = pos.first().copied().unwrap_or_else(|| new_bytes(Vec::new()));
+    let data = pos
+        .first()
+        .copied()
+        .unwrap_or_else(|| new_bytes(Vec::new()));
     let m = new_message("MIMEImage");
     header_append(m, "MIME-Version", new_str("1.0"));
     header_append(m, "Content-Type", new_str("image/png"));
@@ -1121,7 +1259,10 @@ fn build_message_from_text(text: &str, class_name: &str) -> MbValue {
 unsafe extern "C" fn dispatch_message_from_string(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let text = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let text = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     build_message_from_text(&text, "Message")
 }
 
@@ -1130,15 +1271,22 @@ unsafe extern "C" fn dispatch_message_from_bytes(a: *const MbValue, n: usize) ->
     let pos = positional(items);
     // CPython BytesParser calls text.decode(...) — a str argument dies with
     // AttributeError ('str' object has no attribute 'decode').
-    if pos.first().map(|v| {
-        v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
-    }).unwrap_or(false) {
+    if pos
+        .first()
+        .map(|v| {
+            v.as_ptr()
+                .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+        })
+        .unwrap_or(false)
+    {
         return raise(
             "AttributeError",
             "'str' object has no attribute 'decode'".to_string(),
         );
     }
-    let bytes = pos.first().and_then(|v| extract_bytes(*v))
+    let bytes = pos
+        .first()
+        .and_then(|v| extract_bytes(*v))
         .unwrap_or_default();
     // Decode as latin1 to preserve high bytes
     let text: String = bytes.iter().map(|&b| b as char).collect();
@@ -1150,7 +1298,10 @@ unsafe extern "C" fn dispatch_message_from_bytes(a: *const MbValue, n: usize) ->
 unsafe extern "C" fn m_parser_parsestr(_this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let text = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let text = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     build_message_from_text(&text, "Message")
 }
 
@@ -1172,7 +1323,10 @@ unsafe extern "C" fn m_parser_parse(_this: MbValue, args: MbValue) -> MbValue {
 unsafe extern "C" fn m_bytesparser_parsebytes(_this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
-    let bytes = pos.first().and_then(|v| extract_bytes(*v)).unwrap_or_default();
+    let bytes = pos
+        .first()
+        .and_then(|v| extract_bytes(*v))
+        .unwrap_or_default();
     let text: String = bytes.iter().map(|&b| b as char).collect();
     build_message_from_text(&text, "Message")
 }
@@ -1191,7 +1345,10 @@ unsafe extern "C" fn dispatch_bytesparser_ctor(_a: *const MbValue, _n: usize) ->
 unsafe extern "C" fn dispatch_parseaddr(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let addr = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let addr = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let (name, email) = parse_one_address(&addr);
     new_tuple(vec![new_str(name), new_str(email)])
 }
@@ -1210,7 +1367,9 @@ fn parse_one_address(s: &str) -> (String, String) {
             let mut name = s[..lt].trim().to_string();
             // strip surrounding quotes from name
             if name.len() >= 2 && name.starts_with('"') && name.ends_with('"') {
-                name = name[1..name.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\");
+                name = name[1..name.len() - 1]
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\");
             }
             return (name, addr);
         }
@@ -1231,26 +1390,40 @@ fn parse_one_address(s: &str) -> (String, String) {
 unsafe extern "C" fn dispatch_formataddr(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    if pos.is_empty() { return new_str(""); }
+    if pos.is_empty() {
+        return new_str("");
+    }
     let pair = pos[0];
     let (name, addr) = if let Some(ptr) = pair.as_ptr() {
         unsafe {
             match &(*ptr).data {
                 ObjData::Tuple(t) => {
                     if t.len() == 2 {
-                        (extract_str(t[0]).unwrap_or_default(), extract_str(t[1]).unwrap_or_default())
-                    } else { (String::new(), String::new()) }
+                        (
+                            extract_str(t[0]).unwrap_or_default(),
+                            extract_str(t[1]).unwrap_or_default(),
+                        )
+                    } else {
+                        (String::new(), String::new())
+                    }
                 }
                 ObjData::List(lock) => {
                     let l = lock.read().unwrap();
                     if l.len() == 2 {
-                        (extract_str(l[0]).unwrap_or_default(), extract_str(l[1]).unwrap_or_default())
-                    } else { (String::new(), String::new()) }
+                        (
+                            extract_str(l[0]).unwrap_or_default(),
+                            extract_str(l[1]).unwrap_or_default(),
+                        )
+                    } else {
+                        (String::new(), String::new())
+                    }
                 }
                 _ => (String::new(), String::new()),
             }
         }
-    } else { (String::new(), String::new()) };
+    } else {
+        (String::new(), String::new())
+    };
     if name.is_empty() {
         return new_str(addr);
     }
@@ -1271,7 +1444,9 @@ unsafe extern "C" fn dispatch_getaddresses(a: *const MbValue, n: usize) -> MbVal
     let fieldvalues = pos.first().copied().unwrap_or_else(MbValue::none);
     let mut all_text = String::new();
     for v in args_items(fieldvalues) {
-        if !all_text.is_empty() { all_text.push_str(", "); }
+        if !all_text.is_empty() {
+            all_text.push_str(", ");
+        }
         all_text.push_str(&value_to_string(v));
     }
     let mut out = Vec::new();
@@ -1291,32 +1466,56 @@ fn split_addresses(s: &str) -> Vec<String> {
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '"' => { in_quote = !in_quote; cur.push(c); }
-            '\\' if in_quote => { cur.push(c); if let Some(nc) = chars.next() { cur.push(nc); } }
-            '<' if !in_quote => { angle += 1; cur.push(c); }
-            '>' if !in_quote => { angle -= 1; cur.push(c); }
+            '"' => {
+                in_quote = !in_quote;
+                cur.push(c);
+            }
+            '\\' if in_quote => {
+                cur.push(c);
+                if let Some(nc) = chars.next() {
+                    cur.push(nc);
+                }
+            }
+            '<' if !in_quote => {
+                angle += 1;
+                cur.push(c);
+            }
+            '>' if !in_quote => {
+                angle -= 1;
+                cur.push(c);
+            }
             ',' if !in_quote && angle == 0 => {
                 let t = cur.trim().to_string();
-                if !t.is_empty() { out.push(t); }
+                if !t.is_empty() {
+                    out.push(t);
+                }
                 cur.clear();
             }
             _ => cur.push(c),
         }
     }
     let t = cur.trim().to_string();
-    if !t.is_empty() { out.push(t); }
+    if !t.is_empty() {
+        out.push(t);
+    }
     out
 }
 
 unsafe extern "C" fn dispatch_utils_quote(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
-    let s = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let s = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     new_str(s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 unsafe extern "C" fn dispatch_utils_unquote(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
-    let s = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let s = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     new_str(email_unquote(&s))
 }
 
@@ -1354,13 +1553,25 @@ unsafe extern "C" fn dispatch_header_ctor(a: *const MbValue, n: usize) -> MbValu
     let items = args_slice(a, n);
     let pos = positional(items);
     let s = pos.first().copied().unwrap_or_else(|| new_str(""));
-    let charset = pos.get(1).and_then(|v| extract_str(*v))
+    let charset = pos
+        .get(1)
+        .and_then(|v| extract_str(*v))
         .or_else(|| kwarg(items, "charset").and_then(extract_str));
     if let Some(c) = &charset {
         let norm = c.trim().to_lowercase().replace('_', "-");
         const KNOWN: [&str; 12] = [
-            "us-ascii", "ascii", "utf-8", "utf8", "latin-1", "latin1",
-            "iso-8859-1", "iso-8859-2", "utf-16", "utf-32", "big5", "gbk",
+            "us-ascii",
+            "ascii",
+            "utf-8",
+            "utf8",
+            "latin-1",
+            "latin1",
+            "iso-8859-1",
+            "iso-8859-2",
+            "utf-16",
+            "utf-32",
+            "big5",
+            "gbk",
         ];
         if !KNOWN.contains(&norm.as_str()) {
             return raise("LookupError", format!("unknown encoding: {c}"));
@@ -1417,12 +1628,17 @@ fn header_encode_str(text: &str, charset: Option<&str>) -> String {
 fn encode_to_charset(text: &str, charset: &str) -> Vec<u8> {
     let cl = charset.to_lowercase();
     match cl.as_str() {
-        "iso-8859-1" | "latin-1" | "latin1" | "iso8859-1" => {
-            text.chars().map(|c| {
+        "iso-8859-1" | "latin-1" | "latin1" | "iso8859-1" => text
+            .chars()
+            .map(|c| {
                 let cp = c as u32;
-                if cp <= 0xFF { cp as u8 } else { b'?' }
-            }).collect()
-        }
+                if cp <= 0xFF {
+                    cp as u8
+                } else {
+                    b'?'
+                }
+            })
+            .collect(),
         _ => text.as_bytes().to_vec(), // utf-8 and friends
     }
 }
@@ -1511,7 +1727,8 @@ fn decode_header_impl(s: &str) -> Vec<MbValue> {
             // whitespace-only run between two encoded words is dropped
             let text = String::from_utf8_lossy(data);
             let is_ws_between = text.trim().is_empty()
-                && idx > 0 && idx + 1 < result.len()
+                && idx > 0
+                && idx + 1 < result.len()
                 && result[idx - 1].0.is_some()
                 && result[idx + 1].0.is_some();
             if is_ws_between {
@@ -1566,7 +1783,10 @@ fn hex_val(b: u8) -> u8 {
 
 unsafe extern "C" fn dispatch_make_header(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
-    let decoded = items.first().copied().unwrap_or_else(|| new_list(Vec::new()));
+    let decoded = items
+        .first()
+        .copied()
+        .unwrap_or_else(|| new_list(Vec::new()));
     // Reassemble chunks: for each (data, charset), decode bytes with charset to text.
     let mut text = String::new();
     for chunk in args_items(decoded) {
@@ -1608,20 +1828,29 @@ fn decode_bytes_charset(bytes: &[u8], charset: &str) -> String {
 unsafe extern "C" fn dispatch_charset_ctor(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let name = pos.first().and_then(|v| extract_str(*v))
+    let name = pos
+        .first()
+        .and_then(|v| extract_str(*v))
         .unwrap_or_else(|| "us-ascii".to_string());
-    make_instance("Charset", vec![
-        ("input_charset", new_str(name.to_lowercase())),
-    ])
+    make_instance(
+        "Charset",
+        vec![("input_charset", new_str(name.to_lowercase()))],
+    )
 }
 
 extern "C" fn m_charset_str(this: MbValue) -> MbValue {
-    field_get(this, "input_charset").map(|v| { retain(v); v }).unwrap_or_else(|| new_str("us-ascii"))
+    field_get(this, "input_charset")
+        .map(|v| {
+            retain(v);
+            v
+        })
+        .unwrap_or_else(|| new_str("us-ascii"))
 }
 
 unsafe extern "C" fn m_charset_header_encode(this: MbValue, value: MbValue) -> MbValue {
     let text = extract_str(value).unwrap_or_default();
-    let cs = field_get(this, "input_charset").and_then(extract_str)
+    let cs = field_get(this, "input_charset")
+        .and_then(extract_str)
         .unwrap_or_else(|| "us-ascii".to_string());
     new_str(header_encode_str(&text, Some(&cs)))
 }
@@ -1632,7 +1861,9 @@ unsafe extern "C" fn m_charset_header_encode(this: MbValue, value: MbValue) -> M
 
 fn qp_header_map(c: u8) -> bool {
     // returns true if octet is SAFE (no escape) for header
-    if c == b' ' { return true; } // becomes '_', still "safe" in MAP sense (len 1)
+    if c == b' ' {
+        return true;
+    } // becomes '_', still "safe" in MAP sense (len 1)
     c.is_ascii_alphanumeric() || b"-!*+/".contains(&c)
 }
 
@@ -1664,14 +1895,20 @@ unsafe extern "C" fn dispatch_qp_body_check(a: *const MbValue, n: usize) -> MbVa
 
 unsafe extern "C" fn dispatch_qp_quote(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
-    let c = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let c = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let byte = c.chars().next().map(|ch| ch as u32 as u8).unwrap_or(0);
     new_str(format!("={:02X}", byte))
 }
 
 unsafe extern "C" fn dispatch_qp_unquote(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
-    let s = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let s = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     // chr(int(s[1:3], 16))
     if s.len() >= 3 {
         let hex = &s[1..3];
@@ -1685,10 +1922,18 @@ unsafe extern "C" fn dispatch_qp_unquote(a: *const MbValue, n: usize) -> MbValue
 unsafe extern "C" fn dispatch_qp_header_encode(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let header_bytes = pos.first().and_then(|v| extract_bytes(*v))
-        .or_else(|| pos.first().and_then(|v| extract_str(*v)).map(|s| s.into_bytes()))
+    let header_bytes = pos
+        .first()
+        .and_then(|v| extract_bytes(*v))
+        .or_else(|| {
+            pos.first()
+                .and_then(|v| extract_str(*v))
+                .map(|s| s.into_bytes())
+        })
         .unwrap_or_default();
-    let charset = pos.get(1).and_then(|v| extract_str(*v))
+    let charset = pos
+        .get(1)
+        .and_then(|v| extract_str(*v))
         .or_else(|| kwarg(items, "charset").and_then(extract_str))
         .unwrap_or_else(|| "iso-8859-1".to_string());
     if header_bytes.is_empty() {
@@ -1710,7 +1955,10 @@ unsafe extern "C" fn dispatch_qp_header_encode(a: *const MbValue, n: usize) -> M
 
 unsafe extern "C" fn dispatch_qp_header_decode(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
-    let s = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let s = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     // s.replace('_',' '); re.sub(r'=[a-fA-F0-9]{2}', unquote, s)
     let s = s.replace('_', " ");
     let bytes = s.as_bytes();
@@ -1737,11 +1985,16 @@ unsafe extern "C" fn dispatch_qp_header_decode(a: *const MbValue, n: usize) -> M
 unsafe extern "C" fn dispatch_qp_body_encode(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let body = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
-    let maxlinelen = kwarg(items, "maxlinelen").and_then(|v| v.as_int())
+    let body = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
+    let maxlinelen = kwarg(items, "maxlinelen")
+        .and_then(|v| v.as_int())
         .or_else(|| pos.get(1).and_then(|v| v.as_int()))
         .unwrap_or(76) as usize;
-    let eol = kwarg(items, "eol").and_then(extract_str)
+    let eol = kwarg(items, "eol")
+        .and_then(extract_str)
         .or_else(|| pos.get(2).and_then(|v| extract_str(*v)))
         .unwrap_or_else(|| "\n".to_string());
     match qp_body_encode(&body, maxlinelen, &eol) {
@@ -1753,8 +2006,12 @@ unsafe extern "C" fn dispatch_qp_body_encode(a: *const MbValue, n: usize) -> MbV
 unsafe extern "C" fn dispatch_qp_decode(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
-    let encoded = pos.first().and_then(|v| extract_str(*v)).unwrap_or_default();
-    let eol = kwarg(items, "eol").and_then(extract_str)
+    let encoded = pos
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
+    let eol = kwarg(items, "eol")
+        .and_then(extract_str)
         .or_else(|| pos.get(1).and_then(|v| extract_str(*v)))
         .unwrap_or_else(|| "\n".to_string());
     new_str(qp_decode_str(&encoded, &eol))
@@ -1769,19 +2026,22 @@ fn qp_body_encode(body: &str, maxlinelen: usize, eol: &str) -> Result<String, St
         return Ok(body.to_string());
     }
     // translate: escape all body-unsafe except \r \n (encode map keeps CR/LF)
-    let translated: String = body.chars().map(|c| {
-        let cp = c as u32;
-        if cp == 0x0D || cp == 0x0A {
-            c.to_string()
-        } else if cp <= 0xFF && qp_body_safe(cp as u8) {
-            c.to_string()
-        } else if cp <= 0xFF {
-            format!("={:02X}", cp as u8)
-        } else {
-            // non-latin1 chars shouldn't appear (body is latin1 str), but be safe
-            c.to_string()
-        }
-    }).collect();
+    let translated: String = body
+        .chars()
+        .map(|c| {
+            let cp = c as u32;
+            if cp == 0x0D || cp == 0x0A {
+                c.to_string()
+            } else if cp <= 0xFF && qp_body_safe(cp as u8) {
+                c.to_string()
+            } else if cp <= 0xFF {
+                format!("={:02X}", cp as u8)
+            } else {
+                // non-latin1 chars shouldn't appear (body is latin1 str), but be safe
+                c.to_string()
+            }
+        })
+        .collect();
     let soft_break = format!("={eol}");
     let maxlinelen1 = maxlinelen - 1;
     let mut encoded_body: Vec<String> = Vec::new();
@@ -1885,7 +2145,10 @@ fn qp_decode_str(encoded: &str, eol: &str) -> String {
             } else if i + 1 == n {
                 i += 1;
                 continue;
-            } else if i + 2 < n && chars[i + 1].is_ascii_hexdigit() && chars[i + 2].is_ascii_hexdigit() {
+            } else if i + 2 < n
+                && chars[i + 1].is_ascii_hexdigit()
+                && chars[i + 2].is_ascii_hexdigit()
+            {
                 let v = (hex_val(chars[i + 1] as u8) << 4) | hex_val(chars[i + 2] as u8);
                 decoded.push(v as char);
                 i += 3;
@@ -1950,7 +2213,10 @@ fn base64_decode(s: &str) -> Vec<u8> {
             _ => None,
         }
     }
-    let cleaned: Vec<u8> = s.bytes().filter(|&b| b != b'=' && !b.is_ascii_whitespace()).collect();
+    let cleaned: Vec<u8> = s
+        .bytes()
+        .filter(|&b| b != b'=' && !b.is_ascii_whitespace())
+        .collect();
     let mut out = Vec::new();
     let mut buf = 0u32;
     let mut bits = 0u32;
@@ -1972,7 +2238,9 @@ fn base64_decode(s: &str) -> Vec<u8> {
 // ════════════════════════════════════════════════════════════════════════
 
 fn reg_native(addr: usize) {
-    NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(addr as u64); });
+    NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(addr as u64);
+    });
 }
 
 fn register_native_class(name: &str, bases: &[&str], methods: Vec<(&str, *const (), bool)>) {
@@ -2003,10 +2271,26 @@ fn message_methods() -> Vec<(&'static str, *const (), bool)> {
         ("add_header", m_add_header as *const (), true),
         ("replace_header", m_replace_header as *const (), false),
         ("get_content_type", m_get_content_type as *const (), false),
-        ("get_content_maintype", m_get_content_maintype as *const (), false),
-        ("get_content_subtype", m_get_content_subtype as *const (), false),
-        ("get_content_charset", m_get_content_charset as *const (), false),
-        ("get_content_disposition", m_get_content_disposition as *const (), false),
+        (
+            "get_content_maintype",
+            m_get_content_maintype as *const (),
+            false,
+        ),
+        (
+            "get_content_subtype",
+            m_get_content_subtype as *const (),
+            false,
+        ),
+        (
+            "get_content_charset",
+            m_get_content_charset as *const (),
+            false,
+        ),
+        (
+            "get_content_disposition",
+            m_get_content_disposition as *const (),
+            false,
+        ),
         ("get_params", m_get_params as *const (), true),
         ("get_param", m_get_param as *const (), true),
         ("del_param", m_del_param as *const (), true),
@@ -2028,7 +2312,9 @@ fn message_methods() -> Vec<(&'static str, *const (), bool)> {
 fn register_ctor(attrs: &mut HashMap<String, MbValue>, name: &str, addr: usize, type_name: &str) {
     attrs.insert(name.to_string(), MbValue::from_func(addr));
     reg_native(addr);
-    NATIVE_TYPE_NAMES.with(|m| { m.borrow_mut().insert(addr as u64, type_name.to_string()); });
+    NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(addr as u64, type_name.to_string());
+    });
 }
 
 fn register_func(attrs: &mut HashMap<String, MbValue>, name: &str, addr: usize) {
@@ -2045,33 +2331,64 @@ pub fn register() {
         ("MIMEBase", &["Message", "object"]),
         ("MIMENonMultipart", &["MIMEBase", "Message", "object"]),
         ("MIMEMultipart", &["MIMEBase", "Message", "object"]),
-        ("MIMEText", &["MIMENonMultipart", "MIMEBase", "Message", "object"]),
-        ("MIMEApplication", &["MIMENonMultipart", "MIMEBase", "Message", "object"]),
-        ("MIMEImage", &["MIMENonMultipart", "MIMEBase", "Message", "object"]),
-        ("MIMEAudio", &["MIMENonMultipart", "MIMEBase", "Message", "object"]),
-        ("MIMEMessage", &["MIMENonMultipart", "MIMEBase", "Message", "object"]),
+        (
+            "MIMEText",
+            &["MIMENonMultipart", "MIMEBase", "Message", "object"],
+        ),
+        (
+            "MIMEApplication",
+            &["MIMENonMultipart", "MIMEBase", "Message", "object"],
+        ),
+        (
+            "MIMEImage",
+            &["MIMENonMultipart", "MIMEBase", "Message", "object"],
+        ),
+        (
+            "MIMEAudio",
+            &["MIMENonMultipart", "MIMEBase", "Message", "object"],
+        ),
+        (
+            "MIMEMessage",
+            &["MIMENonMultipart", "MIMEBase", "Message", "object"],
+        ),
     ];
     for (cls, bases) in msg_classes {
         register_native_class(cls, bases, message_methods());
     }
     // Parser classes
-    register_native_class("Parser", &["object"], vec![
-        ("parsestr", m_parser_parsestr as *const (), true),
-        ("parse", m_parser_parse as *const (), true),
-    ]);
-    register_native_class("BytesParser", &["object"], vec![
-        ("parsestr", m_parser_parsestr as *const (), true),
-        ("parsebytes", m_bytesparser_parsebytes as *const (), true),
-        ("parse", m_parser_parse as *const (), true),
-    ]);
-    register_native_class("Header", &["object"], vec![
-        ("encode", m_header_encode as *const (), false),
-        ("__str__", m_header_str as *const (), false),
-    ]);
-    register_native_class("Charset", &["object"], vec![
-        ("__str__", m_charset_str as *const (), false),
-        ("header_encode", m_charset_header_encode as *const (), false),
-    ]);
+    register_native_class(
+        "Parser",
+        &["object"],
+        vec![
+            ("parsestr", m_parser_parsestr as *const (), true),
+            ("parse", m_parser_parse as *const (), true),
+        ],
+    );
+    register_native_class(
+        "BytesParser",
+        &["object"],
+        vec![
+            ("parsestr", m_parser_parsestr as *const (), true),
+            ("parsebytes", m_bytesparser_parsebytes as *const (), true),
+            ("parse", m_parser_parse as *const (), true),
+        ],
+    );
+    register_native_class(
+        "Header",
+        &["object"],
+        vec![
+            ("encode", m_header_encode as *const (), false),
+            ("__str__", m_header_str as *const (), false),
+        ],
+    );
+    register_native_class(
+        "Charset",
+        &["object"],
+        vec![
+            ("__str__", m_charset_str as *const (), false),
+            ("header_encode", m_charset_header_encode as *const (), false),
+        ],
+    );
 
     register_email_root();
     register_email_utils();
@@ -2087,62 +2404,199 @@ pub fn register() {
 
 fn register_email_root() {
     let mut attrs = HashMap::new();
-    register_ctor(&mut attrs, "message_from_string", dispatch_message_from_string as *const () as usize, "Message");
-    register_ctor(&mut attrs, "message_from_bytes", dispatch_message_from_bytes as *const () as usize, "Message");
-    register_func(&mut attrs, "message_from_file", dispatch_message_from_string as *const () as usize);
-    register_func(&mut attrs, "message_from_binary_file", dispatch_message_from_bytes as *const () as usize);
+    register_ctor(
+        &mut attrs,
+        "message_from_string",
+        dispatch_message_from_string as *const () as usize,
+        "Message",
+    );
+    register_ctor(
+        &mut attrs,
+        "message_from_bytes",
+        dispatch_message_from_bytes as *const () as usize,
+        "Message",
+    );
+    register_func(
+        &mut attrs,
+        "message_from_file",
+        dispatch_message_from_string as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "message_from_binary_file",
+        dispatch_message_from_bytes as *const () as usize,
+    );
     super::register_module("email", attrs);
 }
 
 fn register_email_utils() {
     let mut attrs = HashMap::new();
-    register_func(&mut attrs, "formatdate", dispatch_formatdate as *const () as usize);
-    register_func(&mut attrs, "format_datetime", dispatch_empty_str as *const () as usize);
-    register_func(&mut attrs, "parseaddr", dispatch_parseaddr as *const () as usize);
-    register_func(&mut attrs, "formataddr", dispatch_formataddr as *const () as usize);
-    register_func(&mut attrs, "getaddresses", dispatch_getaddresses as *const () as usize);
-    register_func(&mut attrs, "parsedate", dispatch_parsedate as *const () as usize);
-    register_func(&mut attrs, "parsedate_tz", dispatch_parsedate as *const () as usize);
-    register_func(&mut attrs, "parsedate_to_datetime", dispatch_dict_shell as *const () as usize);
-    register_func(&mut attrs, "mktime_tz", dispatch_parsedate as *const () as usize);
-    register_func(&mut attrs, "quote", dispatch_utils_quote as *const () as usize);
-    register_func(&mut attrs, "unquote", dispatch_utils_unquote as *const () as usize);
-    register_func(&mut attrs, "make_msgid", dispatch_make_msgid as *const () as usize);
-    register_func(&mut attrs, "collapse_rfc2231_value", dispatch_empty_str as *const () as usize);
-    register_func(&mut attrs, "decode_rfc2231", dispatch_empty_list as *const () as usize);
-    register_func(&mut attrs, "encode_rfc2231", dispatch_empty_str as *const () as usize);
-    register_func(&mut attrs, "decode_params", dispatch_empty_list as *const () as usize);
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("COMMASPACE".into(), MbValue::from_ptr(MbObject::new_str(", ".to_string())));
-    attrs.insert("CRLF".into(), MbValue::from_ptr(MbObject::new_str("\r\n".to_string())));
-    attrs.insert("EMPTYSTRING".into(), MbValue::from_ptr(MbObject::new_str("".to_string())));
-    attrs.insert("TICK".into(), MbValue::from_ptr(MbObject::new_str("'".to_string())));
-    attrs.insert("UEMPTYSTRING".into(), MbValue::from_ptr(MbObject::new_str("".to_string())));
+    register_func(
+        &mut attrs,
+        "formatdate",
+        dispatch_formatdate as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "format_datetime",
+        dispatch_empty_str as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "parseaddr",
+        dispatch_parseaddr as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "formataddr",
+        dispatch_formataddr as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "getaddresses",
+        dispatch_getaddresses as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "parsedate",
+        dispatch_parsedate as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "parsedate_tz",
+        dispatch_parsedate as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "parsedate_to_datetime",
+        dispatch_dict_shell as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "mktime_tz",
+        dispatch_parsedate as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "quote",
+        dispatch_utils_quote as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "unquote",
+        dispatch_utils_unquote as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "make_msgid",
+        dispatch_make_msgid as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "collapse_rfc2231_value",
+        dispatch_empty_str as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "decode_rfc2231",
+        dispatch_empty_list as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "encode_rfc2231",
+        dispatch_empty_str as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "decode_params",
+        dispatch_empty_list as *const () as usize,
+    );
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "COMMASPACE".into(),
+        MbValue::from_ptr(MbObject::new_str(", ".to_string())),
+    );
+    attrs.insert(
+        "CRLF".into(),
+        MbValue::from_ptr(MbObject::new_str("\r\n".to_string())),
+    );
+    attrs.insert(
+        "EMPTYSTRING".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())),
+    );
+    attrs.insert(
+        "TICK".into(),
+        MbValue::from_ptr(MbObject::new_str("'".to_string())),
+    );
+    attrs.insert(
+        "UEMPTYSTRING".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())),
+    );
     attrs.insert("supports_strict_parsing".into(), MbValue::from_int(1));
     super::register_module("email.utils", attrs);
 }
 
 fn register_email_message() {
     let mut attrs = HashMap::new();
-    register_ctor(&mut attrs, "Message", dispatch_message as *const () as usize, "Message");
-    register_ctor(&mut attrs, "EmailMessage", dispatch_emailmessage as *const () as usize, "EmailMessage");
-    register_ctor(&mut attrs, "MIMEPart", dispatch_mimepart as *const () as usize, "MIMEPart");
-        // surface: missing CPython public names (auto-added)
+    register_ctor(
+        &mut attrs,
+        "Message",
+        dispatch_message as *const () as usize,
+        "Message",
+    );
+    register_ctor(
+        &mut attrs,
+        "EmailMessage",
+        dispatch_emailmessage as *const () as usize,
+        "EmailMessage",
+    );
+    register_ctor(
+        &mut attrs,
+        "MIMEPart",
+        dispatch_mimepart as *const () as usize,
+        "MIMEPart",
+    );
+    // surface: missing CPython public names (auto-added)
     // Callable classes/functions re-exported into email.message's namespace.
-    register_ctor(&mut attrs, "Charset", dispatch_charset_ctor as *const () as usize, "Charset");
-    register_ctor(&mut attrs, "BytesIO", dispatch_dict_shell as *const () as usize, "BytesIO");
-    register_ctor(&mut attrs, "StringIO", dispatch_dict_shell as *const () as usize, "StringIO");
-    register_func(&mut attrs, "decode_b", dispatch_dict_shell as *const () as usize);
+    register_ctor(
+        &mut attrs,
+        "Charset",
+        dispatch_charset_ctor as *const () as usize,
+        "Charset",
+    );
+    register_ctor(
+        &mut attrs,
+        "BytesIO",
+        dispatch_dict_shell as *const () as usize,
+        "BytesIO",
+    );
+    register_ctor(
+        &mut attrs,
+        "StringIO",
+        dispatch_dict_shell as *const () as usize,
+        "StringIO",
+    );
+    register_func(
+        &mut attrs,
+        "decode_b",
+        dispatch_dict_shell as *const () as usize,
+    );
     // Non-callable re-exports: imported submodules, a policy instance, a regex,
     // and the module-level string constant. Dict shells stand in for modules.
-    attrs.insert("SEMISPACE".into(), MbValue::from_ptr(MbObject::new_str("; ".to_string())));
+    attrs.insert(
+        "SEMISPACE".into(),
+        MbValue::from_ptr(MbObject::new_str("; ".to_string())),
+    );
     attrs.insert("binascii".into(), MbValue::from_ptr(MbObject::new_dict()));
     attrs.insert("errors".into(), MbValue::from_ptr(MbObject::new_dict()));
     attrs.insert("quopri".into(), MbValue::from_ptr(MbObject::new_dict()));
     attrs.insert("re".into(), MbValue::from_ptr(MbObject::new_dict()));
     attrs.insert("utils".into(), MbValue::from_ptr(MbObject::new_dict()));
     attrs.insert("compat32".into(), MbValue::from_ptr(MbObject::new_dict()));
-    attrs.insert("tspecials".into(), MbValue::from_ptr(MbObject::new_str("()<>@,;:\\\"/[]?=".to_string())));
+    attrs.insert(
+        "tspecials".into(),
+        MbValue::from_ptr(MbObject::new_str("()<>@,;:\\\"/[]?=".to_string())),
+    );
     super::register_module("email.message", attrs);
 }
 
@@ -2161,75 +2615,248 @@ fn register_email_policy() {
 
 fn register_email_parser() {
     let mut attrs = HashMap::new();
-    register_ctor(&mut attrs, "Parser", dispatch_parser_ctor as *const () as usize, "Parser");
-    register_ctor(&mut attrs, "BytesParser", dispatch_bytesparser_ctor as *const () as usize, "BytesParser");
-    register_ctor(&mut attrs, "HeaderParser", dispatch_parser_ctor as *const () as usize, "Parser");
-    register_ctor(&mut attrs, "BytesHeaderParser", dispatch_bytesparser_ctor as *const () as usize, "BytesParser");
-    register_ctor(&mut attrs, "FeedParser", dispatch_parser_ctor as *const () as usize, "Parser");
-    register_ctor(&mut attrs, "BytesFeedParser", dispatch_bytesparser_ctor as *const () as usize, "BytesParser");
+    register_ctor(
+        &mut attrs,
+        "Parser",
+        dispatch_parser_ctor as *const () as usize,
+        "Parser",
+    );
+    register_ctor(
+        &mut attrs,
+        "BytesParser",
+        dispatch_bytesparser_ctor as *const () as usize,
+        "BytesParser",
+    );
+    register_ctor(
+        &mut attrs,
+        "HeaderParser",
+        dispatch_parser_ctor as *const () as usize,
+        "Parser",
+    );
+    register_ctor(
+        &mut attrs,
+        "BytesHeaderParser",
+        dispatch_bytesparser_ctor as *const () as usize,
+        "BytesParser",
+    );
+    register_ctor(
+        &mut attrs,
+        "FeedParser",
+        dispatch_parser_ctor as *const () as usize,
+        "Parser",
+    );
+    register_ctor(
+        &mut attrs,
+        "BytesFeedParser",
+        dispatch_bytesparser_ctor as *const () as usize,
+        "BytesParser",
+    );
     super::register_module("email.parser", attrs);
 }
 
 fn register_email_header() {
     let mut attrs = HashMap::new();
-    register_ctor(&mut attrs, "Header", dispatch_header_ctor as *const () as usize, "Header");
-    register_func(&mut attrs, "decode_header", dispatch_decode_header as *const () as usize);
-    register_func(&mut attrs, "make_header", dispatch_make_header as *const () as usize);
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("EMPTYSTRING".into(), MbValue::from_ptr(MbObject::new_str("".to_string())));
-    attrs.insert("FWS".into(), MbValue::from_ptr(MbObject::new_str(" \t".to_string())));
+    register_ctor(
+        &mut attrs,
+        "Header",
+        dispatch_header_ctor as *const () as usize,
+        "Header",
+    );
+    register_func(
+        &mut attrs,
+        "decode_header",
+        dispatch_decode_header as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "make_header",
+        dispatch_make_header as *const () as usize,
+    );
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "EMPTYSTRING".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())),
+    );
+    attrs.insert(
+        "FWS".into(),
+        MbValue::from_ptr(MbObject::new_str(" \t".to_string())),
+    );
     attrs.insert("MAXLINELEN".into(), MbValue::from_int(78));
-    attrs.insert("NL".into(), MbValue::from_ptr(MbObject::new_str("\n".to_string())));
-    attrs.insert("SPACE".into(), MbValue::from_ptr(MbObject::new_str(" ".to_string())));
-    attrs.insert("SPACE8".into(), MbValue::from_ptr(MbObject::new_str("        ".to_string())));
+    attrs.insert(
+        "NL".into(),
+        MbValue::from_ptr(MbObject::new_str("\n".to_string())),
+    );
+    attrs.insert(
+        "SPACE".into(),
+        MbValue::from_ptr(MbObject::new_str(" ".to_string())),
+    );
+    attrs.insert(
+        "SPACE8".into(),
+        MbValue::from_ptr(MbObject::new_str("        ".to_string())),
+    );
     super::register_module("email.header", attrs);
 }
 
 fn register_email_charset() {
     let mut attrs = HashMap::new();
-    register_ctor(&mut attrs, "Charset", dispatch_charset_ctor as *const () as usize, "Charset");
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("DEFAULT_CHARSET".into(), MbValue::from_ptr(MbObject::new_str("us-ascii".to_string())));
-    attrs.insert("EMPTYSTRING".into(), MbValue::from_ptr(MbObject::new_str("".to_string())));
+    register_ctor(
+        &mut attrs,
+        "Charset",
+        dispatch_charset_ctor as *const () as usize,
+        "Charset",
+    );
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "DEFAULT_CHARSET".into(),
+        MbValue::from_ptr(MbObject::new_str("us-ascii".to_string())),
+    );
+    attrs.insert(
+        "EMPTYSTRING".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())),
+    );
     attrs.insert("RFC2047_CHROME_LEN".into(), MbValue::from_int(7));
-    attrs.insert("UNKNOWN8BIT".into(), MbValue::from_ptr(MbObject::new_str("unknown-8bit".to_string())));
+    attrs.insert(
+        "UNKNOWN8BIT".into(),
+        MbValue::from_ptr(MbObject::new_str("unknown-8bit".to_string())),
+    );
     super::register_module("email.charset", attrs);
 }
 
 fn register_email_quoprimime() {
     let mut attrs = HashMap::new();
-    register_func(&mut attrs, "header_check", dispatch_qp_header_check as *const () as usize);
-    register_func(&mut attrs, "body_check", dispatch_qp_body_check as *const () as usize);
+    register_func(
+        &mut attrs,
+        "header_check",
+        dispatch_qp_header_check as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "body_check",
+        dispatch_qp_body_check as *const () as usize,
+    );
     register_func(&mut attrs, "quote", dispatch_qp_quote as *const () as usize);
-    register_func(&mut attrs, "unquote", dispatch_qp_unquote as *const () as usize);
-    register_func(&mut attrs, "header_encode", dispatch_qp_header_encode as *const () as usize);
-    register_func(&mut attrs, "header_decode", dispatch_qp_header_decode as *const () as usize);
-    register_func(&mut attrs, "body_encode", dispatch_qp_body_encode as *const () as usize);
-    register_func(&mut attrs, "decode", dispatch_qp_decode as *const () as usize);
-    register_func(&mut attrs, "body_decode", dispatch_qp_decode as *const () as usize);
-    register_func(&mut attrs, "decodestring", dispatch_qp_decode as *const () as usize);
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("CRLF".into(), MbValue::from_ptr(MbObject::new_str("\r\n".to_string())));
-    attrs.insert("EMPTYSTRING".into(), MbValue::from_ptr(MbObject::new_str("".to_string())));
-    attrs.insert("NL".into(), MbValue::from_ptr(MbObject::new_str("\n".to_string())));
-    attrs.insert("ascii_letters".into(), MbValue::from_ptr(MbObject::new_str("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_string())));
-    attrs.insert("digits".into(), MbValue::from_ptr(MbObject::new_str("0123456789".to_string())));
-    attrs.insert("hexdigits".into(), MbValue::from_ptr(MbObject::new_str("0123456789abcdefABCDEF".to_string())));
+    register_func(
+        &mut attrs,
+        "unquote",
+        dispatch_qp_unquote as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "header_encode",
+        dispatch_qp_header_encode as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "header_decode",
+        dispatch_qp_header_decode as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "body_encode",
+        dispatch_qp_body_encode as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "decode",
+        dispatch_qp_decode as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "body_decode",
+        dispatch_qp_decode as *const () as usize,
+    );
+    register_func(
+        &mut attrs,
+        "decodestring",
+        dispatch_qp_decode as *const () as usize,
+    );
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "CRLF".into(),
+        MbValue::from_ptr(MbObject::new_str("\r\n".to_string())),
+    );
+    attrs.insert(
+        "EMPTYSTRING".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())),
+    );
+    attrs.insert(
+        "NL".into(),
+        MbValue::from_ptr(MbObject::new_str("\n".to_string())),
+    );
+    attrs.insert(
+        "ascii_letters".into(),
+        MbValue::from_ptr(MbObject::new_str(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".to_string(),
+        )),
+    );
+    attrs.insert(
+        "digits".into(),
+        MbValue::from_ptr(MbObject::new_str("0123456789".to_string())),
+    );
+    attrs.insert(
+        "hexdigits".into(),
+        MbValue::from_ptr(MbObject::new_str("0123456789abcdefABCDEF".to_string())),
+    );
     super::register_module("email.quoprimime", attrs);
 }
 
 fn register_email_mime() {
     // (module, class-name, ctor, type)
     let entries: &[(&str, &str, *const (), &str)] = &[
-        ("email.mime.base", "MIMEBase", dispatch_mimebase as *const (), "MIMEBase"),
-        ("email.mime", "MIMEBase", dispatch_mimebase as *const (), "MIMEBase"),
-        ("email.mime.text", "MIMEText", dispatch_mimetext as *const (), "MIMEText"),
-        ("email.mime.multipart", "MIMEMultipart", dispatch_mimemultipart as *const (), "MIMEMultipart"),
-        ("email.mime.application", "MIMEApplication", dispatch_mimeapplication as *const (), "MIMEApplication"),
-        ("email.mime.image", "MIMEImage", dispatch_mimeimage as *const (), "MIMEImage"),
-        ("email.mime.audio", "MIMEAudio", dispatch_mimeaudio as *const (), "MIMEAudio"),
-        ("email.mime.message", "MIMEMessage", dispatch_mimemessage as *const (), "MIMEMessage"),
-        ("email.mime.nonmultipart", "MIMENonMultipart", dispatch_mimenonmultipart as *const (), "MIMENonMultipart"),
+        (
+            "email.mime.base",
+            "MIMEBase",
+            dispatch_mimebase as *const (),
+            "MIMEBase",
+        ),
+        (
+            "email.mime",
+            "MIMEBase",
+            dispatch_mimebase as *const (),
+            "MIMEBase",
+        ),
+        (
+            "email.mime.text",
+            "MIMEText",
+            dispatch_mimetext as *const (),
+            "MIMEText",
+        ),
+        (
+            "email.mime.multipart",
+            "MIMEMultipart",
+            dispatch_mimemultipart as *const (),
+            "MIMEMultipart",
+        ),
+        (
+            "email.mime.application",
+            "MIMEApplication",
+            dispatch_mimeapplication as *const (),
+            "MIMEApplication",
+        ),
+        (
+            "email.mime.image",
+            "MIMEImage",
+            dispatch_mimeimage as *const (),
+            "MIMEImage",
+        ),
+        (
+            "email.mime.audio",
+            "MIMEAudio",
+            dispatch_mimeaudio as *const (),
+            "MIMEAudio",
+        ),
+        (
+            "email.mime.message",
+            "MIMEMessage",
+            dispatch_mimemessage as *const (),
+            "MIMEMessage",
+        ),
+        (
+            "email.mime.nonmultipart",
+            "MIMENonMultipart",
+            dispatch_mimenonmultipart as *const (),
+            "MIMENonMultipart",
+        ),
     ];
     for (mod_name, cls_name, addr, type_name) in entries {
         let mut attrs = HashMap::new();
@@ -2244,12 +2871,24 @@ fn register_email_misc_submodules() {
     // exercised by the gradable fixtures beyond import.
     let addr = dispatch_dict_shell as *const () as usize;
     reg_native(addr);
-    for m in &["email.generator", "email.headerregistry", "email.base64mime",
-               "email.encoders", "email.errors", "email.iterators"] {
+    for m in &[
+        "email.generator",
+        "email.headerregistry",
+        "email.base64mime",
+        "email.encoders",
+        "email.errors",
+        "email.iterators",
+    ] {
         let mut attrs = HashMap::new();
         // generic class-ish names so attribute access does not explode
-        for cls in &["Generator", "DecodedGenerator", "BytesGenerator",
-                     "HeaderRegistry", "MessageError", "MessageParseError"] {
+        for cls in &[
+            "Generator",
+            "DecodedGenerator",
+            "BytesGenerator",
+            "HeaderRegistry",
+            "MessageError",
+            "MessageParseError",
+        ] {
             attrs.insert((*cls).to_string(), MbValue::from_func(addr));
         }
         super::register_module(m, attrs);

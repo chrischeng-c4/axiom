@@ -59,7 +59,9 @@ impl<T: StatOps> NdArray<T> {
     /// let col_sums = arr.sum_axis(0).unwrap(); // [4, 6]
     /// ```
     pub fn sum_axis(&self, axis: usize) -> Result<NdArray<T>> {
-        self.reduce_axis(axis, |slice| slice.iter().fold(T::zero(), |acc, &x| acc + x))
+        self.reduce_axis(axis, |slice| {
+            slice.iter().fold(T::zero(), |acc, &x| acc + x)
+        })
     }
 
     /// Minimum of all elements.
@@ -234,7 +236,9 @@ impl<T: StatOps + Div<Output = T>> NdArray<T> {
 }
 
 /// Trait for types that support variance calculations.
-pub trait VarOps: StatOps + Div<Output = Self> + std::ops::Mul<Output = Self> + std::ops::Sub<Output = Self> {
+pub trait VarOps:
+    StatOps + Div<Output = Self> + std::ops::Mul<Output = Self> + std::ops::Sub<Output = Self>
+{
     fn sqrt_val(self) -> Self;
 }
 
@@ -310,8 +314,7 @@ impl<T: VarOps> NdArray<T> {
             if slice.len() <= 1 {
                 return T::zero();
             }
-            let mean = slice.iter().fold(T::zero(), |acc, &x| acc + x)
-                / T::from_usize(slice.len());
+            let mean = slice.iter().fold(T::zero(), |acc, &x| acc + x) / T::from_usize(slice.len());
             let sum_sq: T = slice
                 .iter()
                 .fold(T::zero(), |acc, &x| acc + (x - mean) * (x - mean));
@@ -600,7 +603,6 @@ impl NdArray<f64> {
         self.std() / mean.abs()
     }
 
-
     /// Compute the q-th percentile of the data.
     ///
     /// q should be between 0 and 100.
@@ -642,7 +644,9 @@ impl NdArray<f64> {
 
         let (n_vars, n_obs) = (self.dims()[0], self.dims()[1]);
         if n_obs < 2 {
-            return Err(ArrayError::InvalidOperation("need at least 2 observations".into()));
+            return Err(ArrayError::InvalidOperation(
+                "need at least 2 observations".into(),
+            ));
         }
 
         // Compute means
@@ -695,7 +699,9 @@ impl NdArray<f64> {
 
         let (n_vars, n_obs) = (self.dims()[0], self.dims()[1]);
         if n_obs < 2 {
-            return Err(ArrayError::InvalidOperation("need at least 2 observations".into()));
+            return Err(ArrayError::InvalidOperation(
+                "need at least 2 observations".into(),
+            ));
         }
 
         // Compute means

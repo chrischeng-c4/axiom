@@ -1,7 +1,7 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// platform module for Mamba (#mamba-stdlib).
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -32,9 +32,7 @@ unsafe extern "C" fn dispatch_uname(_args_ptr: *const MbValue, _nargs: usize) ->
 }
 
 unsafe extern "C" fn dispatch_architecture(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_tuple(vec![
-        new_str("64bit"), new_str(""),
-    ]))
+    MbValue::from_ptr(MbObject::new_tuple(vec![new_str("64bit"), new_str("")]))
 }
 
 unsafe extern "C" fn dispatch_mac_ver(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -46,18 +44,27 @@ unsafe extern "C" fn dispatch_mac_ver(_args_ptr: *const MbValue, _nargs: usize) 
     MbValue::from_ptr(MbObject::new_tuple(vec![
         new_str(&release),
         MbValue::from_ptr(MbObject::new_tuple(vec![
-            new_str(""), new_str(""), new_str(""),
+            new_str(""),
+            new_str(""),
+            new_str(""),
         ])),
         mb_platform_machine(),
     ]))
 }
 
 unsafe extern "C" fn dispatch_java_ver(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    let empty3 = || MbValue::from_ptr(MbObject::new_tuple(vec![
-        new_str(""), new_str(""), new_str(""),
-    ]));
+    let empty3 = || {
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            new_str(""),
+            new_str(""),
+            new_str(""),
+        ]))
+    };
     MbValue::from_ptr(MbObject::new_tuple(vec![
-        new_str(""), new_str(""), empty3(), empty3(),
+        new_str(""),
+        new_str(""),
+        empty3(),
+        empty3(),
     ]))
 }
 
@@ -84,9 +91,7 @@ unsafe extern "C" fn dispatch_libc_ver(args_ptr: *const MbValue, nargs: usize) -
             if !std::path::Path::new(&path).exists() {
                 super::super::exception::mb_raise(
                     new_str_val("FileNotFoundError"),
-                    new_str_val(&format!(
-                        "[Errno 2] No such file or directory: '{path}'"
-                    )),
+                    new_str_val(&format!("[Errno 2] No such file or directory: '{path}'")),
                 );
                 return MbValue::none();
             }
@@ -95,13 +100,21 @@ unsafe extern "C" fn dispatch_libc_ver(args_ptr: *const MbValue, nargs: usize) -
     MbValue::from_ptr(MbObject::new_tuple(vec![new_str(""), new_str("")]))
 }
 
-unsafe extern "C" fn dispatch_python_version_tuple(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_python_version_tuple(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(vec![
-        new_str("3"), new_str("12"), new_str("0"),
+        new_str("3"),
+        new_str("12"),
+        new_str("0"),
     ]))
 }
 
-unsafe extern "C" fn dispatch_python_implementation(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_python_implementation(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     new_str("CPython")
 }
 
@@ -138,12 +151,17 @@ unsafe extern "C" fn dispatch_sys_version(args_ptr: *const MbValue, nargs: usize
     }
 }
 
-unsafe extern "C" fn dispatch_comparable_version(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_comparable_version(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     if nargs == 0 {
         return MbValue::none();
     }
     let a = std::slice::from_raw_parts(args_ptr, nargs);
-    let Some(v) = as_str_arg(a[0]) else { return MbValue::none() };
+    let Some(v) = as_str_arg(a[0]) else {
+        return MbValue::none();
+    };
     mb_platform_comparable_version(&v)
 }
 
@@ -172,8 +190,14 @@ pub fn register() {
         ("java_ver", dispatch_java_ver as usize),
         ("system_alias", dispatch_system_alias as usize),
         ("libc_ver", dispatch_libc_ver as usize),
-        ("python_version_tuple", dispatch_python_version_tuple as usize),
-        ("python_implementation", dispatch_python_implementation as usize),
+        (
+            "python_version_tuple",
+            dispatch_python_version_tuple as usize,
+        ),
+        (
+            "python_implementation",
+            dispatch_python_implementation as usize,
+        ),
         ("python_branch", dispatch_python_branch as usize),
         ("python_revision", dispatch_python_revision as usize),
         ("python_build", dispatch_python_build as usize),
@@ -202,8 +226,10 @@ pub fn register() {
         });
     }
     // Caches the test helper clears between runs.
-    attrs.insert("_sys_version_cache".to_string(),
-        MbValue::from_ptr(MbObject::new_dict()));
+    attrs.insert(
+        "_sys_version_cache".to_string(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
     attrs.insert("_uname_cache".to_string(), MbValue::none());
     attrs.insert("_os_release_cache".to_string(), MbValue::none());
     super::register_module("platform", attrs);
@@ -220,7 +246,11 @@ fn new_str_val(s: &str) -> MbValue {
 fn as_str_arg(v: MbValue) -> Option<String> {
     v.as_ptr().and_then(|ptr| unsafe {
         use super::super::rc::ObjData;
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -248,8 +278,13 @@ fn uname_parts() -> (String, String, String, String, String, String) {
         let node = run_cmd("uname", &["-n"]).unwrap_or_else(|| "localhost".to_string());
         let release = run_cmd("uname", &["-r"]).unwrap_or_default();
         let version = run_cmd("uname", &["-v"]).unwrap_or_default();
-        let machine = run_cmd("uname", &["-m"]).unwrap_or_else(|| std::env::consts::ARCH.to_string());
-        let processor = if system == "Darwin" { "arm".to_string() } else { String::new() };
+        let machine =
+            run_cmd("uname", &["-m"]).unwrap_or_else(|| std::env::consts::ARCH.to_string());
+        let processor = if system == "Darwin" {
+            "arm".to_string()
+        } else {
+            String::new()
+        };
         let v = (system, node, release, version, machine, processor);
         *c.borrow_mut() = Some(v.clone());
         v
@@ -268,8 +303,12 @@ pub fn mb_platform_uname() -> MbValue {
         MbValue::none(),
     );
     let args = MbValue::from_ptr(MbObject::new_list(vec![
-        new_str(&system), new_str(&node), new_str(&release),
-        new_str(&version), new_str(&machine), new_str(&processor),
+        new_str(&system),
+        new_str(&node),
+        new_str(&release),
+        new_str(&version),
+        new_str(&machine),
+        new_str(&processor),
     ]));
     super::super::builtins::mb_call_spread(factory, args)
 }
@@ -300,11 +339,22 @@ pub fn mb_platform_sys_version(banner: &str) -> MbValue {
         let close = s3.find(')')?;
         let inner = &s3[..close];
         let mut parts = inner.splitn(3, ',');
-        let buildno = parts.next().unwrap_or("").trim().trim_start_matches('#').to_string();
+        let buildno = parts
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_start_matches('#')
+            .to_string();
         // builddate joins the date and time segments with a space
         // ('Jun 21 2006', '13:54:21' → 'Jun 21 2006 13:54:21').
-        let date = parts.next().map(|d| d.trim().to_string()).unwrap_or_default();
-        let time = parts.next().map(|t| t.trim().to_string()).unwrap_or_default();
+        let date = parts
+            .next()
+            .map(|d| d.trim().to_string())
+            .unwrap_or_default();
+        let time = parts
+            .next()
+            .map(|t| t.trim().to_string())
+            .unwrap_or_default();
         let builddate = if time.is_empty() {
             date
         } else {
@@ -319,16 +369,19 @@ pub fn mb_platform_sys_version(banner: &str) -> MbValue {
     match parse() {
         Some((version, buildno, builddate, compiler)) => {
             MbValue::from_ptr(MbObject::new_tuple(vec![
-                new_str(name), new_str(&version), new_str(""), new_str(""),
-                new_str(&buildno), new_str(&builddate), new_str(&compiler),
+                new_str(name),
+                new_str(&version),
+                new_str(""),
+                new_str(""),
+                new_str(&buildno),
+                new_str(&builddate),
+                new_str(&compiler),
             ]))
         }
         None => {
             super::super::exception::mb_raise(
                 new_str_val("ValueError"),
-                new_str_val(&format!(
-                    "failed to parse CPython sys.version: {banner:?}"
-                )),
+                new_str_val(&format!("failed to parse CPython sys.version: {banner:?}")),
             );
             MbValue::none()
         }
@@ -390,18 +443,22 @@ pub fn mb_platform_comparable_version(version: &str) -> MbValue {
 /// skips invalid assignment lines.
 pub fn mb_platform_parse_os_release(lines: MbValue) -> MbValue {
     use super::super::rc::ObjData;
-    let collected: Vec<String> = lines.as_ptr().map(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::Str(s) => s.lines().map(|l| l.to_string()).collect(),
-            ObjData::List(lock) => lock.read().unwrap().iter()
-                .filter_map(|v| as_str_arg(*v))
-                .collect(),
-            ObjData::Tuple(items) => items.iter()
-                .filter_map(|v| as_str_arg(*v))
-                .collect(),
-            _ => Vec::new(),
-        }
-    }).unwrap_or_default();
+    let collected: Vec<String> = lines
+        .as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Str(s) => s.lines().map(|l| l.to_string()).collect(),
+                ObjData::List(lock) => lock
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|v| as_str_arg(*v))
+                    .collect(),
+                ObjData::Tuple(items) => items.iter().filter_map(|v| as_str_arg(*v)).collect(),
+                _ => Vec::new(),
+            }
+        })
+        .unwrap_or_default();
     let dict = super::super::dict_ops::mb_dict_new();
     // CPython seeds the os-release defaults before parsing.
     for (k, v) in [("NAME", "Linux"), ("ID", "linux"), ("PRETTY_NAME", "Linux")] {
@@ -444,7 +501,9 @@ pub fn mb_platform_parse_os_release(lines: MbValue) -> MbValue {
     dict
 }
 
-pub fn mb_platform_system() -> MbValue { new_str(&uname_parts().0) }
+pub fn mb_platform_system() -> MbValue {
+    new_str(&uname_parts().0)
+}
 
 pub fn mb_platform_node() -> MbValue {
     if let Ok(h) = std::env::var("HOSTNAME") {
@@ -455,13 +514,21 @@ pub fn mb_platform_node() -> MbValue {
     new_str(&uname_parts().1)
 }
 
-pub fn mb_platform_release() -> MbValue { new_str(&uname_parts().2) }
+pub fn mb_platform_release() -> MbValue {
+    new_str(&uname_parts().2)
+}
 
-pub fn mb_platform_machine() -> MbValue { new_str(&uname_parts().4) }
+pub fn mb_platform_machine() -> MbValue {
+    new_str(&uname_parts().4)
+}
 
-pub fn mb_platform_processor() -> MbValue { new_str(&uname_parts().5) }
+pub fn mb_platform_processor() -> MbValue {
+    new_str(&uname_parts().5)
+}
 
-pub fn mb_platform_python_version() -> MbValue { MbValue::from_ptr(MbObject::new_str("3.12.0".to_string())) }
+pub fn mb_platform_python_version() -> MbValue {
+    MbValue::from_ptr(MbObject::new_str("3.12.0".to_string()))
+}
 
 pub fn mb_platform_platform() -> MbValue {
     let s = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
@@ -481,7 +548,11 @@ mod tests {
     fn get_str(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
             use super::super::super::rc::ObjData;
-            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
     }
 
@@ -522,7 +593,13 @@ mod tests {
         // Real `uname -r` value: non-empty, starts with a digit.
         let s = get_str(mb_platform_release()).unwrap_or_default();
         assert!(!s.is_empty());
-        assert!(s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false), "{s}");
+        assert!(
+            s.chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false),
+            "{s}"
+        );
     }
 
     #[test]

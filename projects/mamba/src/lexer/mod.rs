@@ -4,8 +4,8 @@ pub mod token;
 use logos::Logos;
 
 use crate::source::span::{FileId, Span};
-use token::{Token, TokenKind};
 use indent::IndentProcessor;
+use token::{Token, TokenKind};
 
 /// Lex a source string into a token stream with INDENT/DEDENT processing.
 pub fn lex(source: &str, file_id: FileId) -> Vec<Token> {

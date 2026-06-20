@@ -11,7 +11,7 @@
 // AW-EC-END
 
 #[test]
-#[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
+#[ignore = "AW EC placeholder: implement this external contract test or keep the aw.toml inventory command authoritative"]
 fn arena_host_scoped_baseline_ratchet() {
     panic!("AW EC placeholder for arena-host-scoped-baseline-ratchet");
 }

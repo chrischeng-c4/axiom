@@ -53,7 +53,10 @@ impl BuildSystem {
     pub fn default_legacy() -> Self {
         Self {
             backend: DEFAULT_BUILD_BACKEND.to_string(),
-            requires: DEFAULT_BUILD_REQUIRES.iter().map(|s| s.to_string()).collect(),
+            requires: DEFAULT_BUILD_REQUIRES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 }
@@ -66,11 +69,10 @@ impl BuildSystem {
 ///
 /// Returns `IndexError::ParseError` when the TOML itself is malformed.
 pub fn parse_build_system(toml_src: &str) -> Result<BuildSystem, IndexError> {
-    let parsed: toml::Value =
-        toml::from_str(toml_src).map_err(|e| IndexError::ParseError {
-            url: "<pyproject.toml>".into(),
-            detail: format!("pyproject.toml: {e}"),
-        })?;
+    let parsed: toml::Value = toml::from_str(toml_src).map_err(|e| IndexError::ParseError {
+        url: "<pyproject.toml>".into(),
+        detail: format!("pyproject.toml: {e}"),
+    })?;
 
     let bs = match parsed.get("build-system") {
         Some(toml::Value::Table(t)) => t,
@@ -97,7 +99,12 @@ pub fn parse_build_system(toml_src: &str) -> Result<BuildSystem, IndexError> {
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_else(|| DEFAULT_BUILD_REQUIRES.iter().map(|s| s.to_string()).collect());
+        .unwrap_or_else(|| {
+            DEFAULT_BUILD_REQUIRES
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        });
 
     Ok(BuildSystem { backend, requires })
 }
@@ -168,10 +175,12 @@ pub fn unpack_sdist(archive: &Path, dest_dir: &Path) -> Result<(), IndexError> {
                     })?;
                 }
                 let mut buf = Vec::with_capacity(entry.size() as usize);
-                entry.read_to_end(&mut buf).map_err(|e| IndexError::CacheIo {
-                    path: rel.display().to_string(),
-                    detail: format!("zip read body: {e}"),
-                })?;
+                entry
+                    .read_to_end(&mut buf)
+                    .map_err(|e| IndexError::CacheIo {
+                        path: rel.display().to_string(),
+                        detail: format!("zip read body: {e}"),
+                    })?;
                 std::fs::write(&out, &buf).map_err(|e| IndexError::CacheIo {
                     path: out.display().to_string(),
                     detail: format!("zip write entry: {e}"),
@@ -319,9 +328,7 @@ pub fn build_wheel_from_sdist(
     if basename.is_empty() {
         return Err(IndexError::NetworkError {
             url: "<pep517-build>".into(),
-            detail: format!(
-                "build_wheel hook returned empty filename (stdout: {stdout:?})"
-            ),
+            detail: format!("build_wheel hook returned empty filename (stdout: {stdout:?})"),
         });
     }
     let produced = out_abs.join(&basename);
@@ -366,7 +373,10 @@ build-backend = "setuptools.build_meta"
 "#;
         let bs = parse_build_system(src).unwrap();
         assert_eq!(bs.backend, "setuptools.build_meta");
-        assert_eq!(bs.requires, vec!["setuptools>=61".to_string(), "wheel".to_string()]);
+        assert_eq!(
+            bs.requires,
+            vec!["setuptools>=61".to_string(), "wheel".to_string()]
+        );
     }
 
     #[test]
@@ -402,7 +412,8 @@ requires = ["flit_core>=3.2,<4"]
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("demo-0.1.0.tar.gz");
         let body_py = b"print('hello')\n";
-        let body_toml = b"[build-system]\nrequires = []\nbuild-backend = \"setuptools.build_meta\"\n";
+        let body_toml =
+            b"[build-system]\nrequires = []\nbuild-backend = \"setuptools.build_meta\"\n";
         write_tar_gz(
             &archive,
             &[
@@ -530,8 +541,16 @@ requires = ["flit_core>=3.2,<4"]
         let f = std::fs::File::create(&sdist).unwrap();
         let gz = GzEncoder::new(f, Compression::default());
         let mut builder = tar::Builder::new(gz);
-        builder.append_dir_all("mamba_t18_demo-0.1.0", &proj).unwrap();
-        builder.into_inner().unwrap().finish().unwrap().sync_all().unwrap();
+        builder
+            .append_dir_all("mamba_t18_demo-0.1.0", &proj)
+            .unwrap();
+        builder
+            .into_inner()
+            .unwrap()
+            .finish()
+            .unwrap()
+            .sync_all()
+            .unwrap();
 
         let work = tmp.path().join("work");
         let out = tmp.path().join("out");

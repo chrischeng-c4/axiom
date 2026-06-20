@@ -292,9 +292,16 @@ machine pypi.org login alice password secret1
 machine artifactory.example.com login bob password secret2
 ";
         let n = parse_netrc(src).unwrap();
-        assert_eq!(n.machines.get("pypi.org").unwrap().login.as_deref(), Some("alice"));
         assert_eq!(
-            n.machines.get("artifactory.example.com").unwrap().password.as_deref(),
+            n.machines.get("pypi.org").unwrap().login.as_deref(),
+            Some("alice")
+        );
+        assert_eq!(
+            n.machines
+                .get("artifactory.example.com")
+                .unwrap()
+                .password
+                .as_deref(),
             Some("secret2")
         );
     }
@@ -344,7 +351,10 @@ machine pypi.org login first password p1
 machine pypi.org login second password p2
 ";
         let n = parse_netrc(src).unwrap();
-        assert_eq!(n.machines.get("pypi.org").unwrap().login.as_deref(), Some("first"));
+        assert_eq!(
+            n.machines.get("pypi.org").unwrap().login.as_deref(),
+            Some("first")
+        );
     }
 
     #[test]
@@ -419,7 +429,10 @@ machine pypi.org login alice password secret
     fn stray_top_level_keyword_errors() {
         let src = "login alice password secret\n";
         let err = parse_netrc(src).unwrap_err();
-        assert!(format!("{err}").contains("unexpected top-level token"), "got: {err}");
+        assert!(
+            format!("{err}").contains("unexpected top-level token"),
+            "got: {err}"
+        );
     }
 
     #[test]

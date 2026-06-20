@@ -56,10 +56,7 @@ impl ModelDiffer {
     /// Foreign key and check constraints are excluded.
     pub async fn diff(&self, models: &[ModelDefinition]) -> Result<ModelDiffResult> {
         let config = AutoDetectConfig {
-            exclude_tables: vec![
-                "_migrations".to_string(),
-                "alembic_version".to_string(),
-            ],
+            exclude_tables: vec!["_migrations".to_string(), "alembic_version".to_string()],
             ..AutoDetectConfig::default()
         };
 
@@ -76,14 +73,21 @@ impl ModelDiffer {
             .iter()
             .filter(|s| {
                 let u = s.to_uppercase();
-                !u.contains("FOREIGN KEY") && !u.contains("ADD FOREIGN") && !u.contains("DROP FOREIGN")
+                !u.contains("FOREIGN KEY")
+                    && !u.contains("ADD FOREIGN")
+                    && !u.contains("DROP FOREIGN")
             })
             .cloned()
             .collect();
 
         let has_changes = !up_sql.trim().is_empty();
 
-        Ok(ModelDiffResult { up_sql, down_sql, summary, has_changes })
+        Ok(ModelDiffResult {
+            up_sql,
+            down_sql,
+            summary,
+            has_changes,
+        })
     }
 
     /// Write the diff result to a new `.sql` file in `output_dir`.
@@ -103,9 +107,8 @@ impl ModelDiffer {
             ));
         }
 
-        fs::create_dir_all(output_dir).map_err(|e| {
-            DataBridgeError::Internal(format!("create migrations dir: {e}"))
-        })?;
+        fs::create_dir_all(output_dir)
+            .map_err(|e| DataBridgeError::Internal(format!("create migrations dir: {e}")))?;
 
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let slug = message.replace(' ', "_").to_lowercase();
@@ -126,9 +129,8 @@ impl ModelDiffer {
         content.push_str(result.down_sql.trim());
         content.push('\n');
 
-        fs::write(&filepath, &content).map_err(|e| {
-            DataBridgeError::Internal(format!("write {}: {e}", filepath.display()))
-        })?;
+        fs::write(&filepath, &content)
+            .map_err(|e| DataBridgeError::Internal(format!("write {}: {e}", filepath.display())))?;
 
         Ok(filename)
     }

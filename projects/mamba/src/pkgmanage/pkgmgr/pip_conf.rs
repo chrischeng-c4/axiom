@@ -109,14 +109,13 @@ pub fn parse_pip_conf(src: &str) -> Result<PipConfig, IndexError> {
         // Continuation line: indented relative to the key's first line.
         if let Some(key) = current_key.as_ref() {
             if indent > current_indent {
-                let section_name = current_section.as_ref().ok_or_else(|| {
-                    IndexError::ParseError {
-                        url: String::new(),
-                        detail: format!(
-                            "pip.conf line {lineno}: continuation without section"
-                        ),
-                    }
-                })?;
+                let section_name =
+                    current_section
+                        .as_ref()
+                        .ok_or_else(|| IndexError::ParseError {
+                            url: String::new(),
+                            detail: format!("pip.conf line {lineno}: continuation without section"),
+                        })?;
                 let section = config.sections.entry(section_name.clone()).or_default();
                 let entry = section
                     .keys
@@ -145,18 +144,17 @@ pub fn parse_pip_conf(src: &str) -> Result<PipConfig, IndexError> {
             }
             current_section = Some(name.to_string());
             current_key = None;
-            config
-                .sections
-                .entry(name.to_string())
-                .or_default();
+            config.sections.entry(name.to_string()).or_default();
             continue;
         }
 
         // Key = value (or key : value).
-        let section_name = current_section.as_ref().ok_or_else(|| IndexError::ParseError {
-            url: String::new(),
-            detail: format!("pip.conf line {lineno}: key outside any section"),
-        })?;
+        let section_name = current_section
+            .as_ref()
+            .ok_or_else(|| IndexError::ParseError {
+                url: String::new(),
+                detail: format!("pip.conf line {lineno}: key outside any section"),
+            })?;
         let (key, value) = split_kv(trimmed).ok_or_else(|| IndexError::ParseError {
             url: String::new(),
             detail: format!("pip.conf line {lineno}: missing '=' or ':' separator"),

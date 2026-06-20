@@ -1,3 +1,5 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// charset_normalizer module for Mamba (#1484).
 ///
 /// Minimal callable-dispatcher shim covering four top-level
@@ -10,10 +12,7 @@
 /// surface) is tracked separately under #1484; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the 3p
 /// conformance issues have closed against.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 unsafe extern "C" fn dispatch_from_bytes(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
@@ -45,7 +44,10 @@ pub fn register() {
     attrs.insert("detect".into(), MbValue::from_func(addr_detect));
 
     let addr_charset_match = dispatch_charset_match as *const () as usize;
-    attrs.insert("CharsetMatch".into(), MbValue::from_func(addr_charset_match));
+    attrs.insert(
+        "CharsetMatch".into(),
+        MbValue::from_func(addr_charset_match),
+    );
 
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();

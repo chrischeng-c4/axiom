@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// codecs module for Mamba (#656, Task #34).
 ///
 /// Implements Python-compatible codec registry with UTF-8, UTF-16, UTF-32,
@@ -11,8 +13,6 @@
 /// brute-force Phase 2, replace when aw standardize lands the
 /// stdlib-shim section type.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Exception helpers ──
 // Raise catchable Python exceptions via the thread-local exception machinery
@@ -26,11 +26,21 @@ fn raise_exc(exc_type: &str, msg: &str) -> MbValue {
     );
     MbValue::none()
 }
-fn raise_lookup_error(msg: &str) -> MbValue { raise_exc("LookupError", msg) }
-fn raise_type_error(msg: &str) -> MbValue { raise_exc("TypeError", msg) }
-fn raise_value_error(msg: &str) -> MbValue { raise_exc("ValueError", msg) }
-fn raise_unicode_decode_error(msg: &str) -> MbValue { raise_exc("UnicodeDecodeError", msg) }
-fn raise_unicode_encode_error(msg: &str) -> MbValue { raise_exc("UnicodeEncodeError", msg) }
+fn raise_lookup_error(msg: &str) -> MbValue {
+    raise_exc("LookupError", msg)
+}
+fn raise_type_error(msg: &str) -> MbValue {
+    raise_exc("TypeError", msg)
+}
+fn raise_value_error(msg: &str) -> MbValue {
+    raise_exc("ValueError", msg)
+}
+fn raise_unicode_decode_error(msg: &str) -> MbValue {
+    raise_exc("UnicodeDecodeError", msg)
+}
+fn raise_unicode_encode_error(msg: &str) -> MbValue {
+    raise_exc("UnicodeEncodeError", msg)
+}
 
 // ── Variadic dispatchers (callable from module-attr context) ──
 // NOTE: dispatcher fn names must start with `dispatch_` so the surface walker
@@ -110,8 +120,14 @@ disp_unary!(dispatch_register, mb_codecs_register);
 disp_binary!(dispatch_register_error, mb_codecs_register_error);
 disp_unary!(dispatch_lookup_error, mb_codecs_lookup_error);
 disp_unary!(dispatch_open, mb_codecs_open);
-disp_unary!(dispatch_getincrementaldecoder, mb_codecs_getincrementaldecoder);
-disp_unary!(dispatch_getincrementalencoder, mb_codecs_getincrementalencoder);
+disp_unary!(
+    dispatch_getincrementaldecoder,
+    mb_codecs_getincrementaldecoder
+);
+disp_unary!(
+    dispatch_getincrementalencoder,
+    mb_codecs_getincrementalencoder
+);
 disp_unary!(dispatch_getreader, mb_codecs_getreader);
 disp_unary!(dispatch_getwriter, mb_codecs_getwriter);
 // iterencode(iterable, encoding, errors='strict') -> list of encoded chunks.
@@ -135,17 +151,29 @@ unsafe extern "C" fn dispatch_encodedfile(args_ptr: *const MbValue, nargs: usize
     make_encoded_file(a)
 }
 // raw_unicode_escape_decode(input, errors='strict') -> (str, len).
-unsafe extern "C" fn dispatch_raw_unicode_escape_decode(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_raw_unicode_escape_decode(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_codecs_raw_unicode_escape_decode(a.get(0).copied().unwrap_or_else(MbValue::none))
 }
-disp_unary!(dispatch_raw_unicode_escape_encode, mb_codecs_raw_unicode_escape_encode);
+disp_unary!(
+    dispatch_raw_unicode_escape_encode,
+    mb_codecs_raw_unicode_escape_encode
+);
 disp_unary!(dispatch_readbuffer_encode, mb_codecs_readbuffer_encode);
 disp_unary!(dispatch_strict_errors, mb_codecs_strict_errors);
 disp_unary!(dispatch_replace_errors, mb_codecs_replace_errors);
 disp_unary!(dispatch_ignore_errors, mb_codecs_ignore_errors);
-disp_unary!(dispatch_xmlcharrefreplace_errors, mb_codecs_xmlcharrefreplace_errors);
-disp_unary!(dispatch_backslashreplace_errors, mb_codecs_backslashreplace_errors);
+disp_unary!(
+    dispatch_xmlcharrefreplace_errors,
+    mb_codecs_xmlcharrefreplace_errors
+);
+disp_unary!(
+    dispatch_backslashreplace_errors,
+    mb_codecs_backslashreplace_errors
+);
 disp_unary!(dispatch_namereplace_errors, mb_codecs_namereplace_errors);
 disp_unary!(dispatch_utf_8_encode, mb_codecs_utf_8_encode);
 disp_unary!(dispatch_utf_8_decode, mb_codecs_utf_8_decode);
@@ -173,7 +201,10 @@ disp_unary!(dispatch_utf_32_decode, mb_codecs_utf_32_decode);
 disp_unary!(dispatch_ascii_encode, mb_codecs_ascii_encode);
 disp_unary!(dispatch_ascii_decode, mb_codecs_ascii_decode);
 disp_unary!(dispatch_escape_encode, mb_codecs_escape_encode);
-disp_unary!(dispatch_unicode_escape_encode, mb_codecs_unicode_escape_encode);
+disp_unary!(
+    dispatch_unicode_escape_encode,
+    mb_codecs_unicode_escape_encode
+);
 // escape_decode / unicode_escape_decode take (input, errors='strict').
 unsafe extern "C" fn dispatch_escape_decode(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
@@ -182,7 +213,10 @@ unsafe extern "C" fn dispatch_escape_decode(args_ptr: *const MbValue, nargs: usi
         a.get(1).copied().unwrap_or_else(MbValue::none),
     )
 }
-unsafe extern "C" fn dispatch_unicode_escape_decode(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_unicode_escape_decode(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_codecs_unicode_escape_decode2(
         a.get(0).copied().unwrap_or_else(MbValue::none),
@@ -203,13 +237,22 @@ unsafe extern "C" fn dispatch_codecinfo(args_ptr: *const MbValue, nargs: usize) 
     //           incrementalencoder=None, incrementaldecoder=None, name=None, ...)
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let name = a.get(6).copied().unwrap_or_else(MbValue::none);
-    make_codec_info(name, a.get(0).copied().unwrap_or_else(MbValue::none),
-                    a.get(1).copied().unwrap_or_else(MbValue::none))
+    make_codec_info(
+        name,
+        a.get(0).copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+    )
 }
-unsafe extern "C" fn dispatch_incrementalencoder(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_incrementalencoder(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_instance("IncrementalEncoder".to_string()))
 }
-unsafe extern "C" fn dispatch_incrementaldecoder(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_incrementaldecoder(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_instance("IncrementalDecoder".to_string()))
 }
 unsafe extern "C" fn dispatch_streamreader(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -218,7 +261,10 @@ unsafe extern "C" fn dispatch_streamreader(_args_ptr: *const MbValue, _nargs: us
 unsafe extern "C" fn dispatch_streamwriter(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_instance("StreamWriter".to_string()))
 }
-unsafe extern "C" fn dispatch_streamreaderwriter(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_streamreaderwriter(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_instance("StreamReaderWriter".to_string()))
 }
 unsafe extern "C" fn dispatch_streamrecoder(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -234,59 +280,152 @@ pub fn register() {
         ("decode", dispatch_decode as *const () as usize),
         ("lookup", dispatch_lookup as *const () as usize),
         ("register", dispatch_register as *const () as usize),
-        ("register_error", dispatch_register_error as *const () as usize),
+        (
+            "register_error",
+            dispatch_register_error as *const () as usize,
+        ),
         ("lookup_error", dispatch_lookup_error as *const () as usize),
         ("open", dispatch_open as *const () as usize),
         ("EncodedFile", dispatch_encodedfile as *const () as usize),
         ("getencoder", dispatch_getencoder as *const () as usize),
         ("getdecoder", dispatch_getdecoder as *const () as usize),
-        ("getincrementaldecoder", dispatch_getincrementaldecoder as *const () as usize),
-        ("getincrementalencoder", dispatch_getincrementalencoder as *const () as usize),
+        (
+            "getincrementaldecoder",
+            dispatch_getincrementaldecoder as *const () as usize,
+        ),
+        (
+            "getincrementalencoder",
+            dispatch_getincrementalencoder as *const () as usize,
+        ),
         ("getreader", dispatch_getreader as *const () as usize),
         ("getwriter", dispatch_getwriter as *const () as usize),
         ("iterencode", dispatch_iterencode as *const () as usize),
         ("iterdecode", dispatch_iterdecode as *const () as usize),
         // Error handlers
-        ("strict_errors", dispatch_strict_errors as *const () as usize),
-        ("replace_errors", dispatch_replace_errors as *const () as usize),
-        ("ignore_errors", dispatch_ignore_errors as *const () as usize),
-        ("xmlcharrefreplace_errors", dispatch_xmlcharrefreplace_errors as *const () as usize),
-        ("backslashreplace_errors", dispatch_backslashreplace_errors as *const () as usize),
-        ("namereplace_errors", dispatch_namereplace_errors as *const () as usize),
+        (
+            "strict_errors",
+            dispatch_strict_errors as *const () as usize,
+        ),
+        (
+            "replace_errors",
+            dispatch_replace_errors as *const () as usize,
+        ),
+        (
+            "ignore_errors",
+            dispatch_ignore_errors as *const () as usize,
+        ),
+        (
+            "xmlcharrefreplace_errors",
+            dispatch_xmlcharrefreplace_errors as *const () as usize,
+        ),
+        (
+            "backslashreplace_errors",
+            dispatch_backslashreplace_errors as *const () as usize,
+        ),
+        (
+            "namereplace_errors",
+            dispatch_namereplace_errors as *const () as usize,
+        ),
         // Convenience codec functions
         ("utf_8_encode", dispatch_utf_8_encode as *const () as usize),
         ("utf_8_decode", dispatch_utf_8_decode as *const () as usize),
-        ("utf_16_encode", dispatch_utf_16_encode as *const () as usize),
-        ("utf_16_decode", dispatch_utf_16_decode as *const () as usize),
-        ("utf_16_le_encode", dispatch_utf_16_le_encode as *const () as usize),
-        ("utf_16_le_decode", dispatch_utf_16_le_decode as *const () as usize),
-        ("utf_16_be_encode", dispatch_utf_16_be_encode as *const () as usize),
-        ("utf_16_be_decode", dispatch_utf_16_be_decode as *const () as usize),
-        ("utf_32_encode", dispatch_utf_32_encode as *const () as usize),
-        ("utf_32_decode", dispatch_utf_32_decode as *const () as usize),
+        (
+            "utf_16_encode",
+            dispatch_utf_16_encode as *const () as usize,
+        ),
+        (
+            "utf_16_decode",
+            dispatch_utf_16_decode as *const () as usize,
+        ),
+        (
+            "utf_16_le_encode",
+            dispatch_utf_16_le_encode as *const () as usize,
+        ),
+        (
+            "utf_16_le_decode",
+            dispatch_utf_16_le_decode as *const () as usize,
+        ),
+        (
+            "utf_16_be_encode",
+            dispatch_utf_16_be_encode as *const () as usize,
+        ),
+        (
+            "utf_16_be_decode",
+            dispatch_utf_16_be_decode as *const () as usize,
+        ),
+        (
+            "utf_32_encode",
+            dispatch_utf_32_encode as *const () as usize,
+        ),
+        (
+            "utf_32_decode",
+            dispatch_utf_32_decode as *const () as usize,
+        ),
         ("ascii_encode", dispatch_ascii_encode as *const () as usize),
         ("ascii_decode", dispatch_ascii_decode as *const () as usize),
-        ("latin_1_encode", dispatch_latin_1_encode as *const () as usize),
-        ("latin_1_decode", dispatch_latin_1_decode as *const () as usize),
+        (
+            "latin_1_encode",
+            dispatch_latin_1_encode as *const () as usize,
+        ),
+        (
+            "latin_1_decode",
+            dispatch_latin_1_decode as *const () as usize,
+        ),
         // Low-level escape codecs
-        ("escape_decode", dispatch_escape_decode as *const () as usize),
-        ("escape_encode", dispatch_escape_encode as *const () as usize),
-        ("unicode_escape_decode", dispatch_unicode_escape_decode as *const () as usize),
-        ("unicode_escape_encode", dispatch_unicode_escape_encode as *const () as usize),
-        ("charmap_decode", dispatch_charmap_decode as *const () as usize),
+        (
+            "escape_decode",
+            dispatch_escape_decode as *const () as usize,
+        ),
+        (
+            "escape_encode",
+            dispatch_escape_encode as *const () as usize,
+        ),
+        (
+            "unicode_escape_decode",
+            dispatch_unicode_escape_decode as *const () as usize,
+        ),
+        (
+            "unicode_escape_encode",
+            dispatch_unicode_escape_encode as *const () as usize,
+        ),
+        (
+            "charmap_decode",
+            dispatch_charmap_decode as *const () as usize,
+        ),
         // Low-level raw-unicode-escape + buffer codec functions
-        ("raw_unicode_escape_decode", dispatch_raw_unicode_escape_decode as *const () as usize),
-        ("raw_unicode_escape_encode", dispatch_raw_unicode_escape_encode as *const () as usize),
-        ("readbuffer_encode", dispatch_readbuffer_encode as *const () as usize),
+        (
+            "raw_unicode_escape_decode",
+            dispatch_raw_unicode_escape_decode as *const () as usize,
+        ),
+        (
+            "raw_unicode_escape_encode",
+            dispatch_raw_unicode_escape_encode as *const () as usize,
+        ),
+        (
+            "readbuffer_encode",
+            dispatch_readbuffer_encode as *const () as usize,
+        ),
         // Classes
         ("Codec", dispatch_codec as *const () as usize),
         ("CodecInfo", dispatch_codecinfo as *const () as usize),
-        ("IncrementalEncoder", dispatch_incrementalencoder as *const () as usize),
-        ("IncrementalDecoder", dispatch_incrementaldecoder as *const () as usize),
+        (
+            "IncrementalEncoder",
+            dispatch_incrementalencoder as *const () as usize,
+        ),
+        (
+            "IncrementalDecoder",
+            dispatch_incrementaldecoder as *const () as usize,
+        ),
         ("StreamReader", dispatch_streamreader as *const () as usize),
         ("StreamWriter", dispatch_streamwriter as *const () as usize),
-        ("StreamReaderWriter", dispatch_streamreaderwriter as *const () as usize),
-        ("StreamRecoder", dispatch_streamrecoder as *const () as usize),
+        (
+            "StreamReaderWriter",
+            dispatch_streamreaderwriter as *const () as usize,
+        ),
+        (
+            "StreamRecoder",
+            dispatch_streamrecoder as *const () as usize,
+        ),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -303,23 +442,65 @@ pub fn register() {
     let bom_utf16_be: Vec<u8> = vec![0xFE, 0xFF];
     let bom_utf32_le: Vec<u8> = vec![0xFF, 0xFE, 0x00, 0x00];
     let bom_utf32_be: Vec<u8> = vec![0x00, 0x00, 0xFE, 0xFF];
-    attrs.insert("BOM_UTF8".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf8)));
-    attrs.insert("BOM_UTF16_LE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le.clone())));
-    attrs.insert("BOM_UTF16_BE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf16_be.clone())));
-    attrs.insert("BOM_UTF32_LE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf32_le.clone())));
-    attrs.insert("BOM_UTF32_BE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf32_be.clone())));
+    attrs.insert(
+        "BOM_UTF8".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf8)),
+    );
+    attrs.insert(
+        "BOM_UTF16_LE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le.clone())),
+    );
+    attrs.insert(
+        "BOM_UTF16_BE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf16_be.clone())),
+    );
+    attrs.insert(
+        "BOM_UTF32_LE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf32_le.clone())),
+    );
+    attrs.insert(
+        "BOM_UTF32_BE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf32_be.clone())),
+    );
     // BOM, BOM_LE, BOM_BE, BOM_UTF16, BOM_UTF32 are aliases — platform-native
     // byteorder. Apple Silicon + x86-64 are little-endian.
-    attrs.insert("BOM".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le.clone())));
-    attrs.insert("BOM_LE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le.clone())));
-    attrs.insert("BOM_BE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf16_be.clone())));
-    attrs.insert("BOM_UTF16".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le.clone())));
-    attrs.insert("BOM_UTF32".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf32_le.clone())));
+    attrs.insert(
+        "BOM".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le.clone())),
+    );
+    attrs.insert(
+        "BOM_LE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le.clone())),
+    );
+    attrs.insert(
+        "BOM_BE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf16_be.clone())),
+    );
+    attrs.insert(
+        "BOM_UTF16".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le.clone())),
+    );
+    attrs.insert(
+        "BOM_UTF32".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf32_le.clone())),
+    );
     // Legacy aliases: BOM32_* == UTF-16 BOMs, BOM64_* == UTF-32 BOMs (CPython).
-    attrs.insert("BOM32_LE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le)));
-    attrs.insert("BOM32_BE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf16_be)));
-    attrs.insert("BOM64_LE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf32_le)));
-    attrs.insert("BOM64_BE".into(), MbValue::from_ptr(MbObject::new_bytes(bom_utf32_be)));
+    attrs.insert(
+        "BOM32_LE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf16_le)),
+    );
+    attrs.insert(
+        "BOM32_BE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf16_be)),
+    );
+    attrs.insert(
+        "BOM64_LE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf32_le)),
+    );
+    attrs.insert(
+        "BOM64_BE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(bom_utf32_be)),
+    );
 
     // Register the native codec classes (StreamReader/Writer/Recoder,
     // IncrementalEncoder/Decoder + their factory wrappers).
@@ -333,7 +514,11 @@ pub fn register() {
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
         use super::super::rc::ObjData;
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -345,14 +530,22 @@ fn extract_str(val: MbValue) -> Option<String> {
 unsafe fn extract_str_ref<'a>(val: &'a MbValue) -> Option<&'a str> {
     val.as_ptr().and_then(|ptr| {
         use super::super::rc::ObjData;
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.as_str()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.as_str())
+        } else {
+            None
+        }
     })
 }
 
 unsafe fn extract_bytes_ref<'a>(val: &'a MbValue) -> Option<&'a [u8]> {
     val.as_ptr().and_then(|ptr| {
         use super::super::rc::ObjData;
-        if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.as_slice()) } else { None }
+        if let ObjData::Bytes(ref b) = (*ptr).data {
+            Some(b.as_slice())
+        } else {
+            None
+        }
     })
 }
 
@@ -360,8 +553,14 @@ fn normalize_encoding(name: &str) -> &str {
     match name.to_lowercase().replace(['-', '_', ' '], "").as_str() {
         s if s.starts_with("utf8") => "utf-8",
         s if s.starts_with("ascii") || s == "usascii" || s == "646" => "ascii",
-        s if s.starts_with("latin1") || s == "iso88591" || s == "8859"
-            || s == "cp819" || s == "l1" => "latin-1",
+        s if s.starts_with("latin1")
+            || s == "iso88591"
+            || s == "8859"
+            || s == "cp819"
+            || s == "l1" =>
+        {
+            "latin-1"
+        }
         s if s.starts_with("utf16le") => "utf-16-le",
         s if s.starts_with("utf16be") => "utf-16-be",
         s if s.starts_with("utf16") => "utf-16",
@@ -419,9 +618,17 @@ fn is_strict_errors(val: MbValue) -> bool {
 
 /// True for the well-known non-raising handlers we model exactly.
 fn known_error_handler(name: &str) -> bool {
-    matches!(name,
-        "strict" | "ignore" | "replace" | "xmlcharrefreplace"
-        | "backslashreplace" | "namereplace" | "surrogateescape" | "surrogatepass")
+    matches!(
+        name,
+        "strict"
+            | "ignore"
+            | "replace"
+            | "xmlcharrefreplace"
+            | "backslashreplace"
+            | "namereplace"
+            | "surrogateescape"
+            | "surrogatepass"
+    )
 }
 
 /// Replacement bytes for an unencodable char `c` under handler `name`, or
@@ -489,7 +696,8 @@ pub fn mb_codecs_encode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
     // handlers (CPython: UnicodeError on any input including empty).
     if normalize_encoding(&enc) == "?unknown" && enc.to_lowercase() == "undefined" {
         return raise_unicode_encode_error(
-            "'undefined' codec can't encode character in position 0");
+            "'undefined' codec can't encode character in position 0",
+        );
     }
     let bytes: Vec<u8> = match enc_norm {
         "utf-8" => {
@@ -528,10 +736,18 @@ pub fn mb_codecs_encode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
             }
             out
         }
-        "utf-16" => { let mut b = vec![0xFF, 0xFE]; b.extend(encode_u16_units(s, true)); b }
+        "utf-16" => {
+            let mut b = vec![0xFF, 0xFE];
+            b.extend(encode_u16_units(s, true));
+            b
+        }
         "utf-16-le" => encode_u16_units(s, true),
         "utf-16-be" => encode_u16_units(s, false),
-        "utf-32" => { let mut b = vec![0xFF, 0xFE, 0x00, 0x00]; b.extend(encode_u32_units(s, true)); b }
+        "utf-32" => {
+            let mut b = vec![0xFF, 0xFE, 0x00, 0x00];
+            b.extend(encode_u32_units(s, true));
+            b
+        }
         "utf-32-le" => encode_u32_units(s, true),
         "utf-32-be" => encode_u32_units(s, false),
         _ => return raise_lookup_error(&format!("unknown encoding: {}", enc)),
@@ -579,7 +795,8 @@ pub fn mb_codecs_decode3(obj: MbValue, encoding: MbValue, errors: MbValue) -> Mb
     // The 'undefined' codec refuses to decode anything.
     if enc_norm == "?unknown" && enc.to_lowercase() == "undefined" {
         return raise_unicode_decode_error(
-            "'undefined' codec can't decode byte 0x00 in position 0: undefined mapping");
+            "'undefined' codec can't decode byte 0x00 in position 0: undefined mapping",
+        );
     }
     let s = match enc_norm {
         "utf-8" => {
@@ -646,21 +863,37 @@ pub fn mb_codecs_lookup(encoding: MbValue) -> MbValue {
 }
 
 /// codecs.register(search_function) — stub
-pub fn mb_codecs_register(_func: MbValue) -> MbValue { MbValue::none() }
+pub fn mb_codecs_register(_func: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 /// codecs.register_error(name, handler) — stub
-pub fn mb_codecs_register_error(_name: MbValue, _handler: MbValue) -> MbValue { MbValue::none() }
+pub fn mb_codecs_register_error(_name: MbValue, _handler: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 /// codecs.lookup_error(name) -> handler — stub
-pub fn mb_codecs_lookup_error(_name: MbValue) -> MbValue { MbValue::none() }
+pub fn mb_codecs_lookup_error(_name: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 /// codecs.open(filename, mode, encoding) — stub
-pub fn mb_codecs_open(_filename: MbValue) -> MbValue { MbValue::none() }
+pub fn mb_codecs_open(_filename: MbValue) -> MbValue {
+    MbValue::none()
+}
 
-pub fn mb_codecs_getincrementaldecoder(encoding: MbValue) -> MbValue { mb_codecs_getincrementaldecoder_real(encoding) }
-pub fn mb_codecs_getincrementalencoder(encoding: MbValue) -> MbValue { mb_codecs_getincrementalencoder_real(encoding) }
-pub fn mb_codecs_getreader(encoding: MbValue) -> MbValue { mb_codecs_getreader_real(encoding) }
-pub fn mb_codecs_getwriter(encoding: MbValue) -> MbValue { mb_codecs_getwriter_real(encoding) }
+pub fn mb_codecs_getincrementaldecoder(encoding: MbValue) -> MbValue {
+    mb_codecs_getincrementaldecoder_real(encoding)
+}
+pub fn mb_codecs_getincrementalencoder(encoding: MbValue) -> MbValue {
+    mb_codecs_getincrementalencoder_real(encoding)
+}
+pub fn mb_codecs_getreader(encoding: MbValue) -> MbValue {
+    mb_codecs_getreader_real(encoding)
+}
+pub fn mb_codecs_getwriter(encoding: MbValue) -> MbValue {
+    mb_codecs_getwriter_real(encoding)
+}
 
 // -- Convenience codecs --
 
@@ -674,7 +907,9 @@ pub fn mb_codecs_utf_8_decode(b: MbValue) -> MbValue {
     // TypeError when handed a str).
     if let Some(s) = extract_str(b) {
         return raise_type_error(&format!(
-            "decoding to str: need a bytes-like object, str found ({:?})", s));
+            "decoding to str: need a bytes-like object, str found ({:?})",
+            s
+        ));
     }
     let enc = MbValue::from_ptr(MbObject::new_str("utf-8".to_string()));
     mb_codecs_decode(b, enc)
@@ -787,7 +1022,11 @@ fn decode_u32_units(bytes: &[u8], le: bool) -> String {
 /// byteorder: -1 = LE, 0 = native/BOM, 1 = BE. A trailing lone byte is handled
 /// by the `errors` handler (replace → U+FFFD, ignore → dropped) and still
 /// counts the full input length as consumed (matching CPython).
-pub fn mb_codecs_utf_16_decode_tuple(input: MbValue, errors: MbValue, byteorder: MbValue) -> MbValue {
+pub fn mb_codecs_utf_16_decode_tuple(
+    input: MbValue,
+    errors: MbValue,
+    byteorder: MbValue,
+) -> MbValue {
     let bytes = match unsafe { extract_bytes_ref(&input) } {
         Some(v) => v.to_vec(),
         None => return raise_type_error("utf_16_decode() argument must be bytes-like"),
@@ -795,9 +1034,13 @@ pub fn mb_codecs_utf_16_decode_tuple(input: MbValue, errors: MbValue, byteorder:
     let errh = extract_str(errors).unwrap_or_else(|| "strict".to_string());
     let bo = byteorder.as_int().unwrap_or(0);
     let consumed = bytes.len() as i64;
-    let (slice, le): (&[u8], bool) = if bo < 0 { (&bytes, true) }
-        else if bo > 0 { (&bytes, false) }
-        else { utf16_bom(&bytes) };
+    let (slice, le): (&[u8], bool) = if bo < 0 {
+        (&bytes, true)
+    } else if bo > 0 {
+        (&bytes, false)
+    } else {
+        utf16_bom(&bytes)
+    };
     let usable = slice.len() - (slice.len() % 2);
     let mut out = decode_u16_units(&slice[..usable], le);
     // Trailing odd byte.
@@ -805,9 +1048,13 @@ pub fn mb_codecs_utf_16_decode_tuple(input: MbValue, errors: MbValue, byteorder:
         match errh.as_str() {
             "ignore" => {}
             "replace" => out.push('\u{FFFD}'),
-            _ => return raise_unicode_decode_error(&format!(
-                "'utf-16-le' codec can't decode byte 0x{:02x} in position {}: truncated data",
-                slice[slice.len() - 1], slice.len() - 1)),
+            _ => {
+                return raise_unicode_decode_error(&format!(
+                    "'utf-16-le' codec can't decode byte 0x{:02x} in position {}: truncated data",
+                    slice[slice.len() - 1],
+                    slice.len() - 1
+                ))
+            }
         }
     }
     tuple2(new_str(out), MbValue::from_int(consumed))
@@ -816,7 +1063,10 @@ pub fn mb_codecs_utf_16_decode_tuple(input: MbValue, errors: MbValue, byteorder:
 /// codecs.utf_16_encode(s, errors='strict', byteorder=0) -> bytes
 /// Platform-native (LE on Apple Silicon / x86-64), BOM-prefixed.
 pub fn mb_codecs_utf_16_encode(s: MbValue) -> MbValue {
-    let st = match unsafe { extract_str_ref(&s) } { Some(v) => v, None => return MbValue::none() };
+    let st = match unsafe { extract_str_ref(&s) } {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
     let mut out = vec![0xFF, 0xFE]; // LE BOM
     out.extend(encode_u16_units(st, true));
     MbValue::from_ptr(MbObject::new_bytes(out))
@@ -825,7 +1075,10 @@ pub fn mb_codecs_utf_16_encode(s: MbValue) -> MbValue {
 /// codecs.utf_16_decode(b, errors='strict') -> str
 /// Inspects BOM if present to pick byteorder; defaults to LE.
 pub fn mb_codecs_utf_16_decode(b: MbValue) -> MbValue {
-    let bytes = match unsafe { extract_bytes_ref(&b) } { Some(v) => v, None => return MbValue::none() };
+    let bytes = match unsafe { extract_bytes_ref(&b) } {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
     let (slice, le) = if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
         (&bytes[2..], true)
     } else if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
@@ -838,35 +1091,53 @@ pub fn mb_codecs_utf_16_decode(b: MbValue) -> MbValue {
 }
 
 pub fn mb_codecs_utf_16_le_encode(s: MbValue) -> MbValue {
-    let st = match unsafe { extract_str_ref(&s) } { Some(v) => v, None => return MbValue::none() };
+    let st = match unsafe { extract_str_ref(&s) } {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
     MbValue::from_ptr(MbObject::new_bytes(encode_u16_units(st, true)))
 }
 
 pub fn mb_codecs_utf_16_le_decode(b: MbValue) -> MbValue {
-    let bytes = match unsafe { extract_bytes_ref(&b) } { Some(v) => v, None => return MbValue::none() };
+    let bytes = match unsafe { extract_bytes_ref(&b) } {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
     MbValue::from_ptr(MbObject::new_str(decode_u16_units(bytes, true)))
 }
 
 pub fn mb_codecs_utf_16_be_encode(s: MbValue) -> MbValue {
-    let st = match unsafe { extract_str_ref(&s) } { Some(v) => v, None => return MbValue::none() };
+    let st = match unsafe { extract_str_ref(&s) } {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
     MbValue::from_ptr(MbObject::new_bytes(encode_u16_units(st, false)))
 }
 
 pub fn mb_codecs_utf_16_be_decode(b: MbValue) -> MbValue {
-    let bytes = match unsafe { extract_bytes_ref(&b) } { Some(v) => v, None => return MbValue::none() };
+    let bytes = match unsafe { extract_bytes_ref(&b) } {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
     MbValue::from_ptr(MbObject::new_str(decode_u16_units(bytes, false)))
 }
 
 /// codecs.utf_32_encode(s) -> bytes (LE BOM-prefixed, platform-native)
 pub fn mb_codecs_utf_32_encode(s: MbValue) -> MbValue {
-    let st = match unsafe { extract_str_ref(&s) } { Some(v) => v, None => return MbValue::none() };
+    let st = match unsafe { extract_str_ref(&s) } {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
     let mut out = vec![0xFF, 0xFE, 0x00, 0x00]; // LE BOM
     out.extend(encode_u32_units(st, true));
     MbValue::from_ptr(MbObject::new_bytes(out))
 }
 
 pub fn mb_codecs_utf_32_decode(b: MbValue) -> MbValue {
-    let bytes = match unsafe { extract_bytes_ref(&b) } { Some(v) => v, None => return MbValue::none() };
+    let bytes = match unsafe { extract_bytes_ref(&b) } {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
     let (slice, le) = if bytes.len() >= 4 && bytes[0..4] == [0xFF, 0xFE, 0x00, 0x00] {
         (&bytes[4..], true)
     } else if bytes.len() >= 4 && bytes[0..4] == [0x00, 0x00, 0xFE, 0xFF] {
@@ -954,19 +1225,24 @@ pub fn mb_codecs_charmap_decode(input: MbValue, errors: MbValue, mapping: MbValu
                             if let Some(code) = v.as_int() {
                                 if !(0..=0x10FFFF).contains(&code) {
                                     return raise_type_error(
-                                        "character mapping must be in range(0x110000)");
+                                        "character mapping must be in range(0x110000)",
+                                    );
                                 }
                                 match char::from_u32(code as u32) {
                                     Some(c) => out.push(c),
-                                    None => return raise_type_error(
-                                        "character mapping must be in range(0x110000)"),
+                                    None => {
+                                        return raise_type_error(
+                                            "character mapping must be in range(0x110000)",
+                                        )
+                                    }
                                 }
                             } else if let Some(sp) = v.as_ptr() {
                                 if let ObjData::Str(ref s) = (*sp).data {
                                     out.push_str(s);
                                 } else {
                                     return raise_type_error(
-                                        "character mapping must return integer, None or str");
+                                        "character mapping must return integer, None or str",
+                                    );
                                 }
                             } else if v.is_none() {
                                 handle_undef!(b, i);
@@ -1005,7 +1281,11 @@ pub fn mb_codecs_charmap_decode(input: MbValue, errors: MbValue, mapping: MbValu
 
 /// Error-handler behaviour for a truncated `\x` escape.
 #[derive(Clone, Copy, PartialEq)]
-enum EscErr { Strict, Ignore, Replace }
+enum EscErr {
+    Strict,
+    Ignore,
+    Replace,
+}
 
 fn esc_err_from(name: Option<&str>) -> EscErr {
     match name {
@@ -1018,9 +1298,7 @@ fn esc_err_from(name: Option<&str>) -> EscErr {
 /// Decode C-style escapes. On a truncated `\x`, behaviour follows `errh`:
 /// Strict → Err((is_unicode, message)); Ignore → consume + emit nothing;
 /// Replace → consume + emit '?'. `unicode` selects the strict error class/msg.
-fn escape_decode_inner(src: &[u8], unicode: bool, errh: EscErr)
-    -> Result<Vec<u8>, (bool, String)>
-{
+fn escape_decode_inner(src: &[u8], unicode: bool, errh: EscErr) -> Result<Vec<u8>, (bool, String)> {
     let mut out: Vec<u8> = Vec::with_capacity(src.len());
     let mut i = 0;
     while i < src.len() {
@@ -1070,7 +1348,9 @@ fn escape_decode_inner(src: &[u8], unicode: bool, errh: EscErr)
                     _ => {
                         let pos = i - 2;
                         // Consume the optional single hex digit that was present.
-                        if h1.is_some() { i += 1; }
+                        if h1.is_some() {
+                            i += 1;
+                        }
                         match errh {
                             EscErr::Ignore => { /* emit nothing */ }
                             EscErr::Replace => out.push(b'?'),
@@ -1080,8 +1360,10 @@ fn escape_decode_inner(src: &[u8], unicode: bool, errh: EscErr)
                                         "'unicodeescape' codec can't decode bytes in position {}-{}: truncated \\xXX escape",
                                         pos, src.len() - 1)));
                                 } else {
-                                    return Err((false, format!(
-                                        "invalid \\x escape at position {}", pos)));
+                                    return Err((
+                                        false,
+                                        format!("invalid \\x escape at position {}", pos),
+                                    ));
                                 }
                             }
                         }
@@ -1103,13 +1385,18 @@ fn escape_input_bytes(input: MbValue, fname: &str) -> Result<Vec<u8>, MbValue> {
         None => match extract_str(input) {
             Some(s) => Ok(s.into_bytes()),
             None => Err(raise_type_error(&format!(
-                "{}() argument must be bytes-like or str", fname))),
+                "{}() argument must be bytes-like or str",
+                fname
+            ))),
         },
     }
 }
 
 pub fn mb_codecs_escape_decode2(input: MbValue, errors: MbValue) -> MbValue {
-    let src = match escape_input_bytes(input, "escape_decode") { Ok(s) => s, Err(e) => return e };
+    let src = match escape_input_bytes(input, "escape_decode") {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
     let orig_len = src.len() as i64;
     let errh = esc_err_from(extract_str(errors).as_deref());
     match escape_decode_inner(&src, false, errh) {
@@ -1135,9 +1422,12 @@ fn unicode_escape_decode_str(src: &[u8], errh: EscErr) -> Result<String, String>
                 None => match errh {
                     EscErr::Ignore => {}
                     EscErr::Replace => out.push('\u{FFFD}'),
-                    EscErr::Strict => return Err(format!(
-                        "'unicodeescape' codec can't decode bytes in position {}-{}: {}",
-                        $pos, $end, $kind)),
+                    EscErr::Strict => {
+                        return Err(format!(
+                            "'unicodeescape' codec can't decode bytes in position {}-{}: {}",
+                            $pos, $end, $kind
+                        ))
+                    }
                 },
             }
         }};
@@ -1148,9 +1438,12 @@ fn unicode_escape_decode_str(src: &[u8], errh: EscErr) -> Result<String, String>
             match errh {
                 EscErr::Ignore => {}
                 EscErr::Replace => out.push('\u{FFFD}'),
-                EscErr::Strict => return Err(format!(
-                    "'unicodeescape' codec can't decode bytes in position {}-{}: {}",
-                    $pos, $end, $kind)),
+                EscErr::Strict => {
+                    return Err(format!(
+                        "'unicodeescape' codec can't decode bytes in position {}-{}: {}",
+                        $pos, $end, $kind
+                    ))
+                }
             }
         }};
     }
@@ -1162,12 +1455,18 @@ fn unicode_escape_decode_str(src: &[u8], errh: EscErr) -> Result<String, String>
             i += 1;
             continue;
         }
-        if i + 1 >= src.len() { out.push('\\'); i += 1; continue; }
+        if i + 1 >= src.len() {
+            out.push('\\');
+            i += 1;
+            continue;
+        }
         let e = src[i + 1];
         let start = i;
         i += 2;
         let hexn = |n: usize, j: usize| -> Option<u32> {
-            if j + n > src.len() { return None; }
+            if j + n > src.len() {
+                return None;
+            }
             let mut v = 0u32;
             for k in 0..n {
                 let d = (src[j + k] as char).to_digit(16)?;
@@ -1191,39 +1490,61 @@ fn unicode_escape_decode_str(src: &[u8], errh: EscErr) -> Result<String, String>
                 let mut n = 1;
                 while n < 3 && i < src.len() && (b'0'..=b'7').contains(&src[i]) {
                     val = val * 8 + (src[i] - b'0') as u32;
-                    i += 1; n += 1;
+                    i += 1;
+                    n += 1;
                 }
                 push_code!(val, start, i - 1, "invalid octal escape");
             }
             b'x' => match hexn(2, i) {
-                Some(v) => { out.push(v as u8 as char); i += 2; }
+                Some(v) => {
+                    out.push(v as u8 as char);
+                    i += 2;
+                }
                 None => {
-                    if i < src.len() && (src[i] as char).is_ascii_hexdigit() { i += 1; }
+                    if i < src.len() && (src[i] as char).is_ascii_hexdigit() {
+                        i += 1;
+                    }
                     truncated!(start, src.len() - 1, "truncated \\xXX escape");
                 }
             },
             b'u' => match hexn(4, i) {
-                Some(v) => { push_code!(v, start, i + 3, "illegal Unicode character"); i += 4; }
+                Some(v) => {
+                    push_code!(v, start, i + 3, "illegal Unicode character");
+                    i += 4;
+                }
                 None => {
-                    while i < src.len() && (src[i] as char).is_ascii_hexdigit() { i += 1; }
+                    while i < src.len() && (src[i] as char).is_ascii_hexdigit() {
+                        i += 1;
+                    }
                     truncated!(start, src.len() - 1, "truncated \\uXXXX escape");
                 }
             },
             b'U' => match hexn(8, i) {
-                Some(v) => { push_code!(v, start, i + 7, "illegal Unicode character"); i += 8; }
+                Some(v) => {
+                    push_code!(v, start, i + 7, "illegal Unicode character");
+                    i += 8;
+                }
                 None => {
-                    while i < src.len() && (src[i] as char).is_ascii_hexdigit() { i += 1; }
+                    while i < src.len() && (src[i] as char).is_ascii_hexdigit() {
+                        i += 1;
+                    }
                     truncated!(start, src.len() - 1, "truncated \\UXXXXXXXX escape");
                 }
             },
-            _ => { out.push('\\'); out.push(e as char); }
+            _ => {
+                out.push('\\');
+                out.push(e as char);
+            }
         }
     }
     Ok(out)
 }
 
 pub fn mb_codecs_unicode_escape_decode2(input: MbValue, errors: MbValue) -> MbValue {
-    let src = match escape_input_bytes(input, "unicode_escape_decode") { Ok(s) => s, Err(e) => return e };
+    let src = match escape_input_bytes(input, "unicode_escape_decode") {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
     let orig_len = src.len() as i64;
     let errh = esc_err_from(extract_str(errors).as_deref());
     match unicode_escape_decode_str(&src, errh) {
@@ -1278,8 +1599,12 @@ pub fn mb_codecs_unicode_escape_encode(input: MbValue) -> MbValue {
             '\r' => out.extend_from_slice(b"\\r"),
             '\\' => out.extend_from_slice(b"\\\\"),
             c if (c as u32) >= 0x20 && (c as u32) < 0x7F => out.push(c as u8),
-            c if (c as u32) <= 0xFF => out.extend_from_slice(format!("\\x{:02x}", c as u32).as_bytes()),
-            c if (c as u32) <= 0xFFFF => out.extend_from_slice(format!("\\u{:04x}", c as u32).as_bytes()),
+            c if (c as u32) <= 0xFF => {
+                out.extend_from_slice(format!("\\x{:02x}", c as u32).as_bytes())
+            }
+            c if (c as u32) <= 0xFFFF => {
+                out.extend_from_slice(format!("\\u{:04x}", c as u32).as_bytes())
+            }
             c => out.extend_from_slice(format!("\\U{:08x}", c as u32).as_bytes()),
         }
     }
@@ -1293,9 +1618,15 @@ pub fn mb_codecs_unicode_escape_encode(input: MbValue) -> MbValue {
 // so `b"".join(...)` / `"".join(...)` work). encodedfile/EncodedFile builds a
 // StreamRecoder. These take 2+ args, so they're driven by the flat-args
 // dispatchers below rather than disp_unary.
-pub fn mb_codecs_iterencode(_obj: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_codecs_iterdecode(_obj: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_codecs_encodedfile(_file: MbValue) -> MbValue { MbValue::none() }
+pub fn mb_codecs_iterencode(_obj: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_codecs_iterdecode(_obj: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_codecs_encodedfile(_file: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 // -- Error handlers --
 //
@@ -1304,12 +1635,24 @@ pub fn mb_codecs_encodedfile(_file: MbValue) -> MbValue { MbValue::none() }
 // strict handler raising semantics queue for Phase 3 exception plumbing.
 // What matters for Gate 3 is that the names are registered.
 
-pub fn mb_codecs_strict_errors(_exc: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_codecs_replace_errors(_exc: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_codecs_ignore_errors(_exc: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_codecs_xmlcharrefreplace_errors(_exc: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_codecs_backslashreplace_errors(_exc: MbValue) -> MbValue { MbValue::none() }
-pub fn mb_codecs_namereplace_errors(_exc: MbValue) -> MbValue { MbValue::none() }
+pub fn mb_codecs_strict_errors(_exc: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_codecs_replace_errors(_exc: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_codecs_ignore_errors(_exc: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_codecs_xmlcharrefreplace_errors(_exc: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_codecs_backslashreplace_errors(_exc: MbValue) -> MbValue {
+    MbValue::none()
+}
+pub fn mb_codecs_namereplace_errors(_exc: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 // ════════════════════════════════════════════════════════════════════════
 //  Stateful codec core + StreamReader/Writer/Recoder + IncrementalEncoder/
@@ -1334,7 +1677,9 @@ fn inst_field(obj: MbValue, name: &str) -> Option<MbValue> {
     obj.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             fields.read().unwrap().get(name).copied()
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
@@ -1350,7 +1695,9 @@ fn set_inst_field(obj: MbValue, name: &str, value: MbValue) {
 }
 
 fn inst_str(obj: MbValue, name: &str) -> String {
-    inst_field(obj, name).and_then(extract_str).unwrap_or_default()
+    inst_field(obj, name)
+        .and_then(extract_str)
+        .unwrap_or_default()
 }
 
 /// First positional argument from the variadic `args_list` passed to an
@@ -1365,8 +1712,12 @@ fn pos_arg(args_list: MbValue, i: usize) -> Option<MbValue> {
     })
 }
 
-fn new_bytes(b: Vec<u8>) -> MbValue { MbValue::from_ptr(MbObject::new_bytes(b)) }
-fn new_str(s: String) -> MbValue { MbValue::from_ptr(MbObject::new_str(s)) }
+fn new_bytes(b: Vec<u8>) -> MbValue {
+    MbValue::from_ptr(MbObject::new_bytes(b))
+}
+fn new_str(s: String) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s))
+}
 fn tuple2(a: MbValue, b: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(vec![a, b]))
 }
@@ -1395,20 +1746,41 @@ fn codec_encode_bytes(mode: &str, s: &str) -> Option<Vec<u8>> {
         "utf-8" => s.as_bytes().to_vec(),
         "ascii" => {
             let mut out = Vec::with_capacity(s.len());
-            for c in s.chars() { if c.is_ascii() { out.push(c as u8); } else { return None; } }
+            for c in s.chars() {
+                if c.is_ascii() {
+                    out.push(c as u8);
+                } else {
+                    return None;
+                }
+            }
             out
         }
         "latin-1" => {
             let mut out = Vec::with_capacity(s.len());
-            for c in s.chars() { let n = c as u32; if n <= 255 { out.push(n as u8); } else { return None; } }
+            for c in s.chars() {
+                let n = c as u32;
+                if n <= 255 {
+                    out.push(n as u8);
+                } else {
+                    return None;
+                }
+            }
             out
         }
         "utf-16-le" => encode_u16_units(s, true),
         "utf-16-be" => encode_u16_units(s, false),
-        "utf-16" => { let mut b = vec![0xFF, 0xFE]; b.extend(encode_u16_units(s, true)); b }
+        "utf-16" => {
+            let mut b = vec![0xFF, 0xFE];
+            b.extend(encode_u16_units(s, true));
+            b
+        }
         "utf-32-le" => encode_u32_units(s, true),
         "utf-32-be" => encode_u32_units(s, false),
-        "utf-32" => { let mut b = vec![0xFF, 0xFE, 0x00, 0x00]; b.extend(encode_u32_units(s, true)); b }
+        "utf-32" => {
+            let mut b = vec![0xFF, 0xFE, 0x00, 0x00];
+            b.extend(encode_u32_units(s, true));
+            b
+        }
         _ => return None,
     })
 }
@@ -1438,21 +1810,32 @@ fn codec_decode_str(mode: &str, bytes: &[u8]) -> Option<String> {
 }
 
 fn utf16_bom(bytes: &[u8]) -> (&[u8], bool) {
-    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE { (&bytes[2..], true) }
-    else if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF { (&bytes[2..], false) }
-    else { (bytes, true) }
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        (&bytes[2..], true)
+    } else if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        (&bytes[2..], false)
+    } else {
+        (bytes, true)
+    }
 }
 fn utf32_bom(bytes: &[u8]) -> (&[u8], bool) {
-    if bytes.len() >= 4 && bytes[0..4] == [0xFF, 0xFE, 0x00, 0x00] { (&bytes[4..], true) }
-    else if bytes.len() >= 4 && bytes[0..4] == [0x00, 0x00, 0xFE, 0xFF] { (&bytes[4..], false) }
-    else { (bytes, true) }
+    if bytes.len() >= 4 && bytes[0..4] == [0xFF, 0xFE, 0x00, 0x00] {
+        (&bytes[4..], true)
+    } else if bytes.len() >= 4 && bytes[0..4] == [0x00, 0x00, 0xFE, 0xFF] {
+        (&bytes[4..], false)
+    } else {
+        (bytes, true)
+    }
 }
 
 /// True for the "-sig" variant (utf-8-sig); returns the base normalised name.
 fn split_sig(enc: &str) -> (String, bool) {
     let low = enc.to_lowercase().replace(['-', '_', ' '], "");
-    if low == "utf8sig" { ("utf-8".to_string(), true) }
-    else { (normalize_encoding(enc).to_string(), false) }
+    if low == "utf8sig" {
+        ("utf-8".to_string(), true)
+    } else {
+        (normalize_encoding(enc).to_string(), false)
+    }
 }
 
 const BOM_UTF8: [u8; 3] = [0xEF, 0xBB, 0xBF];
@@ -1481,19 +1864,29 @@ fn utf8_complete_prefix(buf: &[u8]) -> usize {
 
 fn incr_decode(self_v: MbValue, args_list: MbValue) -> MbValue {
     let input = pos_arg(args_list, 0).unwrap_or_else(MbValue::none);
-    let is_final = pos_arg(args_list, 1).map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+    let is_final = pos_arg(args_list, 1)
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
     let mode = inst_str(self_v, "mode");
-    let sig = inst_field(self_v, "sig").map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+    let sig = inst_field(self_v, "sig")
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
 
     let chunk = as_bytes_vec(input).unwrap_or_default();
-    let mut buf = inst_field(self_v, "buffer").and_then(as_bytes_vec).unwrap_or_default();
+    let mut buf = inst_field(self_v, "buffer")
+        .and_then(as_bytes_vec)
+        .unwrap_or_default();
     buf.extend_from_slice(&chunk);
 
     // utf-8-sig: strip a leading BOM once seen in the buffer.
-    let mut bom_done = inst_field(self_v, "bom_done").map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+    let mut bom_done = inst_field(self_v, "bom_done")
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
     if sig && !bom_done {
         if buf.len() >= 3 {
-            if buf[0..3] == BOM_UTF8 { buf.drain(0..3); }
+            if buf[0..3] == BOM_UTF8 {
+                buf.drain(0..3);
+            }
             bom_done = true;
             set_inst_field(self_v, "bom_done", MbValue::from_bool(true));
         } else if !is_final && (buf.is_empty() || BOM_UTF8.starts_with(&buf)) {
@@ -1535,12 +1928,16 @@ fn incr_decode_reset(self_v: MbValue, _args: MbValue) -> MbValue {
 fn incr_encode(self_v: MbValue, args_list: MbValue) -> MbValue {
     let input = pos_arg(args_list, 0).unwrap_or_else(MbValue::none);
     let mode = inst_str(self_v, "mode");
-    let sig = inst_field(self_v, "sig").map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+    let sig = inst_field(self_v, "sig")
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
     let s = extract_str(input).unwrap_or_default();
     let mut out = codec_encode_bytes(&mode, &s).unwrap_or_default();
     // utf-8-sig emits a BOM before the first chunk.
     if sig {
-        let first = inst_field(self_v, "first").map(|v| v.as_bool() != Some(false)).unwrap_or(true);
+        let first = inst_field(self_v, "first")
+            .map(|v| v.as_bool() != Some(false))
+            .unwrap_or(true);
         if first {
             let mut prefixed = BOM_UTF8.to_vec();
             prefixed.append(&mut out);
@@ -1571,27 +1968,41 @@ fn reader_underlying(self_v: MbValue) -> MbValue {
 /// reader's raw byte buffer, then (re)decode into the text buffer.
 fn reader_fill(self_v: MbValue) {
     let stream = reader_underlying(self_v);
-    let raw = mb_call_method(stream, new_str("read".into()),
-        MbValue::from_ptr(MbObject::new_list(vec![])));
+    let raw = mb_call_method(
+        stream,
+        new_str("read".into()),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
     let bytes = as_bytes_vec(raw).unwrap_or_default();
-    let mut all = inst_field(self_v, "raw").and_then(as_bytes_vec).unwrap_or_default();
+    let mut all = inst_field(self_v, "raw")
+        .and_then(as_bytes_vec)
+        .unwrap_or_default();
     all.extend_from_slice(&bytes);
     let mode = inst_str(self_v, "mode");
-    let sig = inst_field(self_v, "sig").map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+    let sig = inst_field(self_v, "sig")
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
     let mut decode_src: &[u8] = &all;
-    if sig && all.len() >= 3 && all[0..3] == BOM_UTF8 { decode_src = &all[3..]; }
+    if sig && all.len() >= 3 && all[0..3] == BOM_UTF8 {
+        decode_src = &all[3..];
+    }
     let text = codec_decode_str(&mode, decode_src).unwrap_or_default();
     set_inst_field(self_v, "raw", new_bytes(all));
     set_inst_field(self_v, "text", new_str(text));
 }
 
 fn reader_text(self_v: MbValue) -> Vec<char> {
-    if inst_field(self_v, "text").is_none() { reader_fill(self_v); }
+    if inst_field(self_v, "text").is_none() {
+        reader_fill(self_v);
+    }
     inst_str(self_v, "text").chars().collect()
 }
 
 fn reader_pos(self_v: MbValue) -> usize {
-    inst_field(self_v, "pos").and_then(|v| v.as_int()).unwrap_or(0).max(0) as usize
+    inst_field(self_v, "pos")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0)
+        .max(0) as usize
 }
 
 fn reader_read(self_v: MbValue, args_list: MbValue) -> MbValue {
@@ -1612,12 +2023,16 @@ fn reader_read(self_v: MbValue, args_list: MbValue) -> MbValue {
 fn reader_readline(self_v: MbValue, _args: MbValue) -> MbValue {
     let text = reader_text(self_v);
     let pos = reader_pos(self_v);
-    if pos >= text.len() { return new_str(String::new()); }
+    if pos >= text.len() {
+        return new_str(String::new());
+    }
     let mut end = pos;
     while end < text.len() {
         let c = text[end];
         end += 1;
-        if c == '\n' { break; }
+        if c == '\n' {
+            break;
+        }
     }
     let line: String = text[pos..end].iter().collect();
     set_inst_field(self_v, "pos", MbValue::from_int(end as i64));
@@ -1629,7 +2044,9 @@ fn reader_readlines(self_v: MbValue, _args: MbValue) -> MbValue {
     loop {
         let line = reader_readline(self_v, MbValue::none());
         let s = extract_str(line).unwrap_or_default();
-        if s.is_empty() { break; }
+        if s.is_empty() {
+            break;
+        }
         lines.push(new_str(s));
     }
     MbValue::from_ptr(MbObject::new_list(lines))
@@ -1662,13 +2079,19 @@ fn reader_seek(self_v: MbValue, args_list: MbValue) -> MbValue {
 fn writer_write(self_v: MbValue, args_list: MbValue) -> MbValue {
     let obj = pos_arg(args_list, 0).unwrap_or_else(MbValue::none);
     let mode = inst_str(self_v, "mode");
-    let sig = inst_field(self_v, "sig").map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+    let sig = inst_field(self_v, "sig")
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
     let s = extract_str(obj).unwrap_or_default();
     let mut bytes = codec_encode_bytes(&mode, &s).unwrap_or_default();
     if sig {
-        let first = inst_field(self_v, "first").map(|v| v.as_bool() != Some(false)).unwrap_or(true);
+        let first = inst_field(self_v, "first")
+            .map(|v| v.as_bool() != Some(false))
+            .unwrap_or(true);
         if first {
-            let mut p = BOM_UTF8.to_vec(); p.append(&mut bytes); bytes = p;
+            let mut p = BOM_UTF8.to_vec();
+            p.append(&mut bytes);
+            bytes = p;
             set_inst_field(self_v, "first", MbValue::from_bool(false));
         }
     }
@@ -1700,8 +2123,11 @@ fn recoder_recode_read(self_v: MbValue, raw: &[u8]) -> Vec<u8> {
 
 fn recoder_read(self_v: MbValue, _args: MbValue) -> MbValue {
     let stream = recoder_underlying(self_v);
-    let raw = mb_call_method(stream, new_str("read".into()),
-        MbValue::from_ptr(MbObject::new_list(vec![])));
+    let raw = mb_call_method(
+        stream,
+        new_str("read".into()),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
     let bytes = as_bytes_vec(raw).unwrap_or_default();
     new_bytes(recoder_recode_read(self_v, &bytes))
 }
@@ -1710,21 +2136,37 @@ fn recoder_read(self_v: MbValue, _args: MbValue) -> MbValue {
 fn recoder_buffer(self_v: MbValue) -> Vec<u8> {
     if inst_field(self_v, "recoded").is_none() {
         let stream = recoder_underlying(self_v);
-        let raw = mb_call_method(stream, new_str("read".into()),
-            MbValue::from_ptr(MbObject::new_list(vec![])));
+        let raw = mb_call_method(
+            stream,
+            new_str("read".into()),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
         let bytes = as_bytes_vec(raw).unwrap_or_default();
         let recoded = recoder_recode_read(self_v, &bytes);
         set_inst_field(self_v, "recoded", new_bytes(recoded));
     }
-    inst_field(self_v, "recoded").and_then(as_bytes_vec).unwrap_or_default()
+    inst_field(self_v, "recoded")
+        .and_then(as_bytes_vec)
+        .unwrap_or_default()
 }
 
 fn recoder_readline(self_v: MbValue, _args: MbValue) -> MbValue {
     let buf = recoder_buffer(self_v);
-    let pos = inst_field(self_v, "pos").and_then(|v| v.as_int()).unwrap_or(0).max(0) as usize;
-    if pos >= buf.len() { return new_bytes(Vec::new()); }
+    let pos = inst_field(self_v, "pos")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0)
+        .max(0) as usize;
+    if pos >= buf.len() {
+        return new_bytes(Vec::new());
+    }
     let mut end = pos;
-    while end < buf.len() { let b = buf[end]; end += 1; if b == b'\n' { break; } }
+    while end < buf.len() {
+        let b = buf[end];
+        end += 1;
+        if b == b'\n' {
+            break;
+        }
+    }
     set_inst_field(self_v, "pos", MbValue::from_int(end as i64));
     new_bytes(buf[pos..end].to_vec())
 }
@@ -1753,14 +2195,19 @@ fn recoder_write(self_v: MbValue, args_list: MbValue) -> MbValue {
 // ── Context-manager (__enter__/__exit__) for EncodedFile / readers ─────────
 
 extern "C" fn cm_enter(self_v: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(self_v); }
+    unsafe {
+        super::super::rc::retain_if_ptr(self_v);
+    }
     self_v
 }
 extern "C" fn cm_exit(self_v: MbValue, _t: MbValue, _v: MbValue, _tb: MbValue) -> MbValue {
     // Close the wrapped stream (CPython EncodedFile closes the base file).
     if let Some(stream) = inst_field(self_v, "stream") {
-        mb_call_method(stream, new_str("close".into()),
-            MbValue::from_ptr(MbObject::new_list(vec![])));
+        mb_call_method(
+            stream,
+            new_str("close".into()),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
     }
     MbValue::from_bool(false)
 }
@@ -1797,28 +2244,58 @@ method2!(m_recoder_write, recoder_write);
 
 /// `IncrementalDecoder factory`.__call__(self[, errors]) — build a decoder.
 extern "C" fn factory_incr_decoder_call(self_v: MbValue) -> MbValue {
-    let inst = MbValue::from_ptr(MbObject::new_instance("codecs.IncrementalDecoder".to_string()));
-    set_inst_field(inst, "mode", inst_field(self_v, "mode").unwrap_or_else(MbValue::none));
-    set_inst_field(inst, "sig", inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)));
+    let inst = MbValue::from_ptr(MbObject::new_instance(
+        "codecs.IncrementalDecoder".to_string(),
+    ));
+    set_inst_field(
+        inst,
+        "mode",
+        inst_field(self_v, "mode").unwrap_or_else(MbValue::none),
+    );
+    set_inst_field(
+        inst,
+        "sig",
+        inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)),
+    );
     set_inst_field(inst, "buffer", new_bytes(Vec::new()));
     set_inst_field(inst, "bom_done", MbValue::from_bool(false));
     inst
 }
 
 extern "C" fn factory_incr_encoder_call(self_v: MbValue) -> MbValue {
-    let inst = MbValue::from_ptr(MbObject::new_instance("codecs.IncrementalEncoder".to_string()));
-    set_inst_field(inst, "mode", inst_field(self_v, "mode").unwrap_or_else(MbValue::none));
-    set_inst_field(inst, "sig", inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)));
+    let inst = MbValue::from_ptr(MbObject::new_instance(
+        "codecs.IncrementalEncoder".to_string(),
+    ));
+    set_inst_field(
+        inst,
+        "mode",
+        inst_field(self_v, "mode").unwrap_or_else(MbValue::none),
+    );
+    set_inst_field(
+        inst,
+        "sig",
+        inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)),
+    );
     set_inst_field(inst, "first", MbValue::from_bool(true));
     inst
 }
 
 /// `StreamReader factory`.__call__(self, stream) — build a reader over stream.
 extern "C" fn factory_reader_call(self_v: MbValue, stream: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(stream); }
+    unsafe {
+        super::super::rc::retain_if_ptr(stream);
+    }
     let inst = MbValue::from_ptr(MbObject::new_instance("codecs.StreamReader".to_string()));
-    set_inst_field(inst, "mode", inst_field(self_v, "mode").unwrap_or_else(MbValue::none));
-    set_inst_field(inst, "sig", inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)));
+    set_inst_field(
+        inst,
+        "mode",
+        inst_field(self_v, "mode").unwrap_or_else(MbValue::none),
+    );
+    set_inst_field(
+        inst,
+        "sig",
+        inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)),
+    );
     set_inst_field(inst, "stream", stream);
     set_inst_field(inst, "pos", MbValue::from_int(0));
     inst
@@ -1827,7 +2304,9 @@ extern "C" fn factory_reader_call(self_v: MbValue, stream: MbValue) -> MbValue {
 /// `_EncoderFunc`.__call__(self, input) -> (bytes, consumed_char_count).
 extern "C" fn encoder_func_call(self_v: MbValue, input: MbValue) -> MbValue {
     let mode = inst_str(self_v, "mode");
-    let sig = inst_field(self_v, "sig").map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+    let sig = inst_field(self_v, "sig")
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
     let s = match extract_str(input) {
         Some(s) => s,
         None => return raise_type_error("encoder requires a str argument"),
@@ -1835,33 +2314,52 @@ extern "C" fn encoder_func_call(self_v: MbValue, input: MbValue) -> MbValue {
     let consumed = s.chars().count() as i64;
     let mut b = match codec_encode_bytes(&mode, &s) {
         Some(b) => b,
-        None => return raise_unicode_encode_error(&format!(
-            "'{}' codec can't encode character", mode)),
+        None => {
+            return raise_unicode_encode_error(&format!("'{}' codec can't encode character", mode))
+        }
     };
-    if sig { let mut p = BOM_UTF8.to_vec(); p.append(&mut b); b = p; }
+    if sig {
+        let mut p = BOM_UTF8.to_vec();
+        p.append(&mut b);
+        b = p;
+    }
     tuple2(new_bytes(b), MbValue::from_int(consumed))
 }
 
 /// `_DecoderFunc`.__call__(self, input) -> (str, consumed_byte_count).
 extern "C" fn decoder_func_call(self_v: MbValue, input: MbValue) -> MbValue {
     let mode = inst_str(self_v, "mode");
-    let sig = inst_field(self_v, "sig").map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+    let sig = inst_field(self_v, "sig")
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
     let raw = match as_bytes_vec(input) {
         Some(b) => b,
         None => return raise_type_error("decoder requires a bytes-like argument"),
     };
     let consumed = raw.len() as i64;
     let mut src: &[u8] = &raw;
-    if sig && raw.len() >= 3 && raw[0..3] == BOM_UTF8 { src = &raw[3..]; }
+    if sig && raw.len() >= 3 && raw[0..3] == BOM_UTF8 {
+        src = &raw[3..];
+    }
     let s = codec_decode_str(&mode, src).unwrap_or_default();
     tuple2(new_str(s), MbValue::from_int(consumed))
 }
 
 extern "C" fn factory_writer_call(self_v: MbValue, stream: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(stream); }
+    unsafe {
+        super::super::rc::retain_if_ptr(stream);
+    }
     let inst = MbValue::from_ptr(MbObject::new_instance("codecs.StreamWriter".to_string()));
-    set_inst_field(inst, "mode", inst_field(self_v, "mode").unwrap_or_else(MbValue::none));
-    set_inst_field(inst, "sig", inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)));
+    set_inst_field(
+        inst,
+        "mode",
+        inst_field(self_v, "mode").unwrap_or_else(MbValue::none),
+    );
+    set_inst_field(
+        inst,
+        "sig",
+        inst_field(self_v, "sig").unwrap_or_else(|| MbValue::from_bool(false)),
+    );
     set_inst_field(inst, "stream", stream);
     set_inst_field(inst, "first", MbValue::from_bool(true));
     inst
@@ -1878,50 +2376,95 @@ fn make_factory(class_name: &str, enc: &str) -> MbValue {
 
 /// codecs.getincrementaldecoder(encoding) -> IncrementalDecoder factory.
 pub fn mb_codecs_getincrementaldecoder_real(encoding: MbValue) -> MbValue {
-    let enc = match extract_str(encoding) { Some(e) => e, None => return raise_type_error("getincrementaldecoder() argument must be str") };
+    let enc = match extract_str(encoding) {
+        Some(e) => e,
+        None => return raise_type_error("getincrementaldecoder() argument must be str"),
+    };
     let (mode, _) = split_sig(&enc);
-    if !supported_byte_codec(&mode) { return raise_lookup_error(&format!("unknown encoding: {}", enc)); }
+    if !supported_byte_codec(&mode) {
+        return raise_lookup_error(&format!("unknown encoding: {}", enc));
+    }
     make_factory("codecs._IncrementalDecoderFactory", &enc)
 }
 
 pub fn mb_codecs_getincrementalencoder_real(encoding: MbValue) -> MbValue {
-    let enc = match extract_str(encoding) { Some(e) => e, None => return raise_type_error("getincrementalencoder() argument must be str") };
+    let enc = match extract_str(encoding) {
+        Some(e) => e,
+        None => return raise_type_error("getincrementalencoder() argument must be str"),
+    };
     let (mode, _) = split_sig(&enc);
-    if !supported_byte_codec(&mode) { return raise_lookup_error(&format!("unknown encoding: {}", enc)); }
+    if !supported_byte_codec(&mode) {
+        return raise_lookup_error(&format!("unknown encoding: {}", enc));
+    }
     make_factory("codecs._IncrementalEncoderFactory", &enc)
 }
 
 pub fn mb_codecs_getreader_real(encoding: MbValue) -> MbValue {
-    let enc = match extract_str(encoding) { Some(e) => e, None => return raise_type_error("getreader() argument must be str") };
+    let enc = match extract_str(encoding) {
+        Some(e) => e,
+        None => return raise_type_error("getreader() argument must be str"),
+    };
     let (mode, _) = split_sig(&enc);
-    if !supported_byte_codec(&mode) { return raise_lookup_error(&format!("unknown encoding: {}", enc)); }
+    if !supported_byte_codec(&mode) {
+        return raise_lookup_error(&format!("unknown encoding: {}", enc));
+    }
     make_factory("codecs._StreamReaderFactory", &enc)
 }
 
 pub fn mb_codecs_getwriter_real(encoding: MbValue) -> MbValue {
-    let enc = match extract_str(encoding) { Some(e) => e, None => return raise_type_error("getwriter() argument must be str") };
+    let enc = match extract_str(encoding) {
+        Some(e) => e,
+        None => return raise_type_error("getwriter() argument must be str"),
+    };
     let (mode, _) = split_sig(&enc);
-    if !supported_byte_codec(&mode) { return raise_lookup_error(&format!("unknown encoding: {}", enc)); }
+    if !supported_byte_codec(&mode) {
+        return raise_lookup_error(&format!("unknown encoding: {}", enc));
+    }
     make_factory("codecs._StreamWriterFactory", &enc)
 }
 
 fn supported_byte_codec(mode: &str) -> bool {
-    matches!(mode, "utf-8" | "ascii" | "latin-1"
-        | "utf-16" | "utf-16-le" | "utf-16-be"
-        | "utf-32" | "utf-32-le" | "utf-32-be")
+    matches!(
+        mode,
+        "utf-8"
+            | "ascii"
+            | "latin-1"
+            | "utf-16"
+            | "utf-16-le"
+            | "utf-16-be"
+            | "utf-32"
+            | "utf-32-le"
+            | "utf-32-be"
+    )
 }
 
 /// codecs.EncodedFile(file, data_encoding, file_encoding='utf-8', errors='strict')
 /// -> StreamRecoder. `make_encoded_file` is the variadic ctor.
 pub fn make_encoded_file(args: &[MbValue]) -> MbValue {
     let file = args.first().copied().unwrap_or_else(MbValue::none);
-    let data_enc = args.get(1).and_then(|v| extract_str(*v)).unwrap_or_else(|| "utf-8".to_string());
-    let file_enc = args.get(2).and_then(|v| extract_str(*v)).unwrap_or_else(|| "utf-8".to_string());
-    unsafe { super::super::rc::retain_if_ptr(file); }
+    let data_enc = args
+        .get(1)
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_else(|| "utf-8".to_string());
+    let file_enc = args
+        .get(2)
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_else(|| "utf-8".to_string());
+    unsafe {
+        super::super::rc::retain_if_ptr(file);
+    }
     let inst = MbValue::from_ptr(MbObject::new_instance("codecs.StreamRecoder".to_string()));
     set_inst_field(inst, "stream", file);
-    set_inst_field(inst, "data_encoding", new_str(normalize_encoding(&data_enc).to_string()));
-    set_inst_field(inst, "file_encoding", new_str(normalize_encoding(&file_enc).to_string()));
+    set_inst_field(
+        inst,
+        "data_encoding",
+        new_str(normalize_encoding(&data_enc).to_string()),
+    );
+    set_inst_field(
+        inst,
+        "file_encoding",
+        new_str(normalize_encoding(&file_enc).to_string()),
+    );
     set_inst_field(inst, "pos", MbValue::from_int(0));
     inst
 }
@@ -1948,13 +2491,19 @@ fn transform_encode(name: &str, obj: MbValue) -> Option<MbValue> {
     let which = transform_name(name)?;
     let data = match as_bytes_vec(obj) {
         Some(b) => b,
-        None => return Some(raise_type_error(&format!(
-            "{}_codec encoding requires a bytes-like object", which))),
+        None => {
+            return Some(raise_type_error(&format!(
+                "{}_codec encoding requires a bytes-like object",
+                which
+            )))
+        }
     };
     let out: Vec<u8> = match which {
         "hex" => {
             let mut s = Vec::with_capacity(data.len() * 2);
-            for b in &data { s.extend_from_slice(format!("{:02x}", b).as_bytes()); }
+            for b in &data {
+                s.extend_from_slice(format!("{:02x}", b).as_bytes());
+            }
             s
         }
         "base64" => {
@@ -1977,12 +2526,20 @@ fn transform_decode(name: &str, obj: MbValue) -> Option<MbValue> {
     let which = transform_name(name)?;
     let data = match as_bytes_vec(obj) {
         Some(b) => b,
-        None => return Some(raise_type_error(&format!(
-            "{}_codec decoding requires a bytes-like object", which))),
+        None => {
+            return Some(raise_type_error(&format!(
+                "{}_codec decoding requires a bytes-like object",
+                which
+            )))
+        }
     };
     let out: Vec<u8> = match which {
         "hex" => {
-            let hexstr: Vec<u8> = data.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+            let hexstr: Vec<u8> = data
+                .iter()
+                .copied()
+                .filter(|b| !b.is_ascii_whitespace())
+                .collect();
             if hexstr.len() % 2 != 0 {
                 return Some(raise_value_error("non-hexadecimal number found"));
             }
@@ -2017,7 +2574,13 @@ fn transform_decode(name: &str, obj: MbValue) -> Option<MbValue> {
 /// uuencode (binascii.b2a_uu framing): `begin 666 <data>\n` header, lines of up
 /// to 45 bytes encoded 3→4 with `ch = (v & 0x3F) + 0x20`, then ` \nend\n`.
 fn uu_encode(data: &[u8]) -> Vec<u8> {
-    let enc = |v: u8| -> u8 { if v == 0 { 0x60 } else { (v & 0x3F) + 0x20 } };
+    let enc = |v: u8| -> u8 {
+        if v == 0 {
+            0x60
+        } else {
+            (v & 0x3F) + 0x20
+        }
+    };
     let mut out = Vec::new();
     out.extend_from_slice(b"begin 666 <data>\n");
     for chunk in data.chunks(45) {
@@ -2041,16 +2604,26 @@ fn uu_decode(data: &[u8]) -> Vec<u8> {
     let dec = |c: u8| -> u8 { (c.wrapping_sub(0x20)) & 0x3F };
     let mut out = Vec::new();
     for line in data.split(|&b| b == b'\n') {
-        if line.is_empty() { continue; }
-        if line.starts_with(b"begin") || line == b"end" || line == b" " { continue; }
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with(b"begin") || line == b"end" || line == b" " {
+            continue;
+        }
         let n = dec(line[0]) as usize;
-        if n == 0 { continue; }
+        if n == 0 {
+            continue;
+        }
         let body = &line[1..];
         let mut decoded = Vec::new();
         for quad in body.chunks(4) {
-            if quad.len() < 4 { break; }
-            let c0 = dec(quad[0]); let c1 = dec(quad[1]);
-            let c2 = dec(quad[2]); let c3 = dec(quad[3]);
+            if quad.len() < 4 {
+                break;
+            }
+            let c0 = dec(quad[0]);
+            let c1 = dec(quad[1]);
+            let c2 = dec(quad[2]);
+            let c3 = dec(quad[3]);
             decoded.push((c0 << 2) | (c1 >> 4));
             decoded.push((c1 << 4) | (c2 >> 2));
             decoded.push((c2 << 6) | c3);
@@ -2072,8 +2645,16 @@ fn base64_encode(data: &[u8]) -> Vec<u8> {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(B64[((n >> 18) & 63) as usize]);
         out.push(B64[((n >> 12) & 63) as usize]);
-        out.push(if chunk.len() > 1 { B64[((n >> 6) & 63) as usize] } else { b'=' });
-        out.push(if chunk.len() > 2 { B64[(n & 63) as usize] } else { b'=' });
+        out.push(if chunk.len() > 1 {
+            B64[((n >> 6) & 63) as usize]
+        } else {
+            b'='
+        });
+        out.push(if chunk.len() > 2 {
+            B64[(n & 63) as usize]
+        } else {
+            b'='
+        });
     }
     out
 }
@@ -2089,13 +2670,18 @@ fn base64_decode(data: &[u8]) -> Option<Vec<u8>> {
             _ => None,
         }
     };
-    let filtered: Vec<u8> = data.iter().copied()
-        .filter(|&b| b != b'\n' && b != b'\r' && b != b' ' && b != b'\t').collect();
+    let filtered: Vec<u8> = data
+        .iter()
+        .copied()
+        .filter(|&b| b != b'\n' && b != b'\r' && b != b' ' && b != b'\t')
+        .collect();
     let mut out = Vec::new();
     let mut acc = 0u32;
     let mut bits = 0;
     for &c in &filtered {
-        if c == b'=' { break; }
+        if c == b'=' {
+            break;
+        }
         let v = inv(c)?;
         acc = (acc << 6) | v;
         bits += 6;
@@ -2129,7 +2715,10 @@ fn quopri_decode(data: &[u8]) -> Vec<u8> {
     let mut i = 0;
     while i < data.len() {
         if data[i] == b'=' {
-            if i + 1 < data.len() && data[i + 1] == b'\n' { i += 2; continue; } // soft line break
+            if i + 1 < data.len() && data[i + 1] == b'\n' {
+                i += 2;
+                continue;
+            } // soft line break
             if i + 2 < data.len() {
                 let hi = (data[i + 1] as char).to_digit(16);
                 let lo = (data[i + 2] as char).to_digit(16);
@@ -2164,7 +2753,11 @@ pub fn mb_codecs_iterencode2(iterable: MbValue, encoding: MbValue) -> MbValue {
     for it in items {
         let s = extract_str(it).unwrap_or_default();
         let mut b = codec_encode_bytes(&mode, &s).unwrap_or_default();
-        if sig && first { let mut p = BOM_UTF8.to_vec(); p.append(&mut b); b = p; }
+        if sig && first {
+            let mut p = BOM_UTF8.to_vec();
+            p.append(&mut b);
+            b = p;
+        }
         first = false;
         out.push(new_bytes(b));
     }
@@ -2201,25 +2794,48 @@ pub fn mb_codecs_raw_unicode_escape_decode(input: MbValue) -> MbValue {
     let mut i = 0;
     while i < src.len() {
         let b = src[i];
-        if b != b'\\' { out.push(b as char); i += 1; continue; }
+        if b != b'\\' {
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
         // Look at the escape char.
         let next = src.get(i + 1).copied();
         let hexn = |n: usize, j: usize| -> Option<u32> {
-            if j + n > src.len() { return None; }
+            if j + n > src.len() {
+                return None;
+            }
             let mut v = 0u32;
-            for k in 0..n { v = (v << 4) | (src[j + k] as char).to_digit(16)?; }
+            for k in 0..n {
+                v = (v << 4) | (src[j + k] as char).to_digit(16)?;
+            }
             Some(v)
         };
         match next {
             Some(b'u') => match hexn(4, i + 2) {
-                Some(v) => { out.push(char::from_u32(v).unwrap_or('\u{FFFD}')); i += 6; }
-                None => { out.push('\\'); i += 1; }
+                Some(v) => {
+                    out.push(char::from_u32(v).unwrap_or('\u{FFFD}'));
+                    i += 6;
+                }
+                None => {
+                    out.push('\\');
+                    i += 1;
+                }
             },
             Some(b'U') => match hexn(8, i + 2) {
-                Some(v) => { out.push(char::from_u32(v).unwrap_or('\u{FFFD}')); i += 10; }
-                None => { out.push('\\'); i += 1; }
+                Some(v) => {
+                    out.push(char::from_u32(v).unwrap_or('\u{FFFD}'));
+                    i += 10;
+                }
+                None => {
+                    out.push('\\');
+                    i += 1;
+                }
             },
-            _ => { out.push('\\'); i += 1; } // backslash + everything else is literal
+            _ => {
+                out.push('\\');
+                i += 1;
+            } // backslash + everything else is literal
         }
     }
     tuple2(new_str(out), MbValue::from_int(orig_len))
@@ -2236,9 +2852,13 @@ pub fn mb_codecs_raw_unicode_escape_encode(input: MbValue) -> MbValue {
     let mut out: Vec<u8> = Vec::new();
     for c in s.chars() {
         let cp = c as u32;
-        if cp <= 0xFF { out.push(cp as u8); }
-        else if cp <= 0xFFFF { out.extend_from_slice(format!("\\u{:04x}", cp).as_bytes()); }
-        else { out.extend_from_slice(format!("\\U{:08x}", cp).as_bytes()); }
+        if cp <= 0xFF {
+            out.push(cp as u8);
+        } else if cp <= 0xFFFF {
+            out.extend_from_slice(format!("\\u{:04x}", cp).as_bytes());
+        } else {
+            out.extend_from_slice(format!("\\U{:08x}", cp).as_bytes());
+        }
     }
     tuple2(new_bytes(out), MbValue::from_int(orig_len))
 }
@@ -2276,59 +2896,97 @@ fn register_codec_classes() {
     };
 
     // Factories — __call__ only (fixed arity, NOT variadic).
-    reg("codecs._IncrementalDecoderFactory",
-        vec![("__call__", factory_incr_decoder_call as *const () as usize)], &[]);
-    reg("codecs._IncrementalEncoderFactory",
-        vec![("__call__", factory_incr_encoder_call as *const () as usize)], &[]);
-    reg("codecs._StreamReaderFactory",
-        vec![("__call__", factory_reader_call as *const () as usize)], &[]);
-    reg("codecs._StreamWriterFactory",
-        vec![("__call__", factory_writer_call as *const () as usize)], &[]);
-    reg("codecs._EncoderFunc",
-        vec![("__call__", encoder_func_call as *const () as usize)], &[]);
-    reg("codecs._DecoderFunc",
-        vec![("__call__", decoder_func_call as *const () as usize)], &[]);
+    reg(
+        "codecs._IncrementalDecoderFactory",
+        vec![("__call__", factory_incr_decoder_call as *const () as usize)],
+        &[],
+    );
+    reg(
+        "codecs._IncrementalEncoderFactory",
+        vec![("__call__", factory_incr_encoder_call as *const () as usize)],
+        &[],
+    );
+    reg(
+        "codecs._StreamReaderFactory",
+        vec![("__call__", factory_reader_call as *const () as usize)],
+        &[],
+    );
+    reg(
+        "codecs._StreamWriterFactory",
+        vec![("__call__", factory_writer_call as *const () as usize)],
+        &[],
+    );
+    reg(
+        "codecs._EncoderFunc",
+        vec![("__call__", encoder_func_call as *const () as usize)],
+        &[],
+    );
+    reg(
+        "codecs._DecoderFunc",
+        vec![("__call__", decoder_func_call as *const () as usize)],
+        &[],
+    );
 
     // IncrementalDecoder / Encoder.
-    reg("codecs.IncrementalDecoder", vec![
-        ("decode", m_incr_decode as *const () as usize),
-        ("reset", m_incr_decode_reset as *const () as usize),
-    ], &["decode", "reset"]);
-    reg("codecs.IncrementalEncoder", vec![
-        ("encode", m_incr_encode as *const () as usize),
-        ("reset", m_incr_encode_reset as *const () as usize),
-    ], &["encode", "reset"]);
+    reg(
+        "codecs.IncrementalDecoder",
+        vec![
+            ("decode", m_incr_decode as *const () as usize),
+            ("reset", m_incr_decode_reset as *const () as usize),
+        ],
+        &["decode", "reset"],
+    );
+    reg(
+        "codecs.IncrementalEncoder",
+        vec![
+            ("encode", m_incr_encode as *const () as usize),
+            ("reset", m_incr_encode_reset as *const () as usize),
+        ],
+        &["encode", "reset"],
+    );
 
     // StreamReader / Writer.
-    reg("codecs.StreamReader", vec![
-        ("read", m_reader_read as *const () as usize),
-        ("readline", m_reader_readline as *const () as usize),
-        ("readlines", m_reader_readlines as *const () as usize),
-        ("seek", m_reader_seek as *const () as usize),
-        ("__enter__", cm_enter as *const () as usize),
-        ("__exit__", cm_exit as *const () as usize),
-    ], &["read", "readline", "readlines", "seek"]);
-    reg("codecs.StreamWriter", vec![
-        ("write", m_writer_write as *const () as usize),
-        ("__enter__", cm_enter as *const () as usize),
-        ("__exit__", cm_exit as *const () as usize),
-    ], &["write"]);
+    reg(
+        "codecs.StreamReader",
+        vec![
+            ("read", m_reader_read as *const () as usize),
+            ("readline", m_reader_readline as *const () as usize),
+            ("readlines", m_reader_readlines as *const () as usize),
+            ("seek", m_reader_seek as *const () as usize),
+            ("__enter__", cm_enter as *const () as usize),
+            ("__exit__", cm_exit as *const () as usize),
+        ],
+        &["read", "readline", "readlines", "seek"],
+    );
+    reg(
+        "codecs.StreamWriter",
+        vec![
+            ("write", m_writer_write as *const () as usize),
+            ("__enter__", cm_enter as *const () as usize),
+            ("__exit__", cm_exit as *const () as usize),
+        ],
+        &["write"],
+    );
 
     // StreamRecoder (EncodedFile).
-    reg("codecs.StreamRecoder", vec![
-        ("read", m_recoder_read as *const () as usize),
-        ("readline", m_recoder_readline as *const () as usize),
-        ("seek", m_recoder_seek as *const () as usize),
-        ("write", m_recoder_write as *const () as usize),
-        ("__enter__", cm_enter as *const () as usize),
-        ("__exit__", cm_exit as *const () as usize),
-    ], &["read", "readline", "seek", "write"]);
+    reg(
+        "codecs.StreamRecoder",
+        vec![
+            ("read", m_recoder_read as *const () as usize),
+            ("readline", m_recoder_readline as *const () as usize),
+            ("seek", m_recoder_seek as *const () as usize),
+            ("write", m_recoder_write as *const () as usize),
+            ("__enter__", cm_enter as *const () as usize),
+            ("__exit__", cm_exit as *const () as usize),
+        ],
+        &["read", "readline", "seek", "write"],
+    );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::rc::ObjData;
+    use super::*;
 
     fn s(val: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(val.to_string()))
@@ -2336,13 +2994,21 @@ mod tests {
 
     fn get_str(v: MbValue) -> Option<String> {
         v.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref st) = (*ptr).data { Some(st.clone()) } else { None }
+            if let ObjData::Str(ref st) = (*ptr).data {
+                Some(st.clone())
+            } else {
+                None
+            }
         })
     }
 
     fn get_bytes(v: MbValue) -> Option<Vec<u8>> {
         v.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
+            if let ObjData::Bytes(ref b) = (*ptr).data {
+                Some(b.clone())
+            } else {
+                None
+            }
         })
     }
 
@@ -2525,7 +3191,11 @@ mod tests {
         // CodecInfo instance with a normalised .name field.
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
                 assert_eq!(class_name, "CodecInfo");
                 let f = fields.read().unwrap();
                 assert_eq!(get_str(*f.get("name").unwrap()), Some("utf-8".to_string()));

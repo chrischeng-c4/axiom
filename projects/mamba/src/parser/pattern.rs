@@ -1,8 +1,8 @@
+use super::ast::*;
+use super::Parser;
 use crate::error::MambaError;
 use crate::lexer::token::TokenKind;
 use crate::source::span::{Span, Spanned};
-use super::ast::*;
-use super::Parser;
 
 impl<'a> Parser<'a> {
     /// Parse a match pattern (with OR: `p1 | p2 | p3`, and AS: `p as name`).
@@ -28,7 +28,10 @@ impl<'a> Parser<'a> {
             let (ns, ne) = self.expect(TokenKind::Ident)?;
             let name = self.text_at(ns, ne).to_string();
             return Ok(Spanned::new(
-                Pattern::As { pattern: Box::new(pat), name },
+                Pattern::As {
+                    pattern: Box::new(pat),
+                    name,
+                },
                 self.span_from(start),
             ));
         }
@@ -38,9 +41,9 @@ impl<'a> Parser<'a> {
 
     /// Parse a single pattern (no OR at this level).
     fn parse_single_pattern(&mut self) -> crate::error::Result<Spanned<Pattern>> {
-        let token = self.peek().ok_or_else(|| {
-            MambaError::syntax(Span::dummy(), "expected pattern")
-        })?;
+        let token = self
+            .peek()
+            .ok_or_else(|| MambaError::syntax(Span::dummy(), "expected pattern"))?;
         let start = token.start;
 
         match &token.kind {
@@ -50,7 +53,8 @@ impl<'a> Parser<'a> {
             TokenKind::Star => {
                 return Err(MambaError::syntax(
                     Span::new(self.file_id, start, token.end),
-                    "star pattern '*name' is only valid inside a sequence pattern like [*rest, x]".to_string(),
+                    "star pattern '*name' is only valid inside a sequence pattern like [*rest, x]"
+                        .to_string(),
                 ));
             }
             // Sequence pattern: `[a, b, *rest]`
@@ -75,8 +79,12 @@ impl<'a> Parser<'a> {
             | TokenKind::DictType
             | TokenKind::TupleType => self.parse_builtin_type_pattern(),
             // Literal patterns
-            TokenKind::Int(_) | TokenKind::Float(_) | TokenKind::Str(_)
-            | TokenKind::True | TokenKind::False | TokenKind::None_ => {
+            TokenKind::Int(_)
+            | TokenKind::Float(_)
+            | TokenKind::Str(_)
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::None_ => {
                 let expr = self.parse_pattern_literal()?;
                 Ok(Spanned::new(Pattern::Literal(expr.node), expr.span))
             }
@@ -116,7 +124,10 @@ impl<'a> Parser<'a> {
         } else {
             // bare type name without parens — Constructor with no fields
             Ok(Spanned::new(
-                Pattern::Constructor { path: cls, fields: Vec::new() },
+                Pattern::Constructor {
+                    path: cls,
+                    fields: Vec::new(),
+                },
                 self.span_from(start),
             ))
         }
@@ -140,7 +151,10 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::RBracket)?;
 
         // PEP 634: at most one starred element is allowed in a sequence pattern.
-        let star_count = patterns.iter().filter(|p| matches!(&p.node, Pattern::Star(_))).count();
+        let star_count = patterns
+            .iter()
+            .filter(|p| matches!(&p.node, Pattern::Star(_)))
+            .count();
         if star_count > 1 {
             return Err(MambaError::syntax(
                 self.span_from(start),
@@ -148,22 +162,29 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        Ok(Spanned::new(Pattern::Sequence(patterns), self.span_from(start)))
+        Ok(Spanned::new(
+            Pattern::Sequence(patterns),
+            self.span_from(start),
+        ))
     }
 
     /// Parse a single element inside a sequence pattern, allowing `*name` stars.
     /// Star patterns are only valid in this context, not at the top-level (#827).
     fn parse_sequence_element_pattern(&mut self) -> crate::error::Result<Spanned<Pattern>> {
-        let token = self.peek().ok_or_else(|| {
-            MambaError::syntax(Span::dummy(), "expected pattern")
-        })?;
+        let token = self
+            .peek()
+            .ok_or_else(|| MambaError::syntax(Span::dummy(), "expected pattern"))?;
         let start = token.start;
         if token.kind == TokenKind::Star {
             self.advance();
             let name = if self.peek_kind() == Some(TokenKind::Ident) {
                 let text = self.current_text().to_string();
                 self.advance();
-                if text == "_" { None } else { Some(text) }
+                if text == "_" {
+                    None
+                } else {
+                    Some(text)
+                }
             } else {
                 None
             };
@@ -184,7 +205,10 @@ impl<'a> Parser<'a> {
         // Empty parens: ()
         if self.peek_kind() == Some(TokenKind::RParen) {
             self.advance();
-            return Ok(Spanned::new(Pattern::Sequence(vec![]), self.span_from(start)));
+            return Ok(Spanned::new(
+                Pattern::Sequence(vec![]),
+                self.span_from(start),
+            ));
         }
 
         let first = self.parse_sequence_element_pattern()?;
@@ -208,7 +232,10 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(TokenKind::RParen)?;
-        Ok(Spanned::new(Pattern::Sequence(patterns), self.span_from(start)))
+        Ok(Spanned::new(
+            Pattern::Sequence(patterns),
+            self.span_from(start),
+        ))
     }
 
     /// Parse `{"key": value, ..., **rest}` mapping pattern (#827).
@@ -229,7 +256,8 @@ impl<'a> Parser<'a> {
                 let name = if self.peek_kind() == Some(TokenKind::Ident) {
                     let text = self.current_text().to_string();
                     if text == "_" {
-                        let span = self.peek()
+                        let span = self
+                            .peek()
                             .map(|t| Span::new(self.file_id, t.start, t.end))
                             .unwrap_or_else(Span::dummy);
                         return Err(MambaError::syntax(
@@ -241,7 +269,8 @@ impl<'a> Parser<'a> {
                     self.advance();
                     Some(text)
                 } else {
-                    let span = self.peek()
+                    let span = self
+                        .peek()
                         .map(|t| Span::new(self.file_id, t.start, t.end))
                         .unwrap_or_else(Span::dummy);
                     return Err(MambaError::syntax(
@@ -266,7 +295,10 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(TokenKind::RBrace)?;
-        Ok(Spanned::new(Pattern::Mapping { pairs, rest }, self.span_from(start)))
+        Ok(Spanned::new(
+            Pattern::Mapping { pairs, rest },
+            self.span_from(start),
+        ))
     }
 
     /// Parse ident-starting patterns: bindings, constructors, or class patterns.
@@ -288,7 +320,10 @@ impl<'a> Parser<'a> {
             }
             // Dotted name without parens — treat as constructor with no fields
             return Ok(Spanned::new(
-                Pattern::Constructor { path, fields: Vec::new() },
+                Pattern::Constructor {
+                    path,
+                    fields: Vec::new(),
+                },
                 self.span_from(start),
             ));
         }
@@ -317,7 +352,10 @@ impl<'a> Parser<'a> {
         if negative {
             let span = self.span_from(start);
             Ok(Spanned::new(
-                Expr::UnaryOp { op: UnaryOp::Neg, operand: Box::new(inner) },
+                Expr::UnaryOp {
+                    op: UnaryOp::Neg,
+                    operand: Box::new(inner),
+                },
                 span,
             ))
         } else {
@@ -327,9 +365,9 @@ impl<'a> Parser<'a> {
 
     /// Parse a single literal atom: Int, Float, Str, True, False, None_.
     fn parse_literal_atom(&mut self) -> crate::error::Result<Spanned<Expr>> {
-        let token = self.peek().ok_or_else(|| {
-            MambaError::syntax(Span::dummy(), "expected literal")
-        })?;
+        let token = self
+            .peek()
+            .ok_or_else(|| MambaError::syntax(Span::dummy(), "expected literal"))?;
         let start = token.start;
         match &token.kind {
             TokenKind::Int(v) => {
@@ -381,7 +419,10 @@ impl<'a> Parser<'a> {
         if self.peek_kind() == Some(TokenKind::RParen) {
             self.advance();
             return Ok(Spanned::new(
-                Pattern::Constructor { path: cls, fields: Vec::new() },
+                Pattern::Constructor {
+                    path: cls,
+                    fields: Vec::new(),
+                },
                 self.span_from(start),
             ));
         }
@@ -394,7 +435,8 @@ impl<'a> Parser<'a> {
         {
             // PEP 634: star patterns are not allowed inside class patterns.
             if self.peek_kind() == Some(TokenKind::Star) {
-                let span = self.peek()
+                let span = self
+                    .peek()
                     .map(|t| Span::new(self.file_id, t.start, t.end))
                     .unwrap_or_else(Span::dummy);
                 return Err(MambaError::syntax(
@@ -415,7 +457,8 @@ impl<'a> Parser<'a> {
                     // Backtrack — positional pattern starting with an ident
                     // PEP 634: positional may not follow keyword.
                     if seen_keyword {
-                        let span = self.peek()
+                        let span = self
+                            .peek()
                             .map(|t| Span::new(self.file_id, t.start, t.end))
                             .unwrap_or_else(Span::dummy);
                         return Err(MambaError::syntax(
@@ -431,7 +474,8 @@ impl<'a> Parser<'a> {
                 // Positional pattern (literal, sequence, mapping, etc.)
                 // PEP 634: positional may not follow keyword.
                 if seen_keyword {
-                    let span = self.peek()
+                    let span = self
+                        .peek()
                         .map(|t| Span::new(self.file_id, t.start, t.end))
                         .unwrap_or_else(Span::dummy);
                     return Err(MambaError::syntax(
@@ -460,16 +504,16 @@ mod tests {
     use crate::parser::ast::*;
     use crate::source::span::FileId;
 
-    fn fid() -> FileId { FileId(0) }
+    fn fid() -> FileId {
+        FileId(0)
+    }
 
     /// Parse a match statement with a single arm and return the Pattern.
     fn parse_pattern(pat_src: &str) -> Pattern {
         let src = format!("match x:\n    case {pat_src}:\n        pass\n");
         let module = parser::parse(&src, fid()).expect("parse failed");
         match module.stmts.into_iter().next().unwrap().node {
-            Stmt::Match { arms, .. } => {
-                arms.into_iter().next().unwrap().pattern.node
-            }
+            Stmt::Match { arms, .. } => arms.into_iter().next().unwrap().pattern.node,
             other => panic!("expected Match, got {other:?}"),
         }
     }
@@ -536,7 +580,10 @@ mod tests {
     #[test]
     fn test_negative_literal_pattern() {
         match parse_pattern("-1") {
-            Pattern::Literal(Expr::UnaryOp { op: UnaryOp::Neg, operand }) => {
+            Pattern::Literal(Expr::UnaryOp {
+                op: UnaryOp::Neg,
+                operand,
+            }) => {
                 assert!(matches!(operand.node, Expr::IntLit(1)));
             }
             other => panic!("expected Literal(-1), got {other:?}"),
@@ -780,7 +827,10 @@ mod tests {
         // PEP 634: at most one starred element allowed in a sequence pattern
         let src = "match x:\n    case [*a, *b]:\n        pass\n";
         let result = parser::parse(src, fid());
-        assert!(result.is_err(), "multiple starred elements should produce a parse error");
+        assert!(
+            result.is_err(),
+            "multiple starred elements should produce a parse error"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("starred") || err_msg.contains("star"),
@@ -793,7 +843,10 @@ mod tests {
         // PEP 634: positional argument may not follow keyword argument
         let src = "match x:\n    case Point(x=1, 2):\n        pass\n";
         let result = parser::parse(src, fid());
-        assert!(result.is_err(), "positional after keyword should produce a parse error");
+        assert!(
+            result.is_err(),
+            "positional after keyword should produce a parse error"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("positional") || err_msg.contains("keyword"),
@@ -806,7 +859,10 @@ mod tests {
         // PEP 634: starred patterns are not allowed in class patterns
         let src = "match x:\n    case Point(*rest):\n        pass\n";
         let result = parser::parse(src, fid());
-        assert!(result.is_err(), "star inside class pattern should produce a parse error");
+        assert!(
+            result.is_err(),
+            "star inside class pattern should produce a parse error"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("starred") || err_msg.contains("star"),
@@ -821,7 +877,10 @@ mod tests {
         // PEP 634 disallows `**_` in mapping patterns; only a real identifier is valid
         let src = "match x:\n    case {**_}:\n        pass\n";
         let result = parser::parse(src, fid());
-        assert!(result.is_err(), "`**_` in mapping pattern should produce a parse error");
+        assert!(
+            result.is_err(),
+            "`**_` in mapping pattern should produce a parse error"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("**_") || err_msg.contains("identifier"),
@@ -836,7 +895,10 @@ mod tests {
         // `case *rest:` is invalid PEP 634 — star patterns only inside sequences.
         let src = "match x:\n    case *rest:\n        pass\n";
         let result = parser::parse(src, fid());
-        assert!(result.is_err(), "standalone star pattern should be rejected");
+        assert!(
+            result.is_err(),
+            "standalone star pattern should be rejected"
+        );
         let msg = result.unwrap_err().to_string();
         assert!(
             msg.contains("star") || msg.contains("sequence"),
@@ -849,7 +911,10 @@ mod tests {
         // `case *_:` is invalid PEP 634 — star patterns only inside sequences.
         let src = "match x:\n    case *_:\n        pass\n";
         let result = parser::parse(src, fid());
-        assert!(result.is_err(), "standalone star wildcard should be rejected");
+        assert!(
+            result.is_err(),
+            "standalone star wildcard should be rejected"
+        );
     }
 
     #[test]
@@ -901,17 +966,15 @@ mod tests {
         let src = "match x:\n    case int(n):\n        pass\n";
         let module = parser::parse(src, fid()).expect("parse failed");
         match module.stmts.into_iter().next().unwrap().node {
-            Stmt::Match { arms, .. } => {
-                match &arms[0].pattern.node {
-                    Pattern::ClassPattern { cls, patterns } => {
-                        assert_eq!(cls, &vec!["int".to_string()]);
-                        assert_eq!(patterns.len(), 1);
-                        assert_eq!(patterns[0].0, None);
-                        assert!(matches!(&patterns[0].1.node, Pattern::Binding(n) if n == "n"));
-                    }
-                    other => panic!("expected ClassPattern, got {other:?}"),
+            Stmt::Match { arms, .. } => match &arms[0].pattern.node {
+                Pattern::ClassPattern { cls, patterns } => {
+                    assert_eq!(cls, &vec!["int".to_string()]);
+                    assert_eq!(patterns.len(), 1);
+                    assert_eq!(patterns[0].0, None);
+                    assert!(matches!(&patterns[0].1.node, Pattern::Binding(n) if n == "n"));
                 }
-            }
+                other => panic!("expected ClassPattern, got {other:?}"),
+            },
             other => panic!("expected Match, got {other:?}"),
         }
     }
@@ -921,17 +984,15 @@ mod tests {
         let src = "match x:\n    case str(s):\n        pass\n";
         let module = parser::parse(src, fid()).expect("parse failed");
         match module.stmts.into_iter().next().unwrap().node {
-            Stmt::Match { arms, .. } => {
-                match &arms[0].pattern.node {
-                    Pattern::ClassPattern { cls, patterns } => {
-                        assert_eq!(cls, &vec!["str".to_string()]);
-                        assert_eq!(patterns.len(), 1);
-                        assert_eq!(patterns[0].0, None);
-                        assert!(matches!(&patterns[0].1.node, Pattern::Binding(n) if n == "s"));
-                    }
-                    other => panic!("expected ClassPattern, got {other:?}"),
+            Stmt::Match { arms, .. } => match &arms[0].pattern.node {
+                Pattern::ClassPattern { cls, patterns } => {
+                    assert_eq!(cls, &vec!["str".to_string()]);
+                    assert_eq!(patterns.len(), 1);
+                    assert_eq!(patterns[0].0, None);
+                    assert!(matches!(&patterns[0].1.node, Pattern::Binding(n) if n == "s"));
                 }
-            }
+                other => panic!("expected ClassPattern, got {other:?}"),
+            },
             other => panic!("expected Match, got {other:?}"),
         }
     }

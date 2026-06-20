@@ -309,9 +309,7 @@ impl Broker for NatsBroker {
 
     async fn health_check(&self) -> Result<(), TaskError> {
         let js_guard = self.jetstream.read().await;
-        let js = js_guard
-            .as_ref()
-            .ok_or(TaskError::NotConnected)?;
+        let js = js_guard.as_ref().ok_or(TaskError::NotConnected)?;
 
         // Check if we can access the stream (verifies connection is alive)
         js.get_stream(&self.config.stream_name)
@@ -396,9 +394,13 @@ impl DelayedBroker for NatsBroker {
             .clone();
 
         // Calculate ETA
-        let eta = Utc::now() + chrono::Duration::from_std(delay).map_err(|e| {
-            TaskError::Internal(format!("Failed to convert delay to chrono::Duration: {}", e))
-        })?;
+        let eta = Utc::now()
+            + chrono::Duration::from_std(delay).map_err(|e| {
+                TaskError::Internal(format!(
+                    "Failed to convert delay to chrono::Duration: {}",
+                    e
+                ))
+            })?;
 
         let subject = format!("tasks.scheduled.{}", queue);
         let payload = serde_json::to_vec(&message)
@@ -478,7 +480,9 @@ mod tests {
     async fn test_connect_disconnect() {
         let config = NatsBrokerConfig::default();
         let broker = NatsBroker::new(config);
-        if broker.connect().await.is_err() { return; }
+        if broker.connect().await.is_err() {
+            return;
+        }
         broker.health_check().await.unwrap();
         broker.disconnect().await.unwrap();
     }
@@ -488,7 +492,9 @@ mod tests {
     async fn test_publish() {
         let config = NatsBrokerConfig::default();
         let broker = NatsBroker::new(config);
-        if broker.connect().await.is_err() { return; }
+        if broker.connect().await.is_err() {
+            return;
+        }
 
         let message = TaskMessage::new("test_task", serde_json::json!([1, 2, 3]));
         broker.publish("test", message).await.unwrap();
@@ -501,7 +507,9 @@ mod tests {
     async fn test_publish_delayed() {
         let config = NatsBrokerConfig::default();
         let broker = NatsBroker::new(config);
-        if broker.connect().await.is_err() { return; }
+        if broker.connect().await.is_err() {
+            return;
+        }
 
         let message = TaskMessage::new("delayed_task", serde_json::json!([1, 2, 3]));
         broker
@@ -532,7 +540,9 @@ mod tests {
         let config = NatsBrokerConfig::default();
         let broker = Arc::new(NatsBroker::new(config));
 
-        if broker.connect().await.is_err() { return; }
+        if broker.connect().await.is_err() {
+            return;
+        }
 
         let count = Arc::new(AtomicUsize::new(0));
         let handler = Arc::new(TestHandler {
@@ -593,10 +603,15 @@ mod tests {
     #[cfg(feature = "nats")]
     async fn test_health_check() {
         let broker = NatsBroker::new(NatsBrokerConfig::default());
-        if broker.connect().await.is_err() { return; }
+        if broker.connect().await.is_err() {
+            return;
+        }
 
         let result = broker.health_check().await;
-        assert!(result.is_ok(), "health_check should succeed on a connected broker");
+        assert!(
+            result.is_ok(),
+            "health_check should succeed on a connected broker"
+        );
 
         broker.disconnect().await.unwrap();
     }
@@ -605,14 +620,22 @@ mod tests {
     #[cfg(feature = "nats")]
     async fn test_capabilities() {
         let broker = NatsBroker::new(NatsBrokerConfig::default());
-        if broker.connect().await.is_err() { return; }
+        if broker.connect().await.is_err() {
+            return;
+        }
 
         let caps = broker.capabilities();
-        assert!(caps.delayed_tasks, "NATS broker should support delayed tasks");
+        assert!(
+            caps.delayed_tasks,
+            "NATS broker should support delayed tasks"
+        );
         assert!(caps.dead_letter, "NATS broker should support dead letter");
         assert!(!caps.priority, "NATS broker should not support priority");
         assert!(caps.batching, "NATS broker should support batching");
-        assert!(caps.max_delay.is_none(), "NATS broker should have no max delay limit");
+        assert!(
+            caps.max_delay.is_none(),
+            "NATS broker should have no max delay limit"
+        );
 
         broker.disconnect().await.unwrap();
     }
@@ -621,10 +644,15 @@ mod tests {
     #[cfg(feature = "nats")]
     async fn test_delivery_model() {
         let broker = NatsBroker::new(NatsBrokerConfig::default());
-        if broker.connect().await.is_err() { return; }
+        if broker.connect().await.is_err() {
+            return;
+        }
 
-        assert_eq!(broker.delivery_model(), DeliveryModel::Pull,
-            "NATS broker delivery model should be Pull");
+        assert_eq!(
+            broker.delivery_model(),
+            DeliveryModel::Pull,
+            "NATS broker delivery model should be Pull"
+        );
 
         broker.disconnect().await.unwrap();
     }
@@ -665,30 +693,41 @@ mod tests {
         // Disconnect on an unconnected broker should not panic.
         // It may succeed (no-op) or return Ok since there is nothing to flush.
         let result = broker.disconnect().await;
-        assert!(result.is_ok(),
-            "disconnect on unconnected broker should not panic or error");
+        assert!(
+            result.is_ok(),
+            "disconnect on unconnected broker should not panic or error"
+        );
     }
 
     #[tokio::test]
     #[cfg(feature = "nats")]
     async fn test_publish_disconnect_reconnect() {
         let broker = NatsBroker::new(NatsBrokerConfig::default());
-        if broker.connect().await.is_err() { return; }
+        if broker.connect().await.is_err() {
+            return;
+        }
 
         // Publish first message
         let msg1 = TaskMessage::new("reconnect_task_1", serde_json::json!({"phase": "before"}));
-        broker.publish("reconnect-test", msg1).await
+        broker
+            .publish("reconnect-test", msg1)
+            .await
             .expect("first publish should succeed");
 
         // Disconnect
-        broker.disconnect().await.expect("disconnect should succeed");
+        broker
+            .disconnect()
+            .await
+            .expect("disconnect should succeed");
 
         // Reconnect
         broker.connect().await.expect("reconnect should succeed");
 
         // Publish second message after reconnect
         let msg2 = TaskMessage::new("reconnect_task_2", serde_json::json!({"phase": "after"}));
-        broker.publish("reconnect-test", msg2).await
+        broker
+            .publish("reconnect-test", msg2)
+            .await
             .expect("publish after reconnect should succeed");
 
         broker.disconnect().await.unwrap();
@@ -698,25 +737,36 @@ mod tests {
     #[cfg(feature = "nats")]
     async fn test_ack_nack_with_connection() {
         let broker = NatsBroker::new(NatsBrokerConfig::default());
-        if broker.connect().await.is_err() { return; }
+        if broker.connect().await.is_err() {
+            return;
+        }
 
         // NATS handles ack/nack internally via message objects, so direct
         // ack/nack calls with dummy delivery tags should return Internal errors
         // even when connected.
         let ack_result = broker.ack("dummy-delivery-tag-123").await;
         assert!(ack_result.is_err(), "direct ack should return error");
-        assert!(matches!(ack_result.unwrap_err(), TaskError::Internal(_)),
-            "ack error should be TaskError::Internal");
+        assert!(
+            matches!(ack_result.unwrap_err(), TaskError::Internal(_)),
+            "ack error should be TaskError::Internal"
+        );
 
         let nack_result = broker.nack("dummy-delivery-tag-456", false).await;
         assert!(nack_result.is_err(), "direct nack should return error");
-        assert!(matches!(nack_result.unwrap_err(), TaskError::Internal(_)),
-            "nack error should be TaskError::Internal");
+        assert!(
+            matches!(nack_result.unwrap_err(), TaskError::Internal(_)),
+            "nack error should be TaskError::Internal"
+        );
 
         let nack_requeue_result = broker.nack("dummy-delivery-tag-789", true).await;
-        assert!(nack_requeue_result.is_err(), "direct nack with requeue should return error");
-        assert!(matches!(nack_requeue_result.unwrap_err(), TaskError::Internal(_)),
-            "nack requeue error should be TaskError::Internal");
+        assert!(
+            nack_requeue_result.is_err(),
+            "direct nack with requeue should return error"
+        );
+        assert!(
+            matches!(nack_requeue_result.unwrap_err(), TaskError::Internal(_)),
+            "nack requeue error should be TaskError::Internal"
+        );
 
         broker.disconnect().await.unwrap();
     }

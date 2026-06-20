@@ -10,8 +10,7 @@ use sqlx::Row;
 
 /// Helper to get database URL from environment
 fn get_database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
+    std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
 }
 
 /// Helper to setup test table with unique constraint
@@ -105,13 +104,10 @@ async fn test_upsert_on_conflict_do_nothing() -> Result<(), Box<dyn std::error::
     assert_eq!(result.rows_affected(), 0);
 
     // Verify original record unchanged
-    let row: (String,) = sqlx::query_as(&format!(
-        "SELECT name FROM {} WHERE email = $1",
-        table
-    ))
-    .bind("alice@example.com")
-    .fetch_one(pool)
-    .await?;
+    let row: (String,) = sqlx::query_as(&format!("SELECT name FROM {} WHERE email = $1", table))
+        .bind("alice@example.com")
+        .fetch_one(pool)
+        .await?;
 
     assert_eq!(row.0, "Alice");
 
@@ -238,13 +234,10 @@ async fn test_upsert_with_excluded_values() -> Result<(), Box<dyn std::error::Er
     .await?;
 
     // Verify name was updated to EXCLUDED value
-    let row: (String,) = sqlx::query_as(&format!(
-        "SELECT name FROM {} WHERE email = $1",
-        table
-    ))
-    .bind("dave@example.com")
-    .fetch_one(pool)
-    .await?;
+    let row: (String,) = sqlx::query_as(&format!("SELECT name FROM {} WHERE email = $1", table))
+        .bind("dave@example.com")
+        .fetch_one(pool)
+        .await?;
 
     assert_eq!(row.0, "David");
 
@@ -338,13 +331,10 @@ async fn test_upsert_with_where_clause() -> Result<(), Box<dyn std::error::Error
     assert_eq!(result.rows_affected(), 0);
 
     // Verify name unchanged
-    let row: (String,) = sqlx::query_as(&format!(
-        "SELECT name FROM {} WHERE email = $1",
-        table
-    ))
-    .bind("eve@example.com")
-    .fetch_one(pool)
-    .await?;
+    let row: (String,) = sqlx::query_as(&format!("SELECT name FROM {} WHERE email = $1", table))
+        .bind("eve@example.com")
+        .fetch_one(pool)
+        .await?;
 
     assert_eq!(row.0, "Eve");
 
@@ -550,7 +540,7 @@ async fn test_recursive_cte_simple() -> Result<(), Box<dyn std::error::Error>> {
             UNION ALL
             SELECT n + 1 FROM nums WHERE n < 5
         )
-        SELECT n FROM nums"
+        SELECT n FROM nums",
     )
     .fetch_all(pool)
     .await?;
@@ -646,9 +636,15 @@ async fn test_bulk_upsert() -> Result<(), Box<dyn std::error::Error>> {
             login_count = {}.login_count + EXCLUDED.login_count",
         table, table
     ))
-    .bind("user1@example.com").bind("User 1").bind(1)
-    .bind("user2@example.com").bind("User 2").bind(2)
-    .bind("user3@example.com").bind("User 3").bind(3)
+    .bind("user1@example.com")
+    .bind("User 1")
+    .bind(1)
+    .bind("user2@example.com")
+    .bind("User 2")
+    .bind(2)
+    .bind("user3@example.com")
+    .bind("User 3")
+    .bind(3)
     .execute(pool)
     .await?;
 
@@ -665,9 +661,15 @@ async fn test_bulk_upsert() -> Result<(), Box<dyn std::error::Error>> {
             login_count = {}.login_count + EXCLUDED.login_count",
         table, table
     ))
-    .bind("user1@example.com").bind("User 1 Updated").bind(10)
-    .bind("user2@example.com").bind("User 2 Updated").bind(20)
-    .bind("user3@example.com").bind("User 3 Updated").bind(30)
+    .bind("user1@example.com")
+    .bind("User 1 Updated")
+    .bind(10)
+    .bind("user2@example.com")
+    .bind("User 2 Updated")
+    .bind(20)
+    .bind("user3@example.com")
+    .bind("User 3 Updated")
+    .bind(30)
     .execute(pool)
     .await?;
 
@@ -923,13 +925,10 @@ async fn test_upsert_nullable_unique_column() -> Result<(), Box<dyn std::error::
     .execute(pool)
     .await?;
 
-    let row: (String,) = sqlx::query_as(&format!(
-        "SELECT data FROM {} WHERE code = $1",
-        table
-    ))
-    .bind("CODE1")
-    .fetch_one(pool)
-    .await?;
+    let row: (String,) = sqlx::query_as(&format!("SELECT data FROM {} WHERE code = $1", table))
+        .bind("CODE1")
+        .fetch_one(pool)
+        .await?;
     assert_eq!(row.0, "Data 3 Updated");
 
     cleanup_table(pool, table).await?;
@@ -1014,13 +1013,10 @@ async fn test_upsert_empty_string() -> Result<(), Box<dyn std::error::Error>> {
     .execute(pool)
     .await?;
 
-    let row: (String,) = sqlx::query_as(&format!(
-        "SELECT name FROM {} WHERE email = $1",
-        table
-    ))
-    .bind("empty@example.com")
-    .fetch_one(pool)
-    .await?;
+    let row: (String,) = sqlx::query_as(&format!("SELECT name FROM {} WHERE email = $1", table))
+        .bind("empty@example.com")
+        .fetch_one(pool)
+        .await?;
     assert_eq!(row.0, "");
 
     cleanup_table(pool, table).await?;
@@ -1048,13 +1044,10 @@ async fn test_upsert_very_long_string() -> Result<(), Box<dyn std::error::Error>
     .execute(pool)
     .await?;
 
-    let row: (String,) = sqlx::query_as(&format!(
-        "SELECT name FROM {} WHERE email = $1",
-        table
-    ))
-    .bind("long@example.com")
-    .fetch_one(pool)
-    .await?;
+    let row: (String,) = sqlx::query_as(&format!("SELECT name FROM {} WHERE email = $1", table))
+        .bind("long@example.com")
+        .fetch_one(pool)
+        .await?;
     assert_eq!(row.0.len(), 10000);
 
     cleanup_table(pool, table).await?;
@@ -1094,13 +1087,11 @@ async fn test_upsert_special_characters() -> Result<(), Box<dyn std::error::Erro
         .execute(pool)
         .await?;
 
-        let row: (String,) = sqlx::query_as(&format!(
-            "SELECT name FROM {} WHERE email = $1",
-            table
-        ))
-        .bind(&email)
-        .fetch_one(pool)
-        .await?;
+        let row: (String,) =
+            sqlx::query_as(&format!("SELECT name FROM {} WHERE email = $1", table))
+                .bind(&email)
+                .fetch_one(pool)
+                .await?;
         assert_eq!(row.0, *name);
     }
 

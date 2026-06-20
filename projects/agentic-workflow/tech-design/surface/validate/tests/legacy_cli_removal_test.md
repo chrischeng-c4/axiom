@@ -26,11 +26,11 @@ CLI commands and deprecated `aw td` aliases.
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
 | `Cli` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | struct | private | 5 |  |
-| `legacy_top_level_commands_are_removed` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 13 | legacy_top_level_commands_are_removed() |
-| `workflow_protocol_commands_remain_registered` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 47 | workflow_protocol_commands_remain_registered() |
-| `deprecated_td_aliases_are_removed` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 74 | deprecated_td_aliases_are_removed() |
-| `canonical_cb_commands_remain_registered` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 82 | canonical_cb_commands_remain_registered() |
-| `public_aggregation_points_remain_registered` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 102 | public_aggregation_points_remain_registered() |
+| `legacy_top_level_commands_are_removed` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 26 | legacy_top_level_commands_are_removed() |
+| `workflow_protocol_commands_remain_registered` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 68 | workflow_protocol_commands_remain_registered() |
+| `deprecated_td_aliases_are_removed` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 203 | deprecated_td_aliases_are_removed() |
+| `code_artifact_commands_are_inherited_by_td` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 212 | code_artifact_commands_are_inherited_by_td() |
+| `public_aggregation_points_remain_registered` | projects/agentic-workflow/tests/cli/tests/legacy_cli_removal_test.rs | function | private | 231 | public_aggregation_points_remain_registered() |
 
 ## Source
 <!-- type: source lang: rust -->

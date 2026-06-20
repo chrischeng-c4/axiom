@@ -43,7 +43,10 @@ impl Pcg64 {
 
     /// Advance internal state.
     fn advance(&mut self) {
-        self.state = self.state.wrapping_mul(Self::MULTIPLIER).wrapping_add(self.inc);
+        self.state = self
+            .state
+            .wrapping_mul(Self::MULTIPLIER)
+            .wrapping_add(self.inc);
     }
 
     /// Generate a raw 32-bit random value.
@@ -293,7 +296,11 @@ mod tests {
         let variance = sum_sq / n as f64 - mean * mean;
 
         assert!(mean.abs() < 0.1, "mean should be near 0, got {}", mean);
-        assert!((variance - 1.0).abs() < 0.2, "variance should be near 1, got {}", variance);
+        assert!(
+            (variance - 1.0).abs() < 0.2,
+            "variance should be near 1, got {}",
+            variance
+        );
     }
 
     #[test]
@@ -327,7 +334,12 @@ mod tests {
         }
 
         let mean = sum as f64 / n as f64;
-        assert!((mean - lambda).abs() < 0.5, "poisson mean {} far from {}", mean, lambda);
+        assert!(
+            (mean - lambda).abs() < 0.5,
+            "poisson mean {} far from {}",
+            mean,
+            lambda
+        );
     }
 
     #[test]

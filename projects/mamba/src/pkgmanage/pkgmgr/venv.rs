@@ -82,7 +82,10 @@ impl VenvLayout {
         let (bin, site_pkgs, include, exe_name) = match platform {
             PlatformKind::Posix => (
                 "bin".to_string(),
-                format!("lib/python{}.{}/site-packages", version.major, version.minor),
+                format!(
+                    "lib/python{}.{}/site-packages",
+                    version.major, version.minor
+                ),
                 "include".to_string(),
                 "python".to_string(),
             ),
@@ -102,10 +105,12 @@ impl VenvLayout {
         let lib_dir = site_packages
             .parent()
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| root.join(match platform {
-                PlatformKind::Posix => "lib",
-                PlatformKind::Windows => "Lib",
-            }));
+            .unwrap_or_else(|| {
+                root.join(match platform {
+                    PlatformKind::Posix => "lib",
+                    PlatformKind::Windows => "Lib",
+                })
+            });
         VenvLayout {
             root: root.to_path_buf(),
             bin_dir,
@@ -128,7 +133,10 @@ impl VenvLayout {
     pub fn required_subdirs_posix(version: &PythonVersion) -> Vec<String> {
         vec![
             "bin".to_string(),
-            format!("lib/python{}.{}/site-packages", version.major, version.minor),
+            format!(
+                "lib/python{}.{}/site-packages",
+                version.major, version.minor
+            ),
             "include".to_string(),
         ]
     }
@@ -186,7 +194,10 @@ pub fn render_pyvenv_cfg(cfg: &PyvenvCfg) -> String {
             "false"
         },
     );
-    let version = format!("{}.{}.{}", cfg.version.major, cfg.version.minor, cfg.version.patch);
+    let version = format!(
+        "{}.{}.{}",
+        cfg.version.major, cfg.version.minor, cfg.version.patch
+    );
     push_kv(&mut out, "version", &version);
     if let Some(exe) = &cfg.executable {
         push_kv(&mut out, "executable", &display_path(exe));
@@ -245,9 +256,7 @@ pub fn verify_required_keys(src: &str) -> Result<(), IndexError> {
         if !found {
             return Err(IndexError::ParseError {
                 url: "<pyvenv.cfg>".into(),
-                detail: format!(
-                    "mvp_package_manager_pyvenv_cfg_required_key_missing: {required}"
-                ),
+                detail: format!("mvp_package_manager_pyvenv_cfg_required_key_missing: {required}"),
             });
         }
     }
@@ -304,7 +313,10 @@ impl VenvOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VenvCreationOutcome {
     /// New venv was successfully laid down at the requested root.
-    Created { layout: VenvLayout, version: PythonVersion },
+    Created {
+        layout: VenvLayout,
+        version: PythonVersion,
+    },
     /// The target already had a pyvenv.cfg and `clobber` was false.
     Refused { reason: String },
 }
@@ -380,12 +392,11 @@ pub fn create_venv(opts: &VenvOptions) -> Result<VenvCreationOutcome, IndexError
             detail: "mvp_package_manager_pyvenv_cfg_missing".into(),
         });
     }
-    let cfg_body = std::fs::read_to_string(&layout.pyvenv_cfg).map_err(|e| {
-        IndexError::ParseError {
+    let cfg_body =
+        std::fs::read_to_string(&layout.pyvenv_cfg).map_err(|e| IndexError::ParseError {
             url: layout.pyvenv_cfg.display().to_string(),
             detail: format!("reading pyvenv.cfg: {e}"),
-        }
-    })?;
+        })?;
     verify_required_keys(&cfg_body)?;
 
     for required in required_dirs(&layout) {
@@ -463,11 +474,8 @@ mod tests {
 
     #[test]
     fn layout_posix_uses_bin_lib_pythonxy_include() {
-        let layout = VenvLayout::for_platform(
-            Path::new("/tmp/v"),
-            &v(3, 12, 1),
-            PlatformKind::Posix,
-        );
+        let layout =
+            VenvLayout::for_platform(Path::new("/tmp/v"), &v(3, 12, 1), PlatformKind::Posix);
         assert_eq!(layout.bin_dir, PathBuf::from("/tmp/v/bin"));
         assert_eq!(
             layout.site_packages,
@@ -481,17 +489,16 @@ mod tests {
 
     #[test]
     fn layout_windows_uses_scripts_lib_site_packages() {
-        let layout = VenvLayout::for_platform(
-            Path::new("C:\\v"),
-            &v(3, 12, 1),
-            PlatformKind::Windows,
-        );
+        let layout =
+            VenvLayout::for_platform(Path::new("C:\\v"), &v(3, 12, 1), PlatformKind::Windows);
         // On non-Windows hosts PathBuf still composes with the host
         // separator, so we compare on the final-segment strings rather
         // than the whole display.
         assert!(layout.bin_dir.ends_with("Scripts"));
-        assert!(layout.site_packages.ends_with("Lib/site-packages") ||
-                layout.site_packages.ends_with("Lib\\site-packages"));
+        assert!(
+            layout.site_packages.ends_with("Lib/site-packages")
+                || layout.site_packages.ends_with("Lib\\site-packages")
+        );
         assert!(layout.include_dir.ends_with("Include"));
         assert!(layout.python_executable.ends_with("python.exe"));
     }
@@ -637,7 +644,10 @@ mod tests {
         let opts = VenvOptions::new(&python, &root);
         let outcome = create_venv(&opts).expect("create_venv");
         match outcome {
-            VenvCreationOutcome::Created { layout, version: v2 } => {
+            VenvCreationOutcome::Created {
+                layout,
+                version: v2,
+            } => {
                 assert_eq!(layout.root, root);
                 assert!(layout.pyvenv_cfg.is_file());
                 let body = std::fs::read_to_string(&layout.pyvenv_cfg).unwrap();

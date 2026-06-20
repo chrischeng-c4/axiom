@@ -5,7 +5,7 @@
 version = "0.3.13"
 
 # Interface mode — how skills invoke Agentic Workflow tools.
-# - "cli" (default): skills run `aw wi`, `aw td`, `aw cb`, and related commands directly
+# - "cli" (default): skills run `aw wi`, `aw td`, and related commands directly
 # - "mcp": skills call MCP tools via server (requires `cclab server start`)
 interface = "cli"
 

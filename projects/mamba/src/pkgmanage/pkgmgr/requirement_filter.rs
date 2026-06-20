@@ -128,9 +128,7 @@ mod tests {
 
     #[test]
     fn requirement_with_and_combined_marker() {
-        let r = parse(
-            "rich ; python_version >= '3.10' and sys_platform == 'linux'",
-        );
+        let r = parse("rich ; python_version >= '3.10' and sys_platform == 'linux'");
         assert!(applicable(&r, &linux_py312()).unwrap());
         assert!(!applicable(&r, &windows_py39()).unwrap());
 
@@ -141,9 +139,7 @@ mod tests {
 
     #[test]
     fn requirement_with_or_combined_marker() {
-        let r = parse(
-            "rich ; python_version < '3.10' or sys_platform == 'linux'",
-        );
+        let r = parse("rich ; python_version < '3.10' or sys_platform == 'linux'");
         // Linux satisfies the OR
         assert!(applicable(&r, &linux_py312()).unwrap());
         // Windows Py3.9 satisfies the OR via python_version < 3.10

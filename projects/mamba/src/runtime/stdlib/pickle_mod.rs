@@ -1,3 +1,7 @@
+use super::super::dict_ops::{dict_key_to_mbvalue, to_dict_key};
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 /// pickle module for Mamba (#442).
 ///
 /// Real CPython-3.12-compatible behaviour: `dumps`/`loads`/`dump`/`load`
@@ -13,12 +17,7 @@
 /// `pickle.PicklingError`. `PicklingError`/`UnpicklingError` are real
 /// subclasses of `pickle.PickleError` (registered in the class registry so
 /// `issubclass` and `except pickle.X` matching both work).
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::dict_ops::{to_dict_key, dict_key_to_mbvalue};
 
 // ── Wire-format opcodes (protocol 2 subset + one private) ──
 //
@@ -54,11 +53,11 @@ const BINPUT: u8 = b'q'; // 1-byte memo put
 const LONG_BINPUT: u8 = b'r'; // 4-byte memo put
 const BINGET: u8 = b'h'; // 1-byte memo get
 const LONG_BINGET: u8 = b'j'; // 4-byte memo get
-// PRIVATE opcodes for mamba user-class instances (bytes unused by protocol 2
-// for value production in our subset). Both are MARK-delimited so the main
-// opcode loop assembles their parts onto the stack with no sub-decoder:
-//   default:  OP_INST_DEFAULT <class> MARK <key val>* OP_BUILD
-//   reduce:   OP_INST_REDUCE  <class> MARK <arg>*     OP_BUILD
+                              // PRIVATE opcodes for mamba user-class instances (bytes unused by protocol 2
+                              // for value production in our subset). Both are MARK-delimited so the main
+                              // opcode loop assembles their parts onto the stack with no sub-decoder:
+                              //   default:  OP_INST_DEFAULT <class> MARK <key val>* OP_BUILD
+                              //   reduce:   OP_INST_REDUCE  <class> MARK <arg>*     OP_BUILD
 const OP_INST_DEFAULT: u8 = b'Y';
 const OP_INST_REDUCE: u8 = b'Z';
 const OP_BUILD: u8 = b'W';
@@ -107,9 +106,7 @@ fn extract_protocol(items: &[MbValue]) -> Option<i64> {
 fn protocol_invalid(proto: Option<i64>) -> bool {
     if let Some(p) = proto {
         if p < 0 || p > 5 {
-            raise_value_error(&format!(
-                "pickle protocol must be <= 5"
-            ));
+            raise_value_error(&format!("pickle protocol must be <= 5"));
             return true;
         }
     }
@@ -153,7 +150,9 @@ unsafe extern "C" fn d_pickler_new(args_ptr: *const MbValue, nargs: usize) -> Mb
     let file = items.first().copied().unwrap_or_else(MbValue::none);
     let mut fields = FxHashMap::default();
     fields.insert("_file".to_string(), file);
-    unsafe { super::super::rc::retain_if_ptr(file); }
+    unsafe {
+        super::super::rc::retain_if_ptr(file);
+    }
     new_named_instance("Pickler", fields)
 }
 
@@ -162,7 +161,9 @@ unsafe extern "C" fn d_unpickler_new(args_ptr: *const MbValue, nargs: usize) -> 
     let file = items.first().copied().unwrap_or_else(MbValue::none);
     let mut fields = FxHashMap::default();
     fields.insert("_file".to_string(), file);
-    unsafe { super::super::rc::retain_if_ptr(file); }
+    unsafe {
+        super::super::rc::retain_if_ptr(file);
+    }
     new_named_instance("Unpickler", fields)
 }
 
@@ -226,33 +227,85 @@ pub fn register() {
     // mirror CPython's wire bytes). One-shot cost at register time.
     let bytes_const = |b: &[u8]| MbValue::from_ptr(MbObject::new_bytes(b.to_vec()));
     let opcodes: &[(&str, &[u8])] = &[
-        ("MARK", b"("), ("STOP", b"."), ("POP", b"0"), ("POP_MARK", b"1"),
-        ("DUP", b"2"), ("FLOAT", b"F"), ("INT", b"I"), ("BININT", b"J"),
-        ("BININT1", b"K"), ("LONG", b"L"), ("BININT2", b"M"), ("NONE", b"N"),
-        ("PERSID", b"P"), ("BINPERSID", b"Q"), ("REDUCE", b"R"), ("STRING", b"S"),
-        ("BINSTRING", b"T"), ("SHORT_BINSTRING", b"U"), ("UNICODE", b"V"),
-        ("BINUNICODE", b"X"), ("APPEND", b"a"), ("BUILD", b"b"), ("GLOBAL", b"c"),
-        ("DICT", b"d"), ("EMPTY_DICT", b"}"), ("APPENDS", b"e"), ("GET", b"g"),
-        ("BINGET", b"h"), ("INST", b"i"), ("LONG_BINGET", b"j"), ("LIST", b"l"),
-        ("EMPTY_LIST", b"]"), ("OBJ", b"o"), ("PUT", b"p"), ("BINPUT", b"q"),
-        ("LONG_BINPUT", b"r"), ("SETITEM", b"s"), ("TUPLE", b"t"),
-        ("EMPTY_TUPLE", b")"), ("SETITEMS", b"u"), ("BINFLOAT", b"G"),
-        ("TRUE", b"I01\n"), ("FALSE", b"I00\n"), ("PROTO", b"\x80"),
-        ("NEWOBJ", b"\x81"), ("EXT1", b"\x82"), ("EXT2", b"\x83"), ("EXT4", b"\x84"),
-        ("TUPLE1", b"\x85"), ("TUPLE2", b"\x86"), ("TUPLE3", b"\x87"),
-        ("NEWTRUE", b"\x88"), ("NEWFALSE", b"\x89"), ("LONG1", b"\x8a"),
-        ("LONG4", b"\x8b"), ("BINBYTES", b"B"), ("SHORT_BINBYTES", b"C"),
-        ("SHORT_BINUNICODE", b"\x8c"), ("BINUNICODE8", b"\x8d"),
-        ("BINBYTES8", b"\x8e"), ("EMPTY_SET", b"\x8f"), ("ADDITEMS", b"\x90"),
-        ("FROZENSET", b"\x91"), ("NEWOBJ_EX", b"\x92"), ("STACK_GLOBAL", b"\x93"),
-        ("MEMOIZE", b"\x94"), ("FRAME", b"\x95"), ("BYTEARRAY8", b"\x96"),
-        ("NEXT_BUFFER", b"\x97"), ("READONLY_BUFFER", b"\x98"),
+        ("MARK", b"("),
+        ("STOP", b"."),
+        ("POP", b"0"),
+        ("POP_MARK", b"1"),
+        ("DUP", b"2"),
+        ("FLOAT", b"F"),
+        ("INT", b"I"),
+        ("BININT", b"J"),
+        ("BININT1", b"K"),
+        ("LONG", b"L"),
+        ("BININT2", b"M"),
+        ("NONE", b"N"),
+        ("PERSID", b"P"),
+        ("BINPERSID", b"Q"),
+        ("REDUCE", b"R"),
+        ("STRING", b"S"),
+        ("BINSTRING", b"T"),
+        ("SHORT_BINSTRING", b"U"),
+        ("UNICODE", b"V"),
+        ("BINUNICODE", b"X"),
+        ("APPEND", b"a"),
+        ("BUILD", b"b"),
+        ("GLOBAL", b"c"),
+        ("DICT", b"d"),
+        ("EMPTY_DICT", b"}"),
+        ("APPENDS", b"e"),
+        ("GET", b"g"),
+        ("BINGET", b"h"),
+        ("INST", b"i"),
+        ("LONG_BINGET", b"j"),
+        ("LIST", b"l"),
+        ("EMPTY_LIST", b"]"),
+        ("OBJ", b"o"),
+        ("PUT", b"p"),
+        ("BINPUT", b"q"),
+        ("LONG_BINPUT", b"r"),
+        ("SETITEM", b"s"),
+        ("TUPLE", b"t"),
+        ("EMPTY_TUPLE", b")"),
+        ("SETITEMS", b"u"),
+        ("BINFLOAT", b"G"),
+        ("TRUE", b"I01\n"),
+        ("FALSE", b"I00\n"),
+        ("PROTO", b"\x80"),
+        ("NEWOBJ", b"\x81"),
+        ("EXT1", b"\x82"),
+        ("EXT2", b"\x83"),
+        ("EXT4", b"\x84"),
+        ("TUPLE1", b"\x85"),
+        ("TUPLE2", b"\x86"),
+        ("TUPLE3", b"\x87"),
+        ("NEWTRUE", b"\x88"),
+        ("NEWFALSE", b"\x89"),
+        ("LONG1", b"\x8a"),
+        ("LONG4", b"\x8b"),
+        ("BINBYTES", b"B"),
+        ("SHORT_BINBYTES", b"C"),
+        ("SHORT_BINUNICODE", b"\x8c"),
+        ("BINUNICODE8", b"\x8d"),
+        ("BINBYTES8", b"\x8e"),
+        ("EMPTY_SET", b"\x8f"),
+        ("ADDITEMS", b"\x90"),
+        ("FROZENSET", b"\x91"),
+        ("NEWOBJ_EX", b"\x92"),
+        ("STACK_GLOBAL", b"\x93"),
+        ("MEMOIZE", b"\x94"),
+        ("FRAME", b"\x95"),
+        ("BYTEARRAY8", b"\x96"),
+        ("NEXT_BUFFER", b"\x97"),
+        ("READONLY_BUFFER", b"\x98"),
     ];
     for (n, b) in opcodes {
         attrs.insert((*n).to_string(), bytes_const(b));
     }
 
-    attrs.insert("PickleBuffer".into(), MbValue::from_func(d_pickler_new as *const () as usize));
+    attrs.insert(
+        "PickleBuffer".into(),
+        MbValue::from_func(d_pickler_new as *const () as usize),
+    );
 
     // Exception classes. Register them as plain class-name strings (so
     // `except pickle.X` and `pickle.X` value contexts resolve to a type name)
@@ -264,45 +317,65 @@ pub fn register() {
     register_exception_class("PickleError", "Exception");
     register_exception_class("PicklingError", "PickleError");
     register_exception_class("UnpicklingError", "PickleError");
-    attrs.insert("PickleError".into(), MbValue::from_ptr(MbObject::new_str("PickleError".into())));
-    attrs.insert("PicklingError".into(), MbValue::from_ptr(MbObject::new_str("PicklingError".into())));
-    attrs.insert("UnpicklingError".into(), MbValue::from_ptr(MbObject::new_str("UnpicklingError".into())));
+    attrs.insert(
+        "PickleError".into(),
+        MbValue::from_ptr(MbObject::new_str("PickleError".into())),
+    );
+    attrs.insert(
+        "PicklingError".into(),
+        MbValue::from_ptr(MbObject::new_str("PicklingError".into())),
+    );
+    attrs.insert(
+        "UnpicklingError".into(),
+        MbValue::from_ptr(MbObject::new_str("UnpicklingError".into())),
+    );
 
     // Pickler / Unpickler streaming classes. Register native methods so
     // `pickler.dump(obj)` / `unpickler.load()` dispatch through the generic
     // mb_call_method path (self passed first).
     register_streaming_classes();
 
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("format_version".into(), MbValue::from_ptr(MbObject::new_str("4.0".to_string())));
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "format_version".into(),
+        MbValue::from_ptr(MbObject::new_str("4.0".to_string())),
+    );
     super::register_module("pickle", attrs);
 }
 
 // ── Class-registry helpers (call public class.rs APIs; no class.rs edits) ──
 
 fn register_exception_class(name: &str, base: &str) {
-    super::super::class::mb_class_register(
-        name,
-        vec![base.to_string()],
-        HashMap::new(),
-    );
+    super::super::class::mb_class_register(name, vec![base.to_string()], HashMap::new());
 }
 
 fn register_streaming_classes() {
     // Pickler with __init__(self, file) + dump(self, obj).
     let mut pickler_methods: HashMap<String, MbValue> = HashMap::new();
-    pickler_methods.insert("__init__".to_string(),
-        MbValue::from_func(pickler_init as *const () as usize));
-    pickler_methods.insert("dump".to_string(),
-        MbValue::from_func(pickler_dump_method as *const () as usize));
+    pickler_methods.insert(
+        "__init__".to_string(),
+        MbValue::from_func(pickler_init as *const () as usize),
+    );
+    pickler_methods.insert(
+        "dump".to_string(),
+        MbValue::from_func(pickler_dump_method as *const () as usize),
+    );
     super::super::class::mb_class_register("Pickler", vec!["object".to_string()], pickler_methods);
 
     let mut unpickler_methods: HashMap<String, MbValue> = HashMap::new();
-    unpickler_methods.insert("__init__".to_string(),
-        MbValue::from_func(unpickler_init as *const () as usize));
-    unpickler_methods.insert("load".to_string(),
-        MbValue::from_func(unpickler_load_method as *const () as usize));
-    super::super::class::mb_class_register("Unpickler", vec!["object".to_string()], unpickler_methods);
+    unpickler_methods.insert(
+        "__init__".to_string(),
+        MbValue::from_func(unpickler_init as *const () as usize),
+    );
+    unpickler_methods.insert(
+        "load".to_string(),
+        MbValue::from_func(unpickler_load_method as *const () as usize),
+    );
+    super::super::class::mb_class_register(
+        "Unpickler",
+        vec!["object".to_string()],
+        unpickler_methods,
+    );
 }
 
 fn new_named_instance(class_name: &str, fields: FxHashMap<String, MbValue>) -> MbValue {
@@ -323,7 +396,12 @@ fn instance_field(inst: MbValue, name: &str) -> MbValue {
     if let Some(ptr) = inst.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                return fields.read().unwrap().get(name).copied().unwrap_or_else(MbValue::none);
+                return fields
+                    .read()
+                    .unwrap()
+                    .get(name)
+                    .copied()
+                    .unwrap_or_else(MbValue::none);
             }
         }
     }
@@ -334,7 +412,9 @@ fn set_instance_field(inst: MbValue, name: &str, val: MbValue) {
     if let Some(ptr) = inst.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                unsafe { super::super::rc::retain_if_ptr(val); }
+                unsafe {
+                    super::super::rc::retain_if_ptr(val);
+                }
                 fields.write().unwrap().insert(name.to_string(), val);
             }
         }
@@ -375,18 +455,28 @@ fn file_write_bytes(file: MbValue, data: &[u8]) {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut f = fields.write().unwrap();
-                let mut buf = f.get("_buffer").and_then(|v| unsafe { read_bytes_field(v) }).unwrap_or_default();
+                let mut buf = f
+                    .get("_buffer")
+                    .and_then(|v| unsafe { read_bytes_field(v) })
+                    .unwrap_or_default();
                 let pos = f.get("_pos").and_then(|v| v.as_int()).unwrap_or(0) as usize;
                 if pos >= buf.len() {
-                    if pos > buf.len() { buf.resize(pos, 0); }
+                    if pos > buf.len() {
+                        buf.resize(pos, 0);
+                    }
                     buf.extend_from_slice(data);
                 } else {
                     let end = pos + data.len();
-                    if end > buf.len() { buf.resize(end, 0); }
+                    if end > buf.len() {
+                        buf.resize(end, 0);
+                    }
                     buf[pos..pos + data.len()].copy_from_slice(data);
                 }
                 let new_pos = pos + data.len();
-                f.insert("_buffer".to_string(), MbValue::from_ptr(MbObject::new_bytes(buf)));
+                f.insert(
+                    "_buffer".to_string(),
+                    MbValue::from_ptr(MbObject::new_bytes(buf)),
+                );
                 f.insert("_pos".to_string(), MbValue::from_int(new_pos as i64));
             }
         }
@@ -398,9 +488,16 @@ fn file_read_remaining(file: MbValue) -> Vec<u8> {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut f = fields.write().unwrap();
-                let buf = f.get("_buffer").and_then(|v| unsafe { read_bytes_field(v) }).unwrap_or_default();
+                let buf = f
+                    .get("_buffer")
+                    .and_then(|v| unsafe { read_bytes_field(v) })
+                    .unwrap_or_default();
                 let pos = f.get("_pos").and_then(|v| v.as_int()).unwrap_or(0) as usize;
-                let out = if pos < buf.len() { buf[pos..].to_vec() } else { Vec::new() };
+                let out = if pos < buf.len() {
+                    buf[pos..].to_vec()
+                } else {
+                    Vec::new()
+                };
                 f.insert("_pos".to_string(), MbValue::from_int(buf.len() as i64));
                 return out;
             }
@@ -431,7 +528,11 @@ struct Encoder {
 
 impl Encoder {
     fn new() -> Self {
-        Encoder { out: Vec::new(), memo: HashMap::new(), failed: false }
+        Encoder {
+            out: Vec::new(),
+            memo: HashMap::new(),
+            failed: false,
+        }
     }
 
     fn put_memo(&mut self, idx: u32) {
@@ -503,7 +604,9 @@ impl Encoder {
 
     /// Encode a value, returning Err if a PicklingError was raised.
     fn encode(&mut self, val: MbValue) -> Result<(), ()> {
-        if self.failed { return Err(()); }
+        if self.failed {
+            return Err(());
+        }
         // None / bool first (disjoint tags).
         if val.is_none() {
             self.out.push(NONE);
@@ -523,9 +626,7 @@ impl Encoder {
                     let dict = super::super::dict_ops::mb_dict_new();
                     super::super::dict_ops::mb_dict_setitem(
                         dict,
-                        MbValue::from_ptr(MbObject::new_str(
-                            "__mamba_random_state__".to_string(),
-                        )),
+                        MbValue::from_ptr(MbObject::new_str("__mamba_random_state__".to_string())),
                         MbValue::from_int(state_id as i64),
                     );
                     return self.encode(dict);
@@ -546,7 +647,10 @@ impl Encoder {
         }
         let ptr = match val.as_ptr() {
             Some(p) => p,
-            None => { self.out.push(NONE); return Ok(()); }
+            None => {
+                self.out.push(NONE);
+                return Ok(());
+            }
         };
         // Memo: if we've already emitted this heap object, just reference it.
         let key = ptr as usize;
@@ -579,7 +683,8 @@ impl Encoder {
                         self.out.push(bytes.len() as u8);
                     } else {
                         self.out.push(0x8b); // LONG4
-                        self.out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                        self.out
+                            .extend_from_slice(&(bytes.len() as u32).to_le_bytes());
                     }
                     self.out.extend_from_slice(&bytes);
                 }
@@ -606,7 +711,10 @@ impl Encoder {
                 ObjData::Dict(ref lock) => {
                     self.out.push(EMPTY_DICT);
                     self.memoize(key);
-                    let pairs: Vec<(MbValue, MbValue)> = lock.read().unwrap().iter()
+                    let pairs: Vec<(MbValue, MbValue)> = lock
+                        .read()
+                        .unwrap()
+                        .iter()
                         .map(|(k, v)| (dict_key_to_mbvalue(k), *v))
                         .collect();
                     self.emit_setitems(&pairs)?;
@@ -626,7 +734,10 @@ impl Encoder {
                     self.out.push(FROZENSET);
                     self.memoize(key);
                 }
-                ObjData::Instance { ref class_name, ref fields } => {
+                ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                } => {
                     self.encode_instance(val, class_name, fields)?;
                     self.memoize(key);
                 }
@@ -640,7 +751,9 @@ impl Encoder {
     }
 
     fn emit_batch_appends(&mut self, items: &[MbValue]) -> Result<(), ()> {
-        if items.is_empty() { return Ok(()); }
+        if items.is_empty() {
+            return Ok(());
+        }
         self.out.push(MARK);
         for it in items {
             self.encode(*it)?;
@@ -650,7 +763,9 @@ impl Encoder {
     }
 
     fn emit_setitems(&mut self, pairs: &[(MbValue, MbValue)]) -> Result<(), ()> {
-        if pairs.is_empty() { return Ok(()); }
+        if pairs.is_empty() {
+            return Ok(());
+        }
         self.out.push(MARK);
         for (k, v) in pairs {
             self.encode(*k)?;
@@ -661,7 +776,9 @@ impl Encoder {
     }
 
     fn emit_set_additems(&mut self, items: &[MbValue]) -> Result<(), ()> {
-        if items.is_empty() { return Ok(()); }
+        if items.is_empty() {
+            return Ok(());
+        }
         self.out.push(MARK);
         for it in items {
             self.encode(*it)?;
@@ -697,15 +814,22 @@ impl Encoder {
                 let parts: Option<(String, Vec<MbValue>)> = unsafe {
                     if let ObjData::Tuple(ref parts) = (*rptr).data {
                         if parts.len() >= 2 {
-                            let target = extract_str(parts[0]).unwrap_or_else(|| class_name.to_string());
+                            let target =
+                                extract_str(parts[0]).unwrap_or_else(|| class_name.to_string());
                             let args: Vec<MbValue> = match parts[1].as_ptr().map(|p| &(*p).data) {
                                 Some(ObjData::Tuple(items)) => items.clone(),
-                                Some(ObjData::List(lock)) => lock.read().unwrap().iter().copied().collect(),
+                                Some(ObjData::List(lock)) => {
+                                    lock.read().unwrap().iter().copied().collect()
+                                }
                                 _ => vec![parts[1]],
                             };
                             Some((target, args))
-                        } else { None }
-                    } else { None }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
                 };
                 if let Some((target, args)) = parts {
                     self.out.push(OP_INST_REDUCE);
@@ -721,7 +845,10 @@ impl Encoder {
             // __reduce__ returned an unexpected shape — fall through to default.
         }
         // Default path: class name + (key, value)* under a MARK.
-        let snapshot: Vec<(String, MbValue)> = fields.read().unwrap().iter()
+        let snapshot: Vec<(String, MbValue)> = fields
+            .read()
+            .unwrap()
+            .iter()
             .filter(|(k, _)| !k.starts_with("__"))
             .map(|(k, v)| (k.clone(), *v))
             .collect();
@@ -755,7 +882,9 @@ fn encode_value(val: MbValue) -> Result<Vec<u8>, ()> {
     enc.out.push(PROTO);
     enc.out.push(2); // protocol 2
     enc.encode(val)?;
-    if enc.failed { return Err(()); }
+    if enc.failed {
+        return Err(());
+    }
     enc.out.push(STOP);
     Ok(enc.out)
 }
@@ -779,17 +908,29 @@ struct Decoder<'a> {
 
 impl<'a> Decoder<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Decoder { data, pos: 0, stack: Vec::new(), marks: Vec::new(), pending_inst: Vec::new(), memo: HashMap::new(), error: false }
+        Decoder {
+            data,
+            pos: 0,
+            stack: Vec::new(),
+            marks: Vec::new(),
+            pending_inst: Vec::new(),
+            memo: HashMap::new(),
+            error: false,
+        }
     }
 
     fn read_u8(&mut self) -> Option<u8> {
         let b = self.data.get(self.pos).copied();
-        if b.is_some() { self.pos += 1; }
+        if b.is_some() {
+            self.pos += 1;
+        }
         b
     }
 
     fn read_n(&mut self, n: usize) -> Option<&'a [u8]> {
-        if self.pos + n > self.data.len() { return None; }
+        if self.pos + n > self.data.len() {
+            return None;
+        }
         let s = &self.data[self.pos..self.pos + n];
         self.pos += n;
         Some(s)
@@ -816,72 +957,137 @@ impl<'a> Decoder<'a> {
         loop {
             let op = match self.read_u8() {
                 Some(b) => b,
-                None => { self.fail(); return MbValue::none(); }
+                None => {
+                    self.fail();
+                    return MbValue::none();
+                }
             };
             match op {
-                PROTO => { let _ = self.read_u8(); }
+                PROTO => {
+                    let _ = self.read_u8();
+                }
                 STOP => {
                     return self.pop();
                 }
                 NONE => self.stack.push(MbValue::none()),
                 NEWTRUE => self.stack.push(MbValue::from_bool(true)),
                 NEWFALSE => self.stack.push(MbValue::from_bool(false)),
-                BININT => {
-                    match self.read_n(4) {
-                        Some(s) => {
-                            let n = i32::from_le_bytes([s[0], s[1], s[2], s[3]]) as i64;
-                            self.stack.push(MbValue::from_int(n));
-                        }
-                        None => { self.fail(); return MbValue::none(); }
+                BININT => match self.read_n(4) {
+                    Some(s) => {
+                        let n = i32::from_le_bytes([s[0], s[1], s[2], s[3]]) as i64;
+                        self.stack.push(MbValue::from_int(n));
                     }
-                }
+                    None => {
+                        self.fail();
+                        return MbValue::none();
+                    }
+                },
                 LONG1 => {
-                    let len = match self.read_u8() { Some(l) => l as usize, None => { self.fail(); return MbValue::none(); } };
-                    match self.read_n(len) {
-                        Some(s) => self.stack.push(self.decode_long(s)),
-                        None => { self.fail(); return MbValue::none(); }
-                    }
-                }
-                0x8b => { // LONG4
-                    let len = match self.read_u32_le() { Some(l) => l as usize, None => { self.fail(); return MbValue::none(); } };
-                    match self.read_n(len) {
-                        Some(s) => self.stack.push(self.decode_long(s)),
-                        None => { self.fail(); return MbValue::none(); }
-                    }
-                }
-                BINFLOAT => {
-                    match self.read_n(8) {
-                        Some(s) => {
-                            let bits = u64::from_be_bytes([s[0],s[1],s[2],s[3],s[4],s[5],s[6],s[7]]);
-                            self.stack.push(MbValue::from_float(f64::from_bits(bits)));
+                    let len = match self.read_u8() {
+                        Some(l) => l as usize,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
                         }
-                        None => { self.fail(); return MbValue::none(); }
+                    };
+                    match self.read_n(len) {
+                        Some(s) => self.stack.push(self.decode_long(s)),
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
                     }
                 }
+                0x8b => {
+                    // LONG4
+                    let len = match self.read_u32_le() {
+                        Some(l) => l as usize,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    };
+                    match self.read_n(len) {
+                        Some(s) => self.stack.push(self.decode_long(s)),
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    }
+                }
+                BINFLOAT => match self.read_n(8) {
+                    Some(s) => {
+                        let bits =
+                            u64::from_be_bytes([s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]]);
+                        self.stack.push(MbValue::from_float(f64::from_bits(bits)));
+                    }
+                    None => {
+                        self.fail();
+                        return MbValue::none();
+                    }
+                },
                 SHORT_BINUNICODE => {
-                    let len = match self.read_u8() { Some(l) => l as usize, None => { self.fail(); return MbValue::none(); } };
+                    let len = match self.read_u8() {
+                        Some(l) => l as usize,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    };
                     self.push_unicode(len);
-                    if self.error { return MbValue::none(); }
+                    if self.error {
+                        return MbValue::none();
+                    }
                 }
                 BINUNICODE => {
-                    let len = match self.read_u32_le() { Some(l) => l as usize, None => { self.fail(); return MbValue::none(); } };
+                    let len = match self.read_u32_le() {
+                        Some(l) => l as usize,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    };
                     self.push_unicode(len);
-                    if self.error { return MbValue::none(); }
+                    if self.error {
+                        return MbValue::none();
+                    }
                 }
                 SHORT_BINBYTES => {
-                    let len = match self.read_u8() { Some(l) => l as usize, None => { self.fail(); return MbValue::none(); } };
+                    let len = match self.read_u8() {
+                        Some(l) => l as usize,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    };
                     self.push_bytes(len);
-                    if self.error { return MbValue::none(); }
+                    if self.error {
+                        return MbValue::none();
+                    }
                 }
                 BINBYTES => {
-                    let len = match self.read_u32_le() { Some(l) => l as usize, None => { self.fail(); return MbValue::none(); } };
+                    let len = match self.read_u32_le() {
+                        Some(l) => l as usize,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    };
                     self.push_bytes(len);
-                    if self.error { return MbValue::none(); }
+                    if self.error {
+                        return MbValue::none();
+                    }
                 }
-                EMPTY_LIST => self.stack.push(MbValue::from_ptr(MbObject::new_list(vec![]))),
-                EMPTY_TUPLE => self.stack.push(MbValue::from_ptr(MbObject::new_tuple(vec![]))),
+                EMPTY_LIST => self
+                    .stack
+                    .push(MbValue::from_ptr(MbObject::new_list(vec![]))),
+                EMPTY_TUPLE => self
+                    .stack
+                    .push(MbValue::from_ptr(MbObject::new_tuple(vec![]))),
                 EMPTY_DICT => self.stack.push(MbValue::from_ptr(MbObject::new_dict())),
-                EMPTY_SET => self.stack.push(MbValue::from_ptr(MbObject::new_set(vec![]))),
+                EMPTY_SET => self
+                    .stack
+                    .push(MbValue::from_ptr(MbObject::new_set(vec![]))),
                 MARK => {
                     self.marks.push(self.stack.len());
                 }
@@ -893,7 +1099,9 @@ impl<'a> Decoder<'a> {
                             if let ObjData::List(ref lock) = (*ptr).data {
                                 let mut w = lock.write().unwrap();
                                 for it in items {
-                                    unsafe { super::super::rc::retain_if_ptr(it); }
+                                    unsafe {
+                                        super::super::rc::retain_if_ptr(it);
+                                    }
                                     w.push(it);
                                 }
                             }
@@ -911,7 +1119,9 @@ impl<'a> Decoder<'a> {
                                 while i + 1 < items.len() {
                                     let k = items[i];
                                     let v = items[i + 1];
-                                    unsafe { super::super::rc::retain_if_ptr(v); }
+                                    unsafe {
+                                        super::super::rc::retain_if_ptr(v);
+                                    }
                                     w.insert(to_dict_key(k), v);
                                     i += 2;
                                 }
@@ -938,61 +1148,105 @@ impl<'a> Decoder<'a> {
                 }
                 TUPLE => {
                     let items = self.pop_to_mark();
-                    self.stack.push(MbValue::from_ptr(MbObject::new_tuple(items)));
+                    self.stack
+                        .push(MbValue::from_ptr(MbObject::new_tuple(items)));
                 }
                 FROZENSET => {
                     let items = self.pop_to_mark();
                     // De-dup for set semantics.
                     let mut uniq: Vec<MbValue> = Vec::new();
                     for it in items {
-                        if !uniq.iter().any(|e| super::super::builtins::mb_eq(*e, it).as_bool() == Some(true)) {
+                        if !uniq
+                            .iter()
+                            .any(|e| super::super::builtins::mb_eq(*e, it).as_bool() == Some(true))
+                        {
                             uniq.push(it);
                         }
                     }
-                    self.stack.push(MbValue::from_ptr(MbObject::new_frozenset(uniq)));
+                    self.stack
+                        .push(MbValue::from_ptr(MbObject::new_frozenset(uniq)));
                 }
                 BINPUT => {
-                    let idx = match self.read_u8() { Some(i) => i as u32, None => { self.fail(); return MbValue::none(); } };
+                    let idx = match self.read_u8() {
+                        Some(i) => i as u32,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    };
                     if let Some(&top) = self.stack.last() {
                         self.memo.insert(idx, top);
                     }
                 }
                 LONG_BINPUT => {
-                    let idx = match self.read_u32_le() { Some(i) => i, None => { self.fail(); return MbValue::none(); } };
+                    let idx = match self.read_u32_le() {
+                        Some(i) => i,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    };
                     if let Some(&top) = self.stack.last() {
                         self.memo.insert(idx, top);
                     }
                 }
                 BINGET => {
-                    let idx = match self.read_u8() { Some(i) => i as u32, None => { self.fail(); return MbValue::none(); } };
+                    let idx = match self.read_u8() {
+                        Some(i) => i as u32,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    };
                     match self.memo.get(&idx).copied() {
                         Some(v) => {
-                            unsafe { super::super::rc::retain_if_ptr(v); }
+                            unsafe {
+                                super::super::rc::retain_if_ptr(v);
+                            }
                             self.stack.push(v);
                         }
-                        None => { self.fail(); return MbValue::none(); }
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
                     }
                 }
                 LONG_BINGET => {
-                    let idx = match self.read_u32_le() { Some(i) => i, None => { self.fail(); return MbValue::none(); } };
+                    let idx = match self.read_u32_le() {
+                        Some(i) => i,
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
+                    };
                     match self.memo.get(&idx).copied() {
                         Some(v) => {
-                            unsafe { super::super::rc::retain_if_ptr(v); }
+                            unsafe {
+                                super::super::rc::retain_if_ptr(v);
+                            }
                             self.stack.push(v);
                         }
-                        None => { self.fail(); return MbValue::none(); }
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
                     }
                 }
                 OP_INST_REDUCE | OP_INST_DEFAULT => {
                     let is_reduce = op == OP_INST_REDUCE;
                     match self.read_inline_unicode() {
                         Some(cn) => self.pending_inst.push((is_reduce, cn)),
-                        None => { self.fail(); return MbValue::none(); }
+                        None => {
+                            self.fail();
+                            return MbValue::none();
+                        }
                     }
                 }
                 OP_BUILD => {
                     let v = self.build_instance();
-                    if self.error { return MbValue::none(); }
+                    if self.error {
+                        return MbValue::none();
+                    }
                     self.stack.push(v);
                 }
                 _ => {
@@ -1001,8 +1255,13 @@ impl<'a> Decoder<'a> {
                     return MbValue::none();
                 }
             }
-            if self.error { return MbValue::none(); }
-            if self.pos > self.data.len() { self.fail(); return MbValue::none(); }
+            if self.error {
+                return MbValue::none();
+            }
+            if self.pos > self.data.len() {
+                self.fail();
+                return MbValue::none();
+            }
         }
     }
 
@@ -1018,7 +1277,9 @@ impl<'a> Decoder<'a> {
 
     fn push_bytes(&mut self, len: usize) {
         match self.read_n(len) {
-            Some(s) => self.stack.push(MbValue::from_ptr(MbObject::new_bytes(s.to_vec()))),
+            Some(s) => self
+                .stack
+                .push(MbValue::from_ptr(MbObject::new_bytes(s.to_vec()))),
             None => self.fail(),
         }
     }
@@ -1031,8 +1292,14 @@ impl<'a> Decoder<'a> {
             // Sign-extend into i64.
             let mut buf = [0u8; 8];
             buf[..s.len()].copy_from_slice(s);
-            let sign = if s[s.len() - 1] & 0x80 != 0 { 0xff } else { 0x00 };
-            for b in buf.iter_mut().skip(s.len()) { *b = sign; }
+            let sign = if s[s.len() - 1] & 0x80 != 0 {
+                0xff
+            } else {
+                0x00
+            };
+            for b in buf.iter_mut().skip(s.len()) {
+                *b = sign;
+            }
             MbValue::from_int(i64::from_le_bytes(buf))
         } else {
             let big = num_bigint::BigInt::from_signed_bytes_le(s);
@@ -1071,10 +1338,17 @@ impl<'a> Decoder<'a> {
         let items = self.pop_to_mark();
         let (is_reduce, class_name) = match self.pending_inst.pop() {
             Some(x) => x,
-            None => { self.fail(); return MbValue::none(); }
+            None => {
+                self.fail();
+                return MbValue::none();
+            }
         };
         if is_reduce {
-            for it in &items { unsafe { super::super::rc::retain_if_ptr(*it); } }
+            for it in &items {
+                unsafe {
+                    super::super::rc::retain_if_ptr(*it);
+                }
+            }
             let arg_list = MbValue::from_ptr(MbObject::new_list(items));
             super::super::class::mb_instance_new_with_init(
                 MbValue::from_ptr(MbObject::new_str(class_name)),
@@ -1117,7 +1391,11 @@ fn decode_bytes(data: &[u8]) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -1170,7 +1448,10 @@ pub fn mb_pickle_loads(data: MbValue) -> MbValue {
 /// pickle.dump(obj, file) -> None — writes the pickle to a BytesIO-style file.
 pub fn mb_pickle_dump(val: MbValue, file: MbValue) -> MbValue {
     match encode_value(val) {
-        Ok(b) => { file_write_bytes(file, &b); MbValue::none() }
+        Ok(b) => {
+            file_write_bytes(file, &b);
+            MbValue::none()
+        }
         Err(()) => MbValue::none(),
     }
 }
@@ -1192,7 +1473,11 @@ mod tests {
 
     fn str_val(v: MbValue) -> Option<String> {
         v.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
     }
 
@@ -1237,9 +1522,13 @@ mod tests {
 
     #[test]
     fn test_roundtrip_float() {
-        let f = roundtrip(MbValue::from_float(3.14)).as_float().expect("float");
+        let f = roundtrip(MbValue::from_float(3.14))
+            .as_float()
+            .expect("float");
         assert!((f - 3.14).abs() < 1e-9);
-        let big = roundtrip(MbValue::from_float(1e100)).as_float().expect("float");
+        let big = roundtrip(MbValue::from_float(1e100))
+            .as_float()
+            .expect("float");
         assert!((big - 1e100).abs() / 1e100 < 1e-9);
     }
 
@@ -1261,7 +1550,9 @@ mod tests {
             unsafe {
                 if let ObjData::Bytes(ref b) = (*ptr).data {
                     assert_eq!(b, b"bytes");
-                } else { panic!("expected bytes"); }
+                } else {
+                    panic!("expected bytes");
+                }
             }
         }
     }
@@ -1269,7 +1560,9 @@ mod tests {
     #[test]
     fn test_roundtrip_list() {
         let v = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]));
         let rt = roundtrip(v);
         unsafe {
@@ -1278,20 +1571,25 @@ mod tests {
                 assert_eq!(items.len(), 3);
                 assert_eq!(items[0].as_int(), Some(1));
                 assert_eq!(items[2].as_int(), Some(3));
-            } else { panic!("expected list"); }
+            } else {
+                panic!("expected list");
+            }
         }
     }
 
     #[test]
     fn test_roundtrip_tuple() {
         let v = MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
         ]));
         let rt = roundtrip(v);
         unsafe {
             if let ObjData::Tuple(ref items) = (*rt.as_ptr().unwrap()).data {
                 assert_eq!(items.len(), 2);
-            } else { panic!("expected tuple"); }
+            } else {
+                panic!("expected tuple");
+            }
         }
     }
 
@@ -1309,7 +1607,9 @@ mod tests {
         let dict = MbObject::new_dict();
         unsafe {
             if let ObjData::Dict(ref lock) = (*dict).data {
-                lock.write().unwrap().insert("k".into(), MbValue::from_int(5));
+                lock.write()
+                    .unwrap()
+                    .insert("k".into(), MbValue::from_int(5));
             }
         }
         let rt = roundtrip(MbValue::from_ptr(dict));
@@ -1317,20 +1617,26 @@ mod tests {
             if let ObjData::Dict(ref lock) = (*rt.as_ptr().unwrap()).data {
                 let map = lock.read().unwrap();
                 assert_eq!(map.get("k").and_then(|v| v.as_int()), Some(5));
-            } else { panic!("expected dict"); }
+            } else {
+                panic!("expected dict");
+            }
         }
     }
 
     #[test]
     fn test_roundtrip_frozenset() {
         let v = MbValue::from_ptr(MbObject::new_frozenset(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]));
         let rt = roundtrip(v);
         unsafe {
             if let ObjData::FrozenSet(ref items) = (*rt.as_ptr().unwrap()).data {
                 assert_eq!(items.len(), 3);
-            } else { panic!("expected frozenset"); }
+            } else {
+                panic!("expected frozenset");
+            }
         }
     }
 
@@ -1338,9 +1644,14 @@ mod tests {
     fn test_loads_garbage_raises() {
         // After a garbage stream, an exception must be pending.
         super::super::super::exception::mb_clear_exception();
-        let v = mb_pickle_loads(MbValue::from_ptr(MbObject::new_bytes(b"not_a_pickle".to_vec())));
+        let v = mb_pickle_loads(MbValue::from_ptr(MbObject::new_bytes(
+            b"not_a_pickle".to_vec(),
+        )));
         assert!(v.is_none());
-        assert_eq!(super::super::super::exception::mb_has_exception().as_bool(), Some(true));
+        assert_eq!(
+            super::super::super::exception::mb_has_exception().as_bool(),
+            Some(true)
+        );
         super::super::super::exception::mb_clear_exception();
     }
 
@@ -1349,7 +1660,10 @@ mod tests {
         super::super::super::exception::mb_clear_exception();
         let v = mb_pickle_loads(MbValue::from_ptr(MbObject::new_bytes(vec![0x80])));
         assert!(v.is_none());
-        assert_eq!(super::super::super::exception::mb_has_exception().as_bool(), Some(true));
+        assert_eq!(
+            super::super::super::exception::mb_has_exception().as_bool(),
+            Some(true)
+        );
         super::super::super::exception::mb_clear_exception();
     }
 
@@ -1360,10 +1674,20 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*dict).data {
                 let mut w = lock.write().unwrap();
-                w.insert("a".into(), MbValue::from_ptr(MbObject::new_list(vec![
-                    MbValue::from_int(1), MbValue::from_int(2)])));
-                w.insert("b".into(), MbValue::from_ptr(MbObject::new_tuple(vec![
-                    MbValue::from_int(3), MbValue::from_int(4)])));
+                w.insert(
+                    "a".into(),
+                    MbValue::from_ptr(MbObject::new_list(vec![
+                        MbValue::from_int(1),
+                        MbValue::from_int(2),
+                    ])),
+                );
+                w.insert(
+                    "b".into(),
+                    MbValue::from_ptr(MbObject::new_tuple(vec![
+                        MbValue::from_int(3),
+                        MbValue::from_int(4),
+                    ])),
+                );
             }
         }
         let rt = roundtrip(MbValue::from_ptr(dict));
@@ -1373,10 +1697,14 @@ mod tests {
                 let a = map.get("a").copied().unwrap();
                 if let ObjData::List(ref l) = (*a.as_ptr().unwrap()).data {
                     assert_eq!(l.read().unwrap().len(), 2);
-                } else { panic!("a should be list"); }
+                } else {
+                    panic!("a should be list");
+                }
                 let b = map.get("b").copied().unwrap();
                 assert!(matches!((*b.as_ptr().unwrap()).data, ObjData::Tuple(_)));
-            } else { panic!("expected dict"); }
+            } else {
+                panic!("expected dict");
+            }
         }
     }
 }

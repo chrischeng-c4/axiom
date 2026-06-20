@@ -142,9 +142,7 @@ pub fn service_key(url: &str) -> String {
 
     // Lowercase the host portion. Port (if present after `:`) stays as-is.
     let (host, port_suffix) = match authority.rfind(':') {
-        Some(idx) if !authority[idx + 1..].contains(']') => {
-            (&authority[..idx], &authority[idx..])
-        }
+        Some(idx) if !authority[idx + 1..].contains(']') => (&authority[..idx], &authority[idx..]),
         _ => (authority, ""),
     };
     let host_lower = host.to_ascii_lowercase();
@@ -167,8 +165,14 @@ mod tests {
 
     #[test]
     fn provider_parse_known_variants() {
-        assert_eq!(KeyringProvider::parse("disabled").unwrap(), KeyringProvider::Disabled);
-        assert_eq!(KeyringProvider::parse("auto").unwrap(), KeyringProvider::Auto);
+        assert_eq!(
+            KeyringProvider::parse("disabled").unwrap(),
+            KeyringProvider::Disabled
+        );
+        assert_eq!(
+            KeyringProvider::parse("auto").unwrap(),
+            KeyringProvider::Auto
+        );
         assert_eq!(
             KeyringProvider::parse("subprocess").unwrap(),
             KeyringProvider::Subprocess
@@ -178,14 +182,20 @@ mod tests {
     #[test]
     fn provider_parse_aliases() {
         for alias in ["DISABLED", "off", "false", "no"] {
-            assert_eq!(KeyringProvider::parse(alias).unwrap(), KeyringProvider::Disabled);
+            assert_eq!(
+                KeyringProvider::parse(alias).unwrap(),
+                KeyringProvider::Disabled
+            );
         }
     }
 
     #[test]
     fn provider_parse_empty_is_subprocess() {
         // uv treats missing provider as "subprocess" (its default).
-        assert_eq!(KeyringProvider::parse("").unwrap(), KeyringProvider::Subprocess);
+        assert_eq!(
+            KeyringProvider::parse("").unwrap(),
+            KeyringProvider::Subprocess
+        );
     }
 
     #[test]
@@ -332,10 +342,7 @@ mod tests {
 
     #[test]
     fn service_key_handles_no_path() {
-        assert_eq!(
-            service_key("https://pypi.org"),
-            "https://pypi.org"
-        );
+        assert_eq!(service_key("https://pypi.org"), "https://pypi.org");
     }
 
     #[test]

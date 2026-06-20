@@ -13,18 +13,18 @@ pub mod session;
 pub mod validation;
 
 pub use auto_detect::{
-    AutoDetectConfig, AutoDetectResult, AutoDetector, ForeignKeyRef,
-    ModelDefinition, ModelField, ModelIndex,
+    AutoDetectConfig, AutoDetectResult, AutoDetector, ForeignKeyRef, ModelDefinition, ModelField,
+    ModelIndex,
 };
 pub use backref::{BackRefConfig, BackRefLoader, EagerLoader, EagerRelation};
 pub use compat::{
     ComputedFieldConfig, EmailValidator, FieldValidatorConfig, LengthValidator,
-    ModelValidatorConfig, PatternValidator, RangeValidator, UrlValidator,
-    ValidationError, ValidationErrors, ValidationMode, ValidationRegistry,
+    ModelValidatorConfig, PatternValidator, RangeValidator, UrlValidator, ValidationError,
+    ValidationErrors, ValidationMode, ValidationRegistry,
 };
 pub use query::{
-    AggregateFunction, HavingCondition, JoinCondition, JoinType, Operator,
-    OrderDirection, QueryBuilder, WindowExpression, WindowFunction, WindowSpec,
+    AggregateFunction, HavingCondition, JoinCondition, JoinType, Operator, OrderDirection,
+    QueryBuilder, WindowExpression, WindowFunction, WindowSpec,
 };
 pub use schema::{BackRef, CascadeRule, ManyToManyConfig, SchemaInspector};
 pub use session::{Session, SessionModel, SessionQuery};

@@ -269,8 +269,12 @@ impl NdArray<f64> {
         let flat = self.data.clone();
 
         // Sort with original indices
-        let mut indexed: Vec<(f64, usize)> =
-            flat.iter().copied().enumerate().map(|(i, v)| (v, i)).collect();
+        let mut indexed: Vec<(f64, usize)> = flat
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, v)| (v, i))
+            .collect();
         indexed.sort_by(|a, b| a.0.total_cmp(&b.0));
 
         let mut unique_vals: Vec<f64> = Vec::new();

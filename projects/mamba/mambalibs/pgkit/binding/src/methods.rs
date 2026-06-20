@@ -50,16 +50,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use cclab_mamba_registry::MbValue;
 use cclab_mamba_registry::convert::mb_wrap_native;
+use cclab_mamba_registry::MbValue;
 
-use cclab_pg::PoolConfig;
-use cclab_pg::driver::{ExtractedValue, Row};
 use cclab_pg::driver::blocking::{
     Connection as PgConnection, MigrationRunner as PgMigrationRunner, Transaction as PgTransaction,
 };
 use cclab_pg::driver::transaction::IsolationLevel;
+use cclab_pg::driver::{ExtractedValue, Row};
 use cclab_pg::migrate::Migration;
+use cclab_pg::PoolConfig;
 
 use crate::types::{MbPgConnection, MbPgMigration, MbPgMigrationRunner, MbPgTransaction};
 
@@ -739,13 +739,19 @@ mod tests {
         cclab_mamba_registry::test_ops::init();
         let row = Row::new(std::collections::HashMap::from([
             ("id".to_string(), ExtractedValue::BigInt(7)),
-            ("name".to_string(), ExtractedValue::String("mamba".to_string())),
+            (
+                "name".to_string(),
+                ExtractedValue::String("mamba".to_string()),
+            ),
             ("active".to_string(), ExtractedValue::Bool(true)),
         ]));
 
         let dict = row_to_dict(row);
         let ops = cclab_mamba_registry::ops();
-        assert_eq!((ops.dict_get_str)(dict, "id").and_then(|v| v.as_int()), Some(7));
+        assert_eq!(
+            (ops.dict_get_str)(dict, "id").and_then(|v| v.as_int()),
+            Some(7)
+        );
         assert_eq!(
             (ops.dict_get_str)(dict, "name")
                 .and_then(|v| unsafe { cclab_mamba_registry::rc::read_obj_str(v) }),

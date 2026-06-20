@@ -7,7 +7,7 @@
 // @contract search-stability-fault-resilience
 // @category stability
 // @required_for_production true
-// @command target/debug/rig test --dir projects/lumen/tests/rig/cases/resilience
+// @command rig run --dir projects/lumen/tests/rig/cases/resilience
 // AW-EC-END
 
 // Contract: FILTERING/RANKING: under 5% packet loss (toxiproxy timeout toxic) search p99 stays <= 2x baseline_p99 + 20ms.
@@ -16,7 +16,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_search_stability_resilience() {
-    let command = "target/debug/rig test --dir projects/lumen/tests/rig/cases/resilience";
+    let command = "rig run --dir projects/lumen/tests/rig/cases/resilience";
     let id = "lumen-search-stability-resilience";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

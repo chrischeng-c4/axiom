@@ -6,9 +6,9 @@
 use clap::Subcommand;
 use std::path::PathBuf;
 
+use cclab_pg::auto_detect::ModelDefinition;
 use cclab_pg::migration::{MigrationRunner, MigrationStatusReport, ModelDiffer};
 use cclab_pg::{Connection, PoolConfig};
-use cclab_pg::auto_detect::ModelDefinition;
 
 // ── CLI types ─────────────────────────────────────────────────────────────────
 
@@ -70,7 +70,11 @@ pub enum MigrateAction {
 /// Execute the chosen migrate subcommand.
 pub async fn run_migrate(action: MigrateAction) -> anyhow::Result<()> {
     match action {
-        MigrateAction::Generate { message, database_url, migrations_dir } => {
+        MigrateAction::Generate {
+            message,
+            database_url,
+            migrations_dir,
+        } => {
             let url = resolve_url(database_url)?;
             let conn = Connection::new(&url, PoolConfig::default()).await?;
             let differ = ModelDiffer::new(conn);
@@ -93,7 +97,10 @@ pub async fn run_migrate(action: MigrateAction) -> anyhow::Result<()> {
             }
         }
 
-        MigrateAction::Up { database_url, migrations_dir } => {
+        MigrateAction::Up {
+            database_url,
+            migrations_dir,
+        } => {
             let url = resolve_url(database_url)?;
             let runner = MigrationRunner::connect(&url).await?;
             let applied = runner.up(&migrations_dir).await?;
@@ -108,16 +115,22 @@ pub async fn run_migrate(action: MigrateAction) -> anyhow::Result<()> {
             }
         }
 
-        MigrateAction::Down { database_url, migrations_dir } => {
+        MigrateAction::Down {
+            database_url,
+            migrations_dir,
+        } => {
             let url = resolve_url(database_url)?;
             let runner = MigrationRunner::connect(&url).await?;
             match runner.down(&migrations_dir).await? {
                 Some(id) => println!("Reverted: {}", id),
-                None     => println!("No native migrations to revert."),
+                None => println!("No native migrations to revert."),
             }
         }
 
-        MigrateAction::Status { database_url, migrations_dir } => {
+        MigrateAction::Status {
+            database_url,
+            migrations_dir,
+        } => {
             let url = resolve_url(database_url)?;
             let conn = Connection::new(&url, PoolConfig::default()).await?;
             let status = MigrationStatusReport::load(conn, &migrations_dir).await?;
@@ -133,10 +146,12 @@ pub async fn run_migrate(action: MigrateAction) -> anyhow::Result<()> {
 /// Resolve the database URL from CLI flag or `DATABASE_URL` env var.
 fn resolve_url(flag: Option<String>) -> anyhow::Result<String> {
     flag.or_else(|| std::env::var("DATABASE_URL").ok())
-        .ok_or_else(|| anyhow::anyhow!(
-            "No database URL provided. \
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No database URL provided. \
              Pass --database-url or set DATABASE_URL environment variable."
-        ))
+            )
+        })
 }
 
 #[cfg(test)]

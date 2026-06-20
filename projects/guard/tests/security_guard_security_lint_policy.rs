@@ -15,7 +15,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn guard_security_lint_policy() {
-    let command = "target/debug/guard scan projects/guard --profile security-lint --compact --no-persist";
+    let command =
+        "target/debug/guard scan projects/guard --profile security-lint --compact --no-persist";
     let id = "guard-security-lint-policy";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

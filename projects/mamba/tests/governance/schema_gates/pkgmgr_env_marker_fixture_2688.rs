@@ -129,10 +129,13 @@ fn pkgmgr_env_marker_candidates_split_included_vs_excluded() {
 #[test]
 fn pkgmgr_env_marker_record_assertion_pins_lockfile_and_summary() {
     let doc = crate::common::load_toml(&manifest_path());
-    let rec = doc.get("marker_record_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[marker_record_assertion]` block \
+    let rec = doc
+        .get("marker_record_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[marker_record_assertion]` block \
          (acceptance: \"Marker result is recorded in lockfile or resolver summary.\")",
-    );
+        );
 
     assert_eq!(
         rec.get("recorded_in_lockfile").and_then(|v| v.as_bool()),
@@ -140,7 +143,8 @@ fn pkgmgr_env_marker_record_assertion_pins_lockfile_and_summary() {
         "`[marker_record_assertion].recorded_in_lockfile` must be true"
     );
     assert_eq!(
-        rec.get("recorded_in_resolver_summary").and_then(|v| v.as_bool()),
+        rec.get("recorded_in_resolver_summary")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[marker_record_assertion].recorded_in_resolver_summary` must be true"
     );
@@ -188,7 +192,8 @@ fn pkgmgr_env_marker_lockfile_includes_modern_excludes_legacy() {
         "`[lockfile_assertion].must_contain_dependency` must equal the included candidate"
     );
     assert_eq!(
-        lock.get("must_not_contain_dependency").and_then(|v| v.as_str()),
+        lock.get("must_not_contain_dependency")
+            .and_then(|v| v.as_str()),
         Some(excluded),
         "`[lockfile_assertion].must_not_contain_dependency` must equal the excluded candidate"
     );
@@ -197,10 +202,13 @@ fn pkgmgr_env_marker_lockfile_includes_modern_excludes_legacy() {
 #[test]
 fn pkgmgr_env_marker_wrong_inclusion_guard_fails_loud() {
     let doc = crate::common::load_toml(&manifest_path());
-    let guard = doc.get("wrong_inclusion_guard").and_then(|v| v.as_table()).expect(
-        "missing `[wrong_inclusion_guard]` block \
+    let guard = doc
+        .get("wrong_inclusion_guard")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[wrong_inclusion_guard]` block \
          (acceptance: \"Wrong marker inclusion fails the test.\")",
-    );
+        );
 
     for flag in &[
         "fail_if_excluded_present_in_lockfile",
@@ -218,10 +226,13 @@ fn pkgmgr_env_marker_wrong_inclusion_guard_fails_loud() {
 #[test]
 fn pkgmgr_env_marker_runtime_visibility_names_pyver_impl_platform() {
     let doc = crate::common::load_toml(&manifest_path());
-    let vis = doc.get("runtime_visibility").and_then(|v| v.as_table()).expect(
-        "missing `[runtime_visibility]` block \
+    let vis = doc
+        .get("runtime_visibility")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[runtime_visibility]` block \
          (acceptance: \"Current runtime metadata used for marker evaluation is visible.\")",
-    );
+        );
 
     for flag in &[
         "summary_must_name_python_version",
@@ -297,7 +308,8 @@ fn pkgmgr_env_marker_pins_out_of_scope_per_issue_2688() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("every_pep508_marker_expression").and_then(|v| v.as_bool()),
+        oos.get("every_pep508_marker_expression")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].every_pep508_marker_expression` must be true \
          (issue text: \"Out of scope: every PEP 508 marker expression.\")"

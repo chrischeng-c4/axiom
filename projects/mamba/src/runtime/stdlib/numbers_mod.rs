@@ -1,7 +1,7 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// numbers module for Mamba (mamba-stdlib).
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -107,7 +107,6 @@ pub fn mb_numbers_Integral() -> MbValue {
     );
     MbValue::none()
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -82,18 +82,7 @@ fn adaptive_simpson_recursive<F: Fn(f64) -> f64>(
     }
 
     adaptive_simpson_recursive(f, a, mid, tol / 2.0, s_left, fa, fm, f1, depth - 1, neval)
-        + adaptive_simpson_recursive(
-            f,
-            mid,
-            b,
-            tol / 2.0,
-            s_right,
-            fm,
-            fb,
-            f2,
-            depth - 1,
-            neval,
-        )
+        + adaptive_simpson_recursive(f, mid, b, tol / 2.0, s_right, fm, fb, f2, depth - 1, neval)
 }
 
 /// Trapezoid rule for evenly spaced data.
@@ -264,10 +253,12 @@ mod tests {
         // Integrate y = x^2 from 0 to 2 with 5 points
         let n = 5;
         let dx = 2.0 / (n - 1) as f64;
-        let y: Vec<f64> = (0..n).map(|i| {
-            let x = i as f64 * dx;
-            x * x
-        }).collect();
+        let y: Vec<f64> = (0..n)
+            .map(|i| {
+                let x = i as f64 * dx;
+                x * x
+            })
+            .collect();
         let result = simps(&y, dx);
         // exact = 8/3 = 2.6667
         assert!((result - 8.0 / 3.0).abs() < 1e-10, "got {}", result);

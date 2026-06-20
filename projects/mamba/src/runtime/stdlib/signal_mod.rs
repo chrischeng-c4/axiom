@@ -1,3 +1,6 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use std::cell::RefCell;
 /// signal module for Mamba (#1470, #1265 Goal 2 / 3-gate).
 ///
 /// Provides the CPython 3.12 `signal` 61-entry public surface
@@ -52,11 +55,7 @@
 ///   - SIG* integer values reflect the host (macOS/darwin) signal table.
 ///     Linux-only signal numbers (e.g. `SIGRTMIN`, `SIGPWR`) are not
 ///     exposed; surface-presence does not test them.
-
 use std::collections::HashMap;
-use std::cell::RefCell;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Exception helpers ──
 // Raise catchable Python exceptions through the thread-local exception
@@ -71,9 +70,15 @@ fn raise_exc(exc_type: &str, msg: &str) -> MbValue {
     );
     MbValue::none()
 }
-fn raise_type_error(msg: &str) -> MbValue { raise_exc("TypeError", msg) }
-fn raise_value_error(msg: &str) -> MbValue { raise_exc("ValueError", msg) }
-fn raise_os_error(msg: &str) -> MbValue { raise_exc("OSError", msg) }
+fn raise_type_error(msg: &str) -> MbValue {
+    raise_exc("TypeError", msg)
+}
+fn raise_value_error(msg: &str) -> MbValue {
+    raise_exc("ValueError", msg)
+}
+fn raise_os_error(msg: &str) -> MbValue {
+    raise_exc("OSError", msg)
+}
 
 // ── Per-process signal-disposition table ──
 // CPython tracks each signal's installed handler so `signal.signal()` can
@@ -94,8 +99,8 @@ fn as_signum(v: MbValue) -> Option<i64> {
 /// SIG* table registered below). Used by `valid_signals()` and range checks.
 fn valid_signal_numbers() -> Vec<i64> {
     let mut nums: Vec<i64> = vec![
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31,
     ];
     nums.dedup();
     nums
@@ -145,7 +150,9 @@ fn signal_description(signum: i64) -> Option<&'static str> {
 
 macro_rules! disp_nullary {
     ($disp:ident, $fn:path) => {
-        unsafe extern "C" fn $disp(_a: *const MbValue, _n: usize) -> MbValue { $fn() }
+        unsafe extern "C" fn $disp(_a: *const MbValue, _n: usize) -> MbValue {
+            $fn()
+        }
     };
 }
 
@@ -180,28 +187,28 @@ macro_rules! disp_variadic {
 }
 
 // Callables (18 surface entries)
-disp_variadic!(d_signal,                mb_signal_signal);
-disp_unary!(d_getsignal,                mb_signal_getsignal);
-disp_unary!(d_raise_signal,             mb_signal_raise_signal);
-disp_variadic!(d_set_wakeup_fd,         mb_signal_set_wakeup_fd);
-disp_binary!(d_siginterrupt,            mb_signal_siginterrupt);
-disp_unary!(d_strsignal,                mb_signal_strsignal);
-disp_nullary!(d_valid_signals,          mb_signal_valid_signals);
-disp_binary!(d_default_int_handler,     mb_signal_default_int_handler);
-disp_binary!(d_pthread_kill,            mb_signal_pthread_kill);
-disp_variadic!(d_pthread_sigmask,       mb_signal_pthread_sigmask);
-disp_unary!(d_alarm,                    mb_signal_alarm);
-disp_unary!(d_getitimer,                mb_signal_getitimer);
-disp_variadic!(d_setitimer,             mb_signal_setitimer);
-disp_nullary!(d_pause,                  mb_signal_pause);
-disp_nullary!(d_sigpending,             mb_signal_sigpending);
-disp_unary!(d_sigwait,                  mb_signal_sigwait);
+disp_variadic!(d_signal, mb_signal_signal);
+disp_unary!(d_getsignal, mb_signal_getsignal);
+disp_unary!(d_raise_signal, mb_signal_raise_signal);
+disp_variadic!(d_set_wakeup_fd, mb_signal_set_wakeup_fd);
+disp_binary!(d_siginterrupt, mb_signal_siginterrupt);
+disp_unary!(d_strsignal, mb_signal_strsignal);
+disp_nullary!(d_valid_signals, mb_signal_valid_signals);
+disp_binary!(d_default_int_handler, mb_signal_default_int_handler);
+disp_binary!(d_pthread_kill, mb_signal_pthread_kill);
+disp_variadic!(d_pthread_sigmask, mb_signal_pthread_sigmask);
+disp_unary!(d_alarm, mb_signal_alarm);
+disp_unary!(d_getitimer, mb_signal_getitimer);
+disp_variadic!(d_setitimer, mb_signal_setitimer);
+disp_nullary!(d_pause, mb_signal_pause);
+disp_nullary!(d_sigpending, mb_signal_sigpending);
+disp_unary!(d_sigwait, mb_signal_sigwait);
 
 // Class / type shells (4 surface entries)
-disp_variadic!(d_signals,               mb_signal_signals_new);
-disp_variadic!(d_handlers,              mb_signal_handlers_new);
-disp_variadic!(d_sigmasks,              mb_signal_sigmasks_new);
-disp_variadic!(d_itimer_error,          mb_signal_itimer_error_new);
+disp_variadic!(d_signals, mb_signal_signals_new);
+disp_variadic!(d_handlers, mb_signal_handlers_new);
+disp_variadic!(d_sigmasks, mb_signal_sigmasks_new);
+disp_variadic!(d_itimer_error, mb_signal_itimer_error_new);
 
 /// Register the signal module.
 pub fn register() {
@@ -209,27 +216,30 @@ pub fn register() {
 
     // ── Callables ──
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("signal",              d_signal              as *const () as usize),
-        ("getsignal",           d_getsignal           as *const () as usize),
-        ("raise_signal",        d_raise_signal        as *const () as usize),
-        ("set_wakeup_fd",       d_set_wakeup_fd       as *const () as usize),
-        ("siginterrupt",        d_siginterrupt        as *const () as usize),
-        ("strsignal",           d_strsignal           as *const () as usize),
-        ("valid_signals",       d_valid_signals       as *const () as usize),
-        ("default_int_handler", d_default_int_handler as *const () as usize),
-        ("pthread_kill",        d_pthread_kill        as *const () as usize),
-        ("pthread_sigmask",     d_pthread_sigmask     as *const () as usize),
-        ("alarm",               d_alarm               as *const () as usize),
-        ("getitimer",           d_getitimer           as *const () as usize),
-        ("setitimer",           d_setitimer           as *const () as usize),
-        ("pause",               d_pause               as *const () as usize),
-        ("sigpending",          d_sigpending          as *const () as usize),
-        ("sigwait",             d_sigwait             as *const () as usize),
+        ("signal", d_signal as *const () as usize),
+        ("getsignal", d_getsignal as *const () as usize),
+        ("raise_signal", d_raise_signal as *const () as usize),
+        ("set_wakeup_fd", d_set_wakeup_fd as *const () as usize),
+        ("siginterrupt", d_siginterrupt as *const () as usize),
+        ("strsignal", d_strsignal as *const () as usize),
+        ("valid_signals", d_valid_signals as *const () as usize),
+        (
+            "default_int_handler",
+            d_default_int_handler as *const () as usize,
+        ),
+        ("pthread_kill", d_pthread_kill as *const () as usize),
+        ("pthread_sigmask", d_pthread_sigmask as *const () as usize),
+        ("alarm", d_alarm as *const () as usize),
+        ("getitimer", d_getitimer as *const () as usize),
+        ("setitimer", d_setitimer as *const () as usize),
+        ("pause", d_pause as *const () as usize),
+        ("sigpending", d_sigpending as *const () as usize),
+        ("sigwait", d_sigwait as *const () as usize),
         // Class / type shells
-        ("Signals",             d_signals             as *const () as usize),
-        ("Handlers",            d_handlers            as *const () as usize),
-        ("Sigmasks",            d_sigmasks            as *const () as usize),
-        ("ItimerError",         d_itimer_error        as *const () as usize),
+        ("Signals", d_signals as *const () as usize),
+        ("Handlers", d_handlers as *const () as usize),
+        ("Sigmasks", d_sigmasks as *const () as usize),
+        ("ItimerError", d_itimer_error as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -246,38 +256,38 @@ pub fn register() {
 
     // Signal numbers — 30 SIG* constants.
     for (name, value) in [
-        ("SIGABRT",   6),
-        ("SIGALRM",  14),
-        ("SIGBUS",   10),
-        ("SIGCHLD",  20),
-        ("SIGCONT",  19),
-        ("SIGEMT",    7),
-        ("SIGFPE",    8),
-        ("SIGHUP",    1),
-        ("SIGILL",    4),
-        ("SIGINFO",  29),
-        ("SIGINT",    2),
-        ("SIGIO",    23),
-        ("SIGIOT",    6),
-        ("SIGKILL",   9),
-        ("SIGPIPE",  13),
-        ("SIGPROF",  27),
-        ("SIGQUIT",   3),
-        ("SIGSEGV",  11),
-        ("SIGSTOP",  17),
-        ("SIGSYS",   12),
-        ("SIGTERM",  15),
-        ("SIGTRAP",   5),
-        ("SIGTSTP",  18),
-        ("SIGTTIN",  21),
-        ("SIGTTOU",  22),
-        ("SIGURG",   16),
-        ("SIGUSR1",  30),
-        ("SIGUSR2",  31),
-        ("SIGVTALRM",26),
+        ("SIGABRT", 6),
+        ("SIGALRM", 14),
+        ("SIGBUS", 10),
+        ("SIGCHLD", 20),
+        ("SIGCONT", 19),
+        ("SIGEMT", 7),
+        ("SIGFPE", 8),
+        ("SIGHUP", 1),
+        ("SIGILL", 4),
+        ("SIGINFO", 29),
+        ("SIGINT", 2),
+        ("SIGIO", 23),
+        ("SIGIOT", 6),
+        ("SIGKILL", 9),
+        ("SIGPIPE", 13),
+        ("SIGPROF", 27),
+        ("SIGQUIT", 3),
+        ("SIGSEGV", 11),
+        ("SIGSTOP", 17),
+        ("SIGSYS", 12),
+        ("SIGTERM", 15),
+        ("SIGTRAP", 5),
+        ("SIGTSTP", 18),
+        ("SIGTTIN", 21),
+        ("SIGTTOU", 22),
+        ("SIGURG", 16),
+        ("SIGUSR1", 30),
+        ("SIGUSR2", 31),
+        ("SIGVTALRM", 26),
         ("SIGWINCH", 28),
-        ("SIGXCPU",  24),
-        ("SIGXFSZ",  25),
+        ("SIGXCPU", 24),
+        ("SIGXFSZ", 25),
     ] {
         attrs.insert(name.to_string(), MbValue::from_int(value));
     }
@@ -287,14 +297,14 @@ pub fn register() {
     attrs.insert("SIG_IGN".to_string(), MbValue::from_int(1));
 
     // pthread_sigmask "how" modes.
-    attrs.insert("SIG_BLOCK".to_string(),   MbValue::from_int(1));
+    attrs.insert("SIG_BLOCK".to_string(), MbValue::from_int(1));
     attrs.insert("SIG_UNBLOCK".to_string(), MbValue::from_int(2));
     attrs.insert("SIG_SETMASK".to_string(), MbValue::from_int(3));
 
     // Itimer modes.
-    attrs.insert("ITIMER_REAL".to_string(),    MbValue::from_int(0));
+    attrs.insert("ITIMER_REAL".to_string(), MbValue::from_int(0));
     attrs.insert("ITIMER_VIRTUAL".to_string(), MbValue::from_int(1));
-    attrs.insert("ITIMER_PROF".to_string(),    MbValue::from_int(2));
+    attrs.insert("ITIMER_PROF".to_string(), MbValue::from_int(2));
 
     // NSIG — max signal number + 1 (32 on darwin per CPython).
     attrs.insert("NSIG".to_string(), MbValue::from_int(32));
@@ -324,7 +334,9 @@ pub fn mb_signal_signal(args: &[MbValue]) -> MbValue {
     let signum = match as_signum(args[0]) {
         Some(n) => n,
         None => {
-            return raise_type_error("signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object");
+            return raise_type_error(
+                "signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object",
+            );
         }
     };
     if !valid_signal_numbers().contains(&signum) {
@@ -341,12 +353,17 @@ pub fn mb_signal_signal(args: &[MbValue]) -> MbValue {
     let is_sentinel = matches!(handler.as_int_pyint(), Some(0) | Some(1));
     let is_callable = super::super::builtins::mb_callable(handler).as_bool() == Some(true);
     if !is_sentinel && !is_callable {
-        return raise_type_error("signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object");
+        return raise_type_error(
+            "signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object",
+        );
     }
     // Record the new disposition; return the previous one (default SIG_DFL).
     let previous = HANDLERS.with(|h| {
         let mut map = h.borrow_mut();
-        let prev = map.get(&signum).copied().unwrap_or_else(|| MbValue::from_int(0));
+        let prev = map
+            .get(&signum)
+            .copied()
+            .unwrap_or_else(|| MbValue::from_int(0));
         map.insert(signum, handler);
         prev
     });
@@ -361,14 +378,19 @@ pub fn mb_signal_signal(args: &[MbValue]) -> MbValue {
 pub fn mb_signal_getsignal(signum: MbValue) -> MbValue {
     match as_signum(signum) {
         Some(n) => HANDLERS.with(|h| {
-            h.borrow().get(&n).copied().unwrap_or_else(|| MbValue::from_int(0))
+            h.borrow()
+                .get(&n)
+                .copied()
+                .unwrap_or_else(|| MbValue::from_int(0))
         }),
         None => MbValue::from_int(0),
     }
 }
 
 /// signal.raise_signal(signum) -> None.
-pub fn mb_signal_raise_signal(_signum: MbValue) -> MbValue { MbValue::none() }
+pub fn mb_signal_raise_signal(_signum: MbValue) -> MbValue {
+    MbValue::none()
+}
 
 /// signal.set_wakeup_fd(fd) -> previous fd (-1 sentinel).
 ///
@@ -497,7 +519,9 @@ fn seq_items(v: MbValue) -> Option<Vec<MbValue>> {
 }
 
 /// signal.alarm(seconds) -> remaining alarm (0).
-pub fn mb_signal_alarm(_seconds: MbValue) -> MbValue { MbValue::from_int(0) }
+pub fn mb_signal_alarm(_seconds: MbValue) -> MbValue {
+    MbValue::from_int(0)
+}
 
 /// signal.getitimer(which) -> (value, interval) tuple-shaped list.
 pub fn mb_signal_getitimer(_which: MbValue) -> MbValue {
@@ -516,7 +540,9 @@ pub fn mb_signal_setitimer(args: &[MbValue]) -> MbValue {
 }
 
 /// signal.pause() -> None.
-pub fn mb_signal_pause() -> MbValue { MbValue::none() }
+pub fn mb_signal_pause() -> MbValue {
+    MbValue::none()
+}
 
 /// signal.sigpending() -> set of pending signals (empty).
 pub fn mb_signal_sigpending() -> MbValue {
@@ -524,7 +550,9 @@ pub fn mb_signal_sigpending() -> MbValue {
 }
 
 /// signal.sigwait(sigset) -> received signum (0 sentinel).
-pub fn mb_signal_sigwait(_sigset: MbValue) -> MbValue { MbValue::from_int(0) }
+pub fn mb_signal_sigwait(_sigset: MbValue) -> MbValue {
+    MbValue::from_int(0)
+}
 
 // ── Class / type shells ──
 
@@ -606,7 +634,8 @@ mod tests {
 
     fn signal_attr(name: &str) -> Option<MbValue> {
         super::super::super::module::MODULES.with(|mods| {
-            mods.borrow().get("signal")
+            mods.borrow()
+                .get("signal")
                 .and_then(|m| m.attrs.get(name).copied())
         })
     }
@@ -616,39 +645,87 @@ mod tests {
         register();
         // Integer constants — 30 SIG* + 2 disposition + 3 mask + 3 itimer + NSIG = 39.
         for name in [
-            "SIGABRT", "SIGALRM", "SIGBUS", "SIGCHLD", "SIGCONT", "SIGEMT",
-            "SIGFPE", "SIGHUP", "SIGILL", "SIGINFO", "SIGINT", "SIGIO",
-            "SIGIOT", "SIGKILL", "SIGPIPE", "SIGPROF", "SIGQUIT", "SIGSEGV",
-            "SIGSTOP", "SIGSYS", "SIGTERM", "SIGTRAP", "SIGTSTP", "SIGTTIN",
-            "SIGTTOU", "SIGURG", "SIGUSR1", "SIGUSR2", "SIGVTALRM", "SIGWINCH",
-            "SIGXCPU", "SIGXFSZ",
-            "SIG_DFL", "SIG_IGN",
-            "SIG_BLOCK", "SIG_UNBLOCK", "SIG_SETMASK",
-            "ITIMER_REAL", "ITIMER_VIRTUAL", "ITIMER_PROF",
+            "SIGABRT",
+            "SIGALRM",
+            "SIGBUS",
+            "SIGCHLD",
+            "SIGCONT",
+            "SIGEMT",
+            "SIGFPE",
+            "SIGHUP",
+            "SIGILL",
+            "SIGINFO",
+            "SIGINT",
+            "SIGIO",
+            "SIGIOT",
+            "SIGKILL",
+            "SIGPIPE",
+            "SIGPROF",
+            "SIGQUIT",
+            "SIGSEGV",
+            "SIGSTOP",
+            "SIGSYS",
+            "SIGTERM",
+            "SIGTRAP",
+            "SIGTSTP",
+            "SIGTTIN",
+            "SIGTTOU",
+            "SIGURG",
+            "SIGUSR1",
+            "SIGUSR2",
+            "SIGVTALRM",
+            "SIGWINCH",
+            "SIGXCPU",
+            "SIGXFSZ",
+            "SIG_DFL",
+            "SIG_IGN",
+            "SIG_BLOCK",
+            "SIG_UNBLOCK",
+            "SIG_SETMASK",
+            "ITIMER_REAL",
+            "ITIMER_VIRTUAL",
+            "ITIMER_PROF",
             "NSIG",
             // Callables (16)
-            "signal", "getsignal", "raise_signal", "set_wakeup_fd",
-            "siginterrupt", "strsignal", "valid_signals", "default_int_handler",
-            "pthread_kill", "pthread_sigmask",
-            "alarm", "getitimer", "setitimer", "pause", "sigpending", "sigwait",
+            "signal",
+            "getsignal",
+            "raise_signal",
+            "set_wakeup_fd",
+            "siginterrupt",
+            "strsignal",
+            "valid_signals",
+            "default_int_handler",
+            "pthread_kill",
+            "pthread_sigmask",
+            "alarm",
+            "getitimer",
+            "setitimer",
+            "pause",
+            "sigpending",
+            "sigwait",
             // Class shells (4)
-            "Signals", "Handlers", "Sigmasks", "ItimerError",
+            "Signals",
+            "Handlers",
+            "Sigmasks",
+            "ItimerError",
         ] {
-            assert!(signal_attr(name).is_some(),
-                "signal module missing entry: {name}");
+            assert!(
+                signal_attr(name).is_some(),
+                "signal module missing entry: {name}"
+            );
         }
     }
 
     #[test]
     fn test_sig_constants_values() {
         register();
-        assert_eq!(signal_attr("SIGINT").and_then(|v| v.as_int()),  Some(2));
+        assert_eq!(signal_attr("SIGINT").and_then(|v| v.as_int()), Some(2));
         assert_eq!(signal_attr("SIGTERM").and_then(|v| v.as_int()), Some(15));
         assert_eq!(signal_attr("SIGKILL").and_then(|v| v.as_int()), Some(9));
-        assert_eq!(signal_attr("SIGHUP").and_then(|v| v.as_int()),  Some(1));
+        assert_eq!(signal_attr("SIGHUP").and_then(|v| v.as_int()), Some(1));
         assert_eq!(signal_attr("SIG_DFL").and_then(|v| v.as_int()), Some(0));
         assert_eq!(signal_attr("SIG_IGN").and_then(|v| v.as_int()), Some(1));
-        assert_eq!(signal_attr("NSIG").and_then(|v| v.as_int()),    Some(32));
+        assert_eq!(signal_attr("NSIG").and_then(|v| v.as_int()), Some(32));
     }
 
     #[test]
@@ -693,27 +770,37 @@ mod tests {
         unsafe {
             if let super::super::super::rc::ObjData::Str(ref s) = (*ptr).data {
                 assert!(s.contains("Interrupt"), "got {s:?}");
-            } else { panic!("expected Str"); }
+            } else {
+                panic!("expected Str");
+            }
         }
         assert!(mb_signal_strsignal(MbValue::from_int(9999)).is_none());
     }
 
     #[test]
     fn test_set_wakeup_fd_returns_minus_one() {
-        assert_eq!(mb_signal_set_wakeup_fd(&[MbValue::from_int(3)]).as_int(), Some(-1));
+        assert_eq!(
+            mb_signal_set_wakeup_fd(&[MbValue::from_int(3)]).as_int(),
+            Some(-1)
+        );
     }
 
     #[test]
     fn test_signals_class_shell_carries_value() {
         let inst = mb_signal_signals_new(&[MbValue::from_int(2)]);
         unsafe {
-            if let super::super::super::rc::ObjData::Instance { ref class_name, ref fields, .. }
-                = (*inst.as_ptr().unwrap()).data
+            if let super::super::super::rc::ObjData::Instance {
+                ref class_name,
+                ref fields,
+                ..
+            } = (*inst.as_ptr().unwrap()).data
             {
                 assert_eq!(class_name, "Signals");
                 let f = fields.read().unwrap();
                 assert_eq!(f.get("value").and_then(|v| v.as_int()), Some(2));
-            } else { panic!("expected Instance"); }
+            } else {
+                panic!("expected Instance");
+            }
         }
     }
 }

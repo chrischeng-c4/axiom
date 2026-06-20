@@ -8,25 +8,29 @@
 //! Run with: cargo test -p cclab-titan --test test_orm
 
 use cclab_pg::{
-    Connection, PoolConfig, QueryBuilder, Operator, OrderDirection,
-    JoinCondition, ExtractedValue, WindowSpec,
-    Transaction, IsolationLevel,
-    BulkConfig, BulkExecutor,
+    BulkConfig, BulkExecutor, Connection, ExtractedValue, IsolationLevel, JoinCondition, Operator,
+    OrderDirection, PoolConfig, QueryBuilder, Transaction, WindowSpec,
 };
 use std::collections::HashMap;
 
 fn get_database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
+    std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
 }
 
 async fn setup_test_db(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     // Create test tables
-    sqlx::query("DROP TABLE IF EXISTS orm_orders CASCADE").execute(pool).await?;
-    sqlx::query("DROP TABLE IF EXISTS orm_products CASCADE").execute(pool).await?;
-    sqlx::query("DROP TABLE IF EXISTS orm_users CASCADE").execute(pool).await?;
+    sqlx::query("DROP TABLE IF EXISTS orm_orders CASCADE")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TABLE IF EXISTS orm_products CASCADE")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TABLE IF EXISTS orm_users CASCADE")
+        .execute(pool)
+        .await?;
 
-    sqlx::query(r#"
+    sqlx::query(
+        r#"
         CREATE TABLE orm_users (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
@@ -35,9 +39,13 @@ async fn setup_test_db(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
             active BOOLEAN DEFAULT true,
             created_at TIMESTAMP DEFAULT NOW()
         )
-    "#).execute(pool).await?;
+    "#,
+    )
+    .execute(pool)
+    .await?;
 
-    sqlx::query(r#"
+    sqlx::query(
+        r#"
         CREATE TABLE orm_products (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
@@ -45,9 +53,13 @@ async fn setup_test_db(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
             category TEXT,
             stock INTEGER DEFAULT 0
         )
-    "#).execute(pool).await?;
+    "#,
+    )
+    .execute(pool)
+    .await?;
 
-    sqlx::query(r#"
+    sqlx::query(
+        r#"
         CREATE TABLE orm_orders (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES orm_users(id),
@@ -57,26 +69,38 @@ async fn setup_test_db(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
             status TEXT DEFAULT 'pending',
             created_at TIMESTAMP DEFAULT NOW()
         )
-    "#).execute(pool).await?;
+    "#,
+    )
+    .execute(pool)
+    .await?;
 
     // Insert test data
-    sqlx::query(r#"
+    sqlx::query(
+        r#"
         INSERT INTO orm_users (name, email, age, active) VALUES
         ('Alice', 'alice@example.com', 30, true),
         ('Bob', 'bob@example.com', 25, true),
         ('Charlie', 'charlie@example.com', 35, false),
         ('Diana', 'diana@example.com', 28, true)
-    "#).execute(pool).await?;
+    "#,
+    )
+    .execute(pool)
+    .await?;
 
-    sqlx::query(r#"
+    sqlx::query(
+        r#"
         INSERT INTO orm_products (name, price, category, stock) VALUES
         ('Laptop', 999.99, 'Electronics', 50),
         ('Phone', 699.99, 'Electronics', 100),
         ('Book', 29.99, 'Books', 200),
         ('Headphones', 149.99, 'Electronics', 75)
-    "#).execute(pool).await?;
+    "#,
+    )
+    .execute(pool)
+    .await?;
 
-    sqlx::query(r#"
+    sqlx::query(
+        r#"
         INSERT INTO orm_orders (user_id, product_id, quantity, total, status) VALUES
         (1, 1, 1, 999.99, 'completed'),
         (1, 2, 2, 1399.98, 'completed'),
@@ -84,15 +108,24 @@ async fn setup_test_db(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
         (3, 4, 1, 149.99, 'shipped'),
         (4, 1, 1, 999.99, 'completed'),
         (4, 3, 3, 89.97, 'pending')
-    "#).execute(pool).await?;
+    "#,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
 
 async fn teardown_test_db(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
-    sqlx::query("DROP TABLE IF EXISTS orm_orders CASCADE").execute(pool).await?;
-    sqlx::query("DROP TABLE IF EXISTS orm_products CASCADE").execute(pool).await?;
-    sqlx::query("DROP TABLE IF EXISTS orm_users CASCADE").execute(pool).await?;
+    sqlx::query("DROP TABLE IF EXISTS orm_orders CASCADE")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TABLE IF EXISTS orm_products CASCADE")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TABLE IF EXISTS orm_users CASCADE")
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -128,8 +161,8 @@ async fn test_orm_select_specific_columns() -> Result<(), Box<dyn std::error::Er
     setup_test_db(pool).await?;
 
     // ORM: Select only name and email
-    let qb = QueryBuilder::new("orm_users")?
-        .select(vec!["name".to_string(), "email".to_string()])?;
+    let qb =
+        QueryBuilder::new("orm_users")?.select(vec!["name".to_string(), "email".to_string()])?;
     let (sql, _) = qb.build();
 
     assert!(sql.contains("\"name\""));
@@ -161,7 +194,7 @@ async fn test_orm_where_conditions() -> Result<(), Box<dyn std::error::Error>> {
     }
     let rows = query.fetch_all(pool).await?;
 
-    assert_eq!(rows.len(), 2);  // Alice (30) and Diana (28)
+    assert_eq!(rows.len(), 2); // Alice (30) and Diana (28)
 
     teardown_test_db(pool).await?;
     Ok(())
@@ -177,11 +210,11 @@ async fn test_orm_where_null() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add a user with NULL age
     sqlx::query("INSERT INTO orm_users (name, email, age) VALUES ('Eve', 'eve@example.com', NULL)")
-        .execute(pool).await?;
+        .execute(pool)
+        .await?;
 
     // ORM: Find users with NULL age
-    let qb = QueryBuilder::new("orm_users")?
-        .where_null("age")?;
+    let qb = QueryBuilder::new("orm_users")?.where_null("age")?;
     let (sql, _) = qb.build();
 
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
@@ -232,7 +265,7 @@ async fn test_orm_distinct() -> Result<(), Box<dyn std::error::Error>> {
 
     assert!(sql.contains("DISTINCT"));
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
-    assert_eq!(rows.len(), 2);  // Electronics, Books
+    assert_eq!(rows.len(), 2); // Electronics, Books
 
     teardown_test_db(pool).await?;
     Ok(())
@@ -262,7 +295,7 @@ async fn test_orm_inner_join() -> Result<(), Box<dyn std::error::Error>> {
     let (sql, _) = qb.build();
 
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
-    assert_eq!(rows.len(), 6);  // All orders have users
+    assert_eq!(rows.len(), 6); // All orders have users
 
     teardown_test_db(pool).await?;
     Ok(())
@@ -277,8 +310,11 @@ async fn test_orm_left_join() -> Result<(), Box<dyn std::error::Error>> {
     setup_test_db(pool).await?;
 
     // Add a user with no orders
-    sqlx::query("INSERT INTO orm_users (name, email, age) VALUES ('Frank', 'frank@example.com', 40)")
-        .execute(pool).await?;
+    sqlx::query(
+        "INSERT INTO orm_users (name, email, age) VALUES ('Frank', 'frank@example.com', 40)",
+    )
+    .execute(pool)
+    .await?;
 
     // ORM: Get all users with their orders (including those without orders)
     let condition = JoinCondition::new("id", "orm_orders", "user_id")?;
@@ -291,7 +327,7 @@ async fn test_orm_left_join() -> Result<(), Box<dyn std::error::Error>> {
     let (sql, _) = qb.build();
 
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
-    assert!(rows.len() >= 5);  // All users, even Frank with no orders
+    assert!(rows.len() >= 5); // All users, even Frank with no orders
 
     teardown_test_db(pool).await?;
     Ok(())
@@ -340,8 +376,7 @@ async fn test_orm_count() -> Result<(), Box<dyn std::error::Error>> {
     setup_test_db(pool).await?;
 
     // ORM: Count all users
-    let qb = QueryBuilder::new("orm_users")?
-        .count_agg(Some("total"))?;
+    let qb = QueryBuilder::new("orm_users")?.count_agg(Some("total"))?;
     let (sql, _) = qb.build();
 
     let row = sqlx::query(&sql).fetch_one(pool).await?;
@@ -391,7 +426,7 @@ async fn test_orm_group_by() -> Result<(), Box<dyn std::error::Error>> {
     let (sql, _) = qb.build();
 
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
-    assert_eq!(rows.len(), 3);  // completed, pending, shipped
+    assert_eq!(rows.len(), 3); // completed, pending, shipped
 
     teardown_test_db(pool).await?;
     Ok(())
@@ -419,7 +454,7 @@ async fn test_orm_having() -> Result<(), Box<dyn std::error::Error>> {
     }
     let rows = query.fetch_all(pool).await?;
 
-    assert_eq!(rows.len(), 2);  // Alice and Diana have > 1 order
+    assert_eq!(rows.len(), 2); // Alice and Diana have > 1 order
 
     teardown_test_db(pool).await?;
     Ok(())
@@ -442,8 +477,7 @@ async fn test_orm_row_number() -> Result<(), Box<dyn std::error::Error>> {
         .partition_by(&["status"])
         .order_by("total", OrderDirection::Desc);
 
-    let qb = QueryBuilder::new("orm_orders")?
-        .row_number(spec, "rank")?;
+    let qb = QueryBuilder::new("orm_orders")?.row_number(spec, "rank")?;
     let (sql, _) = qb.build();
 
     assert!(sql.contains("ROW_NUMBER()"));
@@ -464,8 +498,7 @@ async fn test_orm_rank_dense_rank() -> Result<(), Box<dyn std::error::Error>> {
     let pool = conn.pool();
     setup_test_db(pool).await?;
 
-    let spec = WindowSpec::new()
-        .order_by("price", OrderDirection::Desc);
+    let spec = WindowSpec::new().order_by("price", OrderDirection::Desc);
 
     let qb = QueryBuilder::new("orm_products")?
         .rank(spec.clone(), "price_rank")?
@@ -505,7 +538,8 @@ async fn test_orm_transaction_commit() -> Result<(), Box<dyn std::error::Error>>
 
     // Verify committed
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orm_users WHERE name = 'TxUser'")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
     assert_eq!(count.0, 1);
 
     teardown_test_db(pool).await?;
@@ -521,20 +555,24 @@ async fn test_orm_transaction_rollback() -> Result<(), Box<dyn std::error::Error
     setup_test_db(pool).await?;
 
     let initial_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orm_users")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
 
     // ORM: Transaction rollback
     let mut tx = Transaction::begin(&conn, IsolationLevel::ReadCommitted).await?;
 
-    sqlx::query("INSERT INTO orm_users (name, email, age) VALUES ('RollbackUser', 'rb@example.com', 25)")
-        .execute(tx.as_mut_transaction().as_mut())
-        .await?;
+    sqlx::query(
+        "INSERT INTO orm_users (name, email, age) VALUES ('RollbackUser', 'rb@example.com', 25)",
+    )
+    .execute(tx.as_mut_transaction().as_mut())
+    .await?;
 
     tx.rollback().await?;
 
     // Verify rolled back
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orm_users")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
     assert_eq!(count.0, initial_count.0);
 
     teardown_test_db(pool).await?;
@@ -573,7 +611,8 @@ async fn test_orm_transaction_savepoint() -> Result<(), Box<dyn std::error::Erro
 
     // Verify
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orm_users WHERE name LIKE 'SP%'")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
     assert_eq!(count.0, 1);
 
     teardown_test_db(pool).await?;
@@ -620,9 +659,15 @@ async fn test_orm_bulk_insert() -> Result<(), Box<dyn std::error::Error>> {
     let products: Vec<HashMap<String, ExtractedValue>> = (0..50)
         .map(|i| {
             let mut row = HashMap::new();
-            row.insert("name".to_string(), ExtractedValue::String(format!("BulkProduct{}", i)));
+            row.insert(
+                "name".to_string(),
+                ExtractedValue::String(format!("BulkProduct{}", i)),
+            );
             row.insert("price".to_string(), ExtractedValue::Double(10.0 + i as f64));
-            row.insert("category".to_string(), ExtractedValue::String("Bulk".to_string()));
+            row.insert(
+                "category".to_string(),
+                ExtractedValue::String("Bulk".to_string()),
+            );
             row.insert("stock".to_string(), ExtractedValue::Int(i * 10));
             row
         })
@@ -660,7 +705,8 @@ async fn test_orm_bulk_update() -> Result<(), Box<dyn std::error::Error>> {
 
     // Verify
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orm_products WHERE stock = 999")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
     assert_eq!(count.0, 4);
 
     teardown_test_db(pool).await?;
@@ -692,8 +738,10 @@ async fn test_orm_bulk_delete() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(result.success_count, 10);
 
     // Verify
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM orm_products WHERE category = 'Delete'")
-        .fetch_one(pool).await?;
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM orm_products WHERE category = 'Delete'")
+            .fetch_one(pool)
+            .await?;
     assert_eq!(count.0, 0);
 
     teardown_test_db(pool).await?;
@@ -745,15 +793,13 @@ async fn test_orm_subquery_filter() -> Result<(), Box<dyn std::error::Error>> {
     setup_test_db(pool).await?;
 
     // ORM: Find users who have placed orders (using subquery)
-    let subquery = QueryBuilder::new("orm_orders")?
-        .select(vec!["user_id".to_string()])?;
+    let subquery = QueryBuilder::new("orm_orders")?.select(vec!["user_id".to_string()])?;
 
-    let qb = QueryBuilder::new("orm_users")?
-        .where_in_subquery("id", subquery)?;
+    let qb = QueryBuilder::new("orm_users")?.where_in_subquery("id", subquery)?;
 
     let (sql, _) = qb.build();
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
-    assert_eq!(rows.len(), 4);  // All 4 users have orders
+    assert_eq!(rows.len(), 4); // All 4 users have orders
 
     teardown_test_db(pool).await?;
     Ok(())
@@ -809,8 +855,11 @@ async fn test_orm_search_like() -> Result<(), Box<dyn std::error::Error>> {
     setup_test_db(pool).await?;
 
     // ORM: Search products by name
-    let qb = QueryBuilder::new("orm_products")?
-        .where_clause("name", Operator::ILike, ExtractedValue::String("%phone%".to_string()))?;
+    let qb = QueryBuilder::new("orm_products")?.where_clause(
+        "name",
+        Operator::ILike,
+        ExtractedValue::String("%phone%".to_string()),
+    )?;
 
     let (sql, params) = qb.build();
     let mut query = sqlx::query(&sql);
@@ -818,7 +867,7 @@ async fn test_orm_search_like() -> Result<(), Box<dyn std::error::Error>> {
         query = bind_extracted_value(query, param.clone());
     }
     let rows = query.fetch_all(pool).await?;
-    assert_eq!(rows.len(), 2);  // Phone, Headphones
+    assert_eq!(rows.len(), 2); // Phone, Headphones
 
     teardown_test_db(pool).await?;
     Ok(())

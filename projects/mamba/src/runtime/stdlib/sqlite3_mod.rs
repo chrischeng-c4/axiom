@@ -1,13 +1,12 @@
+use super::super::rc::{MbObject, MbObjectHeader, MbRwLock, ObjData, ObjKind};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 /// sqlite3 module for Mamba (#444).
 ///
 /// Provides: connect, Connection (execute, fetchall, commit, close)
 /// Stub implementation — stores data in-memory HashMap tables.
 /// No external dependency (no rusqlite).
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, MbObjectHeader, MbRwLock, ObjData, ObjKind};
 
 // ── Variadic dispatchers (callable from module-attr context) ──
 
@@ -160,14 +159,16 @@ fn register_sqlite3_classes() {
     {
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         for (name, addr) in [
-            ("cursor",      m_connection_cursor      as usize),
-            ("execute",     m_connection_execute     as usize),
+            ("cursor", m_connection_cursor as usize),
+            ("execute", m_connection_execute as usize),
             ("executemany", m_connection_executemany as usize),
-            ("commit",      m_connection_commit      as usize),
-            ("rollback",    m_connection_rollback    as usize),
-            ("close",       m_connection_close       as usize),
+            ("commit", m_connection_commit as usize),
+            ("rollback", m_connection_rollback as usize),
+            ("close", m_connection_close as usize),
         ] {
-            super::super::module::NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(addr as u64); });
+            super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                s.borrow_mut().insert(addr as u64);
+            });
             methods.insert(name.to_string(), MbValue::from_func(addr));
         }
         mb_class_register("Connection", Vec::new(), methods);
@@ -177,15 +178,17 @@ fn register_sqlite3_classes() {
     {
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         for (name, addr) in [
-            ("execute",       m_cursor_execute       as usize),
-            ("executemany",   m_cursor_executemany   as usize),
+            ("execute", m_cursor_execute as usize),
+            ("executemany", m_cursor_executemany as usize),
             ("executescript", m_cursor_executescript as usize),
-            ("fetchone",      m_cursor_fetchone      as usize),
-            ("fetchmany",     m_cursor_fetchmany     as usize),
-            ("fetchall",      m_cursor_fetchall      as usize),
-            ("close",         m_cursor_close         as usize),
+            ("fetchone", m_cursor_fetchone as usize),
+            ("fetchmany", m_cursor_fetchmany as usize),
+            ("fetchall", m_cursor_fetchall as usize),
+            ("close", m_cursor_close as usize),
         ] {
-            super::super::module::NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(addr as u64); });
+            super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                s.borrow_mut().insert(addr as u64);
+            });
             methods.insert(name.to_string(), MbValue::from_func(addr));
         }
         mb_class_register("Cursor", Vec::new(), methods);
@@ -193,14 +196,14 @@ fn register_sqlite3_classes() {
 
     // Exception taxonomy — base before subclass so MRO accumulates ancestors.
     let exc_specs: &[(&str, &[&str])] = &[
-        ("Error",             &["Exception"]),
-        ("InterfaceError",    &["Error"]),
-        ("DatabaseError",     &["Error"]),
-        ("DataError",         &["DatabaseError"]),
-        ("OperationalError",  &["DatabaseError"]),
-        ("IntegrityError",    &["DatabaseError"]),
-        ("InternalError",     &["DatabaseError"]),
-        ("ProgrammingError",  &["DatabaseError"]),
+        ("Error", &["Exception"]),
+        ("InterfaceError", &["Error"]),
+        ("DatabaseError", &["Error"]),
+        ("DataError", &["DatabaseError"]),
+        ("OperationalError", &["DatabaseError"]),
+        ("IntegrityError", &["DatabaseError"]),
+        ("InternalError", &["DatabaseError"]),
+        ("ProgrammingError", &["DatabaseError"]),
         ("NotSupportedError", &["DatabaseError"]),
     ];
     for &(name, bases) in exc_specs {
@@ -268,16 +271,25 @@ pub fn register() {
     // is true simply because the attr is present.
     register_sqlite3_classes();
     for cls in [
-        "Connection", "Cursor",
-        "Error", "InterfaceError", "DatabaseError", "DataError",
-        "OperationalError", "IntegrityError", "InternalError",
-        "ProgrammingError", "NotSupportedError",
+        "Connection",
+        "Cursor",
+        "Error",
+        "InterfaceError",
+        "DatabaseError",
+        "DataError",
+        "OperationalError",
+        "IntegrityError",
+        "InternalError",
+        "ProgrammingError",
+        "NotSupportedError",
     ] {
-        attrs.insert(cls.to_string(),
-            MbValue::from_ptr(MbObject::new_str(cls.to_string())));
+        attrs.insert(
+            cls.to_string(),
+            MbValue::from_ptr(MbObject::new_str(cls.to_string())),
+        );
     }
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("LEGACY_TRANSACTION_CONTROL".into(), MbValue::from_int(-1));
     attrs.insert("SQLITE_ABORT".into(), MbValue::from_int(4));
     attrs.insert("SQLITE_ABORT_ROLLBACK".into(), MbValue::from_int(516));
@@ -299,12 +311,21 @@ pub fn register() {
     attrs.insert("SQLITE_CANTOPEN_SYMLINK".into(), MbValue::from_int(1550));
     attrs.insert("SQLITE_CONSTRAINT".into(), MbValue::from_int(19));
     attrs.insert("SQLITE_CONSTRAINT_CHECK".into(), MbValue::from_int(275));
-    attrs.insert("SQLITE_CONSTRAINT_COMMITHOOK".into(), MbValue::from_int(531));
-    attrs.insert("SQLITE_CONSTRAINT_FOREIGNKEY".into(), MbValue::from_int(787));
+    attrs.insert(
+        "SQLITE_CONSTRAINT_COMMITHOOK".into(),
+        MbValue::from_int(531),
+    );
+    attrs.insert(
+        "SQLITE_CONSTRAINT_FOREIGNKEY".into(),
+        MbValue::from_int(787),
+    );
     attrs.insert("SQLITE_CONSTRAINT_FUNCTION".into(), MbValue::from_int(1043));
     attrs.insert("SQLITE_CONSTRAINT_NOTNULL".into(), MbValue::from_int(1299));
     attrs.insert("SQLITE_CONSTRAINT_PINNED".into(), MbValue::from_int(2835));
-    attrs.insert("SQLITE_CONSTRAINT_PRIMARYKEY".into(), MbValue::from_int(1555));
+    attrs.insert(
+        "SQLITE_CONSTRAINT_PRIMARYKEY".into(),
+        MbValue::from_int(1555),
+    );
     attrs.insert("SQLITE_CONSTRAINT_ROWID".into(), MbValue::from_int(2579));
     attrs.insert("SQLITE_CONSTRAINT_TRIGGER".into(), MbValue::from_int(1811));
     attrs.insert("SQLITE_CONSTRAINT_UNIQUE".into(), MbValue::from_int(2067));
@@ -325,19 +346,58 @@ pub fn register() {
     attrs.insert("SQLITE_DBCONFIG_DEFENSIVE".into(), MbValue::from_int(1010));
     attrs.insert("SQLITE_DBCONFIG_DQS_DDL".into(), MbValue::from_int(1014));
     attrs.insert("SQLITE_DBCONFIG_DQS_DML".into(), MbValue::from_int(1013));
-    attrs.insert("SQLITE_DBCONFIG_ENABLE_FKEY".into(), MbValue::from_int(1002));
-    attrs.insert("SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER".into(), MbValue::from_int(1004));
-    attrs.insert("SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION".into(), MbValue::from_int(1005));
-    attrs.insert("SQLITE_DBCONFIG_ENABLE_QPSG".into(), MbValue::from_int(1007));
-    attrs.insert("SQLITE_DBCONFIG_ENABLE_TRIGGER".into(), MbValue::from_int(1003));
-    attrs.insert("SQLITE_DBCONFIG_ENABLE_VIEW".into(), MbValue::from_int(1015));
-    attrs.insert("SQLITE_DBCONFIG_LEGACY_ALTER_TABLE".into(), MbValue::from_int(1012));
-    attrs.insert("SQLITE_DBCONFIG_LEGACY_FILE_FORMAT".into(), MbValue::from_int(1016));
-    attrs.insert("SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE".into(), MbValue::from_int(1006));
-    attrs.insert("SQLITE_DBCONFIG_RESET_DATABASE".into(), MbValue::from_int(1009));
-    attrs.insert("SQLITE_DBCONFIG_TRIGGER_EQP".into(), MbValue::from_int(1008));
-    attrs.insert("SQLITE_DBCONFIG_TRUSTED_SCHEMA".into(), MbValue::from_int(1017));
-    attrs.insert("SQLITE_DBCONFIG_WRITABLE_SCHEMA".into(), MbValue::from_int(1011));
+    attrs.insert(
+        "SQLITE_DBCONFIG_ENABLE_FKEY".into(),
+        MbValue::from_int(1002),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER".into(),
+        MbValue::from_int(1004),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION".into(),
+        MbValue::from_int(1005),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_ENABLE_QPSG".into(),
+        MbValue::from_int(1007),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_ENABLE_TRIGGER".into(),
+        MbValue::from_int(1003),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_ENABLE_VIEW".into(),
+        MbValue::from_int(1015),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_LEGACY_ALTER_TABLE".into(),
+        MbValue::from_int(1012),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_LEGACY_FILE_FORMAT".into(),
+        MbValue::from_int(1016),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE".into(),
+        MbValue::from_int(1006),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_RESET_DATABASE".into(),
+        MbValue::from_int(1009),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_TRIGGER_EQP".into(),
+        MbValue::from_int(1008),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_TRUSTED_SCHEMA".into(),
+        MbValue::from_int(1017),
+    );
+    attrs.insert(
+        "SQLITE_DBCONFIG_WRITABLE_SCHEMA".into(),
+        MbValue::from_int(1011),
+    );
     attrs.insert("SQLITE_DELETE".into(), MbValue::from_int(9));
     attrs.insert("SQLITE_DENY".into(), MbValue::from_int(1));
     attrs.insert("SQLITE_DETACH".into(), MbValue::from_int(25));
@@ -353,7 +413,10 @@ pub fn register() {
     attrs.insert("SQLITE_DROP_VTABLE".into(), MbValue::from_int(30));
     attrs.insert("SQLITE_EMPTY".into(), MbValue::from_int(16));
     attrs.insert("SQLITE_ERROR".into(), MbValue::from_int(1));
-    attrs.insert("SQLITE_ERROR_MISSING_COLLSEQ".into(), MbValue::from_int(257));
+    attrs.insert(
+        "SQLITE_ERROR_MISSING_COLLSEQ".into(),
+        MbValue::from_int(257),
+    );
     attrs.insert("SQLITE_ERROR_RETRY".into(), MbValue::from_int(513));
     attrs.insert("SQLITE_ERROR_SNAPSHOT".into(), MbValue::from_int(769));
     attrs.insert("SQLITE_FORMAT".into(), MbValue::from_int(24));
@@ -368,7 +431,10 @@ pub fn register() {
     attrs.insert("SQLITE_IOERR_AUTH".into(), MbValue::from_int(7178));
     attrs.insert("SQLITE_IOERR_BEGIN_ATOMIC".into(), MbValue::from_int(7434));
     attrs.insert("SQLITE_IOERR_BLOCKED".into(), MbValue::from_int(2826));
-    attrs.insert("SQLITE_IOERR_CHECKRESERVEDLOCK".into(), MbValue::from_int(3594));
+    attrs.insert(
+        "SQLITE_IOERR_CHECKRESERVEDLOCK".into(),
+        MbValue::from_int(3594),
+    );
     attrs.insert("SQLITE_IOERR_CLOSE".into(), MbValue::from_int(4106));
     attrs.insert("SQLITE_IOERR_COMMIT_ATOMIC".into(), MbValue::from_int(7690));
     attrs.insert("SQLITE_IOERR_CONVPATH".into(), MbValue::from_int(6666));
@@ -386,7 +452,10 @@ pub fn register() {
     attrs.insert("SQLITE_IOERR_NOMEM".into(), MbValue::from_int(3082));
     attrs.insert("SQLITE_IOERR_RDLOCK".into(), MbValue::from_int(2314));
     attrs.insert("SQLITE_IOERR_READ".into(), MbValue::from_int(266));
-    attrs.insert("SQLITE_IOERR_ROLLBACK_ATOMIC".into(), MbValue::from_int(7946));
+    attrs.insert(
+        "SQLITE_IOERR_ROLLBACK_ATOMIC".into(),
+        MbValue::from_int(7946),
+    );
     attrs.insert("SQLITE_IOERR_SEEK".into(), MbValue::from_int(5642));
     attrs.insert("SQLITE_IOERR_SHMLOCK".into(), MbValue::from_int(5130));
     attrs.insert("SQLITE_IOERR_SHMMAP".into(), MbValue::from_int(5386));
@@ -403,7 +472,10 @@ pub fn register() {
     attrs.insert("SQLITE_LIMIT_EXPR_DEPTH".into(), MbValue::from_int(3));
     attrs.insert("SQLITE_LIMIT_FUNCTION_ARG".into(), MbValue::from_int(6));
     attrs.insert("SQLITE_LIMIT_LENGTH".into(), MbValue::from_int(0));
-    attrs.insert("SQLITE_LIMIT_LIKE_PATTERN_LENGTH".into(), MbValue::from_int(8));
+    attrs.insert(
+        "SQLITE_LIMIT_LIKE_PATTERN_LENGTH".into(),
+        MbValue::from_int(8),
+    );
     attrs.insert("SQLITE_LIMIT_SQL_LENGTH".into(), MbValue::from_int(1));
     attrs.insert("SQLITE_LIMIT_TRIGGER_DEPTH".into(), MbValue::from_int(10));
     attrs.insert("SQLITE_LIMIT_VARIABLE_NUMBER".into(), MbValue::from_int(9));
@@ -419,7 +491,10 @@ pub fn register() {
     attrs.insert("SQLITE_NOTADB".into(), MbValue::from_int(26));
     attrs.insert("SQLITE_NOTFOUND".into(), MbValue::from_int(12));
     attrs.insert("SQLITE_NOTICE".into(), MbValue::from_int(27));
-    attrs.insert("SQLITE_NOTICE_RECOVER_ROLLBACK".into(), MbValue::from_int(539));
+    attrs.insert(
+        "SQLITE_NOTICE_RECOVER_ROLLBACK".into(),
+        MbValue::from_int(539),
+    );
     attrs.insert("SQLITE_NOTICE_RECOVER_WAL".into(), MbValue::from_int(283));
     attrs.insert("SQLITE_OK".into(), MbValue::from_int(0));
     attrs.insert("SQLITE_OK_LOAD_PERMANENTLY".into(), MbValue::from_int(256));
@@ -447,20 +522,31 @@ pub fn register() {
     attrs.insert("SQLITE_UPDATE".into(), MbValue::from_int(23));
     attrs.insert("SQLITE_WARNING".into(), MbValue::from_int(28));
     attrs.insert("SQLITE_WARNING_AUTOINDEX".into(), MbValue::from_int(284));
-    attrs.insert("apilevel".into(), MbValue::from_ptr(MbObject::new_str("2.0".to_string())));
-    attrs.insert("paramstyle".into(), MbValue::from_ptr(MbObject::new_str("qmark".to_string())));
-    attrs.insert("sqlite_version".into(), MbValue::from_ptr(MbObject::new_str("3.51.0".to_string())));
+    attrs.insert(
+        "apilevel".into(),
+        MbValue::from_ptr(MbObject::new_str("2.0".to_string())),
+    );
+    attrs.insert(
+        "paramstyle".into(),
+        MbValue::from_ptr(MbObject::new_str("qmark".to_string())),
+    );
+    attrs.insert(
+        "sqlite_version".into(),
+        MbValue::from_ptr(MbObject::new_str("3.51.0".to_string())),
+    );
     attrs.insert("threadsafety".into(), MbValue::from_int(1));
 
     // ── Remaining CPython module-attr surface (hasattr probes) ──
     // sqlite_version_info: CPython exposes a 3-tuple matching sqlite_version
     // ("3.51.0" -> (3, 51, 0)).
-    attrs.insert("sqlite_version_info".into(),
+    attrs.insert(
+        "sqlite_version_info".into(),
         MbValue::from_ptr(MbObject::new_tuple(vec![
             MbValue::from_int(3),
             MbValue::from_int(51),
             MbValue::from_int(0),
-        ])));
+        ])),
+    );
     // adapters / converters: CPython exposes these as dicts. Empty dicts are
     // sufficient for the surface `hasattr` probes.
     attrs.insert("adapters".into(), MbValue::from_ptr(MbObject::new_dict()));
@@ -468,12 +554,18 @@ pub fn register() {
     // Re-exported submodules / modules (CPython: module objects). The surface
     // probes only require presence; register sentinel strings so
     // `hasattr(sqlite3, NAME)` holds without standing up real submodules.
-    attrs.insert("collections".into(),
-        MbValue::from_ptr(MbObject::new_str("collections".to_string())));
-    attrs.insert("datetime".into(),
-        MbValue::from_ptr(MbObject::new_str("datetime".to_string())));
-    attrs.insert("time".into(),
-        MbValue::from_ptr(MbObject::new_str("time".to_string())));
+    attrs.insert(
+        "collections".into(),
+        MbValue::from_ptr(MbObject::new_str("collections".to_string())),
+    );
+    attrs.insert(
+        "datetime".into(),
+        MbValue::from_ptr(MbObject::new_str("datetime".to_string())),
+    );
+    attrs.insert(
+        "time".into(),
+        MbValue::from_ptr(MbObject::new_str("time".to_string())),
+    );
 
     // sqlite3.dbapi2 — a real re-export submodule. CPython's `sqlite3.dbapi2`
     // re-exports the full DB-API surface of `sqlite3`, so the submodule shares
@@ -506,7 +598,11 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -519,15 +615,21 @@ fn extract_str(val: MbValue) -> Option<String> {
 pub fn mb_sqlite3_connect(db_path: MbValue) -> MbValue {
     let path = extract_str(db_path).unwrap_or_else(|| ":memory:".to_string());
     let mut fields: FxHashMap<String, MbValue> = FxHashMap::default();
-    fields.insert("database".to_string(),
-        MbValue::from_ptr(MbObject::new_str(path)));
+    fields.insert(
+        "database".to_string(),
+        MbValue::from_ptr(MbObject::new_str(path)),
+    );
     fields.insert("closed".to_string(), MbValue::from_bool(false));
     // In-memory table store.
-    fields.insert("_tables".to_string(),
-        MbValue::from_ptr(MbObject::new_dict()));
+    fields.insert(
+        "_tables".to_string(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
     // Last query results.
-    fields.insert("_results".to_string(),
-        MbValue::from_ptr(MbObject::new_list(vec![])));
+    fields.insert(
+        "_results".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
     new_instance_with_fields("Connection", fields)
 }
 
@@ -537,16 +639,26 @@ pub fn mb_sqlite3_cursor(conn: MbValue) -> MbValue {
     // Share the connection's table store / result buffer so cursor execute /
     // fetch see the same data.
     if let Some(tables) = inst_field(conn, "_tables") {
-        unsafe { super::super::rc::retain_if_ptr(tables); }
+        unsafe {
+            super::super::rc::retain_if_ptr(tables);
+        }
         fields.insert("_tables".to_string(), tables);
     } else {
-        fields.insert("_tables".to_string(), MbValue::from_ptr(MbObject::new_dict()));
+        fields.insert(
+            "_tables".to_string(),
+            MbValue::from_ptr(MbObject::new_dict()),
+        );
     }
     if let Some(results) = inst_field(conn, "_results") {
-        unsafe { super::super::rc::retain_if_ptr(results); }
+        unsafe {
+            super::super::rc::retain_if_ptr(results);
+        }
         fields.insert("_results".to_string(), results);
     } else {
-        fields.insert("_results".to_string(), MbValue::from_ptr(MbObject::new_list(vec![])));
+        fields.insert(
+            "_results".to_string(),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
     }
     new_instance_with_fields("Cursor", fields)
 }
@@ -563,8 +675,8 @@ pub fn mb_sqlite3_execute(conn: MbValue, sql: MbValue) -> MbValue {
                     unsafe {
                         if let ObjData::Dict(ref tbl_lock) = (*tbl_ptr).data {
                             let mut tbl_map = tbl_lock.write().unwrap();
-                            tbl_map.insert(name.into(),
-                                MbValue::from_ptr(MbObject::new_list(vec![])));
+                            tbl_map
+                                .insert(name.into(), MbValue::from_ptr(MbObject::new_list(vec![])));
                         }
                     }
                 }
@@ -572,7 +684,11 @@ pub fn mb_sqlite3_execute(conn: MbValue, sql: MbValue) -> MbValue {
         }
     }
     // Store the query for reference.
-    inst_set_field(conn, "_last_sql", MbValue::from_ptr(MbObject::new_str(query)));
+    inst_set_field(
+        conn,
+        "_last_sql",
+        MbValue::from_ptr(MbObject::new_str(query)),
+    );
     conn
 }
 
@@ -598,7 +714,9 @@ fn extract_table_name(sql: &str) -> Option<String> {
 /// conn.fetchall() -> list of tuples
 pub fn mb_sqlite3_fetchall(conn: MbValue) -> MbValue {
     if let Some(results) = inst_field(conn, "_results") {
-        unsafe { super::super::rc::retain_if_ptr(results); }
+        unsafe {
+            super::super::rc::retain_if_ptr(results);
+        }
         return results;
     }
     MbValue::from_ptr(MbObject::new_list(vec![]))
@@ -661,7 +779,9 @@ mod tests {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 Some(class_name.clone())
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
@@ -715,7 +835,10 @@ mod tests {
     // --- extract_table_name ---
     #[test]
     fn test_extract_table_name_basic() {
-        assert_eq!(extract_table_name("CREATE TABLE users (id INT)"), Some("users".to_string()));
+        assert_eq!(
+            extract_table_name("CREATE TABLE users (id INT)"),
+            Some("users".to_string())
+        );
     }
 
     #[test]
@@ -829,7 +952,8 @@ mod tests {
         let conn = mb_sqlite3_connect(s(":memory:"));
         // Manually inject a _results list into the connection instance.
         let results_list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(10), MbValue::from_int(20),
+            MbValue::from_int(10),
+            MbValue::from_int(20),
         ]));
         inst_set_field(conn, "_results", results_list);
         let result = mb_sqlite3_fetchall(conn);

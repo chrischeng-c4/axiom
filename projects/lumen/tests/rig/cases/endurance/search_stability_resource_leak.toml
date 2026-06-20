@@ -1,0 +1,14 @@
+[record]
+suite = "lumen"
+dimension = "endurance"
+case = "search_stability_resource_leak"
+subject = "resource leak guard remains green for the local readiness smoke"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[[steps]]
+type = "exec"
+name = "planner_matches_bruteforce"
+cmd = ["cargo", "test", "-p", "lumen", "--test", "planner_diff", "planner_matches_bruteforce", "--", "--nocapture"]
+timeout_secs = 120

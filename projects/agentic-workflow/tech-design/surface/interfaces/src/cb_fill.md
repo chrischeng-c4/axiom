@@ -35,7 +35,9 @@ Public API manifest for `projects/agentic-workflow/src/cli/cb_fill.rs` generated
 
 <!-- source-snapshot: path=projects/agentic-workflow/src/cli/cb_fill.rs -->
 ````rust
-//! `aw cb fill` — Phase 3 marker-fill workflow.
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md#source
+// CODEGEN-BEGIN
+//! `aw td fill` — Phase 3 marker-fill workflow.
 //!
 //! Two modes:
 //! - **Brief** (no `--apply`): walk the current checkout source tree and emit a
@@ -45,20 +47,20 @@ Public API manifest for `projects/agentic-workflow/src/cli/cb_fill.rs` generated
 //! - **Apply** (`--apply --marker <id>`): merge the expected marker payload
 //!   into the HANDWRITE block matching `<id>`, commit that marker with WI
 //!   projection trailers, then lock the next marker or dispatch
-//!   `aw cb check`.
+//!   `aw td code-check`.
 //!
 //! @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md
 
+use crate::generate::audit::parse_handwrite_markers;
+use crate::issues::{IssueBackend, IssuePatch, LocalBackend};
 use anyhow::{Context, Result};
 use globset::{Glob, GlobSetBuilder};
-use agentic_workflow::generate::audit::parse_handwrite_markers;
-use agentic_workflow::issues::{IssueBackend, IssuePatch, LocalBackend};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::cb::CbFillArgs;
-use crate::remote_push::maybe_push_remote;
+use crate::cli::cb::CbFillArgs;
+use crate::cli::remote_push::maybe_push_remote;
 
 // A single open HANDWRITE block discovered in the worktree.
 ///
@@ -111,7 +113,12 @@ pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> 
             }
             let path = entry.path();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !matches!(ext, "rs" | "py" | "ts" | "tsx" | "md") {
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !matches!(
+                ext,
+                "rs" | "py" | "ts" | "tsx" | "md" | "toml" | "json" | "yaml" | "yml"
+            ) && file_name != "Dockerfile"
+            {
                 continue;
             }
             let Ok(content) = std::fs::read_to_string(path) else {
@@ -119,10 +126,13 @@ pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> 
             };
 
             // Form 1: <HANDWRITE>...</HANDWRITE> (canonical, parsed by
-            // agentic_workflow::generate::audit::parse_handwrite_markers).
+            // crate::generate::audit::parse_handwrite_markers).
             let path_str = path.to_string_lossy().to_string();
             if let Ok(markers) = parse_handwrite_markers(&content, &path_str) {
                 for m in markers {
+                    if !marker_body_is_unfilled(&content, m.line_start, m.line_end) {
+                        continue;
+                    }
                     let rel = path
                         .strip_prefix(worktree)
                         .unwrap_or(path)
@@ -140,8 +150,11 @@ pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> 
             }
 
             // Form 2: comment-style begin/end markers emitted by
-            // `agentic_workflow::generate::apply::scaffold_handwrite_file`.
+            // `crate::generate::apply::scaffold_handwrite_file`.
             for m in parse_handwrite_begin_end(&content) {
+                if !marker_body_is_unfilled(&content, m.start_line, m.end_line) {
+                    continue;
+                }
                 let rel = path
                     .strip_prefix(worktree)
                     .unwrap_or(path)
@@ -162,11 +175,101 @@ pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> 
     out
 }
 
+fn marker_body_is_unfilled(content: &str, start_line: usize, end_line: usize) -> bool {
+    if start_line == 0 || end_line <= start_line {
+        return true;
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    if end_line > lines.len() {
+        return true;
+    }
+    let body = lines[start_line..end_line - 1].join("\n");
+    let body = body.trim();
+    if body.is_empty() {
+        return true;
+    }
+    let lower = body.to_ascii_lowercase();
+    lower.contains("todo: hand-write content")
+        || lower.contains("todo hand-write content")
+        || lower == "(fill)"
+}
+
 // Lightweight count of HANDWRITE markers in the worktree. Used by
 // `td.rs::run_gen_code` for the post-codegen R8/R11 dispatch decision.
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md#source
 pub fn count_worktree_handwrite_markers(worktree: &Path) -> usize {
     enumerate_worktree_markers(worktree).len()
+}
+
+fn cb_marker_payload_rel(slug: &str, marker_id: &str) -> String {
+    format!(".aw/payloads/{}/{}.md", slug, marker_id)
+}
+
+fn cb_fill_apply_command(slug: &str, marker_id: &str) -> String {
+    format!("aw td fill {} --apply --marker {}", slug, marker_id)
+}
+
+fn td_merge_command(slug: &str, spec_path: &str) -> String {
+    if spec_path.is_empty() {
+        format!("aw td merge {}", slug)
+    } else {
+        format!("aw td merge {} --spec-path {}", slug, spec_path)
+    }
+}
+
+fn marker_payload_template(marker: &HandwriteMarkerEntry) -> String {
+    format!(
+        "(fill)\n\n<!-- marker: {} path: {} reason: {} -->\n",
+        marker.id, marker.source_path, marker.reason
+    )
+}
+
+fn initialize_marker_payload(
+    worktree: &Path,
+    slug: &str,
+    marker: &HandwriteMarkerEntry,
+) -> Result<(String, bool)> {
+    let rel = cb_marker_payload_rel(slug, &marker.id);
+    let abs = worktree.join(&rel);
+    if abs.exists() {
+        return Ok((rel, false));
+    }
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create payload directory {}", parent.display()))?;
+    }
+    std::fs::write(&abs, marker_payload_template(marker))
+        .with_context(|| format!("failed to write payload {}", abs.display()))?;
+    Ok((rel, true))
+}
+
+fn next_for_marker(
+    slug: &str,
+    marker: &HandwriteMarkerEntry,
+    payload_path: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "dispatch",
+        "command": cb_fill_apply_command(slug, &marker.id),
+        "reason": "fill the next HANDWRITE marker payload and apply it",
+        "requires_hitl": false,
+        "payload_path": payload_path,
+    })
+}
+
+fn next_for_td_merge(slug: &str, spec_path: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "dispatch",
+        "command": td_merge_command(slug, spec_path),
+        "reason": "all HANDWRITE markers are filled",
+        "requires_hitl": false,
+        "payload_path": null,
+    })
+}
+
+fn print_compact_json(value: &serde_json::Value) -> Result<()> {
+    println!("{}", serde_json::to_string(value)?);
+    Ok(())
 }
 
 // Marker discovered by the comment-style scanner.
@@ -308,8 +411,13 @@ pub async fn run(args: CbFillArgs) -> Result<()> {
 async fn run_brief(args: CbFillArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = args.slug.clone();
-    crate::td::td_activate_inplace_if_present(&project_root, &slug)?;
-    let worktree_abs = crate::td::td_workspace_path(&project_root, &slug);
+    let payload_prefix = format!(".aw/payloads/{}/", slug);
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
+        &project_root,
+        &slug,
+        &[payload_prefix.as_str()],
+    )?;
+    let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
     if !worktree_abs.exists() {
         emit_error(
             &slug,
@@ -357,32 +465,35 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
             "action": "dispatch",
             "agent": serde_json::Value::Null,
             "slug": slug,
+            "next": next_for_td_merge(&slug, &spec_path),
             "invoke": {
                 "command": "aw td merge",
                 "args": merge_args,
             },
         });
-        println!("{}", serde_json::to_string_pretty(&env)?);
+        print_compact_json(&env)?;
         let _ = args.json;
         let _ = args.force;
         return Ok(());
     }
 
+    let first = &markers[0];
+    let (first_payload, first_payload_created) =
+        initialize_marker_payload(&worktree_abs, &slug, first)?;
     let already_locked = issue
         .as_ref()
-        .and_then(|i| crate::workflow_guard::parse_projection(&i.body))
+        .and_then(|i| crate::cli::workflow_guard::parse_projection(&i.body))
         .map(|p| p.locked)
         .unwrap_or(false);
     if !already_locked {
-        let first = &markers[0];
-        crate::workflow_guard::create_issue_lock(
+        crate::cli::workflow_guard::create_issue_lock(
             &worktree_abs,
-            &crate::workflow_guard::TransitionLock::new(
+            &crate::cli::workflow_guard::TransitionLock::new(
                 &slug,
-                "cb",
-                format!("aw cb fill {} --apply --marker {}", slug, first.id),
+                "td",
+                cb_fill_apply_command(&slug, &first.id),
             )
-            .with_expected_payload(format!(".aw/payloads/{}/{}.md", slug, first.id))
+            .with_expected_payload(first_payload.clone())
             .with_phase_from("cb_genned")
             .with_active_phase("cb_fill_in_progress")
             .with_current_section(first.id.clone())
@@ -390,8 +501,12 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
             .with_dirty_paths([first.source_path.clone()]),
         )
         .await?;
-        let rel_issue = format!(".aw/issues/open/{}.md", slug);
-        if let Err(e) = stage_and_commit_cb_queue_start(&worktree_abs, &slug, &rel_issue, &first.id)
+        let issue_path_s = issue
+            .as_ref()
+            .map(|issue| backend.issue_path(issue).to_string_lossy().into_owned())
+            .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
+        if let Err(e) =
+            stage_and_commit_cb_queue_start(&worktree_abs, &slug, &issue_path_s, &first.id)
         {
             emit_error(&slug, &format!("git commit failed: {}", e))?;
             std::process::exit(1);
@@ -404,8 +519,10 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
         "action": "dispatch",
         "agent": null,
         "slug": slug,
+        "next": next_for_marker(&slug, first, &first_payload),
+        "payload_initialized": first_payload_created,
         "invoke": {
-            "command": "aw cb fill",
+            "command": "aw td fill",
             "args": {
                 "slug": slug,
                 "marker_list": markers,
@@ -413,7 +530,7 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
             },
         },
     });
-    println!("{}", serde_json::to_string_pretty(&env)?);
+    print_compact_json(&env)?;
     let _ = args.json;
     let _ = args.force;
     Ok(())
@@ -421,19 +538,19 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
 
 fn resolve_active_spec_path(
     args: &CbFillArgs,
-    issue: Option<&agentic_workflow::issues::Issue>,
+    issue: Option<&crate::issues::Issue>,
     worktree_abs: &Path,
 ) -> Option<String> {
     args.spec_path
         .clone()
         .filter(|p| !p.is_empty())
         .or_else(|| issue.and_then(derive_spec_path_from_implements))
-        .or_else(|| crate::td::discover_worktree_spec(worktree_abs))
+        .or_else(|| crate::cli::td::discover_worktree_spec(worktree_abs))
 }
 
 // Resolve a worktree-relative spec path from `Issue.implements` (best
 // effort — agents may also rely on the worktree's tech_design tree).
-fn derive_spec_path_from_implements(issue: &agentic_workflow::issues::Issue) -> Option<String> {
+fn derive_spec_path_from_implements(issue: &crate::issues::Issue) -> Option<String> {
     issue
         .implements
         .iter()
@@ -572,10 +689,6 @@ fn normalize_rel_path(path: &str) -> String {
 // (partial-progress envelope) or run the cb check gate.
 async fn run_apply(args: CbFillArgs) -> Result<()> {
     let slug = args.slug.clone();
-    let project_root = crate::find_project_root()?;
-    crate::td::td_activate_inplace_if_present(&project_root, &slug)?;
-    let worktree_abs = crate::td::td_workspace_path(&project_root, &slug);
-
     let marker_id = match args.marker.as_deref() {
         Some(m) if !m.is_empty() => m.to_string(),
         _ => {
@@ -583,6 +696,14 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             std::process::exit(2);
         }
     };
+    let payload_rel = format!(".aw/payloads/{}/{}.md", slug, marker_id);
+    let project_root = crate::find_project_root()?;
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
+        &project_root,
+        &slug,
+        &[payload_rel.as_str()],
+    )?;
+    let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
 
     if !worktree_abs.exists() {
         emit_error(
@@ -618,7 +739,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
                 &slug,
                 &format!(
                     "marker id '{}' is ambiguous — {} files match: {}. \
-                     Re-run `aw cb fill` (no --apply) to get the disambiguated marker list.",
+                     Re-run `aw td fill` (no --apply) to get the disambiguated marker list.",
                     marker_id,
                     many.len(),
                     paths.join(", "),
@@ -629,7 +750,6 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     };
 
     // Read the payload.
-    let payload_rel = format!(".aw/payloads/{}/{}.md", slug, marker_id);
     let payload_abs = worktree_abs.join(&payload_rel);
     let payload_body = match std::fs::read_to_string(&payload_abs) {
         Ok(s) => s,
@@ -646,16 +766,21 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     let source_abs = worktree_abs.join(&target.source_path);
     let original = std::fs::read_to_string(&source_abs)
         .with_context(|| format!("reading source {}", source_abs.display()))?;
-    let new_content =
-        replace_block_body(&original, target.start_line, target.end_line, &payload_body)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "could not locate marker block at lines {}..{} in {}",
-                    target.start_line,
-                    target.end_line,
-                    source_abs.display()
-                )
-            })?;
+    let new_content = replace_block_body_for_path(
+        &original,
+        target.start_line,
+        target.end_line,
+        &payload_body,
+        &target.source_path,
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not locate marker block at lines {}..{} in {}",
+            target.start_line,
+            target.end_line,
+            source_abs.display()
+        )
+    })?;
     std::fs::write(&source_abs, &new_content)
         .with_context(|| format!("writing source {}", source_abs.display()))?;
     // Re-enumerate.
@@ -663,14 +788,16 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
 
     if !remaining.is_empty() {
         let next = &remaining[0];
-        crate::workflow_guard::create_issue_lock(
+        let (next_payload, next_payload_created) =
+            initialize_marker_payload(&worktree_abs, &slug, next)?;
+        crate::cli::workflow_guard::create_issue_lock(
             &worktree_abs,
-            &crate::workflow_guard::TransitionLock::new(
+            &crate::cli::workflow_guard::TransitionLock::new(
                 &slug,
-                "cb",
-                format!("aw cb fill {} --apply --marker {}", slug, next.id),
+                "td",
+                cb_fill_apply_command(&slug, &next.id),
             )
-            .with_expected_payload(format!(".aw/payloads/{}/{}.md", slug, next.id))
+            .with_expected_payload(next_payload.clone())
             .with_phase_from("cb_genned")
             .with_active_phase("cb_fill_in_progress")
             .with_current_section(next.id.clone())
@@ -678,11 +805,16 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             .with_dirty_paths([next.source_path.clone()]),
         )
         .await?;
-        let rel_issue = format!(".aw/issues/open/{}.md", slug);
+        let backend = LocalBackend::from_project_root(&worktree_abs);
+        let issue = backend
+            .get(&slug)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
+        let issue_path_s = backend.issue_path(&issue).to_string_lossy().into_owned();
         if let Err(e) = stage_and_commit_cb_marker(
             &worktree_abs,
             &slug,
-            &rel_issue,
+            &issue_path_s,
             &target.source_path,
             &target.id,
             &next.id,
@@ -695,8 +827,10 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             "action": "dispatch",
             "agent": serde_json::Value::Null,
             "slug": slug,
+            "next": next_for_marker(&slug, next, &next_payload),
+            "payload_initialized": next_payload_created,
             "invoke": {
-                "command": "aw cb fill",
+                "command": "aw td fill",
                 "args": {
                     "slug": slug,
                     "apply": true,
@@ -704,71 +838,57 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
                 },
             },
         });
-        println!("{}", serde_json::to_string_pretty(&env)?);
+        print_compact_json(&env)?;
         let _ = args.json;
         let _ = args.force;
         return Ok(());
     }
 
-    // All markers applied — run cb check as gate.
+    // All markers applied — run the code check gate.
     let check_ok = run_cb_check_gate(&worktree_abs).await;
     if !check_ok.is_ok() {
         let msg = check_ok
             .err()
-            .unwrap_or_else(|| "cb check failed".to_string());
-        emit_error(&slug, &format!("cb check gate failed: {}", msg))?;
+            .unwrap_or_else(|| "td code-check failed".to_string());
+        emit_error(&slug, &format!("td code-check gate failed: {}", msg))?;
         std::process::exit(1);
     }
 
     // Commit Cb-Fill trailer + advance phase.
     let backend = LocalBackend::from_project_root(&worktree_abs);
-    let _issue = backend
+    let issue = backend
         .get(&slug)
         .await?
         .ok_or_else(|| anyhow::anyhow!("issue '{}' not found in current checkout", slug))?;
     let patch = IssuePatch {
-        phase: Some(agentic_workflow::issues::types::td_phase::CB_FILLED.to_string()),
+        phase: Some(crate::issues::types::td_phase::CB_FILLED.to_string()),
         ..Default::default()
     };
     backend.update(&slug, &patch).await?;
 
     // Stage source files + issue + commit.
-    let rel_issue = format!(".aw/issues/open/{}.md", slug);
-    maybe_push_remote(&worktree_abs, &worktree_abs.join(&rel_issue), &slug).await?;
-    if let Err(e) = stage_and_commit_cb_fill(&worktree_abs, &slug, &rel_issue) {
+    let issue_path = backend.issue_path(&issue);
+    let issue_path_s = issue_path.to_string_lossy().into_owned();
+    maybe_push_remote(&worktree_abs, &issue_path, &slug).await?;
+    if let Err(e) = stage_and_commit_cb_fill(&worktree_abs, &slug, &issue_path_s) {
         emit_error(&slug, &format!("git commit failed: {}", e))?;
         std::process::exit(1);
     }
-    crate::workflow_guard::complete_issue_lock(&worktree_abs, &slug, "cb").await?;
+    crate::cli::workflow_guard::complete_issue_lock(&worktree_abs, &slug, "td").await?;
 
-    // Dispatch next verb.
-    // Default: dispatch `aw cb review` so filled handwrite bodies pass
-    // through the CB CRRR loop. Backward-compat: `--no-review` short-circuits
-    // straight to `aw td merge` for callers that don't need review (e.g.,
-    // greenfield slugs with no novel handwrite content).
-    // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
-    let env = if args.no_review {
-        serde_json::json!({
-            "action": "dispatch",
-            "agent": serde_json::Value::Null,
-            "slug": slug,
-            "invoke": {
-                "command": "aw td merge",
-                "args": { "slug": slug },
-            },
-        })
-    } else {
-        serde_json::json!({
-            "action": "dispatch",
-            "agent": serde_json::Value::Null,
-            "slug": slug,
-            "invoke": {
-                "command": "aw cb review",
-                "args": { "slug": slug },
-            },
-        })
-    };
-    println!("{}", serde_json::to_string_pretty(&env)?);
+    // Dispatch to merge after the local code gate. Capability/EC/health gates
+    // decide whether the TD and implementation need another iteration.
+    let env = serde_json::json!({
+        "action": "dispatch",
+        "agent": serde_json::Value::Null,
+        "slug": slug,
+        "next": next_for_td_merge(&slug, ""),
+        "invoke": {
+            "command": "aw td merge",
+            "args": { "slug": slug },
+        },
+    });
+    print_compact_json(&env)?;
     let _ = args.json;
     let _ = args.force;
     Ok(())
@@ -807,6 +927,61 @@ fn replace_block_body(
     Some(out)
 }
 
+fn replace_block_body_for_path(
+    src: &str,
+    start_line: usize,
+    end_line: usize,
+    payload: &str,
+    source_path: &str,
+) -> Option<String> {
+    if should_preserve_handwrite_markers(source_path) {
+        return replace_block_body(src, start_line, end_line, payload);
+    }
+    replace_block_and_markers(src, start_line, end_line, payload)
+}
+
+fn should_preserve_handwrite_markers(source_path: &str) -> bool {
+    let path = Path::new(source_path);
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if file_name == "Dockerfile" {
+        return false;
+    }
+    !matches!(
+        path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+        "json" | "toml" | "yaml" | "yml"
+    )
+}
+
+fn replace_block_and_markers(
+    src: &str,
+    start_line: usize,
+    end_line: usize,
+    payload: &str,
+) -> Option<String> {
+    if start_line == 0 || end_line < start_line {
+        return None;
+    }
+    let lines: Vec<&str> = src.lines().collect();
+    if end_line > lines.len() {
+        return None;
+    }
+
+    let before = &lines[..start_line - 1];
+    let after = &lines[end_line..];
+    let mut out = String::new();
+    for l in before {
+        out.push_str(l);
+        out.push('\n');
+    }
+    out.push_str(payload.trim_end_matches('\n'));
+    out.push('\n');
+    for l in after {
+        out.push_str(l);
+        out.push('\n');
+    }
+    Some(out)
+}
+
 // Resolve the base branch for slug-scoped marker checking.
 ///
 // Resolution order: `SCORE_CB_FILL_BASE_BRANCH` env var → `"main"` fallback.
@@ -826,7 +1001,7 @@ fn resolve_base_branch() -> String {
 ///
 // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md#logic
 pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<String> {
-    let git_bin = match agentic_workflow::git::find_git_bin() {
+    let git_bin = match crate::git::find_git_bin() {
         Some(g) => g,
         None => return HashSet::new(),
     };
@@ -846,7 +1021,7 @@ pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<Strin
         .collect()
 }
 
-// Run `aw cb check` against the worktree as a gate. Returns Ok(())
+// Run code-check semantics against the worktree as a gate. Returns Ok(())
 // when no slug-introduced markers remain, Err(msg) on findings or
 // invocation error.
 ///
@@ -890,10 +1065,15 @@ async fn run_cb_check_gate(worktree_abs: &Path) -> std::result::Result<(), Strin
     Ok(())
 }
 
+fn should_stage_lifecycle_path(worktree: &Path, path: &str) -> bool {
+    let path = Path::new(path);
+    !path.is_absolute() || path.starts_with(worktree)
+}
+
 // Stage files and create the `Lifecycle-Stage: Cb-Fill` commit.
-fn stage_and_commit_cb_fill(worktree: &Path, slug: &str, rel_issue: &str) -> Result<()> {
-    let git_bin =
-        agentic_workflow::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+fn stage_and_commit_cb_fill(worktree: &Path, slug: &str, issue_path: &str) -> Result<()> {
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
 
     // Add everything that changed (source files + issue file).
     let _ = std::process::Command::new(&git_bin)
@@ -902,12 +1082,14 @@ fn stage_and_commit_cb_fill(worktree: &Path, slug: &str, rel_issue: &str) -> Res
         .args(["add", "-A"])
         .output()
         .context("git add -A")?;
-    // Make sure issue file is staged too (-A should cover it but be explicit).
-    let _ = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree)
-        .args(["add", rel_issue])
-        .output();
+    if should_stage_lifecycle_path(worktree, issue_path) {
+        // Make sure issue file is staged too (-A should cover it but be explicit).
+        let _ = std::process::Command::new(&git_bin)
+            .arg("-C")
+            .arg(worktree)
+            .args(["add", issue_path])
+            .output();
+    }
 
     let msg = format!(
         "cb({slug}) \u{2014} markers filled\n\n\
@@ -938,9 +1120,12 @@ fn stage_and_commit_cb_marker(
     marker_id: &str,
     next_marker_id: &str,
 ) -> Result<()> {
-    let git_bin =
-        agentic_workflow::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
     for path in [source_path, rel_issue] {
+        if !should_stage_lifecycle_path(worktree, path) {
+            continue;
+        }
         let add = std::process::Command::new(&git_bin)
             .arg("-C")
             .arg(worktree)
@@ -962,7 +1147,7 @@ fn stage_and_commit_cb_marker(
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
          CB-Marker: {marker_id}\n\
-         Next-Command: aw cb fill {slug} --apply --marker {next_marker_id}",
+         Next-Command: aw td fill {slug} --apply --marker {next_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -985,20 +1170,22 @@ fn stage_and_commit_cb_queue_start(
     rel_issue: &str,
     first_marker_id: &str,
 ) -> Result<()> {
-    let git_bin =
-        agentic_workflow::git::find_git_bin().ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
-    let add = std::process::Command::new(&git_bin)
-        .arg("-C")
-        .arg(worktree)
-        .args(["add", rel_issue])
-        .output()
-        .context("git add")?;
-    if !add.status.success() {
-        anyhow::bail!(
-            "git add '{}' failed: {}",
-            rel_issue,
-            String::from_utf8_lossy(&add.stderr).trim()
-        );
+    let git_bin = crate::git::find_git_bin()
+        .ok_or_else(|| anyhow::anyhow!("git binary not found on PATH"))?;
+    if should_stage_lifecycle_path(worktree, rel_issue) {
+        let add = std::process::Command::new(&git_bin)
+            .arg("-C")
+            .arg(worktree)
+            .args(["add", rel_issue])
+            .output()
+            .context("git add")?;
+        if !add.status.success() {
+            anyhow::bail!(
+                "git add '{}' failed: {}",
+                rel_issue,
+                String::from_utf8_lossy(&add.stderr).trim()
+            );
+        }
     }
     let msg = format!(
         "cb({slug}) \u{2014} fill queue started\n\n\
@@ -1006,12 +1193,12 @@ fn stage_and_commit_cb_queue_start(
          Lifecycle-Stage: Cb-Fill-Start\n\
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
-         Next-Command: aw cb fill {slug} --apply --marker {first_marker_id}",
+         Next-Command: aw td fill {slug} --apply --marker {first_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
         .arg(worktree)
-        .args(["commit", "-m", &msg])
+        .args(["commit", "--allow-empty", "-m", &msg])
         .output()
         .context("git commit")?;
     if !out.status.success() {
@@ -1028,8 +1215,15 @@ fn emit_error(slug: &str, message: &str) -> Result<()> {
         "action": "error",
         "slug": slug,
         "message": message,
+        "next": {
+            "kind": "none",
+            "command": null,
+            "reason": "error requires resolution before continuing",
+            "requires_hitl": false,
+            "payload_path": null,
+        },
     });
-    println!("{}", serde_json::to_string_pretty(&env)?);
+    print_compact_json(&env)?;
     Ok(())
 }
 
@@ -1043,6 +1237,17 @@ mod tests {
 
     fn handwrite_end() -> &'static str {
         concat!("// HANDWRITE-", "END")
+    }
+
+    fn marker(id: &str) -> HandwriteMarkerEntry {
+        HandwriteMarkerEntry {
+            id: id.to_string(),
+            source_path: "src/demo.rs".to_string(),
+            start_line: 10,
+            end_line: 14,
+            reason: "missing deterministic generator".to_string(),
+            spec_ref: Some("spec.md#logic".to_string()),
+        }
     }
 
     #[test]
@@ -1080,6 +1285,108 @@ mod tests {
     }
 
     #[test]
+    fn enumerate_worktree_markers_skips_filled_handwrite_blocks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let filled = format!(
+            "{}\nexport function App() {{ return null; }}\n{}\n",
+            handwrite_begin("gap=\"missing-generator:component\" reason=\"fill app\""),
+            handwrite_end(),
+        );
+        std::fs::write(src_dir.join("App.tsx"), filled).unwrap();
+
+        assert!(enumerate_worktree_markers(tmp.path()).is_empty());
+
+        let unfilled = format!(
+            "{}\n// TODO: hand-write content for `src/App.tsx`.\n{}\n",
+            handwrite_begin("gap=\"missing-generator:component\" reason=\"fill app\""),
+            handwrite_end(),
+        );
+        std::fs::write(src_dir.join("App.tsx"), unfilled).unwrap();
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].id, "missing-generator:component");
+    }
+
+    #[test]
+    fn enumerate_worktree_markers_includes_config_artifact_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let files = [
+            "frontend/package.json",
+            "backend/pyproject.toml",
+            "k8s/base/backend-deployment.yaml",
+            "backend/Dockerfile",
+        ];
+        for file in files {
+            let path = tmp.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let body = format!(
+                "{}\n// TODO: hand-write content for `{}`.\n{}\n",
+                handwrite_begin("gap=\"missing-generator:config\" reason=\"fill config\""),
+                file,
+                handwrite_end(),
+            );
+            std::fs::write(path, body).unwrap();
+        }
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        let paths: HashSet<String> = markers.into_iter().map(|m| m.source_path).collect();
+        assert_eq!(paths.len(), files.len());
+        for file in files {
+            assert!(paths.contains(file), "missing marker for {file}");
+        }
+    }
+
+    #[test]
+    fn cb_fill_next_command_omits_legacy_json() {
+        let marker = marker("missing-generator-cli");
+        let next = next_for_marker(
+            "4124",
+            &marker,
+            ".aw/payloads/4124/missing-generator-cli.md",
+        );
+
+        assert_eq!(
+            next["command"],
+            "aw td fill 4124 --apply --marker missing-generator-cli"
+        );
+        assert!(!next["command"].as_str().unwrap().contains("--json"));
+        assert_eq!(
+            next["payload_path"],
+            ".aw/payloads/4124/missing-generator-cli.md"
+        );
+    }
+
+    #[test]
+    fn cb_fill_initializes_marker_payload_without_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = marker("missing-generator-cli");
+
+        let (rel, created) = initialize_marker_payload(tmp.path(), "4124", &marker).unwrap();
+        assert_eq!(rel, ".aw/payloads/4124/missing-generator-cli.md");
+        assert!(created);
+        let abs = tmp.path().join(&rel);
+        let content = std::fs::read_to_string(&abs).unwrap();
+        assert!(content.contains("(fill)"));
+        assert!(content.contains("missing deterministic generator"));
+
+        std::fs::write(&abs, "custom\n").unwrap();
+        let (_, created_again) = initialize_marker_payload(tmp.path(), "4124", &marker).unwrap();
+        assert!(!created_again);
+        assert_eq!(std::fs::read_to_string(&abs).unwrap(), "custom\n");
+    }
+
+    #[test]
+    fn td_merge_next_command_uses_positional_slug() {
+        assert_eq!(
+            td_merge_command("4124", ".aw/tech-design/demo.md"),
+            "aw td merge 4124 --spec-path .aw/tech-design/demo.md"
+        );
+        assert!(!td_merge_command("4124", "").contains("--json"));
+    }
+
+    #[test]
     fn replace_block_body_preserves_markers() {
         let src = format!(
             "fn before() {{}}\n{}\nstub\n{}\nfn after() {{}}\n",
@@ -1094,7 +1401,47 @@ mod tests {
         assert!(out.contains("fn before"));
         assert!(out.contains("fn after"));
     }
+
+    #[test]
+    fn replace_block_body_for_config_paths_removes_invalid_markers() {
+        let src = format!(
+            "{{\n{}\n// TODO: hand-write content for `frontend/package.json`.\n{}\n}}\n",
+            handwrite_begin("gap=\"missing-generator:config\" reason=\"package metadata\""),
+            handwrite_end(),
+        );
+        let out =
+            replace_block_body_for_path(&src, 2, 4, "\"scripts\": {}", "frontend/package.json")
+                .unwrap();
+        assert!(!out.contains(HANDWRITE_BEGIN_TOKEN));
+        assert!(!out.contains(HANDWRITE_END_TOKEN));
+        assert!(out.contains("\"scripts\": {}"));
+        assert!(out.starts_with("{\n"));
+        assert!(out.ends_with("}\n"));
+    }
+
+    #[test]
+    fn replace_block_body_for_source_paths_preserves_markers() {
+        let src = format!(
+            "{}\nstub\n{}\n",
+            handwrite_begin("gap=\"missing-generator:component\" reason=\"component\""),
+            handwrite_end(),
+        );
+        let out = replace_block_body_for_path(
+            &src,
+            1,
+            3,
+            "export const value = 1;",
+            "frontend/src/demo.tsx",
+        )
+        .unwrap();
+        assert!(out.contains(HANDWRITE_BEGIN_TOKEN));
+        assert!(out.contains(HANDWRITE_END_TOKEN));
+        assert!(out.contains("export const value = 1;"));
+        assert!(!out.contains("stub"));
+    }
 }
+
+// CODEGEN-END
 ````
 
 ## Changes

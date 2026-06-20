@@ -6481,18 +6481,14 @@ fn lifecycle_action_for_work_item(
         ),
         Some("cb_genned") | Some("cb_fill_in_progress") => (
             CapabilityActionKind::RunCb,
-            format!("aw cb fill {work_item}"),
+            format!("aw td fill {work_item}"),
             "active WI has generated CB output; continue handwrite fill".to_string(),
         ),
-        Some("cb_filled") => (
-            CapabilityActionKind::RunCb,
-            format!("aw cb review {work_item}"),
-            "active WI has filled CB output; continue CB review".to_string(),
-        ),
-        Some("cb_reviewed") => (
+        Some("cb_filled") | Some("cb_reviewed") => (
             CapabilityActionKind::RunTd,
             format!("aw td merge {work_item}"),
-            "active WI has reviewed CB output; merge TD/CB lifecycle".to_string(),
+            "active WI has generated and checked implementation output; merge TD lifecycle"
+                .to_string(),
         ),
         Some("td_merged") => (
             CapabilityActionKind::RunVerify,
@@ -6525,7 +6521,10 @@ fn lifecycle_issue_evidence_unresolved(evidence: Option<&CapabilityWiEvidence>) 
 
 fn action_kind_for_lifecycle_command(command: &str) -> CapabilityActionKind {
     let command = command.trim();
-    if command.starts_with("aw cb ") {
+    if command.starts_with("aw td gen ")
+        || command.starts_with("aw td fill ")
+        || command.starts_with("aw td code-")
+    {
         CapabilityActionKind::RunCb
     } else if command.starts_with("aw capability report")
         || command.starts_with("aw capability check")
@@ -6540,8 +6539,8 @@ fn action_kind_for_lifecycle_command(command: &str) -> CapabilityActionKind {
 
 fn cb_gen_command(work_item: &str, td_spec_path: Option<&str>) -> String {
     match td_spec_path.map(str::trim).filter(|path| !path.is_empty()) {
-        Some(path) => format!("aw cb gen {work_item} --spec-path {}", shell_quote(path)),
-        None => format!("aw cb gen {work_item}"),
+        Some(path) => format!("aw td gen {work_item} --spec-path {}", shell_quote(path)),
+        None => format!("aw td gen {work_item}"),
     }
 }
 
@@ -16012,7 +16011,7 @@ capability_refs:
         assert_eq!(kind, CapabilityActionKind::RunCb);
         assert_eq!(
             command,
-            "aw cb gen 57 --spec-path 'projects/agentic-workflow/tech-design/logic/manual.md'"
+            "aw td gen 57 --spec-path 'projects/agentic-workflow/tech-design/logic/manual.md'"
         );
         assert_eq!(reason, "active WI has reviewed TD; continue CB generation");
     }
@@ -16026,7 +16025,7 @@ capability_refs:
             issue_type: "enhancement".to_string(),
             state: "open".to_string(),
             phase: Some("td_reviewed".to_string()),
-            expected_command: Some("aw cb fill 57".to_string()),
+            expected_command: Some("aw td fill 57".to_string()),
             title: "Promote generated manuals to first-class AW evidence artifacts".to_string(),
         };
 
@@ -16041,7 +16040,7 @@ capability_refs:
         );
 
         assert_eq!(kind, CapabilityActionKind::RunCb);
-        assert_eq!(command, "aw cb fill 57");
+        assert_eq!(command, "aw td fill 57");
         assert_eq!(
             reason,
             "active WI has a workflow expected_command; follow lifecycle lock"

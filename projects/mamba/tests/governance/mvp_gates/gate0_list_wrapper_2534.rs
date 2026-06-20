@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn script() -> PathBuf {
-    crate::common::mamba_root().join("scripts").join("gate0_list_tests.py")
+    crate::common::mamba_root()
+        .join("scripts")
+        .join("gate0_list_tests.py")
 }
 
 #[test]
@@ -20,7 +22,11 @@ fn script_is_present_and_executable() {
     let path = script();
     let meta = std::fs::metadata(&path)
         .unwrap_or_else(|e| panic!("gate-0 script missing at {}: {e}", path.display()));
-    assert!(meta.is_file(), "expected a regular file at {}", path.display());
+    assert!(
+        meta.is_file(),
+        "expected a regular file at {}",
+        path.display()
+    );
 }
 
 #[test]

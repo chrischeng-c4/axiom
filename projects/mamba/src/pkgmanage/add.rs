@@ -15,7 +15,7 @@
 // `name==version` specifier per invocation. Transitive resolution and
 // complex version selection are out of scope (per #2681 issue body).
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -305,10 +305,7 @@ fn pick_best_wheel(
 /// `mamba add requests` lands on a stable release. The full PEP 440 sort
 /// arrives with the PubGrub resolver in Tick 13.
 fn pick_pypi_latest(versions: &[String]) -> Option<String> {
-    let mut stable: Vec<&String> = versions
-        .iter()
-        .filter(|v| !is_prerelease(v))
-        .collect();
+    let mut stable: Vec<&String> = versions.iter().filter(|v| !is_prerelease(v)).collect();
     if stable.is_empty() {
         stable = versions.iter().collect();
     }
@@ -318,11 +315,9 @@ fn pick_pypi_latest(versions: &[String]) -> Option<String> {
 
 fn is_prerelease(v: &str) -> bool {
     let lower = v.to_lowercase();
-    [
-        "a", "b", "rc", "dev", "alpha", "beta", "pre", "post",
-    ]
-    .iter()
-    .any(|tag| lower.contains(tag) && lower.chars().any(|c| !c.is_ascii_digit() && c != '.'))
+    ["a", "b", "rc", "dev", "alpha", "beta", "pre", "post"]
+        .iter()
+        .any(|tag| lower.contains(tag) && lower.chars().any(|c| !c.is_ascii_digit() && c != '.'))
 }
 
 /// Coarse PEP 440 ordering: split on `.` and compare numeric segments as
@@ -392,7 +387,11 @@ fn pick_latest_version(pkg_dir: &Path) -> Result<String> {
     let mut versions: Vec<String> = fs::read_dir(pkg_dir)
         .with_context(|| format!("read index dir {}", pkg_dir.display()))?
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|t| t.is_dir() || t.is_file()).unwrap_or(false))
+        .filter(|e| {
+            e.file_type()
+                .map(|t| t.is_dir() || t.is_file())
+                .unwrap_or(false)
+        })
         .filter_map(|e| e.file_name().to_str().map(str::to_string))
         .collect();
     if versions.is_empty() {
@@ -446,8 +445,7 @@ impl ManifestState {
 
     pub(crate) fn upsert_dependency(&mut self, spec: &str) {
         let new_name = dep_name(spec);
-        self.dependencies
-            .retain(|d| dep_name(d) != new_name);
+        self.dependencies.retain(|d| dep_name(d) != new_name);
         self.dependencies.push(spec.to_string());
         self.dependencies.sort();
         self.dependencies.dedup();
@@ -463,10 +461,7 @@ impl ManifestState {
         out.push_str("[project]\n");
         out.push_str(&format!("name = \"{}\"\n", self.project_name));
         out.push_str(&format!("version = \"{}\"\n", self.project_version));
-        out.push_str(&format!(
-            "python-requires = \"{}\"\n",
-            self.python_requires
-        ));
+        out.push_str(&format!("python-requires = \"{}\"\n", self.python_requires));
         out.push_str(&format!(
             "dependencies = {}\n",
             render_string_list(&self.dependencies)

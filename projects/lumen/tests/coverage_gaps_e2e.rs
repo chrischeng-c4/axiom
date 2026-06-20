@@ -429,4 +429,153 @@ async fn s1_oversized_payload_rejected_with_413_or_422() {
         "expected 413 (size) / 422 / 400, got {st}"
     );
 }
+
+#[tokio::test]
+async fn search_security_query_injection_rejects_bad_queries() {
+    let s = server();
+    s.put("/collections/sec")
+        .json(&json!({
+            "fields": {
+                "body": { "type": "text" },
+                "age": { "type": "number" }
+            }
+        }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/sec/index")
+        .json(&json!({ "items": [
+            { "external_id": "safe", "field": "body", "value": "rust search engine" },
+            { "external_id": "safe", "field": "age", "value": 42 }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let special = s
+        .post("/collections/sec/search")
+        .json(&json!({
+            "query": {
+                "match": {
+                    "field": "body",
+                    "text": "rust\" OR *:* ../.. \u{0000}",
+                    "op": "and"
+                }
+            },
+            "limit": 10
+        }))
+        .await;
+    special.assert_status_ok();
+
+    let inverted_range = s
+        .post("/collections/sec/search")
+        .json(&json!({
+            "query": { "range": { "field": "age", "gt": 100, "lt": 10 } },
+            "limit": 10
+        }))
+        .await;
+    inverted_range.assert_status_ok();
+    let body: Value = inverted_range.json();
+    assert_eq!(body["total"], 0, "inverted range must safely short-circuit");
+
+    let mut deep_query = json!({ "term": { "field": "age", "value": 42 } });
+    for _ in 0..96 {
+        deep_query = json!({ "not": deep_query });
+    }
+    let deep_resp = s
+        .post("/collections/sec/search")
+        .json(&json!({ "query": deep_query, "limit": 10 }))
+        .await;
+    let deep_status = deep_resp.status_code().as_u16();
+    assert!(
+        deep_status < 500,
+        "deep query should be rejected or evaluated without server error, got {deep_status}"
+    );
+
+    let overflow_resp = s
+        .post("/collections/sec/search")
+        .content_type("application/json")
+        .text(r#"{"query":{"range":{"field":"age","gte":1e309}},"limit":10}"#)
+        .await;
+    let overflow_status = overflow_resp.status_code().as_u16();
+    assert!(
+        overflow_status < 500,
+        "numeric overflow should not become a server error, got {overflow_status}"
+    );
+
+    let malformed_resp = s
+        .post("/collections/sec/search")
+        .content_type("application/json")
+        .text(r#"{"query":{"match":"#)
+        .await;
+    let malformed_status = malformed_resp.status_code().as_u16();
+    assert!(
+        malformed_status == 400 || malformed_status == 415 || malformed_status == 422,
+        "malformed JSON should be a client error, got {malformed_status}"
+    );
+}
+
+#[tokio::test]
+async fn search_security_result_leak_respects_collection_boundaries() {
+    let s = server();
+    for collection in ["public", "private"] {
+        s.put(&format!("/collections/{collection}"))
+            .json(&json!({ "fields": { "body": { "type": "text" } } }))
+            .await
+            .assert_status_ok();
+    }
+
+    s.post("/collections/private/index")
+        .json(&json!({ "items": [
+            { "external_id": "private-doc", "field": "body", "value": "secretmarker alpha" }
+        ]}))
+        .await
+        .assert_status_ok();
+    s.post("/collections/public/index")
+        .json(&json!({ "items": [
+            { "external_id": "public-doc", "field": "body", "value": "publicmarker beta" }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let private_body: Value = s
+        .post("/collections/private/search")
+        .json(&json!({
+            "query": { "match": { "field": "body", "text": "secretmarker" } },
+            "limit": 10
+        }))
+        .await
+        .json();
+    assert_eq!(private_body["total"], 1);
+    assert_eq!(private_body["hits"][0]["external_id"], "private-doc");
+    assert!(
+        private_body["hits"][0]["score"].as_f64().unwrap() > 0.0,
+        "private collection should have an internal score for its own hit"
+    );
+
+    let public_body: Value = s
+        .post("/collections/public/search")
+        .json(&json!({
+            "query": { "match": { "field": "body", "text": "secretmarker" } },
+            "limit": 10
+        }))
+        .await
+        .json();
+    assert_eq!(public_body["total"], 0);
+    assert!(
+        public_body["hits"].as_array().unwrap().is_empty(),
+        "public collection must not reveal private hit existence or score"
+    );
+
+    let public_own_body: Value = s
+        .post("/collections/public/search")
+        .json(&json!({
+            "query": { "match": { "field": "body", "text": "publicmarker" } },
+            "limit": 10
+        }))
+        .await
+        .json();
+    assert_eq!(public_own_body["total"], 1);
+    let hit = &public_own_body["hits"][0];
+    assert_eq!(hit["external_id"], "public-doc");
+    assert_ne!(hit["external_id"], "private-doc");
+}
 // CODEGEN-END

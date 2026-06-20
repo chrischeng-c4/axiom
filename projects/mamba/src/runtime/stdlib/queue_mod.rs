@@ -34,12 +34,12 @@
 //! (It was previously thread-local, which silently dropped every put
 //! performed on a producer thread distinct from the consumer thread.)
 
+use super::super::rc::ObjData;
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::ObjData;
 
 /// Handle IDs sit at 2^43 — well above uuid (2^41) and ipaddress
 /// (2^42) handle bases, ensuring no cross-lib collisions.
@@ -68,8 +68,7 @@ struct QueueState {
 // so it is auto-`Send + Sync` and safe to park inside the Mutex.
 static QUEUES: LazyLock<Mutex<HashMap<u64, QueueState>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static QUEUE_IDS: LazyLock<Mutex<HashSet<u64>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+static QUEUE_IDS: LazyLock<Mutex<HashSet<u64>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 static NEXT_QUEUE_ID: AtomicU64 = AtomicU64::new(QUEUE_HANDLE_BASE);
 /// Per-handle refcount (#2111). Drops the QUEUES entry — including the
 /// items VecDeque holding owned MbValues — when the count hits zero.
@@ -125,18 +124,23 @@ pub fn release_handle(id: u64) -> bool {
 
 fn make_handle(kind: QueueKind, maxsize: i64) -> MbValue {
     let id = alloc_queue_id();
-    QUEUES.lock().unwrap().insert(id, QueueState {
-        kind,
-        maxsize,
-        items: VecDeque::new(),
-        unfinished: 0,
-    });
+    QUEUES.lock().unwrap().insert(
+        id,
+        QueueState {
+            kind,
+            maxsize,
+            items: VecDeque::new(),
+            unfinished: 0,
+        },
+    );
     QUEUE_IDS.lock().unwrap().insert(id);
     MbValue::from_int(id as i64)
 }
 
 fn handle_of(v: MbValue) -> Option<u64> {
-    v.as_int().map(|i| i as u64).filter(|id| is_queue_handle(*id))
+    v.as_int()
+        .map(|i| i as u64)
+        .filter(|id| is_queue_handle(*id))
 }
 
 macro_rules! dispatch_unary {
@@ -199,15 +203,23 @@ fn make_exception_class(class_name: &str) -> MbValue {
     let slot_sentinel = || MbValue::from_ptr(MbObject::new_str(String::new()));
     fields.insert("__cause__".to_string(), slot_sentinel());
     fields.insert("__context__".to_string(), slot_sentinel());
-    fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
+    fields.insert(
+        "__suppress_context__".to_string(),
+        MbValue::from_bool(false),
+    );
     // A type-object Instance (class_name="type" + __name__) so that
     // resolve_class_name sees the exception class and `except queue.Empty`
     // matches a raised "queue.Empty". Register it as an Exception subclass
     // for the is_subclass_of arm.
-    fields.insert("__name__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(class_name.to_string())));
+    fields.insert(
+        "__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+    );
     super::super::class::mb_class_register(
-        class_name, vec!["Exception".to_string()], HashMap::new());
+        class_name,
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -403,8 +415,7 @@ fn mb_queue_get_opt(q: MbValue) -> Option<MbValue> {
             // Find the minimum item (priority queues pop the smallest).
             let mut min_idx = 0;
             for i in 1..state.items.len() {
-                if super::super::builtins::mb_lt(state.items[i], state.items[min_idx])
-                    .as_bool()
+                if super::super::builtins::mb_lt(state.items[i], state.items[min_idx]).as_bool()
                     == Some(true)
                 {
                     min_idx = i;
@@ -448,7 +459,12 @@ pub fn mb_queue_get(q: MbValue) -> MbValue {
 pub fn mb_queue_empty(q: MbValue) -> MbValue {
     if let Some(id) = handle_of(q) {
         return MbValue::from_bool(
-            QUEUES.lock().unwrap().get(&id).map(|s| s.items.is_empty()).unwrap_or(true),
+            QUEUES
+                .lock()
+                .unwrap()
+                .get(&id)
+                .map(|s| s.items.is_empty())
+                .unwrap_or(true),
         );
     }
     MbValue::from_bool(true)
@@ -457,7 +473,12 @@ pub fn mb_queue_empty(q: MbValue) -> MbValue {
 pub fn mb_queue_qsize(q: MbValue) -> MbValue {
     if let Some(id) = handle_of(q) {
         return MbValue::from_int(
-            QUEUES.lock().unwrap().get(&id).map(|s| s.items.len() as i64).unwrap_or(0),
+            QUEUES
+                .lock()
+                .unwrap()
+                .get(&id)
+                .map(|s| s.items.len() as i64)
+                .unwrap_or(0),
         );
     }
     MbValue::from_int(0)
@@ -466,9 +487,12 @@ pub fn mb_queue_qsize(q: MbValue) -> MbValue {
 pub fn mb_queue_full(q: MbValue) -> MbValue {
     if let Some(id) = handle_of(q) {
         return MbValue::from_bool(
-            QUEUES.lock().unwrap().get(&id).map(|s| {
-                s.maxsize > 0 && s.items.len() as i64 >= s.maxsize
-            }).unwrap_or(false),
+            QUEUES
+                .lock()
+                .unwrap()
+                .get(&id)
+                .map(|s| s.maxsize > 0 && s.items.len() as i64 >= s.maxsize)
+                .unwrap_or(false),
         );
     }
     MbValue::from_bool(false)
@@ -486,8 +510,8 @@ pub fn mb_queue_reexport_stub(_unused: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::value::MbValue;
+    use super::*;
 
     #[test]
     fn test_queue_construction_handles_distinct() {

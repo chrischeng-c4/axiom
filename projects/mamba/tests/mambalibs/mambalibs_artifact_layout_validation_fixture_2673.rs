@@ -121,7 +121,12 @@ fn mambalibs_artifact_layout_expected_files_cover_metadata_lock_module_and_nativ
         .unwrap_or_default();
 
     // The four artifact roles named by the issue body.
-    for required_substr in &["metadata.json", "mamba.lock", "__init__.py", "_mambalibs_native"] {
+    for required_substr in &[
+        "metadata.json",
+        "mamba.lock",
+        "__init__.py",
+        "_mambalibs_native",
+    ] {
         assert!(
             paths.iter().any(|p| p.contains(required_substr)),
             "`[expected_files].relative_paths` must include a path containing \
@@ -151,7 +156,10 @@ fn mambalibs_artifact_layout_expected_files_cover_metadata_lock_module_and_nativ
          got {paths:?}"
     );
 
-    for flag in &["must_all_be_non_directory", "must_all_be_under_artifact_root"] {
+    for flag in &[
+        "must_all_be_non_directory",
+        "must_all_be_under_artifact_root",
+    ] {
         assert_eq!(
             block.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -163,11 +171,14 @@ fn mambalibs_artifact_layout_expected_files_cover_metadata_lock_module_and_nativ
 #[test]
 fn mambalibs_artifact_layout_platform_suffix_table_covers_three_platforms() {
     let doc = load_toml(&manifest_path());
-    let block = doc.get("platform_suffix_table").and_then(|v| v.as_table()).expect(
-        "missing `[platform_suffix_table]` block \
+    let block = doc
+        .get("platform_suffix_table")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[platform_suffix_table]` block \
          (acceptance: \"Platform-specific suffix handling is documented \
          in the test.\")",
-    );
+        );
 
     let macos = block
         .get("macos")
@@ -182,13 +193,28 @@ fn mambalibs_artifact_layout_platform_suffix_table_covers_three_platforms() {
         .and_then(|v| v.as_str())
         .expect("`[platform_suffix_table].windows` must be set");
 
-    assert!(macos.starts_with('.'), "macos suffix must start with `.`; got {macos:?}");
-    assert!(linux.starts_with('.'), "linux suffix must start with `.`; got {linux:?}");
-    assert!(windows.starts_with('.'), "windows suffix must start with `.`; got {windows:?}");
+    assert!(
+        macos.starts_with('.'),
+        "macos suffix must start with `.`; got {macos:?}"
+    );
+    assert!(
+        linux.starts_with('.'),
+        "linux suffix must start with `.`; got {linux:?}"
+    );
+    assert!(
+        windows.starts_with('.'),
+        "windows suffix must start with `.`; got {windows:?}"
+    );
 
-    assert_eq!(macos, ".dylib", "macOS shared-library suffix must be `.dylib`");
+    assert_eq!(
+        macos, ".dylib",
+        "macOS shared-library suffix must be `.dylib`"
+    );
     assert_eq!(linux, ".so", "Linux shared-library suffix must be `.so`");
-    assert_eq!(windows, ".dll", "Windows shared-library suffix must be `.dll`");
+    assert_eq!(
+        windows, ".dll",
+        "Windows shared-library suffix must be `.dll`"
+    );
 
     // Suffixes must all be distinct — otherwise the runner can't
     // disambiguate the host platform from the artifact alone.
@@ -197,7 +223,9 @@ fn mambalibs_artifact_layout_platform_suffix_table_covers_three_platforms() {
     assert_ne!(linux, windows, "linux and windows suffixes must differ");
 
     assert_eq!(
-        block.get("must_be_deterministic_per_platform").and_then(|v| v.as_bool()),
+        block
+            .get("must_be_deterministic_per_platform")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[platform_suffix_table].must_be_deterministic_per_platform` must be true"
     );
@@ -238,7 +266,8 @@ fn mambalibs_artifact_layout_present_case_succeeds_with_all_files() {
         "`[present_layout_case].expected_exit_code` must be 0"
     );
     assert_eq!(
-        case.get("must_create_all_expected_files").and_then(|v| v.as_bool()),
+        case.get("must_create_all_expected_files")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[present_layout_case].must_create_all_expected_files` must be true"
     );
@@ -247,10 +276,13 @@ fn mambalibs_artifact_layout_present_case_succeeds_with_all_files() {
 #[test]
 fn mambalibs_artifact_layout_missing_file_case_names_exact_path() {
     let doc = load_toml(&manifest_path());
-    let case = doc.get("missing_file_case").and_then(|v| v.as_table()).expect(
-        "missing `[missing_file_case]` block \
+    let case = doc
+        .get("missing_file_case")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[missing_file_case]` block \
          (acceptance: \"Missing artifact files fail with exact path names.\")",
-    );
+        );
 
     assert_eq!(
         case.get("case").and_then(|v| v.as_str()),
@@ -296,7 +328,10 @@ fn mambalibs_artifact_layout_missing_file_case_names_exact_path() {
          `[expected_files].relative_paths`; got {expected:?}"
     );
 
-    for flag in &["diagnostic_must_name_missing_path", "must_not_silently_succeed"] {
+    for flag in &[
+        "diagnostic_must_name_missing_path",
+        "must_not_silently_succeed",
+    ] {
         assert_eq!(
             case.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -329,7 +364,10 @@ fn mambalibs_artifact_layout_diagnostic_contract_pins_missing_path_key() {
         .get("diagnostic_must_name_missing_path_field_key")
         .and_then(|v| v.as_str())
         .expect("`diagnostic_must_name_missing_path_field_key` must be set");
-    assert_eq!(field_key, "missing_path", "missing-path field key must be `missing_path`");
+    assert_eq!(
+        field_key, "missing_path",
+        "missing-path field key must be `missing_path`"
+    );
 
     let keys: Vec<&str> = doc
         .get("runner_contract")
@@ -346,13 +384,18 @@ fn mambalibs_artifact_layout_diagnostic_contract_pins_missing_path_key() {
 #[test]
 fn mambalibs_artifact_layout_import_compatibility_preserves_2666() {
     let doc = load_toml(&manifest_path());
-    let block = doc.get("import_compatibility").and_then(|v| v.as_table()).expect(
-        "missing `[import_compatibility]` block \
+    let block = doc
+        .get("import_compatibility")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[import_compatibility]` block \
          (acceptance: \"Import fixture can consume the same artifact layout.\")",
-    );
+        );
 
     assert_eq!(
-        block.get("type_roundtrip_fixture_issue").and_then(|v| v.as_integer()),
+        block
+            .get("type_roundtrip_fixture_issue")
+            .and_then(|v| v.as_integer()),
         Some(2666),
         "`[import_compatibility].type_roundtrip_fixture_issue` must record #2666"
     );

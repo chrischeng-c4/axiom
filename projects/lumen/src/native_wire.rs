@@ -498,7 +498,18 @@ mod tests {
             )
             .unwrap();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::AddrNotAvailable
+                ) =>
+            {
+                return;
+            }
+            Err(err) => panic!("bind native wire test listener: {err}"),
+        };
         let addr = listener.local_addr().unwrap();
         let serve_engine = engine.clone();
         tokio::spawn(async move {

@@ -42,10 +42,10 @@
 //!   convention (every dispatch was receiving garbage), same bug class
 //!   as the struct shim's pre-rewrite state.
 
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // HANDWRITE-BEGIN
 
@@ -58,8 +58,8 @@ use sha3::digest::{ExtendableOutput, Update as XofUpdate, XofReader};
 // Real blake2 (RFC 7693). Default-size variants: blake2b → 64-byte digest,
 // blake2s → 32-byte digest. Blake2bVar/Blake2sVar carry a runtime
 // digest_size; Blake2bMac512/Blake2sMac256 are the keyed (MAC) construction.
+use blake2::digest::{Update as VarUpdate, VariableOutput};
 use blake2::{Blake2b512, Blake2bMac512, Blake2bVar, Blake2s256, Blake2sMac256, Blake2sVar};
-use blake2::digest::{VariableOutput, Update as VarUpdate};
 // PBKDF2 (RFC 8018) is hand-rolled over the RustCrypto `hmac` crate (already
 // a direct dependency) so `hashlib.pbkdf2_hmac(...)` needs no extra crate.
 use hmac::{Hmac, Mac};
@@ -71,9 +71,20 @@ use hmac::{Hmac, Mac};
 /// wired through `HasherState`), so only the surface contract — presence,
 /// callability, and constructibility via `new()` — is honored for them today.
 const ALGOS: &[&str] = &[
-    "md5", "sha1", "sha224", "sha256", "sha384", "sha512",
-    "sha3_224", "sha3_256", "sha3_384", "sha3_512",
-    "blake2b", "blake2s", "shake_128", "shake_256",
+    "md5",
+    "sha1",
+    "sha224",
+    "sha256",
+    "sha384",
+    "sha512",
+    "sha3_224",
+    "sha3_256",
+    "sha3_384",
+    "sha3_512",
+    "blake2b",
+    "blake2s",
+    "shake_128",
+    "shake_256",
 ];
 
 fn digest_size(algo: &str) -> i64 {
@@ -224,13 +235,17 @@ impl HasherState {
             HasherState::Blake2bVar(h) => {
                 let n = VariableOutput::output_size(h);
                 let mut out = vec![0u8; n];
-                h.clone().finalize_variable(&mut out).expect("blake2b finalize");
+                h.clone()
+                    .finalize_variable(&mut out)
+                    .expect("blake2b finalize");
                 out
             }
             HasherState::Blake2sVar(h) => {
                 let n = VariableOutput::output_size(h);
                 let mut out = vec![0u8; n];
-                h.clone().finalize_variable(&mut out).expect("blake2s finalize");
+                h.clone()
+                    .finalize_variable(&mut out)
+                    .expect("blake2s finalize");
                 out
             }
             HasherState::Blake2bMac(h) => h.as_ref().clone().finalize().into_bytes().to_vec(),
@@ -310,9 +325,15 @@ pub fn is_hashlib_handle(id: u64) -> bool {
 }
 
 fn drop_hash_handle(id: u64) {
-    HASHES.with(|m| { m.borrow_mut().remove(&id); });
-    HASH_IDS.with(|s| { s.borrow_mut().remove(&id); });
-    HASH_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
+    HASHES.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
+    HASH_IDS.with(|s| {
+        s.borrow_mut().remove(&id);
+    });
+    HASH_REFCOUNTS.with(|r| {
+        r.borrow_mut().remove(&id);
+    });
 }
 
 /// `mb_retain_value` integer-handle dispatch (#2111).
@@ -356,9 +377,17 @@ fn make_handle(algo: &str) -> MbValue {
 fn make_handle_state(algo: &str, state: HasherState) -> MbValue {
     let id = alloc_hash_id();
     HASHES.with(|m| {
-        m.borrow_mut().insert(id, MbHash { algo: algo.to_string(), state });
+        m.borrow_mut().insert(
+            id,
+            MbHash {
+                algo: algo.to_string(),
+                state,
+            },
+        );
     });
-    HASH_IDS.with(|s| { s.borrow_mut().insert(id); });
+    HASH_IDS.with(|s| {
+        s.borrow_mut().insert(id);
+    });
     MbValue::from_int(id as i64)
 }
 
@@ -379,8 +408,12 @@ fn blake2_make(algo: &str, a: &[MbValue]) -> MbValue {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let g = lock.read().unwrap();
-                    if let Some(v) = g.get(&super::super::dict_ops::DictKey::Str("digest_size".into())) {
-                        if let Some(n) = v.as_int() { digest_size = Some(n.max(0) as usize); }
+                    if let Some(v) =
+                        g.get(&super::super::dict_ops::DictKey::Str("digest_size".into()))
+                    {
+                        if let Some(n) = v.as_int() {
+                            digest_size = Some(n.max(0) as usize);
+                        }
                     }
                     if let Some(v) = g.get(&super::super::dict_ops::DictKey::Str("key".into())) {
                         key = with_bytes(*v, |b| b.to_vec());
@@ -434,9 +467,7 @@ fn with_bytes<R>(val: MbValue, f: impl FnOnce(&[u8]) -> R) -> R {
 #[inline]
 fn is_bytes_like(val: MbValue) -> bool {
     match val.as_ptr() {
-        Some(ptr) => unsafe {
-            matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
-        },
+        Some(ptr) => unsafe { matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) },
         None => false,
     }
 }
@@ -476,22 +507,19 @@ pub fn mb_hashlib_new_handle(algo: &str, initial: MbValue) -> MbValue {
 /// `h.update(data)` — stream more bytes into the hasher state.
 pub fn mb_hashlib_update(handle: MbValue, data: MbValue) -> MbValue {
     // CPython contracts: str must be encoded first; non-buffer types raise.
-    let is_str = data.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+    let is_str = data
+        .as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
         .unwrap_or(false);
     if is_str {
-        return raise_exc(
-            "TypeError",
-            "Strings must be encoded before hashing",
-        );
+        return raise_exc("TypeError", "Strings must be encoded before hashing");
     }
-    let is_buffer = data.as_ptr().map(|p| unsafe {
-        matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
-    }).unwrap_or(false);
+    let is_buffer = data
+        .as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+        .unwrap_or(false);
     if !is_buffer {
-        return raise_exc(
-            "TypeError",
-            "object supporting the buffer API required",
-        );
+        return raise_exc("TypeError", "object supporting the buffer API required");
     }
     if let Some(id) = handle.as_int() {
         let id = id as u64;
@@ -511,7 +539,10 @@ pub fn mb_hashlib_update(handle: MbValue, data: MbValue) -> MbValue {
 fn shake_length(handle: MbValue, length: Option<i64>, method: &str) -> Result<Option<usize>, ()> {
     let is_shake = handle.as_int().is_some_and(|id| {
         HASHES.with(|m| {
-            m.borrow().get(&(id as u64)).map(|h| h.algo.starts_with("shake_")).unwrap_or(false)
+            m.borrow()
+                .get(&(id as u64))
+                .map(|h| h.algo.starts_with("shake_"))
+                .unwrap_or(false)
         })
     });
     if is_shake {
@@ -536,9 +567,16 @@ pub fn mb_hashlib_hexdigest_len(handle: MbValue, length: Option<i64>) -> MbValue
         Ok(n) => n,
         Err(()) => return MbValue::none(),
     };
-    let bytes = handle.as_int().and_then(|id| {
-        HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone(shake_len)))
-    }).unwrap_or_default();
+    let bytes = handle
+        .as_int()
+        .and_then(|id| {
+            HASHES.with(|m| {
+                m.borrow()
+                    .get(&(id as u64))
+                    .map(|h| h.state.finalize_clone(shake_len))
+            })
+        })
+        .unwrap_or_default();
     let mut hex = String::with_capacity(bytes.len() * 2);
     for byte in &bytes {
         use std::fmt::Write;
@@ -558,8 +596,15 @@ pub fn mb_hashlib_digest_len(handle: MbValue, length: Option<i64>) -> MbValue {
         Ok(n) => n,
         Err(()) => return MbValue::none(),
     };
-    let bytes = handle.as_int()
-        .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone(shake_len))))
+    let bytes = handle
+        .as_int()
+        .and_then(|id| {
+            HASHES.with(|m| {
+                m.borrow()
+                    .get(&(id as u64))
+                    .map(|h| h.state.finalize_clone(shake_len))
+            })
+        })
         .unwrap_or_default();
     MbValue::from_ptr(MbObject::new_bytes(bytes))
 }
@@ -573,12 +618,16 @@ pub fn mb_hashlib_digest(handle: MbValue) -> MbValue {
 pub fn mb_hashlib_copy(handle: MbValue) -> MbValue {
     if let Some(id) = handle.as_int() {
         let (algo, state) = HASHES.with(|m| {
-            m.borrow().get(&(id as u64)).map(|h| (h.algo.clone(), h.state.clone_state()))
+            m.borrow()
+                .get(&(id as u64))
+                .map(|h| (h.algo.clone(), h.state.clone_state()))
                 .unwrap_or_else(|| ("md5".to_string(), HasherState::new("md5")))
         });
         let new_id = alloc_hash_id();
         HASHES.with(|m| m.borrow_mut().insert(new_id, MbHash { algo, state }));
-        HASH_IDS.with(|s| { s.borrow_mut().insert(new_id); });
+        HASH_IDS.with(|s| {
+            s.borrow_mut().insert(new_id);
+        });
         return MbValue::from_int(new_id as i64);
     }
     MbValue::none()
@@ -586,7 +635,8 @@ pub fn mb_hashlib_copy(handle: MbValue) -> MbValue {
 
 /// Read the algorithm name for a handle (used by class.rs to expose `h.name`).
 pub fn mb_hashlib_name(handle: MbValue) -> MbValue {
-    let name = handle.as_int()
+    let name = handle
+        .as_int()
         .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
         .unwrap_or_default();
     MbValue::from_ptr(MbObject::new_str(name))
@@ -594,7 +644,8 @@ pub fn mb_hashlib_name(handle: MbValue) -> MbValue {
 
 /// Read `digest_size` for a handle (CPython attribute).
 pub fn mb_hashlib_digest_size_attr(handle: MbValue) -> MbValue {
-    let algo = handle.as_int()
+    let algo = handle
+        .as_int()
         .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
         .unwrap_or_default();
     MbValue::from_int(digest_size(&algo))
@@ -602,7 +653,8 @@ pub fn mb_hashlib_digest_size_attr(handle: MbValue) -> MbValue {
 
 /// Read `block_size` for a handle (CPython attribute).
 pub fn mb_hashlib_block_size_attr(handle: MbValue) -> MbValue {
-    let algo = handle.as_int()
+    let algo = handle
+        .as_int()
         .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
         .unwrap_or_default();
     MbValue::from_int(block_size(&algo))
@@ -648,7 +700,9 @@ unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbV
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // CPython: the name must be a str — a non-str (`new(1)`) is a TypeError.
     let name_v = a.first().copied().unwrap_or_else(MbValue::none);
-    let is_str = name_v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) });
+    let is_str = name_v
+        .as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) });
     if !is_str {
         return raise_type_error("new() argument 1 must be str, not int");
     }
@@ -672,7 +726,11 @@ unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbV
     // value is the stray `usedforsecurity` keyword, not digest input, so it is
     // ignored rather than rejected.
     let arg1 = a.get(1).copied().unwrap_or_else(MbValue::none);
-    let data = if is_bytes_like(arg1) { arg1 } else { MbValue::none() };
+    let data = if is_bytes_like(arg1) {
+        arg1
+    } else {
+        MbValue::none()
+    };
     mb_hashlib_new_handle(&algo, data)
 }
 
@@ -713,8 +771,7 @@ macro_rules! pbkdf2_for {
         let rounds: u32 = $rounds;
         let dklen: usize = $dklen;
         let h_len: usize = $h_len;
-        let prf = <$hmac_ty>::new_from_slice(password)
-            .expect("HMAC accepts any key length");
+        let prf = <$hmac_ty>::new_from_slice(password).expect("HMAC accepts any key length");
         let mut out: Vec<u8> = Vec::with_capacity(dklen);
         let blocks = dklen.div_ceil(h_len);
         for block_index in 1..=blocks as u32 {
@@ -739,7 +796,13 @@ macro_rules! pbkdf2_for {
     }};
 }
 
-fn pbkdf2_dispatch_impl(hash_name: &str, password: &[u8], salt: &[u8], rounds: u32, dklen: Option<usize>) -> Option<Vec<u8>> {
+fn pbkdf2_dispatch_impl(
+    hash_name: &str,
+    password: &[u8],
+    salt: &[u8],
+    rounds: u32,
+    dklen: Option<usize>,
+) -> Option<Vec<u8>> {
     // Default dklen is the underlying digest's output size.
     let h_len = digest_size(hash_name) as usize;
     let dklen = dklen.unwrap_or(h_len);
@@ -758,7 +821,9 @@ fn pbkdf2_dispatch_impl(hash_name: &str, password: &[u8], salt: &[u8], rounds: u
 unsafe extern "C" fn dispatch_pbkdf2_hmac(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let mut hash_name = String::new();
-    with_str(a.first().copied().unwrap_or_else(MbValue::none), |s| hash_name = s.to_string());
+    with_str(a.first().copied().unwrap_or_else(MbValue::none), |s| {
+        hash_name = s.to_string()
+    });
     if hash_name.is_empty() {
         return raise_type_error("pbkdf2_hmac() hash_name must be a string");
     }
@@ -780,7 +845,9 @@ unsafe extern "C" fn dispatch_pbkdf2_hmac(args_ptr: *const MbValue, nargs: usize
             if let Some(ptr) = arg.as_ptr() {
                 unsafe {
                     if let ObjData::Dict(ref lock) = (*ptr).data {
-                        if let Some(v) = lock.read().unwrap()
+                        if let Some(v) = lock
+                            .read()
+                            .unwrap()
                             .get(&super::super::dict_ops::DictKey::Str("dklen".into()))
                         {
                             d = v.as_int();
@@ -796,7 +863,9 @@ unsafe extern "C" fn dispatch_pbkdf2_hmac(args_ptr: *const MbValue, nargs: usize
         d.filter(|&n| n > 0).map(|n| n as usize)
     };
     let result = with_bytes(password, |pw| {
-        with_bytes(salt, |st| pbkdf2_dispatch_impl(&hash_name, pw, st, rounds as u32, dklen))
+        with_bytes(salt, |st| {
+            pbkdf2_dispatch_impl(&hash_name, pw, st, rounds as u32, dklen)
+        })
     });
     match result {
         Some(bytes) => MbValue::from_ptr(MbObject::new_bytes(bytes)),
@@ -907,43 +976,59 @@ mod tests {
     fn test_sha1_known_vector_abc() {
         let data = MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec()));
         let h = mb_hashlib_new_handle("sha1", data);
-        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
-            "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(
+            str_of(mb_hashlib_hexdigest(h)),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
     }
 
     #[test]
     fn test_sha256_known_vector_abc() {
         let data = MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec()));
         let h = mb_hashlib_new_handle("sha256", data);
-        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            str_of(mb_hashlib_hexdigest(h)),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]
     fn test_sha512_known_vector_abc() {
         let data = MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec()));
         let h = mb_hashlib_new_handle("sha512", data);
-        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
+        assert_eq!(
+            str_of(mb_hashlib_hexdigest(h)),
             "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a\
-             2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
+             2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+        );
     }
 
     #[test]
     fn test_sha3_256_known_vector_empty() {
         let h = mb_hashlib_new_handle("sha3_256", MbValue::none());
-        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
-            "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a");
+        assert_eq!(
+            str_of(mb_hashlib_hexdigest(h)),
+            "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"
+        );
     }
 
     #[test]
     fn test_incremental_update_equals_oneshot() {
         let h1 = mb_hashlib_new_handle("sha256", MbValue::none());
-        mb_hashlib_update(h1, MbValue::from_ptr(MbObject::new_bytes(b"hello ".to_vec())));
-        mb_hashlib_update(h1, MbValue::from_ptr(MbObject::new_bytes(b"world".to_vec())));
+        mb_hashlib_update(
+            h1,
+            MbValue::from_ptr(MbObject::new_bytes(b"hello ".to_vec())),
+        );
+        mb_hashlib_update(
+            h1,
+            MbValue::from_ptr(MbObject::new_bytes(b"world".to_vec())),
+        );
         let d1 = mb_hashlib_hexdigest(h1);
 
-        let h2 = mb_hashlib_new_handle("sha256",
-            MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec())));
+        let h2 = mb_hashlib_new_handle(
+            "sha256",
+            MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec())),
+        );
         let d2 = mb_hashlib_hexdigest(h2);
 
         assert_eq!(str_of(d1), str_of(d2));
@@ -951,8 +1036,10 @@ mod tests {
 
     #[test]
     fn test_copy_is_independent() {
-        let h = mb_hashlib_new_handle("md5",
-            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
+        let h = mb_hashlib_new_handle(
+            "md5",
+            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())),
+        );
         let c = mb_hashlib_copy(h);
         // c keeps abc; h gets def appended
         mb_hashlib_update(h, MbValue::from_ptr(MbObject::new_bytes(b"def".to_vec())));
@@ -965,8 +1052,10 @@ mod tests {
 
     #[test]
     fn test_repeated_hexdigest_stable() {
-        let h = mb_hashlib_new_handle("sha1",
-            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
+        let h = mb_hashlib_new_handle(
+            "sha1",
+            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())),
+        );
         let d1 = str_of(mb_hashlib_hexdigest(h));
         let d2 = str_of(mb_hashlib_hexdigest(h));
         assert_eq!(d1, d2);
@@ -975,8 +1064,10 @@ mod tests {
 
     #[test]
     fn test_digest_returns_bytes() {
-        let h = mb_hashlib_new_handle("md5",
-            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
+        let h = mb_hashlib_new_handle(
+            "md5",
+            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())),
+        );
         let raw = mb_hashlib_digest(h);
         let bytes = bytes_of(raw);
         assert_eq!(bytes.len(), 16);
@@ -988,7 +1079,10 @@ mod tests {
     fn test_update_with_bytes_input() {
         let h = mb_hashlib_new_handle("md5", MbValue::none());
         mb_hashlib_update(h, MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
-        assert_eq!(str_of(mb_hashlib_hexdigest(h)), "900150983cd24fb0d6963f7d28e17f72");
+        assert_eq!(
+            str_of(mb_hashlib_hexdigest(h)),
+            "900150983cd24fb0d6963f7d28e17f72"
+        );
     }
 
     #[test]
@@ -1000,10 +1094,14 @@ mod tests {
 
     #[test]
     fn test_new_with_algo_name() {
-        let h = mb_hashlib_new_handle("sha1",
-            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
-        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
-            "a9993e364706816aba3e25717850c26c9cd0d89d");
+        let h = mb_hashlib_new_handle(
+            "sha1",
+            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())),
+        );
+        assert_eq!(
+            str_of(mb_hashlib_hexdigest(h)),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
         assert_eq!(str_of(mb_hashlib_name(h)), "sha1");
     }
 

@@ -3,7 +3,7 @@
 
 //! Shared `push_through` adapter for the `score` CLI.
 //!
-//! All work-item-mutating verbs (`aw wi`, `aw td`, `aw cb`)
+//! All work-item-mutating verbs (`aw wi`, `aw td`)
 //! call `maybe_push_remote` immediately before their `commit_lifecycle`
 //! (or equivalent raw `git commit`) so that the remote tracker stays in
 //! lock-step with the lifecycle working copy. The helper is a no-op for the local

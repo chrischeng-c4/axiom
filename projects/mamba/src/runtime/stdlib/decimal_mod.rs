@@ -45,17 +45,17 @@
 //!   shortest-repr conversion rather than the exact binary expansion;
 //!   context objects (getcontext/localcontext) remain presence stubs.
 
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // HANDWRITE-BEGIN
 
-use rust_decimal::Decimal;
-use std::str::FromStr;
 use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive, Zero};
+use rust_decimal::Decimal;
+use std::str::FromStr;
 
 /// CPython default context precision (significant digits).
 const PREC: usize = 28;
@@ -85,16 +85,32 @@ struct MbDecimal {
 
 impl MbDecimal {
     fn finite(value: Decimal) -> Self {
-        MbDecimal { class: DecClass::Finite, neg: value.is_sign_negative(), value }
+        MbDecimal {
+            class: DecClass::Finite,
+            neg: value.is_sign_negative(),
+            value,
+        }
     }
     fn inf(neg: bool) -> Self {
-        MbDecimal { class: DecClass::Inf, value: Decimal::ZERO, neg }
+        MbDecimal {
+            class: DecClass::Inf,
+            value: Decimal::ZERO,
+            neg,
+        }
     }
     fn qnan() -> Self {
-        MbDecimal { class: DecClass::QNan, value: Decimal::ZERO, neg: false }
+        MbDecimal {
+            class: DecClass::QNan,
+            value: Decimal::ZERO,
+            neg: false,
+        }
     }
     fn snan() -> Self {
-        MbDecimal { class: DecClass::SNan, value: Decimal::ZERO, neg: false }
+        MbDecimal {
+            class: DecClass::SNan,
+            value: Decimal::ZERO,
+            neg: false,
+        }
     }
     fn is_nan(&self) -> bool {
         matches!(self.class, DecClass::QNan | DecClass::SNan)
@@ -134,9 +150,15 @@ pub fn is_decimal_handle(id: u64) -> bool {
 }
 
 fn drop_decimal_handle(id: u64) {
-    DECIMALS.with(|m| { m.borrow_mut().remove(&id); });
-    DECIMAL_IDS.with(|s| { s.borrow_mut().remove(&id); });
-    DECIMAL_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
+    DECIMALS.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
+    DECIMAL_IDS.with(|s| {
+        s.borrow_mut().remove(&id);
+    });
+    DECIMAL_REFCOUNTS.with(|r| {
+        r.borrow_mut().remove(&id);
+    });
 }
 
 /// `mb_retain_value` integer-handle dispatch (#2111).
@@ -177,7 +199,9 @@ fn make_state_handle(state: MbDecimal) -> MbValue {
     DECIMALS.with(|m| {
         m.borrow_mut().insert(id, state);
     });
-    DECIMAL_IDS.with(|s| { s.borrow_mut().insert(id); });
+    DECIMAL_IDS.with(|s| {
+        s.borrow_mut().insert(id);
+    });
     MbValue::from_int(id as i64)
 }
 
@@ -237,7 +261,11 @@ fn parse_special_decimal_str(s: &str) -> Option<MbDecimal> {
         return None;
     };
     if payload.chars().all(|c| c.is_ascii_digit()) {
-        let mut st = if signaling { MbDecimal::snan() } else { MbDecimal::qnan() };
+        let mut st = if signaling {
+            MbDecimal::snan()
+        } else {
+            MbDecimal::qnan()
+        };
         st.neg = neg;
         return Some(st);
     }
@@ -371,9 +399,7 @@ fn round_abs_with_mode(c_abs: &BigInt, drop: u32, mode: Rounding, neg: bool) -> 
         Rounding::Up => true,
         Rounding::HalfUp => twice >= p,
         Rounding::HalfDown => twice > p,
-        Rounding::HalfEven => {
-            twice > p || (twice == p && !(&q % 2u32).is_zero())
-        }
+        Rounding::HalfEven => twice > p || (twice == p && !(&q % 2u32).is_zero()),
         Rounding::Floor => neg,
         Rounding::Ceiling => !neg,
         Rounding::ZeroFiveUp => {
@@ -381,7 +407,11 @@ fn round_abs_with_mode(c_abs: &BigInt, drop: u32, mode: Rounding, neg: bool) -> 
             last == 0 || last == 5
         }
     };
-    if round_up { q + 1u32 } else { q }
+    if round_up {
+        q + 1u32
+    } else {
+        q
+    }
 }
 
 /// Build a finite `MbDecimal` from an exact signed coefficient and scale
@@ -426,7 +456,9 @@ fn finite_from_coeff_scale(c: BigInt, s: i64) -> Result<MbDecimal, ()> {
         }
     }
     let mag: BigInt = c_abs;
-    let Some(i) = mag.to_i128() else { return Err(()) };
+    let Some(i) = mag.to_i128() else {
+        return Err(());
+    };
     let signed = if neg { -i } else { i };
     match Decimal::try_from_i128_with_scale(signed, s as u32) {
         Ok(mut d) => {
@@ -500,7 +532,10 @@ fn classify_numeric(v: MbValue) -> Option<NumOperand> {
         }
     }
     if let Some(b) = v.as_bool() {
-        return Some(NumOperand::Rational(BigInt::from(b as i64), BigInt::from(1u32)));
+        return Some(NumOperand::Rational(
+            BigInt::from(b as i64),
+            BigInt::from(1u32),
+        ));
     }
     if let Some(i) = v.as_int() {
         return Some(NumOperand::Rational(BigInt::from(i), BigInt::from(1u32)));
@@ -546,8 +581,16 @@ fn cmp_operands(a: &NumOperand, b: &NumOperand) -> Option<std::cmp::Ordering> {
         } else {
             Ordering::Greater
         }),
-        (NumOperand::Inf(an), _) => Some(if *an { Ordering::Less } else { Ordering::Greater }),
-        (_, NumOperand::Inf(bn)) => Some(if *bn { Ordering::Greater } else { Ordering::Less }),
+        (NumOperand::Inf(an), _) => Some(if *an {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }),
+        (_, NumOperand::Inf(bn)) => Some(if *bn {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }),
         (NumOperand::Rational(an, ad), NumOperand::Rational(bn, bd)) => {
             Some((an * bd).cmp(&(bn * ad)))
         }
@@ -586,7 +629,11 @@ pub fn mb_numeric_handle_integral_i64(v: MbValue) -> Option<i64> {
     match classify_numeric(v)? {
         NumOperand::Rational(n, d) => {
             let (q, r) = (&n / &d, &n % &d);
-            if r.is_zero() { q.to_i64() } else { None }
+            if r.is_zero() {
+                q.to_i64()
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -601,7 +648,11 @@ pub fn mb_numeric_handle_exact_f64(v: MbValue) -> Option<f64> {
         match st.class {
             DecClass::Finite => st.value.to_f64()?,
             DecClass::Inf => {
-                return Some(if st.neg { f64::NEG_INFINITY } else { f64::INFINITY });
+                return Some(if st.neg {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                });
             }
             _ => return None,
         }
@@ -617,7 +668,11 @@ pub fn mb_numeric_handle_exact_f64(v: MbValue) -> Option<f64> {
     let (fa, fd) = f64_to_rational(approx);
     match classify_numeric(v)? {
         NumOperand::Rational(n, d) => {
-            if n * fd == fa * d { Some(approx) } else { None }
+            if n * fd == fa * d {
+                Some(approx)
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -732,7 +787,9 @@ fn overflow_result() -> MbValue {
 
 /// `a + b` — exact addition, rounded to 28 significant digits.
 pub fn mb_decimal_add(a: MbValue, b: MbValue) -> MbValue {
-    let Some((lhs, rhs)) = arith_pair("+", a, b) else { return MbValue::none() };
+    let Some((lhs, rhs)) = arith_pair("+", a, b) else {
+        return MbValue::none();
+    };
     if lhs.is_nan() || rhs.is_nan() {
         return make_state_handle(MbDecimal::qnan());
     }
@@ -762,7 +819,9 @@ pub fn mb_decimal_add(a: MbValue, b: MbValue) -> MbValue {
 
 /// `a - b`.
 pub fn mb_decimal_sub(a: MbValue, b: MbValue) -> MbValue {
-    let Some((lhs, rhs)) = arith_pair("-", a, b) else { return MbValue::none() };
+    let Some((lhs, rhs)) = arith_pair("-", a, b) else {
+        return MbValue::none();
+    };
     if lhs.is_nan() || rhs.is_nan() {
         return make_state_handle(MbDecimal::qnan());
     }
@@ -792,7 +851,9 @@ pub fn mb_decimal_sub(a: MbValue, b: MbValue) -> MbValue {
 
 /// `a * b`.
 pub fn mb_decimal_mul(a: MbValue, b: MbValue) -> MbValue {
-    let Some((lhs, rhs)) = arith_pair("*", a, b) else { return MbValue::none() };
+    let Some((lhs, rhs)) = arith_pair("*", a, b) else {
+        return MbValue::none();
+    };
     if lhs.is_nan() || rhs.is_nan() {
         return make_state_handle(MbDecimal::qnan());
     }
@@ -886,7 +947,11 @@ fn divide_finite(lhs: &Decimal, rhs: &Decimal) -> Result<MbDecimal, ()> {
         let qq = &q / &p;
         let rem = &q % &p;
         let twice = &rem * 2u32;
-        if twice >= p { qq + 1u32 } else { qq }
+        if twice >= p {
+            qq + 1u32
+        } else {
+            qq
+        }
     } else {
         q
     };
@@ -902,7 +967,9 @@ fn divide_finite(lhs: &Decimal, rhs: &Decimal) -> Result<MbDecimal, ()> {
 /// `a / b`. Raises `DivisionByZero` on zero divisor (CPython default
 /// context traps it).
 pub fn mb_decimal_truediv(a: MbValue, b: MbValue) -> MbValue {
-    let Some((lhs, rhs)) = arith_pair("/", a, b) else { return MbValue::none() };
+    let Some((lhs, rhs)) = arith_pair("/", a, b) else {
+        return MbValue::none();
+    };
     if lhs.is_nan() || rhs.is_nan() {
         return make_state_handle(MbDecimal::qnan());
     }
@@ -944,15 +1011,15 @@ fn divmod_finite(lhs: &Decimal, rhs: &Decimal) -> Option<(MbDecimal, MbDecimal)>
 
 /// `a // b` — truncating division to an integral Decimal.
 pub fn mb_decimal_floordiv(a: MbValue, b: MbValue) -> MbValue {
-    let Some((lhs, rhs)) = arith_pair("//", a, b) else { return MbValue::none() };
+    let Some((lhs, rhs)) = arith_pair("//", a, b) else {
+        return MbValue::none();
+    };
     if lhs.is_nan() || rhs.is_nan() {
         return make_state_handle(MbDecimal::qnan());
     }
     match (lhs.class, rhs.class) {
         (DecClass::Inf, DecClass::Inf) => raise_invalid_operation("INF // INF"),
-        (DecClass::Inf, _) => {
-            make_state_handle(MbDecimal::inf(lhs.neg != lhs_sign(&rhs)))
-        }
+        (DecClass::Inf, _) => make_state_handle(MbDecimal::inf(lhs.neg != lhs_sign(&rhs))),
         (_, DecClass::Inf) => make_state_handle(MbDecimal::finite(Decimal::ZERO)),
         _ => {
             if rhs.value.is_zero() {
@@ -968,7 +1035,9 @@ pub fn mb_decimal_floordiv(a: MbValue, b: MbValue) -> MbValue {
 
 /// `a % b` — remainder with the dividend's sign.
 pub fn mb_decimal_rem(a: MbValue, b: MbValue) -> MbValue {
-    let Some((lhs, rhs)) = arith_pair("%", a, b) else { return MbValue::none() };
+    let Some((lhs, rhs)) = arith_pair("%", a, b) else {
+        return MbValue::none();
+    };
     if lhs.is_nan() || rhs.is_nan() {
         return make_state_handle(MbDecimal::qnan());
     }
@@ -999,7 +1068,9 @@ pub fn mb_decimal_divmod(a: MbValue, b: MbValue) -> MbValue {
 
 /// `a ** b` — integral exponents only (fixture-covered slice).
 pub fn mb_decimal_pow(a: MbValue, b: MbValue) -> MbValue {
-    let Some((lhs, rhs)) = arith_pair("**", a, b) else { return MbValue::none() };
+    let Some((lhs, rhs)) = arith_pair("**", a, b) else {
+        return MbValue::none();
+    };
     if lhs.is_nan() || rhs.is_nan() {
         return make_state_handle(MbDecimal::qnan());
     }
@@ -1055,7 +1126,9 @@ pub fn mb_decimal_pow(a: MbValue, b: MbValue) -> MbValue {
 /// Unary `-` — CPython's minus applies the context, which normalizes
 /// `-0` to `0`.
 pub fn mb_decimal_neg(v: MbValue) -> MbValue {
-    let Some(st) = get_state(v) else { return MbValue::none() };
+    let Some(st) = get_state(v) else {
+        return MbValue::none();
+    };
     match st.class {
         DecClass::Finite => {
             let mut d = st.value;
@@ -1073,7 +1146,9 @@ pub fn mb_decimal_neg(v: MbValue) -> MbValue {
 
 /// Unary `+` — identity through the context (normalizes `-0` to `0`).
 pub fn mb_decimal_pos(v: MbValue) -> MbValue {
-    let Some(st) = get_state(v) else { return MbValue::none() };
+    let Some(st) = get_state(v) else {
+        return MbValue::none();
+    };
     match st.class {
         DecClass::Finite => {
             let mut d = st.value;
@@ -1088,7 +1163,9 @@ pub fn mb_decimal_pos(v: MbValue) -> MbValue {
 
 /// `abs(d)`.
 pub fn mb_decimal_abs(v: MbValue) -> MbValue {
-    let Some(st) = get_state(v) else { return MbValue::none() };
+    let Some(st) = get_state(v) else {
+        return MbValue::none();
+    };
     match st.class {
         DecClass::Finite => make_handle(st.value.abs()),
         DecClass::Inf => make_state_handle(MbDecimal::inf(false)),
@@ -1133,13 +1210,25 @@ fn to_sci_string(neg: bool, digits: &str, exp: i64) -> String {
 fn state_to_string(st: &MbDecimal) -> String {
     match st.class {
         DecClass::Inf => {
-            if st.neg { "-Infinity".to_string() } else { "Infinity".to_string() }
+            if st.neg {
+                "-Infinity".to_string()
+            } else {
+                "Infinity".to_string()
+            }
         }
         DecClass::QNan => {
-            if st.neg { "-NaN".to_string() } else { "NaN".to_string() }
+            if st.neg {
+                "-NaN".to_string()
+            } else {
+                "NaN".to_string()
+            }
         }
         DecClass::SNan => {
-            if st.neg { "-sNaN".to_string() } else { "sNaN".to_string() }
+            if st.neg {
+                "-sNaN".to_string()
+            } else {
+                "sNaN".to_string()
+            }
         }
         DecClass::Finite => {
             let d = &st.value;
@@ -1163,12 +1252,17 @@ pub fn mb_decimal_repr(d: MbValue) -> MbValue {
     let Some(st) = get_state(d) else {
         return MbValue::from_ptr(MbObject::new_str("Decimal('0')".to_string()));
     };
-    MbValue::from_ptr(MbObject::new_str(format!("Decimal('{}')", state_to_string(&st))))
+    MbValue::from_ptr(MbObject::new_str(format!(
+        "Decimal('{}')",
+        state_to_string(&st)
+    )))
 }
 
 /// `bool(d)` — False only for (signed) zero.
 pub fn mb_decimal_bool(d: MbValue) -> MbValue {
-    let Some(st) = get_state(d) else { return MbValue::from_bool(false) };
+    let Some(st) = get_state(d) else {
+        return MbValue::from_bool(false);
+    };
     MbValue::from_bool(match st.class {
         DecClass::Finite => !st.value.is_zero(),
         _ => true,
@@ -1178,11 +1272,11 @@ pub fn mb_decimal_bool(d: MbValue) -> MbValue {
 /// `int(d)` / `math.trunc(d)` — truncate toward zero. Raises for NaN /
 /// Infinity like CPython.
 pub fn mb_decimal_int(d: MbValue) -> MbValue {
-    let Some(st) = get_state(d) else { return MbValue::from_int(0) };
+    let Some(st) = get_state(d) else {
+        return MbValue::from_int(0);
+    };
     match st.class {
-        DecClass::QNan | DecClass::SNan => {
-            raise_value_error("cannot convert NaN to integer")
-        }
+        DecClass::QNan | DecClass::SNan => raise_value_error("cannot convert NaN to integer"),
         DecClass::Inf => {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
@@ -1220,7 +1314,9 @@ pub fn mb_decimal_ceil(d: MbValue) -> MbValue {
 }
 
 fn decimal_floor_ceil(d: MbValue, floor: bool) -> MbValue {
-    let Some(st) = get_state(d) else { return MbValue::from_int(0) };
+    let Some(st) = get_state(d) else {
+        return MbValue::from_int(0);
+    };
     match st.class {
         DecClass::QNan | DecClass::SNan => raise_value_error("cannot convert NaN to integer"),
         DecClass::Inf => {
@@ -1253,11 +1349,17 @@ fn decimal_floor_ceil(d: MbValue, floor: bool) -> MbValue {
 
 /// `float(d)`.
 pub fn mb_decimal_float(d: MbValue) -> MbValue {
-    let Some(st) = get_state(d) else { return MbValue::from_float(0.0) };
+    let Some(st) = get_state(d) else {
+        return MbValue::from_float(0.0);
+    };
     MbValue::from_float(match st.class {
         DecClass::Finite => st.value.to_f64().unwrap_or(0.0),
         DecClass::Inf => {
-            if st.neg { f64::NEG_INFINITY } else { f64::INFINITY }
+            if st.neg {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            }
         }
         _ => f64::NAN,
     })
@@ -1266,7 +1368,9 @@ pub fn mb_decimal_float(d: MbValue) -> MbValue {
 /// `round(d)` / `round(d, n)` — banker's rounding; no-ndigits form
 /// returns an int, ndigits form returns a Decimal.
 pub fn mb_decimal_round(d: MbValue, ndigits: MbValue, ndigits_given: bool) -> MbValue {
-    let Some(st) = get_state(d) else { return MbValue::from_int(0) };
+    let Some(st) = get_state(d) else {
+        return MbValue::from_int(0);
+    };
     if st.is_nan() {
         if !ndigits_given {
             return raise_value_error("cannot round a NaN");
@@ -1277,9 +1381,7 @@ pub fn mb_decimal_round(d: MbValue, ndigits: MbValue, ndigits_given: bool) -> Mb
         if !ndigits_given {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "cannot round an infinity".to_string(),
-                )),
+                MbValue::from_ptr(MbObject::new_str("cannot round an infinity".to_string())),
             );
             return MbValue::none();
         }
@@ -1429,8 +1531,7 @@ fn decimal_from_tuple(items: &[MbValue]) -> MbDecimal {
     }
     let c: BigInt = BigInt::from_str(&coeff).unwrap_or_else(|_| BigInt::from(0u32));
     let signed = if sign == 1 { -c } else { c };
-    finite_from_coeff_scale(signed, -exp)
-        .unwrap_or_else(|_| MbDecimal::finite(Decimal::ZERO))
+    finite_from_coeff_scale(signed, -exp).unwrap_or_else(|_| MbDecimal::finite(Decimal::ZERO))
 }
 
 // ── Public surface — construction ────────────────────────────────────────
@@ -1552,7 +1653,9 @@ pub fn mb_decimal_new(val: MbValue) -> MbValue {
 
 /// `d.is_zero()` — kept as the bench-fixture readback (int 0/1 shape).
 pub fn mb_decimal_is_zero(d: MbValue) -> MbValue {
-    let Some(st) = get_state(d) else { return MbValue::from_int(0) };
+    let Some(st) = get_state(d) else {
+        return MbValue::from_int(0);
+    };
     let z = st.class == DecClass::Finite && st.value.is_zero();
     MbValue::from_int(if z { 1 } else { 0 })
 }
@@ -1774,11 +1877,16 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
             // CPython: the format spec must be a str — a bytes (or other
             // non-str) spec is a TypeError, raised before any formatting.
             let spec = a0.as_ptr().and_then(|p| unsafe {
-                if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                if let ObjData::Str(ref s) = (*p).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
             });
             match spec {
-                Some(s) => mb_numeric_handle_format(handle, &s)
-                    .unwrap_or_else(|| mb_decimal_str(handle)),
+                Some(s) => {
+                    mb_numeric_handle_format(handle, &s).unwrap_or_else(|| mb_decimal_str(handle))
+                }
                 None => raise_type_error("__format__() argument 1 must be str, not bytes"),
             }
         }
@@ -1786,7 +1894,10 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
         "__repr__" => mb_decimal_repr(handle),
         "__bool__" => mb_decimal_bool(handle),
         "__int__" | "__trunc__" | "to_integral" | "to_integral_value" | "to_integral_exact" => {
-            if matches!(method, "to_integral" | "to_integral_value" | "to_integral_exact") {
+            if matches!(
+                method,
+                "to_integral" | "to_integral_value" | "to_integral_exact"
+            ) {
                 if st.class != DecClass::Finite {
                     return Some(make_state_handle(st));
                 }
@@ -1794,7 +1905,9 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
                 return Some(
                     quantize_to_scale(&st, 0, mode)
                         .map(make_state_handle)
-                        .unwrap_or_else(|| raise_invalid_operation("quantize result has too many digits")),
+                        .unwrap_or_else(|| {
+                            raise_invalid_operation("quantize result has too many digits")
+                        }),
                 );
             }
             mb_decimal_int(handle)
@@ -1856,31 +1969,29 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
                 exp,
             ]))
         }
-        "as_integer_ratio" => {
-            match st.class {
-                DecClass::Finite => {
-                    let (c, s) = coeff_scale(&st.value);
-                    let den = pow10(s as u32);
-                    let g = gcd_big(&c, &den);
-                    let n = &c / &g;
-                    let d = &den / &g;
-                    MbValue::from_ptr(MbObject::new_tuple(vec![
-                        big_to_mb_int(n),
-                        big_to_mb_int(d),
-                    ]))
-                }
-                DecClass::Inf => {
-                    super::super::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(
-                            "cannot convert Infinity to integer ratio".to_string(),
-                        )),
-                    );
-                    MbValue::none()
-                }
-                _ => raise_value_error("cannot convert NaN to integer ratio"),
+        "as_integer_ratio" => match st.class {
+            DecClass::Finite => {
+                let (c, s) = coeff_scale(&st.value);
+                let den = pow10(s as u32);
+                let g = gcd_big(&c, &den);
+                let n = &c / &g;
+                let d = &den / &g;
+                MbValue::from_ptr(MbObject::new_tuple(vec![
+                    big_to_mb_int(n),
+                    big_to_mb_int(d),
+                ]))
             }
-        }
+            DecClass::Inf => {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "cannot convert Infinity to integer ratio".to_string(),
+                    )),
+                );
+                MbValue::none()
+            }
+            _ => raise_value_error("cannot convert NaN to integer ratio"),
+        },
         "compare" | "compare_signal" | "compare_total" | "compare_total_mag" => {
             let other = method_operand(a0)?;
             let other = if method == "compare_total_mag" {
@@ -1927,14 +2038,21 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
             let (me_c, ot_c) = if method.ends_with("_mag") {
                 let mut m = st;
                 let mut o = other;
-                if m.class == DecClass::Finite { m.value = m.value.abs(); } else { m.neg = false; }
-                if o.class == DecClass::Finite { o.value = o.value.abs(); } else { o.neg = false; }
+                if m.class == DecClass::Finite {
+                    m.value = m.value.abs();
+                } else {
+                    m.neg = false;
+                }
+                if o.class == DecClass::Finite {
+                    o.value = o.value.abs();
+                } else {
+                    o.neg = false;
+                }
                 (m, o)
             } else {
                 (st, other)
             };
-            let ord = signed_zero_or_value_cmp(&me_c, &ot_c)
-                .unwrap_or(std::cmp::Ordering::Equal);
+            let ord = signed_zero_or_value_cmp(&me_c, &ot_c).unwrap_or(std::cmp::Ordering::Equal);
             let pick_self = if method.starts_with("max") {
                 ord != std::cmp::Ordering::Less
             } else {
@@ -1959,9 +2077,7 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
         "same_quantum" => {
             let other = method_operand(a0)?;
             let same = match (st.class, other.class) {
-                (DecClass::Finite, DecClass::Finite) => {
-                    st.value.scale() == other.value.scale()
-                }
+                (DecClass::Finite, DecClass::Finite) => st.value.scale() == other.value.scale(),
                 (a, b) => a == b,
             };
             MbValue::from_bool(same)
@@ -1973,7 +2089,11 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
                 if s2.class == DecClass::Finite {
                     let (c, sc) = coeff_scale(&s2.value);
                     let den = pow10(sc as u32);
-                    if (&c % &den).is_zero() { (&c / &den).to_i64() } else { None }
+                    if (&c % &den).is_zero() {
+                        (&c / &den).to_i64()
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -2313,10 +2433,7 @@ fn format_decimal_state(st: &MbDecimal, spec: &FormatSpec) -> String {
         }
     };
     let (intpart, fracpart) = if dotplace <= 0 {
-        (
-            "0".to_string(),
-            "0".repeat((-dotplace) as usize) + &digits,
-        )
+        ("0".to_string(), "0".repeat((-dotplace) as usize) + &digits)
     } else if dotplace as usize >= digits.len() {
         (
             digits.clone() + &"0".repeat(dotplace as usize - digits.len()),
@@ -2475,14 +2592,12 @@ unsafe extern "C" fn dispatch_decimal_localcontext(
                     let guard = lock.read().unwrap();
                     for key in ["capitals", "clamp"] {
                         if let Some(v) = guard.get(key) {
-                            let ok = matches!(v.as_int(), Some(0) | Some(1))
-                                || v.as_bool().is_some();
+                            let ok =
+                                matches!(v.as_int(), Some(0) | Some(1)) || v.as_bool().is_some();
                             if !ok {
                                 drop(guard);
                                 super::super::exception::mb_raise(
-                                    MbValue::from_ptr(MbObject::new_str(
-                                        "ValueError".to_string(),
-                                    )),
+                                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                                     MbValue::from_ptr(MbObject::new_str(format!(
                                         "{key} must be 0 or 1"
                                     ))),
@@ -2602,7 +2717,10 @@ pub fn register() {
         ("ConversionSyntax", &["InvalidOperation"]),
         ("DivisionByZero", &["DecimalException", "ZeroDivisionError"]),
         ("DivisionImpossible", &["InvalidOperation"]),
-        ("DivisionUndefined", &["InvalidOperation", "ZeroDivisionError"]),
+        (
+            "DivisionUndefined",
+            &["InvalidOperation", "ZeroDivisionError"],
+        ),
         ("Inexact", &["DecimalException"]),
         ("InvalidContext", &["InvalidOperation"]),
         ("Rounded", &["DecimalException"]),
@@ -2686,16 +2804,58 @@ pub fn register() {
         super::super::module::register_variadic_func(stub);
         let mut methods: HashMap<String, MbValue> = HashMap::new();
         for name in [
-            "adjusted", "as_integer_ratio", "as_tuple", "canonical", "compare",
-            "compare_signal", "compare_total", "compare_total_mag", "conjugate",
-            "copy_abs", "copy_negate", "copy_sign", "exp", "fma", "from_float",
-            "is_canonical", "is_finite", "is_infinite", "is_nan", "is_normal",
-            "is_qnan", "is_signed", "is_snan", "is_subnormal", "is_zero", "ln",
-            "log10", "logb", "logical_and", "logical_invert", "logical_or",
-            "logical_xor", "max", "max_mag", "min", "min_mag", "next_minus",
-            "next_plus", "next_toward", "normalize", "number_class", "quantize",
-            "radix", "remainder_near", "rotate", "same_quantum", "scaleb",
-            "shift", "sqrt", "to_eng_string", "to_integral", "to_integral_exact",
+            "adjusted",
+            "as_integer_ratio",
+            "as_tuple",
+            "canonical",
+            "compare",
+            "compare_signal",
+            "compare_total",
+            "compare_total_mag",
+            "conjugate",
+            "copy_abs",
+            "copy_negate",
+            "copy_sign",
+            "exp",
+            "fma",
+            "from_float",
+            "is_canonical",
+            "is_finite",
+            "is_infinite",
+            "is_nan",
+            "is_normal",
+            "is_qnan",
+            "is_signed",
+            "is_snan",
+            "is_subnormal",
+            "is_zero",
+            "ln",
+            "log10",
+            "logb",
+            "logical_and",
+            "logical_invert",
+            "logical_or",
+            "logical_xor",
+            "max",
+            "max_mag",
+            "min",
+            "min_mag",
+            "next_minus",
+            "next_plus",
+            "next_toward",
+            "normalize",
+            "number_class",
+            "quantize",
+            "radix",
+            "remainder_near",
+            "rotate",
+            "same_quantum",
+            "scaleb",
+            "shift",
+            "sqrt",
+            "to_eng_string",
+            "to_integral",
+            "to_integral_exact",
             "to_integral_value",
         ] {
             methods.insert(name.to_string(), MbValue::from_func(stub as usize));
@@ -2705,8 +2865,10 @@ pub fn register() {
         // Bridge the `Decimal` constructor func -> its class name so the
         // func->native-class method bridge in mb_getattr fires.
         super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-            m.borrow_mut()
-                .insert(dispatch_Decimal as *const () as usize as u64, "Decimal".to_string());
+            m.borrow_mut().insert(
+                dispatch_Decimal as *const () as usize as u64,
+                "Decimal".to_string(),
+            );
         });
     }
 
@@ -2849,9 +3011,15 @@ mod tests {
     fn test_decimal_eq_cross_type_exact() {
         let d = mb_decimal_new(s("0.1"));
         // Decimal('0.1') != float 0.1 (binary expansion differs).
-        assert_eq!(mb_numeric_handle_eq(d, MbValue::from_float(0.1)), Some(false));
+        assert_eq!(
+            mb_numeric_handle_eq(d, MbValue::from_float(0.1)),
+            Some(false)
+        );
         let q = mb_decimal_new(s("0.25"));
-        assert_eq!(mb_numeric_handle_eq(q, MbValue::from_float(0.25)), Some(true));
+        assert_eq!(
+            mb_numeric_handle_eq(q, MbValue::from_float(0.25)),
+            Some(true)
+        );
         let ten = mb_decimal_new(s("10"));
         assert_eq!(mb_numeric_handle_eq(ten, MbValue::from_int(10)), Some(true));
     }

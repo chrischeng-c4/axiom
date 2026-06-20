@@ -504,11 +504,8 @@ mod tests {
         let a = NdArray::new(vec![4.0, 2.0, 2.0, 3.0], vec![2, 2]).unwrap();
         let l = a.cholesky().unwrap();
         // L * L^T should equal A
-        let lt = NdArray::new(
-            vec![l.data[0], l.data[2], l.data[1], l.data[3]],
-            vec![2, 2],
-        )
-        .unwrap();
+        let lt =
+            NdArray::new(vec![l.data[0], l.data[2], l.data[1], l.data[3]], vec![2, 2]).unwrap();
         let result = l.matmul(&lt).unwrap();
         for i in 0..4 {
             assert!((result.data[i] - a.data[i]).abs() < 1e-10);

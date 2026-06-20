@@ -1,10 +1,10 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// errno module for Mamba (#657).
 ///
 /// Exposes POSIX errno constants matching CPython's errno module.
 /// Values follow POSIX / macOS / Linux standard errno numbers.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -21,59 +21,59 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     // POSIX errno constants (numeric values)
-    attrs.insert("EPERM".into(),   MbValue::from_int(1));
-    attrs.insert("ENOENT".into(),  MbValue::from_int(2));
-    attrs.insert("ESRCH".into(),   MbValue::from_int(3));
-    attrs.insert("EINTR".into(),   MbValue::from_int(4));
-    attrs.insert("EIO".into(),     MbValue::from_int(5));
-    attrs.insert("ENXIO".into(),   MbValue::from_int(6));
-    attrs.insert("E2BIG".into(),   MbValue::from_int(7));
+    attrs.insert("EPERM".into(), MbValue::from_int(1));
+    attrs.insert("ENOENT".into(), MbValue::from_int(2));
+    attrs.insert("ESRCH".into(), MbValue::from_int(3));
+    attrs.insert("EINTR".into(), MbValue::from_int(4));
+    attrs.insert("EIO".into(), MbValue::from_int(5));
+    attrs.insert("ENXIO".into(), MbValue::from_int(6));
+    attrs.insert("E2BIG".into(), MbValue::from_int(7));
     attrs.insert("ENOEXEC".into(), MbValue::from_int(8));
-    attrs.insert("EBADF".into(),   MbValue::from_int(9));
-    attrs.insert("ECHILD".into(),  MbValue::from_int(10));
-    attrs.insert("EAGAIN".into(),  MbValue::from_int(11));
-    attrs.insert("ENOMEM".into(),  MbValue::from_int(12));
-    attrs.insert("EACCES".into(),  MbValue::from_int(13));
-    attrs.insert("EFAULT".into(),  MbValue::from_int(14));
-    attrs.insert("EBUSY".into(),   MbValue::from_int(16));
-    attrs.insert("EEXIST".into(),  MbValue::from_int(17));
-    attrs.insert("EXDEV".into(),   MbValue::from_int(18));
-    attrs.insert("ENODEV".into(),  MbValue::from_int(19));
+    attrs.insert("EBADF".into(), MbValue::from_int(9));
+    attrs.insert("ECHILD".into(), MbValue::from_int(10));
+    attrs.insert("EAGAIN".into(), MbValue::from_int(11));
+    attrs.insert("ENOMEM".into(), MbValue::from_int(12));
+    attrs.insert("EACCES".into(), MbValue::from_int(13));
+    attrs.insert("EFAULT".into(), MbValue::from_int(14));
+    attrs.insert("EBUSY".into(), MbValue::from_int(16));
+    attrs.insert("EEXIST".into(), MbValue::from_int(17));
+    attrs.insert("EXDEV".into(), MbValue::from_int(18));
+    attrs.insert("ENODEV".into(), MbValue::from_int(19));
     attrs.insert("ENOTDIR".into(), MbValue::from_int(20));
-    attrs.insert("EISDIR".into(),  MbValue::from_int(21));
-    attrs.insert("EINVAL".into(),  MbValue::from_int(22));
-    attrs.insert("ENFILE".into(),  MbValue::from_int(23));
-    attrs.insert("EMFILE".into(),  MbValue::from_int(24));
-    attrs.insert("ENOTTY".into(),  MbValue::from_int(25));
-    attrs.insert("EFBIG".into(),   MbValue::from_int(27));
-    attrs.insert("ENOSPC".into(),  MbValue::from_int(28));
-    attrs.insert("ESPIPE".into(),  MbValue::from_int(29));
-    attrs.insert("EROFS".into(),   MbValue::from_int(30));
-    attrs.insert("EMLINK".into(),  MbValue::from_int(31));
-    attrs.insert("EPIPE".into(),   MbValue::from_int(32));
-    attrs.insert("EDOM".into(),    MbValue::from_int(33));
-    attrs.insert("ERANGE".into(),  MbValue::from_int(34));
+    attrs.insert("EISDIR".into(), MbValue::from_int(21));
+    attrs.insert("EINVAL".into(), MbValue::from_int(22));
+    attrs.insert("ENFILE".into(), MbValue::from_int(23));
+    attrs.insert("EMFILE".into(), MbValue::from_int(24));
+    attrs.insert("ENOTTY".into(), MbValue::from_int(25));
+    attrs.insert("EFBIG".into(), MbValue::from_int(27));
+    attrs.insert("ENOSPC".into(), MbValue::from_int(28));
+    attrs.insert("ESPIPE".into(), MbValue::from_int(29));
+    attrs.insert("EROFS".into(), MbValue::from_int(30));
+    attrs.insert("EMLINK".into(), MbValue::from_int(31));
+    attrs.insert("EPIPE".into(), MbValue::from_int(32));
+    attrs.insert("EDOM".into(), MbValue::from_int(33));
+    attrs.insert("ERANGE".into(), MbValue::from_int(34));
     attrs.insert("EDEADLK".into(), MbValue::from_int(35));
     attrs.insert("ENAMETOOLONG".into(), MbValue::from_int(36));
-    attrs.insert("ENOLCK".into(),  MbValue::from_int(37));
-    attrs.insert("ENOSYS".into(),  MbValue::from_int(38));
+    attrs.insert("ENOLCK".into(), MbValue::from_int(37));
+    attrs.insert("ENOSYS".into(), MbValue::from_int(38));
     attrs.insert("ENOTEMPTY".into(), MbValue::from_int(39));
-    attrs.insert("ELOOP".into(),   MbValue::from_int(40));
+    attrs.insert("ELOOP".into(), MbValue::from_int(40));
     attrs.insert("EWOULDBLOCK".into(), MbValue::from_int(11)); // alias for EAGAIN
-    attrs.insert("ENOMSG".into(),  MbValue::from_int(42));
-    attrs.insert("EIDRM".into(),   MbValue::from_int(43));
-    attrs.insert("ENOSTR".into(),  MbValue::from_int(60));
+    attrs.insert("ENOMSG".into(), MbValue::from_int(42));
+    attrs.insert("EIDRM".into(), MbValue::from_int(43));
+    attrs.insert("ENOSTR".into(), MbValue::from_int(60));
     attrs.insert("ENODATA".into(), MbValue::from_int(61));
-    attrs.insert("ETIME".into(),   MbValue::from_int(62));
-    attrs.insert("ENOSR".into(),   MbValue::from_int(63));
+    attrs.insert("ETIME".into(), MbValue::from_int(62));
+    attrs.insert("ENOSR".into(), MbValue::from_int(63));
     attrs.insert("EREMOTE".into(), MbValue::from_int(66));
     attrs.insert("ENOLINK".into(), MbValue::from_int(67));
-    attrs.insert("EPROTO".into(),  MbValue::from_int(71));
+    attrs.insert("EPROTO".into(), MbValue::from_int(71));
     attrs.insert("EMULTIHOP".into(), MbValue::from_int(72));
     attrs.insert("EBADMSG".into(), MbValue::from_int(74));
     attrs.insert("EOVERFLOW".into(), MbValue::from_int(75));
-    attrs.insert("EILSEQ".into(),  MbValue::from_int(84));
-    attrs.insert("EUSERS".into(),  MbValue::from_int(87));
+    attrs.insert("EILSEQ".into(), MbValue::from_int(84));
+    attrs.insert("EUSERS".into(), MbValue::from_int(87));
     attrs.insert("ENOTSOCK".into(), MbValue::from_int(88));
     attrs.insert("EDESTADDRREQ".into(), MbValue::from_int(89));
     attrs.insert("EMSGSIZE".into(), MbValue::from_int(90));
@@ -101,7 +101,7 @@ pub fn register() {
     attrs.insert("EHOSTUNREACH".into(), MbValue::from_int(113));
     attrs.insert("EALREADY".into(), MbValue::from_int(114));
     attrs.insert("EINPROGRESS".into(), MbValue::from_int(115));
-    attrs.insert("ESTALE".into(),  MbValue::from_int(116));
+    attrs.insert("ESTALE".into(), MbValue::from_int(116));
     attrs.insert("ECANCELED".into(), MbValue::from_int(125));
     attrs.insert("EOWNERDEAD".into(), MbValue::from_int(130));
     attrs.insert("ENOTRECOVERABLE".into(), MbValue::from_int(131));
@@ -118,7 +118,7 @@ pub fn register() {
         s.borrow_mut().insert(addr as u64);
     });
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("EAUTH".into(), MbValue::from_int(80));
     attrs.insert("EBADARCH".into(), MbValue::from_int(86));
     attrs.insert("EBADEXEC".into(), MbValue::from_int(85));
@@ -148,26 +148,56 @@ pub fn register() {
 /// Return a dict mapping error codes to their symbolic names.
 /// CPython parity: keys are ints, values are str.
 pub fn mb_errno_errorcode() -> MbValue {
-    use super::super::rc::ObjData;
     use super::super::dict_ops::DictKey;
+    use super::super::rc::ObjData;
     let dict = MbObject::new_dict();
     let entries: &[(i64, &str)] = &[
-        (1, "EPERM"), (2, "ENOENT"), (3, "ESRCH"), (4, "EINTR"), (5, "EIO"),
-        (6, "ENXIO"), (7, "E2BIG"), (8, "ENOEXEC"), (9, "EBADF"), (10, "ECHILD"),
-        (11, "EAGAIN"), (12, "ENOMEM"), (13, "EACCES"), (14, "EFAULT"),
-        (16, "EBUSY"), (17, "EEXIST"), (18, "EXDEV"), (19, "ENODEV"),
-        (20, "ENOTDIR"), (21, "EISDIR"), (22, "EINVAL"), (23, "ENFILE"),
-        (24, "EMFILE"), (25, "ENOTTY"), (27, "EFBIG"), (28, "ENOSPC"),
-        (29, "ESPIPE"), (30, "EROFS"), (31, "EMLINK"), (32, "EPIPE"),
-        (33, "EDOM"), (34, "ERANGE"), (110, "ETIMEDOUT"), (111, "ECONNREFUSED"),
-        (113, "EHOSTUNREACH"), (115, "EINPROGRESS"), (125, "ECANCELED"),
+        (1, "EPERM"),
+        (2, "ENOENT"),
+        (3, "ESRCH"),
+        (4, "EINTR"),
+        (5, "EIO"),
+        (6, "ENXIO"),
+        (7, "E2BIG"),
+        (8, "ENOEXEC"),
+        (9, "EBADF"),
+        (10, "ECHILD"),
+        (11, "EAGAIN"),
+        (12, "ENOMEM"),
+        (13, "EACCES"),
+        (14, "EFAULT"),
+        (16, "EBUSY"),
+        (17, "EEXIST"),
+        (18, "EXDEV"),
+        (19, "ENODEV"),
+        (20, "ENOTDIR"),
+        (21, "EISDIR"),
+        (22, "EINVAL"),
+        (23, "ENFILE"),
+        (24, "EMFILE"),
+        (25, "ENOTTY"),
+        (27, "EFBIG"),
+        (28, "ENOSPC"),
+        (29, "ESPIPE"),
+        (30, "EROFS"),
+        (31, "EMLINK"),
+        (32, "EPIPE"),
+        (33, "EDOM"),
+        (34, "ERANGE"),
+        (110, "ETIMEDOUT"),
+        (111, "ECONNREFUSED"),
+        (113, "EHOSTUNREACH"),
+        (115, "EINPROGRESS"),
+        (125, "ECANCELED"),
     ];
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
             for (code, name) in entries {
-                map.insert(DictKey::Int(*code),
-                    MbValue::from_ptr(MbObject::new_str((*name).to_string())));
+                map.insert(
+                    DictKey::Int(*code),
+                    MbValue::from_ptr(MbObject::new_str((*name).to_string())),
+                );
             }
         }
     }
@@ -178,15 +208,15 @@ pub fn mb_errno_errorcode() -> MbValue {
 pub fn mb_errno_strerror(errnum: MbValue) -> MbValue {
     let n = errnum.as_int().unwrap_or(0);
     let msg = match n {
-        1  => "Operation not permitted",
-        2  => "No such file or directory",
-        3  => "No such process",
-        4  => "Interrupted function call",
-        5  => "Input/output error",
-        6  => "No such device or address",
-        7  => "Arg list too long",
-        8  => "Exec format error",
-        9  => "Bad file descriptor",
+        1 => "Operation not permitted",
+        2 => "No such file or directory",
+        3 => "No such process",
+        4 => "Interrupted function call",
+        5 => "Input/output error",
+        6 => "No such device or address",
+        7 => "Arg list too long",
+        8 => "Exec format error",
+        9 => "Bad file descriptor",
         10 => "No child processes",
         11 => "Resource temporarily unavailable",
         12 => "Not enough space",
@@ -217,20 +247,26 @@ pub fn mb_errno_strerror(errnum: MbValue) -> MbValue {
         110 => "Connection timed out",
         111 => "Connection refused",
         113 => "No route to host",
-        _  => "Unknown error",
+        _ => "Unknown error",
     };
     MbValue::from_ptr(MbObject::new_str(msg.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::rc::ObjData;
+    use super::*;
 
     fn str_val(v: MbValue) -> String {
-        v.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
-        }).unwrap_or_default()
+        v.as_ptr()
+            .and_then(|ptr| unsafe {
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
     }
 
     #[test]
@@ -242,72 +278,114 @@ mod tests {
 
     #[test]
     fn test_strerror_eperm() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(1))), "Operation not permitted");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(1))),
+            "Operation not permitted"
+        );
     }
 
     #[test]
     fn test_strerror_enoent() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(2))), "No such file or directory");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(2))),
+            "No such file or directory"
+        );
     }
 
     #[test]
     fn test_strerror_eintr() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(4))), "Interrupted function call");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(4))),
+            "Interrupted function call"
+        );
     }
 
     #[test]
     fn test_strerror_eio() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(5))), "Input/output error");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(5))),
+            "Input/output error"
+        );
     }
 
     #[test]
     fn test_strerror_ebadf() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(9))), "Bad file descriptor");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(9))),
+            "Bad file descriptor"
+        );
     }
 
     #[test]
     fn test_strerror_eagain() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(11))), "Resource temporarily unavailable");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(11))),
+            "Resource temporarily unavailable"
+        );
     }
 
     #[test]
     fn test_strerror_eacces() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(13))), "Permission denied");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(13))),
+            "Permission denied"
+        );
     }
 
     #[test]
     fn test_strerror_einval() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(22))), "Invalid argument");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(22))),
+            "Invalid argument"
+        );
     }
 
     #[test]
     fn test_strerror_epipe() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(32))), "Broken pipe");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(32))),
+            "Broken pipe"
+        );
     }
 
     #[test]
     fn test_strerror_etimedout() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(110))), "Connection timed out");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(110))),
+            "Connection timed out"
+        );
     }
 
     #[test]
     fn test_strerror_econnrefused() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(111))), "Connection refused");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(111))),
+            "Connection refused"
+        );
     }
 
     #[test]
     fn test_strerror_ehostunreach() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(113))), "No route to host");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(113))),
+            "No route to host"
+        );
     }
 
     #[test]
     fn test_strerror_unknown_code() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(999))), "Unknown error");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(999))),
+            "Unknown error"
+        );
     }
 
     #[test]
     fn test_strerror_zero_unknown() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(0))), "Unknown error");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(0))),
+            "Unknown error"
+        );
     }
 
     #[test]
@@ -315,16 +393,25 @@ mod tests {
         // CPython parity: errorcode keys are ints, not strings.
         use super::super::super::dict_ops::DictKey;
         let result = mb_errno_errorcode();
-        let found = result.as_ptr().map(|ptr| unsafe {
-            if let ObjData::Dict(ref lock) = (*ptr).data {
-                let map = lock.read().unwrap();
-                map.get(&DictKey::Int(2)).and_then(|v| {
-                    v.as_ptr().and_then(|p| {
-                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        let found = result
+            .as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let map = lock.read().unwrap();
+                    map.get(&DictKey::Int(2)).and_then(|v| {
+                        v.as_ptr().and_then(|p| {
+                            if let ObjData::Str(ref s) = (*p).data {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
                     })
-                })
-            } else { None }
-        }).flatten();
+                } else {
+                    None
+                }
+            })
+            .flatten();
         assert_eq!(found, Some("ENOENT".to_string()));
     }
 
@@ -337,136 +424,217 @@ mod tests {
     // --- Remaining strerror match arms ---
     #[test]
     fn test_strerror_esrch() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(3))), "No such process");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(3))),
+            "No such process"
+        );
     }
 
     #[test]
     fn test_strerror_enxio() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(6))), "No such device or address");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(6))),
+            "No such device or address"
+        );
     }
 
     #[test]
     fn test_strerror_e2big() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(7))), "Arg list too long");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(7))),
+            "Arg list too long"
+        );
     }
 
     #[test]
     fn test_strerror_enoexec() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(8))), "Exec format error");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(8))),
+            "Exec format error"
+        );
     }
 
     #[test]
     fn test_strerror_echild() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(10))), "No child processes");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(10))),
+            "No child processes"
+        );
     }
 
     #[test]
     fn test_strerror_enomem() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(12))), "Not enough space");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(12))),
+            "Not enough space"
+        );
     }
 
     #[test]
     fn test_strerror_efault() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(14))), "Bad address");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(14))),
+            "Bad address"
+        );
     }
 
     #[test]
     fn test_strerror_ebusy() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(16))), "Device or resource busy");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(16))),
+            "Device or resource busy"
+        );
     }
 
     #[test]
     fn test_strerror_eexist() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(17))), "File exists");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(17))),
+            "File exists"
+        );
     }
 
     #[test]
     fn test_strerror_exdev() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(18))), "Improper link");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(18))),
+            "Improper link"
+        );
     }
 
     #[test]
     fn test_strerror_enodev() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(19))), "No such device");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(19))),
+            "No such device"
+        );
     }
 
     #[test]
     fn test_strerror_enotdir() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(20))), "Not a directory");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(20))),
+            "Not a directory"
+        );
     }
 
     #[test]
     fn test_strerror_eisdir() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(21))), "Is a directory");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(21))),
+            "Is a directory"
+        );
     }
 
     #[test]
     fn test_strerror_enfile() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(23))), "Too many open files in system");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(23))),
+            "Too many open files in system"
+        );
     }
 
     #[test]
     fn test_strerror_emfile() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(24))), "Too many open files");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(24))),
+            "Too many open files"
+        );
     }
 
     #[test]
     fn test_strerror_enotty() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(25))), "Inappropriate I/O control operation");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(25))),
+            "Inappropriate I/O control operation"
+        );
     }
 
     #[test]
     fn test_strerror_efbig() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(27))), "File too large");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(27))),
+            "File too large"
+        );
     }
 
     #[test]
     fn test_strerror_enospc() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(28))), "No space left on device");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(28))),
+            "No space left on device"
+        );
     }
 
     #[test]
     fn test_strerror_espipe() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(29))), "Invalid seek");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(29))),
+            "Invalid seek"
+        );
     }
 
     #[test]
     fn test_strerror_erofs() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(30))), "Read-only file system");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(30))),
+            "Read-only file system"
+        );
     }
 
     #[test]
     fn test_strerror_emlink() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(31))), "Too many links");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(31))),
+            "Too many links"
+        );
     }
 
     #[test]
     fn test_strerror_edom() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(33))), "Domain error");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(33))),
+            "Domain error"
+        );
     }
 
     #[test]
     fn test_strerror_erange() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(34))), "Result too large");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(34))),
+            "Result too large"
+        );
     }
 
     #[test]
     fn test_strerror_enametoolong() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(36))), "File name too long");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(36))),
+            "File name too long"
+        );
     }
 
     #[test]
     fn test_strerror_enosys() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(38))), "Function not implemented");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(38))),
+            "Function not implemented"
+        );
     }
 
     #[test]
     fn test_strerror_enotempty() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(39))), "Directory not empty");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(39))),
+            "Directory not empty"
+        );
     }
 
     #[test]
     fn test_strerror_enotsock() {
-        assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(88))), "Socket operation on non-socket");
+        assert_eq!(
+            str_val(mb_errno_strerror(MbValue::from_int(88))),
+            "Socket operation on non-socket"
+        );
     }
 }

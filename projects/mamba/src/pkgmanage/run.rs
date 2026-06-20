@@ -14,7 +14,7 @@
 // the file off to the compiler. Legacy `mamba run <file>` outside a
 // mamba project is untouched (returns `Mode::Legacy`).
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::pkgmanage::sync::parse_locked_packages;
@@ -73,7 +73,9 @@ pub fn preflight(project_dir: &Path) -> Result<Mode> {
     // for the lifetime of the current process. No global PATH /
     // user shell env mutation.
     set_pythonpath_front(&site);
-    Ok(Mode::Project { site_packages: site })
+    Ok(Mode::Project {
+        site_packages: site,
+    })
 }
 
 fn set_pythonpath_front(site: &Path) {

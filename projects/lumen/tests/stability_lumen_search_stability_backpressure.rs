@@ -7,14 +7,15 @@
 // @contract search-stability-backpressure
 // @category stability
 // @required_for_production true
-// @command target/debug/rig test --dir projects/lumen/tests/rig/cases/load --pins projects/lumen/tests/rig/config/pins
+// @command rig run --dir projects/lumen/tests/rig/cases/load --pins projects/lumen/tests/rig/config/pins
 // AW-EC-END
 
 // Contract: (d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen).
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_search_stability_overload_backpressure() {
-    let command = "target/debug/rig test --dir projects/lumen/tests/rig/cases/load --pins projects/lumen/tests/rig/config/pins";
+    let command =
+        "rig run --dir projects/lumen/tests/rig/cases/load --pins projects/lumen/tests/rig/config/pins";
     let id = "lumen-search-stability-overload-backpressure";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

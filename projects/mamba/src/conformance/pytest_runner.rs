@@ -127,8 +127,7 @@ pub struct PytestOptions {
 
 impl PytestOptions {
     pub fn new(path: PathBuf) -> Self {
-        let mamba_bin = std::env::current_exe()
-            .unwrap_or_else(|_| PathBuf::from("mamba"));
+        let mamba_bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mamba"));
         Self {
             path,
             timeout_secs: 60,
@@ -196,16 +195,15 @@ pub fn collect_test_files(path: &Path) -> Vec<PathBuf> {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let p = entry.path();
         if p.is_dir() {
             walk(&p, out);
         } else if p.extension().and_then(|e| e.to_str()) == Some("py") {
-            let stem = p
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default();
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
             if stem.starts_with("test_") {
                 out.push(p);
             }
@@ -287,10 +285,8 @@ pub fn scan_test_classes(src: &str) -> Vec<TestClass> {
                             let arg_list = &rest[paren + 1..];
                             if let Some(close) = arg_list.find(')') {
                                 let args = arg_list[..close].trim();
-                                let mut parts = args
-                                    .split(',')
-                                    .map(|s| s.trim())
-                                    .filter(|s| !s.is_empty());
+                                let mut parts =
+                                    args.split(',').map(|s| s.trim()).filter(|s| !s.is_empty());
                                 let first = parts.next();
                                 let rest_args: Vec<&str> = parts.collect();
                                 if first == Some("self") && rest_args.is_empty() {
@@ -536,10 +532,7 @@ pub fn parse_decorator(buf: &str) -> Option<PyMark> {
         let (argnames, params_src) = split_top_level_comma(&inside)?;
         let argnames = unquote(argnames.trim()).unwrap_or_else(|| argnames.trim().to_string());
         let params = parse_param_list(params_src.trim())?;
-        return Some(PyMark::Parametrize {
-            argnames,
-            params,
-        });
+        return Some(PyMark::Parametrize { argnames, params });
     }
     None
 }
@@ -747,18 +740,9 @@ pub fn synthesise_single_test_harness(
 /// passing would over-report success — see acceptance gate #2).
 #[derive(Debug, Clone)]
 pub enum PytestHarness {
-    Build {
-        source: String,
-        label: String,
-    },
-    Skip {
-        label: String,
-        reason: String,
-    },
-    Error {
-        label: String,
-        reason: String,
-    },
+    Build { source: String, label: String },
+    Skip { label: String, reason: String },
+    Error { label: String, reason: String },
 }
 
 /// Build one harness per (function, parametrize-row) pair. A function
@@ -896,9 +880,7 @@ fn render_call(
     fn_name: &str,
     call_args: &str,
 ) -> String {
-    let mut out = String::with_capacity(
-        conftest_src.len() + original.len() + 256,
-    );
+    let mut out = String::with_capacity(conftest_src.len() + original.len() + 256);
     if !conftest_src.is_empty() {
         let conftest_neutralised = neutralise_pytest_imports(conftest_src);
         out.push_str(&conftest_neutralised);
@@ -1006,9 +988,7 @@ fn neutralise_unittest_main(src: &str) -> String {
     let mut out = String::with_capacity(src.len() + 64);
     for line in src.lines() {
         let stripped_left = line.trim_start();
-        if stripped_left.starts_with("unittest.main(")
-            || stripped_left == "unittest.main()"
-        {
+        if stripped_left.starts_with("unittest.main(") || stripped_left == "unittest.main()" {
             let indent_len = line.len() - stripped_left.len();
             out.push_str(&line[..indent_len]);
             out.push_str("pass  # mamba-pytest: unittest.main() neutralised\n");
@@ -1028,7 +1008,9 @@ fn neutralise_unittest_main(src: &str) -> String {
 pub fn parse_records(file: &Path, output: &str) -> Vec<TestRecord> {
     let mut out = Vec::new();
     for line in output.lines() {
-        let Some(rest) = line.strip_prefix("RESULT: ") else { continue };
+        let Some(rest) = line.strip_prefix("RESULT: ") else {
+            continue;
+        };
         // Format: "<case> <STATUS> [<reason>...]"
         let mut parts = rest.splitn(3, ' ');
         let case = match parts.next() {
@@ -1036,7 +1018,10 @@ pub fn parse_records(file: &Path, output: &str) -> Vec<TestRecord> {
             _ => continue,
         };
         let status_str = parts.next().unwrap_or("");
-        let reason = parts.next().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let reason = parts
+            .next()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let status = match status_str {
             "PASS" => TestStatus::Pass,
             "FAIL" => TestStatus::Fail,
@@ -1075,9 +1060,7 @@ pub fn run_file(file: &Path, opts: &PytestOptions) -> Vec<TestRecord> {
         }
     };
 
-    let layout = opts
-        .force_layout
-        .unwrap_or_else(|| detect_layout(file));
+    let layout = opts.force_layout.unwrap_or_else(|| detect_layout(file));
 
     match layout {
         Layout::Unittest => run_file_unittest(file, &src, opts),
@@ -1149,12 +1132,16 @@ fn run_file_pytest(file: &Path, src: &str, opts: &PytestOptions) -> Vec<TestReco
     }
 
     // Read conftest chain up to the input directory boundary.
-    let stop_at = opts.path.is_dir().then(|| opts.path.clone()).unwrap_or_else(|| {
-        opts.path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."))
-    });
+    let stop_at = opts
+        .path
+        .is_dir()
+        .then(|| opts.path.clone())
+        .unwrap_or_else(|| {
+            opts.path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."))
+        });
     let conftest_src = read_conftests(file, &stop_at);
 
     fan_out_pytest(file, src, &conftest_src, &funcs, opts)
@@ -1213,7 +1200,13 @@ fn fan_out_pytest(
                     // Sanitise label for filename (replace [/] with _).
                     let safe_label: String = label
                         .chars()
-                        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+                        .map(|c| {
+                            if c.is_ascii_alphanumeric() || c == '_' {
+                                c
+                            } else {
+                                '_'
+                            }
+                        })
                         .collect();
                     let tmp_path = parent.join(format!(
                         ".mamba_pytest_{stem}_pyt_{idx}_{sub_i}_{safe_label}.py"
@@ -1230,7 +1223,10 @@ fn fan_out_pytest(
                         continue;
                     }
                     tmps_to_clean.push(tmp_path.clone());
-                    slots.push(Slot::Spawn { tmp: tmp_path, label });
+                    slots.push(Slot::Spawn {
+                        tmp: tmp_path,
+                        label,
+                    });
                 }
             }
         }
@@ -1506,7 +1502,10 @@ fn keep_harness() -> bool {
 /// Run the mamba binary on `script` and return (exit-status, stdout, stderr).
 /// Enforces `opts.timeout_secs` and reports a Timeout exit-style status
 /// when the wallclock exceeds the budget.
-fn run_mamba_child(script: &Path, opts: &PytestOptions) -> (std::process::ExitStatus, String, String) {
+fn run_mamba_child(
+    script: &Path,
+    opts: &PytestOptions,
+) -> (std::process::ExitStatus, String, String) {
     let mut cmd = Command::new(&opts.mamba_bin);
     cmd.arg("run").arg(script);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -1583,12 +1582,7 @@ fn run_mamba_child(script: &Path, opts: &PytestOptions) -> (std::process::ExitSt
 ///   * non-zero exit + `SkipTest:` somewhere in stderr → SKIP
 ///   * non-zero exit + `AssertionError` in stderr → FAIL
 ///   * any other non-zero exit → FAIL (with the first stderr line as reason)
-fn classify_child(
-    script: &Path,
-    original: &Path,
-    label: &str,
-    opts: &PytestOptions,
-) -> TestRecord {
+fn classify_child(script: &Path, original: &Path, label: &str, opts: &PytestOptions) -> TestRecord {
     let (status, stdout, stderr) = run_mamba_child(script, opts);
     let pass_marker = format!("MAMBA_PYTEST_END {label} PASS");
     let begin_marker = format!("MAMBA_PYTEST_BEGIN {label}");
@@ -1625,7 +1619,9 @@ fn classify_child(
     let panic_line = stderr
         .lines()
         .map(|l| l.trim())
-        .find(|l| l.contains("panicked at") || l.contains("AssertionError") || l.contains("SkipTest"))
+        .find(|l| {
+            l.contains("panicked at") || l.contains("AssertionError") || l.contains("SkipTest")
+        })
         .unwrap_or("")
         .to_string();
     let first_line = stderr
@@ -1795,7 +1791,8 @@ class Bare(TestCase):
 
     #[test]
     fn harness_appends_single_method_tail() {
-        let original = "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        pass\n";
+        let original =
+            "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        pass\n";
         let assembled = synthesise_single_test_harness(original, "T", "test_x");
         assert!(assembled.contains("MAMBA_PYTEST_BEGIN T.test_x"));
         assert!(assembled.contains("_mp_inst = T()"));
@@ -1805,11 +1802,29 @@ class Bare(TestCase):
 
     #[test]
     fn summary_success_only_when_zero_fail_zero_error() {
-        let s = RunSummary { files: 1, pass: 3, fail: 0, skip: 1, error: 0 };
+        let s = RunSummary {
+            files: 1,
+            pass: 3,
+            fail: 0,
+            skip: 1,
+            error: 0,
+        };
         assert!(s.success());
-        let s = RunSummary { files: 1, pass: 3, fail: 1, skip: 0, error: 0 };
+        let s = RunSummary {
+            files: 1,
+            pass: 3,
+            fail: 1,
+            skip: 0,
+            error: 0,
+        };
         assert!(!s.success());
-        let s = RunSummary { files: 1, pass: 0, fail: 0, skip: 0, error: 1 };
+        let s = RunSummary {
+            files: 1,
+            pass: 0,
+            fail: 0,
+            skip: 0,
+            error: 1,
+        };
         assert!(!s.success());
     }
 
@@ -1865,7 +1880,11 @@ class Helper:
         let names: Vec<_> = funcs.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["test_alpha", "test_beta"]);
         for f in &funcs {
-            assert!(f.args.is_empty(), "expected no-arg signatures, got {:?}", f.args);
+            assert!(
+                f.args.is_empty(),
+                "expected no-arg signatures, got {:?}",
+                f.args
+            );
             assert!(f.marks.is_empty(), "expected no marks, got {:?}", f.marks);
         }
     }
@@ -1913,17 +1932,17 @@ def test_pair(a, b):
         match &funcs[0].marks.as_slice() {
             [PyMark::Parametrize { argnames, params }] => {
                 assert_eq!(argnames, "value");
-                assert_eq!(params, &vec!["1".to_string(), "2".to_string(), "3".to_string()]);
+                assert_eq!(
+                    params,
+                    &vec!["1".to_string(), "2".to_string(), "3".to_string()]
+                );
             }
             other => panic!("expected parametrize, got {other:?}"),
         }
         match &funcs[1].marks.as_slice() {
             [PyMark::Parametrize { argnames, params }] => {
                 assert_eq!(argnames, "a, b");
-                assert_eq!(
-                    params,
-                    &vec!["(1, 2)".to_string(), "(3, 4)".to_string()]
-                );
+                assert_eq!(params, &vec!["(1, 2)".to_string(), "(3, 4)".to_string()]);
             }
             other => panic!("expected parametrize, got {other:?}"),
         }
@@ -2056,10 +2075,7 @@ def test_pair(a, b):
                     reason: Some("positional reason".to_string()),
                 }),
             ),
-            (
-                "@pytest.mark.xfail",
-                Some(PyMark::Xfail { reason: None }),
-            ),
+            ("@pytest.mark.xfail", Some(PyMark::Xfail { reason: None })),
             ("@my_custom_mark", None),
         ];
         for (input, expected) in cases {
@@ -2088,7 +2104,10 @@ def test_plain():
 "#;
         let out = neutralise_pytest_imports(src);
         // Original import line replaced with `pass`.
-        assert!(!out.contains("\nimport pytest"), "still has bare `import pytest`");
+        assert!(
+            !out.contains("\nimport pytest"),
+            "still has bare `import pytest`"
+        );
         assert!(out.contains("pass  # mamba-pytest: pytest import neutralised"));
         // `import sys` is preserved.
         assert!(out.contains("import sys"));

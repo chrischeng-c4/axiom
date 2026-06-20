@@ -1,17 +1,16 @@
 ---
 id: lumen-search-security-ec
-summary: Search security — RBAC-filtered results, pagination limits, and (tracked gaps) query-injection + score-leak across filtering / ranking / pagination.
+summary: Search security — RBAC-filtered results, pagination limits, query-injection safety, and score-leak prevention across filtering / ranking / pagination.
 fill_sections: [e2e-test, tool-contract]
 ---
 
 # EC: Search Security (filtering · ranking · pagination)
 
-Search must enforce access control on results, bound result size, and resist
-adversarial queries. guard owns the static posture scan; the dynamic RBAC/limit
-behavior runs as cargo e2e; meter supplies DoS / resource-abuse evidence. Two
-cells are tracked gaps (no test yet) — defined here so the gate exists. Because
-search is a Service capability, security is production-required, so these gaps
-block production until their tests land.
+Search must enforce access control on results, bound result size, resist
+adversarial queries, and avoid leaking hit existence or scores across isolation
+boundaries. guard owns the static posture scan; the dynamic RBAC/limit and
+query-safety behavior runs as cargo e2e; meter supplies DoS / resource-abuse
+evidence.
 
 ## External Contract
 <!-- type: e2e-test lang: yaml -->
@@ -19,8 +18,8 @@ block production until their tests land.
 ```yaml
 e2e_tests:
   - id: lumen-search-security-access-control
-    capability_id: search
-    claim_id: per-route-rbac-result-filtering
+    capability_id: security-auth
+    claim_id: role-based-authz-matrix-per-route
     contract_id: search-security-rbac-and-limit
     category: security
     test_path: projects/lumen/tests/security_lumen_search_security_access_control.rs
@@ -29,23 +28,23 @@ e2e_tests:
       - "FILTERING: search over a collection the token cannot read returns 403; results never leak rows outside the caller's RBAC scope."
       - "PAGINATION: bulk/index requests over MAX_INDEX_ITEMS return 413; result pages are bounded (cursor), not unbounded."
   - id: lumen-search-security-query-injection
-    capability_id: search
+    capability_id: security-auth
     claim_id: adversarial-query-safety
     contract_id: search-security-injection
     category: security
     test_path: projects/lumen/tests/security_lumen_search_security_query_injection.rs
-    command: ""
+    command: "cargo test -p lumen --test coverage_gaps_e2e search_security_query_injection_rejects_bad_queries -- --nocapture"
     assertions:
-      - "GAP (C2): malformed / oversized / deeply-nested JSON query DSL, special-char search text, and range numeric overflow are rejected safely (no panic, no UB, bounded work). Test not yet written."
+      - "C2: malformed JSON, deeply-nested JSON query DSL, special-char search text, inverted ranges, and range numeric overflow are rejected or evaluated safely (no panic, no 5xx, bounded work)."
   - id: lumen-search-security-result-leak
-    capability_id: search
+    capability_id: security-auth
     claim_id: score-confidentiality
     contract_id: search-security-result-leak
     category: security
     test_path: projects/lumen/tests/security_lumen_search_security_result_leak.rs
-    command: ""
+    command: "cargo test -p lumen --test coverage_gaps_e2e search_security_result_leak_respects_collection_boundaries -- --nocapture"
     assertions:
-      - "GAP (C3): relevance scores and hit existence do not leak documents across collection / RBAC boundaries. Confidentiality contract + test not yet written."
+      - "C3: relevance scores and hit existence do not leak documents across collection boundaries; RBAC denial coverage remains pinned by the authz matrix case."
 ```
 
 ## Tool Contract

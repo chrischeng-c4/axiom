@@ -29,10 +29,13 @@ fn test_recovery_verbs_present() {
         td.find_subcommand("idle").is_none(),
         "td idle was removed with the old .aw/worktrees recovery model"
     );
-    let cb = cmd.find_subcommand("cb").expect("cb namespace");
-    cb.find_subcommand("claim").expect("cb claim");
     assert!(
-        cb.find_subcommand("idle").is_none(),
+        cmd.find_subcommand("cb").is_none(),
+        "cb namespace is retired into td"
+    );
+    td.find_subcommand("code-claim").expect("td code-claim");
+    assert!(
+        cmd.find_subcommand("idle").is_none(),
         "cb idle was removed with the old .aw/worktrees recovery model"
     );
 }
@@ -49,7 +52,7 @@ fn flow_b1_e2e_init_and_sync() {
 }
 
 /// B2 e2e: `aw td claim --from-path <spec.md>` advances phase to
-/// td_reviewed and emits a dispatch envelope to `aw cb gen`.
+/// td_reviewed and emits a dispatch envelope to `aw td gen`.
 /// Requires a temp git repo with the spec on disk.
 #[test]
 #[ignore = "requires temp git repo + git binary; run manually with --ignored"]
@@ -59,13 +62,13 @@ fn flow_b2_e2e_td_claim_from_path() {
     // and dispatch envelope.
 }
 
-/// B3 e2e: `aw cb claim <code-path>` followed by
+/// B3 e2e: `aw td code-claim <code-path>` followed by
 /// `aw td claim <slug>` reaches td_reviewed. Requires fillback
 /// infrastructure (tree-sitter, codebase fixture).
 #[test]
 #[ignore = "requires fillback pipeline + tree-sitter fixtures; run manually with --ignored"]
 fn flow_b3_e2e_cb_then_td_claim() {
-    // Reserved for e2e: cb claim creates a spec from code, then td
+    // Reserved for e2e: td code-claim creates a spec from code, then td
     // claim --from-path on that spec lands at td_reviewed.
 }
 

@@ -227,8 +227,7 @@ fn compatible_release(actual: &pep440::Pep440Version, target_str: &str) -> bool 
     }
 
     // Build the upper bound: drop the last segment, increment the new last.
-    let parsed_segs: Result<Vec<u64>, _> =
-        segs.iter().map(|s| s.parse::<u64>()).collect();
+    let parsed_segs: Result<Vec<u64>, _> = segs.iter().map(|s| s.parse::<u64>()).collect();
     let Ok(mut nums) = parsed_segs else {
         return false;
     };
@@ -363,7 +362,11 @@ mod tests {
     #[test]
     fn happy_path_satisfied() {
         let d = vec![
-            dist("requests", "2.31.0", &["urllib3>=1.21,<3", "charset_normalizer<4"]),
+            dist(
+                "requests",
+                "2.31.0",
+                &["urllib3>=1.21,<3", "charset_normalizer<4"],
+            ),
             dist("urllib3", "2.0.7", &[]),
             dist("charset_normalizer", "3.3.0", &[]),
         ];
@@ -383,10 +386,7 @@ mod tests {
 
     #[test]
     fn flags_version_mismatch() {
-        let d = vec![
-            dist("a", "1.0.0", &["b>=2.0"]),
-            dist("b", "1.0.0", &[]),
-        ];
+        let d = vec![dist("a", "1.0.0", &["b>=2.0"]), dist("b", "1.0.0", &[])];
         let issues = check_consistency(&d);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].kind, CheckIssueKind::VersionMismatch);

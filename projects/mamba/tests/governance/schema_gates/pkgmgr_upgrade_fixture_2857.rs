@@ -132,7 +132,8 @@ fn pkgmgr_upgrade_initial_state_pins_older_version() {
         "`[initial_state].locked_version_must_be` must equal `[package].older_version`"
     );
     assert_eq!(
-        init.get("import_probe_value_must_be").and_then(|v| v.as_str()),
+        init.get("import_probe_value_must_be")
+            .and_then(|v| v.as_str()),
         Some(older),
         "`[initial_state].import_probe_value_must_be` must equal `[package].older_version`"
     );
@@ -173,27 +174,37 @@ fn pkgmgr_upgrade_action_flips_to_newer_version_only() {
         "`[upgrade_action].expected_outcome` must be \"pass\""
     );
     assert_eq!(
-        action.get("expected_exit_code").and_then(|v| v.as_integer()),
+        action
+            .get("expected_exit_code")
+            .and_then(|v| v.as_integer()),
         Some(0),
         "`[upgrade_action].expected_exit_code` must be 0"
     );
     assert_eq!(
-        action.get("locked_version_must_become").and_then(|v| v.as_str()),
+        action
+            .get("locked_version_must_become")
+            .and_then(|v| v.as_str()),
         Some(newer),
         "`[upgrade_action].locked_version_must_become` must equal `[package].newer_version`"
     );
     assert_eq!(
-        action.get("locked_version_must_no_longer_be").and_then(|v| v.as_str()),
+        action
+            .get("locked_version_must_no_longer_be")
+            .and_then(|v| v.as_str()),
         Some(older),
         "`[upgrade_action].locked_version_must_no_longer_be` must equal `[package].older_version`"
     );
     assert_eq!(
-        action.get("must_only_touch_target_package").and_then(|v| v.as_bool()),
+        action
+            .get("must_only_touch_target_package")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[upgrade_action].must_only_touch_target_package` must be true"
     );
     assert_eq!(
-        action.get("import_probe_value_must_be").and_then(|v| v.as_str()),
+        action
+            .get("import_probe_value_must_be")
+            .and_then(|v| v.as_str()),
         Some(newer),
         "`[upgrade_action].import_probe_value_must_be` must equal `[package].newer_version`"
     );
@@ -202,10 +213,13 @@ fn pkgmgr_upgrade_action_flips_to_newer_version_only() {
 #[test]
 fn pkgmgr_upgrade_lockfile_diff_bounds_change_to_target() {
     let doc = crate::common::load_toml(&manifest_path());
-    let diff = doc.get("lockfile_diff_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[lockfile_diff_assertion]` block \
+    let diff = doc
+        .get("lockfile_diff_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[lockfile_diff_assertion]` block \
          (acceptance: \"Upgrade changes only expected package entries.\")",
-    );
+        );
 
     let pkg_name = doc
         .get("package")
@@ -239,12 +253,14 @@ fn pkgmgr_upgrade_lockfile_diff_bounds_change_to_target() {
         "`[lockfile_diff_assertion].must_record_new_version` must equal `[package].newer_version`"
     );
     assert_eq!(
-        diff.get("must_only_change_target_package").and_then(|v| v.as_str()),
+        diff.get("must_only_change_target_package")
+            .and_then(|v| v.as_str()),
         Some(pkg_name),
         "`[lockfile_diff_assertion].must_only_change_target_package` must equal `[package].name`"
     );
     assert_eq!(
-        diff.get("must_not_touch_unrelated").and_then(|v| v.as_str()),
+        diff.get("must_not_touch_unrelated")
+            .and_then(|v| v.as_str()),
         Some(other_name),
         "`[lockfile_diff_assertion].must_not_touch_unrelated` must equal `[other_dependency].name`"
     );
@@ -264,12 +280,19 @@ fn pkgmgr_upgrade_lockfile_diff_bounds_change_to_target() {
 #[test]
 fn pkgmgr_upgrade_output_assertion_names_old_and_new_versions() {
     let doc = crate::common::load_toml(&manifest_path());
-    let out = doc.get("output_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[output_assertion]` block \
+    let out = doc
+        .get("output_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[output_assertion]` block \
          (acceptance: \"Output names old and new versions.\")",
-    );
+        );
 
-    for flag in &["must_name_package", "must_name_old_version", "must_name_new_version"] {
+    for flag in &[
+        "must_name_package",
+        "must_name_old_version",
+        "must_name_new_version",
+    ] {
         assert_eq!(
             out.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -277,7 +300,8 @@ fn pkgmgr_upgrade_output_assertion_names_old_and_new_versions() {
         );
     }
     assert_eq!(
-        out.get("output_records_diff_direction").and_then(|v| v.as_str()),
+        out.get("output_records_diff_direction")
+            .and_then(|v| v.as_str()),
         Some("upgrade"),
         "`[output_assertion].output_records_diff_direction` must be \"upgrade\""
     );
@@ -295,10 +319,13 @@ fn pkgmgr_upgrade_output_assertion_names_old_and_new_versions() {
 #[test]
 fn pkgmgr_upgrade_wrong_change_guard_pins_all_failure_flags() {
     let doc = crate::common::load_toml(&manifest_path());
-    let guard = doc.get("wrong_change_guard").and_then(|v| v.as_table()).expect(
-        "missing `[wrong_change_guard]` block \
+    let guard = doc
+        .get("wrong_change_guard")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[wrong_change_guard]` block \
          (acceptance: \"Wrong or missing version change fails the test.\")",
-    );
+        );
 
     for flag in &[
         "fail_if_lockfile_records_unchanged_as_change",
@@ -387,7 +414,8 @@ fn pkgmgr_upgrade_pins_out_of_scope_per_issue_2857() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("full_resolver_backtracking_policy").and_then(|v| v.as_bool()),
+        oos.get("full_resolver_backtracking_policy")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].full_resolver_backtracking_policy` must be true \
          (issue text: \"Out of scope: full resolver backtracking policy.\")"

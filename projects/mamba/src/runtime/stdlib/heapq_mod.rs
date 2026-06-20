@@ -17,9 +17,9 @@
 //! doesn't exist yet. Will convert to CODEGEN once the standardize
 //! sweep grows an `algorithmic_primitive` section type.
 
-use std::collections::HashMap;
-use super::super::value::MbValue;
 use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use std::collections::HashMap;
 
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
@@ -38,9 +38,8 @@ fn raise_index_error(msg: &str) -> MbValue {
 }
 
 fn is_heap_list(val: MbValue) -> bool {
-    val.as_ptr().is_some_and(|ptr| unsafe {
-        matches!((*ptr).data, ObjData::List(_))
-    })
+    val.as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::List(_)) })
 }
 
 macro_rules! dispatch_heap_unary {
@@ -64,29 +63,24 @@ macro_rules! dispatch_heap_binary {
             // arguments; calling with one (`heappush([])`) raises TypeError,
             // not a silent push-of-None.
             if nargs < 2 {
-                return raise_type_error(concat!(
-                    stringify!($fn), " expected 2 arguments"
-                ));
+                return raise_type_error(concat!(stringify!($fn), " expected 2 arguments"));
             }
             let heap = a.get(0).copied().unwrap_or_else(MbValue::none);
             if !is_heap_list(heap) {
                 return raise_type_error("heap argument must be a list");
             }
-            $fn(
-                heap,
-                a.get(1).copied().unwrap_or_else(MbValue::none),
-            )
+            $fn(heap, a.get(1).copied().unwrap_or_else(MbValue::none))
         }
     };
 }
 
-dispatch_heap_binary!(dispatch_heappush,        mb_heapq_heappush);
-dispatch_heap_unary! (dispatch_heappop,         mb_heapq_heappop);
-dispatch_heap_binary!(dispatch_heappushpop,     mb_heapq_heappushpop);
-dispatch_heap_binary!(dispatch_heapreplace,     mb_heapq_heapreplace);
-dispatch_heap_unary! (dispatch_heapify,         mb_heapq_heapify);
-dispatch_heap_unary! (dispatch_heapify_max,     mb_heapq_heapify_max);
-dispatch_heap_unary! (dispatch_heappop_max,     mb_heapq_heappop_max);
+dispatch_heap_binary!(dispatch_heappush, mb_heapq_heappush);
+dispatch_heap_unary!(dispatch_heappop, mb_heapq_heappop);
+dispatch_heap_binary!(dispatch_heappushpop, mb_heapq_heappushpop);
+dispatch_heap_binary!(dispatch_heapreplace, mb_heapq_heapreplace);
+dispatch_heap_unary!(dispatch_heapify, mb_heapq_heapify);
+dispatch_heap_unary!(dispatch_heapify_max, mb_heapq_heapify_max);
+dispatch_heap_unary!(dispatch_heappop_max, mb_heapq_heappop_max);
 dispatch_heap_binary!(dispatch_heapreplace_max, mb_heapq_heapreplace_max);
 
 /// nlargest(n, iterable, key=None). The optional `key=` keyword is
@@ -126,9 +120,13 @@ unsafe extern "C" fn dispatch_merge(args_ptr: *const MbValue, nargs: usize) -> M
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // A trailing dict positional is the kwargs bundle, not an iterable.
     let (iterables, kwargs): (&[MbValue], MbValue) = match a.last() {
-        Some(last) if last.as_ptr().is_some_and(|ptr| unsafe {
-            matches!((*ptr).data, ObjData::Dict(_))
-        }) => (&a[..a.len() - 1], *last),
+        Some(last)
+            if last
+                .as_ptr()
+                .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) }) =>
+        {
+            (&a[..a.len() - 1], *last)
+        }
         _ => (a, MbValue::none()),
     };
     let key = kwarg(kwargs, "key");
@@ -149,7 +147,11 @@ unsafe extern "C" fn dispatch_merge(args_ptr: *const MbValue, nargs: usize) -> M
     // preserving stability, matching heapq.merge(reverse=True).
     all.sort_by(|x, y| {
         let ord = super::super::builtins::mb_value_cmp_pub(apply_key(key, *x), apply_key(key, *y));
-        if reverse { ord.reverse() } else { ord }
+        if reverse {
+            ord.reverse()
+        } else {
+            ord
+        }
     });
     // Elements are borrowed from the source iterables — retain on the way out.
     MbValue::from_ptr(MbObject::new_list_borrowed(all))
@@ -158,18 +160,18 @@ unsafe extern "C" fn dispatch_merge(args_ptr: *const MbValue, nargs: usize) -> M
 pub fn register() {
     let mut attrs = HashMap::new();
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("heappush",     dispatch_heappush     as usize),
-        ("heappop",      dispatch_heappop      as usize),
-        ("heappushpop",  dispatch_heappushpop  as usize),
-        ("heapreplace",  dispatch_heapreplace  as usize),
-        ("heapify",      dispatch_heapify      as usize),
-        ("nlargest",     dispatch_nlargest     as usize),
-        ("nsmallest",    dispatch_nsmallest    as usize),
-        ("merge",        dispatch_merge        as usize),
+        ("heappush", dispatch_heappush as usize),
+        ("heappop", dispatch_heappop as usize),
+        ("heappushpop", dispatch_heappushpop as usize),
+        ("heapreplace", dispatch_heapreplace as usize),
+        ("heapify", dispatch_heapify as usize),
+        ("nlargest", dispatch_nlargest as usize),
+        ("nsmallest", dispatch_nsmallest as usize),
+        ("merge", dispatch_merge as usize),
         // CPython's private max-heap helpers, exercised by the test-suite
         // and used internally by nlargest/nsmallest with key=.
-        ("_heapify_max",     dispatch_heapify_max     as usize),
-        ("_heappop_max",     dispatch_heappop_max     as usize),
+        ("_heapify_max", dispatch_heapify_max as usize),
+        ("_heappop_max", dispatch_heappop_max as usize),
         ("_heapreplace_max", dispatch_heapreplace_max as usize),
     ];
     for (name, addr) in dispatchers {
@@ -200,9 +202,10 @@ fn lt(a: MbValue, b: MbValue) -> bool {
 /// "reverse": ...}`. This pulls a named value out of that dict, or
 /// returns `None` when the arg isn't a dict / the name is absent.
 fn kwarg(maybe_dict: MbValue, name: &str) -> MbValue {
-    if !maybe_dict.as_ptr().is_some_and(|ptr| unsafe {
-        matches!((*ptr).data, ObjData::Dict(_))
-    }) {
+    if !maybe_dict
+        .as_ptr()
+        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+    {
         return MbValue::none();
     }
     let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
@@ -221,7 +224,11 @@ fn apply_key(key: MbValue, item: MbValue) -> MbValue {
     }
     // Named builtin callable passed as a bare string handle (e.g. `len`).
     if let Some(name) = key.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     }) {
         if let Some(v) = super::super::builtins::call_named_callable_pub(&name, item) {
             return v;
@@ -349,7 +356,9 @@ pub fn mb_heapq_heappop_max(heap: MbValue) -> MbValue {
                     return raise_index_error("index out of range");
                 }
                 let last = items.pop().unwrap();
-                if items.is_empty() { return last; }
+                if items.is_empty() {
+                    return last;
+                }
                 let returnitem = items[0];
                 items[0] = last;
                 sift_up_max(&mut items, 0);
@@ -407,7 +416,9 @@ pub fn mb_heapq_heappop(heap: MbValue) -> MbValue {
                     return raise_index_error("index out of range");
                 }
                 let last = items.pop().unwrap();
-                if items.is_empty() { return last; }
+                if items.is_empty() {
+                    return last;
+                }
                 let returnitem = items[0];
                 items[0] = last;
                 sift_up(&mut items, 0);
@@ -499,11 +510,8 @@ pub fn mb_heapq_nlargest(n: MbValue, iterable: MbValue, kwargs: MbValue) -> MbVa
     let key = kwarg(kwargs, "key");
     let items = super::super::builtins::extract_items(iterable);
     // Decorate with original index so the sort is stable on key ties.
-    let mut decorated: Vec<(MbValue, usize)> = items
-        .into_iter()
-        .enumerate()
-        .map(|(i, v)| (v, i))
-        .collect();
+    let mut decorated: Vec<(MbValue, usize)> =
+        items.into_iter().enumerate().map(|(i, v)| (v, i)).collect();
     // Descending by key; ties broken by ascending original index (stable).
     decorated.sort_by(|(a, ia), (b, ib)| {
         match super::super::builtins::mb_value_cmp_pub(apply_key(key, *b), apply_key(key, *a)) {
@@ -523,11 +531,8 @@ pub fn mb_heapq_nsmallest(n: MbValue, iterable: MbValue, kwargs: MbValue) -> MbV
     let count = n.as_int().unwrap_or(0).max(0) as usize;
     let key = kwarg(kwargs, "key");
     let items = super::super::builtins::extract_items(iterable);
-    let mut decorated: Vec<(MbValue, usize)> = items
-        .into_iter()
-        .enumerate()
-        .map(|(i, v)| (v, i))
-        .collect();
+    let mut decorated: Vec<(MbValue, usize)> =
+        items.into_iter().enumerate().map(|(i, v)| (v, i)).collect();
     // Ascending by key; ties broken by ascending original index (stable).
     decorated.sort_by(|(a, ia), (b, ib)| {
         match super::super::builtins::mb_value_cmp_pub(apply_key(key, *a), apply_key(key, *b)) {
@@ -553,11 +558,19 @@ mod tests {
     }
 
     fn read_list(val: MbValue) -> Vec<i64> {
-        val.as_ptr().map(|ptr| unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().iter().filter_map(|v| v.as_int()).collect()
-            } else { vec![] }
-        }).unwrap_or_default()
+        val.as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    lock.read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|v| v.as_int())
+                        .collect()
+                } else {
+                    vec![]
+                }
+            })
+            .unwrap_or_default()
     }
 
     /// Verify the binary-heap invariant: every node is <= its children.
@@ -565,8 +578,12 @@ mod tests {
         for i in 0..vals.len() {
             let lc = 2 * i + 1;
             let rc = 2 * i + 2;
-            if lc < vals.len() && vals[i] > vals[lc] { return false; }
-            if rc < vals.len() && vals[i] > vals[rc] { return false; }
+            if lc < vals.len() && vals[i] > vals[lc] {
+                return false;
+            }
+            if rc < vals.len() && vals[i] > vals[rc] {
+                return false;
+            }
         }
         true
     }
@@ -588,7 +605,9 @@ mod tests {
         let mut out = Vec::new();
         loop {
             let v = mb_heapq_heappop(h);
-            if v.is_none() { break; }
+            if v.is_none() {
+                break;
+            }
             out.push(v.as_int().unwrap());
         }
         assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);

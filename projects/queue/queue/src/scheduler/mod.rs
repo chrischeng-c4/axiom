@@ -26,12 +26,12 @@ pub mod schedule_monitor;
 
 // Re-exports
 pub use backend::{SchedulerBackend, SchedulingMode, TaskScheduleState};
+#[cfg(feature = "cloud-scheduler")]
+pub use cloud_scheduler_backend::{CloudSchedulerBackend, CloudSchedulerConfig};
 #[cfg(feature = "nats")]
 pub use delay::{DelayedTaskConfig, DelayedTaskScheduler};
 #[cfg(feature = "scheduler")]
 pub use ion_backend::IonSchedulerBackend;
-#[cfg(feature = "cloud-scheduler")]
-pub use cloud_scheduler_backend::{CloudSchedulerBackend, CloudSchedulerConfig};
 #[cfg(feature = "k8s-scheduler")]
 pub use k8s_cronjob_backend::{K8sCronJobBackend, K8sCronJobConfig};
 pub use memory_backend::MemorySchedulerBackend;
@@ -71,7 +71,10 @@ mod backends_gcp_tests {
             credentials_path: None,
         };
         let backend = CloudSchedulerBackend::new(config);
-        assert!(backend.is_ok(), "CloudSchedulerBackend should be constructible when cloud-scheduler feature is enabled");
+        assert!(
+            backend.is_ok(),
+            "CloudSchedulerBackend should be constructible when cloud-scheduler feature is enabled"
+        );
     }
 
     #[test]
@@ -177,8 +180,14 @@ mod backends_gcp_tests {
         let dyn_backend: Box<dyn SchedulerBackend> = Box::new(backend);
 
         // Leader election cycle
-        assert!(dyn_backend.acquire_leader(Duration::from_secs(30)).await.unwrap());
-        assert!(dyn_backend.renew_leader(Duration::from_secs(30)).await.unwrap());
+        assert!(dyn_backend
+            .acquire_leader(Duration::from_secs(30))
+            .await
+            .unwrap());
+        assert!(dyn_backend
+            .renew_leader(Duration::from_secs(30))
+            .await
+            .unwrap());
 
         // Task state operations
         let state = dyn_backend.get_task_state("periodic-task").await.unwrap();
@@ -189,7 +198,10 @@ mod backends_gcp_tests {
             last_run_at: Some(chrono::Utc::now()),
             total_run_count: 1,
         };
-        dyn_backend.set_task_state("periodic-task", &updated).await.unwrap();
+        dyn_backend
+            .set_task_state("periodic-task", &updated)
+            .await
+            .unwrap();
 
         let retrieved = dyn_backend.get_task_state("periodic-task").await.unwrap();
         assert_eq!(retrieved.total_run_count, 1);
@@ -219,21 +231,35 @@ mod backends_gcp_tests {
 
         // Both backends work through the same trait interface
         for (i, backend) in backends.iter().enumerate() {
-            let acquired = backend.acquire_leader(Duration::from_secs(10)).await.unwrap();
+            let acquired = backend
+                .acquire_leader(Duration::from_secs(10))
+                .await
+                .unwrap();
             assert!(acquired, "Backend {} should acquire leadership", i);
 
             let state = backend.get_task_state("shared-task").await.unwrap();
-            assert!(state.enabled, "Backend {} default state should be enabled", i);
+            assert!(
+                state.enabled,
+                "Backend {} default state should be enabled",
+                i
+            );
 
             let new_state = TaskScheduleState {
                 enabled: true,
                 last_run_at: Some(chrono::Utc::now()),
                 total_run_count: 1,
             };
-            backend.set_task_state("shared-task", &new_state).await.unwrap();
+            backend
+                .set_task_state("shared-task", &new_state)
+                .await
+                .unwrap();
 
             let retrieved = backend.get_task_state("shared-task").await.unwrap();
-            assert_eq!(retrieved.total_run_count, 1, "Backend {} state should persist", i);
+            assert_eq!(
+                retrieved.total_run_count, 1,
+                "Backend {} state should persist",
+                i
+            );
 
             backend.release_leader().await.unwrap();
         }
@@ -294,7 +320,10 @@ mod backends_gcp_tests {
         let backend = MemorySchedulerBackend::new();
 
         // Leadership works as expected (acquire -> true, renew while leader -> true)
-        assert!(backend.acquire_leader(Duration::from_secs(10)).await.unwrap());
+        assert!(backend
+            .acquire_leader(Duration::from_secs(10))
+            .await
+            .unwrap());
         assert!(backend.renew_leader(Duration::from_secs(10)).await.unwrap());
 
         // Task state management works
@@ -405,6 +434,9 @@ mod mode_selection_tests {
         let config = PeriodicSchedulerConfig::default();
         assert_eq!(config.leader_ttl, std::time::Duration::from_secs(15));
         assert_eq!(config.follower_sleep, std::time::Duration::from_secs(5));
-        assert_eq!(config.leader_renew_interval, std::time::Duration::from_secs(5));
+        assert_eq!(
+            config.leader_renew_interval,
+            std::time::Duration::from_secs(5)
+        );
     }
 }

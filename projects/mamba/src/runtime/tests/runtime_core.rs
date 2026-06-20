@@ -1,11 +1,10 @@
 #![cfg(test)]
 
+use crate::runtime::rc::MbObject;
 /// Integration tests for the Mamba runtime modules.
 /// Tests string_ops, list_ops, dict_ops, tuple_ops, exception, class, iter,
 /// generator, closure, module, and async_rt.
-
 use crate::runtime::value::MbValue;
-use crate::runtime::rc::MbObject;
 
 // ── String Operations (#284) ──
 
@@ -57,8 +56,14 @@ fn test_list_operations() {
     mb_list_append(list, MbValue::from_int(2));
     mb_list_append(list, MbValue::from_int(3));
     assert_eq!(mb_list_len(list).as_int(), Some(3));
-    assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(1));
-    assert_eq!(mb_list_getitem(list, MbValue::from_int(2)).as_int(), Some(3));
+    assert_eq!(
+        mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+        Some(1)
+    );
+    assert_eq!(
+        mb_list_getitem(list, MbValue::from_int(2)).as_int(),
+        Some(3)
+    );
 }
 
 #[test]
@@ -78,8 +83,14 @@ fn test_list_contains() {
     use crate::runtime::list_ops::*;
     let list = mb_list_new();
     mb_list_append(list, MbValue::from_int(42));
-    assert_eq!(mb_list_contains(list, MbValue::from_int(42)).as_bool(), Some(true));
-    assert_eq!(mb_list_contains(list, MbValue::from_int(99)).as_bool(), Some(false));
+    assert_eq!(
+        mb_list_contains(list, MbValue::from_int(42)).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_list_contains(list, MbValue::from_int(99)).as_bool(),
+        Some(false)
+    );
 }
 
 #[test]
@@ -90,9 +101,18 @@ fn test_list_sort() {
     mb_list_append(list, MbValue::from_int(1));
     mb_list_append(list, MbValue::from_int(2));
     mb_list_sort(list);
-    assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(1));
-    assert_eq!(mb_list_getitem(list, MbValue::from_int(1)).as_int(), Some(2));
-    assert_eq!(mb_list_getitem(list, MbValue::from_int(2)).as_int(), Some(3));
+    assert_eq!(
+        mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+        Some(1)
+    );
+    assert_eq!(
+        mb_list_getitem(list, MbValue::from_int(1)).as_int(),
+        Some(2)
+    );
+    assert_eq!(
+        mb_list_getitem(list, MbValue::from_int(2)).as_int(),
+        Some(3)
+    );
 }
 
 // ── Dict Operations (#285) ──
@@ -133,8 +153,14 @@ fn test_tuple_operations() {
     ]);
     assert_eq!(mb_tuple_len(t).as_int(), Some(3));
     assert_eq!(mb_tuple_getitem(t, MbValue::from_int(0)).as_int(), Some(1));
-    assert_eq!(mb_tuple_contains(t, MbValue::from_int(2)).as_bool(), Some(true));
-    assert_eq!(mb_tuple_contains(t, MbValue::from_int(9)).as_bool(), Some(false));
+    assert_eq!(
+        mb_tuple_contains(t, MbValue::from_int(2)).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_tuple_contains(t, MbValue::from_int(9)).as_bool(),
+        Some(false)
+    );
 }
 
 // ── Exception System (#283) ──
@@ -296,11 +322,20 @@ fn test_closure_captures() {
     ]));
     let closure = mb_closure_new(name, func, captures);
 
-    assert_eq!(mb_closure_get_capture(closure, MbValue::from_int(0)).as_int(), Some(10));
-    assert_eq!(mb_closure_get_capture(closure, MbValue::from_int(1)).as_int(), Some(20));
+    assert_eq!(
+        mb_closure_get_capture(closure, MbValue::from_int(0)).as_int(),
+        Some(10)
+    );
+    assert_eq!(
+        mb_closure_get_capture(closure, MbValue::from_int(1)).as_int(),
+        Some(20)
+    );
 
     mb_closure_set_capture(closure, MbValue::from_int(0), MbValue::from_int(99));
-    assert_eq!(mb_closure_get_capture(closure, MbValue::from_int(0)).as_int(), Some(99));
+    assert_eq!(
+        mb_closure_get_capture(closure, MbValue::from_int(0)).as_int(),
+        Some(99)
+    );
 
     mb_closure_release(closure);
 }
@@ -361,9 +396,18 @@ fn test_isinstance_primitives() {
     let float_type = MbValue::from_ptr(MbObject::new_str("float".to_string()));
     let bool_type = MbValue::from_ptr(MbObject::new_str("bool".to_string()));
 
-    assert_eq!(mb_isinstance(MbValue::from_int(42), int_type).as_bool(), Some(true));
-    assert_eq!(mb_isinstance(MbValue::from_float(3.14), float_type).as_bool(), Some(true));
-    assert_eq!(mb_isinstance(MbValue::from_bool(true), bool_type).as_bool(), Some(true));
+    assert_eq!(
+        mb_isinstance(MbValue::from_int(42), int_type).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_isinstance(MbValue::from_float(3.14), float_type).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_isinstance(MbValue::from_bool(true), bool_type).as_bool(),
+        Some(true)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -385,13 +429,15 @@ unsafe fn extract_str(val: MbValue) -> Option<String> {
 }
 
 unsafe fn extract_list(val: MbValue) -> Vec<MbValue> {
-    val.as_ptr().map(|ptr| {
-        if let crate::runtime::rc::ObjData::List(ref lock) = (*ptr).data {
-            lock.read().unwrap().to_vec()
-        } else {
-            vec![]
-        }
-    }).unwrap_or_default()
+    val.as_ptr()
+        .map(|ptr| {
+            if let crate::runtime::rc::ObjData::List(ref lock) = (*ptr).data {
+                lock.read().unwrap().to_vec()
+            } else {
+                vec![]
+            }
+        })
+        .unwrap_or_default()
 }
 
 // ── mb_call_method dispatch (#380) ──
@@ -400,7 +446,9 @@ unsafe fn extract_list(val: MbValue) -> Vec<MbValue> {
 fn test_call_method_str_upper() {
     use crate::runtime::class::mb_call_method;
     let result = mb_call_method(s("hello"), s("upper"), MbValue::none());
-    unsafe { assert_eq!(extract_str(result), Some("HELLO".to_string())); }
+    unsafe {
+        assert_eq!(extract_str(result), Some("HELLO".to_string()));
+    }
 }
 
 #[test]
@@ -418,7 +466,7 @@ fn test_call_method_str_split() {
 #[test]
 fn test_call_method_list_append() {
     use crate::runtime::class::mb_call_method;
-    use crate::runtime::list_ops::{mb_list_new, mb_list_len};
+    use crate::runtime::list_ops::{mb_list_len, mb_list_new};
     let list = mb_list_new();
     let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(42)]));
     mb_call_method(list, s("append"), args);
@@ -453,9 +501,11 @@ fn test_call_method_primitive_raises_attr_error() {
 
 #[test]
 fn test_builtin_min_max() {
-    use crate::runtime::builtins::{mb_min, mb_max};
+    use crate::runtime::builtins::{mb_max, mb_min};
     let list = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(3), MbValue::from_int(1), MbValue::from_int(2),
+        MbValue::from_int(3),
+        MbValue::from_int(1),
+        MbValue::from_int(2),
     ]));
     assert_eq!(mb_min(list).as_int(), Some(1));
     assert_eq!(mb_max(list).as_int(), Some(3));
@@ -465,7 +515,9 @@ fn test_builtin_min_max() {
 fn test_builtin_sum() {
     use crate::runtime::builtins::mb_sum;
     let list = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+        MbValue::from_int(1),
+        MbValue::from_int(2),
+        MbValue::from_int(3),
     ]));
     assert_eq!(mb_sum(list).as_int(), Some(6));
 }
@@ -474,7 +526,9 @@ fn test_builtin_sum() {
 fn test_builtin_sorted() {
     use crate::runtime::builtins::mb_sorted;
     let list = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(3), MbValue::from_int(1), MbValue::from_int(2),
+        MbValue::from_int(3),
+        MbValue::from_int(1),
+        MbValue::from_int(2),
     ]));
     unsafe {
         let items = extract_list(mb_sorted(list, MbValue::none()));
@@ -488,8 +542,14 @@ fn test_builtin_sorted() {
 fn test_builtin_repr() {
     use crate::runtime::builtins::mb_repr;
     unsafe {
-        assert_eq!(extract_str(mb_repr(MbValue::from_int(42))), Some("42".to_string()));
-        assert_eq!(extract_str(mb_repr(s("hello"))), Some("'hello'".to_string()));
+        assert_eq!(
+            extract_str(mb_repr(MbValue::from_int(42))),
+            Some("42".to_string())
+        );
+        assert_eq!(
+            extract_str(mb_repr(s("hello"))),
+            Some("'hello'".to_string())
+        );
     }
 }
 
@@ -497,43 +557,82 @@ fn test_builtin_repr() {
 fn test_builtin_chr_ord() {
     use crate::runtime::builtins::{mb_chr, mb_ord};
     unsafe {
-        assert_eq!(extract_str(mb_chr(MbValue::from_int(65))), Some("A".to_string()));
+        assert_eq!(
+            extract_str(mb_chr(MbValue::from_int(65))),
+            Some("A".to_string())
+        );
     }
     assert_eq!(mb_ord(s("A")).as_int(), Some(65));
 }
 
 #[test]
 fn test_builtin_hex_oct_bin() {
-    use crate::runtime::builtins::{mb_hex, mb_oct, mb_bin};
+    use crate::runtime::builtins::{mb_bin, mb_hex, mb_oct};
     unsafe {
-        assert_eq!(extract_str(mb_hex(MbValue::from_int(255))), Some("0xff".to_string()));
-        assert_eq!(extract_str(mb_oct(MbValue::from_int(8))), Some("0o10".to_string()));
-        assert_eq!(extract_str(mb_bin(MbValue::from_int(10))), Some("0b1010".to_string()));
+        assert_eq!(
+            extract_str(mb_hex(MbValue::from_int(255))),
+            Some("0xff".to_string())
+        );
+        assert_eq!(
+            extract_str(mb_oct(MbValue::from_int(8))),
+            Some("0o10".to_string())
+        );
+        assert_eq!(
+            extract_str(mb_bin(MbValue::from_int(10))),
+            Some("0b1010".to_string())
+        );
     }
 }
 
 #[test]
 fn test_builtin_pow() {
     use crate::runtime::builtins::mb_pow;
-    assert_eq!(mb_pow(MbValue::from_int(2), MbValue::from_int(10)).as_int(), Some(1024));
+    assert_eq!(
+        mb_pow(MbValue::from_int(2), MbValue::from_int(10)).as_int(),
+        Some(1024)
+    );
 }
 
 #[test]
 fn test_builtin_floordiv() {
     use crate::runtime::builtins::mb_floordiv;
-    assert_eq!(mb_floordiv(MbValue::from_int(7), MbValue::from_int(2)).as_int(), Some(3));
-    assert_eq!(mb_floordiv(MbValue::from_int(-7), MbValue::from_int(2)).as_int(), Some(-4));
+    assert_eq!(
+        mb_floordiv(MbValue::from_int(7), MbValue::from_int(2)).as_int(),
+        Some(3)
+    );
+    assert_eq!(
+        mb_floordiv(MbValue::from_int(-7), MbValue::from_int(2)).as_int(),
+        Some(-4)
+    );
 }
 
 #[test]
 fn test_builtin_comparisons() {
-    use crate::runtime::builtins::{mb_gt, mb_le, mb_ge, mb_ne};
-    assert_eq!(mb_gt(MbValue::from_int(5), MbValue::from_int(3)).as_bool(), Some(true));
-    assert_eq!(mb_le(MbValue::from_int(3), MbValue::from_int(5)).as_bool(), Some(true));
-    assert_eq!(mb_le(MbValue::from_int(5), MbValue::from_int(5)).as_bool(), Some(true));
-    assert_eq!(mb_ge(MbValue::from_int(5), MbValue::from_int(5)).as_bool(), Some(true));
-    assert_eq!(mb_ne(MbValue::from_int(1), MbValue::from_int(2)).as_bool(), Some(true));
-    assert_eq!(mb_ne(MbValue::from_int(1), MbValue::from_int(1)).as_bool(), Some(false));
+    use crate::runtime::builtins::{mb_ge, mb_gt, mb_le, mb_ne};
+    assert_eq!(
+        mb_gt(MbValue::from_int(5), MbValue::from_int(3)).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_le(MbValue::from_int(3), MbValue::from_int(5)).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_le(MbValue::from_int(5), MbValue::from_int(5)).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_ge(MbValue::from_int(5), MbValue::from_int(5)).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_ne(MbValue::from_int(1), MbValue::from_int(2)).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_ne(MbValue::from_int(1), MbValue::from_int(1)).as_bool(),
+        Some(false)
+    );
 }
 
 // ── Exception hierarchy (#381) ──
@@ -542,25 +641,43 @@ fn test_builtin_comparisons() {
 fn test_exception_hierarchy_matching() {
     use crate::runtime::exception::mb_exception_matches;
     let exc = crate::runtime::exception::mb_exception_new(s("IndexError"), s("out of range"));
-    assert_eq!(mb_exception_matches(exc, s("IndexError")).as_bool(), Some(true));
-    assert_eq!(mb_exception_matches(exc, s("LookupError")).as_bool(), Some(true));
-    assert_eq!(mb_exception_matches(exc, s("Exception")).as_bool(), Some(true));
-    assert_eq!(mb_exception_matches(exc, s("ValueError")).as_bool(), Some(false));
+    assert_eq!(
+        mb_exception_matches(exc, s("IndexError")).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_exception_matches(exc, s("LookupError")).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_exception_matches(exc, s("Exception")).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        mb_exception_matches(exc, s("ValueError")).as_bool(),
+        Some(false)
+    );
 }
 
 #[test]
 fn test_exception_zero_division() {
     use crate::runtime::exception;
     let exc = exception::mb_zero_division_error();
-    assert_eq!(exception::mb_exception_matches(exc, s("ZeroDivisionError")).as_bool(), Some(true));
-    assert_eq!(exception::mb_exception_matches(exc, s("ArithmeticError")).as_bool(), Some(true));
+    assert_eq!(
+        exception::mb_exception_matches(exc, s("ZeroDivisionError")).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        exception::mb_exception_matches(exc, s("ArithmeticError")).as_bool(),
+        Some(true)
+    );
 }
 
 // ── Iterator builtins (#378 R1) ──
 
 #[test]
 fn test_enumerate_iterator() {
-    use crate::runtime::iter::{mb_enumerate, mb_next, mb_iter_release};
+    use crate::runtime::iter::{mb_enumerate, mb_iter_release, mb_next};
     use crate::runtime::rc::ObjData;
     let list = MbValue::from_ptr(MbObject::new_list(vec![s("a"), s("b")]));
     let it = mb_enumerate(list, MbValue::from_int(0));
@@ -575,9 +692,12 @@ fn test_enumerate_iterator() {
 
 #[test]
 fn test_zip_iterator() {
-    use crate::runtime::iter::{mb_zip, mb_next, mb_iter_release};
+    use crate::runtime::iter::{mb_iter_release, mb_next, mb_zip};
     use crate::runtime::rc::ObjData;
-    let a = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(2)]));
+    let a = MbValue::from_ptr(MbObject::new_list(vec![
+        MbValue::from_int(1),
+        MbValue::from_int(2),
+    ]));
     let b = MbValue::from_ptr(MbObject::new_list(vec![s("a"), s("b")]));
     let it = mb_zip(a, b);
     let first = mb_next(it);
@@ -592,9 +712,11 @@ fn test_zip_iterator() {
 
 #[test]
 fn test_reversed_iterator() {
-    use crate::runtime::iter::{mb_reversed, mb_next, mb_iter_release};
+    use crate::runtime::iter::{mb_iter_release, mb_next, mb_reversed};
     let list = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+        MbValue::from_int(1),
+        MbValue::from_int(2),
+        MbValue::from_int(3),
     ]));
     let it = mb_reversed(list);
     assert_eq!(mb_next(it).as_int(), Some(3));
@@ -622,7 +744,9 @@ fn test_file_io_write_and_read() {
     // Read
     let fh2 = file_io::mb_open(s(&path_str), s("r"));
     let content = file_io::mb_file_read(fh2);
-    unsafe { assert_eq!(extract_str(content), Some("hello\nworld\n".to_string())); }
+    unsafe {
+        assert_eq!(extract_str(content), Some("hello\nworld\n".to_string()));
+    }
     file_io::mb_file_close(fh2);
 
     let _ = std::fs::remove_file(&tmp);
@@ -630,7 +754,7 @@ fn test_file_io_write_and_read() {
 
 #[test]
 fn test_file_io_not_found() {
-    use crate::runtime::{file_io, exception};
+    use crate::runtime::{exception, file_io};
     exception::mb_clear_exception();
     let result = file_io::mb_open(s("/nonexistent/path.txt"), s("r"));
     assert!(result.is_none());
@@ -640,7 +764,7 @@ fn test_file_io_not_found() {
 
 #[test]
 fn test_file_io_read_after_close() {
-    use crate::runtime::{file_io, exception};
+    use crate::runtime::{exception, file_io};
     let tmp = std::env::temp_dir().join("mamba_p0_close_test.txt");
     let path_str = tmp.to_string_lossy().to_string();
 
@@ -664,20 +788,37 @@ fn test_file_io_read_after_close() {
 fn test_str_dispatch_find_replace() {
     use crate::runtime::string_ops::dispatch_str_method;
     let args_find = MbValue::from_ptr(MbObject::new_list(vec![s("world")]));
-    assert_eq!(dispatch_str_method("find", s("hello world"), args_find).as_int(), Some(6));
+    assert_eq!(
+        dispatch_str_method("find", s("hello world"), args_find).as_int(),
+        Some(6)
+    );
 
     let args_replace = MbValue::from_ptr(MbObject::new_list(vec![s("world"), s("rust")]));
     let result = dispatch_str_method("replace", s("hello world"), args_replace);
-    unsafe { assert_eq!(extract_str(result), Some("hello rust".to_string())); }
+    unsafe {
+        assert_eq!(extract_str(result), Some("hello rust".to_string()));
+    }
 }
 
 #[test]
 fn test_str_dispatch_predicates() {
     use crate::runtime::string_ops::dispatch_str_method;
-    assert_eq!(dispatch_str_method("isdigit", s("123"), MbValue::none()).as_bool(), Some(true));
-    assert_eq!(dispatch_str_method("isalpha", s("abc"), MbValue::none()).as_bool(), Some(true));
-    assert_eq!(dispatch_str_method("isupper", s("ABC"), MbValue::none()).as_bool(), Some(true));
-    assert_eq!(dispatch_str_method("islower", s("abc"), MbValue::none()).as_bool(), Some(true));
+    assert_eq!(
+        dispatch_str_method("isdigit", s("123"), MbValue::none()).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        dispatch_str_method("isalpha", s("abc"), MbValue::none()).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        dispatch_str_method("isupper", s("ABC"), MbValue::none()).as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        dispatch_str_method("islower", s("abc"), MbValue::none()).as_bool(),
+        Some(true)
+    );
 }
 
 // ── List dispatch method tests (#376) ──
@@ -685,11 +826,21 @@ fn test_str_dispatch_predicates() {
 #[test]
 fn test_list_dispatch_sort_and_reverse() {
     use crate::runtime::list_ops::*;
-    let list = mb_list_from(vec![MbValue::from_int(3), MbValue::from_int(1), MbValue::from_int(2)]);
+    let list = mb_list_from(vec![
+        MbValue::from_int(3),
+        MbValue::from_int(1),
+        MbValue::from_int(2),
+    ]);
     dispatch_list_method("sort", list, MbValue::none());
-    assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(1));
+    assert_eq!(
+        mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+        Some(1)
+    );
     dispatch_list_method("reverse", list, MbValue::none());
-    assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(3));
+    assert_eq!(
+        mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+        Some(3)
+    );
 }
 
 // ── Dict dispatch method tests (#377) ──
@@ -714,7 +865,10 @@ fn test_string_concat_content() {
     // mb_str_concat must produce the correct concatenated string
     use crate::runtime::string_ops::mb_str_concat;
     let result = mb_str_concat(s("hello"), s(" world"));
-    assert_eq!(unsafe { extract_str(result) }, Some("hello world".to_string()));
+    assert_eq!(
+        unsafe { extract_str(result) },
+        Some("hello world".to_string())
+    );
 }
 
 #[test]

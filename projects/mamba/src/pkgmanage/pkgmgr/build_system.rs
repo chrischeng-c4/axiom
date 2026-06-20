@@ -58,10 +58,12 @@ pub fn parse_build_system(src: &str) -> Result<BuildSystem, IndexError> {
     };
 
     // `requires` is required when `[build-system]` is present.
-    let requires_v = table.get("requires").ok_or_else(|| IndexError::ParseError {
-        url: "pyproject.toml".into(),
-        detail: "[build-system] is missing the required 'requires' key".into(),
-    })?;
+    let requires_v = table
+        .get("requires")
+        .ok_or_else(|| IndexError::ParseError {
+            url: "pyproject.toml".into(),
+            detail: "[build-system] is missing the required 'requires' key".into(),
+        })?;
     let requires = string_array(requires_v, "[build-system].requires")?;
 
     let build_backend = match table.get("build-backend") {
@@ -130,7 +132,10 @@ backend-path = [\"src\", \"vendor\"]
         let bs = parse_build_system(src).unwrap();
         assert_eq!(bs.requires, vec!["hatchling>=1.18", "hatch-vcs"]);
         assert_eq!(bs.build_backend.as_deref(), Some("hatchling.build"));
-        assert_eq!(bs.backend_path.as_deref(), Some(&["src".into(), "vendor".into()][..]));
+        assert_eq!(
+            bs.backend_path.as_deref(),
+            Some(&["src".into(), "vendor".into()][..])
+        );
     }
 
     #[test]
@@ -183,28 +188,23 @@ backend-path = [\"src\", \"vendor\"]
 
     #[test]
     fn build_backend_not_a_string_rejected() {
-        let err = parse_build_system(
-            "[build-system]\nrequires = [\"x\"]\nbuild-backend = 1\n",
-        )
-        .unwrap_err();
+        let err = parse_build_system("[build-system]\nrequires = [\"x\"]\nbuild-backend = 1\n")
+            .unwrap_err();
         assert!(err.to_string().contains("build-backend must be a string"));
     }
 
     #[test]
     fn backend_path_not_an_array_rejected() {
-        let err = parse_build_system(
-            "[build-system]\nrequires = [\"x\"]\nbackend-path = \"src\"\n",
-        )
-        .unwrap_err();
+        let err =
+            parse_build_system("[build-system]\nrequires = [\"x\"]\nbackend-path = \"src\"\n")
+                .unwrap_err();
         assert!(err.to_string().contains("backend-path must be an array"));
     }
 
     #[test]
     fn backend_path_with_non_string_rejected() {
-        let err = parse_build_system(
-            "[build-system]\nrequires = [\"x\"]\nbackend-path = [1, 2]\n",
-        )
-        .unwrap_err();
+        let err = parse_build_system("[build-system]\nrequires = [\"x\"]\nbackend-path = [1, 2]\n")
+            .unwrap_err();
         assert!(err.to_string().contains("backend-path[0]"));
     }
 

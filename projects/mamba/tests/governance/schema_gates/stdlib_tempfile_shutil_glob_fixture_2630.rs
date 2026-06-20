@@ -34,11 +34,20 @@ fn manifest_path() -> PathBuf {
 #[test]
 fn header_is_well_formed() {
     let doc = crate::common::load_toml(&manifest_path());
-    assert_eq!(doc.get("fixture").and_then(|v| v.as_str()), Some("stdlib_tempfile_shutil_glob_behavioral"));
+    assert_eq!(
+        doc.get("fixture").and_then(|v| v.as_str()),
+        Some("stdlib_tempfile_shutil_glob_behavioral")
+    );
     assert_eq!(doc.get("issue").and_then(|v| v.as_integer()), Some(2630));
-    assert_eq!(doc.get("parent_issue").and_then(|v| v.as_integer()), Some(2529));
+    assert_eq!(
+        doc.get("parent_issue").and_then(|v| v.as_integer()),
+        Some(2529)
+    );
     assert_eq!(doc.get("profile").and_then(|v| v.as_str()), Some("stdlib"));
-    assert_eq!(doc.get("family").and_then(|v| v.as_str()), Some("stdlib_tempfile_shutil_glob_behavioral"));
+    assert_eq!(
+        doc.get("family").and_then(|v| v.as_str()),
+        Some("stdlib_tempfile_shutil_glob_behavioral")
+    );
     assert_eq!(doc.get("network").and_then(|v| v.as_str()), Some("offline"));
 }
 
@@ -59,18 +68,30 @@ fn isolation_pins_no_global_state() {
 #[test]
 fn python_target_is_pinned_to_3_12() {
     let doc = crate::common::load_toml(&manifest_path());
-    let p = doc.get("python_target").and_then(|v| v.as_table()).expect("[python_target] missing");
+    let p = doc
+        .get("python_target")
+        .and_then(|v| v.as_table())
+        .expect("[python_target] missing");
     assert_eq!(p.get("python_major").and_then(|v| v.as_integer()), Some(3));
     assert_eq!(p.get("python_minor").and_then(|v| v.as_integer()), Some(12));
-    assert_eq!(p.get("must_be_python_3_12").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        p.get("must_be_python_3_12").and_then(|v| v.as_bool()),
+        Some(true)
+    );
 }
 
 #[test]
 fn surface_covers_tempfile_shutil_glob() {
     let doc = crate::common::load_toml(&manifest_path());
-    let s = doc.get("surface").and_then(|v| v.as_table()).expect("[surface] missing");
-    let modules: Vec<&str> = s.get("covered_modules").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let s = doc
+        .get("surface")
+        .and_then(|v| v.as_table())
+        .expect("[surface] missing");
+    let modules: Vec<&str> = s
+        .get("covered_modules")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for m in &["tempfile", "shutil", "glob"] {
         assert!(modules.contains(m), "covered_modules must include {m}");
     }
@@ -84,29 +105,69 @@ fn surface_covers_tempfile_shutil_glob() {
         "must_cover_file_creation",
         "must_cover_cleanup",
     ] {
-        assert_eq!(s.get(*f).and_then(|v| v.as_bool()), Some(true), "{f} must be true");
+        assert_eq!(
+            s.get(*f).and_then(|v| v.as_bool()),
+            Some(true),
+            "{f} must be true"
+        );
     }
 }
 
 #[test]
 fn deterministic_sample_covers_create_copy_glob_cleanup() {
     let doc = crate::common::load_toml(&manifest_path());
-    let d = doc.get("deterministic_sample").and_then(|v| v.as_table()).expect("[deterministic_sample] missing");
-    assert_eq!(d.get("must_be_deterministic").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(d.get("must_isolate_each_case_in_its_own_tempdir").and_then(|v| v.as_bool()), Some(true));
-    let max = d.get("sample_max_records").and_then(|v| v.as_integer()).unwrap();
-    let min = d.get("sample_min_records").and_then(|v| v.as_integer()).unwrap();
+    let d = doc
+        .get("deterministic_sample")
+        .and_then(|v| v.as_table())
+        .expect("[deterministic_sample] missing");
+    assert_eq!(
+        d.get("must_be_deterministic").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        d.get("must_isolate_each_case_in_its_own_tempdir")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    let max = d
+        .get("sample_max_records")
+        .and_then(|v| v.as_integer())
+        .unwrap();
+    let min = d
+        .get("sample_min_records")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert!(min >= 1 && max >= min, "sample bounds must be sane");
-    assert!(max <= 64, "sample_max_records must stay small for per-run check");
+    assert!(
+        max <= 64,
+        "sample_max_records must stay small for per-run check"
+    );
 
     let specs: &[(&str, &[&str])] = &[
         ("file_creation_cases", &["relative_path", "contents"]),
-        ("copy_cases", &["source_relative_path", "destination_relative_path", "expected_destination_contents"]),
-        ("glob_cases", &["pattern", "created_relative_paths", "expected_match_relative_paths"]),
+        (
+            "copy_cases",
+            &[
+                "source_relative_path",
+                "destination_relative_path",
+                "expected_destination_contents",
+            ],
+        ),
+        (
+            "glob_cases",
+            &[
+                "pattern",
+                "created_relative_paths",
+                "expected_match_relative_paths",
+            ],
+        ),
         ("cleanup_cases", &["relative_paths_to_remove"]),
     ];
     for (key, fields) in specs {
-        let arr = doc.get(*key).and_then(|v| v.as_array()).unwrap_or_else(|| panic!("[[{key}]] missing"));
+        let arr = doc
+            .get(*key)
+            .and_then(|v| v.as_array())
+            .unwrap_or_else(|| panic!("[[{key}]] missing"));
         assert!(!arr.is_empty(), "[[{key}]] must not be empty");
         for c in arr {
             let t = c.as_table().expect("case must be a table");
@@ -121,10 +182,13 @@ fn deterministic_sample_covers_create_copy_glob_cleanup() {
 #[test]
 fn fixture_uses_only_test_temp_directories() {
     let doc = crate::common::load_toml(&manifest_path());
-    let t = doc.get("temp_only_filesystem_contract").and_then(|v| v.as_table()).expect(
-        "[temp_only_filesystem_contract] missing — acceptance: \
+    let t = doc
+        .get("temp_only_filesystem_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "[temp_only_filesystem_contract] missing — acceptance: \
          \"Fixture uses only test temp directories.\"",
-    );
+        );
     for k in &[
         "must_root_all_writes_under_a_per_run_tempdir",
         "must_use_tempfile_temporary_directory_or_mkdtemp",
@@ -133,47 +197,83 @@ fn fixture_uses_only_test_temp_directories() {
         "forbid_assertions_on_absolute_tempdir_path",
         "tempdir_prefix_must_be_deterministic",
     ] {
-        assert_eq!(t.get(*k).and_then(|v| v.as_bool()), Some(true), "{k} must be true");
+        assert_eq!(
+            t.get(*k).and_then(|v| v.as_bool()),
+            Some(true),
+            "{k} must be true"
+        );
     }
-    assert_eq!(t.get("tempdir_prefix_value").and_then(|v| v.as_str()), Some("mamba_stdlib_2630_"));
-    let exit = t.get("write_outside_tempdir_exit_code").and_then(|v| v.as_integer()).unwrap();
+    assert_eq!(
+        t.get("tempdir_prefix_value").and_then(|v| v.as_str()),
+        Some("mamba_stdlib_2630_")
+    );
+    let exit = t
+        .get("write_outside_tempdir_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(exit, 81);
-    assert_eq!(t.get("write_outside_tempdir_failure_kind").and_then(|v| v.as_str()), Some("tempfile_write_escaped_tempdir"));
+    assert_eq!(
+        t.get("write_outside_tempdir_failure_kind")
+            .and_then(|v| v.as_str()),
+        Some("tempfile_write_escaped_tempdir")
+    );
 }
 
 // Acceptance: "Fixture fails on wrong glob or copy behavior."
 #[test]
 fn fixture_fails_on_wrong_glob_or_copy_behavior() {
     let doc = crate::common::load_toml(&manifest_path());
-    let f = doc.get("failure_on_incorrect_behavior_contract").and_then(|v| v.as_table()).expect(
-        "[failure_on_incorrect_behavior_contract] missing — acceptance: \
+    let f = doc
+        .get("failure_on_incorrect_behavior_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "[failure_on_incorrect_behavior_contract] missing — acceptance: \
          \"Fixture fails on wrong glob or copy behavior.\"",
-    );
+        );
     for k in &[
         "must_fail_on_incorrect_glob_match",
         "must_fail_on_incorrect_copy_contents",
         "must_fail_on_incorrect_copy_destination_existence",
         "must_distinguish_glob_from_copy_mismatch",
     ] {
-        assert_eq!(f.get(*k).and_then(|v| v.as_bool()), Some(true), "{k} must be true");
+        assert_eq!(
+            f.get(*k).and_then(|v| v.as_bool()),
+            Some(true),
+            "{k} must be true"
+        );
     }
-    let glob_exit = f.get("glob_mismatch_exit_code").and_then(|v| v.as_integer()).unwrap();
-    let copy_exit = f.get("copy_mismatch_exit_code").and_then(|v| v.as_integer()).unwrap();
+    let glob_exit = f
+        .get("glob_mismatch_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
+    let copy_exit = f
+        .get("copy_mismatch_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(glob_exit, 82);
     assert_eq!(copy_exit, 83);
     assert_ne!(glob_exit, copy_exit, "glob and copy exit codes must differ");
-    assert_eq!(f.get("glob_mismatch_failure_kind").and_then(|v| v.as_str()), Some("glob_match_set_mismatch"));
-    assert_eq!(f.get("copy_mismatch_failure_kind").and_then(|v| v.as_str()), Some("shutil_copy_mismatch"));
+    assert_eq!(
+        f.get("glob_mismatch_failure_kind").and_then(|v| v.as_str()),
+        Some("glob_match_set_mismatch")
+    );
+    assert_eq!(
+        f.get("copy_mismatch_failure_kind").and_then(|v| v.as_str()),
+        Some("shutil_copy_mismatch")
+    );
 }
 
 // Acceptance: "Cleanup does not depend on user filesystem state."
 #[test]
 fn cleanup_does_not_depend_on_user_filesystem_state() {
     let doc = crate::common::load_toml(&manifest_path());
-    let c = doc.get("cleanup_independence_contract").and_then(|v| v.as_table()).expect(
-        "[cleanup_independence_contract] missing — acceptance: \
+    let c = doc
+        .get("cleanup_independence_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "[cleanup_independence_contract] missing — acceptance: \
          \"Cleanup does not depend on user filesystem state.\"",
-    );
+        );
     for k in &[
         "must_clean_up_inside_per_run_tempdir_only",
         "must_succeed_without_pre_existing_user_files",
@@ -183,40 +283,80 @@ fn cleanup_does_not_depend_on_user_filesystem_state() {
         "forbid_calls_to_current_working_directory_paths",
         "forbid_environment_dependent_paths",
     ] {
-        assert_eq!(c.get(*k).and_then(|v| v.as_bool()), Some(true), "{k} must be true");
+        assert_eq!(
+            c.get(*k).and_then(|v| v.as_bool()),
+            Some(true),
+            "{k} must be true"
+        );
     }
-    let forbidden: Vec<&str> = c.get("forbidden_environment_variables").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let forbidden: Vec<&str> = c
+        .get("forbidden_environment_variables")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for v in &["HOME", "USERPROFILE", "TMPDIR_FROM_USER_SHELL_PROFILE"] {
-        assert!(forbidden.contains(v), "forbidden_environment_variables must include {v}");
+        assert!(
+            forbidden.contains(v),
+            "forbidden_environment_variables must include {v}"
+        );
     }
-    let exit = c.get("cleanup_dependency_exit_code").and_then(|v| v.as_integer()).unwrap();
+    let exit = c
+        .get("cleanup_dependency_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(exit, 84);
-    assert_eq!(c.get("cleanup_dependency_failure_kind").and_then(|v| v.as_str()), Some("cleanup_depended_on_user_filesystem"));
+    assert_eq!(
+        c.get("cleanup_dependency_failure_kind")
+            .and_then(|v| v.as_str()),
+        Some("cleanup_depended_on_user_filesystem")
+    );
 }
 
 #[test]
 fn runner_contract_declares_keys_and_cases() {
     let doc = crate::common::load_toml(&manifest_path());
-    let c = doc.get("runner_contract").and_then(|v| v.as_table()).unwrap();
-    let keys: Vec<&str> = c.get("keys").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let c = doc
+        .get("runner_contract")
+        .and_then(|v| v.as_table())
+        .unwrap();
+    let keys: Vec<&str> = c
+        .get("keys")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for required in &[
-        "outcome", "case", "module_name",
-        "relative_path", "source_relative_path", "destination_relative_path",
-        "pattern", "expected_match_relative_paths", "actual_match_relative_paths",
-        "tempdir_prefix", "failure_kind", "exit_code",
+        "outcome",
+        "case",
+        "module_name",
+        "relative_path",
+        "source_relative_path",
+        "destination_relative_path",
+        "pattern",
+        "expected_match_relative_paths",
+        "actual_match_relative_paths",
+        "tempdir_prefix",
+        "failure_kind",
+        "exit_code",
     ] {
-        assert!(keys.contains(required), "runner_contract.keys must include {required}");
+        assert!(
+            keys.contains(required),
+            "runner_contract.keys must include {required}"
+        );
     }
-    let cases: Vec<&str> = c.get("case_values").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let cases: Vec<&str> = c
+        .get("case_values")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for required in &[
         "fixture_uses_only_test_temp_directories",
         "fixture_fails_on_wrong_glob_or_copy_behavior",
         "cleanup_does_not_depend_on_user_filesystem_state",
     ] {
-        assert!(cases.contains(required), "runner_contract.case_values must include {required}");
+        assert!(
+            cases.contains(required),
+            "runner_contract.case_values must include {required}"
+        );
     }
 }
 
@@ -224,5 +364,9 @@ fn runner_contract_declares_keys_and_cases() {
 fn pins_out_of_scope_per_issue() {
     let doc = crate::common::load_toml(&manifest_path());
     let o = doc.get("out_of_scope").and_then(|v| v.as_table()).unwrap();
-    assert_eq!(o.get("platform_specific_permission_behavior").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        o.get("platform_specific_permission_behavior")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
 }

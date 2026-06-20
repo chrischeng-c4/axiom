@@ -8,7 +8,9 @@
 use std::process::Command;
 
 fn run_script(args: &[&str]) -> (i32, String, String) {
-    let script = crate::common::mamba_root().join("scripts").join("inventory_summary.py");
+    let script = crate::common::mamba_root()
+        .join("scripts")
+        .join("inventory_summary.py");
     let out = Command::new("python3")
         .arg(&script)
         .args(args)
@@ -79,7 +81,9 @@ fn json_inventory_is_machine_readable() {
 #[test]
 fn missing_root_returns_nonzero() {
     // Acceptance: exits non-zero if the inventory cannot be computed.
-    let script = crate::common::mamba_root().join("scripts").join("inventory_summary.py");
+    let script = crate::common::mamba_root()
+        .join("scripts")
+        .join("inventory_summary.py");
     let out = Command::new("python3")
         .arg(&script)
         .arg("--root")

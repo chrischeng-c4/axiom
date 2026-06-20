@@ -1,11 +1,11 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// colorsys module for Mamba (mamba-stdlib).
 ///
 /// Pure-math color-space conversion functions mirroring CPython 3.12
 /// Lib/colorsys.py. All inputs and outputs are floats in [0.0, 1.0]
 /// (except YIQ i/q channels which may exceed that range).
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 /// A colorsys channel must be a real number (int / bool / float). None, str,
 /// etc. are rejected so the conversion raises TypeError instead of coercing to
@@ -269,8 +269,8 @@ pub fn mb_colorsys_yiq_to_rgb(y: MbValue, i: MbValue, q: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::rc::ObjData;
+    use super::*;
 
     fn f(v: f64) -> MbValue {
         MbValue::from_float(v)
@@ -364,6 +364,9 @@ mod tests {
         register();
         use super::super::super::module::MODULES;
         let present = MODULES.with(|m| m.borrow().contains_key("colorsys"));
-        assert!(present, "colorsys module should be in the registry after register()");
+        assert!(
+            present,
+            "colorsys module should be in the registry after register()"
+        );
     }
 }

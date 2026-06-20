@@ -135,7 +135,11 @@ impl BulkExecutor {
             .map(<[HashMap<String, ExtractedValue>]>::to_vec)
             .collect();
         let batch_count = batches.len();
-        info!(batch_count, batch_size = self.config.batch_size, "Split into batches");
+        info!(
+            batch_count,
+            batch_size = self.config.batch_size,
+            "Split into batches"
+        );
 
         let conn = self.conn.clone();
         let table = table.to_string();
@@ -262,7 +266,11 @@ impl BulkExecutor {
             .map(<[HashMap<String, ExtractedValue>]>::to_vec)
             .collect();
         let batch_count = batches.len();
-        info!(batch_count, batch_size = self.config.batch_size, "Split into batches");
+        info!(
+            batch_count,
+            batch_size = self.config.batch_size,
+            "Split into batches"
+        );
 
         let conn = self.conn.clone();
         let table = table.to_string();
@@ -385,9 +393,16 @@ impl BulkExecutor {
         info!("Starting parallel bulk delete");
         QueryBuilder::validate_identifier(table)?;
 
-        let batches: Vec<_> = ids.chunks(self.config.batch_size).map(<[i64]>::to_vec).collect();
+        let batches: Vec<_> = ids
+            .chunks(self.config.batch_size)
+            .map(<[i64]>::to_vec)
+            .collect();
         let batch_count = batches.len();
-        info!(batch_count, batch_size = self.config.batch_size, "Split into batches");
+        info!(
+            batch_count,
+            batch_size = self.config.batch_size,
+            "Split into batches"
+        );
 
         let conn = self.conn.clone();
         let table = table.to_string();

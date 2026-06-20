@@ -309,7 +309,10 @@ fn spawn_mamba(path: &Path) -> Result<Output, String> {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )),
-        Err(err) => Err(format!("{}: failed to wait for mamba: {err}", path.display())),
+        Err(err) => Err(format!(
+            "{}: failed to wait for mamba: {err}",
+            path.display()
+        )),
     }
 }
 
@@ -479,9 +482,7 @@ fn run_conformance(path: &Path) -> datatest_stable::Result<()> {
     // D5.3: a content-addressed cache short-circuits the oracle subprocess for
     // fixtures whose bytes (and python version) haven't changed.
     let cache_file = oracle_cache_enabled().then(|| oracle_cache_path(&src));
-    let expected_stdout_bytes: Vec<u8> = match cache_file
-        .as_ref()
-        .and_then(|f| oracle_cache_get(f))
+    let expected_stdout_bytes: Vec<u8> = match cache_file.as_ref().and_then(|f| oracle_cache_get(f))
     {
         Some(cached) => cached,
         None => {

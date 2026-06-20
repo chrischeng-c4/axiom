@@ -1,3 +1,6 @@
+use super::super::rc::{release_if_ptr, retain_if_ptr};
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// dataclasses module for Mamba (#410, PEP 557).
 ///
 /// Real class transformation: the lowering records ordered class-body field
@@ -21,11 +24,7 @@
 /// `field`) operate on the same registry. `make_dataclass` stays a stub:
 /// runtime class synthesis (registering a brand-new class with compiled
 /// methods at runtime) is not yet supported by the class system.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::rc::{retain_if_ptr, release_if_ptr};
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
@@ -140,20 +139,34 @@ pub(crate) fn cleanup_all_dataclasses() {
 /// decorator call.
 pub fn mb_dataclass_record_field(cls: MbValue, name: MbValue, ann: MbValue, default: MbValue) {
     let (Some(cls), Some(name), Some(ann)) =
-        (extract_str(cls), extract_str(name), extract_str(ann)) else { return };
+        (extract_str(cls), extract_str(name), extract_str(ann))
+    else {
+        return;
+    };
     // Registry owns one reference to the stored default.
-    unsafe { retain_if_ptr(default); }
+    unsafe {
+        retain_if_ptr(default);
+    }
     PENDING_FIELDS.with(|reg| {
-        reg.borrow_mut().entry(cls).or_default().push((name, ann, Some(default)));
+        reg.borrow_mut()
+            .entry(cls)
+            .or_default()
+            .push((name, ann, Some(default)));
     });
 }
 
 /// Record one ordered class-body field fact without a default (`x: int`).
 pub fn mb_dataclass_record_field_nodefault(cls: MbValue, name: MbValue, ann: MbValue) {
     let (Some(cls), Some(name), Some(ann)) =
-        (extract_str(cls), extract_str(name), extract_str(ann)) else { return };
+        (extract_str(cls), extract_str(name), extract_str(ann))
+    else {
+        return;
+    };
     PENDING_FIELDS.with(|reg| {
-        reg.borrow_mut().entry(cls).or_default().push((name, ann, None));
+        reg.borrow_mut()
+            .entry(cls)
+            .or_default()
+            .push((name, ann, None));
     });
 }
 
@@ -169,7 +182,11 @@ fn annotation_head(ann: &str) -> &str {
 /// Is `val` a Field marker produced by `dataclasses.field(...)`?
 fn is_field_marker(val: MbValue) -> bool {
     val.as_ptr().is_some_and(|ptr| unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             class_name == "Field" && fields.read().unwrap().contains_key("__dc_field__")
         } else {
             false
@@ -190,7 +207,9 @@ fn marker_get(val: MbValue, key: &str) -> Option<MbValue> {
 
 fn truthy_flag(val: Option<MbValue>, default: bool) -> bool {
     match val {
-        Some(v) => v.as_bool().unwrap_or_else(|| v.as_int().map(|i| i != 0).unwrap_or(default)),
+        Some(v) => v
+            .as_bool()
+            .unwrap_or_else(|| v.as_int().map(|i| i != 0).unwrap_or(default)),
         None => default,
     }
 }
@@ -205,7 +224,9 @@ fn parse_options(dict: MbValue) -> DcOptions {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 for (k, v) in lock.read().unwrap().iter() {
                     let Some(key) = k.as_str() else { continue };
-                    let b = v.as_bool().unwrap_or_else(|| v.as_int().map(|i| i != 0).unwrap_or(false));
+                    let b = v
+                        .as_bool()
+                        .unwrap_or_else(|| v.as_int().map(|i| i != 0).unwrap_or(false));
                     match key {
                         "init" => opts.init = b,
                         "repr" => opts.repr = b,
@@ -241,7 +262,11 @@ fn decorate_dynamic_class(class_name: &str) -> Result<(), ()> {
     let lookup = |attr: &str| -> Option<MbValue> {
         super::super::class::class_attr_lookup(class_name, attr).or_else(|| {
             let m = super::super::class::lookup_method(class_name, attr);
-            if m.is_none() { None } else { Some(m) }
+            if m.is_none() {
+                None
+            } else {
+                Some(m)
+            }
         })
     };
     let anns = lookup("__annotations__");
@@ -266,13 +291,16 @@ fn decorate_dynamic_class(class_name: &str) -> Result<(), ()> {
                     )
                 });
                 if mutable && !is_field_marker(d) {
-                    let kind = d.as_ptr().map(|p| unsafe {
-                        match (*p).data {
-                            ObjData::List(_) => "list",
-                            ObjData::Dict(_) => "dict",
-                            _ => "set",
-                        }
-                    }).unwrap_or("list");
+                    let kind = d
+                        .as_ptr()
+                        .map(|p| unsafe {
+                            match (*p).data {
+                                ObjData::List(_) => "list",
+                                ObjData::Dict(_) => "dict",
+                                _ => "set",
+                            }
+                        })
+                        .unwrap_or("list");
                     super::super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                         MbValue::from_ptr(MbObject::new_str(format!(
@@ -284,8 +312,7 @@ fn decorate_dynamic_class(class_name: &str) -> Result<(), ()> {
                 if is_field_marker(d) {
                     if let Some(factory) = marker_get(d, "default_factory") {
                         if !factory.is_none()
-                            && super::super::builtins::mb_callable(factory).as_bool()
-                                != Some(true)
+                            && super::super::builtins::mb_callable(factory).as_bool() != Some(true)
                         {
                             super::super::exception::mb_raise(
                                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -316,7 +343,8 @@ fn decorate_dynamic_class(class_name: &str) -> Result<(), ()> {
 }
 
 fn decorate_class(class_name: &str, opts: DcOptions) {
-    let raw = PENDING_FIELDS.with(|reg| reg.borrow_mut().remove(class_name))
+    let raw = PENDING_FIELDS
+        .with(|reg| reg.borrow_mut().remove(class_name))
         .unwrap_or_default();
 
     // Inherited dataclass fields first (least-derived ancestor first so
@@ -325,7 +353,9 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
     let mro = super::super::class::class_mro_list(class_name);
     for ancestor in mro.iter().rev() {
         let base_fields = DC_REGISTRY.with(|reg| {
-            reg.borrow().get(ancestor.as_str()).map(|d| d.fields.clone())
+            reg.borrow()
+                .get(ancestor.as_str())
+                .map(|d| d.fields.clone())
         });
         if let Some(bf) = base_fields {
             for f in bf {
@@ -344,7 +374,11 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
         if head == "KW_ONLY" {
             // `_: KW_ONLY` pseudo-field: every following field is kw-only.
             kw_only_zone = true;
-            if let Some(d) = default { unsafe { release_if_ptr(d); } }
+            if let Some(d) = default {
+                unsafe {
+                    release_if_ptr(d);
+                }
+            }
             continue;
         }
         let is_classvar = head == "ClassVar";
@@ -368,7 +402,9 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
                 // here (the registry owns them); the marker itself is released.
                 let take = |key: &str| -> Option<MbValue> {
                     let v = marker_get(d, key)?;
-                    unsafe { retain_if_ptr(v); }
+                    unsafe {
+                        retain_if_ptr(v);
+                    }
                     Some(v)
                 };
                 f.default = take("default");
@@ -380,7 +416,9 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
                 if truthy_flag(marker_get(d, "kw_only"), false) {
                     f.kw_only = true;
                 }
-                unsafe { release_if_ptr(d); }
+                unsafe {
+                    release_if_ptr(d);
+                }
             } else {
                 f.default = Some(d);
             }
@@ -462,7 +500,8 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
     // or_insert semantics in mb_class_set_match_args preserve an explicit
     // class-body `__match_args__`.
     if opts.match_args {
-        let names: Vec<MbValue> = merged.iter()
+        let names: Vec<MbValue> = merged
+            .iter()
             .filter(|f| !f.is_classvar && !f.is_initvar && f.init && !f.kw_only)
             .map(|f| MbValue::from_ptr(MbObject::new_str(f.name.clone())))
             .collect();
@@ -473,18 +512,21 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
     // @dataclass(slots=True): publish __slots__ and register the slot set
     // (suppresses the per-instance __dict__ like a literal __slots__ would).
     if opts.slots {
-        let slot_names: Vec<String> = merged.iter()
+        let slot_names: Vec<String> = merged
+            .iter()
             .filter(|f| !f.is_classvar && !f.is_initvar)
             .map(|f| f.name.clone())
             .collect();
         let slots_list = MbValue::from_ptr(MbObject::new_list(
-            slot_names.iter()
+            slot_names
+                .iter()
                 .map(|n| MbValue::from_ptr(MbObject::new_str(n.clone())))
                 .collect(),
         ));
         super::super::class::mb_register_slots(cls_val, slots_list);
         let slots_tuple = MbValue::from_ptr(MbObject::new_tuple(
-            slot_names.iter()
+            slot_names
+                .iter()
                 .map(|n| MbValue::from_ptr(MbObject::new_str(n.clone())))
                 .collect(),
         ));
@@ -495,9 +537,17 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
         );
     }
 
-    FIELD_TUPLES.with(|c| { c.borrow_mut().remove(class_name); });
+    FIELD_TUPLES.with(|c| {
+        c.borrow_mut().remove(class_name);
+    });
     DC_REGISTRY.with(|reg| {
-        reg.borrow_mut().insert(class_name.to_string(), DcClass { fields: merged, opts });
+        reg.borrow_mut().insert(
+            class_name.to_string(),
+            DcClass {
+                fields: merged,
+                opts,
+            },
+        );
     });
 }
 
@@ -533,7 +583,9 @@ pub(crate) fn dc_has_synth_init(class_name: &str) -> bool {
 
 /// class.rs hook: is this class a frozen dataclass (reject setattr)?
 pub(crate) fn is_frozen_dataclass(class_name: &str) -> bool {
-    lookup_dc(class_name).map(|d| d.opts.frozen).unwrap_or(false)
+    lookup_dc(class_name)
+        .map(|d| d.opts.frozen)
+        .unwrap_or(false)
 }
 
 /// builtins.rs hook: compare-field names when the class is a dataclass with
@@ -571,12 +623,14 @@ pub(crate) fn dc_hash_field_names(class_name: &str) -> Option<Vec<String>> {
 /// instances are unhashable, so `hash()` raises TypeError. (eq=False leaves
 /// the inherited object.__hash__ in place, so it stays hashable.)
 pub(crate) fn is_unhashable_dataclass(class_name: &str) -> bool {
-    lookup_dc(class_name)
-        .map_or(false, |d| d.opts.eq && !d.opts.frozen && !d.opts.unsafe_hash)
+    lookup_dc(class_name).map_or(false, |d| {
+        d.opts.eq && !d.opts.frozen && !d.opts.unsafe_hash
+    })
 }
 
 fn compare_field_names(d: &DcClass) -> Vec<String> {
-    d.fields.iter()
+    d.fields
+        .iter()
         .filter(|f| !f.is_classvar && !f.is_initvar && f.compare)
         .map(|f| f.name.clone())
         .collect()
@@ -592,9 +646,12 @@ pub(crate) fn dc_repr_string(val: MbValue, class_name: &str) -> Option<String> {
     }
     let ptr = val.as_ptr()?;
     let parts: Vec<String> = unsafe {
-        let ObjData::Instance { ref fields, .. } = (*ptr).data else { return None };
+        let ObjData::Instance { ref fields, .. } = (*ptr).data else {
+            return None;
+        };
         let guard = fields.read().unwrap();
-        d.fields.iter()
+        d.fields
+            .iter()
             .filter(|f| !f.is_classvar && !f.is_initvar && f.repr)
             .map(|f| {
                 let v = guard.get(&f.name).copied().unwrap_or_else(MbValue::none);
@@ -630,9 +687,16 @@ fn set_instance_field(instance: MbValue, name: &str, value: MbValue) {
 /// so construct the real builtin container directly.
 fn call_factory(factory: MbValue) -> MbValue {
     let type_name = factory.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             if class_name == "type" {
-                fields.read().ok().and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                fields
+                    .read()
+                    .ok()
+                    .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
             } else {
                 None
             }
@@ -684,14 +748,19 @@ fn resolve_default(f: &DcField, marker: Option<MbValue>) -> Option<(MbValue, boo
 /// default_factory, forward InitVars to `__post_init__`, seed init=False
 /// fields from their defaults, then call `__post_init__` when defined.
 pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: MbValue) {
-    let Some(d) = lookup_dc(class_name) else { return };
-    let args: Vec<MbValue> = args_list.as_ptr().map(|ptr| unsafe {
-        if let ObjData::List(ref lock) = (*ptr).data {
-            lock.read().unwrap().iter().copied().collect()
-        } else {
-            Vec::new()
-        }
-    }).unwrap_or_default();
+    let Some(d) = lookup_dc(class_name) else {
+        return;
+    };
+    let args: Vec<MbValue> = args_list
+        .as_ptr()
+        .map(|ptr| unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                lock.read().unwrap().iter().copied().collect()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
 
     let mut initvars: Vec<MbValue> = Vec::new();
     let mut pos = 0usize;
@@ -723,17 +792,25 @@ pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: 
             set_instance_field(instance, &f.name, val);
             if owned {
                 // set_instance_field took its own +1; drop the factory's.
-                unsafe { release_if_ptr(val); }
+                unsafe {
+                    release_if_ptr(val);
+                }
             }
         }
     }
 
     // init=False real fields still get their declared default / factory.
-    for f in d.fields.iter().filter(|f| !f.is_classvar && !f.is_initvar && !f.init) {
+    for f in d
+        .fields
+        .iter()
+        .filter(|f| !f.is_classvar && !f.is_initvar && !f.init)
+    {
         if let Some((v, owned)) = resolve_default(f, None) {
             set_instance_field(instance, &f.name, v);
             if owned {
-                unsafe { release_if_ptr(v); }
+                unsafe {
+                    release_if_ptr(v);
+                }
             }
         }
     }
@@ -766,10 +843,13 @@ unsafe extern "C" fn dispatch_dataclass(args_ptr: *const MbValue, nargs: usize) 
     for v in a {
         if let Some(s) = extract_str(*v) {
             if super::super::class::class_is_registered(&s) {
-                let opts = PENDING_OPTIONS.with(|c| c.borrow_mut().take())
+                let opts = PENDING_OPTIONS
+                    .with(|c| c.borrow_mut().take())
                     .unwrap_or_default();
                 decorate_class(&s, opts);
-                unsafe { retain_if_ptr(*v); }
+                unsafe {
+                    retain_if_ptr(*v);
+                }
                 return *v;
             }
         }
@@ -778,7 +858,9 @@ unsafe extern "C" fn dispatch_dataclass(args_ptr: *const MbValue, nargs: usize) 
     // the type object's __annotations__ + class-attr defaults, validating the
     // CPython error contract.
     for v in a {
-        let is_dict = v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) });
+        let is_dict = v
+            .as_ptr()
+            .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) });
         if is_dict {
             continue;
         }
@@ -787,7 +869,9 @@ unsafe extern "C" fn dispatch_dataclass(args_ptr: *const MbValue, nargs: usize) 
                 if decorate_dynamic_class(&cn).is_err() {
                     return MbValue::none();
                 }
-                unsafe { retain_if_ptr(*v); }
+                unsafe {
+                    retain_if_ptr(*v);
+                }
                 return *v;
             }
         }
@@ -795,13 +879,17 @@ unsafe extern "C" fn dispatch_dataclass(args_ptr: *const MbValue, nargs: usize) 
     // Options mode: parse the kwargs dict (if any) and return the decorator.
     let mut opts = DcOptions::default();
     for v in a {
-        let is_dict = v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) });
+        let is_dict = v
+            .as_ptr()
+            .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) });
         if is_dict {
             opts = parse_options(*v);
             break;
         }
     }
-    PENDING_OPTIONS.with(|c| { *c.borrow_mut() = Some(opts); });
+    PENDING_OPTIONS.with(|c| {
+        *c.borrow_mut() = Some(opts);
+    });
     MbValue::from_func(dispatch_dataclass as *const () as usize)
 }
 
@@ -823,8 +911,14 @@ unsafe extern "C" fn dispatch_field(args_ptr: *const MbValue, nargs: usize) -> M
                             let Some(key) = k.as_str() else { continue };
                             if matches!(
                                 key,
-                                "default" | "default_factory" | "init" | "repr"
-                                | "compare" | "metadata" | "kw_only" | "hash"
+                                "default"
+                                    | "default_factory"
+                                    | "init"
+                                    | "repr"
+                                    | "compare"
+                                    | "metadata"
+                                    | "kw_only"
+                                    | "hash"
                             ) {
                                 retain_if_ptr(*val);
                                 f.insert(key.to_string(), *val);
@@ -862,7 +956,9 @@ fn dc_name_of(obj: MbValue) -> Option<String> {
 /// Build (and cache) the `fields()` tuple of Field objects for a class.
 fn fields_tuple_for(class_name: &str) -> MbValue {
     if let Some(cached) = FIELD_TUPLES.with(|c| c.borrow().get(class_name).copied()) {
-        unsafe { retain_if_ptr(cached); }
+        unsafe {
+            retain_if_ptr(cached);
+        }
         return cached;
     }
     let missing = || MbValue::from_ptr(MbObject::new_str("MISSING".to_string()));
@@ -876,15 +972,27 @@ fn fields_tuple_for(class_name: &str) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*obj).data {
                 let mut m = fields.write().unwrap();
-                m.insert("name".to_string(), MbValue::from_ptr(MbObject::new_str(f.name.clone())));
-                m.insert("type".to_string(), MbValue::from_ptr(MbObject::new_str(f.ty.clone())));
+                m.insert(
+                    "name".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(f.name.clone())),
+                );
+                m.insert(
+                    "type".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(f.ty.clone())),
+                );
                 let default = match f.default {
-                    Some(v) => { retain_if_ptr(v); v }
+                    Some(v) => {
+                        retain_if_ptr(v);
+                        v
+                    }
                     None => missing(),
                 };
                 m.insert("default".to_string(), default);
                 let factory = match f.default_factory {
-                    Some(v) => { retain_if_ptr(v); v }
+                    Some(v) => {
+                        retain_if_ptr(v);
+                        v
+                    }
                     None => missing(),
                 };
                 m.insert("default_factory".to_string(), factory);
@@ -893,7 +1001,10 @@ fn fields_tuple_for(class_name: &str) -> MbValue {
                 m.insert("compare".to_string(), MbValue::from_bool(f.compare));
                 m.insert("kw_only".to_string(), MbValue::from_bool(f.kw_only));
                 let metadata = match f.metadata {
-                    Some(v) => { retain_if_ptr(v); v }
+                    Some(v) => {
+                        retain_if_ptr(v);
+                        v
+                    }
                     None => MbValue::from_ptr(MbObject::new_dict()),
                 };
                 m.insert("metadata".to_string(), metadata);
@@ -903,8 +1014,12 @@ fn fields_tuple_for(class_name: &str) -> MbValue {
         items.push(MbValue::from_ptr(obj));
     }
     let tup = MbValue::from_ptr(MbObject::new_tuple(items));
-    unsafe { retain_if_ptr(tup); } // cache's own reference
-    FIELD_TUPLES.with(|c| { c.borrow_mut().insert(class_name.to_string(), tup); });
+    unsafe {
+        retain_if_ptr(tup);
+    } // cache's own reference
+    FIELD_TUPLES.with(|c| {
+        c.borrow_mut().insert(class_name.to_string(), tup);
+    });
     tup
 }
 
@@ -935,19 +1050,25 @@ fn convert_value(v: MbValue, as_tuple: bool) -> MbValue {
             match &(*ptr).data {
                 ObjData::Instance { class_name, .. } => {
                     if is_dataclass_name(class_name) {
-                        return if as_tuple { dc_astuple(v) } else { dc_asdict(v) };
+                        return if as_tuple {
+                            dc_astuple(v)
+                        } else {
+                            dc_asdict(v)
+                        };
                     }
                 }
                 ObjData::List(lock) => {
-                    let items: Vec<MbValue> = lock.read().unwrap().iter()
+                    let items: Vec<MbValue> = lock
+                        .read()
+                        .unwrap()
+                        .iter()
                         .map(|x| convert_value(*x, as_tuple))
                         .collect();
                     return MbValue::from_ptr(MbObject::new_list(items));
                 }
                 ObjData::Tuple(items) => {
-                    let out: Vec<MbValue> = items.iter()
-                        .map(|x| convert_value(*x, as_tuple))
-                        .collect();
+                    let out: Vec<MbValue> =
+                        items.iter().map(|x| convert_value(*x, as_tuple)).collect();
                     return MbValue::from_ptr(MbObject::new_tuple(out));
                 }
                 ObjData::Dict(lock) => {
@@ -965,7 +1086,9 @@ fn convert_value(v: MbValue, as_tuple: bool) -> MbValue {
         }
     }
     // Leaf value: the new container owns one reference.
-    unsafe { retain_if_ptr(v); }
+    unsafe {
+        retain_if_ptr(v);
+    }
     v
 }
 
@@ -1043,17 +1166,27 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let obj = a.first().copied().unwrap_or_else(MbValue::none);
     let Some(name) = dc_name_of(obj) else {
-        unsafe { retain_if_ptr(obj); }
+        unsafe {
+            retain_if_ptr(obj);
+        }
         return obj;
     };
     let Some(d) = lookup_dc(&name) else {
-        unsafe { retain_if_ptr(obj); }
+        unsafe {
+            retain_if_ptr(obj);
+        }
         return obj;
     };
     // Trailing kwargs dict carries the changes.
-    let changes: Option<MbValue> = a.iter().skip(1).rev().find(|v| {
-        v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
-    }).copied();
+    let changes: Option<MbValue> = a
+        .iter()
+        .skip(1)
+        .rev()
+        .find(|v| {
+            v.as_ptr()
+                .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        })
+        .copied();
     let change_of = |field: &str| -> Option<MbValue> {
         let dict = changes?;
         let ptr = dict.as_ptr()?;
@@ -1086,7 +1219,9 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
     let args_list = MbValue::from_ptr(MbObject::new_list(init_args));
     dc_run_synth_init(&name, new_inst, args_list);
     // Drop the temp args list (releases the element refs taken above).
-    unsafe { release_if_ptr(args_list); }
+    unsafe {
+        release_if_ptr(args_list);
+    }
     new_inst
 }
 
@@ -1112,8 +1247,10 @@ fn make_exception_class(class_name: &str) -> MbValue {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             let mut fields = fields.write().unwrap();
             let slot_sentinel = || MbValue::from_ptr(MbObject::new_str(String::new()));
-            fields.insert("__name__".into(),
-                MbValue::from_ptr(MbObject::new_str(class_name.to_string())));
+            fields.insert(
+                "__name__".into(),
+                MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+            );
             fields.insert("__cause__".into(), slot_sentinel());
             fields.insert("__context__".into(), slot_sentinel());
             fields.insert("__suppress_context__".into(), MbValue::from_bool(false));
@@ -1136,7 +1273,10 @@ pub fn register() {
         ("astuple", dispatch_astuple as *const () as usize),
         ("is_dataclass", dispatch_is_dataclass as *const () as usize),
         ("replace", dispatch_replace as *const () as usize),
-        ("make_dataclass", dispatch_make_dataclass as *const () as usize),
+        (
+            "make_dataclass",
+            dispatch_make_dataclass as *const () as usize,
+        ),
     ] {
         attrs.insert(name.into(), MbValue::from_func(addr));
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
@@ -1146,26 +1286,44 @@ pub fn register() {
 
     // Sentinels that must be PRESENT but NOT callable: a plain (non-type-name)
     // string value answers `hasattr` True and `callable` False.
-    attrs.insert("MISSING".into(),
-        MbValue::from_ptr(MbObject::new_str("MISSING".to_string())));
-    attrs.insert("KW_ONLY".into(),
-        MbValue::from_ptr(MbObject::new_str("KW_ONLY".to_string())));
+    attrs.insert(
+        "MISSING".into(),
+        MbValue::from_ptr(MbObject::new_str("MISSING".to_string())),
+    );
+    attrs.insert(
+        "KW_ONLY".into(),
+        MbValue::from_ptr(MbObject::new_str("KW_ONLY".to_string())),
+    );
 
     // `FrozenInstanceError` subclasses `AttributeError` (see exception.rs
     // hierarchy entries); exported as a type-object shell so except-clauses
     // and surface hasattr probes both resolve.
-    attrs.insert("FrozenInstanceError".into(),
-        make_exception_class("FrozenInstanceError"));
+    attrs.insert(
+        "FrozenInstanceError".into(),
+        make_exception_class("FrozenInstanceError"),
+    );
 
     // Re-exported type objects and submodule names from CPython's
     // dataclasses.py — surface fixtures only assert presence (`hasattr`).
     for name in [
-        "Field", "FunctionType", "GenericAlias", "InitVar",
-        "abc", "copy", "functools", "inspect", "itertools", "keyword",
-        "re", "sys", "types",
+        "Field",
+        "FunctionType",
+        "GenericAlias",
+        "InitVar",
+        "abc",
+        "copy",
+        "functools",
+        "inspect",
+        "itertools",
+        "keyword",
+        "re",
+        "sys",
+        "types",
     ] {
-        attrs.insert(name.into(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())));
+        attrs.insert(
+            name.into(),
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        );
     }
 
     super::register_module("dataclasses", attrs);
@@ -1189,7 +1347,9 @@ mod tests {
         if let Some(ptr) = inst.as_ptr() {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                    if let Some(v) = fields.read().unwrap().get(key) { return *v; }
+                    if let Some(v) = fields.read().unwrap().get(key) {
+                        return *v;
+                    }
                 }
             }
         }
@@ -1277,13 +1437,18 @@ mod tests {
         let dict = MbObject::new_dict();
         unsafe {
             if let ObjData::Dict(ref lock) = (*dict).data {
-                lock.write().unwrap().insert("default".into(), MbValue::from_int(42));
+                lock.write()
+                    .unwrap()
+                    .insert("default".into(), MbValue::from_int(42));
             }
         }
         let args = [MbValue::from_ptr(dict)];
         let marker = unsafe { dispatch_field(args.as_ptr(), 1) };
         assert!(is_field_marker(marker));
-        assert_eq!(marker_get(marker, "default").and_then(|v| v.as_int()), Some(42));
+        assert_eq!(
+            marker_get(marker, "default").and_then(|v| v.as_int()),
+            Some(42)
+        );
 
         cleanup_all_dataclasses();
         register_test_class("TMark");
@@ -1298,7 +1463,10 @@ mod tests {
         cleanup_all_dataclasses();
         register_test_class("TFroz");
         record("TFroz", "x", "int", None);
-        let opts = DcOptions { frozen: true, ..DcOptions::default() };
+        let opts = DcOptions {
+            frozen: true,
+            ..DcOptions::default()
+        };
         decorate_class("TFroz", opts);
         assert!(is_frozen_dataclass("TFroz"));
         assert_eq!(dc_hash_field_names("TFroz"), Some(vec!["x".to_string()]));
@@ -1315,9 +1483,13 @@ mod tests {
         decorate_class("TRepr", DcOptions::default());
         let inst = MbValue::from_ptr(MbObject::new_instance("TRepr".to_string()));
         let args = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
         ]));
         dc_run_synth_init("TRepr", inst, args);
-        assert_eq!(dc_repr_string(inst, "TRepr").as_deref(), Some("TRepr(x=1, y=2)"));
+        assert_eq!(
+            dc_repr_string(inst, "TRepr").as_deref(),
+            Some("TRepr(x=1, y=2)")
+        );
     }
 }

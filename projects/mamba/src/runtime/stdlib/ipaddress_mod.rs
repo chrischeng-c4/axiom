@@ -45,11 +45,11 @@
 //!   so we fold via XOR (same approach as uuid_mod's .int)
 //! - No prefix-length validation beyond /0../32 for v4, /0../128 for v6
 
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // HANDWRITE-BEGIN reason: per-section primitive vocabulary for stdlib
 // shims (register_module + flat-args dispatch + integer-handle protocol)
@@ -89,9 +89,15 @@ pub fn is_ip_handle(id: u64) -> bool {
 }
 
 fn drop_ip_handle(id: u64) {
-    IPS.with(|m| { m.borrow_mut().remove(&id); });
-    IP_IDS.with(|s| { s.borrow_mut().remove(&id); });
-    IP_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
+    IPS.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
+    IP_IDS.with(|s| {
+        s.borrow_mut().remove(&id);
+    });
+    IP_REFCOUNTS.with(|r| {
+        r.borrow_mut().remove(&id);
+    });
 }
 
 /// `mb_retain_value` integer-handle dispatch (#2111).
@@ -135,8 +141,12 @@ pub fn release_handle(id: u64) -> bool {
 fn make_handle(state: IpState) -> MbValue {
     use super::super::rc::{InstanceFields, MbObjectHeader, MbRwLock, ObjKind};
     let id = alloc_ip_id();
-    IPS.with(|m| { m.borrow_mut().insert(id, state); });
-    IP_IDS.with(|s| { s.borrow_mut().insert(id); });
+    IPS.with(|m| {
+        m.borrow_mut().insert(id, state);
+    });
+    IP_IDS.with(|s| {
+        s.borrow_mut().insert(id);
+    });
 
     let mut fields = InstanceFields::default();
     fields.insert("_handle".to_string(), MbValue::from_int(id as i64));
@@ -153,8 +163,14 @@ fn make_handle(state: IpState) -> MbValue {
                 MbValue::from_ptr(MbObject::new_bytes(a.to_be_bytes().to_vec())),
             );
             fields.insert("_ip".to_string(), MbValue::from_int(a as i64));
-            fields.insert("is_private".to_string(), MbValue::from_bool(is_v4_private(a)));
-            fields.insert("is_global".to_string(), MbValue::from_bool(!is_v4_private(a)));
+            fields.insert(
+                "is_private".to_string(),
+                MbValue::from_bool(is_v4_private(a)),
+            );
+            fields.insert(
+                "is_global".to_string(),
+                MbValue::from_bool(!is_v4_private(a)),
+            );
             fields.insert(
                 "is_loopback".to_string(),
                 MbValue::from_bool(a >> 24 == 127),
@@ -186,11 +202,11 @@ fn make_handle(state: IpState) -> MbValue {
             let loopback = b[..15].iter().all(|&x| x == 0) && b[15] == 1;
             let unspecified = b.iter().all(|&x| x == 0);
             fields.insert("is_loopback".to_string(), MbValue::from_bool(loopback));
-            fields.insert("is_unspecified".to_string(), MbValue::from_bool(unspecified));
             fields.insert(
-                "is_multicast".to_string(),
-                MbValue::from_bool(b[0] == 0xFF),
+                "is_unspecified".to_string(),
+                MbValue::from_bool(unspecified),
             );
+            fields.insert("is_multicast".to_string(), MbValue::from_bool(b[0] == 0xFF));
             fields.insert(
                 "is_link_local".to_string(),
                 MbValue::from_bool(b[0] == 0xFE && (b[1] & 0xC0) == 0x80),
@@ -218,18 +234,35 @@ fn make_handle(state: IpState) -> MbValue {
             fields.insert("exploded".to_string(), estr(&text));
             fields.insert("with_prefixlen".to_string(), estr(&text));
             let host_bits = 32 - prefix as u32;
-            let num = if host_bits >= 32 { u64::from(u32::MAX) + 1 } else { 1u64 << host_bits };
+            let num = if host_bits >= 32 {
+                u64::from(u32::MAX) + 1
+            } else {
+                1u64 << host_bits
+            };
             fields.insert("num_addresses".to_string(), MbValue::from_int(num as i64));
-            let mask: u32 = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix as u32) };
-            fields.insert("network_address".to_string(), make_handle(IpState::V4(addr)));
+            let mask: u32 = if prefix == 0 {
+                0
+            } else {
+                u32::MAX << (32 - prefix as u32)
+            };
+            fields.insert(
+                "network_address".to_string(),
+                make_handle(IpState::V4(addr)),
+            );
             fields.insert(
                 "broadcast_address".to_string(),
                 make_handle(IpState::V4(addr | !mask)),
             );
             fields.insert("netmask".to_string(), make_handle(IpState::V4(mask)));
             fields.insert("hostmask".to_string(), make_handle(IpState::V4(!mask)));
-            fields.insert("is_private".to_string(), MbValue::from_bool(is_v4_private(addr)));
-            fields.insert("is_global".to_string(), MbValue::from_bool(!is_v4_private(addr)));
+            fields.insert(
+                "is_private".to_string(),
+                MbValue::from_bool(is_v4_private(addr)),
+            );
+            fields.insert(
+                "is_global".to_string(),
+                MbValue::from_bool(!is_v4_private(addr)),
+            );
             "IPv4Network"
         }
     };
@@ -256,7 +289,11 @@ fn load(handle: MbValue) -> Option<IpState> {
         let ptr = handle.as_ptr()?;
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                fields.read().unwrap().get("_handle").and_then(|v| v.as_int())? as u64
+                fields
+                    .read()
+                    .unwrap()
+                    .get("_handle")
+                    .and_then(|v| v.as_int())? as u64
             } else {
                 return None;
             }
@@ -269,11 +306,15 @@ fn load(handle: MbValue) -> Option<IpState> {
 
 fn parse_ipv4(s: &str) -> Option<u32> {
     let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() != 4 { return None; }
+    if parts.len() != 4 {
+        return None;
+    }
     let mut acc: u32 = 0;
     for p in &parts {
         let octet: u32 = p.parse().ok()?;
-        if octet > 255 { return None; }
+        if octet > 255 {
+            return None;
+        }
         acc = (acc << 8) | octet;
     }
     Some(acc)
@@ -287,12 +328,7 @@ fn parse_ipv6(s: &str) -> Option<[u8; 16]> {
         let last = &s[idx + 1..];
         if last.contains('.') {
             let v4 = parse_ipv4(last)?;
-            let expanded = format!(
-                "{}{:x}:{:x}",
-                &s[..idx + 1],
-                v4 >> 16,
-                v4 & 0xFFFF
-            );
+            let expanded = format!("{}{:x}:{:x}", &s[..idx + 1], v4 >> 16, v4 & 0xFFFF);
             return parse_ipv6(&expanded);
         }
     }
@@ -301,9 +337,19 @@ fn parse_ipv6(s: &str) -> Option<[u8; 16]> {
         Some(idx) => (&s[..idx], &s[idx + 2..]),
         None => (s, ""),
     };
-    let head_parts: Vec<&str> = if head.is_empty() { vec![] } else { head.split(':').collect() };
-    let tail_parts: Vec<&str> = if tail.is_empty() { vec![] } else { tail.split(':').collect() };
-    if head_parts.len() + tail_parts.len() > 8 { return None; }
+    let head_parts: Vec<&str> = if head.is_empty() {
+        vec![]
+    } else {
+        head.split(':').collect()
+    };
+    let tail_parts: Vec<&str> = if tail.is_empty() {
+        vec![]
+    } else {
+        tail.split(':').collect()
+    };
+    if head_parts.len() + tail_parts.len() > 8 {
+        return None;
+    }
     let zeros = 8 - head_parts.len() - tail_parts.len();
     let mut groups = [0u16; 8];
     for (i, p) in head_parts.iter().enumerate() {
@@ -321,7 +367,13 @@ fn parse_ipv6(s: &str) -> Option<[u8; 16]> {
 }
 
 fn ipv4_to_str(a: u32) -> String {
-    format!("{}.{}.{}.{}", (a >> 24) & 0xFF, (a >> 16) & 0xFF, (a >> 8) & 0xFF, a & 0xFF)
+    format!(
+        "{}.{}.{}.{}",
+        (a >> 24) & 0xFF,
+        (a >> 16) & 0xFF,
+        (a >> 8) & 0xFF,
+        a & 0xFF
+    )
 }
 
 fn ipv6_to_compressed(bytes: &[u8; 16]) -> String {
@@ -336,16 +388,25 @@ fn ipv6_to_compressed(bytes: &[u8; 16]) -> String {
     let mut cur_len = 0usize;
     for i in 0..8 {
         if groups[i] == 0 {
-            if cur_len == 0 { cur_start = i; }
+            if cur_len == 0 {
+                cur_start = i;
+            }
             cur_len += 1;
-            if cur_len > best_len { best_start = cur_start; best_len = cur_len; }
+            if cur_len > best_len {
+                best_start = cur_start;
+                best_len = cur_len;
+            }
         } else {
             cur_len = 0;
         }
     }
     if best_len < 2 {
         // No compression — emit all 8 groups.
-        return groups.iter().map(|g| format!("{:x}", g)).collect::<Vec<_>>().join(":");
+        return groups
+            .iter()
+            .map(|g| format!("{:x}", g))
+            .collect::<Vec<_>>()
+            .join(":");
     }
     let mut parts: Vec<String> = Vec::with_capacity(8);
     let mut i = 0usize;
@@ -360,9 +421,13 @@ fn ipv6_to_compressed(bytes: &[u8; 16]) -> String {
     }
     let joined = parts.join(":");
     // If compression is at edges, "::" appears as part of the join.
-    if best_start == 0 { format!(":{}", joined) }
-    else if best_start + best_len == 8 { format!("{}:", joined) }
-    else { joined }
+    if best_start == 0 {
+        format!(":{}", joined)
+    } else if best_start + best_len == 8 {
+        format!("{}:", joined)
+    } else {
+        joined
+    }
 }
 
 fn ipv6_to_exploded(bytes: &[u8; 16]) -> String {
@@ -378,10 +443,7 @@ fn is_v4_private(a: u32) -> bool {
     // RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 + loopback 127.0.0.0/8
     let o1 = (a >> 24) & 0xFF;
     let o2 = (a >> 16) & 0xFF;
-    o1 == 10
-        || o1 == 127
-        || (o1 == 172 && (16..=31).contains(&o2))
-        || (o1 == 192 && o2 == 168)
+    o1 == 10 || o1 == 127 || (o1 == 172 && (16..=31).contains(&o2)) || (o1 == 192 && o2 == 168)
 }
 
 // ── Public surface — free fns used by both dispatchers and class.rs ──
@@ -399,7 +461,12 @@ pub fn mb_ipaddress_ip_address(arg: MbValue) -> MbValue {
         // AddressValueError is a ValueError subclass, so `except ValueError`
         // (ip_address) and `except ipaddress.AddressValueError`
         // (IPv4Address/IPv6Address) both catch it.
-        None => return raise("AddressValueError", "does not appear to be an IPv4 or IPv6 address"),
+        None => {
+            return raise(
+                "AddressValueError",
+                "does not appear to be an IPv4 or IPv6 address",
+            )
+        }
     };
     if let Some(a) = parse_ipv4(&s) {
         return make_handle(IpState::V4(a));
@@ -407,7 +474,10 @@ pub fn mb_ipaddress_ip_address(arg: MbValue) -> MbValue {
     if let Some(b) = parse_ipv6(&s) {
         return make_handle(IpState::V6(b));
     }
-    raise("AddressValueError", &format!("{:?} does not appear to be an IPv4 or IPv6 address", s))
+    raise(
+        "AddressValueError",
+        &format!("{:?} does not appear to be an IPv4 or IPv6 address", s),
+    )
 }
 
 pub fn mb_ipaddress_ip_network(arg: MbValue) -> MbValue {
@@ -447,10 +517,9 @@ fn build_network(arg: MbValue, strict: bool) -> MbValue {
         if items.len() != 2 {
             return None;
         }
-        let addr_s = extract_str(items[0])
-            .or_else(|| items[0].as_int().map(|i| ipv4_to_str(i as u32)))?;
-        let spec_s = extract_str(items[1])
-            .or_else(|| items[1].as_int().map(|i| i.to_string()))?;
+        let addr_s =
+            extract_str(items[0]).or_else(|| items[0].as_int().map(|i| ipv4_to_str(i as u32)))?;
+        let spec_s = extract_str(items[1]).or_else(|| items[1].as_int().map(|i| i.to_string()))?;
         Some((addr_s, spec_s))
     });
     let s = match tuple_parts {
@@ -517,22 +586,33 @@ fn build_network(arg: MbValue, strict: bool) -> MbValue {
     // an out-of-range integer prefix (>32) is a NetmaskValueError.
     let prefix: u8 = match prefix_part.parse::<u32>() {
         Ok(p) if p <= 32 => p as u8,
-        Ok(p) => return raise("NetmaskValueError", &format!("'{}' is not a valid netmask", p)),
+        Ok(p) => {
+            return raise(
+                "NetmaskValueError",
+                &format!("'{}' is not a valid netmask", p),
+            )
+        }
         // A dotted spelling: either a netmask (contiguous leading 1s, e.g.
         // 255.255.255.0) or a hostmask (contiguous trailing 1s, e.g.
         // 0.255.255.255). Convert to a prefix length.
         Err(_) => match parse_ipv4(prefix_part).and_then(netmask_to_prefix) {
             Some(p) => p,
-            None => return raise(
-                "NetmaskValueError",
-                &format!("'{prefix_part}' is not a valid netmask"),
-            ),
+            None => {
+                return raise(
+                    "NetmaskValueError",
+                    &format!("'{prefix_part}' is not a valid netmask"),
+                )
+            }
         },
     };
     // strict (the CPython default for the network constructors): host bits must
     // be clear. host_mask = the low (32 - prefix) bits.
     if strict {
-        let host_mask: u32 = if prefix == 32 { 0 } else { 0xFFFF_FFFFu32 >> prefix };
+        let host_mask: u32 = if prefix == 32 {
+            0
+        } else {
+            0xFFFF_FFFFu32 >> prefix
+        };
         if addr & host_mask != 0 {
             return raise("ValueError", &format!("{} has host bits set", s));
         }
@@ -544,7 +624,9 @@ pub fn mb_ipaddress_packed(handle: MbValue) -> MbValue {
     match load(handle) {
         Some(IpState::V4(a)) => MbValue::from_ptr(MbObject::new_bytes(a.to_be_bytes().to_vec())),
         Some(IpState::V6(b)) => MbValue::from_ptr(MbObject::new_bytes(b.to_vec())),
-        Some(IpState::V4Net { addr, .. }) => MbValue::from_ptr(MbObject::new_bytes(addr.to_be_bytes().to_vec())),
+        Some(IpState::V4Net { addr, .. }) => {
+            MbValue::from_ptr(MbObject::new_bytes(addr.to_be_bytes().to_vec()))
+        }
         None => MbValue::none(),
     }
 }
@@ -553,7 +635,11 @@ pub fn mb_ipaddress_compressed(handle: MbValue) -> MbValue {
     match load(handle) {
         Some(IpState::V4(a)) => MbValue::from_ptr(MbObject::new_str(ipv4_to_str(a))),
         Some(IpState::V6(b)) => MbValue::from_ptr(MbObject::new_str(ipv6_to_compressed(&b))),
-        Some(IpState::V4Net { addr, prefix }) => MbValue::from_ptr(MbObject::new_str(format!("{}/{}", ipv4_to_str(addr), prefix))),
+        Some(IpState::V4Net { addr, prefix }) => MbValue::from_ptr(MbObject::new_str(format!(
+            "{}/{}",
+            ipv4_to_str(addr),
+            prefix
+        ))),
         None => MbValue::none(),
     }
 }
@@ -562,7 +648,11 @@ pub fn mb_ipaddress_exploded(handle: MbValue) -> MbValue {
     match load(handle) {
         Some(IpState::V4(a)) => MbValue::from_ptr(MbObject::new_str(ipv4_to_str(a))),
         Some(IpState::V6(b)) => MbValue::from_ptr(MbObject::new_str(ipv6_to_exploded(&b))),
-        Some(IpState::V4Net { addr, prefix }) => MbValue::from_ptr(MbObject::new_str(format!("{}/{}", ipv4_to_str(addr), prefix))),
+        Some(IpState::V4Net { addr, prefix }) => MbValue::from_ptr(MbObject::new_str(format!(
+            "{}/{}",
+            ipv4_to_str(addr),
+            prefix
+        ))),
         None => MbValue::none(),
     }
 }
@@ -597,7 +687,11 @@ pub fn mb_ipaddress_is_global(handle: MbValue) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -627,8 +721,12 @@ pub fn mb_ipaddress_ip_interface(arg: MbValue) -> MbValue {
 }
 
 pub fn mb_ipaddress_v4_int_to_packed(arg: MbValue) -> MbValue {
-    let Some(i) = arg.as_int() else { return MbValue::none(); };
-    if !(0..=0xFFFF_FFFF).contains(&i) { return MbValue::none(); }
+    let Some(i) = arg.as_int() else {
+        return MbValue::none();
+    };
+    if !(0..=0xFFFF_FFFF).contains(&i) {
+        return MbValue::none();
+    }
     let bytes = (i as u32).to_be_bytes();
     MbValue::from_ptr(MbObject::new_bytes(bytes.to_vec()))
 }
@@ -636,7 +734,9 @@ pub fn mb_ipaddress_v4_int_to_packed(arg: MbValue) -> MbValue {
 pub fn mb_ipaddress_v6_int_to_packed(arg: MbValue) -> MbValue {
     // MbValue is 48-bit; full 128-bit v6 ints don't fit. Best-effort:
     // place the int in the low 8 bytes (BE), high 8 bytes are zero.
-    let Some(i) = arg.as_int() else { return MbValue::none(); };
+    let Some(i) = arg.as_int() else {
+        return MbValue::none();
+    };
     let mut bytes = [0u8; 16];
     let lo = (i as u64).to_be_bytes();
     bytes[8..16].copy_from_slice(&lo);
@@ -644,31 +744,41 @@ pub fn mb_ipaddress_v6_int_to_packed(arg: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn dispatch_ip_address(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+    if nargs == 0 {
+        return MbValue::none();
+    }
     let arg = unsafe { *args_ptr };
     mb_ipaddress_ip_address(arg)
 }
 
 unsafe extern "C" fn dispatch_ip_network(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+    if nargs == 0 {
+        return MbValue::none();
+    }
     let arg = unsafe { *args_ptr };
     mb_ipaddress_ip_network(arg)
 }
 
 unsafe extern "C" fn dispatch_ip_interface(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+    if nargs == 0 {
+        return MbValue::none();
+    }
     let arg = unsafe { *args_ptr };
     mb_ipaddress_ip_interface(arg)
 }
 
 unsafe extern "C" fn dispatch_v4_int_to_packed(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+    if nargs == 0 {
+        return MbValue::none();
+    }
     let arg = unsafe { *args_ptr };
     mb_ipaddress_v4_int_to_packed(arg)
 }
 
 unsafe extern "C" fn dispatch_v6_int_to_packed(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+    if nargs == 0 {
+        return MbValue::none();
+    }
     let arg = unsafe { *args_ptr };
     mb_ipaddress_v6_int_to_packed(arg)
 }
@@ -686,7 +796,11 @@ fn summarize_v4(mut first: u32, last: u32) -> Vec<(u32, u8)> {
     loop {
         // Largest block that starts at `first` and fits within the range:
         // limited by `first`'s trailing zero bits and the remaining span.
-        let tz = if first == 0 { 32 } else { first.trailing_zeros() };
+        let tz = if first == 0 {
+            32
+        } else {
+            first.trailing_zeros()
+        };
         let span = (last - first) as u64 + 1;
         let span_bits = 63 - span.leading_zeros(); // floor(log2(span))
         let nbits = tz.min(span_bits);
@@ -701,18 +815,24 @@ fn summarize_v4(mut first: u32, last: u32) -> Vec<(u32, u8)> {
     out
 }
 
-unsafe extern "C" fn dispatch_collapse_addresses(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_collapse_addresses(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let seq = a.first().copied().unwrap_or_else(MbValue::none);
     // Gather (network, broadcast) integer ranges from the input networks /
     // addresses.
-    let items: Vec<MbValue> = seq.as_ptr().and_then(|p| unsafe {
-        match &(*p).data {
-            ObjData::List(ref lk) => Some(lk.read().unwrap().to_vec()),
-            ObjData::Tuple(ref t) => Some(t.to_vec()),
-            _ => None,
-        }
-    }).unwrap_or_default();
+    let items: Vec<MbValue> = seq
+        .as_ptr()
+        .and_then(|p| unsafe {
+            match &(*p).data {
+                ObjData::List(ref lk) => Some(lk.read().unwrap().to_vec()),
+                ObjData::Tuple(ref t) => Some(t.to_vec()),
+                _ => None,
+            }
+        })
+        .unwrap_or_default();
     let mut ranges: Vec<(u32, u32)> = Vec::new();
     for it in items {
         if let Some((addr, prefix)) = v4net_bounds(it) {
@@ -742,7 +862,10 @@ unsafe extern "C" fn dispatch_collapse_addresses(args_ptr: *const MbValue, nargs
     MbValue::from_ptr(MbObject::new_list(out))
 }
 
-unsafe extern "C" fn dispatch_summarize_address_range(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_summarize_address_range(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let first_v = a.first().copied().unwrap_or_else(MbValue::none);
     let last_v = a.get(1).copied().unwrap_or_else(MbValue::none);
@@ -773,33 +896,63 @@ unsafe extern "C" fn dispatch_get_mixed_type_key(_args: *const MbValue, _n: usiz
 // construction). Network / Interface delegate to ip_network / ip_interface so
 // `ipaddress.IPv4Network("…")` still yields a live handle. Calling them with no
 // args returns None (CPython would raise; surface coverage only needs callable).
-unsafe extern "C" fn dispatch_class_ipv4_address(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+unsafe extern "C" fn dispatch_class_ipv4_address(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    if nargs == 0 {
+        return MbValue::none();
+    }
     mb_ipaddress_ip_address(unsafe { *args_ptr })
 }
 
-unsafe extern "C" fn dispatch_class_ipv6_address(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+unsafe extern "C" fn dispatch_class_ipv6_address(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    if nargs == 0 {
+        return MbValue::none();
+    }
     mb_ipaddress_ip_address(unsafe { *args_ptr })
 }
 
-unsafe extern "C" fn dispatch_class_ipv4_network(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+unsafe extern "C" fn dispatch_class_ipv4_network(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    if nargs == 0 {
+        return MbValue::none();
+    }
     mb_ipaddress_ip_network(unsafe { *args_ptr })
 }
 
-unsafe extern "C" fn dispatch_class_ipv6_network(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+unsafe extern "C" fn dispatch_class_ipv6_network(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    if nargs == 0 {
+        return MbValue::none();
+    }
     mb_ipaddress_ip_network(unsafe { *args_ptr })
 }
 
-unsafe extern "C" fn dispatch_class_ipv4_interface(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+unsafe extern "C" fn dispatch_class_ipv4_interface(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    if nargs == 0 {
+        return MbValue::none();
+    }
     mb_ipaddress_ip_interface(unsafe { *args_ptr })
 }
 
-unsafe extern "C" fn dispatch_class_ipv6_interface(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+unsafe extern "C" fn dispatch_class_ipv6_interface(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    if nargs == 0 {
+        return MbValue::none();
+    }
     mb_ipaddress_ip_interface(unsafe { *args_ptr })
 }
 
@@ -835,7 +988,12 @@ fn args_first(args: MbValue) -> MbValue {
     if let Some(p) = args.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*p).data {
-                return lock.read().unwrap().first().copied().unwrap_or_else(MbValue::none);
+                return lock
+                    .read()
+                    .unwrap()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(MbValue::none);
             }
         }
     }
@@ -846,7 +1004,12 @@ fn inst_str_field(v: MbValue, key: &str) -> Option<String> {
     let ptr = v.as_ptr()?;
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            fields.read().unwrap().get(key).copied().and_then(extract_str)
+            fields
+                .read()
+                .unwrap()
+                .get(key)
+                .copied()
+                .and_then(extract_str)
         } else {
             None
         }
@@ -900,7 +1063,12 @@ fn inst_int_field(v: MbValue, key: &str) -> Option<i64> {
     let ptr = v.as_ptr()?;
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            fields.read().unwrap().get(key).copied().and_then(|x| x.as_int())
+            fields
+                .read()
+                .unwrap()
+                .get(key)
+                .copied()
+                .and_then(|x| x.as_int())
         } else {
             None
         }
@@ -1086,9 +1254,21 @@ fn net_relation(self_v: MbValue, other: MbValue, as_subnet: bool) -> MbValue {
             );
         }
     }
-    let (inner, outer) = if as_subnet { (self_v, other) } else { (other, self_v) };
-    if let (Some(IpState::V4Net { addr: ia, prefix: ip_ }), Some(IpState::V4Net { addr: oa, prefix: op })) =
-        (load(inner), load(outer))
+    let (inner, outer) = if as_subnet {
+        (self_v, other)
+    } else {
+        (other, self_v)
+    };
+    if let (
+        Some(IpState::V4Net {
+            addr: ia,
+            prefix: ip_,
+        }),
+        Some(IpState::V4Net {
+            addr: oa,
+            prefix: op,
+        }),
+    ) = (load(inner), load(outer))
     {
         if op > ip_ {
             return MbValue::from_bool(false);
@@ -1116,7 +1296,11 @@ fn v4net_bounds(v: MbValue) -> Option<(u32, u8)> {
 }
 
 fn v4_broadcast(addr: u32, prefix: u8) -> u32 {
-    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix as u32) };
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix as u32)
+    };
     addr | !mask
 }
 
@@ -1171,28 +1355,44 @@ unsafe extern "C" fn net_subnets(self_v: MbValue, args: MbValue) -> MbValue {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let g = lock.read().unwrap();
-                    if let Some(d) = g.get(&super::super::dict_ops::DictKey::Str("prefixlen_diff".into())) {
-                        if let Some(n) = d.as_int() { diff = n.max(0) as u8; }
+                    if let Some(d) = g.get(&super::super::dict_ops::DictKey::Str(
+                        "prefixlen_diff".into(),
+                    )) {
+                        if let Some(n) = d.as_int() {
+                            diff = n.max(0) as u8;
+                        }
                     }
-                    if let Some(d) = g.get(&super::super::dict_ops::DictKey::Str("new_prefix".into())) {
+                    if let Some(d) =
+                        g.get(&super::super::dict_ops::DictKey::Str("new_prefix".into()))
+                    {
                         new_prefix = d.as_int().map(|n| n as u8);
                     }
                     continue;
                 }
             }
         }
-        if let Some(n) = v.as_int() { diff = n.max(0) as u8; }
+        if let Some(n) = v.as_int() {
+            diff = n.max(0) as u8;
+        }
     }
-    let target = new_prefix.unwrap_or_else(|| prefix.saturating_add(diff)).min(32);
+    let target = new_prefix
+        .unwrap_or_else(|| prefix.saturating_add(diff))
+        .min(32);
     if target <= prefix {
-        return MbValue::from_ptr(MbObject::new_list(vec![make_handle(IpState::V4Net { addr, prefix })]));
+        return MbValue::from_ptr(MbObject::new_list(vec![make_handle(IpState::V4Net {
+            addr,
+            prefix,
+        })]));
     }
     let count = 1u64 << (target - prefix);
     let step = 1u64 << (32 - target as u32);
     let mut out = Vec::with_capacity(count as usize);
     for i in 0..count {
         let sub_addr = addr.wrapping_add((i * step) as u32);
-        out.push(make_handle(IpState::V4Net { addr: sub_addr, prefix: target }));
+        out.push(make_handle(IpState::V4Net {
+            addr: sub_addr,
+            prefix: target,
+        }));
     }
     MbValue::from_ptr(MbObject::new_list(out))
 }
@@ -1272,20 +1472,53 @@ pub fn register() {
         ("ip_address", dispatch_ip_address as *const () as usize),
         ("ip_network", dispatch_ip_network as *const () as usize),
         ("ip_interface", dispatch_ip_interface as *const () as usize),
-        ("v4_int_to_packed", dispatch_v4_int_to_packed as *const () as usize),
-        ("v6_int_to_packed", dispatch_v6_int_to_packed as *const () as usize),
-        ("collapse_addresses", dispatch_collapse_addresses as *const () as usize),
-        ("summarize_address_range", dispatch_summarize_address_range as *const () as usize),
-        ("get_mixed_type_key", dispatch_get_mixed_type_key as *const () as usize),
+        (
+            "v4_int_to_packed",
+            dispatch_v4_int_to_packed as *const () as usize,
+        ),
+        (
+            "v6_int_to_packed",
+            dispatch_v6_int_to_packed as *const () as usize,
+        ),
+        (
+            "collapse_addresses",
+            dispatch_collapse_addresses as *const () as usize,
+        ),
+        (
+            "summarize_address_range",
+            dispatch_summarize_address_range as *const () as usize,
+        ),
+        (
+            "get_mixed_type_key",
+            dispatch_get_mixed_type_key as *const () as usize,
+        ),
         // Address / Network / Interface classes registered as callable func
         // stubs so `callable(ipaddress.IPv4Address)` (etc.) is true. No code
         // does isinstance/construction on these as Instance shells.
-        ("IPv4Address", dispatch_class_ipv4_address as *const () as usize),
-        ("IPv6Address", dispatch_class_ipv6_address as *const () as usize),
-        ("IPv4Network", dispatch_class_ipv4_network as *const () as usize),
-        ("IPv6Network", dispatch_class_ipv6_network as *const () as usize),
-        ("IPv4Interface", dispatch_class_ipv4_interface as *const () as usize),
-        ("IPv6Interface", dispatch_class_ipv6_interface as *const () as usize),
+        (
+            "IPv4Address",
+            dispatch_class_ipv4_address as *const () as usize,
+        ),
+        (
+            "IPv6Address",
+            dispatch_class_ipv6_address as *const () as usize,
+        ),
+        (
+            "IPv4Network",
+            dispatch_class_ipv4_network as *const () as usize,
+        ),
+        (
+            "IPv6Network",
+            dispatch_class_ipv6_network as *const () as usize,
+        ),
+        (
+            "IPv4Interface",
+            dispatch_class_ipv4_interface as *const () as usize,
+        ),
+        (
+            "IPv6Interface",
+            dispatch_class_ipv6_interface as *const () as usize,
+        ),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -1300,12 +1533,30 @@ pub fn register() {
     // v6 class — acceptable for the isinstance surface.
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
-        map.insert(dispatch_class_ipv4_address as *const () as usize as u64, "IPv4Address".to_string());
-        map.insert(dispatch_class_ipv6_address as *const () as usize as u64, "IPv6Address".to_string());
-        map.insert(dispatch_class_ipv4_network as *const () as usize as u64, "IPv4Network".to_string());
-        map.insert(dispatch_class_ipv6_network as *const () as usize as u64, "IPv6Network".to_string());
-        map.insert(dispatch_class_ipv4_interface as *const () as usize as u64, "IPv4Interface".to_string());
-        map.insert(dispatch_class_ipv6_interface as *const () as usize as u64, "IPv6Interface".to_string());
+        map.insert(
+            dispatch_class_ipv4_address as *const () as usize as u64,
+            "IPv4Address".to_string(),
+        );
+        map.insert(
+            dispatch_class_ipv6_address as *const () as usize as u64,
+            "IPv6Address".to_string(),
+        );
+        map.insert(
+            dispatch_class_ipv4_network as *const () as usize as u64,
+            "IPv4Network".to_string(),
+        );
+        map.insert(
+            dispatch_class_ipv6_network as *const () as usize as u64,
+            "IPv6Network".to_string(),
+        );
+        map.insert(
+            dispatch_class_ipv4_interface as *const () as usize as u64,
+            "IPv4Interface".to_string(),
+        );
+        map.insert(
+            dispatch_class_ipv6_interface as *const () as usize as u64,
+            "IPv6Interface".to_string(),
+        );
     });
     register_ip_classes();
 
@@ -1319,10 +1570,24 @@ pub fn register() {
     // `check_class_hierarchy` make `except ValueError` catch them and
     // `issubclass(AddressValueError, ValueError)` true. (Same pattern as
     // configparser's exception classes and statistics.StatisticsError.)
-    attrs.insert("AddressValueError".to_string(), MbValue::from_ptr(MbObject::new_str("AddressValueError".to_string())));
-    attrs.insert("NetmaskValueError".to_string(), MbValue::from_ptr(MbObject::new_str("NetmaskValueError".to_string())));
-    super::super::class::mb_class_register("AddressValueError", vec!["ValueError".to_string()], HashMap::new());
-    super::super::class::mb_class_register("NetmaskValueError", vec!["ValueError".to_string()], HashMap::new());
+    attrs.insert(
+        "AddressValueError".to_string(),
+        MbValue::from_ptr(MbObject::new_str("AddressValueError".to_string())),
+    );
+    attrs.insert(
+        "NetmaskValueError".to_string(),
+        MbValue::from_ptr(MbObject::new_str("NetmaskValueError".to_string())),
+    );
+    super::super::class::mb_class_register(
+        "AddressValueError",
+        vec!["ValueError".to_string()],
+        HashMap::new(),
+    );
+    super::super::class::mb_class_register(
+        "NetmaskValueError",
+        vec!["ValueError".to_string()],
+        HashMap::new(),
+    );
 
     // `import functools` at CPython's ipaddress module top re-exports the
     // functools module as an attribute. The surface fixture only asserts
@@ -1369,7 +1634,9 @@ mod tests {
     fn test_parse_ipv6_basic() {
         let b = parse_ipv6("::1").unwrap();
         assert_eq!(b[15], 1);
-        for i in 0..15 { assert_eq!(b[i], 0); }
+        for i in 0..15 {
+            assert_eq!(b[i], 0);
+        }
     }
 
     #[test]

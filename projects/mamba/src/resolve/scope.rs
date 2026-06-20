@@ -46,7 +46,10 @@ pub struct Scope {
 
 impl Scope {
     pub fn new(parent: Option<usize>) -> Self {
-        Self { parent, symbols: HashMap::new() }
+        Self {
+            parent,
+            symbols: HashMap::new(),
+        }
     }
 
     pub fn define(&mut self, name: String, id: SymbolId) {
@@ -97,7 +100,11 @@ impl SymbolTable {
 
     pub fn define(&mut self, name: String, kind: SymbolKind) -> SymbolId {
         let id = SymbolId(self.symbols.len() as u32);
-        self.symbols.push(SymbolInfo { id, name: name.clone(), kind });
+        self.symbols.push(SymbolInfo {
+            id,
+            name: name.clone(),
+            kind,
+        });
         self.scopes[self.current_scope].define(name, id);
         id
     }
@@ -133,7 +140,10 @@ impl SymbolTable {
     /// Get the variable classification for a symbol.
     /// Returns `Local` by default if not explicitly classified.
     pub fn get_var_class(&self, id: SymbolId) -> VariableClass {
-        self.var_classes.get(&id).copied().unwrap_or(VariableClass::Local)
+        self.var_classes
+            .get(&id)
+            .copied()
+            .unwrap_or(VariableClass::Local)
     }
 
     /// Get the current scope index.
@@ -155,15 +165,25 @@ impl SymbolTable {
     /// PEP 572: walrus `:=` inside a comprehension defines in the enclosing scope.
     /// Falls back to current scope if there is no parent.
     pub fn define_in_enclosing_scope(&mut self, name: String, kind: SymbolKind) -> SymbolId {
-        let target_scope = self.scopes[self.current_scope].parent
+        let target_scope = self.scopes[self.current_scope]
+            .parent
             .unwrap_or(self.current_scope);
         self.define_in_scope(target_scope, name, kind)
     }
 
     /// Define a symbol in a specific scope (for walrus-in-comprehension, PEP 572).
-    pub fn define_in_scope(&mut self, scope_idx: usize, name: String, kind: SymbolKind) -> SymbolId {
+    pub fn define_in_scope(
+        &mut self,
+        scope_idx: usize,
+        name: String,
+        kind: SymbolKind,
+    ) -> SymbolId {
         let id = SymbolId(self.symbols.len() as u32);
-        self.symbols.push(SymbolInfo { id, name: name.clone(), kind });
+        self.symbols.push(SymbolInfo {
+            id,
+            name: name.clone(),
+            kind,
+        });
         self.scopes[scope_idx].define(name, id);
         id
     }
@@ -205,11 +225,11 @@ mod tests {
         st.push_scope();
         let inner = st.current_scope_idx();
         assert_eq!(st.parent_scope(inner), Some(0));
-        let s = g;  // outer id captured for later
+        let s = g; // outer id captured for later
         let inner_x = st.define("x".into(), SymbolKind::Parameter);
         assert_ne!(inner_x, s);
-        assert_eq!(st.lookup("x"), Some(inner_x));              // walks up → inner wins
-        assert_eq!(st.lookup_in_scope(0, "x"), Some(s));        // no-walk → outer
+        assert_eq!(st.lookup("x"), Some(inner_x)); // walks up → inner wins
+        assert_eq!(st.lookup_in_scope(0, "x"), Some(s)); // no-walk → outer
         assert_eq!(st.lookup_in_scope(inner, "x"), Some(inner_x));
 
         // pop_scope returns to global — inner shadow gone

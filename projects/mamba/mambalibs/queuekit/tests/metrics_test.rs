@@ -3,7 +3,7 @@
 #[cfg(feature = "metrics")]
 #[cfg(test)]
 mod tests {
-    use queuekit::metrics::{METRICS, gather_metrics};
+    use queuekit::metrics::{gather_metrics, METRICS};
 
     #[test]
     fn test_metrics_recording() {

@@ -1,6 +1,6 @@
-use crate::resolve::SymbolKind;
-use super::{Ty, TypeId};
 use super::check::TypeChecker;
+use super::{Ty, TypeId};
+use crate::resolve::SymbolKind;
 
 /// Built-in function registration and exception hierarchy (#245, #249).
 impl TypeChecker {
@@ -138,21 +138,36 @@ impl TypeChecker {
         self.def_builtin_variadic("compile", &[], any);
 
         // Builtin constants — NotImplemented, Ellipsis, __debug__
-        let sym = self.symbols.define("NotImplemented".to_string(), SymbolKind::Variable);
+        let sym = self
+            .symbols
+            .define("NotImplemented".to_string(), SymbolKind::Variable);
         self.set_sym_type(sym.0, any);
-        let sym = self.symbols.define("Ellipsis".to_string(), SymbolKind::Variable);
+        let sym = self
+            .symbols
+            .define("Ellipsis".to_string(), SymbolKind::Variable);
         self.set_sym_type(sym.0, any);
 
         // Module-level dunder variables — always available in every module.
-        for dunder in &["__name__", "__file__", "__doc__", "__package__",
-                        "__spec__", "__loader__", "__builtins__"] {
-            let sym = self.symbols.define(dunder.to_string(), SymbolKind::Variable);
+        for dunder in &[
+            "__name__",
+            "__file__",
+            "__doc__",
+            "__package__",
+            "__spec__",
+            "__loader__",
+            "__builtins__",
+        ] {
+            let sym = self
+                .symbols
+                .define(dunder.to_string(), SymbolKind::Variable);
             self.set_sym_type(sym.0, str_ty);
         }
         // `__annotations__` is a dict (PEP 526) auto-created at module init.
         // Typed `any` so `isinstance(__annotations__, dict)` and membership tests
         // route through the runtime dict carried in the global slot.
-        let ann_sym = self.symbols.define("__annotations__".to_string(), SymbolKind::Variable);
+        let ann_sym = self
+            .symbols
+            .define("__annotations__".to_string(), SymbolKind::Variable);
         self.set_sym_type(ann_sym.0, any);
     }
 
@@ -267,7 +282,11 @@ mod tests {
         let sym = tc.symbols.lookup("print").expect("print not found");
         let ty = tc.get_sym_type(sym.0);
         match tc.tcx.get(ty) {
-            Ty::Fn { params, ret, variadic } => {
+            Ty::Fn {
+                params,
+                ret,
+                variadic,
+            } => {
                 assert_eq!(params.len(), 0); // print(*args)
                 assert_eq!(*ret, tc.tcx.none());
                 assert!(*variadic);
@@ -370,15 +389,24 @@ mod tests {
     fn test_exception_is_class() {
         let tc = TypeChecker::new();
         let exceptions = [
-            "ValueError", "TypeError", "KeyError", "IndexError",
-            "RuntimeError", "BaseException", "Exception",
+            "ValueError",
+            "TypeError",
+            "KeyError",
+            "IndexError",
+            "RuntimeError",
+            "BaseException",
+            "Exception",
         ];
         for name in &exceptions {
-            let sym = tc.symbols.lookup(name)
+            let sym = tc
+                .symbols
+                .lookup(name)
                 .unwrap_or_else(|| panic!("{name} not found"));
             let ty = tc.get_sym_type(sym.0);
             match tc.tcx.get(ty) {
-                Ty::Class { name: class_name, .. } => {
+                Ty::Class {
+                    name: class_name, ..
+                } => {
                     assert_eq!(class_name, *name);
                 }
                 other => panic!("{name} should be a class, got {:?}", other),
@@ -397,7 +425,9 @@ mod tests {
     #[test]
     fn test_all_type_constructor_builtins() {
         let tc = TypeChecker::new();
-        for name in &["int", "float", "bool", "str", "list", "dict", "set", "tuple"] {
+        for name in &[
+            "int", "float", "bool", "str", "list", "dict", "set", "tuple",
+        ] {
             assert!(
                 tc.symbols.lookup(name).is_some(),
                 "builtin {name} not found"
@@ -419,9 +449,15 @@ mod tests {
     #[test]
     fn test_all_introspection_builtins() {
         let tc = TypeChecker::new();
-        for name in &["type", "isinstance", "issubclass", "hasattr",
-                       "getattr", "setattr", "delattr"]
-        {
+        for name in &[
+            "type",
+            "isinstance",
+            "issubclass",
+            "hasattr",
+            "getattr",
+            "setattr",
+            "delattr",
+        ] {
             assert!(
                 tc.symbols.lookup(name).is_some(),
                 "builtin {name} not found"

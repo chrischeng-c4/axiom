@@ -1,0 +1,14 @@
+[record]
+suite = "lumen"
+dimension = "resilience"
+case = "search_stability_fault_resilience"
+subject = "filtering and ranking stay bounded under the search stability fault contract"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[[steps]]
+type = "exec"
+name = "term_query_latency_floor"
+cmd = ["cargo", "test", "-p", "lumen", "--test", "perf_gate", "term_query_latency_floor", "--", "--nocapture"]
+timeout_secs = 120

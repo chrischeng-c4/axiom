@@ -1,3 +1,5 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// google-cloud-storage module for Mamba (#1510).
 ///
 /// Minimal callable-dispatcher shim covering four top-level
@@ -11,10 +13,7 @@
 /// surface) is tracked separately under #1510; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the 3p
 /// conformance issues have closed against.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 unsafe extern "C" fn dispatch_client(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())

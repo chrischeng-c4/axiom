@@ -7,14 +7,14 @@
 // @contract search-stability-resource-leak
 // @category stability
 // @required_for_production true
-// @command target/debug/rig test --dir projects/lumen/tests/rig/cases/endurance
+// @command rig run --dir projects/lumen/tests/rig/cases/endurance
 // AW-EC-END
 
 // Contract: (e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen).
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_search_stability_resource_leak() {
-    let command = "target/debug/rig test --dir projects/lumen/tests/rig/cases/endurance";
+    let command = "rig run --dir projects/lumen/tests/rig/cases/endurance";
     let id = "lumen-search-stability-resource-leak";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

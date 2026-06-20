@@ -65,7 +65,7 @@ The parent workflow coordinates these readiness layers and maturity signals:
    work directly:
    - `capability-format-migration`: migrate YAML/legacy capability maps into Markdown tables.
    - `fix_spec_rule`: edit the target TD spec until `aw td check <target>` passes.
-   - `regen_drift`: regenerate or repair the affected CODEGEN block, then run `aw cb check <target>`.
+   - `regen_drift`: regenerate or repair the affected CODEGEN block, then run `aw td code-check <target>`.
    - `semantic_td_missing`: create or update the semantic TD only when AST/source evidence supports the claim.
    - `generator_primitive_gap`: improve the generator primitive or open/update the work item that owns that gap.
    - `command_no_td_ref`: classify one command as promote/delete; promote by adding a TD `command_refs` claim with valid `capability_refs`, or delete it from the active surface.

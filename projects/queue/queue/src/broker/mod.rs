@@ -79,14 +79,21 @@ pub trait PullBroker: Broker {
 /// Trait for push-based brokers (broker sends HTTP to worker)
 pub trait PushBroker: Broker {
     /// Parse an incoming HTTP request into a BrokerMessage
-    fn parse_push_request(&self, headers: &HashMap<String, String>, body: &[u8])
-        -> Result<BrokerMessage, TaskError>;
+    fn parse_push_request(
+        &self,
+        headers: &HashMap<String, String>,
+        body: &[u8],
+    ) -> Result<BrokerMessage, TaskError>;
 
     /// Get HTTP status code for successful ack
-    fn ack_status_code(&self) -> u16 { 200 }
+    fn ack_status_code(&self) -> u16 {
+        200
+    }
 
     /// Get HTTP status code for nack (retry)
-    fn nack_status_code(&self) -> u16 { 500 }
+    fn nack_status_code(&self) -> u16 {
+        500
+    }
 
     /// Get the expected endpoint path pattern
     fn endpoint_path(&self) -> &str;
@@ -154,7 +161,10 @@ pub struct SubscriptionHandle {
 impl SubscriptionHandle {
     /// Create a new subscription handle
     pub fn new(queue: String, cancel_token: CancellationToken) -> Self {
-        Self { queue, cancel_token }
+        Self {
+            queue,
+            cancel_token,
+        }
     }
 
     /// Cancel the subscription
@@ -197,10 +207,10 @@ pub use config::BrokerInstance;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{TaskError, TaskMessage};
+    use chrono::Utc;
     use std::collections::HashMap;
     use std::time::Duration;
-    use chrono::Utc;
-    use crate::{TaskError, TaskMessage};
     use tokio_util::sync::CancellationToken;
 
     // -----------------------------------------------------------------------
@@ -301,7 +311,10 @@ mod tests {
 
         assert_eq!(broker_msg.delivery_tag, "task-123");
         assert_eq!(broker_msg.payload.task_name, "test_task");
-        assert_eq!(broker_msg.headers.get("x-cloudtasks-taskname").unwrap(), "task-123");
+        assert_eq!(
+            broker_msg.headers.get("x-cloudtasks-taskname").unwrap(),
+            "task-123"
+        );
         assert_eq!(broker_msg.timestamp, now);
         assert!(!broker_msg.redelivered);
     }
@@ -368,12 +381,24 @@ mod tests {
 
     #[async_trait]
     impl Broker for MockPushBroker {
-        async fn connect(&self) -> Result<(), TaskError> { Ok(()) }
-        async fn disconnect(&self) -> Result<(), TaskError> { Ok(()) }
-        async fn publish(&self, _queue: &str, _message: TaskMessage) -> Result<(), TaskError> { Ok(()) }
-        async fn health_check(&self) -> Result<(), TaskError> { Ok(()) }
-        fn delivery_model(&self) -> DeliveryModel { DeliveryModel::Push }
-        fn capabilities(&self) -> BrokerCapabilities { BrokerCapabilities::default() }
+        async fn connect(&self) -> Result<(), TaskError> {
+            Ok(())
+        }
+        async fn disconnect(&self) -> Result<(), TaskError> {
+            Ok(())
+        }
+        async fn publish(&self, _queue: &str, _message: TaskMessage) -> Result<(), TaskError> {
+            Ok(())
+        }
+        async fn health_check(&self) -> Result<(), TaskError> {
+            Ok(())
+        }
+        fn delivery_model(&self) -> DeliveryModel {
+            DeliveryModel::Push
+        }
+        fn capabilities(&self) -> BrokerCapabilities {
+            BrokerCapabilities::default()
+        }
     }
 
     impl PushBroker for MockPushBroker {
@@ -465,14 +490,23 @@ mod tests {
 
     #[async_trait]
     impl Broker for MockDelayedBroker {
-        async fn connect(&self) -> Result<(), TaskError> { Ok(()) }
-        async fn disconnect(&self) -> Result<(), TaskError> { Ok(()) }
-        async fn publish(&self, _queue: &str, _message: TaskMessage) -> Result<(), TaskError> {
-            self.published_immediate.store(true, std::sync::atomic::Ordering::SeqCst);
+        async fn connect(&self) -> Result<(), TaskError> {
             Ok(())
         }
-        async fn health_check(&self) -> Result<(), TaskError> { Ok(()) }
-        fn delivery_model(&self) -> DeliveryModel { DeliveryModel::Push }
+        async fn disconnect(&self) -> Result<(), TaskError> {
+            Ok(())
+        }
+        async fn publish(&self, _queue: &str, _message: TaskMessage) -> Result<(), TaskError> {
+            self.published_immediate
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        async fn health_check(&self) -> Result<(), TaskError> {
+            Ok(())
+        }
+        fn delivery_model(&self) -> DeliveryModel {
+            DeliveryModel::Push
+        }
         fn capabilities(&self) -> BrokerCapabilities {
             BrokerCapabilities {
                 delayed_tasks: true,
@@ -489,7 +523,8 @@ mod tests {
             _message: TaskMessage,
             _delay: Duration,
         ) -> Result<(), TaskError> {
-            self.published_delayed.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.published_delayed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
         // Uses default publish_at implementation
@@ -503,10 +538,18 @@ mod tests {
 
         let result = broker.publish_at("test-queue", msg, past_eta).await;
         assert!(result.is_ok());
-        assert!(broker.published_immediate.load(std::sync::atomic::Ordering::SeqCst),
-            "Past ETA should call publish() immediately");
-        assert!(!broker.published_delayed.load(std::sync::atomic::Ordering::SeqCst),
-            "Past ETA should NOT call publish_delayed()");
+        assert!(
+            broker
+                .published_immediate
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "Past ETA should call publish() immediately"
+        );
+        assert!(
+            !broker
+                .published_delayed
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "Past ETA should NOT call publish_delayed()"
+        );
     }
 
     #[tokio::test]
@@ -517,10 +560,18 @@ mod tests {
 
         let result = broker.publish_at("test-queue", msg, future_eta).await;
         assert!(result.is_ok());
-        assert!(!broker.published_immediate.load(std::sync::atomic::Ordering::SeqCst),
-            "Future ETA should NOT call publish() immediately");
-        assert!(broker.published_delayed.load(std::sync::atomic::Ordering::SeqCst),
-            "Future ETA should call publish_delayed()");
+        assert!(
+            !broker
+                .published_immediate
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "Future ETA should NOT call publish() immediately"
+        );
+        assert!(
+            broker
+                .published_delayed
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "Future ETA should call publish_delayed()"
+        );
     }
 
     #[tokio::test]
@@ -533,8 +584,12 @@ mod tests {
         let result = broker.publish_at("test-queue", msg, now_eta).await;
         assert!(result.is_ok());
         // eta <= now should trigger immediate publish
-        assert!(broker.published_immediate.load(std::sync::atomic::Ordering::SeqCst),
-            "ETA at now should call publish() immediately");
+        assert!(
+            broker
+                .published_immediate
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "ETA at now should call publish() immediately"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -608,15 +663,24 @@ mod tests {
             let body = serde_json::to_vec(&msg).unwrap();
 
             let mut headers = HashMap::new();
-            headers.insert("x-cloudtasks-taskname".to_string(), "projects/test/locations/us/queues/q/tasks/t123".to_string());
+            headers.insert(
+                "x-cloudtasks-taskname".to_string(),
+                "projects/test/locations/us/queues/q/tasks/t123".to_string(),
+            );
             headers.insert("x-cloudtasks-taskretrycount".to_string(), "0".to_string());
 
             let result = broker.parse_push_request(&headers, &body);
             assert!(result.is_ok());
             let broker_msg = result.unwrap();
-            assert_eq!(broker_msg.delivery_tag, "projects/test/locations/us/queues/q/tasks/t123");
+            assert_eq!(
+                broker_msg.delivery_tag,
+                "projects/test/locations/us/queues/q/tasks/t123"
+            );
             assert_eq!(broker_msg.payload.task_name, "cloud_task");
-            assert!(!broker_msg.redelivered, "retry count 0 should not be redelivered");
+            assert!(
+                !broker_msg.redelivered,
+                "retry count 0 should not be redelivered"
+            );
         }
 
         // S1: Redelivery detection via retry count header
@@ -627,13 +691,19 @@ mod tests {
             let body = serde_json::to_vec(&msg).unwrap();
 
             let mut headers = HashMap::new();
-            headers.insert("x-cloudtasks-taskname".to_string(), "task-retry-1".to_string());
+            headers.insert(
+                "x-cloudtasks-taskname".to_string(),
+                "task-retry-1".to_string(),
+            );
             headers.insert("x-cloudtasks-taskretrycount".to_string(), "3".to_string());
 
             let result = broker.parse_push_request(&headers, &body);
             assert!(result.is_ok());
             let broker_msg = result.unwrap();
-            assert!(broker_msg.redelivered, "retry count > 0 should be redelivered");
+            assert!(
+                broker_msg.redelivered,
+                "retry count > 0 should be redelivered"
+            );
         }
 
         // S1: Missing task name header falls back to task ID
@@ -649,8 +719,10 @@ mod tests {
             let result = broker.parse_push_request(&headers, &body);
             assert!(result.is_ok());
             let broker_msg = result.unwrap();
-            assert_eq!(broker_msg.delivery_tag, task_id_str,
-                "Missing x-cloudtasks-taskname should fall back to task ID");
+            assert_eq!(
+                broker_msg.delivery_tag, task_id_str,
+                "Missing x-cloudtasks-taskname should fall back to task ID"
+            );
         }
 
         // Parse invalid JSON body
@@ -683,7 +755,10 @@ mod tests {
             assert!(result.is_err());
             match result.unwrap_err() {
                 TaskError::Authentication(msg) => {
-                    assert!(msg.contains("Authorization"), "Error should mention Authorization header");
+                    assert!(
+                        msg.contains("Authorization"),
+                        "Error should mention Authorization header"
+                    );
                 }
                 other => panic!("Expected Authentication error, got: {:?}", other),
             }
@@ -699,13 +774,19 @@ mod tests {
             let msg = TaskMessage::new("auth_task", serde_json::json!([]));
             let body = serde_json::to_vec(&msg).unwrap();
             let mut headers = HashMap::new();
-            headers.insert("authorization".to_string(), "Basic dXNlcjpwYXNz".to_string());
+            headers.insert(
+                "authorization".to_string(),
+                "Basic dXNlcjpwYXNz".to_string(),
+            );
 
             let result = broker.parse_push_request(&headers, &body);
             assert!(result.is_err());
             match result.unwrap_err() {
                 TaskError::Authentication(msg) => {
-                    assert!(msg.contains("Invalid"), "Error should mention invalid format");
+                    assert!(
+                        msg.contains("Invalid"),
+                        "Error should mention invalid format"
+                    );
                 }
                 other => panic!("Expected Authentication error, got: {:?}", other),
             }
@@ -731,7 +812,10 @@ mod tests {
 
             let mut headers = HashMap::new();
             headers.insert("authorization".to_string(), format!("Bearer {}", jwt_token));
-            headers.insert("x-cloudtasks-taskname".to_string(), "auth-task-1".to_string());
+            headers.insert(
+                "x-cloudtasks-taskname".to_string(),
+                "auth-task-1".to_string(),
+            );
 
             let result = broker.parse_push_request(&headers, &body);
             assert!(result.is_ok(), "Valid Bearer token should pass auth check");

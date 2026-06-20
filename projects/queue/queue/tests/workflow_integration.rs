@@ -5,7 +5,7 @@
 
 use cclab_queue::{
     Broker, Chain, Chord, Group, NatsBroker, NatsBrokerConfig, RedisBackend, RedisBackendConfig,
-    TaskSignature, TaskOptions,
+    TaskOptions, TaskSignature,
 };
 
 /// Helper to create a test broker
@@ -25,7 +25,9 @@ async fn create_test_backend() -> RedisBackend {
         url: "redis://localhost:6379".to_string(),
         ..Default::default()
     };
-    RedisBackend::new(config).await.expect("Failed to create Redis backend")
+    RedisBackend::new(config)
+        .await
+        .expect("Failed to create Redis backend")
 }
 
 #[tokio::test]
@@ -55,8 +57,7 @@ async fn test_chain_with_custom_queue() {
     let broker = create_test_broker().await;
 
     let tasks = vec![
-        TaskSignature::new("task1", serde_json::json!([1]))
-            .set_queue("priority"),
+        TaskSignature::new("task1", serde_json::json!([1])).set_queue("priority"),
         TaskSignature::new("task2", serde_json::json!([2])),
     ];
 
@@ -187,7 +188,9 @@ async fn test_chord_empty_header_error() {
         url: "redis://localhost:6379".to_string(),
         ..Default::default()
     };
-    let backend = RedisBackend::new(backend_config).await.expect("Failed to create backend");
+    let backend = RedisBackend::new(backend_config)
+        .await
+        .expect("Failed to create backend");
 
     let header = Group::new(vec![]);
     let callback = TaskSignature::new("callback", serde_json::json!([]));
@@ -238,8 +241,7 @@ fn test_task_signature_builder() {
 
 #[test]
 fn test_task_signature_immutable() {
-    let sig = TaskSignature::new("task", serde_json::json!([2, 3]))
-        .immutable();
+    let sig = TaskSignature::new("task", serde_json::json!([2, 3])).immutable();
 
     assert!(sig.immutable);
 

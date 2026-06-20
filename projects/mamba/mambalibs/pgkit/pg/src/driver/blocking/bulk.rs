@@ -11,9 +11,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 
 use crate::driver::blocking::Connection;
-use crate::driver::{
-    BulkConfig, BulkExecutor as AsyncBulkExecutor, BulkResult, ExtractedValue,
-};
+use crate::driver::{BulkConfig, BulkExecutor as AsyncBulkExecutor, BulkResult, ExtractedValue};
 use crate::Result;
 
 /// Blocking sibling for [`crate::driver::BulkExecutor`].

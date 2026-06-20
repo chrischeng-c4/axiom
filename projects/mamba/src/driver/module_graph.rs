@@ -19,7 +19,6 @@
 /// graph.add_root("src/main.py").unwrap();
 /// let order = graph.topo_sort().unwrap();
 /// ```
-
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -45,16 +44,19 @@ pub enum GraphError {
 impl std::fmt::Display for GraphError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GraphError::Io { path, reason } =>
-                write!(f, "I/O error reading {}: {}", path.display(), reason),
-            GraphError::Parse { path, reason } =>
-                write!(f, "Parse error in {}: {}", path.display(), reason),
+            GraphError::Io { path, reason } => {
+                write!(f, "I/O error reading {}: {}", path.display(), reason)
+            }
+            GraphError::Parse { path, reason } => {
+                write!(f, "Parse error in {}: {}", path.display(), reason)
+            }
             GraphError::Cycle { cycle } => {
                 let names: Vec<_> = cycle.iter().map(|p| p.display().to_string()).collect();
                 write!(f, "Import cycle: {}", names.join(" → "))
             }
-            GraphError::Unresolved { import, from } =>
-                write!(f, "Unresolved import '{}' in {}", import, from.display()),
+            GraphError::Unresolved { import, from } => {
+                write!(f, "Unresolved import '{}' in {}", import, from.display())
+            }
         }
     }
 }
@@ -128,8 +130,8 @@ impl ModuleGraph {
     /// Returns `Err` if any file cannot be read, parsed, or resolved.
     /// Unresolvable imports from the standard library are silently skipped.
     pub fn add_root(&mut self, path: impl AsRef<Path>) -> Result<(), Vec<GraphError>> {
-        let canon = std::fs::canonicalize(path.as_ref())
-            .unwrap_or_else(|_| path.as_ref().to_path_buf());
+        let canon =
+            std::fs::canonicalize(path.as_ref()).unwrap_or_else(|_| path.as_ref().to_path_buf());
 
         self.enqueue(canon);
         self.resolve_all()
@@ -239,7 +241,11 @@ impl ModuleGraph {
             }
         }
 
-        if errors.is_empty() { Ok(()) } else { Err(errors) }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 
     /// Load, parse, and extract imports for a single file.
@@ -260,11 +266,17 @@ impl ModuleGraph {
         let ast = ast;
 
         let imports = collect_imports(&ast);
-        let is_package = path.file_name().map(|n| n == "__init__.py").unwrap_or(false);
+        let is_package = path
+            .file_name()
+            .map(|n| n == "__init__.py")
+            .unwrap_or(false);
 
-        let module_name = self
-            .path_to_module_name(path)
-            .unwrap_or_else(|| path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
+        let module_name = self.path_to_module_name(path).unwrap_or_else(|| {
+            path.file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        });
 
         // Resolve each import to a canonical path.
         let mut deps: Vec<PathBuf> = Vec::new();
@@ -327,8 +339,7 @@ impl ModuleGraph {
 
         if imp.module.is_empty() {
             // `from . import name` — the anchor dir IS the package.
-            return Some(anchor.join("__init__.py"))
-                .filter(|p| p.exists());
+            return Some(anchor.join("__init__.py")).filter(|p| p.exists());
         }
 
         probe_module(&anchor, &imp.module)
@@ -545,7 +556,9 @@ mod tests {
         // `import os` cannot be resolved in dir — should not error.
         let main = write_file(&dir, "main.py", "import os\nprint(os.getcwd())\n");
         let mut graph = ModuleGraph::new(vec![dir.path().to_path_buf()]);
-        graph.add_root(&main).expect("stdlib import skipped silently");
+        graph
+            .add_root(&main)
+            .expect("stdlib import skipped silently");
         assert_eq!(graph.len(), 1); // only main.py
     }
 
@@ -603,14 +616,17 @@ mod tests {
         let a = dir.path().join("a.py");
 
         let mut graph = ModuleGraph::new(vec![dir.path().to_path_buf()]);
-        graph.add_root(&a).expect("add_root should not error on cycle");
+        graph
+            .add_root(&a)
+            .expect("add_root should not error on cycle");
         // Both a.py and b.py are in the graph
         assert_eq!(graph.len(), 2);
 
         let result = graph.topo_sort();
         assert!(
             matches!(result, Err(GraphError::Cycle { .. })),
-            "expected Cycle error, got: {:?}", result
+            "expected Cycle error, got: {:?}",
+            result
         );
     }
 }

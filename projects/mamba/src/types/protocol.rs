@@ -1,3 +1,5 @@
+use super::context::TypeContext;
+use super::ty::TypeId;
 /// Protocol types (structural subtyping) for Mamba (#314 R2).
 ///
 /// Implements Python's Protocol pattern where an object satisfies a protocol
@@ -12,10 +14,7 @@
 ///       def draw(self) -> None: ...
 ///
 ///   # Circle satisfies Drawable (structural match)
-
 use std::collections::HashMap;
-use super::ty::TypeId;
-use super::context::TypeContext;
 
 /// A protocol definition: required method signatures.
 #[derive(Debug, Clone)]
@@ -44,7 +43,9 @@ pub struct ProtocolRegistry {
 
 impl ProtocolRegistry {
     pub fn new() -> Self {
-        Self { protocols: HashMap::new() }
+        Self {
+            protocols: HashMap::new(),
+        }
     }
 
     /// Register a new protocol.
@@ -71,7 +72,11 @@ impl ProtocolRegistry {
 
         let protocol = match self.protocols.get(protocol_name) {
             Some(p) => p,
-            None => return vec![ProtocolViolation::ProtocolNotFound(protocol_name.to_string())],
+            None => {
+                return vec![ProtocolViolation::ProtocolNotFound(
+                    protocol_name.to_string(),
+                )]
+            }
         };
 
         // Check required methods
@@ -94,15 +99,16 @@ impl ProtocolRegistry {
                     } else {
                         // Check parameter type compatibility (contravariant:
                         // actual params must be supertypes of required params)
-                        for (i, (req, act)) in required_sig.params.iter()
-                            .zip(actual_sig.params.iter()).enumerate()
+                        for (i, (req, act)) in required_sig
+                            .params
+                            .iter()
+                            .zip(actual_sig.params.iter())
+                            .enumerate()
                         {
                             if !tcx.is_subtype(*req, *act) {
                                 violations.push(ProtocolViolation::MethodSignatureMismatch {
                                     method: method_name.clone(),
-                                    reason: format!(
-                                        "parameter {} has incompatible type", i
-                                    ),
+                                    reason: format!("parameter {} has incompatible type", i),
                                 });
                             }
                         }
@@ -145,7 +151,8 @@ impl ProtocolRegistry {
         class_attrs: &HashMap<String, TypeId>,
         tcx: &TypeContext,
     ) -> bool {
-        self.check_conformance(protocol_name, class_methods, class_attrs, tcx).is_empty()
+        self.check_conformance(protocol_name, class_methods, class_attrs, tcx)
+            .is_empty()
     }
 }
 
@@ -191,10 +198,13 @@ mod tests {
             name: "Drawable".to_string(),
             methods: {
                 let mut m = HashMap::new();
-                m.insert("draw".to_string(), MethodSig {
-                    params: vec![], // self is implicit
-                    return_type: none_ty,
-                });
+                m.insert(
+                    "draw".to_string(),
+                    MethodSig {
+                        params: vec![], // self is implicit
+                        return_type: none_ty,
+                    },
+                );
                 m
             },
             attrs: HashMap::new(),
@@ -203,10 +213,13 @@ mod tests {
 
         // Circle has draw() → None
         let mut circle_methods = HashMap::new();
-        circle_methods.insert("draw".to_string(), MethodSig {
-            params: vec![],
-            return_type: none_ty,
-        });
+        circle_methods.insert(
+            "draw".to_string(),
+            MethodSig {
+                params: vec![],
+                return_type: none_ty,
+            },
+        );
 
         assert!(registry.satisfies("Drawable", &circle_methods, &HashMap::new(), &tcx));
 
@@ -226,10 +239,13 @@ mod tests {
             name: "Comparable".to_string(),
             methods: {
                 let mut m = HashMap::new();
-                m.insert("__lt__".to_string(), MethodSig {
-                    params: vec![int_ty],
-                    return_type: tcx.bool(),
-                });
+                m.insert(
+                    "__lt__".to_string(),
+                    MethodSig {
+                        params: vec![int_ty],
+                        return_type: tcx.bool(),
+                    },
+                );
                 m
             },
             attrs: {
@@ -241,20 +257,20 @@ mod tests {
         });
 
         // Class with no methods/attrs
-        let violations = registry.check_conformance(
-            "Comparable", &HashMap::new(), &HashMap::new(), &tcx
-        );
+        let violations =
+            registry.check_conformance("Comparable", &HashMap::new(), &HashMap::new(), &tcx);
         assert_eq!(violations.len(), 2); // missing method + missing attr
 
         // Class with __lt__ but no value attr
         let mut methods = HashMap::new();
-        methods.insert("__lt__".to_string(), MethodSig {
-            params: vec![int_ty],
-            return_type: tcx.bool(),
-        });
-        let violations = registry.check_conformance(
-            "Comparable", &methods, &HashMap::new(), &tcx
+        methods.insert(
+            "__lt__".to_string(),
+            MethodSig {
+                params: vec![int_ty],
+                return_type: tcx.bool(),
+            },
         );
+        let violations = registry.check_conformance("Comparable", &methods, &HashMap::new(), &tcx);
         assert_eq!(violations.len(), 1); // missing attr only
     }
 
@@ -263,9 +279,8 @@ mod tests {
         let tcx = TypeContext::new();
         let registry = ProtocolRegistry::new();
 
-        let violations = registry.check_conformance(
-            "NonExistent", &HashMap::new(), &HashMap::new(), &tcx,
-        );
+        let violations =
+            registry.check_conformance("NonExistent", &HashMap::new(), &HashMap::new(), &tcx);
         assert_eq!(violations.len(), 1);
         match &violations[0] {
             ProtocolViolation::ProtocolNotFound(name) => {
@@ -328,10 +343,13 @@ mod tests {
             name: "Sizable".to_string(),
             methods: {
                 let mut m = HashMap::new();
-                m.insert("size".to_string(), MethodSig {
-                    params: vec![], // no params
-                    return_type: int_ty,
-                });
+                m.insert(
+                    "size".to_string(),
+                    MethodSig {
+                        params: vec![], // no params
+                        return_type: int_ty,
+                    },
+                );
                 m
             },
             attrs: HashMap::new(),
@@ -340,14 +358,15 @@ mod tests {
 
         // Method has wrong param count
         let mut methods = HashMap::new();
-        methods.insert("size".to_string(), MethodSig {
-            params: vec![int_ty], // 1 param instead of 0
-            return_type: int_ty,
-        });
-
-        let violations = registry.check_conformance(
-            "Sizable", &methods, &HashMap::new(), &tcx,
+        methods.insert(
+            "size".to_string(),
+            MethodSig {
+                params: vec![int_ty], // 1 param instead of 0
+                return_type: int_ty,
+            },
         );
+
+        let violations = registry.check_conformance("Sizable", &methods, &HashMap::new(), &tcx);
         assert!(violations.iter().any(|v| matches!(
             v,
             ProtocolViolation::MethodSignatureMismatch { method, reason }
@@ -366,10 +385,13 @@ mod tests {
             name: "Nameable".to_string(),
             methods: {
                 let mut m = HashMap::new();
-                m.insert("name".to_string(), MethodSig {
-                    params: vec![],
-                    return_type: str_ty,
-                });
+                m.insert(
+                    "name".to_string(),
+                    MethodSig {
+                        params: vec![],
+                        return_type: str_ty,
+                    },
+                );
                 m
             },
             attrs: HashMap::new(),
@@ -378,14 +400,15 @@ mod tests {
 
         // Method returns int instead of str
         let mut methods = HashMap::new();
-        methods.insert("name".to_string(), MethodSig {
-            params: vec![],
-            return_type: int_ty, // wrong return
-        });
-
-        let violations = registry.check_conformance(
-            "Nameable", &methods, &HashMap::new(), &tcx,
+        methods.insert(
+            "name".to_string(),
+            MethodSig {
+                params: vec![],
+                return_type: int_ty, // wrong return
+            },
         );
+
+        let violations = registry.check_conformance("Nameable", &methods, &HashMap::new(), &tcx);
         assert!(violations.iter().any(|v| matches!(
             v,
             ProtocolViolation::MethodSignatureMismatch { reason, .. }
@@ -415,9 +438,7 @@ mod tests {
         let mut attrs = HashMap::new();
         attrs.insert("name".to_string(), int_ty); // int, not str
 
-        let violations = registry.check_conformance(
-            "HasName", &HashMap::new(), &attrs, &tcx,
-        );
+        let violations = registry.check_conformance("HasName", &HashMap::new(), &attrs, &tcx);
         assert!(violations.iter().any(|v| matches!(
             v, ProtocolViolation::AttributeTypeMismatch { attr } if attr == "name"
         )));
@@ -434,10 +455,13 @@ mod tests {
             name: "Identifiable".to_string(),
             methods: {
                 let mut m = HashMap::new();
-                m.insert("id".to_string(), MethodSig {
-                    params: vec![],
-                    return_type: int_ty,
-                });
+                m.insert(
+                    "id".to_string(),
+                    MethodSig {
+                        params: vec![],
+                        return_type: int_ty,
+                    },
+                );
                 m
             },
             attrs: {
@@ -450,10 +474,13 @@ mod tests {
 
         // Full conformance
         let mut methods = HashMap::new();
-        methods.insert("id".to_string(), MethodSig {
-            params: vec![],
-            return_type: int_ty,
-        });
+        methods.insert(
+            "id".to_string(),
+            MethodSig {
+                params: vec![],
+                return_type: int_ty,
+            },
+        );
         let mut attrs = HashMap::new();
         attrs.insert("active".to_string(), bool_ty);
 
@@ -475,7 +502,10 @@ mod tests {
             method: "baz".into(),
             reason: "wrong params".into(),
         };
-        assert_eq!(format!("{v4}"), "method 'baz' signature mismatch: wrong params");
+        assert_eq!(
+            format!("{v4}"),
+            "method 'baz' signature mismatch: wrong params"
+        );
 
         let v5 = ProtocolViolation::AttributeTypeMismatch { attr: "qux".into() };
         assert_eq!(format!("{v5}"), "attribute 'qux' has incompatible type");
@@ -511,10 +541,13 @@ mod tests {
             name: "Drawable".to_string(),
             methods: {
                 let mut m = HashMap::new();
-                m.insert("draw".to_string(), MethodSig {
-                    params: vec![],
-                    return_type: none_ty,
-                });
+                m.insert(
+                    "draw".to_string(),
+                    MethodSig {
+                        params: vec![],
+                        return_type: none_ty,
+                    },
+                );
                 m
             },
             attrs: HashMap::new(),
@@ -523,14 +556,20 @@ mod tests {
 
         // Class has draw() AND extra resize() — should still satisfy
         let mut methods = HashMap::new();
-        methods.insert("draw".to_string(), MethodSig {
-            params: vec![],
-            return_type: none_ty,
-        });
-        methods.insert("resize".to_string(), MethodSig {
-            params: vec![tcx.int(), tcx.int()],
-            return_type: none_ty,
-        });
+        methods.insert(
+            "draw".to_string(),
+            MethodSig {
+                params: vec![],
+                return_type: none_ty,
+            },
+        );
+        methods.insert(
+            "resize".to_string(),
+            MethodSig {
+                params: vec![tcx.int(), tcx.int()],
+                return_type: none_ty,
+            },
+        );
 
         assert!(registry.satisfies("Drawable", &methods, &HashMap::new(), &tcx));
     }

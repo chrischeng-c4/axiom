@@ -61,7 +61,10 @@ impl Normal {
 
     /// Standard normal distribution N(0, 1).
     pub fn standard() -> Self {
-        Self { mu: 0.0, sigma: 1.0 }
+        Self {
+            mu: 0.0,
+            sigma: 1.0,
+        }
     }
 }
 
@@ -499,7 +502,10 @@ pub struct Geometric {
 impl Geometric {
     /// Create a new geometric distribution.
     pub fn new(p: f64) -> Self {
-        assert!((0.0..=1.0).contains(&p) && p > 0.0, "p must be between 0 and 1");
+        assert!(
+            (0.0..=1.0).contains(&p) && p > 0.0,
+            "p must be between 0 and 1"
+        );
         Self { p }
     }
 }
@@ -767,7 +773,7 @@ mod tests {
     #[test]
     fn test_beta() {
         let b = Beta::new(2.0, 5.0);
-        assert!((b.mean() - 2.0/7.0).abs() < 1e-10);
+        assert!((b.mean() - 2.0 / 7.0).abs() < 1e-10);
         // PDF at 0.5
         let pdf_val = b.pdf(0.5);
         assert!(pdf_val > 0.0);
@@ -786,7 +792,7 @@ mod tests {
     fn test_student_t() {
         let t = StudentT::new(10.0);
         assert_eq!(t.mean(), 0.0);
-        assert!((t.variance() - 10.0/8.0).abs() < 1e-10);
+        assert!((t.variance() - 10.0 / 8.0).abs() < 1e-10);
     }
 
     #[test]
@@ -811,7 +817,7 @@ mod tests {
         // B(1, 1) = 1
         assert!((beta_fn(1.0, 1.0) - 1.0).abs() < 1e-10);
         // B(2, 2) = 1/6
-        assert!((beta_fn(2.0, 2.0) - 1.0/6.0).abs() < 1e-10);
+        assert!((beta_fn(2.0, 2.0) - 1.0 / 6.0).abs() < 1e-10);
     }
 
     #[test]

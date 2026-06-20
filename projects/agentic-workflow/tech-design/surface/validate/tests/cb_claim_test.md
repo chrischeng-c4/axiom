@@ -26,12 +26,14 @@ No public AST symbols.
 
 <!-- source-snapshot: path=projects/agentic-workflow/tests/cli/tests/cb_claim_test.rs -->
 ```rust
-//! Integration tests for `aw cb claim` (Phase 2 recovery).
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/validate/tests/cb_claim_test.md#source
+// CODEGEN-BEGIN
+//! Integration tests for `aw td code-claim` (Phase 2 recovery).
 //!
-//! Tests for `aw cb claim`.
+//! Tests for `aw td code-claim`.
 
-use clap::{CommandFactory, Parser};
 use agentic_workflow::cli::Commands;
+use clap::{CommandFactory, Parser};
 
 #[derive(Parser)]
 #[command(name = "aw")]
@@ -40,14 +42,14 @@ struct Cli {
     command: Commands,
 }
 
-/// R3 smoke: `aw cb claim` registers with the right positional arg.
+/// R3 smoke: `aw td code-claim` registers with the right positional arg.
 #[test]
 fn test_cb_claim_registered() {
     let cmd = Cli::command();
     let claim = cmd
-        .find_subcommand("cb")
-        .and_then(|c| c.find_subcommand("claim"))
-        .expect("cb claim subcommand");
+        .find_subcommand("td")
+        .and_then(|c| c.find_subcommand("code-claim"))
+        .expect("td code-claim subcommand");
     let positionals: Vec<String> = claim
         .get_positionals()
         .map(|p: &clap::Arg| p.get_id().as_str().to_string())
@@ -60,9 +62,9 @@ fn test_cb_claim_registered() {
 fn test_cb_claim_init_flag() {
     let cmd = Cli::command();
     let claim = cmd
-        .find_subcommand("cb")
-        .and_then(|c| c.find_subcommand("claim"))
-        .expect("cb claim");
+        .find_subcommand("td")
+        .and_then(|c| c.find_subcommand("code-claim"))
+        .expect("td code-claim");
     claim
         .get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "init")
@@ -74,9 +76,9 @@ fn test_cb_claim_init_flag() {
 fn test_cb_claim_issue_stub_flag() {
     let cmd = Cli::command();
     let claim = cmd
-        .find_subcommand("cb")
-        .and_then(|c| c.find_subcommand("claim"))
-        .expect("cb claim");
+        .find_subcommand("td")
+        .and_then(|c| c.find_subcommand("code-claim"))
+        .expect("td code-claim");
     claim
         .get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "issue_stub")
@@ -96,7 +98,7 @@ fn test_cb_claim_trailer_const() {
 #[test]
 #[ignore = "requires real codebase + fillback infrastructure; run manually with --ignored"]
 fn test_cb_claim_fillback_invoked_e2e() {
-    // Reserved for end-to-end: feed a small fixture into `aw cb claim`,
+    // Reserved for end-to-end: feed a small fixture into `aw td code-claim`,
     // assert .aw/tech-design/<group>/<derived>.md exists and contains
     // YAML frontmatter; assert the result envelope action == "done".
 }
@@ -108,16 +110,16 @@ fn test_cb_claim_fillback_invoked_e2e() {
 fn test_cb_claim_non_interactive_flag_registered() {
     let cmd = Cli::command();
     let claim = cmd
-        .find_subcommand("cb")
-        .and_then(|c| c.find_subcommand("claim"))
-        .expect("cb claim");
+        .find_subcommand("td")
+        .and_then(|c| c.find_subcommand("code-claim"))
+        .expect("td code-claim");
     claim
         .get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "non_interactive")
         .expect("--non-interactive registered");
 }
 
-/// R6 e2e: `aw cb claim --non-interactive --init <crate-path>` against
+/// R6 e2e: `aw td code-claim --non-interactive --init <crate-path>` against
 /// a synthesised tempdir crate. Verifies (a) exit 0; (b) command does not
 /// hang on stdin; (c) at least one spec file is written under
 /// `.aw/tech-design/`. Wraps with a 30-second timeout enforced via the
@@ -130,8 +132,8 @@ fn test_cb_claim_non_interactive_writes_spec() {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
-    let Ok(score_bin) = std::env::var("CARGO_BIN_EXE_score") else {
-        eprintln!("skipping: CARGO_BIN_EXE_score not set");
+    let Ok(aw_bin) = std::env::var("CARGO_BIN_EXE_aw") else {
+        eprintln!("skipping: CARGO_BIN_EXE_aw not set");
         return;
     };
 
@@ -151,9 +153,9 @@ fn test_cb_claim_non_interactive_writes_spec() {
     )
     .unwrap();
 
-    let mut child = Command::new(&score_bin)
-        .arg("cb")
-        .arg("claim")
+    let mut child = Command::new(&aw_bin)
+        .arg("td")
+        .arg("code-claim")
         .arg(".")
         .arg("--non-interactive")
         .arg("--init")
@@ -162,7 +164,7 @@ fn test_cb_claim_non_interactive_writes_spec() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn aw cb claim");
+        .expect("spawn aw td code-claim");
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let status = loop {
@@ -171,7 +173,7 @@ fn test_cb_claim_non_interactive_writes_spec() {
             Ok(None) => {
                 if Instant::now() > deadline {
                     let _ = child.kill();
-                    panic!("aw cb claim --non-interactive hung past 30s — interactive prompt still blocking");
+                    panic!("aw td code-claim --non-interactive hung past 30s — interactive prompt still blocking");
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
@@ -181,7 +183,7 @@ fn test_cb_claim_non_interactive_writes_spec() {
 
     assert!(
         status.success(),
-        "aw cb claim --non-interactive exit code {:?}",
+        "aw td code-claim --non-interactive exit code {:?}",
         status.code()
     );
 
@@ -211,6 +213,8 @@ fn count_md_recursive(dir: &std::path::Path) -> usize {
     }
     n
 }
+
+// CODEGEN-END
 ```
 
 ## Changes

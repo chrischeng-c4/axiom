@@ -1,3 +1,5 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// pydantic_core module for Mamba (#1496).
 ///
 /// Minimal callable-dispatcher shim covering the four most-used
@@ -11,20 +13,26 @@
 /// surface) is tracked separately under #1496; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the 3p
 /// conformance issues have closed against.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
-unsafe extern "C" fn dispatch_validation_error(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_validation_error(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_schema_validator(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_schema_validator(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_schema_serializer(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_schema_serializer(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
@@ -37,13 +45,22 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let addr_validation_error = dispatch_validation_error as *const () as usize;
-    attrs.insert("ValidationError".into(), MbValue::from_func(addr_validation_error));
+    attrs.insert(
+        "ValidationError".into(),
+        MbValue::from_func(addr_validation_error),
+    );
 
     let addr_schema_validator = dispatch_schema_validator as *const () as usize;
-    attrs.insert("SchemaValidator".into(), MbValue::from_func(addr_schema_validator));
+    attrs.insert(
+        "SchemaValidator".into(),
+        MbValue::from_func(addr_schema_validator),
+    );
 
     let addr_schema_serializer = dispatch_schema_serializer as *const () as usize;
-    attrs.insert("SchemaSerializer".into(), MbValue::from_func(addr_schema_serializer));
+    attrs.insert(
+        "SchemaSerializer".into(),
+        MbValue::from_func(addr_schema_serializer),
+    );
 
     let addr_url = dispatch_url as *const () as usize;
     attrs.insert("Url".into(), MbValue::from_func(addr_url));

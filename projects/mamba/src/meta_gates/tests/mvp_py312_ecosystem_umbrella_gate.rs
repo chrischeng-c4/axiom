@@ -203,7 +203,9 @@ fn r3_stdlib_denominator_is_explicit() {
     }
     assert_eq!(
         c["cpython_lib_test_gate_relative_path"].as_str(),
-        Some("projects/mamba/tests/governance/gates/cpython_lib_test_denominator_gate/manifest.toml")
+        Some(
+            "projects/mamba/tests/governance/gates/cpython_lib_test_denominator_gate/manifest.toml"
+        )
     );
     assert_eq!(
         c["typeshed_surface_gate_relative_path"].as_str(),
@@ -221,10 +223,7 @@ fn r3_stdlib_denominator_is_explicit() {
         c["denominator_implicit_failure_kind"].as_str(),
         Some("mvp_ecosystem_stdlib_denominator_is_implicit")
     );
-    assert_eq!(
-        c["denominator_implicit_exit_code"].as_integer(),
-        Some(327)
-    );
+    assert_eq!(c["denominator_implicit_exit_code"].as_integer(), Some(327));
     assert_eq!(
         c["denominator_dimension_dropped_failure_kind"].as_str(),
         Some("mvp_ecosystem_stdlib_denominator_dimension_dropped")

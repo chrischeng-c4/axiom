@@ -1,3 +1,5 @@
+use super::rc::ObjData;
+use super::value::MbValue;
 /// Async/await runtime with tokio for Mamba (#293).
 ///
 /// Thread-safe version — all async state is global, protected by DashMap/RwLock.
@@ -9,20 +11,16 @@
 /// - The event loop drives coroutines to completion
 ///
 /// Task management, event loop, and bridge functions live in `async_task`.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
-use super::value::MbValue;
-use super::rc::ObjData;
 
 // Re-export task/bridge/GIL functions so `symbols.rs` can reference
 // them via `async_rt::*` without changing import paths.
 pub use super::async_task::{
-    mb_create_task, mb_task_done, mb_task_result, mb_cancel_task,
-    mb_task_cancelled, mb_await, mb_gather, mb_sleep, mb_async_wait,
-    mb_run_until_complete, mb_orbit_schedule, mb_orbit_register_waker,
-    mb_gil_release, mb_gil_acquire, mb_gil_held, mb_await_external,
+    mb_async_wait, mb_await, mb_await_external, mb_cancel_task, mb_create_task, mb_gather,
+    mb_gil_acquire, mb_gil_held, mb_gil_release, mb_orbit_register_waker, mb_orbit_schedule,
+    mb_run_until_complete, mb_sleep, mb_task_cancelled, mb_task_done, mb_task_result,
 };
 
 /// Coroutine state — similar to generator but for async functions.
@@ -116,7 +114,9 @@ pub fn mb_coroutine_new(name: MbValue, locals: MbValue) -> MbValue {
 /// Accepts both TAG_FUNC (MirConst::FuncRef lowering) and raw integer addresses.
 pub fn mb_coroutine_set_body(coro_handle: MbValue, fn_ptr: MbValue) {
     if let Some(id) = coro_handle.as_int() {
-        let addr = fn_ptr.as_func().or_else(|| fn_ptr.as_int().map(|v| v as usize));
+        let addr = fn_ptr
+            .as_func()
+            .or_else(|| fn_ptr.as_int().map(|v| v as usize));
         if let Some(ptr_val) = addr {
             if ptr_val != 0 {
                 let body: unsafe extern "C" fn(i64) -> i64 =
@@ -137,10 +137,16 @@ pub fn mb_coroutine_step(coro_handle: MbValue) -> MbValue {
     super::gc::gc_safepoint();
     if let Some(id) = coro_handle.as_int() {
         // Check if already exhausted
-        let exhausted = COROUTINES.read().unwrap()
-            .get(&(id as u64)).map(|c| c.exhausted).unwrap_or(true);
+        let exhausted = COROUTINES
+            .read()
+            .unwrap()
+            .get(&(id as u64))
+            .map(|c| c.exhausted)
+            .unwrap_or(true);
         if exhausted {
-            return COROUTINES.read().unwrap()
+            return COROUTINES
+                .read()
+                .unwrap()
                 .get(&(id as u64))
                 .and_then(|c| c.result)
                 .unwrap_or(MbValue::none());
@@ -171,14 +177,18 @@ pub fn mb_coroutine_step(coro_handle: MbValue) -> MbValue {
         match step_result {
             Ok(Some(body)) => {
                 // Call the compiled body function with coroutine handle
-                unsafe { body(coro_handle.to_bits() as i64); }
+                unsafe {
+                    body(coro_handle.to_bits() as i64);
+                }
             }
             Err(()) => { /* fail-fast: coroutine marked exhausted above */ }
             Ok(None) => { /* already started, nothing to do */ }
         }
 
         // Return result if now exhausted
-        COROUTINES.read().unwrap()
+        COROUTINES
+            .read()
+            .unwrap()
             .get(&(id as u64))
             .and_then(|c| c.result)
             .unwrap_or(MbValue::none())
@@ -199,7 +209,9 @@ pub fn mb_coroutine_complete(coro_handle: MbValue, result: MbValue) {
         if let Some(coro) = COROUTINES.write().unwrap().get_mut(&(id as u64)) {
             coro.exhausted = true;
             // Retain so c.result holds a fresh ref independent of caller's rc.
-            unsafe { super::rc::retain_if_ptr(result); }
+            unsafe {
+                super::rc::retain_if_ptr(result);
+            }
             coro.result = Some(result);
         }
     }
@@ -209,8 +221,12 @@ pub fn mb_coroutine_complete(coro_handle: MbValue, result: MbValue) {
 
 pub fn mb_coroutine_get_state(coro_handle: MbValue) -> u32 {
     if let Some(id) = coro_handle.as_int() {
-        COROUTINES.read().unwrap()
-            .get(&(id as u64)).map(|c| c.state).unwrap_or(u32::MAX)
+        COROUTINES
+            .read()
+            .unwrap()
+            .get(&(id as u64))
+            .map(|c| c.state)
+            .unwrap_or(u32::MAX)
     } else {
         u32::MAX
     }
@@ -230,11 +246,15 @@ pub fn mb_coroutine_set_state(coro_handle: MbValue, state: u32) {
 pub fn mb_coroutine_get_local(coro_handle: MbValue, index: MbValue) -> MbValue {
     let idx = index.as_int().unwrap_or(0) as usize;
     if let Some(id) = coro_handle.as_int() {
-        let val = COROUTINES.read().unwrap()
+        let val = COROUTINES
+            .read()
+            .unwrap()
             .get(&(id as u64))
             .and_then(|c| c.locals.get(idx).copied())
             .unwrap_or(MbValue::none());
-        unsafe { super::rc::retain_if_ptr(val); }
+        unsafe {
+            super::rc::retain_if_ptr(val);
+        }
         val
     } else {
         MbValue::none()
@@ -284,8 +304,8 @@ pub(crate) fn extract_list(val: MbValue) -> Vec<MbValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::rc::MbObject;
+    use super::*;
 
     #[test]
     fn test_coroutine_lifecycle() {
@@ -338,10 +358,16 @@ mod tests {
         let result = mb_coroutine_step(coro);
         assert_eq!(result.as_int(), None, "missing body should return None");
         // Coroutine should now be exhausted
-        let is_exhausted = COROUTINES.read().unwrap()
+        let is_exhausted = COROUTINES
+            .read()
+            .unwrap()
             .get(&(coro.as_int().unwrap() as u64))
-            .map(|c| c.exhausted).unwrap_or(false);
-        assert!(is_exhausted, "coroutine with no body should be exhausted after step");
+            .map(|c| c.exhausted)
+            .unwrap_or(false);
+        assert!(
+            is_exhausted,
+            "coroutine with no body should be exhausted after step"
+        );
     }
 
     #[test]
@@ -351,10 +377,16 @@ mod tests {
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
         let coro = mb_coroutine_new(name, locals);
         // Before stepping, coroutine should not be exhausted
-        let is_exhausted = COROUTINES.read().unwrap()
+        let is_exhausted = COROUTINES
+            .read()
+            .unwrap()
             .get(&(coro.as_int().unwrap() as u64))
-            .map(|c| c.exhausted).unwrap_or(true);
-        assert!(!is_exhausted, "coroutine should not be exhausted before step");
+            .map(|c| c.exhausted)
+            .unwrap_or(true);
+        assert!(
+            !is_exhausted,
+            "coroutine should not be exhausted before step"
+        );
         // State should still be 0 (not started)
         assert_eq!(mb_coroutine_get_state(coro), 0);
         mb_coroutine_release(coro);

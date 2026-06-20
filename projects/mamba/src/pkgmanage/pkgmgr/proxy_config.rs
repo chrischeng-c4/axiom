@@ -93,10 +93,7 @@ impl ProxyUrl {
 
         // Strip any path/query — proxy URLs don't use them, but curl
         // tolerates a trailing `/`.
-        let hostport = hostport
-            .split(['/', '?', '#'])
-            .next()
-            .unwrap_or(hostport);
+        let hostport = hostport.split(['/', '?', '#']).next().unwrap_or(hostport);
 
         if hostport.is_empty() {
             return Err(IndexError::ParseError {
@@ -214,9 +211,7 @@ impl NoProxyList {
             }
             match (entry.port, port) {
                 (None, _) => return true,
-                (Some(entry_port), Some(target_port)) if entry_port == target_port => {
-                    return true
-                }
+                (Some(entry_port), Some(target_port)) if entry_port == target_port => return true,
                 _ => continue,
             }
         }
@@ -244,9 +239,8 @@ impl ProxyConfig {
         F: Fn(&str) -> Option<String>,
     {
         // Lowercase first (curl precedence), then uppercase fallback.
-        let pick = |lower: &str, upper: &str| -> Option<String> {
-            get(lower).or_else(|| get(upper))
-        };
+        let pick =
+            |lower: &str, upper: &str| -> Option<String> { get(lower).or_else(|| get(upper)) };
 
         let http_proxy = match pick("http_proxy", "HTTP_PROXY") {
             Some(s) if !s.trim().is_empty() => Some(ProxyUrl::parse(&s)?),
@@ -310,15 +304,15 @@ fn host_matches_suffix(host: &str, suffix: &str) -> bool {
 fn parse_target_url(url: &str) -> Option<(String, String, Option<u16>)> {
     let (scheme, rest) = url.split_once("://")?;
     let scheme = scheme.to_ascii_lowercase();
-    let authority = rest
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("");
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     if authority.is_empty() {
         return None;
     }
     // Strip userinfo.
-    let authority = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let authority = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
     let (host, port) = if let Some(stripped) = authority.strip_prefix('[') {
         let close = stripped.find(']')?;
         let host = &stripped[..close];
@@ -490,11 +484,8 @@ mod tests {
 
     #[test]
     fn pick_proxy_for_falls_back_to_all_proxy() {
-        let cfg = ProxyConfig::from_env(lookup(env(&[(
-            "ALL_PROXY",
-            "socks5://socks.corp:1080",
-        )])))
-        .unwrap();
+        let cfg = ProxyConfig::from_env(lookup(env(&[("ALL_PROXY", "socks5://socks.corp:1080")])))
+            .unwrap();
         let p = cfg.pick_proxy_for("https://example.com").unwrap();
         assert_eq!(p.scheme, "socks5");
     }
@@ -518,11 +509,8 @@ mod tests {
 
     #[test]
     fn pick_proxy_for_returns_none_for_malformed_target() {
-        let cfg = ProxyConfig::from_env(lookup(env(&[(
-            "ALL_PROXY",
-            "http://all.corp:80",
-        )])))
-        .unwrap();
+        let cfg =
+            ProxyConfig::from_env(lookup(env(&[("ALL_PROXY", "http://all.corp:80")]))).unwrap();
         assert!(cfg.pick_proxy_for("not-a-url").is_none());
     }
 

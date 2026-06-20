@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// concurrent.futures module for Mamba (#1261).
 ///
 /// Minimal callable-dispatcher shim covering four top-level
@@ -14,13 +16,10 @@
 /// surface) is tracked separately under #1261; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the
 /// stub-only conversion long-tail has closed against.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
-use rustc_hash::FxHashMap;
 use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 use std::sync::atomic::AtomicU32;
 
 fn make_instance(class_name: &str, fields_kv: Vec<(&str, MbValue)>) -> MbValue {
@@ -70,17 +69,21 @@ fn set_field(inst: MbValue, key: &str, val: MbValue) {
 }
 
 fn seq_items(val: MbValue) -> Vec<MbValue> {
-    val.as_ptr().and_then(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
-            ObjData::Tuple(items) => Some(items.clone()),
-            _ => None,
-        }
-    }).unwrap_or_default()
+    val.as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
+                ObjData::Tuple(items) => Some(items.clone()),
+                _ => None,
+            }
+        })
+        .unwrap_or_default()
 }
 
 fn is_dict_value(v: MbValue) -> bool {
-    v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+    v.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
 }
 
 fn raise_cf(exc: &str, msg: &str) -> MbValue {
@@ -89,7 +92,9 @@ fn raise_cf(exc: &str, msg: &str) -> MbValue {
 }
 
 unsafe fn arg_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
-    if nargs == 0 || args_ptr.is_null() { &[] } else {
+    if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     }
 }
@@ -98,25 +103,41 @@ fn instance_class(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
             Some(class_name.clone())
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
 // ── Future ──
 
 fn make_pending_future() -> MbValue {
-    make_instance("concurrent.futures.Future", vec![
-        ("_state", new_str("PENDING")),
-        ("_result", MbValue::none()),
-        ("_exception", MbValue::none()),
-        ("_callbacks", MbValue::from_ptr(MbObject::new_list(Vec::new()))),
-    ])
+    make_instance(
+        "concurrent.futures.Future",
+        vec![
+            ("_state", new_str("PENDING")),
+            ("_result", MbValue::none()),
+            ("_exception", MbValue::none()),
+            (
+                "_callbacks",
+                MbValue::from_ptr(MbObject::new_list(Vec::new())),
+            ),
+        ],
+    )
 }
 
 fn future_state(fut: MbValue) -> String {
-    get_field(fut, "_state").and_then(|v| v.as_ptr().map(|p| unsafe {
-        if let ObjData::Str(ref s) = (*p).data { s.clone() } else { String::new() }
-    })).unwrap_or_default()
+    get_field(fut, "_state")
+        .and_then(|v| {
+            v.as_ptr().map(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    s.clone()
+                } else {
+                    String::new()
+                }
+            })
+        })
+        .unwrap_or_default()
 }
 
 fn future_finish_result(fut: MbValue, value: MbValue) {
@@ -132,7 +153,9 @@ fn future_finish_exception(fut: MbValue, exc: MbValue) {
 }
 
 fn run_done_callbacks(fut: MbValue) {
-    let cbs = get_field(fut, "_callbacks").map(seq_items).unwrap_or_default();
+    let cbs = get_field(fut, "_callbacks")
+        .map(seq_items)
+        .unwrap_or_default();
     for cb in cbs {
         let args = MbValue::from_ptr(MbObject::new_list(vec![fut]));
         let _ = super::super::builtins::mb_call_spread(cb, args);
@@ -140,7 +163,11 @@ fn run_done_callbacks(fut: MbValue) {
             super::super::exception::mb_clear_exception();
         }
     }
-    set_field(fut, "_callbacks", MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    set_field(
+        fut,
+        "_callbacks",
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
 }
 
 /// Re-raise the stored exception of a finished future.
@@ -148,9 +175,16 @@ fn reraise_future_exception(fut: MbValue) -> MbValue {
     let exc = get_field(fut, "_exception").unwrap_or_else(MbValue::none);
     let cls = instance_class(exc).unwrap_or_else(|| "Exception".to_string());
     let msg = super::super::builtins::mb_str(exc);
-    let msg_s = msg.as_ptr().map(|p| unsafe {
-        if let ObjData::Str(ref s) = (*p).data { s.clone() } else { String::new() }
-    }).unwrap_or_default();
+    let msg_s = msg
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data {
+                s.clone()
+            } else {
+                String::new()
+            }
+        })
+        .unwrap_or_default();
     raise_cf(&cls, &msg_s)
 }
 
@@ -173,7 +207,10 @@ unsafe extern "C" fn future_exception(self_v: MbValue, _args: MbValue) -> MbValu
 }
 
 unsafe extern "C" fn future_done(self_v: MbValue, _args: MbValue) -> MbValue {
-    MbValue::from_bool(matches!(future_state(self_v).as_str(), "FINISHED" | "CANCELLED"))
+    MbValue::from_bool(matches!(
+        future_state(self_v).as_str(),
+        "FINISHED" | "CANCELLED"
+    ))
 }
 
 unsafe extern "C" fn future_cancelled(self_v: MbValue, _args: MbValue) -> MbValue {
@@ -198,7 +235,10 @@ unsafe extern "C" fn future_cancel(self_v: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn future_add_done_callback(self_v: MbValue, args: MbValue) -> MbValue {
-    let cb = seq_items(args).first().copied().unwrap_or_else(MbValue::none);
+    let cb = seq_items(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
     if matches!(future_state(self_v).as_str(), "FINISHED" | "CANCELLED") {
         let call_args = MbValue::from_ptr(MbObject::new_list(vec![self_v]));
         let _ = super::super::builtins::mb_call_spread(cb, call_args);
@@ -216,11 +256,15 @@ unsafe extern "C" fn future_add_done_callback(self_v: MbValue, args: MbValue) ->
 unsafe extern "C" fn future_set_result(self_v: MbValue, args: MbValue) -> MbValue {
     if future_state(self_v) == "FINISHED" {
         let state = future_state(self_v);
-        return raise_cf("InvalidStateError", &format!(
-            "{}: {state}", "invalid state"
-        ));
+        return raise_cf(
+            "InvalidStateError",
+            &format!("{}: {state}", "invalid state"),
+        );
     }
-    let value = seq_items(args).first().copied().unwrap_or_else(MbValue::none);
+    let value = seq_items(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
     future_finish_result(self_v, value);
     MbValue::none()
 }
@@ -229,21 +273,31 @@ unsafe extern "C" fn future_set_exception(self_v: MbValue, args: MbValue) -> MbV
     if future_state(self_v) == "FINISHED" {
         return raise_cf("InvalidStateError", "invalid state");
     }
-    let exc = seq_items(args).first().copied().unwrap_or_else(MbValue::none);
+    let exc = seq_items(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
     future_finish_exception(self_v, exc);
     MbValue::none()
 }
 
 // ── Executor (synchronous model: submit runs the task immediately) ──
 
-unsafe extern "C" fn dispatch_thread_pool_executor(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_thread_pool_executor(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let _ = unsafe { arg_slice(args_ptr, nargs) };
-    make_instance("concurrent.futures.ThreadPoolExecutor", vec![
-        ("_shutdown", MbValue::from_bool(false)),
-    ])
+    make_instance(
+        "concurrent.futures.ThreadPoolExecutor",
+        vec![("_shutdown", MbValue::from_bool(false))],
+    )
 }
 
-unsafe extern "C" fn dispatch_process_pool_executor(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_process_pool_executor(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     unsafe { dispatch_thread_pool_executor(args_ptr, nargs) }
 }
 
@@ -255,7 +309,8 @@ unsafe extern "C" fn executor_submit(self_v: MbValue, args: MbValue) -> MbValue 
     if get_field(self_v, "_shutdown").and_then(|v| v.as_bool()) == Some(true) {
         return raise_cf("RuntimeError", "cannot schedule new futures after shutdown");
     }
-    let items: Vec<MbValue> = seq_items(args).into_iter()
+    let items: Vec<MbValue> = seq_items(args)
+        .into_iter()
         .filter(|v| !is_dict_value(*v))
         .collect();
     let func = items.first().copied().unwrap_or_else(MbValue::none);
@@ -275,7 +330,8 @@ unsafe extern "C" fn executor_map(self_v: MbValue, args: MbValue) -> MbValue {
     if get_field(self_v, "_shutdown").and_then(|v| v.as_bool()) == Some(true) {
         return raise_cf("RuntimeError", "cannot schedule new futures after shutdown");
     }
-    let items: Vec<MbValue> = seq_items(args).into_iter()
+    let items: Vec<MbValue> = seq_items(args)
+        .into_iter()
         .filter(|v| !is_dict_value(*v))
         .collect();
     let func = items.first().copied().unwrap_or_else(MbValue::none);
@@ -385,22 +441,46 @@ fn register_cf_classes() {
     let mut ex: Map<String, MbValue> = Map::new();
     ex.insert("submit".into(), var(executor_submit as *const () as usize));
     ex.insert("map".into(), var(executor_map as *const () as usize));
-    ex.insert("shutdown".into(), var(executor_shutdown as *const () as usize));
-    ex.insert("__enter__".into(), var(executor_enter as *const () as usize));
+    ex.insert(
+        "shutdown".into(),
+        var(executor_shutdown as *const () as usize),
+    );
+    ex.insert(
+        "__enter__".into(),
+        var(executor_enter as *const () as usize),
+    );
     ex.insert("__exit__".into(), var(executor_exit as *const () as usize));
     super::super::class::mb_class_register(
-        "concurrent.futures.ThreadPoolExecutor", vec![], ex.clone());
+        "concurrent.futures.ThreadPoolExecutor",
+        vec![],
+        ex.clone(),
+    );
 
     let mut fut: Map<String, MbValue> = Map::new();
     fut.insert("result".into(), var(future_result as *const () as usize));
-    fut.insert("exception".into(), var(future_exception as *const () as usize));
+    fut.insert(
+        "exception".into(),
+        var(future_exception as *const () as usize),
+    );
     fut.insert("done".into(), var(future_done as *const () as usize));
-    fut.insert("cancelled".into(), var(future_cancelled as *const () as usize));
+    fut.insert(
+        "cancelled".into(),
+        var(future_cancelled as *const () as usize),
+    );
     fut.insert("running".into(), var(future_running as *const () as usize));
     fut.insert("cancel".into(), var(future_cancel as *const () as usize));
-    fut.insert("add_done_callback".into(), var(future_add_done_callback as *const () as usize));
-    fut.insert("set_result".into(), var(future_set_result as *const () as usize));
-    fut.insert("set_exception".into(), var(future_set_exception as *const () as usize));
+    fut.insert(
+        "add_done_callback".into(),
+        var(future_add_done_callback as *const () as usize),
+    );
+    fut.insert(
+        "set_result".into(),
+        var(future_set_result as *const () as usize),
+    );
+    fut.insert(
+        "set_exception".into(),
+        var(future_set_exception as *const () as usize),
+    );
     super::super::class::mb_class_register("concurrent.futures.Future", vec![], fut);
 }
 
@@ -426,9 +506,18 @@ fn make_exception_type_object(name: &str) -> MbValue {
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*cls).data {
             let mut f = fields.write().unwrap();
-            f.insert("__name__".to_string(), MbValue::from_ptr(MbObject::new_str(name.to_string())));
-            f.insert("__qualname__".to_string(), MbValue::from_ptr(MbObject::new_str(name.to_string())));
-            f.insert("__module__".to_string(), MbValue::from_ptr(MbObject::new_str("concurrent.futures".to_string())));
+            f.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            f.insert(
+                "__qualname__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            f.insert(
+                "__module__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("concurrent.futures".to_string())),
+            );
         }
     }
     MbValue::from_ptr(cls)
@@ -477,21 +566,39 @@ pub fn register() {
     super::super::class::mb_class_register("BrokenExecutor", vec!["RuntimeError".into()], empty());
     super::super::class::mb_class_register("CancelledError", vec!["Exception".into()], empty());
     super::super::class::mb_class_register("InvalidStateError", vec!["Exception".into()], empty());
-    attrs.insert("BrokenExecutor".into(), make_exception_type_object("BrokenExecutor"));
-    attrs.insert("CancelledError".into(), make_exception_type_object("CancelledError"));
-    attrs.insert("InvalidStateError".into(), make_exception_type_object("InvalidStateError"));
+    attrs.insert(
+        "BrokenExecutor".into(),
+        make_exception_type_object("BrokenExecutor"),
+    );
+    attrs.insert(
+        "CancelledError".into(),
+        make_exception_type_object("CancelledError"),
+    );
+    attrs.insert(
+        "InvalidStateError".into(),
+        make_exception_type_object("InvalidStateError"),
+    );
 
     // TimeoutError resolves to the builtin exception name for except clauses.
     super::super::class::mb_class_register(
-        "TimeoutError", vec!["OSError".to_string()], HashMap::new());
-    attrs.insert("TimeoutError".into(), make_exception_type_object("TimeoutError"));
+        "TimeoutError",
+        vec!["OSError".to_string()],
+        HashMap::new(),
+    );
+    attrs.insert(
+        "TimeoutError".into(),
+        make_exception_type_object("TimeoutError"),
+    );
     let addr_timeout = dispatch_timeout_error as *const () as usize;
     let _ = addr_timeout;
 
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
         map.insert(addr_fut as u64, "concurrent.futures.Future".to_string());
-        map.insert(addr_tpe as u64, "concurrent.futures.ThreadPoolExecutor".to_string());
+        map.insert(
+            addr_tpe as u64,
+            "concurrent.futures.ThreadPoolExecutor".to_string(),
+        );
     });
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
@@ -504,9 +611,18 @@ pub fn register() {
         set.insert(addr_timeout as u64);
     });
 
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("ALL_COMPLETED".into(), MbValue::from_ptr(MbObject::new_str("ALL_COMPLETED".to_string())));
-    attrs.insert("FIRST_COMPLETED".into(), MbValue::from_ptr(MbObject::new_str("FIRST_COMPLETED".to_string())));
-    attrs.insert("FIRST_EXCEPTION".into(), MbValue::from_ptr(MbObject::new_str("FIRST_EXCEPTION".to_string())));
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "ALL_COMPLETED".into(),
+        MbValue::from_ptr(MbObject::new_str("ALL_COMPLETED".to_string())),
+    );
+    attrs.insert(
+        "FIRST_COMPLETED".into(),
+        MbValue::from_ptr(MbObject::new_str("FIRST_COMPLETED".to_string())),
+    );
+    attrs.insert(
+        "FIRST_EXCEPTION".into(),
+        MbValue::from_ptr(MbObject::new_str("FIRST_EXCEPTION".to_string())),
+    );
     super::register_module("concurrent.futures", attrs);
 }
