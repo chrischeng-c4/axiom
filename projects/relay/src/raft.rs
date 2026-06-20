@@ -58,7 +58,7 @@ pub enum Role {
     Leader,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VoteReq {
     pub term: Term,
     pub candidate: NodeId,
@@ -66,13 +66,13 @@ pub struct VoteReq {
     pub last_log_term: Term,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VoteResp {
     pub term: Term,
     pub granted: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppendReq {
     pub term: Term,
     pub leader: NodeId,
@@ -82,7 +82,7 @@ pub struct AppendReq {
     pub leader_commit: Index,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppendResp {
     pub term: Term,
     pub success: bool,
@@ -156,6 +156,8 @@ pub struct RaftNode {
     election_elapsed: u64,
     election_timeout: u64,
     heartbeat_elapsed: u64,
+    /// Last known leader for this term (drives producer redirect-to-leader).
+    leader_id: Option<NodeId>,
 
     outbox: Vec<Outgoing>,
 }
@@ -189,6 +191,7 @@ impl RaftNode {
             // distinct per node so one voter always times out first.
             election_timeout: ELECTION_MIN + id,
             heartbeat_elapsed: 0,
+            leader_id: None,
             outbox: Vec::new(),
         }
     }
@@ -238,6 +241,10 @@ impl RaftNode {
     }
     pub fn last_index(&self) -> Index {
         self.log.len() as Index
+    }
+    /// Last known leader for the current term (for producer redirect).
+    pub fn leader(&self) -> Option<NodeId> {
+        self.leader_id
     }
 
     fn last_term(&self) -> Term {
@@ -297,6 +304,7 @@ impl RaftNode {
         self.current_term += 1;
         self.role = Role::Candidate;
         self.voted_for = Some(self.id);
+        self.leader_id = None;
         self.votes.clear();
         self.votes.insert(self.id);
         self.election_elapsed = 0;
@@ -339,6 +347,7 @@ impl RaftNode {
 
     fn become_leader(&mut self) {
         self.role = Role::Leader;
+        self.leader_id = Some(self.id);
         let next = self.last_index() + 1;
         self.next_index.clear();
         self.match_index.clear();
@@ -473,6 +482,7 @@ impl RaftNode {
         }
         // Valid leader for this (or a newer) term: become its follower.
         self.step_down(req.term);
+        self.leader_id = Some(leader);
 
         // Log matching: the entry preceding the new ones must agree.
         if req.prev_log_index > self.last_index()
