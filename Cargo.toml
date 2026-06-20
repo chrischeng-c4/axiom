@@ -12,7 +12,6 @@ members = [
     "projects/guard",
     "projects/guard/guard-cli",
     "crates/cclab-core",
-    "crates/cclab-kv",
     "projects/mamba/mambalibs/queuekit",
     "crates/cclab-schema",
     "crates/cclab-grid",
@@ -73,10 +72,8 @@ members = [
     "crates/cclab-aurora",
     "crates/cclab-ctx-inf-db",
     "projects/lumen",
+    "projects/keep",
     "projects/queue/queue",
-]
-exclude = [
-    "projects/queue/kv",
 ]
 resolver = "2"
 
