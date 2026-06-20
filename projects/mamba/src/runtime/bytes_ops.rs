@@ -813,13 +813,40 @@ pub fn mb_bytearray_append(ba: MbValue, value: MbValue) {
     }
 }
 
-/// bytearray.extend(iterable)
+/// bytearray.extend(iterable) — accepts bytes/bytearray, any int iterator
+/// (range, generator), or a list of ints.
 pub fn mb_bytearray_extend(ba: MbValue, other: MbValue) {
     unsafe {
+        // bytes / bytearray directly.
         if let Some(other_data) = as_bytes_cloned(other) {
             if let Some(ptr) = ba.as_ptr() {
                 if let ObjData::ByteArray(ref lock) = (*ptr).data {
                     lock.write().unwrap().extend_from_slice(&other_data);
+                }
+            }
+            return;
+        }
+        // Iterator handle (range, generators, …).
+        if super::iter::is_iter_handle(other) {
+            if let Some(data) = drain_handle_to_u8s(other) {
+                if let Some(ptr) = ba.as_ptr() {
+                    if let ObjData::ByteArray(ref lock) = (*ptr).data {
+                        lock.write().unwrap().extend_from_slice(&data);
+                    }
+                }
+            }
+            return;
+        }
+        // List of ints.
+        if let Some(ptr) = other.as_ptr() {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap().clone();
+                if let Some(data) = validated_bytes_from_items(&items) {
+                    if let Some(ba_ptr) = ba.as_ptr() {
+                        if let ObjData::ByteArray(ref ba_lock) = (*ba_ptr).data {
+                            ba_lock.write().unwrap().extend_from_slice(&data);
+                        }
+                    }
                 }
             }
         }
@@ -837,20 +864,161 @@ pub fn mb_bytearray_clear(ba: MbValue) {
     }
 }
 
-/// bytearray.pop() → int
+/// bytearray.pop() → int — remove and return the last byte (JIT ABI: 1-arg).
 pub fn mb_bytearray_pop(ba: MbValue) -> MbValue {
+    mb_bytearray_pop_at(ba, MbValue::none())
+}
+
+/// bytearray.pop(index=-1) → int — remove and return the byte at `index`
+/// (default last). Out-of-range / empty raises IndexError (CPython).
+pub fn mb_bytearray_pop_at(ba: MbValue, index: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = ba.as_ptr() {
             if let ObjData::ByteArray(ref lock) = (*ptr).data {
-                return lock
-                    .write()
-                    .unwrap()
-                    .pop()
-                    .map(|b| MbValue::from_int(b as i64))
-                    .unwrap_or(MbValue::none());
+                let mut v = lock.write().unwrap();
+                let len = v.len() as i64;
+                if len == 0 {
+                    drop(v);
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "pop from empty bytearray".to_string())),
+                    );
+                    return MbValue::none();
+                }
+                let raw = index.as_int_pyint().unwrap_or(-1);
+                let actual = if raw < 0 { raw + len } else { raw };
+                if actual < 0 || actual >= len {
+                    drop(v);
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "pop index out of range".to_string())),
+                    );
+                    return MbValue::none();
+                }
+                let b = v.remove(actual as usize);
+                return MbValue::from_int(b as i64);
             }
         }
         MbValue::none()
+    }
+}
+
+/// bytearray.insert(index, byte) — insert `byte` before `index` (clamped like
+/// list.insert: negative offsets count from the end, both ends saturate).
+pub fn mb_bytearray_insert(ba: MbValue, index: MbValue, value: MbValue) {
+    unsafe {
+        if let Some(ptr) = ba.as_ptr() {
+            if let ObjData::ByteArray(ref lock) = (*ptr).data {
+                if let Some(b) = value.as_int() {
+                    let mut v = lock.write().unwrap();
+                    let len = v.len() as i64;
+                    let mut idx = index.as_int().unwrap_or(0);
+                    if idx < 0 {
+                        idx += len;
+                        if idx < 0 { idx = 0; }
+                    }
+                    if idx > len { idx = len; }
+                    v.insert(idx as usize, b as u8);
+                }
+            }
+        }
+    }
+}
+
+/// bytearray.remove(value) — remove the first byte equal to `value`;
+/// ValueError if it is absent (CPython).
+pub fn mb_bytearray_remove(ba: MbValue, value: MbValue) {
+    unsafe {
+        if let Some(ptr) = ba.as_ptr() {
+            if let ObjData::ByteArray(ref lock) = (*ptr).data {
+                if let Some(b) = value.as_int() {
+                    let target = b as u8;
+                    let mut v = lock.write().unwrap();
+                    if let Some(pos) = v.iter().position(|&x| x == target) {
+                        v.remove(pos);
+                    } else {
+                        drop(v);
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "value not found in bytearray".to_string())),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// del bytearray[i] / del bytearray[start:stop:step]. Slice keys arrive as a
+/// (start, stop, step) tuple (normalized by mb_obj_delitem).
+pub fn mb_bytearray_delitem(ba: MbValue, key: MbValue) {
+    unsafe {
+        let Some(ptr) = ba.as_ptr() else { return };
+        let ObjData::ByteArray(ref lock) = (*ptr).data else { return };
+        if let Some(kp) = key.as_ptr() {
+            if let ObjData::Tuple(ref t) = (*kp).data {
+                if t.len() == 3 {
+                    let mut v = lock.write().unwrap();
+                    let len = v.len() as i64;
+                    let norm = |o: Option<i64>, dflt: i64| -> i64 {
+                        match o {
+                            Some(i) => (if i < 0 { i + len } else { i }).clamp(0, len),
+                            None => dflt,
+                        }
+                    };
+                    let step = t[2].as_int().unwrap_or(1);
+                    if step == 1 {
+                        let s = norm(t[0].as_int(), 0);
+                        let e = norm(t[1].as_int(), len).max(s);
+                        v.drain(s as usize..e as usize);
+                    } else if step > 1 {
+                        let s = norm(t[0].as_int(), 0);
+                        let e = norm(t[1].as_int(), len);
+                        let mut idx = s;
+                        let mut rm: Vec<usize> = Vec::new();
+                        while idx < e {
+                            rm.push(idx as usize);
+                            idx += step;
+                        }
+                        for &r in rm.iter().rev() {
+                            v.remove(r);
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        if let Some(idx) = key.as_int() {
+            let mut v = lock.write().unwrap();
+            let len = v.len() as i64;
+            let actual = if idx < 0 { idx + len } else { idx };
+            if actual >= 0 && actual < len {
+                v.remove(actual as usize);
+            }
+        }
+    }
+}
+
+/// bytearray *= n — repeat the buffer in place `n` times (n<=0 empties it).
+pub fn mb_bytearray_imul(ba: MbValue, n: MbValue) {
+    unsafe {
+        if let Some(ptr) = ba.as_ptr() {
+            if let ObjData::ByteArray(ref lock) = (*ptr).data {
+                let count = n.as_int().unwrap_or(1);
+                let mut v = lock.write().unwrap();
+                if count <= 0 {
+                    v.clear();
+                    return;
+                }
+                let orig: Vec<u8> = v.to_vec();
+                for _ in 1..count {
+                    v.extend_from_slice(&orig);
+                }
+            }
+        }
     }
 }
 
@@ -1529,7 +1697,18 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
             mb_bytearray_clear(receiver);
             MbValue::none()
         }
-        "pop" => mb_bytearray_pop(receiver),
+        "pop" => mb_bytearray_pop_at(
+            receiver,
+            if argc() > 0 { arg(0) } else { MbValue::none() },
+        ),
+        "insert" => {
+            mb_bytearray_insert(receiver, arg(0), arg(1));
+            MbValue::none()
+        }
+        "remove" => {
+            mb_bytearray_remove(receiver, arg(0));
+            MbValue::none()
+        }
         "reverse" => {
             mb_bytearray_reverse(receiver);
             MbValue::none()
@@ -1614,9 +1793,11 @@ pub fn dispatch_bytes_method(name: &str, receiver: MbValue, args: MbValue) -> Mb
         "removeprefix" => mb_bytes_removeprefix(receiver, arg(0)),
         "removesuffix" => mb_bytes_removesuffix(receiver, arg(0)),
         "copy" => {
+            // bytearray.copy() must return an independent, MUTABLE bytearray
+            // (not immutable bytes); bytes_to_value preserves the receiver type.
             let cloned: Option<Vec<u8>> = unsafe { as_bytes_cloned(receiver) };
             cloned
-                .map(|d| MbValue::from_ptr(MbObject::new_bytes(d)))
+                .map(|d| bytes_to_value(receiver, d))
                 .unwrap_or_else(MbValue::none)
         }
         "__alloc__" => MbValue::from_int(0),
