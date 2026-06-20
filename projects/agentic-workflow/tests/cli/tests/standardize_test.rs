@@ -58,16 +58,33 @@ test_cmd = "true"
         "README.md",
         r#"# demo
 
-## Demo Capability
+## Brief
 
-| Field | Value |
-|---|---|
-| ID | demo-capability |
-| Root WI | - |
-| Status | verified |
-| Promise | Provide demo behavior. |
-| Required Verification | smoke |
-| Gate Inventory | - |
+Demo fixture.
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| Demo Capability | - | implemented | verified | smoke | ready | Provide demo behavior. |
+
+### Demo Capability
+
+ID: demo-capability
+Type: DeveloperTool
+Surfaces:
+- CLI: `demo handle` - demo behavior entrypoint.
+EC Dimensions:
+- behavior: `true` - demo behavior remains available.
+Root WI: -
+Status: verified
+Required Verification: smoke
+Promise:
+Provide demo behavior.
+Gate Inventory:
+- true
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|

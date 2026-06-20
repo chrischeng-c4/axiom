@@ -38,6 +38,7 @@ capability_refs:
 e2e_tests:
   - id: vat-host-process-gpu-visibility
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: host-process-execution-and-gpu-visibility
     contract_id: host-process-execution-and-gpu-visibility
     category: behavior
     command: "rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal projects/vat/README.md projects/vat/src/gpu.rs"
@@ -53,6 +54,7 @@ e2e_tests:
 e2e_tests:
   - id: vat-agent-state-and-diff-surface
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: agent-legible-state-and-diff-surface
     contract_id: agent-legible-state-and-diff-surface
     category: behavior
     command: "rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured projects/vat/README.md"
@@ -68,6 +70,7 @@ e2e_tests:
 e2e_tests:
   - id: vat-copy-on-write-lifecycle
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: copy-on-write-fork-and-snapshot-lifecycle
     contract_id: copy-on-write-fork-and-snapshot-lifecycle
     category: behavior
     command: "rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md"
@@ -83,6 +86,7 @@ e2e_tests:
 e2e_tests:
   - id: vat-resource-isolation-boundary
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: resource-isolation-boundary
     contract_id: resource-isolation-boundary
     category: behavior
     command: "rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox"

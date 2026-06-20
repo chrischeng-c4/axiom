@@ -166,8 +166,7 @@ fn profile_target_missing(opts: &RunOptions) -> Option<String> {
 /// Run the `profile` sub-verb under the single-knob measurement contract:
 /// resolve the level (CLI > meter.toml in the target dir > default `vitals`),
 /// run one capture window (until-exit / cap / driver lifetime), and fold the
-/// `vital` findings (plus ranked hot spots at level `sample`). meter.toml
-/// `[gate]` ceilings adjudicate via High findings on the worst-wins ladder.
+/// informational `vital` findings (plus ranked hot spots at level `sample`).
 fn run_profile_sub(opts: &RunOptions, builder: &mut ReportBuilder) {
     use super::fold;
     use super::sampler::Target;
@@ -213,8 +212,6 @@ fn run_profile_sub(opts: &RunOptions, builder: &mut ReportBuilder) {
         }
         Level::Vitals | Level::Sample => {}
     }
-    let gate = config.map(|c| c.gate).unwrap_or_default();
-
     let wopts = vitals::WindowOpts {
         attach_sampler: level >= Level::Sample,
         duration_cap_secs: opts.profile_duration_cap,
@@ -223,24 +220,7 @@ fn run_profile_sub(opts: &RunOptions, builder: &mut ReportBuilder) {
     };
     match vitals::capture_window(&target, &[], &wopts) {
         Ok(outcome) => {
-            let escalate = format!(
-                "meter run --target {} {} --level sample",
-                opts.target,
-                if let Some(b) = &opts.profile_bin {
-                    format!("--profile-bin {b}")
-                } else {
-                    format!(
-                        "--profile-example {}",
-                        opts.profile_example.as_deref().unwrap_or("<target>")
-                    )
-                }
-            );
-            builder.add_findings(vitals::vitals_findings(
-                &outcome.vitals,
-                &target.label(),
-                &gate,
-                &escalate,
-            ));
+            builder.add_findings(vitals::vitals_findings(&outcome.vitals, &target.label()));
             if let Some(run) = &outcome.sample {
                 // Hot spots are informational by default (no --fail-hot in the
                 // composite), so they are Info findings and never move the

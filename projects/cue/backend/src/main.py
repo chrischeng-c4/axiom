@@ -5,6 +5,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+
+def _prefer_local_mambalibs_for_direct_import() -> None:
+    if __package__:
+        return
+
+    import sys
+
+    src_dir = Path(__file__).resolve().parent
+    if str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+
+    loaded = sys.modules.get("mambalibs")
+    loaded_file = getattr(loaded, "__file__", "") if loaded else ""
+    if loaded and (not loaded_file or not str(Path(loaded_file).resolve()).startswith(str(src_dir))):
+        for module_name in list(sys.modules):
+            if module_name == "mambalibs" or module_name.startswith("mambalibs."):
+                sys.modules.pop(module_name, None)
+
+
+_prefer_local_mambalibs_for_direct_import()
+
 from mambalibs.http import App, CORSMiddleware, StaticFiles
 
 try:

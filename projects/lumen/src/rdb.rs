@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! RDB — point-in-time snapshots of the materialized index, tagged with
 //! the WAL sequence they correspond to.
@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use crate::storage::{Engine, SnapshotV1};
 
 /// A snapshot plus the log sequence it is current as of.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 pub struct RdbSnapshot {
     /// The WAL sequence this snapshot incorporates. A node that loads
     /// this baseline tails the log from `up_to_seq + 1`.
@@ -33,7 +33,7 @@ pub struct RdbSnapshot {
     pub snapshot: SnapshotV1,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 impl RdbSnapshot {
     /// Capture the engine's current state as a snapshot tagged with
     /// `up_to_seq` (the caller passes the coordinator's applied
@@ -67,6 +67,7 @@ impl RdbSnapshot {
 /// Where RDB snapshots are persisted. Object-store adapters (S3/GCS)
 /// implement this with the same byte layout as [`LocalFsRdbStore`].
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 pub trait RdbStore: Send + Sync {
     /// Persist `rdb` and make it the new latest.
     async fn save(&self, rdb: &RdbSnapshot) -> Result<()>;
@@ -81,13 +82,13 @@ pub trait RdbStore: Send + Sync {
 /// Filesystem-backed RDB store: `<root>/rdb-<seq>.lrb`. The newest
 /// `rdb-*.lrb` (by sequence) is the latest — no separate pointer file
 /// needed, the sequence in the name is the total order.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 pub struct LocalFsRdbStore {
     root: PathBuf,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 impl LocalFsRdbStore {
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
@@ -119,8 +120,8 @@ impl LocalFsRdbStore {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-rdb-rs.md#source
 impl RdbStore for LocalFsRdbStore {
     async fn save(&self, rdb: &RdbSnapshot) -> Result<()> {
         let bytes = rdb.encode()?;

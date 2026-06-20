@@ -9,6 +9,9 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 use crate::cli::cb::{CbCodegenOriginSummary, CbColdVerifySummary, CbVerifySummary};
 use crate::cli::production::{
     evaluate_release_scope, evaluate_release_scope_with_regenerability, inputs_from_sections,
@@ -316,6 +319,7 @@ pub struct ProjectTestCommandReport {
 pub enum ProjectTestCommandStatus {
     Passed,
     Failed,
+    TimedOut,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -638,7 +642,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
         None
     } else {
         Some(format!(
-            "traceability not evaluated; run `aw health --project {project}`"
+            "traceability not evaluated; run `aw health --project {project} full`"
         ))
     };
     let (cb, cb_verify_note) = if verify_cb {
@@ -653,7 +657,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
         (
             cb_verify_not_evaluated(),
             Some(format!(
-                "cb verify not evaluated; run `aw health --project {project}`"
+                "cb verify not evaluated; run `aw health --project {project} full`"
             )),
         )
     };
@@ -716,7 +720,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
             None
         } else {
             Some(format!(
-                "cold rebuild not evaluated; run `aw health --project {project}`"
+                "cold rebuild not evaluated; run `aw health --project {project} full`"
             ))
         };
         if let Some(note) = &report.cold_rebuild_note {
@@ -801,7 +805,7 @@ fn apply_scoped_production_readiness(
                             None
                         } else {
                             Some(format!(
-                                        "capability production readiness not evaluated; run `aw health --project {}`",
+                                        "capability production readiness not evaluated; run `aw health --project {} full`",
                                         report.project
                                     ))
                         },
@@ -1389,7 +1393,7 @@ impl ProjectTestGateReport {
             evaluated: false,
             status: ProjectTestGateStatus::NotEvaluated,
             note: Some(format!(
-                "test gates not evaluated; run `aw health --project {project}`"
+                "test gates not evaluated; run `aw health --project {project} full`"
             )),
             command_count: 0,
             passed_count: 0,
@@ -1525,6 +1529,34 @@ fn run_project_test_command(
     project_root: &std::path::Path,
     progress: &HealthProgressSink<'_>,
 ) -> Result<ProjectTestCommandReport> {
+    run_project_test_command_with_timeout(
+        workspace,
+        command,
+        project_root,
+        progress,
+        project_test_gate_timeout(),
+    )
+}
+
+const PROJECT_TEST_GATE_TIMEOUT_ENV: &str = "AW_TEST_GATE_TIMEOUT_SECS";
+const DEFAULT_PROJECT_TEST_GATE_TIMEOUT_SECS: u64 = 30 * 60;
+
+fn project_test_gate_timeout() -> Duration {
+    std::env::var(PROJECT_TEST_GATE_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_PROJECT_TEST_GATE_TIMEOUT_SECS))
+}
+
+fn run_project_test_command_with_timeout(
+    workspace: &str,
+    command: &str,
+    project_root: &std::path::Path,
+    progress: &HealthProgressSink<'_>,
+    timeout: Duration,
+) -> Result<ProjectTestCommandReport> {
     let started = Instant::now();
     progress.emit(
         15,
@@ -1544,7 +1576,10 @@ fn run_project_test_command(
         .reopen()
         .with_context(|| format!("open stderr capture for test command `{command}`"))?;
 
-    let mut child = Command::new("sh")
+    let mut command_process = Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    configure_test_gate_process_group(&mut command_process);
+    let mut child = command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)
@@ -1554,14 +1589,29 @@ fn run_project_test_command(
         .with_context(|| format!("failed to execute test command `{command}`"))?;
 
     let mut next_progress = Duration::from_secs(10);
+    let mut timed_out = false;
     let status = loop {
         if let Some(status) = child
             .try_wait()
             .with_context(|| format!("poll test command `{command}`"))?
         {
-            break status;
+            break Some(status);
         }
         let elapsed = started.elapsed();
+        if elapsed >= timeout {
+            timed_out = true;
+            progress.emit(
+                80,
+                "tests",
+                &format!(
+                    "test gate timed out for workspace `{workspace}` after {}s",
+                    elapsed.as_secs()
+                ),
+                Some(command),
+            );
+            terminate_test_gate_child(&mut child);
+            break None;
+        }
         if elapsed >= next_progress {
             progress.emit(
                 80,
@@ -1582,7 +1632,14 @@ fn run_project_test_command(
         .with_context(|| format!("read stdout capture for test command `{command}`"))?;
     let stderr = fs::read(stderr_file.path())
         .with_context(|| format!("read stderr capture for test command `{command}`"))?;
-    let command_status = if status.success() {
+    let exit_code = status.as_ref().and_then(|status| status.code());
+    let command_status = if timed_out {
+        ProjectTestCommandStatus::TimedOut
+    } else if status
+        .as_ref()
+        .map(|status| status.success())
+        .unwrap_or(false)
+    {
         ProjectTestCommandStatus::Passed
     } else {
         ProjectTestCommandStatus::Failed
@@ -1593,16 +1650,72 @@ fn run_project_test_command(
         &format!("test gate finished for workspace `{workspace}` with status {command_status:?}"),
         Some(command),
     );
+    let mut stderr_tail = tail_lossy(&stderr, 4000);
+    if timed_out {
+        if !stderr_tail.trim().is_empty() {
+            stderr_tail.push('\n');
+        }
+        stderr_tail.push_str(&format!(
+            "aw test gate timed out after {}s; set {PROJECT_TEST_GATE_TIMEOUT_ENV} to override",
+            timeout.as_secs()
+        ));
+    }
 
     Ok(ProjectTestCommandReport {
         workspace: workspace.to_string(),
         command: command.to_string(),
         status: command_status,
-        exit_code: status.code(),
+        exit_code,
         duration_ms,
         stdout_tail: tail_lossy(&stdout, 4000),
-        stderr_tail: tail_lossy(&stderr, 4000),
+        stderr_tail,
     })
+}
+
+#[cfg(unix)]
+fn configure_test_gate_process_group(command: &mut Command) {
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_test_gate_process_group(_command: &mut Command) {}
+
+fn terminate_test_gate_child(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    unsafe {
+        let pgid = child.id() as i32;
+        if pgid > 0 {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+
+    let terminate_started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => return,
+        }
+        if terminate_started.elapsed() >= Duration::from_secs(2) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    #[cfg(unix)]
+    unsafe {
+        let pgid = child.id() as i32;
+        if pgid > 0 {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -2157,7 +2270,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     if !report.traceability_evaluated {
         missing.push(report.traceability_note.clone().unwrap_or_else(|| {
             format!(
-                "traceability not evaluated; run `aw health --project {}`",
+                "traceability not evaluated; run `aw health --project {} full`",
                 report.project
             )
         }));
@@ -2165,7 +2278,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     if !report.cb_verify_evaluated {
         missing.push(report.cb_verify_note.clone().unwrap_or_else(|| {
             format!(
-                "cb verify not evaluated; run `aw health --project {}`",
+                "cb verify not evaluated; run `aw health --project {} full`",
                 report.project
             )
         }));
@@ -2175,7 +2288,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     {
         missing.push(report.cold_rebuild_note.clone().unwrap_or_else(|| {
             format!(
-                "cold rebuild not evaluated; run `aw health --project {}`",
+                "cold rebuild not evaluated; run `aw health --project {} full`",
                 report.project
             )
         }));
@@ -2183,7 +2296,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
     if report.test_gates.status == ProjectTestGateStatus::NotEvaluated {
         missing.push(report.test_gates.note.clone().unwrap_or_else(|| {
             format!(
-                "test gates not evaluated; run `aw health --project {}`",
+                "test gates not evaluated; run `aw health --project {} full`",
                 report.project
             )
         }));
@@ -2267,9 +2380,6 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             report.project
         ));
     }
-    if !project_health_missing_evaluations(report).is_empty() {
-        return Some(format!("aw health --project {}", report.project));
-    }
     if report.claim_closure.blocker_count > 0 {
         return Some(format!("aw health --project {} claims", report.project));
     }
@@ -2307,6 +2417,9 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
             report.project
         ));
     }
+    if !project_health_missing_evaluations(report).is_empty() {
+        return Some(format!("aw health --project {} full", report.project));
+    }
     Some(format!("aw run --project {} --max-ticks 1", report.project))
 }
 
@@ -2314,13 +2427,6 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
 fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     if report.production_ready {
         return "project production readiness is complete".to_string();
-    }
-    let missing_evaluations = project_health_missing_evaluations(report);
-    if !missing_evaluations.is_empty() {
-        return format!(
-            "production readiness needs full health verification: {}",
-            missing_evaluations.join("; ")
-        );
     }
     if report.workflow_lock_count > 0 {
         return report
@@ -2389,6 +2495,13 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     if !report.traceability_ready {
         return "TD/source/command traceability is incomplete; advance traceability closure"
             .to_string();
+    }
+    let missing_evaluations = project_health_missing_evaluations(report);
+    if !missing_evaluations.is_empty() {
+        return format!(
+            "production readiness needs full health verification: {}",
+            missing_evaluations.join("; ")
+        );
     }
     report.blockers.first().cloned().unwrap_or_else(|| {
         "project production readiness is blocked; return to project root".to_string()
@@ -2536,7 +2649,7 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
             | ProjectHealthSection::Blockers => HealthVerificationFlags::none(),
         }
     } else {
-        HealthVerificationFlags::all()
+        HealthVerificationFlags::none()
     }
 }
 
@@ -2697,7 +2810,11 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                 .into_iter()
                 .find(|project| project.name == report.project);
             let mut commands = Vec::new();
-            for case in &manifest.cases {
+            for case in manifest
+                .cases
+                .iter()
+                .filter(|case| case.required_for_production)
+            {
                 commands.push(run_project_ec_command(
                     case,
                     project_model.as_ref(),
@@ -2861,6 +2978,12 @@ fn build_claim_closure_report(
     let mut claims = Vec::new();
 
     for capability in &document.capabilities {
+        if capability.status == crate::cli::capability::CapabilityStatus::Retired {
+            continue;
+        }
+        if capability.status != crate::cli::capability::CapabilityStatus::Verified {
+            continue;
+        }
         let Some(contract) = capability.verification_contract.as_ref() else {
             continue;
         };
@@ -3015,10 +3138,11 @@ fn block_health_report(report: &mut ProjectHealthReport, blocker: String) {
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 impl EcBinding {
-    /// wi-13 R2: deterministic verify command for one EC tool binding. Total
-    /// over the four known tools; a missing argument or an unknown tool is
-    /// an error the dispatch surfaces as a Failed EC command, not a
-    /// health-run abort.
+    /// wi-13 R2: deterministic verify command for one EC tool binding. Current
+    /// bindings use rig/meter/vat/guard. Arena remains accepted for legacy
+    /// compatibility; new capability contracts should not default to it.
+    /// A missing argument or an unknown tool is an error the dispatch surfaces
+    /// as a Failed EC command, not a health-run abort.
     pub fn command(&self) -> Result<String> {
         if let Some(command) = self
             .command
@@ -3041,7 +3165,7 @@ impl EcBinding {
                     .dir
                     .as_deref()
                     .context("ec binding `rig` requires `dir`")?;
-                Ok(format!("rig run --dir {dir}"))
+                Ok(format!("rig test --dir {dir}"))
             }
             "meter" => {
                 let target = self
@@ -3072,7 +3196,7 @@ impl EcBinding {
             }
             other => {
                 anyhow::bail!(
-                    "unknown ec binding tool `{other}` (expected arena|rig|meter|vat|guard)"
+                    "unknown ec binding tool `{other}` (expected rig|meter|vat|guard, or legacy arena)"
                 )
             }
         }
@@ -3087,10 +3211,21 @@ fn resolve_project_ec_command(
     case: &crate::cli::ec::EcManifestCase,
     project: Option<&crate::models::project::Project>,
 ) -> Result<String> {
-    match project.and_then(|project| project.ec.get(&case.category)) {
+    match project.and_then(|project| project_ec_binding_for_category(project, &case.category)) {
         Some(binding) => binding.command(),
         None => Ok(case.command.clone()),
     }
+}
+
+fn project_ec_binding_for_category<'a>(
+    project: &'a crate::models::project::Project,
+    category: &str,
+) -> Option<&'a EcBinding> {
+    project.ec.get(category).or_else(|| match category {
+        "efficiency" => project.ec.get("benchmark"),
+        "benchmark" => project.ec.get("efficiency"),
+        _ => None,
+    })
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -3131,7 +3266,9 @@ fn run_project_ec_command(
         .reopen()
         .with_context(|| format!("open stderr capture for EC command `{command}`"))?;
 
-    let status = Command::new("sh")
+    let mut command_process = Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let status = command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)
@@ -3631,9 +3768,26 @@ mod tests {
     }
 
     #[test]
-    fn health_without_verify_flags_defaults_to_full_verification() {
+    fn health_without_verify_flags_defaults_to_metrics_only() {
         let flags =
             effective_health_verification_flags(&health_args(false, false, false, false, false));
+
+        assert_eq!(
+            flags,
+            HealthVerificationFlags {
+                traceability: false,
+                cb: false,
+                cold: false,
+                tests: false,
+                ec: false,
+            }
+        );
+    }
+
+    #[test]
+    fn health_full_section_runs_full_verification() {
+        let flags =
+            effective_health_verification_flags(&health_section_args(ProjectHealthSection::Full));
 
         assert_eq!(
             flags,
@@ -3717,6 +3871,24 @@ mod tests {
     }
 
     #[test]
+    fn project_test_gate_times_out_and_reports_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let progress = HealthProgressSink::disabled("demo");
+        let report = run_project_test_command_with_timeout(
+            "demo",
+            "sleep 2",
+            tmp.path(),
+            &progress,
+            Duration::from_millis(200),
+        )
+        .unwrap();
+
+        assert_eq!(report.status, ProjectTestCommandStatus::TimedOut);
+        assert_eq!(report.exit_code, None);
+        assert!(report.stderr_tail.contains("aw test gate timed out"));
+    }
+
+    #[test]
     fn focused_claims_health_runs_traceability_and_ec_by_default() {
         let flags =
             effective_health_verification_flags(&health_section_args(ProjectHealthSection::Claims));
@@ -3737,13 +3909,21 @@ mod tests {
         crate::cli::capability::CapabilityDocument {
             cap_path: std::path::PathBuf::from("projects/demo/README.md"),
             format: crate::cli::capability::CapabilityDocumentFormat::MarkdownTables,
+            needs_canonicalization: false,
             capabilities: vec![crate::cli::capability::CapabilitySection {
                 title: "Demo Capability".to_string(),
                 id: "cap".to_string(),
                 status: crate::cli::capability::CapabilityStatus::Verified,
+                prelude: String::new(),
+                postlude: String::new(),
+                index_summary: None,
+                capability_type: None,
+                surfaces: Vec::new(),
+                ec_dimensions: Vec::new(),
                 promise: "promise".to_string(),
                 current_state: "state".to_string(),
                 gaps: Vec::new(),
+                work_roots: Vec::new(),
                 verification_contract: Some(
                     crate::cli::capability::CapabilityVerificationContract {
                         required_maturity: vec![crate::cli::capability::CapabilityMaturity::Smoke],
@@ -3768,6 +3948,7 @@ mod tests {
                 line: 1,
             }],
             legacy_rows: Vec::new(),
+            prose_candidates: Vec::new(),
             findings: Vec::new(),
         }
     }
@@ -3776,6 +3957,7 @@ mod tests {
         crate::cli::capability::TdCapabilityEvidence {
             spec_path: "projects/demo/tech-design/logic/claim.md".to_string(),
             spec_id: Some("demo-claim".to_string()),
+            review_status: None,
             capability_id: "cap".to_string(),
             role: crate::cli::capability::CapabilityRefRole::Primary,
             gap: None,
@@ -3806,7 +3988,7 @@ mod tests {
                 ProjectEcGateStatus::Failed
             },
             note: None,
-            manifest_path: "projects/demo/aw.toml".to_string(),
+            manifest_path: "projects/demo/tests/aw-ec.toml".to_string(),
             expected_case_count: 1,
             case_count: 1,
             expected_tool_manifest_count: 0,
@@ -3962,9 +4144,10 @@ mod tests {
         }
     }
 
-    /// wi-38 AC2: the builder emits deterministic tool shapes, including vat and guard.
+    /// wi-38 AC2: the builder emits deterministic tool shapes, including vat,
+    /// guard, and legacy arena compatibility.
     #[test]
-    fn ec_binding_command_builds_arena_rig_meter_vat_guard() {
+    fn ec_binding_command_builds_rig_meter_vat_guard_and_legacy_arena() {
         let arena = EcBinding {
             tool: "arena".into(),
             command: None,
@@ -3984,7 +4167,7 @@ mod tests {
             dir: Some("tests/rig/scenarios".into()),
             meter: None,
         };
-        assert_eq!(rig.command().unwrap(), "rig run --dir tests/rig/scenarios");
+        assert_eq!(rig.command().unwrap(), "rig test --dir tests/rig/scenarios");
 
         let meter = EcBinding {
             tool: "meter".into(),
@@ -4073,7 +4256,7 @@ mod tests {
             .command()
             .unwrap_err()
             .to_string()
-            .contains("expected arena|rig|meter|vat|guard"));
+            .contains("expected rig|meter|vat|guard, or legacy arena"));
 
         let armless = EcBinding {
             tool: "arena".into(),
@@ -4095,22 +4278,63 @@ mod tests {
     fn resolve_ec_command_dispatches_bound_category() {
         let mut ec = BTreeMap::new();
         ec.insert(
+            "efficiency".to_string(),
+            EcBinding {
+                tool: "meter".into(),
+                command: None,
+                spec: None,
+                dir: None,
+                meter: Some("projects/lumen".into()),
+            },
+        );
+        let project = ec_project(ec);
+
+        let bound = resolve_project_ec_command(&ec_case("efficiency"), Some(&project)).unwrap();
+        assert_eq!(bound, "meter run --target projects/lumen");
+
+        let unbound = resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
+        assert_eq!(unbound, "cargo test -p demo");
+    }
+
+    #[test]
+    fn resolve_ec_command_accepts_legacy_benchmark_binding_for_efficiency() {
+        let mut ec = BTreeMap::new();
+        ec.insert(
             "benchmark".to_string(),
             EcBinding {
                 tool: "arena".into(),
                 command: None,
-                spec: Some("tests/arena/x.toml".into()),
+                spec: Some("projects/arena/examples/lumen-vs-pg.toml".into()),
                 dir: None,
                 meter: None,
             },
         );
         let project = ec_project(ec);
 
-        let bound = resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap();
-        assert_eq!(bound, "arena run --spec tests/arena/x.toml");
+        let command = resolve_project_ec_command(&ec_case("efficiency"), Some(&project)).unwrap();
+        assert_eq!(
+            command,
+            "arena run --spec projects/arena/examples/lumen-vs-pg.toml"
+        );
+    }
 
-        let unbound = resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
-        assert_eq!(unbound, "cargo test -p demo");
+    #[test]
+    fn resolve_ec_command_accepts_efficiency_binding_for_legacy_benchmark_case() {
+        let mut ec = BTreeMap::new();
+        ec.insert(
+            "efficiency".to_string(),
+            EcBinding {
+                tool: "meter".into(),
+                command: None,
+                spec: None,
+                dir: None,
+                meter: Some("projects/lumen".into()),
+            },
+        );
+        let project = ec_project(ec);
+
+        let command = resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap();
+        assert_eq!(command, "meter run --target projects/lumen");
     }
 
     /// wi-13 AC4: no `ec` map (or no project model at all) is today's
@@ -4136,7 +4360,7 @@ mod tests {
 [[projects]]
 name = "lumen"
 path = "projects/lumen"
-ec.benchmark = { tool = "arena", spec = "tests/arena/x.toml" }
+ec.efficiency = { tool = "meter", meter = "projects/lumen" }
 
 [[projects.workspaces]]
 paths = ["projects/lumen/**"]
@@ -4144,16 +4368,16 @@ target = "rust"
 "#;
         let parsed: crate::models::project::ProjectsToml = toml::from_str(doc).unwrap();
         let project = &parsed.projects[0];
-        assert_eq!(project.ec["benchmark"].tool, "arena");
+        assert_eq!(project.ec["efficiency"].tool, "meter");
         assert_eq!(
-            project.ec["benchmark"].spec.as_deref(),
-            Some("tests/arena/x.toml")
+            project.ec["efficiency"].meter.as_deref(),
+            Some("projects/lumen")
         );
 
         let reserialized = toml::to_string(&parsed).unwrap();
         assert!(
-            reserialized.contains("[projects.ec.benchmark]")
-                || reserialized.contains("ec.benchmark")
+            reserialized.contains("[projects.ec.efficiency]")
+                || reserialized.contains("ec.efficiency")
         );
         let reparsed: crate::models::project::ProjectsToml = toml::from_str(&reserialized).unwrap();
         assert_eq!(parsed, reparsed);

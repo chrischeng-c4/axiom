@@ -50,6 +50,13 @@ pub struct RunnerConfig {
     /// `jet.test.config.ts` project `use.headless`.
     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R5
     pub headless: bool,
+    /// Optional browser executable override for browser-backed tests.
+    /// `None` keeps Jet's default pinned Chromium-first resolver.
+    pub browser_executable: Option<PathBuf>,
+    /// Optional existing browser CDP endpoint. When set, the worker connects
+    /// to that browser and opens test pages as tabs in its default window
+    /// instead of launching another browser process.
+    pub browser_ws_url: Option<String>,
     /// Web-server to spawn before the runner starts. Loaded from
     /// `jet.toml` `[test.web_server]`. When `Some`, `test_runner::run`
     /// boots the server, waits for readiness, runs the specs, and kills it.
@@ -231,6 +238,8 @@ impl RunnerConfig {
             shard: None,
             base_url: None,
             headless: true,
+            browser_executable: None,
+            browser_ws_url: None,
             web_server: None,
             // @spec .aw/tech-design/projects/jet/logic/auto-artifacts.md#A2
             auto_artifacts: true,

@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec meter-benchmark-regression-api
 // @capability runtime-resource-attribution
+// @claim benchmark-regression-api
 // @contract benchmark-regression-api
 // @category performance
+// @required_for_production true
 // @command cargo test -p meter benchmark::
 // AW-EC-END
 
