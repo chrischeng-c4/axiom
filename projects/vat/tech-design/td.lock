@@ -1,8 +1,12 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-20T14:37:04.107148+00:00"
-digest = "sha256:65d8e5a61cb568300aa7c3c418cd955a53b760af9773a7c3f05fae865e8c352c"
+generated_at = "2026-06-20T15:35:13.121987+00:00"
+digest = "sha256:5afb12cabb75cf563630e75a2145601b8565c7f0ec280e670cb9de23afebe7fb"
+
+[[files]]
+path = "logic/built-in-cloud-storage-gcs-emulator.md"
+digest = "sha256:160f67cfc8d55e5aec09d6571c20da95231562aa906bd8f8e614c396e4ff904e"
 
 [[files]]
 path = "logic/built-in-cloud-tasks-cloud-scheduler-emulators.md"
@@ -166,8 +170,8 @@ digest = "sha256:1cb7d290f685bce33af5a11210a84be1e9aea62dd50fe68ea0f4c802247f035
 
 [[files]]
 path = "semantic/vat-src.md"
-digest = "sha256:ffd9d2e07f8edb9563bbf878e78ef4a3445884c6d670168c057accadc3eb5ff1"
+digest = "sha256:9fe1f543cea65efc31a75d87aaf0008f137888cdadfb088ec1dedf4a1ea1c52a"
 
 [[files]]
 path = "semantic/vat-tests.md"
-digest = "sha256:f0db685406af902e44ad8012e2cf187578048cd6fbcbdd0e9442ab8a93a05ced"
+digest = "sha256:4827d58c3cb202bbe866ff92b4574918ad4bf695c87962f831c955119f19b234"
