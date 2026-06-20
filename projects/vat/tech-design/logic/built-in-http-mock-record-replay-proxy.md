@@ -70,3 +70,53 @@ flowchart TD
     runner --> teardown[stop service kills proxy; cassettes persist]
     teardown --> done([return exit code])
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-http-mock-evidence.schema.json"
+title: "Vat HTTP mock proxy evidence"
+type: object
+description: "Service-evidence shape, exported env, and the stub/cassette records for vat's built-in HTTP mock proxy."
+properties:
+  preset:
+    type: string
+    enum: [http-mock]
+  prepare_mode:
+    type: string
+    enum: [builtin_emulator]
+  exported_env:
+    type: array
+    items: { type: string }
+    description: "Proxy + CA-trust vars exported to the runner: HTTP_PROXY/HTTPS_PROXY/ALL_PROXY (+lowercase), NO_PROXY, SSL_CERT_FILE, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS, GIT_SSL_CAINFO, VAT_HTTP_MOCK_HOST."
+  stub:
+    type: object
+    description: "A registered stub: a request matcher and a canned response."
+    properties:
+      match:
+        type: object
+        properties:
+          method: { type: string }
+          host: { type: string }
+          path: { type: string }
+        additionalProperties: true
+      response:
+        type: object
+        properties:
+          status: { type: integer }
+          headers: { type: object, additionalProperties: { type: string } }
+          body: { type: string }
+        additionalProperties: true
+    additionalProperties: true
+  cassette:
+    type: object
+    description: "A recorded request/response pair keyed by method+host+path+query+body."
+    properties:
+      key: { type: string }
+      status: { type: integer }
+      body_base64: { type: boolean }
+    additionalProperties: true
+additionalProperties: true
+```
