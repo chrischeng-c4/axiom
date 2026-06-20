@@ -1,0 +1,67 @@
+# Raft-backed relay as a StatefulSet: stable identity (relay-<ordinal>), a
+# per-pod PVC for the durable Raft log, and downward-API env so each node
+# derives its id / role / peers itself. Keep replicas == RELAY_REPLICAS (odd N
+# is the cleanest; an even N makes the trailing pod a read-only learner).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: relay
+  labels:
+    app: relay
+spec:
+  serviceName: relay # the headless Service above
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: relay
+  template:
+    metadata:
+      labels:
+        app: relay
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: relay
+          image: relay-raft:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Pod name == relay-<ordinal>; ordinal_from_hostname() -> node id.
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RELAY_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: RELAY_REPLICAS
+              value: "3" # must match spec.replicas
+            - name: RELAY_SERVICE
+              value: "relay"
+            - name: RELAY_PORT
+              value: "8080"
+            - name: RELAY_SUBJECT
+              value: "events"
+            - name: RELAY_DATA_DIR
+              value: "/data"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

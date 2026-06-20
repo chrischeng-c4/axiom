@@ -1,0 +1,11 @@
+# Keep a quorum during voluntary disruptions (e.g. rolling updates / drains):
+# at most one relay voter may be unavailable at a time.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: relay
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: relay

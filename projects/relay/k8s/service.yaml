@@ -1,0 +1,16 @@
+# Headless Service: stable per-pod DNS for Raft peer addressing.
+# Each pod is reachable at relay-<ordinal>.relay.<namespace>.svc.cluster.local.
+apiVersion: v1
+kind: Service
+metadata:
+  name: relay
+  labels:
+    app: relay
+spec:
+  clusterIP: None # headless: no load balancing; DNS resolves to each pod
+  selector:
+    app: relay
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

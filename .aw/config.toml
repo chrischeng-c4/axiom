@@ -347,6 +347,24 @@ paths = [
 target = "schemas"
 test_cmd = "true"
 
+
+[[projects]]
+name = "relay"
+path = "projects/relay"
+label = "project:relay"
+# Competitor perf-gate (#125): arena compare-N + ratchet vs NATS / RabbitMQ /
+# Redpanda. `aw health --verify-ec` drives the benchmark dimension through arena;
+# competitor adapters run in CI (their native protocols are not HTTP).
+ec.benchmark = { tool = "arena", spec = "projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml" }
+
+[[projects.workspaces]]
+name = "relay"
+paths = ["projects/relay/**"]
+target = "rust"
+test_cmd = "cargo test -p relay"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Agents — registry of LLM runners available for work-item assignment.
 #
