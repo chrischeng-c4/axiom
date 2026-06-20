@@ -158,7 +158,14 @@ pub struct ServiceConfig {
 }
 
 /// Built-in local service presets.
+///
+/// The datastore/broker presets (postgres … mongo) prefer a native Homebrew
+/// binary with a Docker image fallback. The emulator presets
+/// (firestore … spanner) wrap the GCP `gcloud beta emulators` family — native
+/// when the gcloud component is installed, Docker otherwise — and `firebase` is
+/// the Firebase Emulator Suite bundle driven by a workspace `firebase.json`.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#config
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ServicePreset {
@@ -169,6 +176,28 @@ pub enum ServicePreset {
     Mysql,
     Mongo,
     Opensearch,
+    Firestore,
+    Pubsub,
+    Datastore,
+    Bigtable,
+    Spanner,
+    Firebase,
+}
+
+impl ServicePreset {
+    /// Whether this preset is a GCP/Firebase emulator (vs a datastore/broker).
+    /// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
+    pub fn is_emulator(self) -> bool {
+        matches!(
+            self,
+            ServicePreset::Firestore
+                | ServicePreset::Pubsub
+                | ServicePreset::Datastore
+                | ServicePreset::Bigtable
+                | ServicePreset::Spanner
+                | ServicePreset::Firebase
+        )
+    }
 }
 
 /// How a `preset` service is provided. The default prefers the native binary
@@ -327,8 +356,10 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
                     validate_image_service(service)?;
                 } else if has_cluster {
                     validate_cluster_service(service)?;
+                } else if service.preset == Some(ServicePreset::Firebase) {
+                    validate_firebase_service(cfg, service)?;
                 }
-                // preset: no extra checks here.
+                // other presets: no extra checks here.
             }
             _ => bail!(
                 "service `{}` must define only one of cmd, preset, image, or cluster",
@@ -464,6 +495,20 @@ fn validate_cluster_service(service: &ServiceConfig) -> Result<()> {
                 service.id
             );
         }
+    }
+    Ok(())
+}
+
+/// The `firebase` preset is a bundle driven by the Firebase Emulator Suite, so
+/// it requires a `firebase.json` in the workspace to know which emulators and
+/// ports to start.
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
+fn validate_firebase_service(cfg: &VatConfig, service: &ServiceConfig) -> Result<()> {
+    if !cfg.root.join("firebase.json").exists() {
+        bail!(
+            "service `{}` preset `firebase` requires a firebase.json in the workspace",
+            service.id
+        );
     }
     Ok(())
 }
@@ -954,6 +999,50 @@ artifacts = ["out.txt"]
             assert_eq!(parsed, backend);
             let dumped = serde_json::to_value(backend).unwrap();
             assert_eq!(dumped, serde_json::Value::String(token.into()));
+        }
+    }
+
+    #[test]
+    fn accepts_gcp_emulator_presets() {
+        for preset in [
+            ServicePreset::Firestore,
+            ServicePreset::Pubsub,
+            ServicePreset::Datastore,
+            ServicePreset::Bigtable,
+            ServicePreset::Spanner,
+        ] {
+            let mut svc = bare_service("svc");
+            svc.preset = Some(preset);
+            assert!(validate(&cfg_with_service(svc)).is_ok(), "{preset:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_firebase_without_firebase_json() {
+        // cfg_with_service roots at "." (the crate dir), which has no firebase.json.
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::Firebase);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn emulator_presets_round_trip() {
+        for (token, preset) in [
+            ("firestore", ServicePreset::Firestore),
+            ("pubsub", ServicePreset::Pubsub),
+            ("datastore", ServicePreset::Datastore),
+            ("bigtable", ServicePreset::Bigtable),
+            ("spanner", ServicePreset::Spanner),
+            ("firebase", ServicePreset::Firebase),
+        ] {
+            let parsed: ServicePreset =
+                serde_json::from_value(serde_json::Value::String(token.into())).unwrap();
+            assert_eq!(parsed, preset);
+            assert_eq!(
+                serde_json::to_value(preset).unwrap(),
+                serde_json::Value::String(token.into())
+            );
+            assert!(preset.is_emulator());
         }
     }
 }

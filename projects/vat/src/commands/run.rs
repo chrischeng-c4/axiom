@@ -739,6 +739,10 @@ fn prepare_service(
         // Explicit image: a Docker-only service (e.g. AlloyDB) with no native
         // equivalent. Always a container.
         prepare_image_service(vat, service, image)?
+    } else if service.preset == Some(ServicePreset::Firebase) {
+        // Firebase: a multi-emulator bundle driven by firebase.json — its own
+        // prepare path because it is one process exposing many ports.
+        prepare_firebase_service(vat, cfg, service)?
     } else if let Some(preset) = service.preset {
         // Preset: prefer the native Homebrew binary, fall back to the preset's
         // official Docker image when the binary is missing (or as forced).
@@ -1037,30 +1041,40 @@ fn resolve_preset_runtime(
         ServiceRuntime::Native => Ok(ResolvedRuntime::Native),
         ServiceRuntime::Docker => Ok(ResolvedRuntime::Docker),
         ServiceRuntime::Auto => {
-            let missing: Vec<&str> = required_binaries(preset)
-                .iter()
-                .filter(|binary| which(binary).is_none())
-                .copied()
-                .collect();
-            if missing.is_empty() {
+            // Native means more than "binary on PATH" for emulators: the gcloud
+            // component must also be installed, else native would be chosen and
+            // then fail to start. preset_native_available folds that in so a
+            // missing component falls back to Docker.
+            if preset_native_available(preset) {
                 Ok(ResolvedRuntime::Native)
             } else if docker_available() {
                 Ok(ResolvedRuntime::Docker)
             } else {
+                let missing: Vec<&str> = required_binaries(preset)
+                    .iter()
+                    .filter(|binary| which(binary).is_none())
+                    .copied()
+                    .collect();
+                let missing_component = gcloud_component(preset)
+                    .filter(|c| !installed_gcloud_components().iter().any(|x| x == c));
                 emit_jsonl(serde_json::json!({
                     "type": "error",
                     "code": "service_runtime_unavailable",
                     "service": service.id.as_str(),
                     "preset": service_preset_name(preset),
                     "missing_native": missing,
+                    "missing_component": missing_component,
                     "docker": false,
                 }))?;
                 bail!(
-                    "service `{}` preset `{}`: native binaries missing ({}) and Docker is unavailable; \
-                     install them via Homebrew, install/start Docker, or set runtime explicitly",
+                    "service `{}` preset `{}`: native unavailable (missing binaries: [{}]{}) and Docker is unavailable; \
+                     install them, install the gcloud component, install/start Docker, or set runtime explicitly",
                     service.id,
                     service_preset_name(preset),
-                    missing.join(", ")
+                    missing.join(", "),
+                    missing_component
+                        .map(|c| format!(", missing component: {c}"))
+                        .unwrap_or_default(),
                 );
             }
         }
@@ -1087,7 +1101,11 @@ fn prepare_preset_docker_service(
     for (key, value) in &service.image_env {
         container_env.insert(key.clone(), value.clone());
     }
-    let command = docker_run_command(&name, &image, host_port, container_port, &container_env);
+    let mut command = docker_run_command(&name, &image, host_port, container_port, &container_env);
+    // GCP emulators on the cloud-cli image need the emulator start command
+    // appended; the datastore/broker official images and Spanner's dedicated
+    // image start via their own entrypoint.
+    command.extend(preset_docker_command(preset, container_port));
     let env = preset_exports(service, preset, host_port);
     Ok(ServicePlan {
         id: service.id.clone(),
@@ -1106,6 +1124,111 @@ fn prepare_preset_docker_service(
         image: Some(image),
         cluster: None,
     })
+}
+
+/// Prepare the `firebase` bundle: one `firebase emulators:start` process that
+/// serves every emulator configured in the workspace `firebase.json`. vat reads
+/// firebase.json for the ports (firebase owns them — vat does not auto-allocate),
+/// exports the well-known `*_EMULATOR_HOST` vars the client SDKs read, and probes
+/// the first configured emulator (or the hub) for readiness. Native-only: there
+/// is no reliable official Docker image, so a missing firebase-tools is a
+/// structured unavailable error, not a silent Docker attempt.
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic
+fn prepare_firebase_service(
+    vat: &store::Vat,
+    cfg: &VatConfig,
+    service: &ServiceConfig,
+) -> Result<ServicePlan> {
+    let _ = vat;
+    let missing: Vec<&str> = required_binaries(ServicePreset::Firebase)
+        .iter()
+        .filter(|binary| which(binary).is_none())
+        .copied()
+        .collect();
+    if !missing.is_empty() {
+        emit_jsonl(serde_json::json!({
+            "type": "error",
+            "code": "service_runtime_unavailable",
+            "service": service.id.as_str(),
+            "preset": "firebase",
+            "missing_native": missing,
+            "docker": false,
+            "note": "the firebase bundle requires firebase-tools (npm i -g firebase-tools); Docker is not a supported fallback for firebase",
+        }))?;
+        bail!(
+            "service `{}` preset `firebase` needs firebase-tools (missing: {}); install via `npm i -g firebase-tools`",
+            service.id,
+            missing.join(", ")
+        );
+    }
+
+    let firebase_json = cfg.root.join("firebase.json");
+    let raw = std::fs::read_to_string(&firebase_json)
+        .with_context(|| format!("read {}", firebase_json.display()))?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).context("parse firebase.json")?;
+
+    let mut env = BTreeMap::new();
+    let mut hub_port = 4400u16;
+    let mut first_port: Option<u16> = None;
+    if let Some(emulators) = parsed.get("emulators").and_then(|e| e.as_object()) {
+        for (emulator, conf) in emulators {
+            let port = conf.get("port").and_then(|p| p.as_u64()).map(|p| p as u16);
+            if emulator == "hub" {
+                if let Some(p) = port {
+                    hub_port = p;
+                }
+                continue;
+            }
+            if let (Some(var), Some(p)) = (firebase_emulator_host_var(emulator), port) {
+                env.insert(var.to_string(), format!("127.0.0.1:{p}"));
+                first_port.get_or_insert(p);
+            }
+        }
+    }
+    env.insert(
+        "FIREBASE_EMULATOR_HUB".to_string(),
+        format!("127.0.0.1:{hub_port}"),
+    );
+
+    let ready_port = first_port.unwrap_or(hub_port);
+    Ok(ServicePlan {
+        id: service.id.clone(),
+        command: vec![
+            "firebase".to_string(),
+            "emulators:start".to_string(),
+            "--project".to_string(),
+            "demo-vat".to_string(),
+        ],
+        ready_http: service.ready_http.clone(),
+        ready_probe: ReadyProbe::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: ready_port,
+        },
+        timeout_s: service.timeout_s,
+        preset: Some(ServicePreset::Firebase),
+        port: Some(hub_port),
+        prepare_mode: "firebase_emulators".to_string(),
+        cache_key: None,
+        prepare_duration_ms: 0,
+        exported_env: sorted_keys(&env),
+        env,
+        docker_name: None,
+        image: None,
+        cluster: None,
+    })
+}
+
+/// The client-SDK host env var for a Firebase emulator, when one exists.
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
+fn firebase_emulator_host_var(emulator: &str) -> Option<&'static str> {
+    match emulator {
+        "firestore" => Some("FIRESTORE_EMULATOR_HOST"),
+        "auth" => Some("FIREBASE_AUTH_EMULATOR_HOST"),
+        "database" => Some("FIREBASE_DATABASE_EMULATOR_HOST"),
+        "storage" => Some("FIREBASE_STORAGE_EMULATOR_HOST"),
+        "pubsub" => Some("PUBSUB_EMULATOR_HOST"),
+        _ => None,
+    }
 }
 
 /// Run a Docker-only custom service (e.g. AlloyDB) declared with `image`.
@@ -1208,6 +1331,19 @@ fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
         ServicePreset::Mysql => ("mysql", "8"),
         ServicePreset::Mongo => ("mongo", "7"),
         ServicePreset::Opensearch => ("opensearchproject/opensearch", "2"),
+        // The cloud-cli `:emulators` image bundles the gcloud emulator
+        // components and a JVM.
+        ServicePreset::Firestore
+        | ServicePreset::Pubsub
+        | ServicePreset::Datastore
+        | ServicePreset::Bigtable => (
+            "gcr.io/google.com/cloudsdktool/google-cloud-cli",
+            "emulators",
+        ),
+        // Spanner ships its own emulator image, not the cloud-cli one.
+        ServicePreset::Spanner => ("gcr.io/cloud-spanner-emulator/emulator", "latest"),
+        // Firebase is routed through prepare_firebase_service, never here.
+        ServicePreset::Firebase => ("node", "20-slim"),
     };
     format!("{repo}:{}", version.unwrap_or(default_tag))
 }
@@ -1222,6 +1358,40 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
         ServicePreset::Mysql => 3306,
         ServicePreset::Mongo => 27017,
         ServicePreset::Opensearch => 9200,
+        ServicePreset::Firestore => 8080,
+        ServicePreset::Datastore => 8081,
+        ServicePreset::Pubsub => 8085,
+        ServicePreset::Bigtable => 8086,
+        ServicePreset::Spanner => 9010,
+        ServicePreset::Firebase => 4400,
+    }
+}
+
+/// The emulator-start command appended after the image for GCP emulators on the
+/// cloud-cli image. Empty for images that start their server via their own
+/// entrypoint (datastore/broker official images, Spanner's dedicated image).
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic
+fn preset_docker_command(preset: ServicePreset, container_port: u16) -> Vec<String> {
+    let emulator = |name: &str, extra: &[&str]| {
+        let mut cmd = vec![
+            "gcloud".to_string(),
+            "beta".to_string(),
+            "emulators".to_string(),
+            name.to_string(),
+            "start".to_string(),
+            format!("--host-port=0.0.0.0:{container_port}"),
+        ];
+        cmd.extend(extra.iter().map(|s| s.to_string()));
+        cmd
+    };
+    match preset {
+        ServicePreset::Firestore => emulator("firestore", &[]),
+        ServicePreset::Pubsub => emulator("pubsub", &["--project=demo-vat"]),
+        ServicePreset::Datastore => {
+            emulator("datastore", &["--project=demo-vat", "--no-store-on-disk"])
+        }
+        ServicePreset::Bigtable => emulator("bigtable", &[]),
+        _ => Vec::new(),
     }
 }
 
@@ -1239,7 +1409,13 @@ fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
         ServicePreset::Redis
         | ServicePreset::Nats
         | ServicePreset::Mongo
-        | ServicePreset::Rabbitmq => {}
+        | ServicePreset::Rabbitmq
+        | ServicePreset::Firestore
+        | ServicePreset::Pubsub
+        | ServicePreset::Datastore
+        | ServicePreset::Bigtable
+        | ServicePreset::Spanner
+        | ServicePreset::Firebase => {}
         ServicePreset::Opensearch => {
             env.insert("discovery.type".to_string(), "single-node".to_string());
             env.insert("plugins.security.disabled".to_string(), "true".to_string());
@@ -1345,7 +1521,15 @@ fn cold_prepare_service_image(
         | ServicePreset::Mongo
         | ServicePreset::Rabbitmq
         | ServicePreset::Redis
-        | ServicePreset::Nats => {}
+        | ServicePreset::Nats
+        // Emulators are stateless per run (preset_uses_service_image is false),
+        // so they never reach cold-prepare.
+        | ServicePreset::Firestore
+        | ServicePreset::Pubsub
+        | ServicePreset::Datastore
+        | ServicePreset::Bigtable
+        | ServicePreset::Spanner
+        | ServicePreset::Firebase => {}
     }
     Ok(())
 }
@@ -1531,7 +1715,82 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         // other presets assume their server binary. Readiness uses the built-in
         // HTTP probe, so no extra client binary is required.
         ServicePreset::Opensearch => &["opensearch"],
+        // GCP emulators run under the gcloud CLI and a JVM.
+        ServicePreset::Firestore
+        | ServicePreset::Pubsub
+        | ServicePreset::Datastore
+        | ServicePreset::Bigtable
+        | ServicePreset::Spanner => &["gcloud", "java"],
+        // The Firebase Emulator Suite runs under firebase-tools (+ a JVM for
+        // its Firestore/Database emulators).
+        ServicePreset::Firebase => &["firebase", "java"],
     }
+}
+
+/// The gcloud component an emulator preset needs locally installed for the
+/// native path. `None` for non-gcloud presets (datastore/broker, firebase).
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config
+fn gcloud_component(preset: ServicePreset) -> Option<&'static str> {
+    match preset {
+        ServicePreset::Firestore => Some("cloud-firestore-emulator"),
+        ServicePreset::Pubsub => Some("pubsub-emulator"),
+        ServicePreset::Datastore => Some("cloud-datastore-emulator"),
+        ServicePreset::Bigtable => Some("bigtable"),
+        ServicePreset::Spanner => Some("cloud-spanner-emulator"),
+        _ => None,
+    }
+}
+
+/// Locally-installed gcloud component ids (`--only-local-state` lists only the
+/// installed ones). Empty when gcloud is absent or the query fails.
+fn installed_gcloud_components() -> Vec<String> {
+    Command::new("gcloud")
+        .args([
+            "components",
+            "list",
+            "--only-local-state",
+            "--format=value(id)",
+        ])
+        .stderr(Stdio::null())
+        .output()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Pure native-availability decision: all binaries present, and (for emulator
+/// presets) the required gcloud component locally installed.
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic
+fn native_available(has_binaries: bool, component: Option<&str>, installed: &[String]) -> bool {
+    has_binaries
+        && match component {
+            Some(c) => installed.iter().any(|x| x == c),
+            None => true,
+        }
+}
+
+/// Whether a preset's native path is usable on this host. For emulator presets
+/// this checks the gcloud component, not just the binary, so `runtime = auto`
+/// falls back to Docker when the component is missing rather than choosing
+/// native and failing to start.
+/// @spec projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic
+fn preset_native_available(preset: ServicePreset) -> bool {
+    let has_binaries = required_binaries(preset)
+        .iter()
+        .all(|binary| which(binary).is_some());
+    let component = gcloud_component(preset);
+    // Only pay the gcloud query when a component actually gates this preset.
+    let installed = if component.is_some() {
+        installed_gcloud_components()
+    } else {
+        Vec::new()
+    };
+    native_available(has_binaries, component, &installed)
 }
 
 fn preset_uses_service_image(preset: ServicePreset) -> bool {
@@ -1649,7 +1908,39 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
             format!("-Epath.data={}", data_dir.join("data").display()),
             format!("-Epath.logs={}", data_dir.join("logs").display()),
         ],
+        // GCP emulators: `gcloud (beta) emulators <x> start --host-port`.
+        ServicePreset::Firestore => gcloud_emulator_command(true, "firestore", port, &[]),
+        ServicePreset::Pubsub => {
+            gcloud_emulator_command(true, "pubsub", port, &["--project=demo-vat"])
+        }
+        ServicePreset::Datastore => gcloud_emulator_command(
+            true,
+            "datastore",
+            port,
+            &["--project=demo-vat", "--no-store-on-disk"],
+        ),
+        ServicePreset::Bigtable => gcloud_emulator_command(true, "bigtable", port, &[]),
+        ServicePreset::Spanner => gcloud_emulator_command(false, "spanner", port, &[]),
+        // Firebase is routed through prepare_firebase_service, never here.
+        ServicePreset::Firebase => vec!["firebase".to_string(), "emulators:start".to_string()],
     }
+}
+
+/// `gcloud [beta] emulators <name> start --host-port=127.0.0.1:{port} [extra]`.
+/// Spanner is GA (`beta = false`); the others live under `beta`.
+fn gcloud_emulator_command(beta: bool, name: &str, port: u16, extra: &[&str]) -> Vec<String> {
+    let mut cmd = vec!["gcloud".to_string()];
+    if beta {
+        cmd.push("beta".to_string());
+    }
+    cmd.extend([
+        "emulators".to_string(),
+        name.to_string(),
+        "start".to_string(),
+        format!("--host-port=127.0.0.1:{port}"),
+    ]);
+    cmd.extend(extra.iter().map(|s| s.to_string()));
+    cmd
 }
 
 fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
@@ -1674,7 +1965,14 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
         ServicePreset::Redis
         | ServicePreset::Nats
         | ServicePreset::Mongo
-        | ServicePreset::Rabbitmq => ReadyProbe::Tcp {
+        | ServicePreset::Rabbitmq
+        // Emulators open their port once ready — a TCP connect is enough.
+        | ServicePreset::Firestore
+        | ServicePreset::Pubsub
+        | ServicePreset::Datastore
+        | ServicePreset::Bigtable
+        | ServicePreset::Spanner
+        | ServicePreset::Firebase => ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
             port,
         },
@@ -1715,6 +2013,14 @@ fn preset_exports(
         ),
         ServicePreset::Mongo => ("MONGODB_URI", format!("mongodb://127.0.0.1:{port}/test")),
         ServicePreset::Opensearch => ("OPENSEARCH_URL", format!("http://127.0.0.1:{port}")),
+        // Emulators export the well-known *_EMULATOR_HOST the client SDKs read.
+        ServicePreset::Firestore => ("FIRESTORE_EMULATOR_HOST", format!("127.0.0.1:{port}")),
+        ServicePreset::Pubsub => ("PUBSUB_EMULATOR_HOST", format!("127.0.0.1:{port}")),
+        ServicePreset::Datastore => ("DATASTORE_EMULATOR_HOST", format!("127.0.0.1:{port}")),
+        ServicePreset::Bigtable => ("BIGTABLE_EMULATOR_HOST", format!("127.0.0.1:{port}")),
+        ServicePreset::Spanner => ("SPANNER_EMULATOR_HOST", format!("127.0.0.1:{port}")),
+        // Firebase is routed through prepare_firebase_service, never here.
+        ServicePreset::Firebase => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -1781,6 +2087,12 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::Mysql => "mysql",
         ServicePreset::Mongo => "mongo",
         ServicePreset::Opensearch => "opensearch",
+        ServicePreset::Firestore => "firestore",
+        ServicePreset::Pubsub => "pubsub",
+        ServicePreset::Datastore => "datastore",
+        ServicePreset::Bigtable => "bigtable",
+        ServicePreset::Spanner => "spanner",
+        ServicePreset::Firebase => "firebase",
     }
 }
 
@@ -2343,6 +2655,66 @@ mod tests {
             env.get("OPENSEARCH_JAVA_OPTS").map(String::as_str),
             Some("-Xms512m -Xmx512m")
         );
+    }
+
+    #[test]
+    fn emulator_image_defaults() {
+        assert_eq!(
+            preset_image(ServicePreset::Firestore, None),
+            "gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators"
+        );
+        assert_eq!(
+            preset_image(ServicePreset::Spanner, None),
+            "gcr.io/cloud-spanner-emulator/emulator:latest"
+        );
+    }
+
+    #[test]
+    fn native_available_requires_gcloud_component() {
+        // Binary present but the gcloud component is not installed → not native.
+        assert!(!native_available(true, Some("pubsub-emulator"), &[]));
+        // Component installed → native.
+        assert!(native_available(
+            true,
+            Some("pubsub-emulator"),
+            &["pubsub-emulator".to_string()]
+        ));
+        // No component gate (datastore/broker presets) → binary presence wins.
+        assert!(native_available(true, None, &[]));
+        assert!(!native_available(false, None, &[]));
+    }
+
+    #[test]
+    fn emulator_exports_well_known_host_var() {
+        let svc = test_service("db", &[]);
+        let env = preset_exports(&svc, ServicePreset::Firestore, 8080);
+        assert_eq!(
+            env.get("FIRESTORE_EMULATOR_HOST").map(String::as_str),
+            Some("127.0.0.1:8080")
+        );
+        let env = preset_exports(&svc, ServicePreset::Pubsub, 8085);
+        assert_eq!(
+            env.get("PUBSUB_EMULATOR_HOST").map(String::as_str),
+            Some("127.0.0.1:8085")
+        );
+    }
+
+    #[test]
+    fn emulator_docker_command_appends_start_for_cloud_cli() {
+        let cmd = preset_docker_command(ServicePreset::Firestore, 8080);
+        assert_eq!(
+            cmd,
+            vec![
+                "gcloud",
+                "beta",
+                "emulators",
+                "firestore",
+                "start",
+                "--host-port=0.0.0.0:8080"
+            ]
+        );
+        // Spanner's dedicated image starts via its own entrypoint.
+        assert!(preset_docker_command(ServicePreset::Spanner, 9010).is_empty());
     }
 
     #[test]
