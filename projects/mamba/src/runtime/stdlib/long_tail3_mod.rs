@@ -776,14 +776,14 @@ fn register_zoneinfo() {
 
     let mut attrs = HashMap::new();
     attrs.insert("ZoneInfo".to_string(), zone_info);
+    // ZoneInfoNotFoundError is a real exception class (KeyError subclass,
+    // registered in exception.rs) so `except zoneinfo.ZoneInfoNotFoundError`
+    // and `except KeyError` both catch it -- a class object is its name-string.
     attrs.insert(
         "ZoneInfoNotFoundError".to_string(),
-        MbValue::from_func(shell),
+        MbValue::from_ptr(MbObject::new_str("ZoneInfoNotFoundError".to_string())),
     );
-    attrs.insert(
-        "InvalidTZPathWarning".to_string(),
-        MbValue::from_func(shell),
-    );
+    attrs.insert("InvalidTZPathWarning".to_string(), MbValue::from_func(shell));
     attrs.insert(
         "available_timezones".to_string(),
         MbValue::from_func(dispatch_empty_list as *const () as usize),

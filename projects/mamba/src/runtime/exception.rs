@@ -603,7 +603,9 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
             child,
             "ZeroDivisionError" | "OverflowError" | "FloatingPointError"
         ),
-        "LookupError" => matches!(child, "IndexError" | "KeyError"),
+        "LookupError" => matches!(child, "IndexError" | "KeyError" | "ZoneInfoNotFoundError"),
+        // zoneinfo.ZoneInfoNotFoundError derives from KeyError.
+        "KeyError" => matches!(child, "ZoneInfoNotFoundError"),
         "UnicodeError" => matches!(
             child,
             "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"
@@ -1131,6 +1133,8 @@ pub fn register_builtin_exceptions() {
     super::class::mb_class_register("LookupError", vec!["Exception".into()], empty());
     super::class::mb_class_register("IndexError", vec!["LookupError".into()], empty());
     super::class::mb_class_register("KeyError", vec!["LookupError".into()], empty());
+    // zoneinfo.ZoneInfoNotFoundError derives from KeyError (CPython).
+    super::class::mb_class_register("ZoneInfoNotFoundError", vec!["KeyError".into()], empty());
 
     // Value / Unicode hierarchy
     super::class::mb_class_register("ValueError", vec!["Exception".into()], empty());
