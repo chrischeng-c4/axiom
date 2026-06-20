@@ -11038,7 +11038,7 @@ pub fn capability_rows_for_wi_plan(
                     surfaces: capability_wi_plan_surfaces(capability, report_item),
                     ec_dimensions: capability_wi_plan_ec_dimensions(capability, report_item),
                     current_state: capability.current_state.clone(),
-                    gaps: if has_primary_td || work_root_has_closed_evidence(work_root, claim) {
+                    gaps: if has_primary_td {
                         "none".to_string()
                     } else {
                         format!("claim {}: {}", claim.id, claim.user_story)
@@ -11096,19 +11096,6 @@ pub fn capability_rows_for_wi_plan(
         });
     }
     Ok(rows)
-}
-
-fn work_root_has_closed_evidence(
-    work_root: Option<&CapabilityWorkRoot>,
-    claim: &CapabilityClaim,
-) -> bool {
-    let Some(work_root) = work_root else {
-        return false;
-    };
-    capability_gap_status_from_table(&work_root.implementation, &work_root.verification)
-        == CapabilityGapStatus::Closed
-        && parse_first_maturity(&work_root.maturity).is_some()
-        && (!claim.gates.is_empty() || !claim.fixtures.is_empty())
 }
 
 fn claim_wi_plan_evidence(claim: &CapabilityClaim) -> String {
@@ -13952,7 +13939,7 @@ Cube: projects/lumen/tests/perf-cube.json
             .iter()
             .find(|row| row.claim_id.as_deref() == Some("query-planner"))
             .unwrap();
-        assert_eq!(query_planner.gaps, "none");
+        assert!(query_planner.gaps.contains("claim query-planner"));
         assert_eq!(query_planner.active_wi, "#4141");
         assert_eq!(query_planner.capability_type, "Service");
         assert!(query_planner
@@ -13978,7 +13965,7 @@ Cube: projects/lumen/tests/perf-cube.json
             .iter()
             .find(|row| row.claim_id.as_deref() == Some("fixture-inventory"))
             .unwrap();
-        assert_eq!(fixture_inventory.gaps, "none");
+        assert!(fixture_inventory.gaps.contains("claim fixture-inventory"));
         assert_eq!(fixture_inventory.active_wi, "none");
         assert!(fixture_inventory
             .evidence
@@ -13986,6 +13973,28 @@ Cube: projects/lumen/tests/perf-cube.json
         assert!(!fixture_inventory
             .evidence
             .contains("Add at least one concrete verification gate"));
+
+        let wi_rows_with_td = capability_rows_for_wi_plan(
+            &doc,
+            &[TdCapabilityEvidence {
+                spec_path: "projects/lumen/tech-design/semantic/search.md".to_string(),
+                spec_id: Some("semantic-search".to_string()),
+                review_status: None,
+                capability_id: "search".to_string(),
+                role: CapabilityRefRole::Primary,
+                gap: Some("query-planner".to_string()),
+                claim: Some("query-planner".to_string()),
+                coverage: CapabilityCoverage::Full,
+                rationale: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let linked_query_planner = wi_rows_with_td
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("query-planner"))
+            .unwrap();
+        assert_eq!(linked_query_planner.gaps, "none");
 
         let prose_follow_up = wi_rows
             .iter()
