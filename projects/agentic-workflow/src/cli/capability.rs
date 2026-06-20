@@ -11038,7 +11038,7 @@ pub fn capability_rows_for_wi_plan(
                     surfaces: capability_wi_plan_surfaces(capability, report_item),
                     ec_dimensions: capability_wi_plan_ec_dimensions(capability, report_item),
                     current_state: capability.current_state.clone(),
-                    gaps: if has_primary_td {
+                    gaps: if has_primary_td && work_root_is_closed(work_root) {
                         "none".to_string()
                     } else {
                         format!("claim {}: {}", claim.id, claim.user_story)
@@ -11096,6 +11096,13 @@ pub fn capability_rows_for_wi_plan(
         });
     }
     Ok(rows)
+}
+
+fn work_root_is_closed(work_root: Option<&CapabilityWorkRoot>) -> bool {
+    work_root.is_some_and(|work_root| {
+        capability_gap_status_from_table(&work_root.implementation, &work_root.verification)
+            == CapabilityGapStatus::Closed
+    })
 }
 
 fn claim_wi_plan_evidence(claim: &CapabilityClaim) -> String {
@@ -13976,17 +13983,30 @@ Cube: projects/lumen/tests/perf-cube.json
 
         let wi_rows_with_td = capability_rows_for_wi_plan(
             &doc,
-            &[TdCapabilityEvidence {
-                spec_path: "projects/lumen/tech-design/semantic/search.md".to_string(),
-                spec_id: Some("semantic-search".to_string()),
-                review_status: None,
-                capability_id: "search".to_string(),
-                role: CapabilityRefRole::Primary,
-                gap: Some("query-planner".to_string()),
-                claim: Some("query-planner".to_string()),
-                coverage: CapabilityCoverage::Full,
-                rationale: None,
-            }],
+            &[
+                TdCapabilityEvidence {
+                    spec_path: "projects/lumen/tech-design/semantic/search.md".to_string(),
+                    spec_id: Some("semantic-search".to_string()),
+                    review_status: None,
+                    capability_id: "search".to_string(),
+                    role: CapabilityRefRole::Primary,
+                    gap: Some("query-planner".to_string()),
+                    claim: Some("query-planner".to_string()),
+                    coverage: CapabilityCoverage::Full,
+                    rationale: None,
+                },
+                TdCapabilityEvidence {
+                    spec_path: "projects/lumen/tech-design/semantic/hardening.md".to_string(),
+                    spec_id: Some("semantic-hardening".to_string()),
+                    review_status: None,
+                    capability_id: "search".to_string(),
+                    role: CapabilityRefRole::Primary,
+                    gap: Some("prose-follow-up".to_string()),
+                    claim: Some("prose-follow-up".to_string()),
+                    coverage: CapabilityCoverage::Partial,
+                    rationale: None,
+                },
+            ],
             &[],
         )
         .unwrap();
@@ -13995,6 +14015,13 @@ Cube: projects/lumen/tests/perf-cube.json
             .find(|row| row.claim_id.as_deref() == Some("query-planner"))
             .unwrap();
         assert_eq!(linked_query_planner.gaps, "none");
+        let linked_prose_follow_up = wi_rows_with_td
+            .iter()
+            .find(|row| row.claim_id.as_deref() == Some("prose-follow-up"))
+            .unwrap();
+        assert!(linked_prose_follow_up
+            .gaps
+            .contains("claim prose-follow-up"));
 
         let prose_follow_up = wi_rows
             .iter()
