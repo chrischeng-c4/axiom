@@ -96,7 +96,6 @@ flowchart TD
     sa_kubeconfig --> done
     sa_delete --> done
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
