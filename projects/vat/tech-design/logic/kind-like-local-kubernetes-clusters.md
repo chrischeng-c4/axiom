@@ -251,7 +251,6 @@ commands:
     behavior:
       - "Deletes the cluster via its backend driver, then removes the registry directory."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
