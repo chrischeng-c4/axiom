@@ -343,7 +343,6 @@ e2e_tests:
       - "vat cluster create then ls --json lists the cluster, kubeconfig prints a usable path, and delete removes it from the registry and the backend."
       - "the test skips gracefully when no backend/docker is present."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
