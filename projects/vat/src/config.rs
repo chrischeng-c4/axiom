@@ -123,6 +123,21 @@ pub struct ServiceConfig {
     /// always Docker and `cmd` services are always native.
     #[serde(default)]
     pub runtime: ServiceRuntime,
+    /// Declares this service as an ephemeral local Kubernetes cluster (kind /
+    /// k3d / minikube). Mutually exclusive with cmd/preset/image. vat creates
+    /// the cluster before the runner, exports KUBECONFIG into the runner, and
+    /// deletes it at teardown subject to the workspace `keep` policy. `auto`
+    /// resolves to the first installed backend whose Docker daemon is reachable.
+    /// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<ClusterBackend>,
+    /// Optional Kubernetes version for the cluster node image (e.g. "1.30").
+    /// Only meaningful with `cluster`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub k8s_version: Option<String>,
+    /// Cluster node count (default 1). Only meaningful with `cluster`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nodes: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default)]
@@ -166,6 +181,25 @@ pub enum ServiceRuntime {
     Native,
     /// Always run the preset's official Docker image.
     Docker,
+}
+
+/// Local Kubernetes cluster backend for a `cluster` service. `auto` (the
+/// default when the field is present) prefers the first installed of kind,
+/// then k3d, then minikube whose Docker daemon is reachable. All require Docker
+/// on Apple Silicon.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterBackend {
+    /// Prefer the first installed backend whose Docker daemon is reachable.
+    #[default]
+    Auto,
+    /// kind — Kubernetes in Docker.
+    Kind,
+    /// k3d — k3s in Docker.
+    K3d,
+    /// minikube with the docker driver.
+    Minikube,
 }
 
 /// Port policy for a service. Presets default to `auto` to avoid conflicts.
@@ -270,16 +304,28 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
         let has_cmd = !service.cmd.is_empty();
         let has_preset = service.preset.is_some();
         let has_image = service.image.is_some();
-        match (has_cmd, has_preset, has_image) {
-            (false, false, false) => bail!(
-                "service `{}` must define exactly one of cmd, preset, or image",
+        let has_cluster = service.cluster.is_some();
+        let backing = [has_cmd, has_preset, has_image, has_cluster]
+            .into_iter()
+            .filter(|b| *b)
+            .count();
+        match backing {
+            0 => bail!(
+                "service `{}` must define exactly one of cmd, preset, image, or cluster",
                 service.id
             ),
-            (true, false, false) => validate_cmd("service", &service.id, &service.cmd)?,
-            (false, true, false) => {}
-            (false, false, true) => validate_image_service(service)?,
+            1 => {
+                if has_cmd {
+                    validate_cmd("service", &service.id, &service.cmd)?;
+                } else if has_image {
+                    validate_image_service(service)?;
+                } else if has_cluster {
+                    validate_cluster_service(service)?;
+                }
+                // preset: no extra checks here.
+            }
             _ => bail!(
-                "service `{}` must define only one of cmd, preset, or image",
+                "service `{}` must define only one of cmd, preset, image, or cluster",
                 service.id
             ),
         }
@@ -390,6 +436,28 @@ fn validate_image_service(service: &ServiceConfig) -> Result<()> {
             "service `{}` image requires `container_port` (the port the service listens on inside the image)",
             service.id
         );
+    }
+    Ok(())
+}
+
+/// A `cluster` service spins up an ephemeral local Kubernetes cluster, so it
+/// rejects the container/preset-only knobs and bounds the node count.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config
+fn validate_cluster_service(service: &ServiceConfig) -> Result<()> {
+    if service.container_port.is_some() || !service.image_env.is_empty() || !service.seed.is_empty()
+    {
+        bail!(
+            "service `{}` cluster does not accept container_port, image_env, or seed",
+            service.id
+        );
+    }
+    if let Some(nodes) = service.nodes {
+        if !(1..=9).contains(&nodes) {
+            bail!(
+                "service `{}` cluster nodes must be between 1 and 9",
+                service.id
+            );
+        }
     }
     Ok(())
 }
@@ -569,6 +637,9 @@ artifacts = ["out.txt"]
                 container_port: None,
                 image_env: BTreeMap::new(),
                 runtime: ServiceRuntime::default(),
+                cluster: None,
+                k8s_version: None,
+                nodes: None,
                 version: None,
                 port: PortSpec::default(),
                 seed: Vec::new(),
@@ -609,6 +680,9 @@ artifacts = ["out.txt"]
                     container_port: None,
                     image_env: BTreeMap::new(),
                     runtime: ServiceRuntime::default(),
+                    cluster: None,
+                    k8s_version: None,
+                    nodes: None,
                     version: None,
                     port: PortSpec::default(),
                     seed: Vec::new(),
@@ -625,6 +699,9 @@ artifacts = ["out.txt"]
                     container_port: None,
                     image_env: BTreeMap::new(),
                     runtime: ServiceRuntime::default(),
+                    cluster: None,
+                    k8s_version: None,
+                    nodes: None,
                     version: None,
                     port: PortSpec::default(),
                     seed: Vec::new(),
@@ -679,6 +756,9 @@ artifacts = ["out.txt"]
             container_port: None,
             image_env: BTreeMap::new(),
             runtime: ServiceRuntime::default(),
+            cluster: None,
+            k8s_version: None,
+            nodes: None,
             version: None,
             port: PortSpec::default(),
             seed: Vec::new(),
@@ -743,6 +823,87 @@ artifacts = ["out.txt"]
         svc.preset = Some(ServicePreset::Postgres);
         svc.runtime = ServiceRuntime::Docker;
         assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn accepts_cluster_service() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        assert!(validate(&cfg_with_service(svc)).is_ok());
+    }
+
+    #[test]
+    fn rejects_cluster_and_cmd_together() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Kind);
+        svc.cmd = vec!["true".into()];
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_and_preset_together() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Kind);
+        svc.preset = Some(ServicePreset::Postgres);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_and_image_together() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Kind);
+        svc.image = Some("postgres:16".into());
+        svc.container_port = Some(5432);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_with_container_port() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        svc.container_port = Some(6443);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_with_seed() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        svc.seed = vec![PathBuf::from("schema.sql")];
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_nodes_zero() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        svc.nodes = Some(0);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn rejects_cluster_nodes_too_many() {
+        let mut svc = bare_service("svc");
+        svc.cluster = Some(ClusterBackend::Auto);
+        svc.nodes = Some(10);
+        assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn cluster_backend_parses_k3d_kebab() {
+        // serde round-trips the backend tokens used in vat.toml / --backend.
+        for (token, backend) in [
+            ("auto", ClusterBackend::Auto),
+            ("kind", ClusterBackend::Kind),
+            ("k3d", ClusterBackend::K3d),
+            ("minikube", ClusterBackend::Minikube),
+        ] {
+            let parsed: ClusterBackend =
+                serde_json::from_value(serde_json::Value::String(token.into())).unwrap();
+            assert_eq!(parsed, backend);
+            let dumped = serde_json::to_value(backend).unwrap();
+            assert_eq!(dumped, serde_json::Value::String(token.into()));
+        }
     }
 }
 // CODEGEN-END

@@ -77,7 +77,10 @@ cleans up according to the run policy.
   `cap run --label "vat train" -- vat run -- python train.py`.
 - **Not a long-lived process manager.** Services in `vat.toml` are dependencies
   of one runner invocation. vat starts them, waits for readiness, runs the
-  runner, captures evidence, and terminates them.
+  runner, captures evidence, and terminates them. Standalone `vat cluster`
+  clusters outlive a run as a convenience, but vat does not *supervise* them (no
+  daemon, no restart, no health monitoring) — it creates/lists/deletes/reports
+  only on explicit command, exactly like kind/k3d/minikube do.
 - **Not an image registry / build system.** No Dockerfile, and vat builds no
   images. A vat's environment is a declarative [`EnvSpec`](src/spec.rs) an agent
   reads and rewrites. A `vat.toml` *service* may run as an ephemeral `docker run`
@@ -169,6 +172,7 @@ The command an agent calls to understand a vat. One document, no log-scraping:
 | `vat snapshot <id>` | Copy-on-write a **frozen** restore point. |
 | `vat rm <id>` | Delete a vat and its workspace. |
 | `vat gpu` | Report the GPU every vat on this host can reach. |
+| `vat cluster create\|ls\|delete\|kubeconfig` | Manage standalone local Kubernetes clusters (kind/k3d/minikube), independent of a run. |
 
 ## vat.toml
 
@@ -207,15 +211,22 @@ container_port = 5432
 image_env = { POSTGRES_PASSWORD = "pw" }
 export = { ALLOY_URL = "postgres://postgres:pw@{host}:{port}/postgres" }
 
+[[services]]
+id = "k8s"                 # ephemeral local Kubernetes cluster
+cluster = "auto"           # auto (kind→k3d→minikube) | kind | k3d | minikube
+# k8s_version = "1.30"
+# nodes = 1
+export = { KUBECONFIG = "{kubeconfig}" }
+
 [[runners]]
 id = "e2e"
-requires = ["pg"]
+requires = ["pg", "k8s"]
 cmd = ["pnpm", "run", "test:e2e"]
 timeout_s = 300
 artifacts = ["test-results/**", "playwright-report/**"]
 ```
 
-A service is provided in one of three ways, and **native (Homebrew) is
+A service is provided in one of four ways, and **native (Homebrew) is
 preferred**:
 
 - `preset` — a built-in service. With the default `runtime = "auto"` vat uses
@@ -225,6 +236,15 @@ preferred**:
   AlloyDB). Requires `container_port`; `image_env` is passed into the container;
   in `export`, `{host}`/`{port}` resolve to the mapped host endpoint and
   `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
+- `cluster` — an ephemeral local Kubernetes cluster, for testing K8s-native
+  targets. `auto` picks the first installed of kind → k3d → minikube (all need
+  Docker on Apple Silicon); `kind`/`k3d`/`minikube` force one. Optional
+  `k8s_version` and `nodes`. vat creates the cluster before the runner with an
+  isolated kubeconfig (it never touches `~/.kube/config`), exports `KUBECONFIG`
+  (the `{kubeconfig}` token) and `VAT_SERVICE_<ID>_KUBECONFIG`, probes readiness
+  with `kubectl get nodes`, and deletes it at teardown per the `keep` policy. A
+  missing backend fails with a structured `cluster_backend_unavailable` error
+  (never a panic). `vat cluster` manages clusters standalone, outside a run.
 - `cmd` — an explicit native command.
 
 For the native path vat checks for required binaries, cold-prepares cached

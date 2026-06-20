@@ -50,6 +50,13 @@ container_port = 5432
 image_env = { POSTGRES_PASSWORD = "pw" }
 export = { ALLOY_URL = "postgres://postgres:pw@{host}:{port}/postgres" }
 
+[[services]]
+id = "k8s"                 # ephemeral local Kubernetes cluster
+cluster = "auto"           # auto (kind→k3d→minikube) | kind | k3d | minikube
+# k8s_version = "1.30"
+# nodes = 1
+export = { KUBECONFIG = "{kubeconfig}" }
+
 [[runners]]
 id = "e2e"
 requires = ["pg"]
@@ -66,6 +73,13 @@ artifacts = ["test-results/**", "playwright-report/**"]
   no native binary (e.g. AlloyDB). It requires `container_port`; `image_env` is
   passed into the container; in `export`, `{host}`/`{port}` resolve to the mapped
   host endpoint, and `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
+- A `cluster` service spins up an ephemeral local Kubernetes cluster (kind, k3d,
+  or minikube; `auto` picks the first installed). vat creates it before the
+  runner, exports `KUBECONFIG` (the `{kubeconfig}` token) plus
+  `VAT_SERVICE_<ID>_KUBECONFIG`, probes readiness with `kubectl get nodes`, and
+  deletes it at teardown per the `keep` policy. With no backend it emits a
+  structured `cluster_backend_unavailable` error (no panic). All backends need
+  Docker on Apple Silicon.
 - Docker-backed services need a reachable Docker daemon; vat emits a structured
   `docker_unavailable` error (no panic) when it is missing. The runner itself is
   never containerized.
@@ -82,6 +96,9 @@ artifacts = ["test-results/**", "playwright-report/**"]
 - `vat logs <id> <service-id>`: print retained service stdout/stderr.
 - `vat state <id>`: read the agent-legible JSON state.
 - `vat diff <id> --json`: read filesystem changes vs. the vat base.
+- `vat cluster create [--backend auto|kind|k3d|minikube] [--name N]`: create a
+  standalone local Kubernetes cluster (outlives a run); `vat cluster ls --json`,
+  `vat cluster kubeconfig <name>`, and `vat cluster delete <name>` manage it.
 
 ## Retention
 
@@ -97,6 +114,9 @@ emitting JSON, while failed runs keep workspace state and logs for inspection.
 - Services in `vat.toml` are run-scoped dependencies of one runner invocation;
   containers are ephemeral (`docker run --rm`) and removed at teardown.
 - vat does not schedule production work or manage restart policy.
+- Standalone `vat cluster` clusters outlive a run as a convenience, but vat does
+  not supervise them (no daemon, no restart, no health monitoring) — it only
+  creates/lists/deletes/reports on explicit command, like kind/k3d themselves.
 "#;
 
 /// @spec projects/vat/tech-design/logic/llm-agent-usage-guide.md#cli
