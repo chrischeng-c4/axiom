@@ -129,3 +129,12 @@ changes:
     impl_mode: hand-written
     reason: "Real-h2c integration: 3 relay-raft servers on ephemeral ports with wired peers. Assert one leader elected, a publish to the leader converges on all three engines, a publish to a follower returns NotLeader+hint, and killing the leader re-elects with no committed loss + accepts new publishes."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] RaftDriver wraps the pure RaftNode + RaftStore + h2c client + Relay; tick task; persist-before-flush (safety); apply committed to Relay; outbox flushed by POSTing RequestVote/AppendEntries and feeding responses back; /raft/* endpoints return replies; publish redirects to leader (NotLeader+hint) else proposes. Standalone (reqwest only). Sound.
+- [unit-test] 3 real-h2c servers: single leader, publish converges on all engines, follower redirect+hint, kill-leader re-elect with no committed loss + accepts new publishes.
+- [changes] raft_driver.rs + raft_router + lib re-export + raft_cluster.rs.
