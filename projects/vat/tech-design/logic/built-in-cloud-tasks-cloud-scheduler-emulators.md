@@ -383,3 +383,16 @@ changes:
       - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#e2e-test"
     summary: "Add tests/vat_emulator_tasks.rs and tests/vat_emulator_scheduler.rs dispatch integration tests."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] The Mermaid Plus flow captures both emulators behind the #145 builtin/self-spawn framework, then the dispatch core (scheduleTime / cron / :run -> dispatch_http) shared by tasks and scheduler.
+- [schema] The dispatch evidence (preset, builtin_emulator prepare_mode, exported host var, outbound target) is precise and consistent with ServiceRunRecord.
+- [config] cloud-tasks/cloud-scheduler builtin-only presets (runtime must stay auto, no gcloud/docker) are unambiguous; export host vars documented.
+- [cli] vat emulator cloud-tasks/cloud-scheduler contract is clear, including OIDC mint and the lean-build error.
+- [unit-test] UT1..UT5 cover parsing/classification, builtin resolution + runtime guard, export+command, and tasks/scheduler dispatch — deterministic and dependency-free.
+- [e2e-test] Self-contained tasks-dispatch + scheduler-:run integration, builtin-preset run, and lean-build check.
+- [changes] Bounded list mapping Cargo, dispatch/tasks/scheduler, cli/run/config, docs, tests to their driving sections.
