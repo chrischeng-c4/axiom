@@ -752,6 +752,25 @@ fn register_xml_subs() {
     );
 }
 
+/// `zoneinfo.available_timezones()` → a set of IANA zone-name strings. mamba
+/// has no full tz database, but CPython guarantees a non-empty set containing
+/// "UTC"; expose the common-zone subset so consumers see a realistic set.
+unsafe extern "C" fn dispatch_available_timezones(_a: *const MbValue, _n: usize) -> MbValue {
+    const ZONES: &[&str] = &[
+        "UTC", "GMT", "America/New_York", "America/Chicago", "America/Denver",
+        "America/Los_Angeles", "America/Sao_Paulo", "America/Toronto",
+        "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Moscow",
+        "Asia/Tokyo", "Asia/Shanghai", "Asia/Kolkata", "Asia/Dubai",
+        "Asia/Singapore", "Australia/Sydney", "Pacific/Auckland",
+        "Africa/Cairo", "Africa/Johannesburg",
+    ];
+    let elems: Vec<MbValue> = ZONES
+        .iter()
+        .map(|z| MbValue::from_ptr(MbObject::new_str((*z).to_string())))
+        .collect();
+    MbValue::from_ptr(MbObject::new_set(elems))
+}
+
 fn register_zoneinfo() {
     // Most of the surface is the standard class-shell / dispatcher set, but
     // `ZoneInfo` additionally exposes the classmethods `clear_cache`,
@@ -783,11 +802,17 @@ fn register_zoneinfo() {
         "ZoneInfoNotFoundError".to_string(),
         MbValue::from_ptr(MbObject::new_str("ZoneInfoNotFoundError".to_string())),
     );
-    attrs.insert("InvalidTZPathWarning".to_string(), MbValue::from_func(shell));
+    // A real RuntimeWarning subclass (registered in exception.rs) so
+    // issubclass(InvalidTZPathWarning, RuntimeWarning) and isinstance hold.
     attrs.insert(
-        "available_timezones".to_string(),
-        MbValue::from_func(dispatch_empty_list as *const () as usize),
+        "InvalidTZPathWarning".to_string(),
+        MbValue::from_ptr(MbObject::new_str("InvalidTZPathWarning".to_string())),
     );
+    let avail = dispatch_available_timezones as *const () as usize;
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(avail as u64);
+    });
+    attrs.insert("available_timezones".to_string(), MbValue::from_func(avail));
     attrs.insert(
         "reset_tzpath".to_string(),
         MbValue::from_func(dispatch_noop as *const () as usize),

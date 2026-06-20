@@ -543,7 +543,7 @@ pub(crate) fn is_builtin_exception_name(name: &str) -> bool {
         | "Warning" | "DeprecationWarning" | "RuntimeWarning" | "UserWarning"
         | "SyntaxWarning" | "FutureWarning" | "PendingDeprecationWarning"
         | "UnicodeWarning" | "BytesWarning" | "ResourceWarning"
-        | "ImportWarning" | "EncodingWarning"
+        | "ImportWarning" | "EncodingWarning" | "InvalidTZPathWarning"
         // subprocess exception tree (subprocess_mod.rs raises these). All
         // ultimately derive from Exception.
         | "SubprocessError" | "CalledProcessError" | "TimeoutExpired"
@@ -669,7 +669,10 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
                 | "ResourceWarning"
                 | "ImportWarning"
                 | "EncodingWarning"
+                | "InvalidTZPathWarning"
         ),
+        // zoneinfo.InvalidTZPathWarning derives from RuntimeWarning.
+        "RuntimeWarning" => matches!(child, "InvalidTZPathWarning"),
         // subprocess: SubprocessError ⊂ Exception; CalledProcessError and
         // TimeoutExpired ⊂ SubprocessError (Python 3.12).
         "SubprocessError" => matches!(child, "CalledProcessError" | "TimeoutExpired"),
@@ -1278,6 +1281,7 @@ pub fn register_builtin_exceptions() {
     super::class::mb_class_register("UnicodeWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("BytesWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("ResourceWarning", vec!["Warning".into()], empty());
+    super::class::mb_class_register("InvalidTZPathWarning", vec!["RuntimeWarning".into()], empty());
     super::class::mb_class_register("ImportWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("EncodingWarning", vec!["Warning".into()], empty());
 
