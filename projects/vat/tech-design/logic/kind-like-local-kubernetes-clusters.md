@@ -254,3 +254,63 @@ commands:
     behavior:
       - "Deletes the cluster via its backend driver, then removes the registry directory."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-kind-like-local-kubernetes-clusters-unit-tests
+---
+requirementDiagram
+    requirement cluster_service_exclusivity {
+      id: UT1
+      text: "A cluster service is mutually exclusive with cmd/preset/image; validation rejects any combination and rejects an empty backing."
+      risk: high
+      verifymethod: test
+    }
+    requirement cluster_backend_enum {
+      id: UT2
+      text: "ClusterBackend round-trips auto/kind/k3d/minikube via serde with the k3d/minikube tokens preserved."
+      risk: medium
+      verifymethod: test
+    }
+    requirement cluster_knob_rejection {
+      id: UT3
+      text: "A cluster service rejects container_port/image_env/seed and rejects nodes outside 1..9."
+      risk: medium
+      verifymethod: test
+    }
+    requirement cluster_name_sanitized {
+      id: UT4
+      text: "The run-scoped cluster name builder produces a collision-resistant, backend-safe name from vat id and service id."
+      risk: medium
+      verifymethod: test
+    }
+    requirement backend_unavailable_no_panic {
+      id: UT5
+      text: "resolve_backend with no cluster backend on PATH returns a structured cluster_backend_unavailable error and never panics."
+      risk: high
+      verifymethod: test
+    }
+    test config_cluster_validation_tests {
+      type: functional
+      verifies: cluster_service_exclusivity
+    }
+    test config_cluster_knob_tests {
+      type: functional
+      verifies: cluster_knob_rejection
+    }
+    test cluster_backend_serde_tests {
+      type: functional
+      verifies: cluster_backend_enum
+    }
+    test cluster_name_tests {
+      type: functional
+      verifies: cluster_name_sanitized
+    }
+    test resolve_backend_unavailable_tests {
+      type: functional
+      verifies: backend_unavailable_no_panic
+    }
+```
