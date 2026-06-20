@@ -51,8 +51,8 @@ reqwest = { workspace = true, optional = true }
 # JWT for SA key auth and inbound OIDC validation (Cloud Tasks)
 jsonwebtoken = { workspace = true, optional = true }
 
-# Ion backend
-cclab-kv = { path = "../../../../crates/cclab-kv", optional = true }
+# Ion backend — keep over HTTP (migrated off the retired raw-TCP cclab-kv client).
+keep = { path = "../../../../projects/keep", features = ["client"], optional = true }
 
 # Push receiver auth (HMAC-SHA256 for K8s, OIDC JWT for Cloud Scheduler)
 hmac = { version = "0.12", optional = true }
@@ -91,7 +91,7 @@ default = ["nats", "redis"]
 nats = ["dep:async-nats"]
 redis = ["dep:redis", "dep:deadpool-redis"]
 pubsub = ["dep:google-cloud-pubsub", "dep:google-cloud-googleapis"]
-scheduler = ["dep:cron", "dep:cclab-kv", "dep:reqwest"]
+scheduler = ["dep:cron", "dep:keep", "dep:reqwest"]
 metrics = ["dep:prometheus", "dep:once_cell"]
 tracing-otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk"]
 schema = ["dep:schemars"]
@@ -104,7 +104,7 @@ cloudtasks = ["dep:reqwest", "dep:jsonwebtoken"]
 cloud-scheduler = ["dep:reqwest"]
 
 # Ion result backend
-ion = ["dep:cclab-kv"]
+ion = ["dep:keep"]
 
 # K8s Job executor
 k8s = ["dep:kube", "dep:k8s-openapi"]
