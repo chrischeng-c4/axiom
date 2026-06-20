@@ -321,22 +321,53 @@ pub fn is_runtime_checkable_protocol(name: &str) -> bool {
     RUNTIME_CHECKABLE_PROTOCOLS.with(|s| s.borrow().contains(name))
 }
 
-/// Structural isinstance: does `obj_class` (and its MRO) provide every
-/// non-dunder method declared by runtime-checkable Protocol `proto`?
-fn protocol_structural_match(obj_class: &str, proto: &str) -> bool {
+/// Structural isinstance: does `obj` (its class MRO + its own instance fields)
+/// provide every non-dunder member declared by runtime-checkable Protocol
+/// `proto` — including data members declared as annotations (`name: str`)?
+fn protocol_structural_match(obj: MbValue, obj_class: &str, proto: &str) -> bool {
+    // Instance attributes (e.g. `self.name` set in __init__) count toward a
+    // DATA protocol — collect them up front to avoid borrowing across the
+    // CLASS_REGISTRY borrow.
+    let inst_fields: std::collections::HashSet<String> = obj
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields.read().unwrap().keys().cloned().collect()
+            } else {
+                std::collections::HashSet::new()
+            }
+        })
+        .unwrap_or_default();
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
         let Some(pcls) = reg.get(proto) else {
             return false;
         };
-        // Required members: the Protocol's own non-dunder method/attr names.
-        let required: Vec<String> = pcls
+        // Required members: the Protocol's own non-dunder method/attr names...
+        let mut required: Vec<String> = pcls
             .methods
             .keys()
             .chain(pcls.class_attrs.keys())
             .filter(|n| !(n.starts_with("__") && n.ends_with("__")))
             .cloned()
             .collect();
+        // ...plus annotation-only DATA members, which live as keys inside the
+        // class's `__annotations__` dict rather than as class_attrs.
+        if let Some(anns) = pcls.class_attrs.get("__annotations__") {
+            if let Some(ptr) = anns.as_ptr() {
+                unsafe {
+                    if let ObjData::Dict(ref lock) = (*ptr).data {
+                        for k in lock.read().unwrap().keys() {
+                            if let super::dict_ops::DictKey::Str(s) = k {
+                                if !(s.starts_with("__") && s.ends_with("__")) {
+                                    required.push(s.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if required.is_empty() {
             // An empty Protocol matches any object (CPython: all objects
             // satisfy a member-less runtime_checkable Protocol).
@@ -353,11 +384,12 @@ fn protocol_structural_match(obj_class: &str, proto: &str) -> bool {
             })
             .unwrap_or_else(|| vec![obj_class.to_string()]);
         let provides = |member: &str| -> bool {
-            chain.iter().any(|cn| {
-                reg.get(cn).map_or(false, |c| {
-                    c.methods.contains_key(member) || c.class_attrs.contains_key(member)
+            inst_fields.contains(member)
+                || chain.iter().any(|cn| {
+                    reg.get(cn).map_or(false, |c| {
+                        c.methods.contains_key(member) || c.class_attrs.contains_key(member)
+                    })
                 })
-            })
         };
         required.iter().all(|m| provides(m))
     })
@@ -7513,7 +7545,7 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
                 }
                 // Structural match against a @runtime_checkable Protocol.
                 if is_runtime_checkable_protocol(&target) {
-                    return MbValue::from_bool(protocol_structural_match(class_name, &target));
+                    return MbValue::from_bool(protocol_structural_match(obj, class_name, &target));
                 }
                 if collections_abc_structural_match(class_name, &target) {
                     return MbValue::from_bool(true);
