@@ -144,7 +144,6 @@ properties:
       additionalProperties: true
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
