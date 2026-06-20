@@ -643,6 +643,12 @@ semantic_domain:
           - name: "Oidc"
             kind: "struct"
             public: true
+          - name: "DispatchResult"
+            kind: "struct"
+            public: true
+          - name: "dispatch_collect"
+            kind: "function"
+            public: true
           - name: "dispatch_http"
             kind: "function"
             public: true
@@ -704,6 +710,87 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/workflows/mod.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "expr"
+            kind: "module"
+            public: true
+          - name: "interp"
+            kind: "module"
+            public: true
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "create_workflow"
+            kind: "function"
+            public: false
+          - name: "create_execution"
+            kind: "function"
+            public: false
+          - name: "get_execution"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/workflows"
+      - path: "projects/vat/src/emulator/workflows/expr.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "Scope"
+            kind: "type"
+            public: true
+          - name: "eval_value"
+            kind: "function"
+            public: true
+          - name: "eval_expr"
+            kind: "function"
+            public: true
+          - name: "to_text"
+            kind: "function"
+            public: true
+          - name: "tokenize"
+            kind: "function"
+            public: false
+          - name: "Parser"
+            kind: "struct"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/workflows"
+      - path: "projects/vat/src/emulator/workflows/interp.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "run"
+            kind: "function"
+            public: true
+          - name: "Interp"
+            kind: "struct"
+            public: false
+          - name: "main_args"
+            kind: "function"
+            public: false
+          - name: "parse_steps"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/workflows"
 ```
 
 ## Changes

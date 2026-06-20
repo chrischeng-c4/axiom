@@ -266,6 +266,29 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_workflows.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "spawn_sink"
+            kind: "function"
+            public: false
+          - name: "cloud_workflows_emulator_runs_and_dispatches"
+            kind: "function"
+            public: false
+          - name: "cloud_workflows_try_except_recovers"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
 ```
 
 ## Unit Test
@@ -290,6 +313,7 @@ evidence:
     - path: "projects/vat/tests/vat_emulator_pubsub.rs"
     - path: "projects/vat/tests/vat_emulator_tasks.rs"
     - path: "projects/vat/tests/vat_emulator_scheduler.rs"
+    - path: "projects/vat/tests/vat_emulator_workflows.rs"
 ---
 requirementDiagram
 
