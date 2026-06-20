@@ -13880,6 +13880,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             // arity dispatch and re-boxing of raw returns.
                             return super::builtins::mb_call_spread(func_val, args);
                         }
+                        // A module attribute that is an exception class-name string
+                        // (e.g. zoneinfo.ZoneInfoNotFoundError, InvalidTZPathWarning)
+                        // called as a constructor builds an exception instance, the
+                        // same as a bare `ValueError("msg")`.
+                        if let Some(sp) = func_val.as_ptr() {
+                            if let ObjData::Str(ref s) = (*sp).data {
+                                if super::exception::is_builtin_exception_name(s)
+                                    || class_mro_any(s, super::exception::is_builtin_exception_name)
+                                {
+                                    return super::exception::mb_exception_new_with_args(func_val, args);
+                                }
+                            }
+                        }
                     }
                     super::dict_ops::dispatch_dict_method(&name, receiver, args)
                 }
