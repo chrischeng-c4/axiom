@@ -34,13 +34,41 @@ bounded-staleness reads. Failover = promote a replica. Cheap, but a crash loses
 the unreplicated tail → does **not** meet #114 "durable before ack" under node
 loss. A middle ground, optional.
 
-## Phase C — raft / quorum via openraft (the big one)
+## Phase C — raft / quorum via openraft
 
-Each shard is a raft group (multi-raft); a write commits to a quorum before ack
-→ no data loss on a single-node failure + automatic leader election. This is the
-real HA bar for the result store.
+**Single-node integration: DONE** (behind the `raft` feature, `src/raft.rs`).
+A write proposed through raft is committed by the quorum and applied to the
+engine by the state machine — proven end-to-end by `tests/raft_node.rs`
+(`cargo test -p keep --features raft`). This validates the consensus machinery
+(log → commit → apply → snapshot) with the engine wired in. What's implemented:
 
-Concrete integration (openraft 0.9):
+- `TypeConfig`: `D = WalOp` (the logical mutation — same type the WAL/recovery
+  use), `R = Response`.
+- `StateMachineStore`: applies committed commands via
+  `RecoveryManager::apply_one` (the exact WAL-replay path); snapshots dump/restore
+  engine key→value (`KvEngine::dump_values`/`load_values`).
+- `LogStore`: in-memory raft log (vote / entries / committed / purge).
+- `Network`: stub (a single node sends no RPCs).
+- `RaftKv::single_node` + `write()` (client_write → commit → apply).
+
+**Remaining (the multi-node big part):**
+1. **Network over HTTP/2** — replace the stub `RaftNetwork` with real
+   AppendEntries/Vote/InstallSnapshot as `/raft/*` POSTs to `ClusterConfig::peers`
+   (reuse the hyper client). `RaftNetworkFactory::new_client` per peer.
+2. **Durable raft log** — the in-memory `LogStore` becomes the on-disk log,
+   subsuming the existing WAL (keep already has a segmented, CRC'd, group-committed
+   fsync log to wrap). The public write path then moves from
+   `engine.set → log_wal` to `raft.client_write`; durable-before-ack becomes
+   replicated-and-fsynced-before-ack (strictly stronger).
+3. **Membership / discovery** — initialize from the k8s StatefulSet ordinal set
+   (`keep-<i>.keep-headless`); `change_membership` for scaling.
+4. **Reads** — leader reads + bounded-lag follower reads via `x-read-consistency`.
+
+These are a dedicated multi-node effort (with a partition/leader-loss test
+harness) — but the hard trait wiring (storage + state machine + type config) is
+now done and validated single-node.
+
+### Original design notes (openraft 0.9)
 
 1. **TypeConfig** (`declare_raft_types!`): node id = pod ordinal; request =
    `Command` (an enum mirroring `WalOp` — the existing logical mutations);

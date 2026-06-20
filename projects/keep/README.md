@@ -79,7 +79,7 @@ Images: `Dockerfile` (from-source, build context = repo root) and
 - ✅ durable-before-ack WAL (no-drop, group commit) — #114
 - ✅ perf-gate via meter: engine throughput ratchet + server resource gate — see [PERF-GATE.md](PERF-GATE.md) (#126). Competitor comparison (vs Redis/Dragonfly) is the separate one-off `examples/bench_compare.rs`.
 - ☐ worker-facing OpenAPI contract finalized with relay — #108
-- ◑ HA — phase A (sharded scale-out + `/cluster`) done; async-replica (B) and raft/quorum (C) planned — see [HA.md](HA.md) (#121)
+- ◑ HA — phase A (sharded scale-out + `/cluster`) done; phase C raft via openraft integrated single-node (`--features raft`, engine-backed state machine, proven by `tests/raft_node.rs`) — multi-node HTTP/2 network + durable raft log staged; see [HA.md](HA.md) (#121)
 - ☐ migrate the `ion`-feature TCP consumers (queuekit, queue) off the retired
   `cclab-kv` TCP client; then dedupe the legacy `crates/cclab-kv` +
   `projects/queue/kv` copies.

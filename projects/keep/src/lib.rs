@@ -20,6 +20,8 @@ pub mod error;
 pub mod http;
 pub mod metrics;
 pub mod persistence;
+#[cfg(feature = "raft")]
+pub mod raft;
 pub mod types;
 
 pub use cluster::{ClusterConfig, ClusterState};

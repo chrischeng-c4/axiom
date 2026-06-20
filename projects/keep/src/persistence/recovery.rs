@@ -184,6 +184,13 @@ impl RecoveryManager {
     }
 
     /// Apply a single WAL operation to the engine
+    /// Public entry point to apply a single logical op to an engine — used by
+    /// the raft state machine to replay committed commands (same path as WAL
+    /// recovery).
+    pub fn apply_one(engine: &KvEngine, op: &WalOp) -> Result<()> {
+        Self::apply_wal_operation(engine, op)
+    }
+
     fn apply_wal_operation(engine: &KvEngine, op: &WalOp) -> Result<()> {
         use crate::types::KvKey;
 
