@@ -314,3 +314,37 @@ requirementDiagram
       verifies: backend_unavailable_no_panic
     }
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-cluster-backend-unavailable-smoke
+    name: "cluster service reports structured backend-unavailable error"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat cluster_backend_unavailable_reports_jsonl_error -- --nocapture"
+    assertions:
+      - "a cluster service with no backend on PATH emits a cluster_backend_unavailable JSONL error and a non-zero exit."
+      - "vat never panics on the unavailable path."
+  - id: vat-cluster-runscoped-smoke
+    name: "run-scoped cluster service exports KUBECONFIG and tears down"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat vat_cluster_create_exports_kubeconfig -- --nocapture --ignored"
+    assertions:
+      - "with a real backend and Docker available, vat creates the cluster, the runner reaches the cluster via KUBECONFIG, and vat state shows services[].cluster.backend."
+      - "the cluster is deleted at teardown under keep=never; the test skips gracefully when no backend/docker is present."
+  - id: vat-cluster-standalone-smoke
+    name: "standalone vat cluster lifecycle"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat vat_cluster_standalone_lifecycle -- --nocapture --ignored"
+    assertions:
+      - "vat cluster create then ls --json lists the cluster, kubeconfig prints a usable path, and delete removes it from the registry and the backend."
+      - "the test skips gracefully when no backend/docker is present."
+```
