@@ -179,6 +179,7 @@ pub enum ServicePreset {
     FirebaseAuth,
     CloudTasks,
     CloudScheduler,
+    CloudWorkflows,
 }
 
 impl ServicePreset {
@@ -196,6 +197,7 @@ impl ServicePreset {
                 | ServicePreset::FirebaseAuth
                 | ServicePreset::CloudTasks
                 | ServicePreset::CloudScheduler
+                | ServicePreset::CloudWorkflows
         )
     }
 
@@ -209,6 +211,7 @@ impl ServicePreset {
                 | ServicePreset::FirebaseAuth
                 | ServicePreset::CloudTasks
                 | ServicePreset::CloudScheduler
+                | ServicePreset::CloudWorkflows
         )
     }
 
@@ -218,7 +221,10 @@ impl ServicePreset {
     pub fn is_builtin_only(self) -> bool {
         matches!(
             self,
-            ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler
+            ServicePreset::FirebaseAuth
+                | ServicePreset::CloudTasks
+                | ServicePreset::CloudScheduler
+                | ServicePreset::CloudWorkflows
         )
     }
 }

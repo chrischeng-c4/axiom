@@ -92,16 +92,21 @@ artifacts = ["test-results/**", "playwright-report/**"]
   passed into the container; in `export`, `{host}`/`{port}` resolve to the mapped
   host endpoint, and `VAT_SERVICE_<ID>_{HOST,PORT}` are always exported.
 - Built-in emulators: `preset = "pubsub"`, `"firebase-auth"`, `"cloud-tasks"`,
-  and `"cloud-scheduler"` run vat's OWN in-process Rust emulator under
-  `runtime = auto` — no gcloud, Java, firebase-tools, or Docker, and instant
-  start. They export `PUBSUB_EMULATOR_HOST` / `FIREBASE_AUTH_EMULATOR_HOST` /
-  `CLOUD_TASKS_EMULATOR_HOST` / `CLOUD_SCHEDULER_EMULATOR_HOST` — point your
+  `"cloud-scheduler"`, and `"cloud-workflows"` run vat's OWN in-process Rust
+  emulator under `runtime = auto` — no gcloud, Java, firebase-tools, or Docker,
+  and instant start. They export `PUBSUB_EMULATOR_HOST` /
+  `FIREBASE_AUTH_EMULATOR_HOST` / `CLOUD_TASKS_EMULATOR_HOST` /
+  `CLOUD_SCHEDULER_EMULATOR_HOST` / `CLOUD_WORKFLOWS_EMULATOR_HOST` — point your
   client's base URL at `http://$HOST`. `cloud-tasks` (v2 REST) delivers each
   task's httpRequest to its target at scheduleTime (or `tasks/{t}:run`);
   `cloud-scheduler` (v1 REST) fires a job's httpTarget on its cron schedule or
-  `jobs/{j}:run`. `pubsub` still accepts `runtime = native` (gcloud) /
-  `runtime = docker` (image) as a fidelity fallback; the others are built-in
-  only (Cloud Tasks / Scheduler have no official emulator at all).
+  `jobs/{j}:run`; `cloud-workflows` (v1 REST: createWorkflow → createExecution →
+  getExecution) runs a subset Workflows interpreter (assign / call http.* /
+  switch / for / try-retry-except / subworkflow + `${...}` expressions) whose
+  `call: http.*` steps can orchestrate the other emulators or any HTTP endpoint.
+  `pubsub` still accepts `runtime = native` (gcloud) / `runtime = docker`
+  (image) as a fidelity fallback; the others are built-in only (no official
+  emulator exists).
 - A `cluster` service spins up an ephemeral local Kubernetes cluster (kind, k3d,
   or minikube; `auto` picks the first installed). vat creates it before the
   runner, exports `KUBECONFIG` (the `{kubeconfig}` token) plus

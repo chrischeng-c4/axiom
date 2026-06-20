@@ -19,7 +19,7 @@ path = "src/main.rs"
 # shipped binary always has them; `--no-default-features` drops the async stack
 # for a lean build (the `vat emulator` verb then errors cleanly).
 default = ["emulator"]
-emulator = ["dep:tokio", "dep:axum", "dep:jsonwebtoken", "dep:tonic", "dep:prost", "dep:prost-types", "dep:async-trait", "dep:tokio-stream", "dep:async-stream", "dep:reqwest", "dep:cron", "dep:base64"]
+emulator = ["dep:tokio", "dep:axum", "dep:jsonwebtoken", "dep:tonic", "dep:prost", "dep:prost-types", "dep:async-trait", "dep:tokio-stream", "dep:async-stream", "dep:reqwest", "dep:cron", "dep:base64", "dep:serde_yaml"]
 
 [dependencies]
 clap = { workspace = true, features = ["derive", "color"] }
@@ -47,6 +47,7 @@ async-stream = { version = "0.3", optional = true }
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls", "json"] }
 cron = { version = "0.12", optional = true }
 base64 = { version = "0.22", optional = true }
+serde_yaml = { version = "0.9", optional = true }
 
 [build-dependencies]
 tonic-build = "0.12"
@@ -74,4 +75,8 @@ required-features = ["emulator"]
 
 [[test]]
 name = "vat_emulator_scheduler"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_workflows"
 required-features = ["emulator"]

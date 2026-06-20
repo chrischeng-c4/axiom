@@ -1244,6 +1244,7 @@ fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) 
         ServicePreset::FirebaseAuth => ("firebase-auth", "FIREBASE_AUTH_EMULATOR_HOST"),
         ServicePreset::CloudTasks => ("cloud-tasks", "CLOUD_TASKS_EMULATOR_HOST"),
         ServicePreset::CloudScheduler => ("cloud-scheduler", "CLOUD_SCHEDULER_EMULATOR_HOST"),
+        ServicePreset::CloudWorkflows => ("cloud-workflows", "CLOUD_WORKFLOWS_EMULATOR_HOST"),
         // Non-built-in presets never reach this path.
         _ => ("", ""),
     }
@@ -1413,7 +1414,8 @@ fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
         ServicePreset::Firebase
         | ServicePreset::FirebaseAuth
         | ServicePreset::CloudTasks
-        | ServicePreset::CloudScheduler => ("node", "20-slim"),
+        | ServicePreset::CloudScheduler
+        | ServicePreset::CloudWorkflows => ("node", "20-slim"),
     };
     format!("{repo}:{}", version.unwrap_or(default_tag))
 }
@@ -1435,7 +1437,8 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
         ServicePreset::Firebase
         | ServicePreset::FirebaseAuth
         | ServicePreset::CloudTasks
-        | ServicePreset::CloudScheduler => 4400,
+        | ServicePreset::CloudScheduler
+        | ServicePreset::CloudWorkflows => 4400,
     }
 }
 
@@ -1490,7 +1493,8 @@ fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
         | ServicePreset::Firebase
         | ServicePreset::FirebaseAuth
         | ServicePreset::CloudTasks
-        | ServicePreset::CloudScheduler => {}
+        | ServicePreset::CloudScheduler
+        | ServicePreset::CloudWorkflows => {}
     }
     env
 }
@@ -1588,7 +1592,7 @@ fn cold_prepare_service_image(
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler => {}
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows => {}
     }
     Ok(())
 }
@@ -1636,7 +1640,8 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         ServicePreset::Firebase
         | ServicePreset::FirebaseAuth
         | ServicePreset::CloudTasks
-        | ServicePreset::CloudScheduler => &["firebase", "java"],
+        | ServicePreset::CloudScheduler
+        | ServicePreset::CloudWorkflows => &["firebase", "java"],
     }
 }
 
@@ -1823,7 +1828,8 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
         ServicePreset::Firebase
         | ServicePreset::FirebaseAuth
         | ServicePreset::CloudTasks
-        | ServicePreset::CloudScheduler => {
+        | ServicePreset::CloudScheduler
+        | ServicePreset::CloudWorkflows => {
             vec!["firebase".to_string(), "emulators:start".to_string()]
         }
     }
@@ -1874,7 +1880,7 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler => ReadyProbe::Tcp {
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows => ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
             port,
         },
@@ -1909,7 +1915,8 @@ fn preset_exports(
         ServicePreset::Firebase
         | ServicePreset::FirebaseAuth
         | ServicePreset::CloudTasks
-        | ServicePreset::CloudScheduler => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
+        | ServicePreset::CloudScheduler
+        | ServicePreset::CloudWorkflows => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -1973,6 +1980,7 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::FirebaseAuth => "firebase-auth",
         ServicePreset::CloudTasks => "cloud-tasks",
         ServicePreset::CloudScheduler => "cloud-scheduler",
+        ServicePreset::CloudWorkflows => "cloud-workflows",
     }
 }
 
