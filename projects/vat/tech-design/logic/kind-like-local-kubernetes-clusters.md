@@ -227,3 +227,30 @@ properties:
       additionalProperties: false
 additionalProperties: false
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat cluster create
+    usage: "vat cluster create [--name <name>] [--backend auto|kind|k3d|minikube] [--k8s-version <v>] [--nodes <n>] [--json]"
+    behavior:
+      - "Resolves the backend (auto prefers the first installed of kind, k3d, minikube whose Docker daemon is reachable)."
+      - "Creates a standalone cluster with an isolated kubeconfig under <repo>/.vat/clusters/<name>/."
+      - "Auto-generates a unique name when --name is omitted; rejects a name that collides with the registry or the backend."
+      - "Fails with a structured cluster_backend_unavailable error and a non-zero exit when no backend is usable."
+  - name: vat cluster ls
+    usage: "vat cluster ls [--json]"
+    behavior:
+      - "Lists vat-managed clusters from the registry."
+      - "Reconciles against the backend cluster list and marks entries missing from the backend as stale."
+  - name: vat cluster kubeconfig
+    usage: "vat cluster kubeconfig <name> [--json]"
+    behavior:
+      - "Prints the isolated kubeconfig path for the named cluster (or its contents in --json form)."
+  - name: vat cluster delete
+    usage: "vat cluster delete <name> [--json]"
+    behavior:
+      - "Deletes the cluster via its backend driver, then removes the registry directory."
+```
