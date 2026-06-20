@@ -159,3 +159,17 @@ properties:
       additionalProperties: true
 additionalProperties: true
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat emulator
+    usage: "vat emulator http-mock --host-port 127.0.0.1:<PORT> --ca-path <pem> --cassette-dir <dir>"
+    behavior:
+      - "Hidden verb: vat spawns itself as the service process for the http-mock preset; --ca-path and --cassette-dir are optional args used only by this kind."
+      - "Runs a forward proxy: absolute-form http requests and CONNECT (HTTPS MITM via a vat-minted CA + per-host leaf certs) are intercepted; origin-form /__admin/* is the control API (register stubs, set mode, list recordings)."
+      - "Each request resolves stub > cassette replay > (auto/record) forward-and-record to the real upstream; cassettes persist under --cassette-dir across runs."
+      - "Built without the emulator feature, the verb errors cleanly (no panic); a malformed request never panics the proxy."
+```
