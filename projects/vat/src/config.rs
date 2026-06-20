@@ -183,6 +183,8 @@ pub enum ServicePreset {
     Spanner,
     Firebase,
     FirebaseAuth,
+    CloudTasks,
+    CloudScheduler,
 }
 
 impl ServicePreset {
@@ -198,6 +200,8 @@ impl ServicePreset {
                 | ServicePreset::Spanner
                 | ServicePreset::Firebase
                 | ServicePreset::FirebaseAuth
+                | ServicePreset::CloudTasks
+                | ServicePreset::CloudScheduler
         )
     }
 
@@ -205,14 +209,23 @@ impl ServicePreset {
     /// presets run vat's own in-process server under `runtime = auto`.
     /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
     pub fn is_builtin(self) -> bool {
-        matches!(self, ServicePreset::Pubsub | ServicePreset::FirebaseAuth)
+        matches!(
+            self,
+            ServicePreset::Pubsub
+                | ServicePreset::FirebaseAuth
+                | ServicePreset::CloudTasks
+                | ServicePreset::CloudScheduler
+        )
     }
 
     /// Built-in presets that have *only* the built-in path (no gcloud/Docker
     /// equivalent), so `runtime` must stay `auto`.
     /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#config
     pub fn is_builtin_only(self) -> bool {
-        matches!(self, ServicePreset::FirebaseAuth)
+        matches!(
+            self,
+            ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler
+        )
     }
 }
 
@@ -1093,6 +1106,33 @@ artifacts = ["out.txt"]
         svc.preset = Some(ServicePreset::FirebaseAuth);
         svc.runtime = ServiceRuntime::Docker;
         assert!(validate(&cfg_with_service(svc)).is_err());
+    }
+
+    #[test]
+    fn accepts_cloud_tasks_and_scheduler_builtin_presets() {
+        for (token, preset) in [
+            ("cloud-tasks", ServicePreset::CloudTasks),
+            ("cloud-scheduler", ServicePreset::CloudScheduler),
+        ] {
+            let parsed: ServicePreset =
+                serde_json::from_value(serde_json::Value::String(token.into())).unwrap();
+            assert_eq!(parsed, preset);
+            assert!(preset.is_builtin());
+            assert!(preset.is_builtin_only());
+            let mut svc = bare_service("svc");
+            svc.preset = Some(preset);
+            assert!(validate(&cfg_with_service(svc)).is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_cloud_preset_with_explicit_runtime() {
+        for preset in [ServicePreset::CloudTasks, ServicePreset::CloudScheduler] {
+            let mut svc = bare_service("svc");
+            svc.preset = Some(preset);
+            svc.runtime = ServiceRuntime::Docker;
+            assert!(validate(&cfg_with_service(svc)).is_err());
+        }
     }
 }
 // CODEGEN-END

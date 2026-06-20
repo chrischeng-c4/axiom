@@ -11,7 +11,10 @@
 //! @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic
 
 pub mod auth;
+pub mod dispatch;
 pub mod pubsub;
+pub mod scheduler;
+pub mod tasks;
 
 use anyhow::Result;
 
@@ -19,6 +22,8 @@ use anyhow::Result;
 pub enum Kind {
     Pubsub,
     FirebaseAuth,
+    CloudTasks,
+    CloudScheduler,
 }
 
 /// Serve the selected emulator on `host_port` (e.g. `127.0.0.1:8085`) until the
@@ -27,6 +32,8 @@ pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
     match kind {
         Kind::FirebaseAuth => auth::serve(host_port).await,
         Kind::Pubsub => pubsub::serve(host_port).await,
+        Kind::CloudTasks => tasks::serve(host_port).await,
+        Kind::CloudScheduler => scheduler::serve(host_port).await,
     }
 }
 // CODEGEN-END
