@@ -334,7 +334,9 @@ pub fn kv_to_json(v: KvValue) -> serde_json::Value {
     match v {
         KvValue::Null => J::Null,
         KvValue::Int(i) => J::from(i),
-        KvValue::Float(f) => serde_json::Number::from_f64(f).map(J::Number).unwrap_or(J::Null),
+        KvValue::Float(f) => serde_json::Number::from_f64(f)
+            .map(J::Number)
+            .unwrap_or(J::Null),
         KvValue::Decimal(d) => J::String(d.to_string()),
         KvValue::String(s) => J::String(s),
         KvValue::Bytes(b) => J::Array(b.into_iter().map(J::from).collect()),
@@ -346,7 +348,9 @@ pub fn kv_to_json(v: KvValue) -> serde_json::Value {
                 .map(|(k, score)| {
                     (
                         k,
-                        serde_json::Number::from_f64(score).map(J::Number).unwrap_or(J::Null),
+                        serde_json::Number::from_f64(score)
+                            .map(J::Number)
+                            .unwrap_or(J::Null),
                     )
                 })
                 .collect(),

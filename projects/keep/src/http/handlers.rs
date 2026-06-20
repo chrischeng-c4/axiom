@@ -280,10 +280,7 @@ pub async fn mget(
     request_body = MSetRequest,
     responses((status = 200, description = "Number of keys written", body = CountResponse))
 )]
-pub async fn mset(
-    State(st): State<AppState>,
-    body: Bytes,
-) -> Result<Json<CountResponse>, ApiErr> {
+pub async fn mset(State(st): State<AppState>, body: Bytes) -> Result<Json<CountResponse>, ApiErr> {
     // Fast parse: entry values -> KvValue directly (no serde_json::Value each).
     let req: MSetRequestFast = serde_json::from_slice(&body)
         .map_err(|e| ApiErr::bad_request(format!("invalid JSON body: {e}")))?;
@@ -336,10 +333,7 @@ pub async fn mdel(
     ),
     responses((status = 200, description = "Matching keys", body = ScanResponse))
 )]
-pub async fn scan(
-    State(st): State<AppState>,
-    Query(q): Query<ScanQuery>,
-) -> Json<ScanResponse> {
+pub async fn scan(State(st): State<AppState>, Query(q): Query<ScanQuery>) -> Json<ScanResponse> {
     Json(ScanResponse {
         keys: st.engine.scan(q.prefix.as_deref(), q.limit),
     })

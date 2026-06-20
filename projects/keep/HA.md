@@ -34,39 +34,43 @@ bounded-staleness reads. Failover = promote a replica. Cheap, but a crash loses
 the unreplicated tail → does **not** meet #114 "durable before ack" under node
 loss. A middle ground, optional.
 
-## Phase C — raft / quorum via openraft
+## Phase C — raft / quorum via `raftcore` (per-shard groups)
 
-**Single-node integration: DONE** (behind the `raft` feature, `src/raft.rs`).
-A write proposed through raft is committed by the quorum and applied to the
-engine by the state machine — proven end-to-end by `tests/raft_node.rs`
-(`cargo test -p keep --features raft`). This validates the consensus machinery
-(log → commit → apply → snapshot) with the engine wired in. What's implemented:
+**Consensus core + per-shard structure: DONE** (behind the `raft` feature,
+`src/raft.rs`). keep now uses the shared **`raftcore`** crate (`libs/raftcore`,
+serde-only) — the same verified, k8s-failover-tested engine relay uses —
+**replacing openraft** (the heavy `openraft` dependency is gone). Proven by
+`tests/raft_node.rs` (`cargo test -p keep --features raft`). What's implemented:
 
-- `TypeConfig`: `D = WalOp` (the logical mutation — same type the WAL/recovery
-  use), `R = Response`.
-- `StateMachineStore`: applies committed commands via
-  `RecoveryManager::apply_one` (the exact WAL-replay path); snapshots dump/restore
-  engine key→value (`KvEngine::dump_values`/`load_values`).
-- `LogStore`: in-memory raft log (vote / entries / committed / purge).
-- `Network`: stub (a single node sends no RPCs).
-- `RaftKv::single_node` + `write()` (client_write → commit → apply).
+- **Command = `WalOp`** (the logical mutation — same type the WAL/recovery use),
+  serialized as the Raft log entry; `Response { applied }`.
+- **`RaftKv`** — one raftcore group fronting the engine. `write()` proposes →
+  commits → applies via `RecoveryManager::apply_one` (the exact WAL-replay path).
+  `snapshot()` dumps the engine (`KvEngine::dump_values`) and `compact`s the log;
+  a follower that has fallen behind is shipped the snapshot (InstallSnapshot) and
+  loads it via `load_values` — so a lagging/new replica never replays full history.
+- **`ShardedRaft`** — **one raft group per owned shard** (`cluster.owned_shards()`):
+  a write routes by `crc32(key) % shard_count → shard → group`, so each shard is
+  its own independently-replicated consensus group (the natural fit for Phase A's
+  keyspace split). Single node = one sole-voter group per shard.
+- voter/learner membership comes from `raftcore::auto_membership` (odd voter set;
+  the trailing even node is a read-only learner).
 
-**Remaining (the multi-node big part):**
-1. **Network over HTTP/2** — replace the stub `RaftNetwork` with real
-   AppendEntries/Vote/InstallSnapshot as `/raft/*` POSTs to `ClusterConfig::peers`
-   (reuse the hyper client). `RaftNetworkFactory::new_client` per peer.
-2. **Durable raft log** — the in-memory `LogStore` becomes the on-disk log,
-   subsuming the existing WAL (keep already has a segmented, CRC'd, group-committed
-   fsync log to wrap). The public write path then moves from
-   `engine.set → log_wal` to `raft.client_write`; durable-before-ack becomes
-   replicated-and-fsynced-before-ack (strictly stronger).
-3. **Membership / discovery** — initialize from the k8s StatefulSet ordinal set
-   (`keep-<i>.keep-headless`); `change_membership` for scaling.
+**Remaining (the multi-node networking slice):**
+1. **h2c driver** — feed each group's `handle`/`take_outgoing`/`tick` over HTTP/2
+   (`/raft/*` POSTs to `ClusterConfig::peers`), mirroring relay's `raft_driver`.
+   raftcore already emits AppendEntries/RequestVote/InstallSnapshot; this wires the
+   transport + the tick/flush loop + persistence (`raftcore::PersistedState`).
+2. **Durable raft log** — back `PersistedState` with keep's on-disk WAL so the
+   public write path moves from `engine.set → log_wal` to `raft write`;
+   durable-before-ack becomes replicated-and-fsynced-before-ack (strictly stronger).
+3. **Membership / discovery** — derive voters from the StatefulSet ordinal set
+   (`keep-<i>.keep-headless`); promote/demote on scale.
 4. **Reads** — leader reads + bounded-lag follower reads via `x-read-consistency`.
 
-These are a dedicated multi-node effort (with a partition/leader-loss test
-harness) — but the hard trait wiring (storage + state machine + type config) is
-now done and validated single-node.
+The consensus core, per-shard structure, snapshot/compaction, and apply path are
+done + validated; the multi-node h2c driver reuses the pattern relay already
+proved on a real kind cluster.
 
 ### Original design notes (openraft 0.9)
 

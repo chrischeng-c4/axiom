@@ -39,9 +39,7 @@ pub struct KvClient {
 impl KvClient {
     /// Connect to a keep base URL (e.g. `http://keep:7117`) and verify liveness.
     pub async fn connect(url: &str) -> Result<Self, ClientError> {
-        let http = reqwest::Client::builder()
-            .http2_prior_knowledge()
-            .build()?;
+        let http = reqwest::Client::builder().http2_prior_knowledge().build()?;
         let base = url.trim_end_matches('/').to_string();
         // Fail fast if the endpoint isn't reachable.
         let r = http.get(format!("{base}/healthz")).send().await?;
@@ -75,8 +73,14 @@ impl KvClient {
             let bytes = r.bytes().await?;
             return Ok(Some(KvValue::Bytes(bytes.to_vec())));
         }
-        let body: serde_json::Value = r.json().await.map_err(|e| ClientError::Decode(e.to_string()))?;
-        let value = body.get("value").cloned().unwrap_or(serde_json::Value::Null);
+        let body: serde_json::Value = r
+            .json()
+            .await
+            .map_err(|e| ClientError::Decode(e.to_string()))?;
+        let value = body
+            .get("value")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         Ok(Some(json_to_kv(value)))
     }
 
@@ -91,10 +95,10 @@ impl KvClient {
         let url = format!("{}/v1/kv/{}", self.base, key);
         let req = match value {
             KvValue::Bytes(b) => {
-                let mut rb = self.http.put(&url).header(
-                    reqwest::header::CONTENT_TYPE,
-                    "application/octet-stream",
-                );
+                let mut rb = self
+                    .http
+                    .put(&url)
+                    .header(reqwest::header::CONTENT_TYPE, "application/octet-stream");
                 if let Some(t) = ttl {
                     rb = rb.query(&[("ttl_ms", t.as_millis() as u64)]);
                 }
@@ -125,7 +129,11 @@ impl KvClient {
 
     /// Liveness check against `/healthz`.
     pub async fn ping(&self) -> Result<(), ClientError> {
-        let r = self.http.get(format!("{}/healthz", self.base)).send().await?;
+        let r = self
+            .http
+            .get(format!("{}/healthz", self.base))
+            .send()
+            .await?;
         if r.status().is_success() {
             Ok(())
         } else {
