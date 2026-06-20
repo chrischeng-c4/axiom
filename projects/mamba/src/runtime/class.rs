@@ -1942,6 +1942,26 @@ fn instance_new_with_init_impl(
                         let items = lock.read().unwrap();
                         let message = items.first().copied().unwrap_or_else(MbValue::none);
                         let excs = items.get(1).copied().unwrap_or_else(MbValue::none);
+                        // PEP 654: an ExceptionGroup subclass (but not a bare
+                        // BaseExceptionGroup subclass) cannot nest a BaseException.
+                        let is_eg_not_base = name == "ExceptionGroup"
+                            || super::exception::is_subclass_of(&name, "ExceptionGroup");
+                        if is_eg_not_base {
+                            let members: Vec<MbValue> = excs.as_ptr().map(|ep| match &(*ep).data {
+                                ObjData::List(ref el) => el.read().unwrap().to_vec(),
+                                ObjData::Tuple(ref t) => t.to_vec(),
+                                _ => Vec::new(),
+                            }).unwrap_or_default();
+                            if members.iter().any(|m| super::exception::eg_member_is_bare_base(*m)) {
+                                drop(items);
+                                super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                    MbValue::from_ptr(MbObject::new_str(
+                                        super::exception::eg_nest_error_message(&name))),
+                                );
+                                return instance;
+                            }
+                        }
                         let msg_str = super::builtins::mb_str(message);
                         mb_setattr(instance,
                             MbValue::from_ptr(MbObject::new_str("message".to_string())), msg_str);
