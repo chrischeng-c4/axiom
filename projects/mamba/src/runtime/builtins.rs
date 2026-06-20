@@ -7952,6 +7952,42 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         }
                     }
                     if !name.is_empty() {
+                        // zoneinfo.ZoneInfo(key): mamba has no IANA tz database
+                        // (only UTC). Validate the key like CPython: a path-
+                        // traversal/absolute key is a ValueError; any unknown
+                        // zone is a ZoneInfoNotFoundError (a KeyError subclass).
+                        if name == "ZoneInfo" {
+                            let zi_key: Option<String> = items.first()
+                                .and_then(|v| v.as_ptr())
+                                .and_then(|p| match &(*p).data {
+                                    super::rc::ObjData::Str(ref s) => Some(s.clone()),
+                                    _ => None,
+                                });
+                            if let Some(key) = zi_key {
+                                if key.starts_with('/')
+                                    || key.split('/').any(|c| c == "..")
+                                {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                                        MbValue::from_ptr(MbObject::new_str(format!(
+                                            "ZoneInfo key {key:?} is not a valid IANA time zone name"
+                                        ))),
+                                    );
+                                    return MbValue::none();
+                                }
+                                if key != "UTC" {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "ZoneInfoNotFoundError".to_string(),
+                                        )),
+                                        MbValue::from_ptr(MbObject::new_str(format!(
+                                            "No time zone found with key {key}"
+                                        ))),
+                                    );
+                                    return MbValue::none();
+                                }
+                            }
+                        }
                         // If `name` is a registered native class that has a
                         // registered `__init__`, run the REAL constructor so
                         // the instance is properly initialised (e.g. unittest
