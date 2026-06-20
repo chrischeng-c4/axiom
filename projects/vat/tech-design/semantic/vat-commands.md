@@ -99,6 +99,30 @@ semantic_domain:
           - name: "should_delete_clusters"
             kind: "function"
             public: false
+          - name: "prepare_firebase_service"
+            kind: "function"
+            public: false
+          - name: "firebase_emulator_host_var"
+            kind: "function"
+            public: false
+          - name: "gcloud_component"
+            kind: "function"
+            public: false
+          - name: "installed_gcloud_components"
+            kind: "function"
+            public: false
+          - name: "native_available"
+            kind: "function"
+            public: false
+          - name: "preset_native_available"
+            kind: "function"
+            public: false
+          - name: "preset_docker_command"
+            kind: "function"
+            public: false
+          - name: "gcloud_emulator_command"
+            kind: "function"
+            public: false
           - name: "run_setup_step"
             kind: "function"
             public: false

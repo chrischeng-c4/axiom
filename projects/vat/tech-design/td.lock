@@ -1,12 +1,16 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-20T06:14:43.560499+00:00"
-digest = "sha256:c6313dcc4ffd907326e0a3707ea5a0602f997c1e9834972da630d3ec4a4f6a48"
+generated_at = "2026-06-20T07:20:22.031943+00:00"
+digest = "sha256:56d392b4bbf92577d9a58d39fb89a3cc5268c2ac7ea21089d9d7523867a714c3"
 
 [[files]]
 path = "logic/external-contracts.md"
 digest = "sha256:9202db074fde90cb75a0140a122c8a60f66e05c59ab7a82ae9fb2a3a656f15bc"
+
+[[files]]
+path = "logic/gcp-firebase-emulator-service-presets.md"
+digest = "sha256:22ef930f9156cafb45c04d54c364612b85f7081b90b97b0fe48460e1caee5f4f"
 
 [[files]]
 path = "logic/kind-like-local-kubernetes-clusters.md"
@@ -134,7 +138,7 @@ digest = "sha256:63bd3560ae5b3837a11dad7d911604b7866f2e4e045b54bf3a77d162e94f6fd
 
 [[files]]
 path = "semantic/vat-commands.md"
-digest = "sha256:9ecdead0c2b042cd52e4bedbe2f0c2889e770b2573061b3e260703d41fb62c8a"
+digest = "sha256:6f1edeebae4bd37bb252d8b1a04afaf5c1ac55332622d04edac9ee7359033a14"
 
 [[files]]
 path = "semantic/vat-install-script.md"
@@ -150,8 +154,8 @@ digest = "sha256:1cb7d290f685bce33af5a11210a84be1e9aea62dd50fe68ea0f4c802247f035
 
 [[files]]
 path = "semantic/vat-src.md"
-digest = "sha256:6d1f4e73bc848882b8afc120d5c85a19688e0bcd3630e85d0ee3af930c9fedd8"
+digest = "sha256:975e378e53c81b2d2a99c3f4daa0ee964e263f9eca052a6af15778944d4055fa"
 
 [[files]]
 path = "semantic/vat-tests.md"
-digest = "sha256:72cc922f496d6c6e9eff5e7875657fb66f51e9d865e6117656985589ec08f54b"
+digest = "sha256:37ba1f1b9a20a09004fabda7115f1bd846664bbcc1e49ef211a5cc7b02bafaec"
