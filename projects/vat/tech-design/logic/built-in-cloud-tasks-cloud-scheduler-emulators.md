@@ -75,3 +75,34 @@ flowchart TD
     runner --> teardown[stop service kills emulator child]
     teardown --> done([return exit code])
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-cloud-tasks-scheduler-evidence.schema.json"
+title: "Vat Cloud Tasks / Scheduler emulator evidence"
+type: object
+description: "Service-evidence shape for vat's built-in Cloud Tasks / Scheduler emulators."
+properties:
+  preset:
+    type: string
+    enum: [cloud-tasks, cloud-scheduler]
+  prepare_mode:
+    type: string
+    enum: [builtin_emulator]
+  exported_env:
+    type: array
+    items: { type: string }
+    description: "Host env var exported to the runner: CLOUD_TASKS_EMULATOR_HOST or CLOUD_SCHEDULER_EMULATOR_HOST."
+  dispatch:
+    type: object
+    description: "How the emulator delivers a task/job: an outbound HTTP request to the target."
+    properties:
+      uri: { type: string }
+      http_method: { type: string }
+      oidc: { type: [boolean] }
+    additionalProperties: true
+additionalProperties: true
+```
