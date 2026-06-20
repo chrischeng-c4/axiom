@@ -8897,6 +8897,18 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
             return MbValue::from_bool(r);
         }
     }
+    // Reflected fallback: `a <= b` where `b` is an instance defining __ge__
+    // and `a` did not handle __le__ (e.g. `{1} <= Probe()` with a set on the left)
+    // → b.__ge__(a), matching CPython's reflected-comparison rule.
+    if let Some(pb) = b.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*pb).data {
+                if !super::class::lookup_method(class_name, "__ge__").is_none() {
+                    return MbValue::from_bool(dispatch_richcmp_dunder(b, a, class_name, "__ge__"));
+                }
+            }
+        }
+    }
     let lt_result = mb_lt(a, b);
     let eq_result = mb_eq(a, b);
     MbValue::from_bool(lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false))
