@@ -75,7 +75,6 @@ flowchart TD
     runner --> teardown[stop service kills emulator child; blobs vanish]
     teardown --> done([return exit code])
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
