@@ -1,0 +1,16 @@
+[project]
+name = "keep"
+cap_path = "README.md"
+label = "project:keep"
+
+[ec.efficiency]
+tool = "meter"
+meter = "projects/keep"
+command = "cargo test -p keep --test http_api -- --nocapture"
+
+[[workspaces]]
+name = "keep"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p keep"
+codegen.profile = "rust/score-crate"

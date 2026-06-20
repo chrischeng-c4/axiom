@@ -1,9 +1,123 @@
 # keep
 
+## Brief
+
 Cloud-native, multi-core key-value / claim-check store — the loom/relay data
 plane and a Redis / Dragonfly replacement. Promoted from `cclab-kv`: the sharded
 engine and tiered RAM+disk persistence are unchanged; the transport is now
 **HTTP/2 + OpenAPI** (no raw TCP).
+
+## Capabilities
+
+### Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| KV API | - | implemented | passing | conformance | ready | HTTP/2/OpenAPI scalar, batch, scan, lock, probe, metrics, and claim-check blob API |
+| Durability | - | implemented | passing | conformance | ready | WAL-backed durable-before-ack recovery |
+| Collections | - | implemented | passing | conformance | ready | hash, set, sorted-set, and list APIs |
+| HA / Raft | 121 | implemented | planned | dogfood | not_ready | single-node raftcore path exists; multi-node HTTP/2 network proof remains staged |
+| Relay Worker Data Plane | 108 | planned | planned | dogfood | not_ready | worker-facing claim-check contract with relay still needs a closed OpenAPI integration spec |
+
+### KV API
+
+ID: kv-api
+Type: Runtime
+Surfaces: HTTP: `/v1/kv/*`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json` - public service API.; Rust API: `keep::client::KvClient` - in-tree HTTP client.
+EC Dimensions: behavior: `cargo test -p keep --test http_api` - public HTTP API conformance
+Root WI: -
+Status: passing
+Required Verification: conformance
+Promise:
+Expose a cloud-native key-value and claim-check store over HTTP/2 + OpenAPI,
+including scalar get/set/delete, batches, scans, locks, probes, metrics, and
+opaque blob roundtrips.
+Gate Inventory:
+- projects/keep/tests/http_api.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| HTTP key-value surface | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
+| Claim-check blob roundtrip | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
+| OpenAPI/probe/metrics surface | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
+
+### Durability
+
+ID: durability
+Type: Runtime
+Surfaces: Engine: `KvEngine` + persistence - WAL and snapshot-backed state.; HTTP: mutation APIs - durable-before-ack public writes.
+EC Dimensions: stability: `cargo test -p keep --test durability` - cold recovery conformance
+Root WI: -
+Status: passing
+Required Verification: conformance
+Promise:
+Persist mutations before acknowledgement and recover committed state after a
+cold restart.
+Gate Inventory:
+- projects/keep/tests/durability.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| WAL-backed cold recovery | epic | - | implemented | passing | conformance | projects/keep/tests/durability.rs |
+
+### Collections
+
+ID: collections
+Type: Runtime
+Surfaces: HTTP: `/v1/hashes`, `/v1/sets`, `/v1/zsets`, `/v1/lists` - collection APIs.
+EC Dimensions: behavior: `cargo test -p keep --test collections_api` - collection operation conformance
+Root WI: -
+Status: passing
+Required Verification: conformance
+Promise:
+Provide Redis-like hash, set, sorted-set, and list operations on the same
+durable engine and HTTP surface.
+Gate Inventory:
+- projects/keep/tests/collections_api.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Hash / set / sorted-set operations | epic | - | implemented | passing | conformance | projects/keep/tests/collections_api.rs |
+| List push/pop/blocking-pop operations | epic | - | implemented | passing | conformance | projects/keep/tests/collections_api.rs |
+
+### HA / Raft
+
+ID: ha-raft
+Type: Runtime
+Surfaces: Rust API: `keep::raft` - raftcore-backed state machine.; K8s: StatefulSet - PVC-backed instances.
+EC Dimensions: stability: `cargo test -p keep --test raft_node` - raft state-machine conformance
+Root WI: 121
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Move keep from independent StatefulSet shards toward raft-backed HA without
+changing the public KV API.
+Gate Inventory:
+- projects/keep/tests/raft_node.rs; projects/keep/HA.md
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Single-node raftcore state machine | epic | 121 | implemented | passing | conformance | projects/keep/tests/raft_node.rs |
+| Multi-node HTTP/2 raft network | epic | 121 | planned | planned | dogfood | projects/keep/HA.md |
+
+### Relay Worker Data Plane
+
+ID: relay-worker-data-plane
+Type: Runtime
+Surfaces: HTTP: keep OpenAPI + relay OpenAPI - worker payload and lease integration contract.
+EC Dimensions: behavior: future relay+keep integration gate - worker-facing contract closure
+Root WI: 108
+Status: auditing
+Required Verification: dogfood
+Promise:
+Serve as the claim-check/value data plane paired with relay's ordered queue and
+worker contract.
+Gate Inventory:
+- projects/keep/README.md; projects/relay/tests/worker_loop.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Relay+keep worker-facing contract | epic | 108 | planned | planned | dogfood | pending integration spec |
 
 ## Architecture
 
@@ -80,6 +194,6 @@ Images: `Dockerfile` (from-source, build context = repo root) and
 - ✅ perf-gate via meter: engine throughput ratchet + server resource gate — see [PERF-GATE.md](PERF-GATE.md) (#126). Competitor comparison (vs Redis/Dragonfly) is the separate one-off `examples/bench_compare.rs`.
 - ☐ worker-facing OpenAPI contract finalized with relay — #108
 - ◑ HA — phase A (sharded scale-out + `/cluster`) done; phase C raft via openraft integrated single-node (`--features raft`, engine-backed state machine, proven by `tests/raft_node.rs`) — multi-node HTTP/2 network + durable raft log staged; see [HA.md](HA.md) (#121)
-- ☐ migrate the `ion`-feature TCP consumers (queuekit, queue) off the retired
-  `cclab-kv` TCP client; then dedupe the legacy `crates/cclab-kv` +
-  `projects/queue/kv` copies.
+- ✅ queuekit and queue `ion` feature consumers now use `keep::client` instead
+  of the retired raw-TCP `cclab-kv` client; remaining cleanup is deduping the
+  legacy `crates/cclab-kv` + `projects/queue/kv` copies.

@@ -1327,6 +1327,8 @@ fn project_standardize_readiness_summary(
     let td_gen_expected_units = report.codegen_eligible_files;
     let ec_gen_status = if !report.ec.evaluated {
         "not_evaluated"
+    } else if ec_gen_expected_units == 0 {
+        "not_configured"
     } else if report.ec.check_clean
         && report.ec.case_count == report.ec.expected_case_count
         && report.ec.tool_manifest_count == report.ec.expected_tool_manifest_count
@@ -1389,10 +1391,11 @@ fn project_standardize_readiness_summary(
                 "document_kind": "ec",
                 "generated_units": ec_gen_generated_units,
                 "expected_units": ec_gen_expected_units,
-                "generated_percent": coverage_percent(
-                    ec_gen_generated_units,
-                    ec_gen_expected_units,
-                ),
+                "generated_percent": if ec_gen_expected_units == 0 {
+                    0.0
+                } else {
+                    coverage_percent(ec_gen_generated_units, ec_gen_expected_units)
+                },
                 "handwrite_units": 0,
                 "missing_units": ec_gen_expected_units.saturating_sub(ec_gen_generated_units),
             },

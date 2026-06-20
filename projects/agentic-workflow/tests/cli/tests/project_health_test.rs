@@ -688,6 +688,52 @@ fn project_health_compact_summary_is_low_token_default() {
 }
 
 #[test]
+fn project_health_ec_gen_axis_is_not_configured_for_zero_expected_units() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.ec = ProjectEcGateReport {
+        evaluated: true,
+        check_clean: true,
+        verify_evaluated: false,
+        status: ProjectEcGateStatus::NotConfigured,
+        note: None,
+        inventory_path: "projects/demo/aw.toml".to_string(),
+        expected_case_count: 0,
+        case_count: 0,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
+        command_count: 0,
+        passed_count: 0,
+        failed_count: 0,
+        findings: Vec::new(),
+        commands: Vec::new(),
+    };
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(
+        summary["axes"]["ec_gen"]["status"].as_str(),
+        Some("not_configured")
+    );
+    assert_eq!(
+        summary["axes"]["ec_gen"]["expected_units"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(
+        summary["axes"]["ec_gen"]["generated_units"].as_u64(),
+        Some(0)
+    );
+}
+
+#[test]
 fn project_health_section_full_preserves_detailed_report() {
     let report = ProjectHealthReport::from_components(
         "demo",
@@ -782,6 +828,48 @@ fn project_health_summary_routes_managed_blockers_to_standardize() {
     assert_eq!(
         summary["next"]["command"].as_str(),
         Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
+    );
+}
+
+#[test]
+fn project_health_next_reason_matches_managed_route_when_ec_has_no_expected_units() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(50.0, vec!["projects/demo/src/lib.rs".to_string()]),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.ec = ProjectEcGateReport {
+        evaluated: true,
+        check_clean: true,
+        verify_evaluated: false,
+        status: ProjectEcGateStatus::NotConfigured,
+        note: Some("EC inventory has no cases".to_string()),
+        inventory_path: "projects/demo/aw.toml".to_string(),
+        expected_case_count: 0,
+        case_count: 0,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
+        command_count: 0,
+        passed_count: 0,
+        failed_count: 0,
+        findings: Vec::new(),
+        commands: Vec::new(),
+    };
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(
+        summary["next"]["command"].as_str(),
+        Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
+    );
+    assert_eq!(
+        summary["next"]["reason"].as_str(),
+        Some("source ownership is incomplete; advance managed takeover")
     );
 }
 

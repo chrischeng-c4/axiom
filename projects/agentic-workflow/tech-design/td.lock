@@ -1,8 +1,8 @@
 version = 1
 project = "agentic-workflow"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-06-20T06:17:54.952831+00:00"
-digest = "sha256:e3a269f6372b375f6d477ddaa0baea82cd0e3a586b0ac66b2eacf882aead0124"
+generated_at = "2026-06-20T13:06:09.335920+00:00"
+digest = "sha256:a328eef9b095ba900bd250b94bc115c7beab4078eba3b33aa228b92fb635a067"
 
 [[files]]
 path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
@@ -3458,11 +3458,11 @@ digest = "sha256:55e4ef2c2482f612b7cf203e71f712520973d4c3da9e8597eebdad73faee98f
 
 [[files]]
 path = "surface/generate/project-health-source.md"
-digest = "sha256:3b352854d9b5983fec3a84aca946ec40317201a92bd351b1ed3792c6f3ed6569"
+digest = "sha256:cd6486d072b95ae2c23c58a102919819499c8549bfb1237402928cc50d9959ef"
 
 [[files]]
 path = "surface/generate/project-health-test-source.md"
-digest = "sha256:4a27ddefe3cc836caf663d9e3f232a8b7849176c5f49661b34dc7d7a80c35b6f"
+digest = "sha256:b9bb99b427df872ff678c790c06ef9cc5b7c931cc59467c59f7bf58b51da0621"
 
 [[files]]
 path = "surface/interfaces/src/cb.md"
@@ -3558,7 +3558,7 @@ digest = "sha256:f74d9878a3b1f231707b021cfaa6b3cb9ceac24c945258f6cd285f3ca55cc1a
 
 [[files]]
 path = "surface/interfaces/src/standardize.md"
-digest = "sha256:5c544573bb5be458952060ffca5e19ca92d00e000e75a849fb15b5737d00dfbc"
+digest = "sha256:f8d344ffb93bdeb0550836cf167d117b72899c8e1a5178800c878570203e6700"
 
 [[files]]
 path = "surface/interfaces/src/standardize_audit.md"

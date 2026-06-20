@@ -1,3 +1,4 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#rust-source-unit
 // HANDWRITE-BEGIN gap="missing-generator:logic:54088576" tracker="pending-tracker" reason="RelayWal: a WalLog backed by relay's broadcast. publish POSTs to relay /v1/{subject}/publish (payload=json(WalRecord)); subscribe GETs /v1/{subject}/subscribe and decodes relay's length-prefixed CBOR LogEntry frames (relay::wire::decode_frames), mapping each to (seq+1, WalRecord). Plaintext h2c, no TLS."
 //! #124 — tail **relay**'s broadcast as the WAL backend (behind the `relay-wal`
 //! feature), replacing NATS.
@@ -23,6 +24,7 @@ use relay::LogEntry;
 use crate::wal::{WalLog, WalRecord, WalStream};
 
 /// A `WalLog` backed by a relay broker's broadcast log.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#source
 pub struct RelayWal {
     client: reqwest::Client,
     base: String,
@@ -32,6 +34,7 @@ pub struct RelayWal {
 
 impl RelayWal {
     /// Connect to `base_url` (e.g. `http://relay:8080`) for `subject`.
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#source
     pub fn new(base_url: impl Into<String>, subject: impl Into<String>) -> Result<Self> {
         Ok(Self {
             client: reqwest::Client::builder().build()?,
@@ -44,6 +47,7 @@ impl RelayWal {
 
 #[async_trait]
 impl WalLog for RelayWal {
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#source
     async fn publish(&self, record: WalRecord) -> Result<u64> {
         let payload = serde_json::to_value(&record)?;
         let message_id = format!("lumen-{}", self.counter.fetch_add(1, Ordering::Relaxed));
@@ -64,6 +68,7 @@ impl WalLog for RelayWal {
         Ok(seq + 1)
     }
 
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#source
     async fn subscribe(&self, from_seq: u64) -> Result<WalStream> {
         let url = format!(
             "{}/v1/{}/subscribe?from_seq={}&subscriber_id=lumen",
@@ -104,6 +109,7 @@ impl WalLog for RelayWal {
         Ok(Box::pin(stream))
     }
 
+    /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal_relay-rs.md#source
     async fn latest_seq(&self) -> Result<u64> {
         // relay exposes no length endpoint; a derived index is rebuildable, so a
         // consumer replays from its requested offset (0 = "from the start").
