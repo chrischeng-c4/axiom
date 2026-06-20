@@ -1,0 +1,50 @@
+# SPEC-MANAGED: projects/relay/tech-design/logic/core-durable-log-single-multi-broadcast-delivery-model.md#changes
+# HANDWRITE-BEGIN gap="missing-generator:config:7d099e74" tracker="pending-tracker" reason="Manifest for the standalone HTTP/2 queue core (no external project deps)."
+[package]
+name = "relay"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "relay core — durable ordered log per subject/shard serving broadcast (replay) and work-queue (lease/ack/redeliver) delivery."
+
+[lib]
+name = "relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "relay-server"
+path = "src/bin/relay_server.rs"
+
+# Raft-backed node for k8s (HA): identity/peers from the downward API.
+[[bin]]
+name = "relay-raft"
+path = "src/bin/relay_raft.rs"
+
+[[bench]]
+name = "relay_bench"
+harness = false
+
+[dependencies]
+# The broker core is payload-agnostic (epic #120: "knows nothing about
+# workflows"): a message body is carried as opaque JSON. relay stays standalone
+# — it depends on no other axiom project, only third-party crates.
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+# HTTP/2 (h2c) + OpenAPI transport (#115).
+tokio = { workspace = true }
+axum = { workspace = true }
+futures = { workspace = true }
+utoipa = { workspace = true, features = ["axum_extras"] }
+ciborium = "0.2"
+crc32fast = "1.4"
+
+# HA: the follower is an HTTP/2 client tailing the leader (#135).
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+criterion = "0.5"
+# HANDWRITE-END

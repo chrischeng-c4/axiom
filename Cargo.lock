@@ -9459,6 +9459,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "relay"
+version = "0.4.0"
+dependencies = [
+ "axum 0.8.9",
+ "chrono",
+ "ciborium",
+ "crc32fast",
+ "criterion",
+ "futures",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "utoipa",
+]
+
+[[package]]
 name = "rend"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
