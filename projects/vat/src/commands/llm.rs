@@ -57,6 +57,10 @@ cluster = "auto"           # auto (kind→k3d→minikube) | kind | k3d | minikub
 # nodes = 1
 export = { KUBECONFIG = "{kubeconfig}" }
 
+[[services]]
+id = "fs"                  # GCP Firestore emulator (exports FIRESTORE_EMULATOR_HOST)
+preset = "firestore"       # firestore | pubsub | datastore | bigtable | spanner | firebase
+
 [[runners]]
 id = "e2e"
 requires = ["pg"]
@@ -68,7 +72,21 @@ artifacts = ["test-results/**", "playwright-report/**"]
 
 - A `preset` service prefers the native Homebrew binary and falls back to the
   preset's official Docker image when the binary is missing. Force it with
-  `runtime = "native"` or `runtime = "docker"`.
+  `runtime = "native"` or `runtime = "docker"`. Datastore/broker presets:
+  postgres, redis, nats, rabbitmq, mysql, mongo.
+- Emulator presets: `firestore`, `pubsub`, `datastore`, `bigtable`, `spanner`
+  wrap the GCP `gcloud beta emulators` family (native needs gcloud + Java + the
+  gcloud component; `runtime = auto` falls back to the cloud-cli Docker image —
+  Spanner uses its own image — when the component is missing). Each exports the
+  well-known host var (`FIRESTORE_EMULATOR_HOST`, `PUBSUB_EMULATOR_HOST`,
+  `DATASTORE_EMULATOR_HOST`, `BIGTABLE_EMULATOR_HOST`, `SPANNER_EMULATOR_HOST`).
+- `preset = "firebase"` is the Firebase Emulator Suite bundle: it requires a
+  `firebase.json` in the workspace, runs `firebase emulators:start`, and exports
+  each configured emulator's host var (`FIRESTORE_EMULATOR_HOST`,
+  `FIREBASE_AUTH_EMULATOR_HOST`, `FIREBASE_DATABASE_EMULATOR_HOST`,
+  `FIREBASE_STORAGE_EMULATOR_HOST`, `PUBSUB_EMULATOR_HOST`,
+  `FIREBASE_EMULATOR_HUB`). It is native-only (firebase-tools + Java); there is
+  no Docker fallback for firebase.
 - An `image` service is always a Docker container — use it for dependencies with
   no native binary (e.g. AlloyDB). It requires `container_port`; `image_env` is
   passed into the container; in `export`, `{host}`/`{port}` resolve to the mapped

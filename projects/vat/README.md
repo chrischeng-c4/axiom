@@ -233,6 +233,22 @@ preferred**:
 - `preset` — a built-in service. With the default `runtime = "auto"` vat uses
   the native binary when it is installed and falls back to the preset's official
   Docker image when it is not; `runtime = "native"` / `"docker"` force one path.
+  Datastore/broker presets: `postgres`, `redis`, `nats`, `rabbitmq`, `mysql`,
+  `mongo`.
+- `preset` (emulators) — `firestore`, `pubsub`, `datastore`, `bigtable`,
+  `spanner` wrap the GCP `gcloud beta emulators` family. Native needs gcloud +
+  Java + the gcloud component; `runtime = auto` falls back to the cloud-cli
+  Docker image (Spanner uses its own image) when the component is missing.
+  Each exports the well-known host var (e.g. `FIRESTORE_EMULATOR_HOST`,
+  `PUBSUB_EMULATOR_HOST`). `preset = "firebase"` is the Firebase Emulator Suite
+  bundle: it requires a `firebase.json`, runs `firebase emulators:start`, and
+  exports each configured emulator's `*_EMULATOR_HOST` (native-only — no Docker
+  fallback). Example:
+  ```toml
+  [[services]]
+  id = "fb"
+  preset = "firebase"        # reads ./firebase.json, exports *_EMULATOR_HOST
+  ```
 - `image` — a Docker-only dependency that has no native equivalent (e.g.
   AlloyDB). Requires `container_port`; `image_env` is passed into the container;
   in `export`, `{host}`/`{port}` resolve to the mapped host endpoint and
