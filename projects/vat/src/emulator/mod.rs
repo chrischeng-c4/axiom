@@ -14,6 +14,7 @@ pub mod auth;
 pub mod dispatch;
 pub mod pubsub;
 pub mod scheduler;
+pub mod storage;
 pub mod tasks;
 pub mod workflows;
 
@@ -26,6 +27,7 @@ pub enum Kind {
     CloudTasks,
     CloudScheduler,
     CloudWorkflows,
+    CloudStorage,
 }
 
 /// Serve the selected emulator on `host_port` (e.g. `127.0.0.1:8085`) until the
@@ -37,6 +39,7 @@ pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
         Kind::CloudTasks => tasks::serve(host_port).await,
         Kind::CloudScheduler => scheduler::serve(host_port).await,
         Kind::CloudWorkflows => workflows::serve(host_port).await,
+        Kind::CloudStorage => storage::serve(host_port).await,
     }
 }
 // CODEGEN-END

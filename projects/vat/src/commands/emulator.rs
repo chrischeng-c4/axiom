@@ -23,6 +23,7 @@ pub fn exec(kind: EmulatorKind, host_port: String) -> Result<ExitCode> {
         EmulatorKind::CloudTasks => crate::emulator::Kind::CloudTasks,
         EmulatorKind::CloudScheduler => crate::emulator::Kind::CloudScheduler,
         EmulatorKind::CloudWorkflows => crate::emulator::Kind::CloudWorkflows,
+        EmulatorKind::CloudStorage => crate::emulator::Kind::CloudStorage,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
