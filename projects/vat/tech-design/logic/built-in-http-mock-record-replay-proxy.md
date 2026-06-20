@@ -249,7 +249,6 @@ requirementDiagram
       verifies: record_then_replay
     }
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
