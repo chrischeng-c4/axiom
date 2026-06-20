@@ -249,7 +249,6 @@ e2e_tests:
       - "a firebase preset with a firebase.json starts the suite and exports the configured *_EMULATOR_HOST vars."
       - "the test skips gracefully when firebase-tools and docker are both unavailable."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
