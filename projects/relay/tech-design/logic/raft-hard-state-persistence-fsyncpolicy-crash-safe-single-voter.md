@@ -2,7 +2,7 @@
 id: relay-raft-persistence
 summary: Persist Raft hard state (term, votedFor, log) so a node survives restart and never double-votes or forgets acked entries. RaftNode stays pure — add a serializable PersistedState + persisted()/from_persisted(); a file-backed RaftStore saves/loads under a data dir honoring FsyncPolicy; the driver persists before flushing the outbox. Standalone, no external dep.
 capability_refs:
-  - id: ha-replication
+  - id: competitor-feature-parity
     role: primary
     gap: durable-raft-hard-state-restore
     claim: durable-raft-hard-state-restore

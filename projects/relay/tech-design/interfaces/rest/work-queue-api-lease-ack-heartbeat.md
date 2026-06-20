@@ -2,7 +2,7 @@
 id: relay-work-queue-api
 summary: relay's work-queue face over HTTP/2 — lease (prefer redeliver) / ack / heartbeat with epoch fencing for exactly-one competing-consumer delivery. Generic; relay does not know workflows. Standalone.
 capability_refs:
-  - id: work-queue
+  - id: competitor-feature-parity
     role: primary
     gap: lease-heartbeat-ack-lifecycle
     claim: lease-heartbeat-ack-lifecycle

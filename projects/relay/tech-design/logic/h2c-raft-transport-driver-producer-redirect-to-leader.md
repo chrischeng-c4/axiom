@@ -2,7 +2,7 @@
 id: relay-raft-driver
 summary: Production driver that runs the self-contained Raft core over HTTP/2. A RaftDriver owns the RaftNode (async mutex) + RaftStore + peer URLs + h2c client + local Relay; a tick task advances the node, persists before flushing the outbox, and applies committed commands to the Relay. Outbound RequestVote/AppendEntries are POSTed to peers and responses fed back; endpoints serve /raft/request-vote and /raft/append-entries; producers hitting a non-leader get a NotLeader leader-hint, the leader proposes the publish through Raft. Standalone (reqwest only), no axiom-project dep.
 capability_refs:
-  - id: ha-replication
+  - id: competitor-feature-parity
     role: primary
     gap: real-h2c-raft-cluster-smoke
     claim: real-h2c-raft-cluster-smoke

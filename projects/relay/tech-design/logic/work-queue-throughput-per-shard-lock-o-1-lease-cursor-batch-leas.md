@@ -2,7 +2,7 @@
 id: relay-work-queue-throughput
 summary: Work-queue throughput rework — per-(subject,shard) locking for real consumer concurrency, an O(1) next-eligible lease cursor (redeliver min-heap + next_offer + committed watermark) replacing the O(n) scan, and batch lease/ack endpoints to amortize HTTP round-trips. Same exactly-once / epoch-fencing semantics. Standalone.
 capability_refs:
-  - id: work-queue
+  - id: competitor-performance
     role: primary
     gap: o-1-lease-cursor-throughput
     claim: o-1-lease-cursor-throughput

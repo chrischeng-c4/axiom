@@ -1,6 +1,19 @@
 ---
 id: relay-http2-openapi-transport
 summary: axum HTTP/2 (h2c) + utoipa OpenAPI transport over the relay core — publish / lease / ack with a length-prefixed CBOR fast path, streaming broadcast subscribe from a seq, and client-side crc32 sharding. Standalone; depends on no other axiom project.
+capability_refs:
+  - id: cli-interface
+    role: primary
+    gap: relay-server-process-interface
+    claim: relay-server-process-interface
+    coverage: full
+    rationale: "Defines the relay-server h2c process surface, config shape, OpenAPI document, and HTTP route entrypoints."
+  - id: competitor-feature-parity
+    role: primary
+    gap: http-worker-protocol-parity
+    claim: http-worker-protocol-parity
+    coverage: partial
+    rationale: "Defines the h2c publish, subscribe, lease, ack, and OpenAPI transport primitives used by broker feature parity."
 fill_sections: [logic, schema, rest-api, config, unit-test, changes]
 ---
 

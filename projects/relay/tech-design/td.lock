@@ -1,20 +1,20 @@
 version = 1
 project = "relay"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-06-20T13:40:33.226531+00:00"
-digest = "sha256:ed09185809b1d5e24062efa974db304ea19071af3340dd926b6e0dcf27412836"
+generated_at = "2026-06-20T14:01:22.115628+00:00"
+digest = "sha256:c2d57fb99588d01570a1fdeaedeb7d7669fe577a5570a82b4a3335e20468397e"
 
 [[files]]
 path = "interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md"
-digest = "sha256:14709bdd4b3a883424cd06acea8cbacde8472248f721463bdbe3f8a40b0c339b"
+digest = "sha256:f4eca33406eb642d92afd1859776073de69df3fd0c4df6e12a025fd144a577eb"
 
 [[files]]
 path = "interfaces/rest/relay-keep-worker-facing-openapi-contract-polyglot-worker-integr.md"
-digest = "sha256:032874e6b7a49c03990b7776f61240bd37d76f86d570d38974d49f5fc20d2899"
+digest = "sha256:1823425df637d13a67f4e6aa89661831b16392aed22fb9018cefcb2f1d06d111"
 
 [[files]]
 path = "interfaces/rest/work-queue-api-lease-ack-heartbeat.md"
-digest = "sha256:31a44c0b4bf2fa26e65f376eb8e685f36d1f24841425db975df31c655c4be0c3"
+digest = "sha256:4b60a1feb6cdc35fe0c432505482727ebbdbaebf207d8532359092a914370665"
 
 [[files]]
 path = "logic/bounded-ram-durable-log-entry-eviction-offset-index-disk-backed.md"
@@ -22,11 +22,11 @@ digest = "sha256:45c7f0701704886bff0ed25db7ee531aa18e53b116eee40f0693f096c0c5e7d
 
 [[files]]
 path = "logic/competitor-perf-gate-vs-nats-rabbitmq-redpanda-arena-ratchet.md"
-digest = "sha256:155f84ea421e4ea4e796f7fd40dc7d92bdc0e6b80b878d3d8503b04c5d023b26"
+digest = "sha256:56061c7b6a0954119814d373c6a501e971779bd8e361835c3707617b98bae03e"
 
 [[files]]
 path = "logic/core-durable-log-single-multi-broadcast-delivery-model.md"
-digest = "sha256:af683c7fa0985c5acad7c019e55e4bfdf578dad8a180d80b6adc583f16705b05"
+digest = "sha256:0a086c6b8ca7c295bce339c0a39b2571d4b2cd33d0638d29f1edacc64a0b73d3"
 
 [[files]]
 path = "logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md"
@@ -34,7 +34,7 @@ digest = "sha256:f0519c61d62313ff24e2c3d50374d613831ebfc588ef198c1bef45cbecda99b
 
 [[files]]
 path = "logic/h2c-raft-transport-driver-producer-redirect-to-leader.md"
-digest = "sha256:e49c91771a1970d5f514c29d16261dadede94eed3347c4787bab2c1bb2d5d7c7"
+digest = "sha256:cd61ab7eb4dbdb3abddae21f3626370258746e703b3957f9908e46c3aee69114"
 
 [[files]]
 path = "logic/ha-via-leader-follower-log-replication-async-primary-backup.md"
@@ -42,7 +42,7 @@ digest = "sha256:d961955ef2bc9a4e258a43d117f799f4d30e391501dc5eda1a698c63e58f3eb
 
 [[files]]
 path = "logic/k8s-manifests-ordinal-role-kind-failover-smoke-raft-ha-layer-2.md"
-digest = "sha256:2e8dbe0a9d186c25defdaf739c59b16e10a94ae3398f34d1d2172375d09ebcd8"
+digest = "sha256:2919f9b9be02bf1d55f3f05de90f58128346820df51feecb752e6c250de3786a"
 
 [[files]]
 path = "logic/log-segment-rotation-retention-full-log-lifecycle.md"
@@ -54,7 +54,7 @@ digest = "sha256:a4557b5a2cfebd2a0e48d319b08e98b39fcac11982781009e6257d18e90013f
 
 [[files]]
 path = "logic/raft-hard-state-persistence-fsyncpolicy-crash-safe-single-voter.md"
-digest = "sha256:06634736d3b09bc523f8df5abc4be5f9f6f8b2e6dcb248ae58e56c82fd28146f"
+digest = "sha256:878b16039a9e02555bfc544235dfcc7f1f27a54d325312416395ded1eb0fd47f"
 
 [[files]]
 path = "logic/reconciler-lease-reclaim-redeliver-liveness.md"
@@ -62,7 +62,7 @@ digest = "sha256:22e29a69065e5e574bd0d987cdf75165eba2db3930a8aac38ca3017cc721028
 
 [[files]]
 path = "logic/single-shard-raft-consensus-core-self-contained-rsm-auto-voter-l.md"
-digest = "sha256:3984abfc02f5929f42e0d3d255582eae9bb555a38b917614908024f4dd87896e"
+digest = "sha256:a0c64c71c4d6fcd535e231a8c861fca1fe362948f5665ddcc9684dc2a65fa131"
 
 [[files]]
 path = "logic/sparse-offset-index-scale-the-log-to-billions-of-entries.md"
@@ -70,4 +70,4 @@ digest = "sha256:b568c5d90a8a57a1fe2ba861a5344ae9656b05e5108b23b78e9f9c0a37d54de
 
 [[files]]
 path = "logic/work-queue-throughput-per-shard-lock-o-1-lease-cursor-batch-leas.md"
-digest = "sha256:9969745d432ab5426f7f70ab24fd1d0d2eae6963ff7074968e1fa04aa7edcec6"
+digest = "sha256:c14877cb770c187d72f4e904d762eb32cdbcb6242c8dc6fd252034e9098d44d1"
