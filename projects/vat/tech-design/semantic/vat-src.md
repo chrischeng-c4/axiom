@@ -91,6 +91,12 @@ semantic_domain:
           - name: "RetentionPolicy"
             kind: "enum"
             public: true
+          - name: "ClusterBackend"
+            kind: "enum"
+            public: true
+          - name: "validate_cluster_service"
+            kind: "function"
+            public: false
           - name: "SetupStep"
             kind: "struct"
             public: true
@@ -150,6 +156,9 @@ semantic_domain:
         ownership_state: "codegen"
         generator_primitives: ["config_surface"]
         symbols:
+          - name: "cluster"
+            kind: "module"
+            public: true
           - name: "commands"
             kind: "module"
             public: true
@@ -207,6 +216,12 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "vat_dir"
+            kind: "function"
+            public: true
+          - name: "clusters_dir"
+            kind: "function"
+            public: true
+          - name: "cluster_dir"
             kind: "function"
             public: true
           - name: "file"
@@ -364,6 +379,9 @@ semantic_domain:
           - name: "ConfigRef"
             kind: "struct"
             public: true
+          - name: "ClusterRunRecord"
+            kind: "struct"
+            public: true
           - name: "ServiceRunRecord"
             kind: "struct"
             public: true
@@ -460,9 +478,62 @@ semantic_domain:
           - name: "Cmd"
             kind: "enum"
             public: false
+          - name: "ClusterCmd"
+            kind: "enum"
+            public: false
           - name: "run"
             kind: "function"
             public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src"
+      - path: "projects/vat/src/cluster.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "ResolvedBackend"
+            kind: "enum"
+            public: true
+          - name: "ClusterSpec"
+            kind: "struct"
+            public: true
+          - name: "ClusterInfo"
+            kind: "struct"
+            public: true
+          - name: "BackendUnavailable"
+            kind: "struct"
+            public: true
+          - name: "backend_token"
+            kind: "function"
+            public: true
+          - name: "resolve_backend"
+            kind: "function"
+            public: true
+          - name: "pick_backend"
+            kind: "function"
+            public: false
+          - name: "cluster_name"
+            kind: "function"
+            public: true
+          - name: "kind_multinode_config"
+            kind: "function"
+            public: false
+          - name: "run_capture"
+            kind: "function"
+            public: false
+          - name: "docker_daemon_up"
+            kind: "function"
+            public: false
+          - name: "which"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"

@@ -27,20 +27,20 @@ cleans up according to the run policy.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Agent-Native GPU-Native Dev Containers | - | implemented | verified | smoke | ready | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, and host GPU access without a VM. |
+| Agent-Native GPU-Native Dev Containers | - | implemented | verified | smoke | ready | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), and host GPU access without a VM. |
 
 ## AW Verification Snapshot
 
 | Field | Value |
 |---|---|
-| Last verified | 2026-06-06 |
+| Last verified | 2026-06-20 |
 | Production readiness | ready |
 | Tech design root | `projects/vat/tech-design` |
 | TD lock | `projects/vat/tech-design/td.lock` |
 | External-contract inventory | `projects/vat/tests/aw-ec.toml` |
-| Source ownership | full codegen, 100.0% (32/32) |
+| Source ownership | full codegen, 100.0% (39/39) |
 | Semantic coverage | 100.0% |
-| Traceability coverage | 93.9% |
+| Traceability coverage | 94.7% |
 | External-contract gate | passed, 6/6 |
 | Test gate | `cargo test -p vat` passed |
 | Health gate | `aw health vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
@@ -52,7 +52,7 @@ cleans up according to the run policy.
 | ID | agent-native-gpu-native-dev-containers |
 | Root WI | - |
 | Status | verified |
-| Promise | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, and host GPU access without a VM. |
+| Promise | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), and host GPU access without a VM. |
 | Required Verification | smoke |
 | Gate Inventory | `cargo test -p vat`; `rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured projects/vat/README.md`; `rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal projects/vat/README.md projects/vat/src/gpu.rs`; `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md` |
 
@@ -61,6 +61,7 @@ cleans up according to the run policy.
 | Host-process execution and GPU visibility | epic | - | implemented | verified | smoke | `rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal projects/vat/README.md projects/vat/src/gpu.rs` |
 | Agent-legible state and diff surface | epic | - | implemented | verified | smoke | `rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured projects/vat/README.md` |
 | Local agent test runner protocol | epic | #4152 | implemented | verified | smoke | `cargo test -p vat vat_toml_runner -- --nocapture` |
+| Local Kubernetes cluster service and `vat cluster` | change | #141 | implemented | verified | smoke | `cargo test -p vat --test vat_cluster -- --nocapture` |
 | Copy-on-write fork and snapshot lifecycle | epic | - | implemented | verified | smoke | `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md` |
 | Resource isolation boundary | epic | - | implemented | verified | smoke | `rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox` |
 

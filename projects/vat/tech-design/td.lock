@@ -1,12 +1,16 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-15T08:37:01.417287+00:00"
-digest = "sha256:e31c53f7807fd0514b3b03d6717a88803e6e3afd0b116ab06e1d3f5666b1d277"
+generated_at = "2026-06-20T06:14:43.560499+00:00"
+digest = "sha256:c6313dcc4ffd907326e0a3707ea5a0602f997c1e9834972da630d3ec4a4f6a48"
 
 [[files]]
 path = "logic/external-contracts.md"
 digest = "sha256:9202db074fde90cb75a0140a122c8a60f66e05c59ab7a82ae9fb2a3a656f15bc"
+
+[[files]]
+path = "logic/kind-like-local-kubernetes-clusters.md"
+digest = "sha256:d901f9f5ee0e8827e030cada744dc7d46ff7f4aaba07d08e3456d065197af367"
 
 [[files]]
 path = "logic/llm-agent-usage-guide.md"
@@ -118,7 +122,7 @@ digest = "sha256:c6bc7648f48b193100feb3af2e359d31b4c63619b06062705949d6b658638cc
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_concurrent_runners-rs.md"
-digest = "sha256:b7e8096cec1114f1c403a66b872a9f8762e44d114bf8a62eb500e0769e8817a9"
+digest = "sha256:60f733551ba4cd20ce9ec49aef5f170c19ad7b55f26a14ba5aae8a49259b0e7e"
 
 [[files]]
 path = "semantic/source/projects-vat-tests-vat_toml_runner-rs.md"
@@ -130,7 +134,7 @@ digest = "sha256:63bd3560ae5b3837a11dad7d911604b7866f2e4e045b54bf3a77d162e94f6fd
 
 [[files]]
 path = "semantic/vat-commands.md"
-digest = "sha256:dbd88937cf530e063dfde05ed1ad01a17996ee000d8fcd677c3bc121e56090d7"
+digest = "sha256:9ecdead0c2b042cd52e4bedbe2f0c2889e770b2573061b3e260703d41fb62c8a"
 
 [[files]]
 path = "semantic/vat-install-script.md"
@@ -146,8 +150,8 @@ digest = "sha256:1cb7d290f685bce33af5a11210a84be1e9aea62dd50fe68ea0f4c802247f035
 
 [[files]]
 path = "semantic/vat-src.md"
-digest = "sha256:a5035827d68a1603b77b2f466182a62dfc1cac54466cc7579a3c21add8ff0939"
+digest = "sha256:6d1f4e73bc848882b8afc120d5c85a19688e0bcd3630e85d0ee3af930c9fedd8"
 
 [[files]]
 path = "semantic/vat-tests.md"
-digest = "sha256:c5ccf817c09c8af7aba56ce8b3c05e3aa5a139ce418d8a096bd12fa64d9e8a57"
+digest = "sha256:72cc922f496d6c6e9eff5e7875657fb66f51e9d865e6117656985589ec08f54b"

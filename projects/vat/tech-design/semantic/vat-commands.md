@@ -93,6 +93,12 @@ semantic_domain:
           - name: "run_configured"
             kind: "function"
             public: false
+          - name: "prepare_cluster_service"
+            kind: "function"
+            public: false
+          - name: "should_delete_clusters"
+            kind: "function"
+            public: false
           - name: "run_setup_step"
             kind: "function"
             public: false
@@ -158,6 +164,9 @@ semantic_domain:
         ownership_state: "codegen"
         generator_primitives: ["service_method"]
         symbols:
+          - name: "cluster"
+            kind: "module"
+            public: true
           - name: "diff"
             kind: "module"
             public: true
@@ -268,6 +277,41 @@ semantic_domain:
             kind: "function"
             public: false
           - name: "print_file"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/commands"
+      - path: "projects/vat/src/commands/cluster.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "ClusterRecord"
+            kind: "struct"
+            public: true
+          - name: "create"
+            kind: "function"
+            public: true
+          - name: "ls"
+            kind: "function"
+            public: true
+          - name: "kubeconfig"
+            kind: "function"
+            public: true
+          - name: "delete"
+            kind: "function"
+            public: true
+          - name: "default_cluster_name"
+            kind: "function"
+            public: false
+          - name: "read_registry"
+            kind: "function"
+            public: false
+          - name: "load_record"
             kind: "function"
             public: false
         source_evidence_node:
