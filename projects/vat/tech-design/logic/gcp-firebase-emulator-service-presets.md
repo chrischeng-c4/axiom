@@ -113,7 +113,6 @@ properties:
       FIREBASE_STORAGE_EMULATOR_HOST.
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
