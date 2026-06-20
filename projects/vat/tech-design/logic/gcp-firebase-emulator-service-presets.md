@@ -253,3 +253,77 @@ e2e_tests:
       - "a firebase preset with a firebase.json starts the suite and exports the configured *_EMULATOR_HOST vars."
       - "the test skips gracefully when firebase-tools and docker are both unavailable."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md
+    action: create
+    section: changes
+    impl_mode: hand-written
+    reason: "Define the GCP/Firebase emulator preset TD."
+  - path: projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md
+    action: validate
+    section: logic
+    impl_mode: hand-written
+    reason: "Record the native/docker/firebase emulator resolution and lifecycle."
+  - path: projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md
+    action: validate
+    section: schema
+    impl_mode: hand-written
+    reason: "Record the emulator service evidence and exported env shape."
+  - path: projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md
+    action: validate
+    section: config
+    impl_mode: hand-written
+    reason: "Record the preset enum additions and firebase.json requirement."
+  - path: projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Record preset parsing, firebase validation, native-availability, export, and unavailable coverage."
+  - path: projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md
+    action: validate
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Record firestore-native, pubsub-docker, firebase-bundle, and unavailable smoke coverage."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config"
+    summary: "Add firestore/pubsub/datastore/bigtable/spanner/firebase ServicePreset variants and the firebase.json validation."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#logic"
+      - "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config"
+    summary: "Extend the preset tables (binaries/command/readiness/exports/image/port/env) for the five GCP emulators, add the gcloud-component-aware preset_native_available used by resolve_preset_runtime, and add prepare_firebase_service for the firebase bundle."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config"
+    summary: "Document the emulator presets, their *_EMULATOR_HOST exports, and the firebase bundle in the agent usage guide."
+  - path: projects/vat/README.md
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#config"
+    summary: "Document the GCP/Firebase emulator presets and a firebase bundle example."
+  - path: projects/vat/tests
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#unit-test"
+      - "projects/vat/tech-design/logic/gcp-firebase-emulator-service-presets.md#e2e-test"
+    summary: "Add emulator config unit tests and gated integration smokes (firestore native, pubsub docker, firebase bundle, unavailable)."
+```
