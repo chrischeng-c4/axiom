@@ -5407,6 +5407,21 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     if class_name == "UnionType" {
                         return MbValue::from_ptr(MbObject::new_str(union_type_repr(val)));
                     }
+                    // zoneinfo.ZoneInfo(key='America/New_York')
+                    if class_name == "ZoneInfo" {
+                        if let Some(k) = fields.read().ok()
+                            .and_then(|f| f.get("key").copied())
+                        {
+                            let key_repr = mb_repr(k);
+                            if let Some(p) = key_repr.as_ptr() {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    return MbValue::from_ptr(MbObject::new_str(
+                                        format!("zoneinfo.ZoneInfo(key={s})"),
+                                    ));
+                                }
+                            }
+                        }
+                    }
                     // A bare object() instance reprs as `<object object at 0xADDR>`
                     // (CPython's object.__repr__). User subclasses that don't
                     // override __repr__ get the same shape with their class name,
@@ -8006,7 +8021,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                     );
                                     return MbValue::none();
                                 }
-                                if key != "UTC" {
+                                if !super::stdlib::long_tail3_mod::is_known_zone(&key) {
                                     super::exception::mb_raise(
                                         MbValue::from_ptr(MbObject::new_str(
                                             "ZoneInfoNotFoundError".to_string(),
