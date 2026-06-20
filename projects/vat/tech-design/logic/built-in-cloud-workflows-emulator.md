@@ -89,3 +89,39 @@ flowchart TD
     finish --> teardown[stop service kills emulator child]
     teardown --> done([return exit code])
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-cloud-workflows-evidence.schema.json"
+title: "Vat Cloud Workflows emulator evidence"
+type: object
+description: "Service-evidence shape and the Workflows execution result for vat's built-in Cloud Workflows emulator."
+properties:
+  preset:
+    type: string
+    enum: [cloud-workflows]
+  prepare_mode:
+    type: string
+    enum: [builtin_emulator]
+  exported_env:
+    type: array
+    items: { type: string }
+    description: "Host env var exported to the runner: CLOUD_WORKFLOWS_EMULATOR_HOST."
+  execution:
+    type: object
+    description: "A Workflows execution result returned by getExecution."
+    properties:
+      name: { type: string }
+      state: { type: string, enum: [ACTIVE, SUCCEEDED, FAILED] }
+      result: {}
+      error:
+        type: [object, "null"]
+        properties:
+          message: { type: string }
+        additionalProperties: true
+    additionalProperties: true
+additionalProperties: true
+```
