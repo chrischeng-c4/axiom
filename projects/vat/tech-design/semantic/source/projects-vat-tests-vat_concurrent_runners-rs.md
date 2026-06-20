@@ -6,8 +6,8 @@ capability_refs:
     role: primary
     gap: local-agent-test-runner-protocol
     claim: local-agent-test-runner-protocol
-    coverage: partial
-    rationale: "The concurrent runner test verifies that multiple configured vat runners execute in one workspace and fold into one agent-readable result."
+    coverage: full
+    rationale: "This source replay TD preserves the concurrent-runner contract of the local agent test runner protocol: a shared workspace and service union, side-by-side runner execution, and worst-wins exit folding."
 ---
 
 # Standardized projects/vat/tests/vat_concurrent_runners.rs

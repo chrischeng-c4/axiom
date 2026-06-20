@@ -122,6 +122,38 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_cluster.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "any_cluster_backend"
+            kind: "function"
+            public: false
+          - name: "delete_cluster"
+            kind: "function"
+            public: false
+          - name: "cluster_backend_unavailable_reports_jsonl_error"
+            kind: "function"
+            public: false
+          - name: "llm_guide_mentions_cluster"
+            kind: "function"
+            public: false
+          - name: "vat_cluster_create_exports_kubeconfig"
+            kind: "function"
+            public: false
+          - name: "vat_cluster_standalone_lifecycle"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
 ```
 
 ## Unit Test
@@ -140,6 +172,7 @@ evidence:
     - path: "projects/vat/tests/behavior_vat_resource_isolation_boundary.rs"
     - path: "projects/vat/tests/behavior_vat_toml_runner_local_service_smoke.rs"
     - path: "projects/vat/tests/behavior_vat_host_process_gpu_visibility.rs"
+    - path: "projects/vat/tests/vat_cluster.rs"
 ---
 requirementDiagram
 
