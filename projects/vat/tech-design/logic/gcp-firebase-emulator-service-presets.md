@@ -114,3 +114,39 @@ properties:
       FIREBASE_STORAGE_EMULATOR_HOST.
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-config-emulator.schema.json"
+title: "vat.toml (emulator preset additions)"
+type: object
+properties:
+  services:
+    type: array
+    items:
+      type: object
+      required: [id]
+      properties:
+        preset:
+          type: string
+          enum: [postgres, redis, nats, rabbitmq, mysql, mongo, firestore, pubsub, datastore, bigtable, spanner, firebase]
+          description: >
+            firestore/pubsub/datastore/bigtable/spanner are GCP emulators (native
+            gcloud + Java + the gcloud component, with a docker-image fallback);
+            firebase is a bundle that requires a firebase.json in the workspace and
+            runs the Firebase Emulator Suite.
+        runtime:
+          type: string
+          enum: [auto, native, docker]
+          default: auto
+          description: "auto prefers the native emulator and falls back to the docker image when the native binary or gcloud component is missing."
+        export:
+          type: object
+          additionalProperties: { type: string }
+          description: "Override the default *_EMULATOR_HOST export target name(s)."
+      additionalProperties: true
+additionalProperties: true
+```
