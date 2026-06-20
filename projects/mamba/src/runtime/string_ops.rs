@@ -3344,6 +3344,35 @@ pub fn value_to_string(val: MbValue) -> String {
                         }
                         return value_to_string(result);
                     }
+                    // PEP 654 ExceptionGroup str: "message (N sub-exceptions)".
+                    if super::exception::is_subclass_of(class_name, "BaseExceptionGroup")
+                        || super::exception::is_subclass_of(class_name, "ExceptionGroup")
+                        || class_name == "BaseExceptionGroup"
+                        || class_name == "ExceptionGroup"
+                    {
+                        let g = fields.read().unwrap();
+                        let msg_v = g.get("message").copied();
+                        let exc_v = g.get("exceptions").copied();
+                        drop(g);
+                        if let (Some(msg_v), Some(exc_v)) = (msg_v, exc_v) {
+                            let n = exc_v.as_ptr().map(|p| unsafe {
+                                match &(*p).data {
+                                    ObjData::Tuple(ref t) => t.len(),
+                                    ObjData::List(ref l) => l.read().unwrap().len(),
+                                    _ => 0,
+                                }
+                            });
+                            let m = msg_v.as_ptr().and_then(|p| unsafe {
+                                if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                            });
+                            if let (Some(n), Some(m)) = (n, m) {
+                                return format!(
+                                    "{m} ({n} sub-exception{})",
+                                    if n == 1 { "" } else { "s" }
+                                );
+                            }
+                        }
+                    }
                     // Exception str: 0 args → ""; 1 arg → str(arg0);
                     // ≥2 args → repr of the args tuple. KeyError keeps its
                     // quirk where __str__ is repr(args[0]). (#1652)

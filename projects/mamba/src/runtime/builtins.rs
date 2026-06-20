@@ -5630,6 +5630,37 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             parts.join(", ")
                         )));
                     }
+                    // PEP 654 ExceptionGroup repr: `ClassName('message', [child
+                    // reprs])` — recursive over the `.exceptions` tuple. Gated to
+                    // EG-shaped instances (subclass of BaseExceptionGroup with an
+                    // `exceptions` tuple field) so plain exceptions are unaffected.
+                    if super::exception::is_subclass_of(class_name, "BaseExceptionGroup")
+                        || super::exception::is_subclass_of(class_name, "ExceptionGroup")
+                        || class_name == "BaseExceptionGroup"
+                        || class_name == "ExceptionGroup"
+                    {
+                        let guard = fields.read().unwrap();
+                        let msg_v = guard.get("message").copied();
+                        let exc_v = guard.get("exceptions").copied();
+                        drop(guard);
+                        if let (Some(msg_v), Some(exc_v)) = (msg_v, exc_v) {
+                            let children: Option<Vec<MbValue>> = exc_v.as_ptr().and_then(|p| {
+                                if let ObjData::Tuple(ref t) = (*p).data { Some(t.clone()) } else { None }
+                            });
+                            if let Some(children) = children {
+                                let repr_s = |v: MbValue| -> String {
+                                    mb_repr(v).as_ptr().and_then(|p| {
+                                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                                    }).unwrap_or_else(|| "None".to_string())
+                                };
+                                let msg_r = repr_s(msg_v);
+                                let kids: Vec<String> = children.iter().map(|c| repr_s(*c)).collect();
+                                return MbValue::from_ptr(MbObject::new_str(
+                                    format!("{class_name}({msg_r}, [{}])", kids.join(", ")),
+                                ));
+                            }
+                        }
+                    }
                     if is_exception_class {
                         // CPython repr: ClassName(repr(arg0), repr(arg1), ...)
                         // over the full `args` tuple. Falls back to the

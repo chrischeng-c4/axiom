@@ -826,6 +826,16 @@ pub fn mb_import_error(msg: &str) -> MbValue {
 /// Create an ExceptionGroup: ExceptionGroup(message, [exc1, exc2, ...])
 /// The `exceptions` field is always stored as a tuple (matching CPython).
 pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue {
+    mb_exception_group_new_as(message, exceptions, "ExceptionGroup")
+}
+
+/// Like `mb_exception_group_new` but stamps a specific class name (so a
+/// `BaseExceptionGroup` / subclass keeps its identity in isinstance and repr).
+pub fn mb_exception_group_new_as(
+    message: MbValue,
+    exceptions: MbValue,
+    class_name: &str,
+) -> MbValue {
     let msg = message_display(message);
     // Convert exceptions list to tuple (CPython stores as tuple)
     let exc_tuple = if let Some(ptr) = exceptions.as_ptr() {
@@ -849,7 +859,7 @@ pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue 
     );
     fields.insert(
         "__type__".to_string(),
-        MbValue::from_ptr(MbObject::new_str("ExceptionGroup".to_string())),
+        MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
     );
     fields.insert("exceptions".to_string(), exc_tuple);
     let obj = Box::new(MbObject {
@@ -858,11 +868,44 @@ pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue 
             kind: ObjKind::Instance,
         },
         data: ObjData::Instance {
-            class_name: "ExceptionGroup".to_string(),
+            class_name: class_name.to_string(),
             fields: crate::runtime::rc::MbRwLock::new(fields),
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// PEP 654 constructor narrowing: `BaseExceptionGroup(msg, excs)` returns an
+/// `ExceptionGroup` when every member is an `Exception` (not a bare
+/// `BaseException` such as KeyboardInterrupt); otherwise it stays a
+/// `BaseExceptionGroup`. `ExceptionGroup` and user subclasses keep their name.
+fn narrow_eg_class_name(cn: &str, members: &[MbValue]) -> String {
+    if cn != "BaseExceptionGroup" {
+        return cn.to_string();
+    }
+    // `is_subclass_of(_, "Exception")` has an early-return that treats EVERY
+    // builtin exception name as an Exception, so it can't distinguish the
+    // BaseException-only classes. Exclude those (and BaseExceptionGroup, which
+    // derives from BaseException, not Exception) explicitly.
+    let bare_base = |cn: &str| {
+        matches!(
+            cn,
+            "BaseException" | "KeyboardInterrupt" | "SystemExit"
+                | "GeneratorExit" | "BaseExceptionGroup"
+        )
+    };
+    let all_exception = members.iter().all(|m| {
+        m.as_ptr()
+            .map(|p| unsafe {
+                if let ObjData::Instance { ref class_name, .. } = (*p).data {
+                    !bare_base(class_name) && is_subclass_of(class_name, "BaseException")
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
+    });
+    if all_exception { "ExceptionGroup".to_string() } else { "BaseExceptionGroup".to_string() }
 }
 
 /// True if `v` is an exception *instance* (an Instance whose class is in the
@@ -954,7 +997,8 @@ pub fn mb_exception_group_construct(args_list: MbValue, class_name: MbValue) -> 
             return MbValue::none();
         }
     }
-    mb_exception_group_new(message, exceptions)
+    let actual = narrow_eg_class_name(&cn, &seq);
+    mb_exception_group_new_as(message, exceptions, &actual)
 }
 
 /// `raise (Base)ExceptionGroup(...)` path: validate + build via
