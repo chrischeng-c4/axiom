@@ -240,7 +240,6 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; `vat emulator ...` then exits non-zero with a clear 'built without emulator feature' message, never a panic."
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
