@@ -106,6 +106,24 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ClusterCmd,
     },
+    /// Internal: run a built-in emulator. vat spawns itself for an emulator
+    /// preset service; not intended for direct human use.
+    #[command(hide = true)]
+    Emulator {
+        #[arg(value_enum)]
+        kind: EmulatorKind,
+        /// host:port to bind, e.g. 127.0.0.1:8085.
+        #[arg(long)]
+        host_port: String,
+    },
+}
+
+/// Which built-in emulator to run.
+/// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#cli
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum EmulatorKind {
+    Pubsub,
+    FirebaseAuth,
 }
 
 /// Standalone `vat cluster` verbs. Clusters created here outlive a single run;
@@ -208,6 +226,7 @@ pub fn run() -> Result<ExitCode> {
             ClusterCmd::Kubeconfig { name, json } => commands::cluster::kubeconfig(name, json),
             ClusterCmd::Delete { name, json } => commands::cluster::delete(name, json),
         },
+        Cmd::Emulator { kind, host_port } => commands::emulator::exec(kind, host_port),
     }
 }
 // CODEGEN-END
