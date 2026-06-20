@@ -127,6 +127,7 @@ pub enum EmulatorKind {
     CloudTasks,
     CloudScheduler,
     CloudWorkflows,
+    CloudStorage,
 }
 
 /// Standalone `vat cluster` verbs. Clusters created here outlive a single run;

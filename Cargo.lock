@@ -12505,6 +12505,8 @@ dependencies = [
  "dirs",
  "jsonwebtoken",
  "libc",
+ "md-5 0.10.6",
+ "percent-encoding",
  "prost 0.13.5",
  "prost-types",
  "protoc-bin-vendored",
