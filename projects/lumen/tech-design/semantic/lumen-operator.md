@@ -2,13 +2,13 @@
 id: semantic-lumen-operator
 summary: Semantic coverage for "projects/lumen/src/operator"
 capability_refs:
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     gap: "kustomize-base-overlays-hpa"
     claim: "kustomize-base-overlays-hpa"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/src/operator`."
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     gap: "lumen-crd-reconcile-loop-kube-rs-operator"
     claim: "lumen-crd-reconcile-loop-kube-rs-operator"

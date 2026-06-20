@@ -1,8 +1,8 @@
-# SPEC-MANAGED: projects/lumen/external-contracts/security-auth/security/auth-bearer-rbac.md#lumen-guard-auth-surface
+# SPEC-MANAGED: projects/lumen/external-contracts/security-hardening/security/auth-bearer-rbac.md#lumen-guard-auth-surface
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
 project = "lumen"
-source_contract = "lumen-security-auth-bearer-rbac"
+source_contract = "lumen-security-hardening-auth-bearer-rbac"
 target = "projects/lumen"
 version = 1
 # AW-EC-TOOL-END

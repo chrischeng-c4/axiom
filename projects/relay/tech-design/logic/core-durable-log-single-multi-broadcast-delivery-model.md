@@ -14,6 +14,12 @@ capability_refs:
     claim: broadcast-replay-model
     coverage: full
     rationale: "Defines broadcast fan-out, independent subscriber cursors, and replay from a requested sequence over the durable log."
+  - id: security-hardening
+    role: primary
+    gap: opaque-payload-boundary
+    claim: opaque-payload-boundary
+    coverage: partial
+    rationale: "Defines Relay's opaque payload model so the broker does not interpret application domain data."
 fill_sections: [logic, schema, config, unit-test, changes]
 ---
 

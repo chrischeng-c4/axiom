@@ -8,6 +8,12 @@ capability_refs:
     claim: real-h2c-raft-cluster-smoke
     coverage: full
     rationale: "Defines the real h2c raft driver, producer redirect-to-leader behavior, leader failover, and cluster convergence smoke covered by raft_cluster."
+  - id: long-running-stability
+    role: primary
+    gap: failover-without-committed-loss
+    claim: failover-without-committed-loss
+    coverage: full
+    rationale: "Defines leader failover behavior that preserves committed broker entries."
 fill_sections: [logic, unit-test, changes]
 ---
 

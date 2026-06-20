@@ -1,13 +1,13 @@
 ---
 id: projects-lumen-src-api-rs
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
     gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "This source unit is captured as a per-file rust-source-unit during lumen td_ast standardization."
-  - id: "ops-operability"
+  - id: "long-running-stability"
     role: primary
     gap: "meta-api-health-ready-metrics-version"
     claim: "meta-api-health-ready-metrics-version"

@@ -2,7 +2,7 @@
 id: lumen-relay-wal
 summary: lumen tails relay's broadcast as its WAL backend (#124) — a derived index, not a source of truth, so it needs no consensus; it folds an ordered broker log into its index. Add a RelayWal WalLog backend (publish via relay, subscribe via relay's broadcast, reusing relay::wire), wired as `--wal relay`, behind a `relay-wal` feature so the default serving binary stays HTTP-client-free. Plaintext h2c (no TLS) preserves the clean cross-compile.
 capability_refs:
-  - id: "resilience"
+  - id: "long-running-stability"
     role: primary
     gap: "log-fan-out-rebuild-from-log"
     claim: "log-fan-out-rebuild-from-log"

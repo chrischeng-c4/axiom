@@ -2,7 +2,7 @@
 id: semantic-lumen-k8s-overlays-dev
 summary: Semantic coverage for "projects/lumen/k8s/overlays/dev"
 capability_refs:
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     claim: "kustomize-base-overlays-hpa"
     coverage: partial

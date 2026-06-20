@@ -2,7 +2,7 @@
 id: semantic-lumen-bin
 summary: Semantic coverage for "projects/lumen/src/bin"
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial

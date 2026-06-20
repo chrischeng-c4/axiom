@@ -13,111 +13,122 @@ engine and tiered RAM+disk persistence are unchanged; the transport is now
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| KV API | - | implemented | passing | conformance | ready | HTTP/2/OpenAPI scalar, batch, scan, lock, probe, metrics, and claim-check blob API |
-| Durability | - | implemented | passing | conformance | ready | WAL-backed durable-before-ack recovery |
-| Collections | - | implemented | passing | conformance | ready | hash, set, sorted-set, and list APIs |
-| HA / Raft | 121 | implemented | planned | dogfood | not_ready | single-node raftcore path exists; multi-node HTTP/2 network proof remains staged |
-| Relay Worker Data Plane | 108 | planned | planned | dogfood | not_ready | worker-facing claim-check contract with relay still needs a closed OpenAPI integration spec |
+| CLI Interface | - | implemented | passing | conformance | not_ready | keep binary exposes HTTP/2/OpenAPI, probes, metrics, env/flag config, and graceful drain |
+| Competitive Broker Feature Parity | 108 | implemented | planned | dogfood | not_ready | Redis/Dragonfly-like KV, collections, locks, TTL, and claim-check API exist; relay worker contract remains open |
+| Competitive Broker Performance | 126 | implemented | planned | dogfood | not_ready | engine perf gate and competitor comparison exist, but external Redis/Dragonfly comparison is not release-closed |
+| Long-Running Stability | 121 | implemented | planned | dogfood | not_ready | WAL/snapshot recovery and graceful drain pass locally; multi-node raft network remains staged |
+| Security Hardening | - | planned | planned | negative | not_ready | body limits exist, but auth/TLS/negative security gates are not yet defined |
 
-### KV API
+### CLI Interface
 
-ID: kv-api
-Type: Runtime
-Surfaces: HTTP: `/v1/kv/*`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json` - public service API.; Rust API: `keep::client::KvClient` - in-tree HTTP client.
-EC Dimensions: behavior: `cargo test -p keep --test http_api` - public HTTP API conformance
+ID: cli-interface
+Type: RuntimeTool
+Surfaces: CLI: `keep` - long-running HTTP/2 key-value service process.; HTTP: `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - binary-served operational surface.
+EC Dimensions: behavior: `cargo test -p keep --test http_api` - binary-facing OpenAPI/probe/metrics and API conformance
 Root WI: -
-Status: passing
+Status: auditing
 Required Verification: conformance
 Promise:
-Expose a cloud-native key-value and claim-check store over HTTP/2 + OpenAPI,
-including scalar get/set/delete, batches, scans, locks, probes, metrics, and
-opaque blob roundtrips.
+Expose Keep as a runnable long-lived binary with stable config, HTTP/2/OpenAPI,
+health/readiness probes, metrics, and graceful drain behavior.
 Gate Inventory:
-- projects/keep/tests/http_api.rs
+- projects/keep/tests/http_api.rs; projects/keep/src/bin/keep.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Keep process interface | epic | - | implemented | passing | conformance | projects/keep/src/bin/keep.rs; projects/keep/tests/http_api.rs |
+| OpenAPI/probe/metrics surface | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
+| Graceful drain readiness flip | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
+
+### Competitive Broker Feature Parity
+
+ID: competitor-feature-parity
+Type: RuntimeTool
+Surfaces: HTTP: `/v1/kv/*`, `/v1/hashes`, `/v1/sets`, `/v1/zsets`, `/v1/lists`, `/v1/locks` - Redis/Dragonfly-style data plane over HTTP/2.; Rust API: `keep::client::KvClient` - in-tree HTTP client.
+EC Dimensions: behavior: `cargo test -p keep --test http_api --test collections_api` - public KV, collection, lock, TTL, and claim-check conformance
+Root WI: 108
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Cover the core functions Keep needs to replace Redis/Dragonfly in Axiom
+workloads: scalar KV, claim-check blobs, TTL/locks, scans, and collection
+operations over a cloud-native HTTP/2/OpenAPI surface.
+Gate Inventory:
+- projects/keep/tests/http_api.rs; projects/keep/tests/collections_api.rs; projects/keep/README.md
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | HTTP key-value surface | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
 | Claim-check blob roundtrip | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
-| OpenAPI/probe/metrics surface | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
-
-### Durability
-
-ID: durability
-Type: Runtime
-Surfaces: Engine: `KvEngine` + persistence - WAL and snapshot-backed state.; HTTP: mutation APIs - durable-before-ack public writes.
-EC Dimensions: stability: `cargo test -p keep --test durability` - cold recovery conformance
-Root WI: -
-Status: passing
-Required Verification: conformance
-Promise:
-Persist mutations before acknowledgement and recover committed state after a
-cold restart.
-Gate Inventory:
-- projects/keep/tests/durability.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
-| WAL-backed cold recovery | epic | - | implemented | passing | conformance | projects/keep/tests/durability.rs |
-
-### Collections
-
-ID: collections
-Type: Runtime
-Surfaces: HTTP: `/v1/hashes`, `/v1/sets`, `/v1/zsets`, `/v1/lists` - collection APIs.
-EC Dimensions: behavior: `cargo test -p keep --test collections_api` - collection operation conformance
-Root WI: -
-Status: passing
-Required Verification: conformance
-Promise:
-Provide Redis-like hash, set, sorted-set, and list operations on the same
-durable engine and HTTP surface.
-Gate Inventory:
-- projects/keep/tests/collections_api.rs
-
-| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
-|---|---|---:|---|---|---|---|
 | Hash / set / sorted-set operations | epic | - | implemented | passing | conformance | projects/keep/tests/collections_api.rs |
 | List push/pop/blocking-pop operations | epic | - | implemented | passing | conformance | projects/keep/tests/collections_api.rs |
+| Relay+keep worker-facing contract | epic | 108 | planned | planned | dogfood | pending integration spec |
 
-### HA / Raft
+### Competitive Broker Performance
 
-ID: ha-raft
-Type: Runtime
-Surfaces: Rust API: `keep::raft` - raftcore-backed state machine.; K8s: StatefulSet - PVC-backed instances.
-EC Dimensions: stability: `cargo test -p keep --test raft_node` - raft state-machine conformance
+ID: competitor-performance
+Type: RuntimeTool
+Surfaces: Example: `bench_compare` - Redis/Dragonfly comparison harness.; Meter: `PERF-GATE.md` - engine throughput and resource gate.
+EC Dimensions: efficiency: `meter` - engine throughput and resource ratchet; behavior: `cargo test -p keep` - API behavior under the performance-relevant surfaces
+Root WI: 126
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Keep performance claims tied to repeatable engine/resource gates and an
+external Redis/Dragonfly comparison, not anecdotal local timings.
+Gate Inventory:
+- projects/keep/PERF-GATE.md; projects/keep/examples/bench_compare.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Engine throughput ratchet | epic | 126 | implemented | planned | conformance | projects/keep/PERF-GATE.md |
+| Redis/Dragonfly comparison | epic | 126 | implemented | planned | dogfood | projects/keep/examples/bench_compare.rs |
+
+### Long-Running Stability
+
+ID: long-running-stability
+Type: RuntimeTool
+Surfaces: CLI: `keep` - long-running WAL/snapshot-backed service process.; K8s: `projects/keep/k8s` - StatefulSet/PDB deployment shape.; Rust API: `keep::raft` - raftcore-backed HA path.
+EC Dimensions: stability: `cargo test -p keep --test durability --test http_api --test raft_node` - recovery, drain, probe, and raft state-machine conformance
 Root WI: 121
 Status: auditing
 Required Verification: conformance, dogfood
 Promise:
-Move keep from independent StatefulSet shards toward raft-backed HA without
-changing the public KV API.
+Run as a long-lived data-plane service without losing durable writes across
+restart, without receiving traffic during drain, and with a path to raft-backed
+HA that preserves the public KV API.
 Gate Inventory:
-- projects/keep/tests/raft_node.rs; projects/keep/HA.md
+- projects/keep/tests/durability.rs; projects/keep/tests/http_api.rs; projects/keep/tests/raft_node.rs; projects/keep/HA.md; projects/keep/k8s
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
+| WAL-backed cold recovery | epic | - | implemented | passing | conformance | projects/keep/tests/durability.rs |
+| Snapshot and final flush lifecycle | epic | - | implemented | passing | conformance | projects/keep/src/persistence; projects/keep/tests/durability.rs |
+| Graceful shutdown and readiness drain | epic | - | implemented | passing | conformance | projects/keep/src/bin/keep.rs; projects/keep/tests/http_api.rs |
 | Single-node raftcore state machine | epic | 121 | implemented | passing | conformance | projects/keep/tests/raft_node.rs |
 | Multi-node HTTP/2 raft network | epic | 121 | planned | planned | dogfood | projects/keep/HA.md |
 
-### Relay Worker Data Plane
+### Security Hardening
 
-ID: relay-worker-data-plane
-Type: Runtime
-Surfaces: HTTP: keep OpenAPI + relay OpenAPI - worker payload and lease integration contract.
-EC Dimensions: behavior: future relay+keep integration gate - worker-facing contract closure
-Root WI: 108
+ID: security-hardening
+Type: RuntimeTool
+Surfaces: HTTP: keep public API - request body and data-plane boundary.; K8s: `projects/keep/k8s` - deployment boundary for future network policy and identity.
+EC Dimensions: security: `guard` - negative API and deployment security gate to be authored; behavior: `cargo test -p keep --test http_api` - body-limit and public-route smoke
+Root WI: -
 Status: auditing
-Required Verification: dogfood
+Required Verification: negative
 Promise:
-Serve as the claim-check/value data plane paired with relay's ordered queue and
-worker contract.
+Keep the long-running KV service safe by enforcing request boundaries and
+adding explicit negative gates for authn/z, TLS, network policy, and malformed
+or oversized request handling before production readiness.
 Gate Inventory:
-- projects/keep/README.md; projects/relay/tests/worker_loop.rs
+- projects/keep/src/http/routes.rs; projects/keep/tests/http_api.rs; pending guard/negative security inventory
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Relay+keep worker-facing contract | epic | 108 | planned | planned | dogfood | pending integration spec |
+| Body limit and public route boundary | epic | - | implemented | passing | smoke | projects/keep/src/http/routes.rs; projects/keep/tests/http_api.rs |
+| Auth/TLS/network-policy boundary | epic | - | planned | planned | negative | pending guard/negative security inventory |
+| Malformed and oversized request negative tests | epic | - | planned | planned | negative | pending guard/negative security inventory |
 
 ## Architecture
 

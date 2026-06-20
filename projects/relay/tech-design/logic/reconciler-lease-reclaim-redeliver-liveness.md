@@ -1,6 +1,13 @@
 ---
 id: relay-reconciler
 summary: relay-side work-queue liveness — a background per-shard sweep that reclaims expired leases so a dead worker's in-flight range is redelivered (epoch-bumped to fence the old worker), never a full log scan. Standalone.
+capability_refs:
+  - id: long-running-stability
+    role: primary
+    gap: lease-reclaim-liveness
+    claim: lease-reclaim-liveness
+    coverage: full
+    rationale: "Defines expired-lease reclaim and redelivery liveness for long-running worker queues."
 fill_sections: [logic, config, unit-test, changes]
 ---
 
