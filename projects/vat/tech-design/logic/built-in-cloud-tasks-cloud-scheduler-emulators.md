@@ -155,3 +155,63 @@ commands:
       - "cloud-scheduler serves the Cloud Scheduler v1 REST API, fires a job's httpTarget on its cron schedule via a background ticker, and on jobs/{j}:run."
       - "Both mint OIDC JWTs into the Authorization header when the task/job requests one. Built without the emulator feature, the verb errors cleanly (no panic)."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-built-in-cloud-tasks-cloud-scheduler-emulators-unit-tests
+---
+requirementDiagram
+    requirement presets_parse_builtin {
+      id: UT1
+      text: "ServicePreset round-trips cloud-tasks/cloud-scheduler, and both classify as built-in and built-in-only."
+      risk: medium
+      verifymethod: test
+    }
+    requirement builtin_only_rejects_runtime {
+      id: UT2
+      text: "validate rejects an explicit runtime on a cloud-tasks/cloud-scheduler service, and resolve_preset_runtime returns Builtin under auto."
+      risk: high
+      verifymethod: test
+    }
+    requirement exports_host_var {
+      id: UT3
+      text: "prepare_builtin_service exports CLOUD_TASKS_EMULATOR_HOST / CLOUD_SCHEDULER_EMULATOR_HOST and builds the self-exec emulator command."
+      risk: medium
+      verifymethod: test
+    }
+    requirement tasks_dispatch {
+      id: UT4
+      text: "The Cloud Tasks emulator dispatches a created task's httpRequest to its target (immediate scheduleTime and via :run)."
+      risk: high
+      verifymethod: test
+    }
+    requirement scheduler_dispatch {
+      id: UT5
+      text: "The Cloud Scheduler emulator fires a job's httpTarget when :run is called."
+      risk: high
+      verifymethod: test
+    }
+    test config_cloud_presets_tests {
+      type: functional
+      verifies: presets_parse_builtin
+    }
+    test cloud_builtin_runtime_tests {
+      type: functional
+      verifies: builtin_only_rejects_runtime
+    }
+    test prepare_cloud_builtin_tests {
+      type: functional
+      verifies: exports_host_var
+    }
+    test cloud_tasks_dispatch_tests {
+      type: functional
+      verifies: tasks_dispatch
+    }
+    test cloud_scheduler_dispatch_tests {
+      type: functional
+      verifies: scheduler_dispatch
+    }
+```
