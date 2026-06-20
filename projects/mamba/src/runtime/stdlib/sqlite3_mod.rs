@@ -614,6 +614,22 @@ fn extract_str(val: MbValue) -> Option<String> {
 /// instance fields, mirroring the previous dict-backed shim.
 pub fn mb_sqlite3_connect(db_path: MbValue) -> MbValue {
     let path = extract_str(db_path).unwrap_or_else(|| ":memory:".to_string());
+    // A path naming an existing directory cannot be opened as a database file:
+    // CPython's sqlite3.connect raises OperationalError "unable to open database
+    // file". (":memory:" and "" are special sentinels that never touch the FS.)
+    if path != ":memory:" && !path.is_empty() {
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.is_dir() {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("OperationalError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "unable to open database file".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+        }
+    }
     let mut fields: FxHashMap<String, MbValue> = FxHashMap::default();
     fields.insert(
         "database".to_string(),
