@@ -310,7 +310,6 @@ requirementDiagram
       verifies: backend_unavailable_no_panic
     }
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
