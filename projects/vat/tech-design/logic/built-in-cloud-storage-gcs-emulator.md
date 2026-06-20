@@ -160,3 +160,63 @@ commands:
       - "Object names with slashes are percent-decoded; size and md5Hash are reported so SDK integrity checks pass. The runner reaches it through STORAGE_EMULATOR_HOST."
       - "Built without the emulator feature, the verb errors cleanly (no panic); an unknown object returns a structured 404."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-built-in-cloud-storage-gcs-emulator-unit-tests
+---
+requirementDiagram
+    requirement preset_parses_builtin {
+      id: UT1
+      text: "ServicePreset round-trips cloud-storage, and it classifies as built-in and built-in-only (validate rejects an explicit runtime)."
+      risk: medium
+      verifymethod: test
+    }
+    requirement exports_storage_host {
+      id: UT2
+      text: "prepare_builtin_service exports STORAGE_EMULATOR_HOST and builds the self-exec emulator command."
+      risk: medium
+      verifymethod: test
+    }
+    requirement media_upload_download {
+      id: UT3
+      text: "A media upload then download (alt=media) returns the same bytes; metadata reports the right size and md5Hash."
+      risk: high
+      verifymethod: test
+    }
+    requirement multipart_and_list_delete {
+      id: UT4
+      text: "A multipart upload round-trips; list with a prefix returns the object; delete removes it (404 afterward)."
+      risk: high
+      verifymethod: test
+    }
+    requirement slashed_names {
+      id: UT5
+      text: "Object names containing '/' (percent-encoded in the path) upload and download correctly."
+      risk: medium
+      verifymethod: test
+    }
+    test config_cloud_storage_tests {
+      type: functional
+      verifies: preset_parses_builtin
+    }
+    test prepare_storage_builtin_tests {
+      type: functional
+      verifies: exports_storage_host
+    }
+    test storage_media_roundtrip_tests {
+      type: functional
+      verifies: media_upload_download
+    }
+    test storage_multipart_list_delete_tests {
+      type: functional
+      verifies: multipart_and_list_delete
+    }
+    test storage_slashed_name_tests {
+      type: functional
+      verifies: slashed_names
+    }
+```
