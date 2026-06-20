@@ -252,3 +252,116 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; the cloud-storage emulator verb then errors cleanly, never a panic."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md
+    action: create
+    section: changes
+    impl_mode: hand-written
+    reason: "Define the Cloud Storage emulator TD."
+  - path: projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md
+    action: validate
+    section: logic
+    impl_mode: hand-written
+    reason: "Record the JSON API + upload/download + in-memory store lifecycle."
+  - path: projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md
+    action: validate
+    section: schema
+    impl_mode: hand-written
+    reason: "Record the object evidence and exported env."
+  - path: projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md
+    action: validate
+    section: config
+    impl_mode: hand-written
+    reason: "Record the cloud-storage builtin-only preset."
+  - path: projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md
+    action: validate
+    section: cli
+    impl_mode: hand-written
+    reason: "Record the vat emulator cloud-storage kind."
+  - path: projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Record preset, export, media/multipart, list/delete, and slashed-name coverage."
+  - path: projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md
+    action: validate
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Record storage-roundtrip, preset-run, and lean-build coverage."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#config"
+    summary: "Add percent-encoding to the emulator feature (object-name decode) and the integration test entry."
+  - path: projects/vat/src/emulator/storage.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#logic"
+    summary: "GCS JSON API v1 emulator: axum bucket/object routes (upload media/multipart/resumable, download alt=media, metadata, list, delete) over an in-memory store with md5/size."
+  - path: projects/vat/src/emulator/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#logic"
+    summary: "Register the storage module and the CloudStorage serve arm."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#cli"
+    summary: "Add the CloudStorage EmulatorKind arm."
+  - path: projects/vat/src/commands/emulator.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#cli"
+    summary: "Map the CloudStorage EmulatorKind to the emulator serve dispatch."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#config"
+    summary: "Add the CloudStorage ServicePreset and include it in is_emulator/is_builtin/is_builtin_only."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#logic"
+    summary: "Extend builtin_emulator_info and service_preset_name and fill the new exhaustive preset arm."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#config"
+    summary: "Document the built-in Cloud Storage emulator."
+  - path: projects/vat/README.md
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#config"
+    summary: "Document the built-in Cloud Storage emulator preset."
+  - path: projects/vat/tests
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#unit-test"
+      - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#e2e-test"
+    summary: "Add tests/vat_emulator_storage.rs integration test."
+```
