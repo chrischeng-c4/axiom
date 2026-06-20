@@ -381,6 +381,40 @@ pub fn register() {
         );
     }
 
+    // Register quote function's default parameters
+    let quote_func = MbValue::from_func(dispatch_quote as *const () as usize);
+    let quote_params = MbValue::from_ptr(MbObject::new_list(vec![
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("string".to_string())),
+            MbValue::from_int(1), // POSITIONAL_OR_KEYWORD
+            MbValue::from_int(0), // has_default
+            MbValue::none(),      // default
+            MbValue::none(),      // annotation
+        ])),
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("safe".to_string())),
+            MbValue::from_int(1), // POSITIONAL_OR_KEYWORD
+            MbValue::from_int(1), // has_default
+            MbValue::from_ptr(MbObject::new_str("/".to_string())),
+            MbValue::none(),      // annotation
+        ])),
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("encoding".to_string())),
+            MbValue::from_int(1), // POSITIONAL_OR_KEYWORD
+            MbValue::from_int(1), // has_default
+            MbValue::none(),      // default
+            MbValue::none(),      // annotation
+        ])),
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("errors".to_string())),
+            MbValue::from_int(1), // POSITIONAL_OR_KEYWORD
+            MbValue::from_int(1), // has_default
+            MbValue::none(),      // default
+            MbValue::none(),      // annotation
+        ])),
+    ]));
+    super::super::closure::mb_func_set_params(quote_func, quote_params);
+
     // urllib.parse module-level constants (per typeshed Final[list[str]]
     // and Final[str]). These mirror CPython's lists used internally by
     // urlparse / urljoin and are also exposed as part of the public
