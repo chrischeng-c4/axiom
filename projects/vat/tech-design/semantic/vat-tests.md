@@ -154,6 +154,41 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulators.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "on_path"
+            kind: "function"
+            public: false
+          - name: "gcloud_component_installed"
+            kind: "function"
+            public: false
+          - name: "firestore_native_available"
+            kind: "function"
+            public: false
+          - name: "gcloud_emulator_unavailable_reports_jsonl_error"
+            kind: "function"
+            public: false
+          - name: "firebase_without_firebase_json_is_rejected"
+            kind: "function"
+            public: false
+          - name: "firestore_emulator_exports_host"
+            kind: "function"
+            public: false
+          - name: "firebase_bundle_exports_hosts"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
 ```
 
 ## Unit Test
@@ -173,6 +208,7 @@ evidence:
     - path: "projects/vat/tests/behavior_vat_toml_runner_local_service_smoke.rs"
     - path: "projects/vat/tests/behavior_vat_host_process_gpu_visibility.rs"
     - path: "projects/vat/tests/vat_cluster.rs"
+    - path: "projects/vat/tests/vat_emulators.rs"
 ---
 requirementDiagram
 

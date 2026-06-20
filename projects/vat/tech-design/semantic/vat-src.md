@@ -128,6 +128,9 @@ semantic_domain:
           - name: "validate_cluster_service"
             kind: "function"
             public: false
+          - name: "validate_firebase_service"
+            kind: "function"
+            public: false
           - name: "SetupStep"
             kind: "struct"
             public: true
