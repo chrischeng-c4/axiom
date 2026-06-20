@@ -152,7 +152,6 @@ commands:
       - "cloud-scheduler serves the Cloud Scheduler v1 REST API, fires a job's httpTarget on its cron schedule via a background ticker, and on jobs/{j}:run."
       - "Both mint OIDC JWTs into the Authorization header when the task/job requests one. Built without the emulator feature, the verb errors cleanly (no panic)."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
