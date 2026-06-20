@@ -55,6 +55,20 @@ pub fn vat_dir(id: &str) -> Result<PathBuf> {
     Ok(vats_dir()?.join(id))
 }
 
+/// Directory holding standalone `vat cluster` registry entries
+/// (`<root>/clusters`). Standalone clusters are not vats, so they live in a
+/// sibling tree, one directory per cluster.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
+pub fn clusters_dir() -> Result<PathBuf> {
+    Ok(root()?.join("clusters"))
+}
+
+/// Directory for a single standalone cluster (`<root>/clusters/<name>`).
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
+pub fn cluster_dir(name: &str) -> Result<PathBuf> {
+    Ok(clusters_dir()?.join(name))
+}
+
 /// Filenames within a vat directory. Centralized so the layout has one source
 /// of truth.
 pub mod file {

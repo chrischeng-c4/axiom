@@ -31,6 +31,7 @@
 //! running environment. Isolation is a pluggable [`sandbox::Sandbox`] backend;
 //! v1 ships a host-process backend with an opt-in macOS seatbelt profile.
 
+pub mod cluster;
 pub mod commands;
 pub mod config;
 pub mod event;

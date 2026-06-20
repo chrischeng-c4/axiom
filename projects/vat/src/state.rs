@@ -82,6 +82,23 @@ pub struct ConfigRef {
     pub digest: String,
 }
 
+/// Captured state of a local Kubernetes cluster backing a `cluster` service.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterRunRecord {
+    /// Backend that provisioned the cluster: "kind", "k3d", or "minikube".
+    pub backend: String,
+    /// Cluster name as known to the backend.
+    pub name: String,
+    /// Path to the isolated kubeconfig exported to the runner.
+    pub kubeconfig: String,
+    /// Number of nodes requested for the cluster.
+    pub node_count: u32,
+    /// Time from create to first readiness, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_ms: Option<u64>,
+}
+
 /// Captured service state for one run-scoped dependency process.
 /// @spec projects/vat/tech-design/logic/local-agent-test-runner-protocol.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +126,9 @@ pub struct ServiceRunRecord {
     pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready_http: Option<String>,
+    /// Present when this service is a local Kubernetes cluster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<ClusterRunRecord>,
     pub stdout_log: String,
     pub stderr_log: String,
 }

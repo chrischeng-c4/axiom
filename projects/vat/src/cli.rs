@@ -15,6 +15,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands;
+use crate::config::ClusterBackend;
 use crate::spec::{GpuRequest, Isolation};
 
 #[derive(Parser)]
@@ -100,6 +101,53 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Manage standalone local Kubernetes clusters (independent of runs).
+    Cluster {
+        #[command(subcommand)]
+        cmd: ClusterCmd,
+    },
+}
+
+/// Standalone `vat cluster` verbs. Clusters created here outlive a single run;
+/// vat creates/lists/deletes them on explicit command but does not supervise
+/// them.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
+#[derive(Subcommand)]
+enum ClusterCmd {
+    /// Create a local Kubernetes cluster.
+    Create {
+        /// Cluster name (auto-generated when omitted).
+        #[arg(long)]
+        name: Option<String>,
+        /// Backend to use; `auto` prefers kind → k3d → minikube.
+        #[arg(long, value_enum, default_value = "auto")]
+        backend: ClusterBackend,
+        /// Kubernetes version for the node image (e.g. 1.30).
+        #[arg(long)]
+        k8s_version: Option<String>,
+        /// Node count.
+        #[arg(long, default_value_t = 1)]
+        nodes: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List vat-managed clusters.
+    Ls {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the kubeconfig path (or record) for a cluster.
+    Kubeconfig {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a cluster by name.
+    Delete {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Parse argv and dispatch. Returns the process exit code (notably, `run`
@@ -148,6 +196,18 @@ pub fn run() -> Result<ExitCode> {
         Cmd::Logs { id, source } => commands::logs::exec(id, source),
         Cmd::Llm => commands::llm::exec(),
         Cmd::Gpu { json } => commands::gpu::exec(json),
+        Cmd::Cluster { cmd } => match cmd {
+            ClusterCmd::Create {
+                name,
+                backend,
+                k8s_version,
+                nodes,
+                json,
+            } => commands::cluster::create(name, backend, k8s_version, nodes, json),
+            ClusterCmd::Ls { json } => commands::cluster::ls(json),
+            ClusterCmd::Kubeconfig { name, json } => commands::cluster::kubeconfig(name, json),
+            ClusterCmd::Delete { name, json } => commands::cluster::delete(name, json),
+        },
     }
 }
 // CODEGEN-END
