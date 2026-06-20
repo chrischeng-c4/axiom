@@ -879,33 +879,36 @@ pub fn mb_exception_group_new_as(
 /// `ExceptionGroup` when every member is an `Exception` (not a bare
 /// `BaseException` such as KeyboardInterrupt); otherwise it stays a
 /// `BaseExceptionGroup`. `ExceptionGroup` and user subclasses keep their name.
+/// True if `m` is a bare `BaseException` member (NOT an `Exception` subclass),
+/// which cannot be nested in an `ExceptionGroup`. `is_subclass_of(_, "Exception")`
+/// over-reports (early-return on any builtin exc name), so test the known
+/// BaseException-only roots; `BaseExceptionGroup` itself derives from
+/// BaseException, not Exception.
+pub fn eg_member_is_bare_base(m: MbValue) -> bool {
+    m.as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*p).data {
+                matches!(
+                    class_name.as_str(),
+                    "BaseException" | "KeyboardInterrupt" | "SystemExit"
+                        | "GeneratorExit" | "BaseExceptionGroup"
+                )
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false)
+}
+
 fn narrow_eg_class_name(cn: &str, members: &[MbValue]) -> String {
     if cn != "BaseExceptionGroup" {
         return cn.to_string();
     }
-    // `is_subclass_of(_, "Exception")` has an early-return that treats EVERY
-    // builtin exception name as an Exception, so it can't distinguish the
-    // BaseException-only classes. Exclude those (and BaseExceptionGroup, which
-    // derives from BaseException, not Exception) explicitly.
-    let bare_base = |cn: &str| {
-        matches!(
-            cn,
-            "BaseException" | "KeyboardInterrupt" | "SystemExit"
-                | "GeneratorExit" | "BaseExceptionGroup"
-        )
-    };
-    let all_exception = members.iter().all(|m| {
-        m.as_ptr()
-            .map(|p| unsafe {
-                if let ObjData::Instance { ref class_name, .. } = (*p).data {
-                    !bare_base(class_name) && is_subclass_of(class_name, "BaseException")
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false)
-    });
-    if all_exception { "ExceptionGroup".to_string() } else { "BaseExceptionGroup".to_string() }
+    if members.iter().all(|m| !eg_member_is_bare_base(*m)) {
+        "ExceptionGroup".to_string()
+    } else {
+        "BaseExceptionGroup".to_string()
+    }
 }
 
 /// True if `v` is an exception *instance* (an Instance whose class is in the
@@ -997,8 +1000,27 @@ pub fn mb_exception_group_construct(args_list: MbValue, class_name: MbValue) -> 
             return MbValue::none();
         }
     }
+    // PEP 654: only BaseExceptionGroup may hold a bare BaseException; an
+    // ExceptionGroup (or a subclass of it) raises TypeError.
+    if cn != "BaseExceptionGroup" && seq.iter().any(|m| eg_member_is_bare_base(*m)) {
+        mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(eg_nest_error_message(&cn))),
+        );
+        return MbValue::none();
+    }
     let actual = narrow_eg_class_name(&cn, &seq);
     mb_exception_group_new_as(message, exceptions, &actual)
+}
+
+/// The CPython TypeError text for nesting a BaseException in a non-base group:
+/// the plain `ExceptionGroup` reads "an ExceptionGroup", a subclass `'Name'`.
+pub fn eg_nest_error_message(cn: &str) -> String {
+    if cn == "ExceptionGroup" {
+        "Cannot nest BaseExceptions in an ExceptionGroup".to_string()
+    } else {
+        format!("Cannot nest BaseExceptions in '{cn}'")
+    }
 }
 
 /// `raise (Base)ExceptionGroup(...)` path: validate + build via
