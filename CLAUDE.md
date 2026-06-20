@@ -184,7 +184,7 @@ Full principle: **`CONTRIBUTING.md`**. mamba CPython-test mechanics (PEP 723 `[t
 
 ## Testing
 
-- **Real services over mocks**: Use real Docker/Homebrew services for integration tests. Only mock SaaS (GCP Cloud Tasks, Cloud Scheduler, etc.).
+- **Real services over mocks**: Use real Docker/Homebrew services for integration tests. vat ships built-in Rust emulators for the GCP/Firebase surface (Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, Cloud Workflows, Cloud Storage) plus a transparent HTTP stub + record/replay proxy (`preset = "http-mock"`) for arbitrary third-party APIs — prefer those over hand-rolled mocks. Reach for a mock only when no real service or emulator exists.
 - **Local services**: `brew services start redis` (Redis), `brew services start nats-server` (NATS). Tests skip gracefully if unavailable.
 - **Skip pattern**: `let Some(x) = connect().await.ok() else { return };`
 - **Feature gates**: Redis tests behind `#[cfg(feature = "redis")]`, NATS behind `#[cfg(feature = "nats")]`, Ion behind `#[cfg(feature = "ion")]`

@@ -16,7 +16,12 @@ use crate::cli::EmulatorKind;
 /// Run the selected built-in emulator bound to `host_port`.
 /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#cli
 #[cfg(feature = "emulator")]
-pub fn exec(kind: EmulatorKind, host_port: String) -> Result<ExitCode> {
+pub fn exec(
+    kind: EmulatorKind,
+    host_port: String,
+    ca_path: Option<String>,
+    cassette_dir: Option<String>,
+) -> Result<ExitCode> {
     let kind = match kind {
         EmulatorKind::Pubsub => crate::emulator::Kind::Pubsub,
         EmulatorKind::FirebaseAuth => crate::emulator::Kind::FirebaseAuth,
@@ -24,6 +29,10 @@ pub fn exec(kind: EmulatorKind, host_port: String) -> Result<ExitCode> {
         EmulatorKind::CloudScheduler => crate::emulator::Kind::CloudScheduler,
         EmulatorKind::CloudWorkflows => crate::emulator::Kind::CloudWorkflows,
         EmulatorKind::CloudStorage => crate::emulator::Kind::CloudStorage,
+        EmulatorKind::HttpMock => crate::emulator::Kind::HttpMock {
+            ca_path: ca_path.unwrap_or_else(|| "vat-http-mock-ca.pem".to_string()),
+            cassette_dir: cassette_dir.unwrap_or_else(|| "vat-http-mock-cassettes".to_string()),
+        },
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -35,7 +44,12 @@ pub fn exec(kind: EmulatorKind, host_port: String) -> Result<ExitCode> {
 /// Lean build (no `emulator` feature): the verb is present but inert.
 /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#cli
 #[cfg(not(feature = "emulator"))]
-pub fn exec(_kind: EmulatorKind, _host_port: String) -> Result<ExitCode> {
+pub fn exec(
+    _kind: EmulatorKind,
+    _host_port: String,
+    _ca_path: Option<String>,
+    _cassette_dir: Option<String>,
+) -> Result<ExitCode> {
     anyhow::bail!(
         "this vat was built without the `emulator` feature; rebuild with default features to use `vat emulator`"
     );
