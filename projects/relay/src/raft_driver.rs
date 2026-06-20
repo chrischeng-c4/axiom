@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -32,6 +32,10 @@ use crate::raft::{
 use crate::raft_store::RaftStore;
 
 const TICK: Duration = Duration::from_millis(20);
+/// Fast loop that ships outbound messages and picks up work produced by
+/// responses (kept well under the election timeout so a dead peer never starves
+/// heartbeats).
+const PUMP: Duration = Duration::from_millis(5);
 const RPC_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// A publish replicated through Raft (the command bytes of a log entry).
@@ -118,27 +122,18 @@ impl Shared {
         }
     }
 
-    /// Drain the outbox and deliver each request to its peer over h2c, feeding
-    /// the response back into the node; repeat until quiescent.
+    /// Drain the outbox and deliver each request to its peer over h2c — each in
+    /// its own task (fire-and-forget). A response feeds back into the node and
+    /// triggers another flush, so progress is event-driven and a dead/slow peer
+    /// never stalls heartbeats or elections (no barrier on the slowest peer).
     async fn flush(self: &Arc<Self>) {
-        for _ in 0..64 {
-            let outs = {
-                let mut n = self.node.lock().await;
-                n.take_outgoing()
-            };
-            if outs.is_empty() {
-                break;
-            }
-            let mut tasks = Vec::new();
-            for o in outs {
-                let s = Arc::clone(self);
-                tasks.push(tokio::spawn(
-                    async move { s.send_request(o.to, o.msg).await },
-                ));
-            }
-            for t in tasks {
-                let _ = t.await;
-            }
+        let outs = {
+            let mut n = self.node.lock().await;
+            n.take_outgoing()
+        };
+        for o in outs {
+            let s = Arc::clone(self);
+            tokio::spawn(async move { s.send_request(o.to, o.msg).await });
         }
     }
 
@@ -183,6 +178,9 @@ impl Shared {
             n.handle(to, reply);
             self.persist(&n);
             self.apply_committed(&mut n);
+            // Any new work the response produced (became leader -> heartbeats;
+            // commit advanced -> propagate) is picked up by the pump loop — no
+            // recursive flush here (which would make this future un-sendable).
         }
     }
 }
@@ -191,11 +189,13 @@ impl Shared {
 pub struct RaftDriver {
     shared: Arc<Shared>,
     tick: JoinHandle<()>,
+    pump: JoinHandle<()>,
 }
 
 impl Drop for RaftDriver {
     fn drop(&mut self) {
         self.tick.abort();
+        self.pump.abort();
     }
 }
 
@@ -241,7 +241,14 @@ impl RaftDriver {
                 s.flush().await;
             }
         });
-        RaftDriver { shared, tick }
+        let p = Arc::clone(&shared);
+        let pump = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(PUMP).await;
+                p.flush().await;
+            }
+        });
+        RaftDriver { shared, tick, pump }
     }
 
     pub fn relay(&self) -> Arc<Relay> {
@@ -258,6 +265,7 @@ impl RaftDriver {
 
     pub fn stop(&self) {
         self.tick.abort();
+        self.pump.abort();
     }
 
     /// Router exposing the Raft RPCs, producer publish, and status.
@@ -334,7 +342,7 @@ async fn publish(
     Path(_subject): Path<String>,
     Json(body): Json<PublishBody>,
 ) -> axum::response::Response {
-    {
+    let index = {
         let mut n = s.node.lock().await;
         if !n.is_leader() {
             let leader = n.leader();
@@ -356,21 +364,43 @@ async fn publish(
             headers: body.headers,
         })
         .unwrap_or_default();
-        n.propose(cmd);
+        let idx = n.propose(cmd);
         s.persist(&n);
         s.apply_committed(&mut n);
-    }
-    // Replicate to followers; commit + apply happen via the feedback path.
+        idx
+    };
+    // Kick replication (fire-and-forget) and wait for the entry to commit+apply.
     s.flush().await;
-    {
-        let mut n = s.node.lock().await;
-        s.apply_committed(&mut n);
+    let Some(index) = index else {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "committed": true })),
+        )
+            .into_response();
+    };
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let committed = {
+            let mut n = s.node.lock().await;
+            s.apply_committed(&mut n);
+            n.commit_index() >= index
+        };
+        if committed {
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({ "committed": true, "index": index })),
+            )
+                .into_response();
+        }
+        if Instant::now() >= deadline {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "committed": false, "index": index })),
+            )
+                .into_response();
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({ "committed": true })),
-    )
-        .into_response()
 }
 
 async fn raftz(State(s): State<Arc<Shared>>) -> Json<RaftStatus> {
