@@ -372,3 +372,16 @@ changes:
 - [unit-test] UT1..UT5 cover preset classification, export, media round-trip, multipart+list+delete, and slashed names — self-contained, no external tooling.
 - [e2e-test] Self-contained roundtrip integration + a preset-run smoke + lean-build check.
 - [changes] Bounded list mapping Cargo, storage.rs, cli/run/config, docs, and the test to their driving sections.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic is codegen-ready: builtin framework + GCS request router over an in-memory store.
+- [schema] Object evidence fully specified and consistent with run evidence.
+- [config] cloud-storage builtin-only preset unambiguous; STORAGE_EMULATOR_HOST documented.
+- [cli] vat emulator cloud-storage contract clear including upload types + no-panic.
+- [unit-test] UT1..UT5 self-contained coverage of preset, export, media, multipart/list/delete, slashed names.
+- [e2e-test] roundtrip integration + preset-run + lean-build checks.
+- [changes] Bounded change list mapping every artifact to its driving section.
