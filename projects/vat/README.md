@@ -252,11 +252,15 @@ preferred**:
   Cloud Workflows v1 REST server (createWorkflow → createExecution →
   getExecution) running a **subset Workflows interpreter** (assign / call http.* /
   switch / for / try-retry-except / subworkflow + `${...}` expressions) whose
-  `call: http.*` steps **orchestrate the other emulators** or any HTTP endpoint.
-  Each exports its host var (`PUBSUB_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`,
+  `call: http.*` steps **orchestrate the other emulators** or any HTTP endpoint;
+  `cloud-storage` is a GCS JSON API v1 server over an in-memory object store
+  (bucket CRUD, media/multipart upload, `alt=media` download, list with prefix,
+  delete; reports size + md5Hash). Each exports its host var
+  (`PUBSUB_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`,
   `CLOUD_TASKS_EMULATOR_HOST`, `CLOUD_SCHEDULER_EMULATOR_HOST`,
-  `CLOUD_WORKFLOWS_EMULATOR_HOST` — point your client's base URL at
-  `http://$HOST`). `pubsub` still accepts `runtime = native` (gcloud) /
+  `CLOUD_WORKFLOWS_EMULATOR_HOST`, `STORAGE_EMULATOR_HOST` — point your client's
+  base URL at `http://$HOST`; the GCS SDKs read `STORAGE_EMULATOR_HOST`
+  automatically). `pubsub` still accepts `runtime = native` (gcloud) /
   `runtime = docker` (the cloud-cli image) as a full-fidelity fallback; the
   others are built-in only (no official emulator exists). The async emulator
   stack sits behind a default-on `emulator` Cargo feature (`--no-default-features`

@@ -186,6 +186,7 @@ pub enum ServicePreset {
     CloudTasks,
     CloudScheduler,
     CloudWorkflows,
+    CloudStorage,
 }
 
 impl ServicePreset {
@@ -204,6 +205,7 @@ impl ServicePreset {
                 | ServicePreset::CloudTasks
                 | ServicePreset::CloudScheduler
                 | ServicePreset::CloudWorkflows
+                | ServicePreset::CloudStorage
         )
     }
 
@@ -218,6 +220,7 @@ impl ServicePreset {
                 | ServicePreset::CloudTasks
                 | ServicePreset::CloudScheduler
                 | ServicePreset::CloudWorkflows
+                | ServicePreset::CloudStorage
         )
     }
 
@@ -231,6 +234,7 @@ impl ServicePreset {
                 | ServicePreset::CloudTasks
                 | ServicePreset::CloudScheduler
                 | ServicePreset::CloudWorkflows
+                | ServicePreset::CloudStorage
         )
     }
 }
@@ -1119,6 +1123,8 @@ artifacts = ["out.txt"]
         for (token, preset) in [
             ("cloud-tasks", ServicePreset::CloudTasks),
             ("cloud-scheduler", ServicePreset::CloudScheduler),
+            ("cloud-workflows", ServicePreset::CloudWorkflows),
+            ("cloud-storage", ServicePreset::CloudStorage),
         ] {
             let parsed: ServicePreset =
                 serde_json::from_value(serde_json::Value::String(token.into())).unwrap();
@@ -1133,7 +1139,12 @@ artifacts = ["out.txt"]
 
     #[test]
     fn rejects_cloud_preset_with_explicit_runtime() {
-        for preset in [ServicePreset::CloudTasks, ServicePreset::CloudScheduler] {
+        for preset in [
+            ServicePreset::CloudTasks,
+            ServicePreset::CloudScheduler,
+            ServicePreset::CloudWorkflows,
+            ServicePreset::CloudStorage,
+        ] {
             let mut svc = bare_service("svc");
             svc.preset = Some(preset);
             svc.runtime = ServiceRuntime::Docker;
