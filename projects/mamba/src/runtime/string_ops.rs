@@ -3318,6 +3318,18 @@ pub fn value_to_string(val: MbValue) -> String {
                     if class_name == "datetime.timezone" {
                         return super::stdlib::datetime_mod::timezone_str(val);
                     }
+                    // zoneinfo.ZoneInfo str is its key (e.g. "America/New_York").
+                    if class_name == "ZoneInfo" {
+                        if let Some(k) = fields.read().ok()
+                            .and_then(|f| f.get("key").copied())
+                        {
+                            if let Some(p) = k.as_ptr() {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    return s.clone();
+                                }
+                            }
+                        }
+                    }
                     // namedtuple: dynamic class_name → marker-field dispatch. (#1648)
                     if let Some(s) = super::stdlib::collections_mod::namedtuple_repr(val) {
                         return s;
