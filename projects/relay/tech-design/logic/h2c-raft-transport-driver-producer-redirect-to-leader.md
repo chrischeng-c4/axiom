@@ -108,7 +108,6 @@ flowchart TD
     suite --> t_redir[publish to follower] --> a_redir([NotLeader + hint])
     suite --> t_fail[kill leader + publish] --> a_fail([re-elect, no committed loss])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
