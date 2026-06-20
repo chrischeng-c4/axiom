@@ -111,3 +111,38 @@ properties:
     additionalProperties: true
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-config-cloud-storage.schema.json"
+title: "vat.toml (Cloud Storage preset addition)"
+type: object
+properties:
+  services:
+    type: array
+    items:
+      type: object
+      required: [id]
+      properties:
+        preset:
+          type: string
+          enum: [postgres, redis, nats, rabbitmq, mysql, mongo, firestore, pubsub, datastore, bigtable, spanner, firebase, firebase-auth, cloud-tasks, cloud-scheduler, cloud-workflows, cloud-storage]
+          description: >
+            cloud-storage runs vat's built-in GCS emulator under runtime=auto
+            (no gcloud/Java/Docker — Google ships no standalone GCS emulator). It
+            exports STORAGE_EMULATOR_HOST, which the GCS client SDKs read, so the
+            runner needs no code change. Blob state is in-memory and per-run.
+            Built-in only: runtime must stay auto.
+        runtime:
+          type: string
+          enum: [auto, native, docker]
+          default: auto
+        export:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+additionalProperties: true
+```
