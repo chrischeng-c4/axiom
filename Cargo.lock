@@ -9100,6 +9100,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "raftcore"
+version = "0.4.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "rancor"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9468,6 +9475,7 @@ dependencies = [
  "crc32fast",
  "criterion",
  "futures",
+ "raftcore",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

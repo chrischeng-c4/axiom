@@ -1,0 +1,14 @@
+[package]
+name = "raftcore"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Self-contained, step-driven Raft consensus core — transport- and storage-agnostic. Consumers (relay, keep) supply the network, persistence, and state machine."
+
+[lib]
+name = "raftcore"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
