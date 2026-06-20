@@ -1,9 +1,9 @@
-# SPEC-MANAGED: projects/lumen/external-contracts/search/stability/query-resilience.md#lumen-meter-search-stability
+# SPEC-MANAGED: projects/lumen/external-contracts/long-running-stability/stability/query-resilience.md#lumen-meter-search-stability
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
 delegate_command = "target/debug/meter test -- -p lumen --test disk_scale_proof -- --ignored"
 project = "lumen"
-source_contract = "lumen-search-stability-resilience"
+source_contract = "lumen-long-running-stability-query-resilience"
 version = 1
 # AW-EC-TOOL-END
 # CODEGEN-END

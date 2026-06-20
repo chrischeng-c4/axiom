@@ -1,8 +1,8 @@
 version = 1
 project = "relay"
 td_path = "projects/relay/tech-design"
-generated_at = "2026-06-20T14:01:22.115628+00:00"
-digest = "sha256:c2d57fb99588d01570a1fdeaedeb7d7669fe577a5570a82b4a3335e20468397e"
+generated_at = "2026-06-20T14:26:46.661241+00:00"
+digest = "sha256:a89576408fae832c046a2a8d4b86fbacbcde6d8c7bc6caf9dc5a5b8248d4b503"
 
 [[files]]
 path = "interfaces/rest/http-2-openapi-transport-client-side-sharding-streaming-subscrib.md"
@@ -26,15 +26,15 @@ digest = "sha256:56061c7b6a0954119814d373c6a501e971779bd8e361835c3707617b98bae03
 
 [[files]]
 path = "logic/core-durable-log-single-multi-broadcast-delivery-model.md"
-digest = "sha256:0a086c6b8ca7c295bce339c0a39b2571d4b2cd33d0638d29f1edacc64a0b73d3"
+digest = "sha256:0b29d2df9006f1ab0105f863a0ac9b97e9a871d6eed99f9beb982837dd12b567"
 
 [[files]]
 path = "logic/default-durable-engine-throughput-group-commit-fsync-publish-bat.md"
-digest = "sha256:f0519c61d62313ff24e2c3d50374d613831ebfc588ef198c1bef45cbecda99b4"
+digest = "sha256:59948f81413e00d80c09861eddab47ed3c6fd0cfb9d7f07f16abc5c3f52f1275"
 
 [[files]]
 path = "logic/h2c-raft-transport-driver-producer-redirect-to-leader.md"
-digest = "sha256:cd61ab7eb4dbdb3abddae21f3626370258746e703b3957f9908e46c3aee69114"
+digest = "sha256:a5f8ca1aa48fa912ff7d768569b378ecff21ba60cb87703abb6eaec1df79de73"
 
 [[files]]
 path = "logic/ha-via-leader-follower-log-replication-async-primary-backup.md"
@@ -46,7 +46,7 @@ digest = "sha256:2919f9b9be02bf1d55f3f05de90f58128346820df51feecb752e6c250de3786
 
 [[files]]
 path = "logic/log-segment-rotation-retention-full-log-lifecycle.md"
-digest = "sha256:02b9489702059bccb093e32ed5aacb58bdedd52bb4be95536213c32fb329cfe0"
+digest = "sha256:10a3465cffaf6ed5b7c59c86735c2e85f981090dc9ccaf988179f0c568049c38"
 
 [[files]]
 path = "logic/multi-shard-per-subject-server-side-sharding-horizontal-scale.md"
@@ -54,11 +54,11 @@ digest = "sha256:a4557b5a2cfebd2a0e48d319b08e98b39fcac11982781009e6257d18e90013f
 
 [[files]]
 path = "logic/raft-hard-state-persistence-fsyncpolicy-crash-safe-single-voter.md"
-digest = "sha256:878b16039a9e02555bfc544235dfcc7f1f27a54d325312416395ded1eb0fd47f"
+digest = "sha256:e0abf58c27e661333d5feff7b93cbe350b8897d525335c1a93a2c235fc190633"
 
 [[files]]
 path = "logic/reconciler-lease-reclaim-redeliver-liveness.md"
-digest = "sha256:22e29a69065e5e574bd0d987cdf75165eba2db3930a8aac38ca3017cc7210285"
+digest = "sha256:8713bae64cfbe618f577a924c76cc656656e27676849f4e3decf5e6a4bde2fd5"
 
 [[files]]
 path = "logic/single-shard-raft-consensus-core-self-contained-rsm-auto-voter-l.md"

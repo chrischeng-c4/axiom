@@ -1,7 +1,7 @@
 ---
 id: projects-lumen-src-wal_relay-rs
 capability_refs:
-  - id: "resilience"
+  - id: "long-running-stability"
     role: primary
     gap: "log-fan-out-rebuild-from-log"
     claim: "log-fan-out-rebuild-from-log"

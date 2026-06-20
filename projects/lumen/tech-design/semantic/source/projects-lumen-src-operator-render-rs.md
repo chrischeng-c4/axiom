@@ -1,13 +1,13 @@
 ---
 id: projects-lumen-src-operator-render-rs
 capability_refs:
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     gap: "kustomize-base-overlays-hpa"
     claim: "kustomize-base-overlays-hpa"
     coverage: partial
     rationale: "This source unit is captured as a per-file rust-source-unit during lumen td_ast standardization."
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     gap: "lumen-crd-reconcile-loop-kube-rs-operator"
     claim: "lumen-crd-reconcile-loop-kube-rs-operator"

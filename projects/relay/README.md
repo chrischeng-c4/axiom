@@ -17,6 +17,8 @@ domain model.
 | CLI Interface | 108 | implemented | passing | conformance | not_ready | relay-server and relay-raft expose the binary surfaces; install/build artifacts still need standardization |
 | Competitive Broker Feature Parity | - | implemented | planned | dogfood | not_ready | durable log, queue lifecycle, OpenAPI worker flow, and raft failover are implemented; kind failover remains the dogfood gap |
 | Competitive Broker Performance | 125 | implemented | planned | dogfood | not_ready | local throughput and ratchet logic exist; external NATS/RabbitMQ/Redpanda arena comparison remains dogfood |
+| Long-Running Stability | - | implemented | passing | dogfood | not_ready | durable recovery, segment lifecycle, lease reclaim, and raft failover have local gates; kind soak remains open |
+| Security Hardening | - | planned | planned | negative | not_ready | opaque payload boundaries exist, but auth/TLS/negative security gates are not yet defined |
 
 ### CLI Interface
 
@@ -88,3 +90,49 @@ Gate Inventory:
 | O(1) lease cursor throughput | epic | - | implemented | passing | conformance | projects/relay/tests/work_queue_throughput.rs |
 | Normalized win/ratchet decision model | epic | 125 | implemented | passing | conformance | projects/relay/tests/perf_gate.rs |
 | External broker comparison | epic | 125 | implemented | planned | dogfood | projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml |
+
+### Long-Running Stability
+
+ID: long-running-stability
+Type: RuntimeTool
+Surfaces: CLI: `relay-server` - durable service process with reconciler.; CLI: `relay-raft` - failover-capable long-running broker node.; K8s: `projects/relay/k8s` - StatefulSet-oriented raft deployment.
+EC Dimensions: stability: `cargo test -p relay --test durable --test segments --test reconciler --test raft_persistence --test raft_cluster` - recovery, retention, lease reclaim, and failover conformance
+Root WI: -
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Run as a long-lived broker without losing committed entries, leaking stuck
+leases forever, or corrupting recovery state across restarts, segment rotation,
+and leader failover.
+Gate Inventory:
+- projects/relay/tests/durable.rs; projects/relay/tests/segments.rs; projects/relay/tests/reconciler.rs; projects/relay/tests/raft_persistence.rs; projects/relay/tests/raft_cluster.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Durable power-safe recovery | epic | - | implemented | passing | conformance | projects/relay/tests/durable.rs |
+| Segment rotation and retention recovery | epic | - | implemented | passing | conformance | projects/relay/tests/segments.rs |
+| Lease reclaim liveness | epic | - | implemented | passing | conformance | projects/relay/tests/reconciler.rs |
+| Raft hard-state restart safety | epic | - | implemented | passing | conformance | projects/relay/tests/raft_persistence.rs |
+| Failover without committed loss | epic | - | implemented | passing | dogfood | projects/relay/tests/raft_cluster.rs |
+
+### Security Hardening
+
+ID: security-hardening
+Type: RuntimeTool
+Surfaces: HTTP: relay h2c API - worker and producer request boundary.; K8s: `projects/relay/k8s` - deployment boundary for future network policy and identity.
+EC Dimensions: security: `guard` - negative API and deployment security gate to be authored; behavior: `cargo test -p relay --test relay_core --test worker_loop` - opaque payload and worker contract boundary smoke
+Root WI: -
+Status: auditing
+Required Verification: negative
+Promise:
+Keep Relay safe as a long-running broker by preserving opaque payload
+boundaries and adding explicit negative gates for request limits, authn/z,
+TLS/network policy, and deployment identity before production readiness.
+Gate Inventory:
+- projects/relay/tests/relay_core.rs; projects/relay/tests/worker_loop.rs; pending guard/negative security inventory
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| Opaque payload boundary | epic | - | implemented | passing | smoke | projects/relay/tests/relay_core.rs; projects/relay/tests/worker_loop.rs |
+| Request limit and malformed-frame negative tests | epic | - | planned | planned | negative | pending guard/negative security inventory |
+| Auth/TLS/network-policy boundary | epic | - | planned | planned | negative | pending guard/negative security inventory |

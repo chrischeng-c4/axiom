@@ -1,8 +1,8 @@
 version = 1
 project = "lumen"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-06-20T12:58:03.865971+00:00"
-digest = "sha256:6f17eca125b17ce09ecb2c159ecb9272cc87e3384a1d3164a661f30bcb188d69"
+generated_at = "2026-06-20T14:26:56.770474+00:00"
+digest = "sha256:545c70fcd588fecf8a735302cbeb1b898cfd8a3ed4d3e33c9e6ad1bd1a6dbcec"
 
 [[files]]
 path = "interfaces/cli/lumen-cli-consolidation-single-binary-serve-spec-llm-k8s-operato.md"
@@ -10,200 +10,200 @@ digest = "sha256:66a6ba1327e4f741b9ec1cd403ed70f8c98d25e0eee0d59eae5f13d8c9f8ce9
 
 [[files]]
 path = "interfaces/rest/relay-wal.md"
-digest = "sha256:76a74391969c4cc5394b7ca811e04e3fd5f437a5bf84b4f23b28e6465e748da8"
+digest = "sha256:d84aeb68a2a56399113749e953ed14194d81183742ce74dc347f3c770790451a"
 
 [[files]]
 path = "semantic/lumen-benches.md"
-digest = "sha256:22f832e0143f372030b6fe3ed2f595df33ece81145927791ce81cffcc8bba611"
+digest = "sha256:f76dcffffb3e2dd3c7f7efc4ba3f722b445fea6fbfc4d3a2937e522c29b37773"
 
 [[files]]
 path = "semantic/lumen-bin.md"
-digest = "sha256:d88bb061bead158caa24ecf9b95d211f7e28576a5cea0a7c6e32b9b394c005b9"
+digest = "sha256:a08c0374aa2af52fe4ed4dfc8bbc7169f526ce15156101af72a79fb62925272f"
 
 [[files]]
 path = "semantic/lumen-build-script.md"
-digest = "sha256:6d47825d76401e5fb4db22117def4ff9712297c835bfdea0015b1d93bb32668f"
+digest = "sha256:dedd41f3270973e7670257616503fdc475f99042795d9c3b912feff79c4ff2df"
 
 [[files]]
 path = "semantic/lumen-examples.md"
-digest = "sha256:30c1164b9a30035c114e85068a62e83e3f36129f907de131082b5468ff701934"
+digest = "sha256:f20daccb4e333cb38bf4accf4ba30a7606fa62379721b3ebf2bd7a10a6ed3a47"
 
 [[files]]
 path = "semantic/lumen-install-script.md"
-digest = "sha256:f9623e29a16333261a3e82fa9cb4b4bc772a0026707ccaf23af1fa230e6b0f07"
+digest = "sha256:a2d791746761c013cd5709d17a4fe606cf9515b30f9afc183db9ac05b0f6f0c5"
 
 [[files]]
 path = "semantic/lumen-k8s-base.md"
-digest = "sha256:2a5ede34594088ebbccfe7bb8e71d501d24b2c9d044a4aa7d5b8d031e003abc1"
+digest = "sha256:3fae7713fc1389ac99cafa04d0d63952878f68b66c8b9969b129781ba13b7907"
 
 [[files]]
 path = "semantic/lumen-k8s-components-observability.md"
-digest = "sha256:14db832148e9e8b1b55e18f773986d4aea36dd605f12f96fa20dbc9c37d8eda3"
+digest = "sha256:0f392d5da9d412de66357e3eb5ffc970072bae2a68c49dde4560e0787c902600"
 
 [[files]]
 path = "semantic/lumen-k8s-operator.md"
-digest = "sha256:877971fd2b531f5d4c45bb3dbcbd7d845add0c507f21e19bf996d5942bd0da37"
+digest = "sha256:9c66088c2809065040fb2d591deb1de6b359b361895880c2a3cb62f90ee9ad62"
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-dev.md"
-digest = "sha256:7eadbb1497bce0453546e98126b2a66830233a97c81b3bbc8506dc5233e38993"
+digest = "sha256:1781cbff853f0a8f2187cf2babba4dfc9bc49612d88342f2faac8a27f56fcb29"
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-prod.md"
-digest = "sha256:ddb792c3b3b7f92c865ad50b99381f7e680f91eff371342ca8e3d16da69e6957"
+digest = "sha256:60cf860f65070244edd292553cc3f14e1e494832ed57854e8b32fd6a95a58fee"
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-staging.md"
-digest = "sha256:8bbbea4f875b901e0f6923f5bf3ef99ff130a3ce9b10a9b1e2567d099fa17e57"
+digest = "sha256:24c7089dff716f68f370a65757f3fdcfedd512dce74348450e70bf161c2fd7f2"
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-template.md"
-digest = "sha256:631a47d21c98ae327572cc509ce319fffbc1574d4f7457bc707db05667955076"
+digest = "sha256:f1c66e7f19b74666aad95d6d0d2e49a8108e602298e66194e6e3d3ff71a72596"
 
 [[files]]
 path = "semantic/lumen-operator.md"
-digest = "sha256:61254e5a020c14b046efff70e225b66305d518686290a9db3ac4c0a28aada4f3"
+digest = "sha256:f7f45c19264c1e6b80bc76ea28eea6cb662ba33b99dc2133d5463cdf2201092f"
 
 [[files]]
 path = "semantic/lumen-projects-lumen.md"
-digest = "sha256:5b39b7dce6f5a77716a02640444d3b82b512a9be593a1b726ec5fbbb94c83e2a"
+digest = "sha256:88b2aeb813978bbe539608937219b8d11567dc8c1e100f921ac9209717c36f59"
 
 [[files]]
 path = "semantic/lumen-runtime-image.md"
-digest = "sha256:d90fe6d2c643ef458fbdb20a10201a18fa7786d09983722b07344bf1e4378194"
+digest = "sha256:8d5ac455efa3b6db75a3d6be417bacb5d950e9301cf3407871f3c4b7cc5425ea"
 
 [[files]]
 path = "semantic/lumen-scripts.md"
-digest = "sha256:7a014458bef4fdbc78672e6b8c14b6c8991cfcb4c90f968383eec9b294db6d46"
+digest = "sha256:1e486ea7f3fce241e3e759edb7e14701d20722d760b74554e8a72c14ee5f6e90"
 
 [[files]]
 path = "semantic/lumen-src.md"
-digest = "sha256:9817ae12850c24fc2eb637e47cfc343b3b386a5e4fdbd22707cc620b555a2438"
+digest = "sha256:0d5ebdebc8474d13b7e5ec403802263498852a4be09abf0bd6c4375571801f91"
 
 [[files]]
 path = "semantic/lumen-tests.md"
-digest = "sha256:0cc0b982dbd18791003000581550078262a6703db606c78b9c1b187543eedcf3"
+digest = "sha256:55bd73e9d359e03749157983a96e1cf26933715c865dc49b80695788f22a23fb"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-aof-rs.md"
-digest = "sha256:e3eef407d32cc0e50c081e45ddafe11e2192ddf72f15f9eaef307216a50a3a4c"
+digest = "sha256:224007cce92deb4d875331755d7d8ece9d85e49de4fc9f3a2fd5bad1ef8f5409"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-api-rs.md"
-digest = "sha256:dbb5d8b7b1029302253e78645f14af5d9c69e5ccbf4c9da8efc2f38f67a953b7"
+digest = "sha256:f58d4513a0f8a3fcebea4da68cec997dbc229e5a75309b721f746e5565343909"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-auth-rs.md"
-digest = "sha256:a73e61605761bda47cbfc43b6592d36a66001ffabbcf3d432c5b95569cd52e9c"
+digest = "sha256:7db2e4992f9f51bc05d267bceef40a1c8cb46dad49e096e3534356ffabaa18ec"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-backup_sink-rs.md"
-digest = "sha256:952f994ebd502c8ed03c1909cee7fd099c3ddf67a664f0898e01587bae07ca81"
+digest = "sha256:2a696a4a9d507e0279915a2a21a1bb1f56c11191ea165bdfb07fc4333641a372"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-bin-lumen-rs.md"
-digest = "sha256:5b701889065f74e0df2f5eae125d99ad7128d1e1d82b1cd37a53bf3d5cdae76a"
+digest = "sha256:5c4103e020a6f894ad99624fce8b626218ac0a092124a239d98c0e8ad0ac5371"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-config-rs.md"
-digest = "sha256:6d0a28bc4f8f032253f3fa304c5f7e637e179348365effa25820c4bc2f8a14f8"
+digest = "sha256:75ce03188744a2f5c22900df3f80274028cf52ad8952122b7acccfc70969fbed"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-consumer-rs.md"
-digest = "sha256:948f1cb2b46575448e5c56a0229ac23dcc83901c103b37aacd78b0b27ba1d823"
+digest = "sha256:c4974414c9a8c4dc5c52f6695e2a6b241e29a078bfb9d893b34c5c44c43112f1"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-coordinator-rs.md"
-digest = "sha256:a4bb42fbe5a32f0dacafeced4765221400932ff025aebae4b1c3e353a6270fbf"
+digest = "sha256:c8aa0a4b8c82fc118cca33a17f188ee7eb0abd086b0a6abb3543a9eb5a5e7313"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-lib-rs.md"
-digest = "sha256:d1e6fb5eb39c20f49421d11e457f95a07aebcc294b5f603b45f9b44c7bfcfb1c"
+digest = "sha256:b1850fe256fc04a49bee72d74a7c896d39c4f7c308bfb94ac062807e06b75a08"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-log_entry-rs.md"
-digest = "sha256:fd6297a65933d0b4d34e66b06e3e3047fc2a9b50de1dbf0b847b7f948f00b940"
+digest = "sha256:7f654ce6559be758028530bb02df18ddb1f8855d5493f6681a3093d1c848d63f"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-metrics-rs.md"
-digest = "sha256:7297648fa697d430e085a4a990b48dc61928d03a4a71fc38d10bcbfc58121072"
+digest = "sha256:48665ac4517bb92322a2cb41d663ddef2ab2b1303d7a5ea530a4e7feda75f753"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-native_wire-rs.md"
-digest = "sha256:b46577bb727e2db6ec754770b03e92e8ecf4ea3d914d2c0939ac35c953fee54c"
+digest = "sha256:35ba1bd3a94b668bdb74fccd5490fe2799d42dc12954241ad31c747c88eb9c23"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-crd-rs.md"
-digest = "sha256:a41aa929da5f4e55434de15e14982d5eb1f3fdb137a70c605aac57295ae75961"
+digest = "sha256:d6c1f2a664aed3a8b0266b763055fed50a1d1207798d41067dbc6d58f6e9cfee"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-lease-rs.md"
-digest = "sha256:6e62d79327fd4859c34725e7a9dd11c258ef10fd15016be4958b03080429d2af"
+digest = "sha256:7dbb68d845ca20763c9e02c7218402b7c14a4f7fd52bce3d68b2c4acc86d63ce"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-mod-rs.md"
-digest = "sha256:f5a0d7efbdee00184d2875f5d70f788d4b803aff1f7fed4c4afde0fc904be166"
+digest = "sha256:6d7178012d841ba69bcd7f27db1c3054ee869838e8d9282869e7a161f3d938ff"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-reconcile-rs.md"
-digest = "sha256:815f849d64ed01bea019775fb2ea6cdbaf70e61b8c405e450970b25a9f64ed60"
+digest = "sha256:c57bba3d3d1c3fcf23b83ba3d352083a4a4723fb093dca8be87021c7d65ed088"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-operator-render-rs.md"
-digest = "sha256:9ed080cbac092ab1cae0278bba9abf0fd4a9f62fe819c844cb0dc1eed6be66e0"
+digest = "sha256:6a86ad6930146875bc1f86aafa92f2eeeefcecf312ef634e0470e57efc110c66"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-raft-rs.md"
-digest = "sha256:07d8c45d93cc9e72f589cad2e44b3236f6ba9b298bee4c051cdeedee714d4be6"
+digest = "sha256:979d213d28743d97048c6992dea6cee5d21db288e2c886b9d3abe8d840a78fb4"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-rdb-rs.md"
-digest = "sha256:9a00d6350240a06131bc0dcbf9f5f172e1cb88b33a8b6148b967866dd2582cae"
+digest = "sha256:4f97824a855921f410e70905d8e4b91b92fbb85b7be6d69c744b2552ba4c8b1c"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-routing-rs.md"
-digest = "sha256:5d57090eeda162d9fe37eeb8e1e6bdce5989c829f9eba62d5fd4e50bca0f18fc"
+digest = "sha256:ad1cc8a45e45f24b14f3cc621d008b7daf91fb541fb1d11fcb52e3c22e577f92"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-segment-rs.md"
-digest = "sha256:e9e8e847b7d7cb3186b6f12de004a22889d6cafa8bcdad39aa2dbadd913f5d22"
+digest = "sha256:e8721388349f6a379b91835fbd607c6a7cf196583df5293f0eb2e90bac35d19e"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-segment_rdb-rs.md"
-digest = "sha256:708be5a4350e0c9f52fb480b0b6a175821d3f5ac138c6f2c9d4fe1dd525099fa"
+digest = "sha256:6a190e450e14653d0aeb64778e65fbe9d685a251c1894f260fc90b0f1d433ce1"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-spec-rs.md"
-digest = "sha256:b6912dd436551493b868e87d24551f5b75cd3897bf7c342a2287b6bc9836d265"
+digest = "sha256:c87fdb94e139e4449e1aa3cd9bf4c9f57e0f37a0e8fa0acf1ecf76cb1da6256b"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-storage-rs.md"
-digest = "sha256:ae6a6df493d1462d222ad5ef852442d5cf95025c769ccc210c4652f51d169647"
+digest = "sha256:6742b663f8eae3d82ba3dc14f11b9988bbd52a1fa6d010e1d7cde2c35937e73e"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-tls-rs.md"
-digest = "sha256:706608a6c7587d71df23f02f875295d4d39d2a4be983d021caccade5eb4217a9"
+digest = "sha256:c065bfef31062ffede64ce78aa2d60b6e74758affed780bb881f969b44d92038"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-tokenize-rs.md"
-digest = "sha256:95340098991cbe580f4cee9b205ad7f2fe937faec6c8478fe16805e98feedaf1"
+digest = "sha256:fc1940abc62f0393d81b538248f02c7fae15d03ef4fde06248d5f96508e3b5bf"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-types-rs.md"
-digest = "sha256:5737fc085673a856291aa967dde94df2e6974edd670bf0b710422000614004a3"
+digest = "sha256:fb8c804bd2c0138044e99cdb2cc5282cbb729f331ba4fdb01ddb5de71d50f2d6"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-vector_index-rs.md"
-digest = "sha256:590e0c2e4f11e7e093f35d1b408e121584f87b3282a6ed945bb1c3bc3445cc82"
+digest = "sha256:a146c86becf598daed3a519df7fab62d798ebc68080554fd8083c97bf48d5506"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-wal-rs.md"
-digest = "sha256:8e13ba2659a1252c79a07f889ac85598f3500ad234a8d3ffb6cdab367fc49a67"
+digest = "sha256:963a17dcbde5acf57432d98ec92db7e593e23f7ec6593899ef6d6f459015de63"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-wal_nats-rs.md"
-digest = "sha256:ed3780815d9a21eec2e50bb64c9c4e6af39bf348adb9daf7526b6dc8091acb71"
+digest = "sha256:ef742d6c7aa8fbe18b8e52f3d9c2b6faab4619f1782ad45f9c7867add74448ab"
 
 [[files]]
 path = "semantic/source/projects-lumen-src-wal_relay-rs.md"
-digest = "sha256:e397b5881586acd4d2a7b86ad3e0212aa9c8df5a15c7f13b6e395c21fb8d725f"
+digest = "sha256:04eae306572aa2c08573be01bbb21dd7aab4fc96e9869207e9de570fc1d6b31b"

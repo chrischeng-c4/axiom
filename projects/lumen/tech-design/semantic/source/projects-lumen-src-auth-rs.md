@@ -1,7 +1,7 @@
 ---
 id: projects-lumen-src-auth-rs
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial

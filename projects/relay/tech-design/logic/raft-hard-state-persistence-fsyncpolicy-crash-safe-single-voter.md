@@ -8,6 +8,12 @@ capability_refs:
     claim: durable-raft-hard-state-restore
     coverage: full
     rationale: "Defines durable raft hard-state persistence and restart restore behavior for term, vote, and replicated log state."
+  - id: long-running-stability
+    role: primary
+    gap: raft-hard-state-restart-safety
+    claim: raft-hard-state-restart-safety
+    coverage: full
+    rationale: "Defines restart-safe persisted raft term, vote, and log state."
 fill_sections: [logic, unit-test, changes]
 ---
 
