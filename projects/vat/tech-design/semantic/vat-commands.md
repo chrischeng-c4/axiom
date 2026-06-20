@@ -105,6 +105,12 @@ semantic_domain:
           - name: "firebase_emulator_host_var"
             kind: "function"
             public: false
+          - name: "prepare_builtin_service"
+            kind: "function"
+            public: false
+          - name: "builtin_emulator_info"
+            kind: "function"
+            public: false
           - name: "gcloud_component"
             kind: "function"
             public: false
@@ -192,6 +198,9 @@ semantic_domain:
             kind: "module"
             public: true
           - name: "diff"
+            kind: "module"
+            public: true
+          - name: "emulator"
             kind: "module"
             public: true
           - name: "gpu"
@@ -338,6 +347,20 @@ semantic_domain:
           - name: "load_record"
             kind: "function"
             public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/commands"
+      - path: "projects/vat/src/commands/emulator.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "exec"
+            kind: "function"
+            public: true
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"

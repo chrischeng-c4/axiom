@@ -1,8 +1,12 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-20T07:20:22.031943+00:00"
-digest = "sha256:56d392b4bbf92577d9a58d39fb89a3cc5268c2ac7ea21089d9d7523867a714c3"
+generated_at = "2026-06-20T08:55:05.885022+00:00"
+digest = "sha256:a0343c5a9dda4c5d343b12ac70eb8ce8ad704eb073053cacd7eaa6d43528723b"
+
+[[files]]
+path = "logic/built-in-rust-emulators-pub-sub-firebase-auth.md"
+digest = "sha256:96217e70d16e2f193d27ac310e2fc6cbe6bbecb4846c9a3aa310b123d7f2d28d"
 
 [[files]]
 path = "logic/external-contracts.md"
@@ -138,7 +142,7 @@ digest = "sha256:63bd3560ae5b3837a11dad7d911604b7866f2e4e045b54bf3a77d162e94f6fd
 
 [[files]]
 path = "semantic/vat-commands.md"
-digest = "sha256:6f1edeebae4bd37bb252d8b1a04afaf5c1ac55332622d04edac9ee7359033a14"
+digest = "sha256:85d661d6e060595aa47739aaa1bc006652c41991e9076a1fa3efb6bcf48b7307"
 
 [[files]]
 path = "semantic/vat-install-script.md"
@@ -154,8 +158,8 @@ digest = "sha256:1cb7d290f685bce33af5a11210a84be1e9aea62dd50fe68ea0f4c802247f035
 
 [[files]]
 path = "semantic/vat-src.md"
-digest = "sha256:975e378e53c81b2d2a99c3f4daa0ee964e263f9eca052a6af15778944d4055fa"
+digest = "sha256:dbdbfbda522228d15132502aee81fa1171dbc724240472edf11ea2fefa89535d"
 
 [[files]]
 path = "semantic/vat-tests.md"
-digest = "sha256:37ba1f1b9a20a09004fabda7115f1bd846664bbcc1e49ef211a5cc7b02bafaec"
+digest = "sha256:b91bac3eecdce594df6fe934dceabe75de1ae671ab12ca594989e4b2dd3aeb4c"

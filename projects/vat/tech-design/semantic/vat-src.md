@@ -168,6 +168,9 @@ semantic_domain:
           - name: "config"
             kind: "module"
             public: true
+          - name: "emulator"
+            kind: "module"
+            public: true
           - name: "event"
             kind: "module"
             public: true
@@ -484,6 +487,9 @@ semantic_domain:
           - name: "ClusterCmd"
             kind: "enum"
             public: false
+          - name: "EmulatorKind"
+            kind: "enum"
+            public: true
           - name: "run"
             kind: "function"
             public: true
@@ -543,6 +549,89 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/vat/src"
+      - path: "projects/vat/build.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "main"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat"
+      - path: "projects/vat/src/emulator/mod.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "enum_model"]
+        symbols:
+          - name: "auth"
+            kind: "module"
+            public: true
+          - name: "pubsub"
+            kind: "module"
+            public: true
+          - name: "Kind"
+            kind: "enum"
+            public: true
+          - name: "serve"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/auth.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "sign_up"
+            kind: "function"
+            public: false
+          - name: "sign_in"
+            kind: "function"
+            public: false
+          - name: "lookup"
+            kind: "function"
+            public: false
+          - name: "mint"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/pubsub.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "pb"
+            kind: "module"
+            public: true
+          - name: "PubsubEmulator"
+            kind: "struct"
+            public: false
+          - name: "serve"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
 ```
 
 ## Changes

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/vat/tech-design/semantic/vat-src.md#schema
+// CODEGEN-BEGIN
 //! Build script: compile the vendored google.pubsub.v1 proto for the built-in
 //! Pub/Sub emulator. No-op for a lean build (no `emulator` feature) or before
 //! the proto is vendored, so the build never depends on a system protoc.
@@ -20,3 +22,4 @@ fn main() {
         .expect("compile google.pubsub.v1 proto");
     println!("cargo:rerun-if-changed={proto}");
 }
+// CODEGEN-END
