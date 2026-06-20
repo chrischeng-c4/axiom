@@ -130,7 +130,6 @@ properties:
     additionalProperties: false
 additionalProperties: false
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
