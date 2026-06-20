@@ -225,7 +225,6 @@ properties:
       additionalProperties: false
 additionalProperties: false
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
