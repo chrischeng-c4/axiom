@@ -89,7 +89,6 @@ flowchart TD
     finish --> teardown[stop service kills emulator child]
     teardown --> done([return exit code])
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
