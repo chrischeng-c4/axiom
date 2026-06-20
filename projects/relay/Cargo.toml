@@ -16,6 +16,11 @@ path = "src/lib.rs"
 name = "relay-server"
 path = "src/bin/relay_server.rs"
 
+# Raft-backed node for k8s (HA): identity/peers from the downward API.
+[[bin]]
+name = "relay-raft"
+path = "src/bin/relay_raft.rs"
+
 [[bench]]
 name = "relay_bench"
 harness = false
