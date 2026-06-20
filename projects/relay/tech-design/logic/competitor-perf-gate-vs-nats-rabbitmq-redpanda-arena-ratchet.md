@@ -1,6 +1,19 @@
 ---
 id: relay-perf-gate
 summary: A permanent regression gate (mirrors lumen perf_gate_vs_db) — arena compare-N + ratchet across three cells (broadcast, work-queue, durable log) vs NATS / RabbitMQ / Redpanda. Primary bar = NATS. Gate = no-regression ratchet + must-beat where claimed. relay-side benches + ratchet rule are standalone; competitor adapters run in CI.
+capability_refs:
+  - id: broker-benchmark
+    role: primary
+    gap: normalized-win-ratchet-decision-model
+    claim: normalized-win-ratchet-decision-model
+    coverage: full
+    rationale: "Defines the normalized ratio, ratchet, and must-beat decision model used by the relay perf gate."
+  - id: broker-benchmark
+    role: primary
+    gap: external-broker-comparison
+    claim: external-broker-comparison
+    coverage: partial
+    rationale: "Defines the external competitor comparison contract while adapter execution remains tied to the arena dogfood path."
 fill_sections: [logic, config, unit-test, changes]
 ---
 

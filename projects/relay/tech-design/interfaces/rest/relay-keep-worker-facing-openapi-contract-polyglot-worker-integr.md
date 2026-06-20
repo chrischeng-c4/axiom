@@ -1,6 +1,19 @@
 ---
 id: relay-keep-worker-facing-contract
 summary: The worker-facing contract for polyglot workers — relay's lease/ack/heartbeat OpenAPI plus keep's get-input/put-result, and the worker loop that ties them. Deliverable is the contract (a doc + a test-only reference worker), not a worker. relay stays standalone.
+capability_refs:
+  - id: http2-openapi
+    role: primary
+    gap: reference-worker-over-h2c
+    claim: reference-worker-over-h2c
+    coverage: full
+    rationale: "Defines the HTTP-only reference worker loop over h2c lease, heartbeat, and ack calls."
+  - id: http2-openapi
+    role: primary
+    gap: served-openapi-worker-verbs
+    claim: served-openapi-worker-verbs
+    coverage: full
+    rationale: "Defines the served OpenAPI worker contract surface that exposes the relay worker verbs to non-Rust workers."
 fill_sections: [unit-test, changes]
 ---
 
