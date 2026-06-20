@@ -66,3 +66,31 @@ flowchart TD
     runner --> teardown[stop service kills emulator child]
     teardown --> done([return exit code])
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-builtin-emulator-evidence.schema.json"
+title: "Vat built-in emulator evidence"
+type: object
+description: "Service-evidence shape for vat's built-in Rust emulators."
+properties:
+  preset:
+    type: string
+    enum: [pubsub, firebase-auth]
+  prepare_mode:
+    type: string
+    enum: [builtin_emulator, direct_start, docker_run]
+    description: "builtin_emulator = vat's own in-process emulator (the vat emulator subcommand)."
+  exported_env:
+    type: array
+    items: { type: string }
+    description: "Host env var exported to the runner: PUBSUB_EMULATOR_HOST or FIREBASE_AUTH_EMULATOR_HOST."
+  emulator_command:
+    type: array
+    items: { type: string }
+    description: "Self-exec invocation: [<vat exe>, emulator, <kind>, --host-port, 127.0.0.1:<port>]."
+additionalProperties: true
+```
