@@ -119,7 +119,6 @@ properties:
     additionalProperties: true
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
