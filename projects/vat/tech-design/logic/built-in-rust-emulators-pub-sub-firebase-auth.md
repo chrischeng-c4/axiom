@@ -94,3 +94,39 @@ properties:
     description: "Self-exec invocation: [<vat exe>, emulator, <kind>, --host-port, 127.0.0.1:<port>]."
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-config-builtin-emulator.schema.json"
+title: "vat.toml (built-in emulator preset additions)"
+type: object
+properties:
+  services:
+    type: array
+    items:
+      type: object
+      required: [id]
+      properties:
+        preset:
+          type: string
+          enum: [postgres, redis, nats, rabbitmq, mysql, mongo, firestore, pubsub, datastore, bigtable, spanner, firebase, firebase-auth]
+          description: >
+            pubsub and firebase-auth have a built-in Rust emulator: under
+            runtime=auto vat runs its own in-process emulator (no gcloud/Java/
+            firebase-tools/Docker). pubsub keeps runtime=native (gcloud) and
+            runtime=docker (image) as fidelity fallback; firebase-auth is
+            built-in only (runtime must be auto).
+        runtime:
+          type: string
+          enum: [auto, native, docker]
+          default: auto
+          description: "auto prefers the built-in emulator when the preset has one."
+        export:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+additionalProperties: true
+```
