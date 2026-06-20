@@ -365,3 +365,16 @@ changes:
       - "projects/vat/tech-design/logic/built-in-cloud-storage-gcs-emulator.md#e2e-test"
     summary: "Add tests/vat_emulator_storage.rs integration test."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] The Mermaid Plus flow captures the builtin/self-spawn framing and the request router (upload/download/metadata/list/delete/bucket) over one in-memory store.
+- [schema] The object evidence (preset, builtin_emulator, STORAGE_EMULATOR_HOST, GCS object resource fields) is precise and consistent with run evidence.
+- [config] The cloud-storage builtin-only preset (runtime must stay auto, in-memory) and STORAGE_EMULATOR_HOST export are unambiguous.
+- [cli] The vat emulator cloud-storage contract is clear including upload types, percent-decoded names, and the no-panic-on-unknown guarantee.
+- [unit-test] UT1..UT5 cover preset classification, export, media round-trip, multipart+list+delete, and slashed names — self-contained, no external tooling.
+- [e2e-test] Self-contained roundtrip integration + a preset-run smoke + lean-build check.
+- [changes] Bounded list mapping Cargo, storage.rs, cli/run/config, docs, and the test to their driving sections.
