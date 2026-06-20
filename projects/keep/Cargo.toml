@@ -51,23 +51,19 @@ hyper-util = { version = "0.1", features = ["server", "server-auto", "server-gra
 reqwest = { workspace = true, optional = true }
 # Error glue for the raft module (behind the `raft` feature).
 anyhow = { workspace = true, optional = true }
+# Shared Raft consensus engine (libs/raftcore, serde-only) — replaces openraft.
+raftcore = { path = "../../libs/raftcore", optional = true }
 
 # Config
 clap = { workspace = true, features = ["env"] }
-
-[dependencies.openraft]
-version = "0.9"
-# storage-v2 enables 3rd-party impls of the RaftLogStorage / RaftStateMachine traits.
-features = ["serde", "storage-v2"]
-optional = true
 
 [features]
 default = []
 # keep::client — a convenience HTTP/2 client for in-tree Rust callers migrating
 # off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
 client = ["dep:reqwest"]
-# raft — openraft-backed consensus (HA phase C, single-node integration; see HA.md).
-raft = ["dep:openraft", "dep:anyhow"]
+# raft — raftcore-backed consensus (HA phase C; see HA.md).
+raft = ["dep:raftcore", "dep:anyhow"]
 
 [dev-dependencies]
 tokio-test = "0.4"

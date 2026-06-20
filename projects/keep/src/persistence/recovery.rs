@@ -277,7 +277,12 @@ impl RecoveryManager {
             }
 
             // --- collection / expiry / cas ops (errors ignored during replay) ---
-            WalOp::Cas { key, expected, new, ttl } => {
+            WalOp::Cas {
+                key,
+                expected,
+                new,
+                ttl,
+            } => {
                 if let Ok(k) = KvKey::new(key) {
                     let _ = engine.cas(&k, expected, new.clone(), *ttl);
                 }
@@ -363,7 +368,11 @@ impl RecoveryManager {
                     engine.rpop(&k);
                 }
             }
-            WalOp::GetEx { key, ttl_ms, persist } => {
+            WalOp::GetEx {
+                key,
+                ttl_ms,
+                persist,
+            } => {
                 if let Ok(k) = KvKey::new(key) {
                     let ttl = ttl_ms.map(std::time::Duration::from_millis);
                     engine.getex(&k, ttl, *persist);

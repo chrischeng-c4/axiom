@@ -93,7 +93,9 @@ async fn many_concurrent_durable_writes_all_persist() {
     let (recovered, _stats) = RecoveryManager::recover(dir.path(), shards).unwrap();
     for i in 0..n {
         assert!(
-            recovered.get(&KvKey::new(format!("k:{i}")).unwrap()).is_some(),
+            recovered
+                .get(&KvKey::new(format!("k:{i}")).unwrap())
+                .is_some(),
             "durably-acked key k:{i} missing after recovery"
         );
     }
@@ -111,18 +113,68 @@ async fn collections_survive_recovery() {
     let app = router(AppState::new(engine));
 
     // Write one of each collection type + a TTL, all durably acked.
-    assert_eq!(put_json(&app, "POST", "/v1/hashes/h", json!({"fields": {"a": 1, "b": "x"}})).await, StatusCode::OK);
-    assert_eq!(put_json(&app, "POST", "/v1/sets/s", json!({"members": ["m1", "m2"]})).await, StatusCode::OK);
-    assert_eq!(put_json(&app, "POST", "/v1/zsets/z", json!({"members": [{"member": "a", "score": 2.0}]})).await, StatusCode::OK);
-    assert_eq!(put_json(&app, "POST", "/v1/lists/l/rpush", json!({"values": [1, 2, 3]})).await, StatusCode::OK);
-    assert_eq!(put_json(&app, "PUT", "/v1/kv/scalar", json!({"value": "v"})).await, StatusCode::OK);
-    assert_eq!(put_json(&app, "POST", "/v1/kv/scalar/expire", json!({"seconds": 1000})).await, StatusCode::OK);
+    assert_eq!(
+        put_json(
+            &app,
+            "POST",
+            "/v1/hashes/h",
+            json!({"fields": {"a": 1, "b": "x"}})
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        put_json(&app, "POST", "/v1/sets/s", json!({"members": ["m1", "m2"]})).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        put_json(
+            &app,
+            "POST",
+            "/v1/zsets/z",
+            json!({"members": [{"member": "a", "score": 2.0}]})
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        put_json(
+            &app,
+            "POST",
+            "/v1/lists/l/rpush",
+            json!({"values": [1, 2, 3]})
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        put_json(&app, "PUT", "/v1/kv/scalar", json!({"value": "v"})).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        put_json(
+            &app,
+            "POST",
+            "/v1/kv/scalar/expire",
+            json!({"seconds": 1000})
+        )
+        .await,
+        StatusCode::OK
+    );
 
     // Cold recovery: every collection write must be on disk (the WalOp fix).
     let (rec, _stats) = RecoveryManager::recover(dir.path(), shards).unwrap();
-    assert_eq!(rec.hgetall(&KvKey::new("h").unwrap()).unwrap().len(), 2, "hash lost");
+    assert_eq!(
+        rec.hgetall(&KvKey::new("h").unwrap()).unwrap().len(),
+        2,
+        "hash lost"
+    );
     assert_eq!(rec.scard(&KvKey::new("s").unwrap()).unwrap(), 2, "set lost");
-    assert_eq!(rec.zcard(&KvKey::new("z").unwrap()).unwrap(), 1, "zset lost");
+    assert_eq!(
+        rec.zcard(&KvKey::new("z").unwrap()).unwrap(),
+        1,
+        "zset lost"
+    );
     assert_eq!(rec.llen(&KvKey::new("l").unwrap()).unwrap(), 3, "list lost");
     assert!(rec.ttl(&KvKey::new("scalar").unwrap()) > 0, "TTL lost");
 }

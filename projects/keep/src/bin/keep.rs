@@ -110,8 +110,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (engine, Some(persistence))
     };
 
-    let cluster =
-        keep::ClusterConfig::new(args.node_id, args.node_count, args.shard_count, args.peers.clone());
+    let cluster = keep::ClusterConfig::new(
+        args.node_id,
+        args.node_count,
+        args.shard_count,
+        args.peers.clone(),
+    );
     info!(
         node_id = cluster.node_id,
         node_count = cluster.node_count,

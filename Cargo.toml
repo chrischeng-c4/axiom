@@ -29,6 +29,7 @@ members = [
     "projects/jet/wasm",
     "projects/agentic-workflow",
     "libs/compass",
+    "libs/raftcore",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",
