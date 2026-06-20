@@ -141,3 +141,17 @@ properties:
       additionalProperties: true
 additionalProperties: true
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat emulator
+    usage: "vat emulator <cloud-tasks|cloud-scheduler> --host-port 127.0.0.1:<PORT>"
+    behavior:
+      - "Hidden verb: vat spawns itself as the service process for a cloud-tasks / cloud-scheduler preset."
+      - "cloud-tasks serves the Cloud Tasks v2 REST API and dispatches each task's httpRequest at its scheduleTime (or on tasks/{t}:run)."
+      - "cloud-scheduler serves the Cloud Scheduler v1 REST API, fires a job's httpTarget on its cron schedule via a background ticker, and on jobs/{j}:run."
+      - "Both mint OIDC JWTs into the Authorization header when the task/job requests one. Built without the emulator feature, the verb errors cleanly (no panic)."
+```
