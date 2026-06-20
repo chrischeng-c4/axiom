@@ -236,3 +236,36 @@ requirementDiagram
       verifies: workflow_http_dispatch
     }
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-cloud-workflows-dispatch-smoke
+    name: "Cloud Workflows emulator runs a workflow that calls a target"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_emulator_workflows -- --nocapture"
+    assertions:
+      - "createWorkflow + createExecution for a workflow that assigns, call: http.post to a local sink, and returns yields a SUCCEEDED execution with the expected result and the sink receives the call."
+      - "a try block calling a dead URL falls through to except (no panic); a named subworkflow call returns its value."
+      - "no gcloud / Java / Docker required; the emulator starts in well under a second."
+  - id: vat-cloud-workflows-orchestrates-sibling
+    name: "a workflow orchestrates a sibling vat emulator"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat cloud_workflows_orchestrates_sibling -- --nocapture --ignored"
+    assertions:
+      - "a vat.toml with preset = cloud-workflows alongside another emulator preset runs a workflow whose http step targets that sibling emulator's exported host, end to end."
+  - id: vat-cloud-workflows-lean-build
+    name: "lean build still compiles"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo build -p vat --no-default-features"
+    assertions:
+      - "vat compiles without the emulator feature; the cloud-workflows emulator verb then errors cleanly, never a panic."
+```
