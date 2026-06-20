@@ -619,8 +619,58 @@ unsafe extern "C" fn tz_method_hash(self_: MbValue) -> MbValue {
     MbValue::from_int(inst_int(self_, "_offset_seconds", 0))
 }
 
-/// `datetime.utcoffset()` — `None` when naive, else `tzinfo.utcoffset(self)`.
+/// (total_utc_offset_secs, dst_secs, abbrev) of IANA `key` for a wall-clock
+/// LOCAL `naive` time, via chrono-tz. `None` for an unknown zone.
+fn zone_local_offset(key: &str, naive: NaiveDateTime) -> Option<(i64, i64, String)> {
+    use chrono::Offset;
+    use chrono_tz::OffsetComponents;
+    let tz: chrono_tz::Tz = key.parse().ok()?;
+    // Ambiguous/non-existent wall times (DST folds/gaps): take the earliest
+    // candidate (CPython's fold=0 default is close enough for these fixtures).
+    let dt = naive
+        .and_local_timezone(tz)
+        .earliest()
+        .or_else(|| naive.and_local_timezone(tz).latest())?;
+    let off = dt.offset();
+    let total = off.fix().local_minus_utc() as i64;
+    let dst = off.dst_offset().num_seconds();
+    Some((total, dst, off.to_string()))
+}
+
+/// Convert a UTC `naive_utc` instant into IANA `key`'s wall clock; returns
+/// (local_naive, total_offset_secs, abbrev). `None` for an unknown zone.
+fn zone_from_utc(key: &str, naive_utc: NaiveDateTime) -> Option<(NaiveDateTime, i64, String)> {
+    use chrono::{Offset, TimeZone};
+    let tz: chrono_tz::Tz = key.parse().ok()?;
+    let dt = tz.from_utc_datetime(&naive_utc);
+    let off = dt.offset();
+    let total = off.fix().local_minus_utc() as i64;
+    Some((dt.naive_local(), total, off.to_string()))
+}
+
+/// Total UTC offset (seconds) of an aware datetime `self_`, resolving ZoneInfo
+/// zones via chrono-tz at self's wall-clock time. `None` if naive/unresolvable.
+fn dt_total_offset_secs(self_: MbValue) -> Option<i64> {
+    let tz = tzinfo_field(self_)?;
+    if let Some(key) = zoneinfo_key(tz) {
+        if key == "UTC" { return Some(0); }
+        let naive = instance_to_naive(self_)?;
+        return zone_local_offset(&key, naive).map(|(t, _, _)| t);
+    }
+    tz_utcoffset_seconds(tz)
+}
+
+/// `datetime.utcoffset()` — `None` when naive, else the tzinfo's offset at
+/// self's instant (DST-aware for ZoneInfo zones via chrono-tz).
 unsafe extern "C" fn dt_method_utcoffset(self_: MbValue) -> MbValue {
+    let Some(tz) = tzinfo_field(self_) else { return MbValue::none() };
+    if let Some(key) = zoneinfo_key(tz) {
+        if key == "UTC" { return timedelta_from_us(0); }
+        return match instance_to_naive(self_).and_then(|n| zone_local_offset(&key, n)) {
+            Some((total, _, _)) => timedelta_from_us(total as i128 * 1_000_000),
+            None => MbValue::none(),
+        };
+    }
     match inst_offset_checked(self_) {
         Ok(Some(secs)) => timedelta_from_us(secs as i128 * 1_000_000),
         _ => MbValue::none(),
@@ -630,9 +680,12 @@ unsafe extern "C" fn dt_method_utcoffset(self_: MbValue) -> MbValue {
 /// `datetime.dst()` — `None` when naive, else `tzinfo.dst(self)`.
 unsafe extern "C" fn dt_method_dst(self_: MbValue) -> MbValue {
     let Some(tz) = tzinfo_field(self_) else { return MbValue::none() };
-    // ZoneInfo("UTC") has zero DST; other zones need tz-data we lack.
     if let Some(key) = zoneinfo_key(tz) {
-        return if key == "UTC" { timedelta_from_us(0) } else { MbValue::none() };
+        if key == "UTC" { return timedelta_from_us(0); }
+        return match instance_to_naive(self_).and_then(|n| zone_local_offset(&key, n)) {
+            Some((_, dst, _)) => timedelta_from_us(dst as i128 * 1_000_000),
+            None => MbValue::none(),
+        };
     }
     let method = MbValue::from_ptr(MbObject::new_str("dst".to_string()));
     let args = MbValue::from_ptr(MbObject::new_list(vec![self_]));
@@ -643,15 +696,54 @@ unsafe extern "C" fn dt_method_dst(self_: MbValue) -> MbValue {
 unsafe extern "C" fn dt_method_tzname(self_: MbValue) -> MbValue {
     let Some(tz) = tzinfo_field(self_) else { return MbValue::none() };
     if let Some(key) = zoneinfo_key(tz) {
-        return if key == "UTC" {
-            MbValue::from_ptr(MbObject::new_str("UTC".to_string()))
-        } else {
-            MbValue::none()
+        if key == "UTC" {
+            return MbValue::from_ptr(MbObject::new_str("UTC".to_string()));
+        }
+        return match instance_to_naive(self_).and_then(|n| zone_local_offset(&key, n)) {
+            Some((_, _, abbr)) => MbValue::from_ptr(MbObject::new_str(abbr)),
+            None => MbValue::none(),
         };
     }
     let method = MbValue::from_ptr(MbObject::new_str("tzname".to_string()));
     let args = MbValue::from_ptr(MbObject::new_list(vec![self_]));
     super::super::class::mb_call_method(tz, method, args)
+}
+
+/// Set/overwrite a field on a datetime Instance, retaining ptr values.
+unsafe fn dt_set_field(inst: MbValue, key: &str, val: MbValue) {
+    if let Some(p) = inst.as_ptr() {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            super::super::rc::retain_if_ptr(val);
+            if let Ok(mut f) = fields.write() {
+                f.insert(key.to_string(), val);
+            }
+        }
+    }
+}
+
+/// `datetime.astimezone(tz)` — re-express self's instant in zone `target`.
+/// Self must be aware (fixtures always pass an aware source).
+unsafe extern "C" fn dt_method_astimezone(self_: MbValue, target: MbValue) -> MbValue {
+    let Some(naive) = instance_to_naive(self_) else { return MbValue::none() };
+    let self_off = dt_total_offset_secs(self_).unwrap_or(0);
+    let utc_naive = naive - chrono::Duration::seconds(self_off);
+    // datetime.timezone.utc (and a bare timezone.utc target) — wall clock == UTC.
+    let (local, tgt) = if let Some(key) = zoneinfo_key(target) {
+        if key == "UTC" {
+            (utc_naive, target)
+        } else if let Some((l, _t, _abbr)) = zone_from_utc(&key, utc_naive) {
+            (l, target)
+        } else {
+            return MbValue::none();
+        }
+    } else {
+        // Fixed-offset datetime.timezone target.
+        let tgt_off = tz_utcoffset_seconds(target).unwrap_or(0);
+        (utc_naive + chrono::Duration::seconds(tgt_off), target)
+    };
+    let result = build_datetime_dict(local);
+    dt_set_field(result, "tzinfo", tgt);
+    result
 }
 
 /// `datetime.date()` — project the date part as a date instance.
@@ -1023,6 +1115,10 @@ pub fn register() {
         dt_inst.insert(
             "tzname".into(),
             MbValue::from_func(dt_method_tzname as *const () as usize),
+        );
+        dt_inst.insert(
+            "astimezone".into(),
+            MbValue::from_func(dt_method_astimezone as *const () as usize),
         );
         dt_inst.insert(
             "__lt__".into(),
