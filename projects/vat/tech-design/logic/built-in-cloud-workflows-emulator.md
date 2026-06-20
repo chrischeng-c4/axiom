@@ -403,3 +403,16 @@ changes:
 - [unit-test] UT1..UT5 cover preset classification, the expression evaluator, the core interpreter, try/subworkflow, and http dispatch — units are pure, the dispatch one self-contained.
 - [e2e-test] Self-contained workflow-dispatch integration + a sibling-orchestration smoke + lean-build check.
 - [changes] Bounded list mapping Cargo, expr/interp/mod, cli/run/config, docs, and the test to their driving sections.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic is codegen-ready: builtin framework + REST entry + interpreter dispatch sharing dispatch.rs.
+- [schema] Execution evidence fully specified and consistent with run evidence.
+- [config] cloud-workflows builtin-only preset unambiguous; supported-subset documented.
+- [cli] vat emulator cloud-workflows contract clear including no-panic-on-unsupported.
+- [unit-test] UT1..UT5 give pure expr/interp coverage plus a self-contained dispatch test.
+- [e2e-test] workflow-dispatch + sibling-orchestration + lean-build checks.
+- [changes] Bounded change list mapping every artifact to its driving section.
