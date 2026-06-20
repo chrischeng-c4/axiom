@@ -118,6 +118,9 @@ enum WalBackend {
     Embedded,
     /// NATS JetStream. Clustered: the broker owns the log + fan-out.
     Nats,
+    /// relay broadcast (#124). Clustered: relay owns the log (HA via raftcore).
+    #[cfg(feature = "relay-wal")]
+    Relay,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -188,6 +191,14 @@ struct ServeArgs {
     /// rollout) retries with backoff instead of crash-looping.
     #[arg(long, env = "LUMEN_NATS_CONNECT_TIMEOUT_SECS", default_value_t = 120)]
     nats_connect_timeout_secs: u64,
+    /// relay base URL (used when `--wal relay`).
+    #[cfg(feature = "relay-wal")]
+    #[arg(long, env = "LUMEN_RELAY_URL", default_value = "http://localhost:8080")]
+    relay_url: String,
+    /// relay subject carrying the lumen WAL (used when `--wal relay`).
+    #[cfg(feature = "relay-wal")]
+    #[arg(long, env = "LUMEN_RELAY_SUBJECT", default_value = "lumen-wal")]
+    relay_subject: String,
     /// Shard count for client-side routing (`crc32(collection) % N`).
     /// Install-time topology constant.
     #[arg(long, env = "SHARD_COUNT", default_value_t = 1)]
@@ -343,6 +354,14 @@ async fn serve(args: ServeArgs) -> Result<()> {
                 connect_nats_with_retry(&args.nats_url, args.nats_connect_timeout_secs)
                     .await
                     .context("connect NATS write log")?,
+            )
+        }
+        #[cfg(feature = "relay-wal")]
+        WalBackend::Relay => {
+            tracing::info!(url = %args.relay_url, subject = %args.relay_subject, "wal=relay (broadcast)");
+            Arc::new(
+                lumen::wal_relay::RelayWal::new(&args.relay_url, &args.relay_subject)
+                    .context("connect relay write log")?,
             )
         }
     };
