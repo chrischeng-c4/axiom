@@ -348,3 +348,137 @@ e2e_tests:
       - "vat cluster create then ls --json lists the cluster, kubeconfig prints a usable path, and delete removes it from the registry and the backend."
       - "the test skips gracefully when no backend/docker is present."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md
+    action: create
+    section: changes
+    impl_mode: hand-written
+    reason: "Define the kind-like local Kubernetes clusters TD."
+  - path: projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md
+    action: validate
+    section: logic
+    impl_mode: hand-written
+    reason: "Record the run-scoped and standalone cluster lifecycle logic."
+  - path: projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md
+    action: validate
+    section: schema
+    impl_mode: hand-written
+    reason: "Record the ClusterRunRecord evidence and standalone registry record."
+  - path: projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md
+    action: validate
+    section: config
+    impl_mode: hand-written
+    reason: "Record the cluster/k8s_version/nodes vat.toml service additions."
+  - path: projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md
+    action: validate
+    section: cli
+    impl_mode: hand-written
+    reason: "Record the vat cluster create/ls/delete/kubeconfig commands."
+  - path: projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Record cluster config validation, backend resolution, and naming unit coverage."
+  - path: projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md
+    action: validate
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Record cluster unavailable, run-scoped, and standalone smoke coverage."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#config"
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#schema"
+    summary: "Add ClusterBackend enum, the cluster/k8s_version/nodes ServiceConfig fields, and validate_cluster_service with four-way backing exclusivity."
+  - path: projects/vat/src/cluster.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#logic"
+    summary: "Backend abstraction: resolve_backend auto selection plus kind/k3d/minikube drivers (create with isolated kubeconfig, ready probe, delete, list)."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#logic"
+    summary: "prepare_cluster_service in the prepare phase, kubectl readiness, KUBECONFIG export, and keep-policy-aware cluster teardown in stop_services."
+  - path: projects/vat/src/commands/cluster.rs
+    action: add
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli"
+    summary: "Standalone vat cluster create/ls/delete/kubeconfig backed by the .vat/clusters registry."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli"
+    summary: "Add the Cmd::Cluster subcommand and ClusterCmd tree and dispatch to commands::cluster."
+  - path: projects/vat/src/commands/mod.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli"
+    summary: "Register the new cluster command module."
+  - path: projects/vat/src/state.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#schema"
+    summary: "Add ClusterRunRecord and the optional cluster field on ServiceRunRecord surfaced via vat state."
+  - path: projects/vat/src/paths.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli"
+    summary: "Add clusters_dir/cluster_dir for the standalone cluster registry under .vat/clusters."
+  - path: projects/vat/src/lib.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#logic"
+    summary: "Expose the new cluster module."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli"
+    summary: "Document cluster service syntax, KUBECONFIG export, and vat cluster commands in the agent usage guide."
+  - path: projects/vat/README.md
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli"
+    summary: "Document the cluster service and vat cluster commands."
+  - path: projects/vat/tests
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#unit-test"
+    summary: "Add cluster config validation, backend serde, naming, and resolve-unavailable unit coverage."
+  - path: projects/vat/tests
+    action: modify
+    section: e2e-test
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#e2e-test"
+    summary: "Add cluster unavailable, run-scoped KUBECONFIG, and standalone lifecycle smoke coverage (gated on a real backend)."
+```
