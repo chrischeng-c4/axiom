@@ -125,3 +125,40 @@ properties:
     additionalProperties: true
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-config-cloud-workflows.schema.json"
+title: "vat.toml (Cloud Workflows preset addition)"
+type: object
+properties:
+  services:
+    type: array
+    items:
+      type: object
+      required: [id]
+      properties:
+        preset:
+          type: string
+          enum: [postgres, redis, nats, rabbitmq, mysql, mongo, firestore, pubsub, datastore, bigtable, spanner, firebase, firebase-auth, cloud-tasks, cloud-scheduler, cloud-workflows]
+          description: >
+            cloud-workflows runs vat's built-in Workflows emulator under
+            runtime=auto (no gcloud/Java/Docker — Cloud Workflows has no official
+            emulator). It exports CLOUD_WORKFLOWS_EMULATOR_HOST; point your client's
+            base URL at http://$HOST. Built-in only: runtime must stay auto. The
+            interpreter supports a subset (assign/call http+sys.log/switch/for/
+            try-retry-except/subworkflow + a ${...} expression evaluator), enough
+            to orchestrate vat's other local emulators and HTTP endpoints.
+        runtime:
+          type: string
+          enum: [auto, native, docker]
+          default: auto
+        export:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+additionalProperties: true
+```
