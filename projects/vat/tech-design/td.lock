@@ -1,12 +1,16 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-20T13:39:49.396894+00:00"
-digest = "sha256:004ff78c5760a6477a57ed3d986c1c18719f4e9b3d9557922c97af86b2bc5d6a"
+generated_at = "2026-06-20T14:37:04.107148+00:00"
+digest = "sha256:65d8e5a61cb568300aa7c3c418cd955a53b760af9773a7c3f05fae865e8c352c"
 
 [[files]]
 path = "logic/built-in-cloud-tasks-cloud-scheduler-emulators.md"
 digest = "sha256:055d5c2ea5799f4b2716bb74761023eec7419c92cde506d2299d35c4ab7b608d"
+
+[[files]]
+path = "logic/built-in-cloud-workflows-emulator.md"
+digest = "sha256:3f3caa05912d14cfcff47813a3c24ba24dc94fcf56a92a2bb8a761dddeee5169"
 
 [[files]]
 path = "logic/built-in-rust-emulators-pub-sub-firebase-auth.md"
@@ -162,8 +166,8 @@ digest = "sha256:1cb7d290f685bce33af5a11210a84be1e9aea62dd50fe68ea0f4c802247f035
 
 [[files]]
 path = "semantic/vat-src.md"
-digest = "sha256:780e173d60e3108db7d3d82d7c1ae3ec8daa75c6048002375e17c9cb45e47d2f"
+digest = "sha256:ffd9d2e07f8edb9563bbf878e78ef4a3445884c6d670168c057accadc3eb5ff1"
 
 [[files]]
 path = "semantic/vat-tests.md"
-digest = "sha256:5f80a0fd4a4a893743b77938943146f32753af2106d1c25175b3678fa1706bf3"
+digest = "sha256:f0db685406af902e44ad8012e2cf187578048cd6fbcbdd0e9442ab8a93a05ced"
