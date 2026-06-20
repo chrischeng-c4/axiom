@@ -705,6 +705,40 @@ pub fn mb_list_setslice(
                 };
                 let mut data = lock.write().unwrap();
                 let len = data.len() as i64;
+                let step = _step.as_int_pyint().unwrap_or(1);
+                if step > 1 {
+                    // Extended (stepped) slice assignment: the replacement must
+                    // have exactly as many bytes as targeted indices (CPython
+                    // raises ValueError otherwise).
+                    let s = start
+                        .as_int_pyint()
+                        .map(|i| if i < 0 { i + len } else { i })
+                        .unwrap_or(0)
+                        .clamp(0, len);
+                    let e = stop
+                        .as_int_pyint()
+                        .map(|i| if i < 0 { i + len } else { i })
+                        .unwrap_or(len)
+                        .clamp(0, len);
+                    let mut indices: Vec<usize> = Vec::new();
+                    let mut idx = s;
+                    while idx < e {
+                        indices.push(idx as usize);
+                        idx += step;
+                    }
+                    if indices.len() != new_bytes.len() {
+                        drop(data);
+                        super::builtins::raise_value_error(format!(
+                            "attempt to assign bytes of size {} to extended slice of size {}",
+                            new_bytes.len(), indices.len()
+                        ));
+                        return;
+                    }
+                    for (k, &ti) in indices.iter().enumerate() {
+                        data[ti] = new_bytes[k];
+                    }
+                    return;
+                }
                 let s = start
                     .as_int_pyint()
                     .map(|i| clamp_index(i, len))
