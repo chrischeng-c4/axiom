@@ -1,6 +1,19 @@
 ---
 id: relay-core-durable-log
 summary: In-process broker core that serves both broadcast (replay from seq) and work-queue (lease / ack / redeliver) delivery over one durable ordered log per subject/shard. Standalone HTTP/2 queue core with standard at-least-once / replay semantics; depends on no other axiom project.
+capability_refs:
+  - id: durable-log
+    role: primary
+    gap: per-subject-shard-append-ordering
+    claim: per-subject-shard-append-ordering
+    coverage: full
+    rationale: "Defines the per-subject/shard append path, idempotent message id handling, and monotonic ordered log semantics."
+  - id: durable-log
+    role: primary
+    gap: broadcast-replay-model
+    claim: broadcast-replay-model
+    coverage: full
+    rationale: "Defines broadcast fan-out, independent subscriber cursors, and replay from a requested sequence over the durable log."
 fill_sections: [logic, schema, config, unit-test, changes]
 ---
 
