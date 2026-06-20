@@ -1246,6 +1246,7 @@ fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) 
         ServicePreset::CloudScheduler => ("cloud-scheduler", "CLOUD_SCHEDULER_EMULATOR_HOST"),
         ServicePreset::CloudWorkflows => ("cloud-workflows", "CLOUD_WORKFLOWS_EMULATOR_HOST"),
         ServicePreset::CloudStorage => ("cloud-storage", "STORAGE_EMULATOR_HOST"),
+        ServicePreset::HttpMock => ("http-mock", "VAT_HTTP_MOCK_HOST"),
         // Non-built-in presets never reach this path.
         _ => ("", ""),
     }
@@ -1262,7 +1263,7 @@ fn prepare_builtin_service(service: &ServiceConfig, preset: ServicePreset) -> Re
     let (kind, default_var) = builtin_emulator_info(preset);
     let host_port = format!("127.0.0.1:{port}");
 
-    let command = vec![
+    let mut command = vec![
         exe.to_string_lossy().into_owned(),
         "emulator".to_string(),
         kind.to_string(),
@@ -1270,14 +1271,30 @@ fn prepare_builtin_service(service: &ServiceConfig, preset: ServicePreset) -> Re
         host_port.clone(),
     ];
 
-    let mut env = BTreeMap::new();
-    if service.export.is_empty() {
-        env.insert(default_var.to_string(), host_port.clone());
+    let env = if preset == ServicePreset::HttpMock {
+        // The HTTP mock proxy exports a SET of env: proxy + CA trust. Paths live
+        // under the stable store root, keyed by port for this run.
+        let base = crate::paths::root()?.join("http-mock");
+        let cassette_dir = base.join("cassettes");
+        std::fs::create_dir_all(&cassette_dir)
+            .with_context(|| format!("create {}", cassette_dir.display()))?;
+        let ca_path = base.join(format!("ca-{port}.pem"));
+        command.push("--ca-path".to_string());
+        command.push(ca_path.to_string_lossy().into_owned());
+        command.push("--cassette-dir".to_string());
+        command.push(cassette_dir.to_string_lossy().into_owned());
+        http_mock_env(&host_port, &ca_path.to_string_lossy())
     } else {
-        for target in service.export.values() {
-            env.insert(target.clone(), host_port.clone());
+        let mut env = BTreeMap::new();
+        if service.export.is_empty() {
+            env.insert(default_var.to_string(), host_port.clone());
+        } else {
+            for target in service.export.values() {
+                env.insert(target.clone(), host_port.clone());
+            }
         }
-    }
+        env
+    };
 
     Ok(ServicePlan {
         id: service.id.clone(),
@@ -1299,6 +1316,38 @@ fn prepare_builtin_service(service: &ServiceConfig, preset: ServicePreset) -> Re
         image: None,
         cluster: None,
     })
+}
+
+/// The env set the http-mock proxy exports into the runner: proxy vars (so all
+/// outbound HTTP/S is intercepted), NO_PROXY (so the runner's other loopback
+/// emulators stay direct), and CA-trust vars for every common runtime (so the
+/// HTTPS MITM is trusted) — plus the admin host.
+/// @spec projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#config
+fn http_mock_env(host_port: &str, ca_path: &str) -> BTreeMap<String, String> {
+    let proxy = format!("http://{host_port}");
+    let mut env = BTreeMap::new();
+    for k in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "ALL_PROXY",
+    ] {
+        env.insert(k.to_string(), proxy.clone());
+    }
+    env.insert("NO_PROXY".to_string(), "localhost,127.0.0.1".to_string());
+    env.insert("no_proxy".to_string(), "localhost,127.0.0.1".to_string());
+    for k in [
+        "SSL_CERT_FILE",
+        "CURL_CA_BUNDLE",
+        "REQUESTS_CA_BUNDLE",
+        "NODE_EXTRA_CA_CERTS",
+        "GIT_SSL_CAINFO",
+    ] {
+        env.insert(k.to_string(), ca_path.to_string());
+    }
+    env.insert("VAT_HTTP_MOCK_HOST".to_string(), host_port.to_string());
+    env
 }
 
 /// Run a Docker-only custom service (e.g. AlloyDB) declared with `image`.
@@ -1417,7 +1466,8 @@ fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
         | ServicePreset::CloudTasks
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
-        | ServicePreset::CloudStorage => ("node", "20-slim"),
+        | ServicePreset::CloudStorage
+        | ServicePreset::HttpMock => ("node", "20-slim"),
     };
     format!("{repo}:{}", version.unwrap_or(default_tag))
 }
@@ -1441,7 +1491,8 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
         | ServicePreset::CloudTasks
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
-        | ServicePreset::CloudStorage => 4400,
+        | ServicePreset::CloudStorage
+        | ServicePreset::HttpMock => 4400,
     }
 }
 
@@ -1498,7 +1549,8 @@ fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
         | ServicePreset::CloudTasks
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
-        | ServicePreset::CloudStorage => {}
+        | ServicePreset::CloudStorage
+        | ServicePreset::HttpMock => {}
     }
     env
 }
@@ -1596,7 +1648,7 @@ fn cold_prepare_service_image(
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage => {}
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock => {}
     }
     Ok(())
 }
@@ -1646,7 +1698,8 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         | ServicePreset::CloudTasks
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
-        | ServicePreset::CloudStorage => &["firebase", "java"],
+        | ServicePreset::CloudStorage
+        | ServicePreset::HttpMock => &["firebase", "java"],
     }
 }
 
@@ -1835,7 +1888,8 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
         | ServicePreset::CloudTasks
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
-        | ServicePreset::CloudStorage => {
+        | ServicePreset::CloudStorage
+        | ServicePreset::HttpMock => {
             vec!["firebase".to_string(), "emulators:start".to_string()]
         }
     }
@@ -1886,7 +1940,7 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage => ReadyProbe::Tcp {
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock => ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
             port,
         },
@@ -1923,7 +1977,8 @@ fn preset_exports(
         | ServicePreset::CloudTasks
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
-        | ServicePreset::CloudStorage => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
+        | ServicePreset::CloudStorage
+        | ServicePreset::HttpMock => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -1989,6 +2044,7 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::CloudScheduler => "cloud-scheduler",
         ServicePreset::CloudWorkflows => "cloud-workflows",
         ServicePreset::CloudStorage => "cloud-storage",
+        ServicePreset::HttpMock => "http-mock",
     }
 }
 
@@ -2410,6 +2466,25 @@ mod tests {
             .iter()
             .any(|k| k == "PUBSUB_EMULATOR_HOST"));
         assert_eq!(plan.command[2], "pubsub");
+    }
+
+    #[test]
+    fn http_mock_env_exports_proxy_and_ca_trust() {
+        let env = http_mock_env("127.0.0.1:9", "/tmp/ca.pem");
+        assert_eq!(env.get("HTTP_PROXY").unwrap(), "http://127.0.0.1:9");
+        assert_eq!(env.get("HTTPS_PROXY").unwrap(), "http://127.0.0.1:9");
+        // Other loopback emulators stay direct.
+        assert_eq!(env.get("NO_PROXY").unwrap(), "localhost,127.0.0.1");
+        // CA trust for the common runtimes points at the minted CA.
+        for k in [
+            "SSL_CERT_FILE",
+            "CURL_CA_BUNDLE",
+            "REQUESTS_CA_BUNDLE",
+            "NODE_EXTRA_CA_CERTS",
+        ] {
+            assert_eq!(env.get(k).unwrap(), "/tmp/ca.pem");
+        }
+        assert_eq!(env.get("VAT_HTTP_MOCK_HOST").unwrap(), "127.0.0.1:9");
     }
 
     #[test]

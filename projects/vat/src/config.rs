@@ -181,6 +181,7 @@ pub enum ServicePreset {
     CloudScheduler,
     CloudWorkflows,
     CloudStorage,
+    HttpMock,
 }
 
 impl ServicePreset {
@@ -200,6 +201,7 @@ impl ServicePreset {
                 | ServicePreset::CloudScheduler
                 | ServicePreset::CloudWorkflows
                 | ServicePreset::CloudStorage
+                | ServicePreset::HttpMock
         )
     }
 
@@ -215,6 +217,7 @@ impl ServicePreset {
                 | ServicePreset::CloudScheduler
                 | ServicePreset::CloudWorkflows
                 | ServicePreset::CloudStorage
+                | ServicePreset::HttpMock
         )
     }
 
@@ -229,6 +232,7 @@ impl ServicePreset {
                 | ServicePreset::CloudScheduler
                 | ServicePreset::CloudWorkflows
                 | ServicePreset::CloudStorage
+                | ServicePreset::HttpMock
         )
     }
 }
@@ -1074,6 +1078,7 @@ artifacts = ["out.txt"]
             ("cloud-scheduler", ServicePreset::CloudScheduler),
             ("cloud-workflows", ServicePreset::CloudWorkflows),
             ("cloud-storage", ServicePreset::CloudStorage),
+            ("http-mock", ServicePreset::HttpMock),
         ] {
             let parsed: ServicePreset =
                 serde_json::from_value(serde_json::Value::String(token.into())).unwrap();
@@ -1093,6 +1098,7 @@ artifacts = ["out.txt"]
             ServicePreset::CloudScheduler,
             ServicePreset::CloudWorkflows,
             ServicePreset::CloudStorage,
+            ServicePreset::HttpMock,
         ] {
             let mut svc = bare_service("svc");
             svc.preset = Some(preset);
