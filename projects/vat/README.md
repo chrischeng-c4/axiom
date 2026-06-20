@@ -237,16 +237,22 @@ preferred**:
   Docker image when it is not; `runtime = "native"` / `"docker"` force one path.
   Datastore/broker presets: `postgres`, `redis`, `nats`, `rabbitmq`, `mysql`,
   `mongo`.
-- `preset` (built-in Rust emulators) — `pubsub` and `firebase-auth` run vat's
-  **own** in-process emulator under `runtime = auto`: pure Rust, instant start,
-  **no gcloud / Java / firebase-tools / Docker**. `pubsub` is a google.pubsub.v1
-  gRPC server (topics/subscriptions, Publish, Pull, StreamingPull, Acknowledge);
-  `firebase-auth` is a Firebase Auth (Identity Toolkit) REST server (signUp,
-  signInWithPassword, lookup, …). They export `PUBSUB_EMULATOR_HOST` /
-  `FIREBASE_AUTH_EMULATOR_HOST`. `pubsub` still accepts `runtime = native`
-  (gcloud) or `runtime = docker` (the cloud-cli image) as a full-fidelity
-  fallback; `firebase-auth` is built-in only. The async emulator stack sits
-  behind a default-on `emulator` Cargo feature (`--no-default-features` drops it).
+- `preset` (built-in Rust emulators) — `pubsub`, `firebase-auth`, `cloud-tasks`,
+  and `cloud-scheduler` run vat's **own** in-process emulator under
+  `runtime = auto`: pure Rust, instant start, **no gcloud / Java / firebase-tools
+  / Docker**. `pubsub` is a google.pubsub.v1 gRPC server (topics/subscriptions,
+  Publish, Pull, StreamingPull, Acknowledge); `firebase-auth` is a Firebase Auth
+  (Identity Toolkit) REST server; `cloud-tasks` is a Cloud Tasks v2 REST server
+  that delivers each task's httpRequest to its target at scheduleTime (or
+  `tasks/{t}:run`); `cloud-scheduler` is a Cloud Scheduler v1 REST server that
+  fires a job's httpTarget on its cron schedule (or `jobs/{j}:run`). Each exports
+  its host var (`PUBSUB_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`,
+  `CLOUD_TASKS_EMULATOR_HOST`, `CLOUD_SCHEDULER_EMULATOR_HOST` — point your
+  client's base URL at `http://$HOST`). `pubsub` still accepts `runtime = native`
+  (gcloud) / `runtime = docker` (the cloud-cli image) as a full-fidelity
+  fallback; the other three are built-in only (Cloud Tasks / Scheduler have no
+  official emulator at all). The async emulator stack sits behind a default-on
+  `emulator` Cargo feature (`--no-default-features` drops it).
   ```toml
   [[services]]
   id = "ps"

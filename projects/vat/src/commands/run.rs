@@ -1242,6 +1242,8 @@ fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) 
     match preset {
         ServicePreset::Pubsub => ("pubsub", "PUBSUB_EMULATOR_HOST"),
         ServicePreset::FirebaseAuth => ("firebase-auth", "FIREBASE_AUTH_EMULATOR_HOST"),
+        ServicePreset::CloudTasks => ("cloud-tasks", "CLOUD_TASKS_EMULATOR_HOST"),
+        ServicePreset::CloudScheduler => ("cloud-scheduler", "CLOUD_SCHEDULER_EMULATOR_HOST"),
         // Non-built-in presets never reach this path.
         _ => ("", ""),
     }
@@ -1408,7 +1410,10 @@ fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
         // Spanner ships its own emulator image, not the cloud-cli one.
         ServicePreset::Spanner => ("gcr.io/cloud-spanner-emulator/emulator", "latest"),
         // Firebase is routed through prepare_firebase_service, never here.
-        ServicePreset::Firebase | ServicePreset::FirebaseAuth => ("node", "20-slim"),
+        ServicePreset::Firebase
+        | ServicePreset::FirebaseAuth
+        | ServicePreset::CloudTasks
+        | ServicePreset::CloudScheduler => ("node", "20-slim"),
     };
     format!("{repo}:{}", version.unwrap_or(default_tag))
 }
@@ -1427,7 +1432,10 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
         ServicePreset::Pubsub => 8085,
         ServicePreset::Bigtable => 8086,
         ServicePreset::Spanner => 9010,
-        ServicePreset::Firebase | ServicePreset::FirebaseAuth => 4400,
+        ServicePreset::Firebase
+        | ServicePreset::FirebaseAuth
+        | ServicePreset::CloudTasks
+        | ServicePreset::CloudScheduler => 4400,
     }
 }
 
@@ -1480,7 +1488,9 @@ fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
         | ServicePreset::Firebase
-        | ServicePreset::FirebaseAuth => {}
+        | ServicePreset::FirebaseAuth
+        | ServicePreset::CloudTasks
+        | ServicePreset::CloudScheduler => {}
     }
     env
 }
@@ -1578,7 +1588,7 @@ fn cold_prepare_service_image(
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth => {}
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler => {}
     }
     Ok(())
 }
@@ -1623,7 +1633,10 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         | ServicePreset::Spanner => &["gcloud", "java"],
         // The Firebase Emulator Suite runs under firebase-tools (+ a JVM for
         // its Firestore/Database emulators).
-        ServicePreset::Firebase | ServicePreset::FirebaseAuth => &["firebase", "java"],
+        ServicePreset::Firebase
+        | ServicePreset::FirebaseAuth
+        | ServicePreset::CloudTasks
+        | ServicePreset::CloudScheduler => &["firebase", "java"],
     }
 }
 
@@ -1807,7 +1820,10 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
         ServicePreset::Bigtable => gcloud_emulator_command(true, "bigtable", port, &[]),
         ServicePreset::Spanner => gcloud_emulator_command(false, "spanner", port, &[]),
         // Firebase is routed through prepare_firebase_service, never here.
-        ServicePreset::Firebase | ServicePreset::FirebaseAuth => {
+        ServicePreset::Firebase
+        | ServicePreset::FirebaseAuth
+        | ServicePreset::CloudTasks
+        | ServicePreset::CloudScheduler => {
             vec!["firebase".to_string(), "emulators:start".to_string()]
         }
     }
@@ -1858,7 +1874,7 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth => ReadyProbe::Tcp {
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler => ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
             port,
         },
@@ -1890,9 +1906,10 @@ fn preset_exports(
         ServicePreset::Bigtable => ("BIGTABLE_EMULATOR_HOST", format!("127.0.0.1:{port}")),
         ServicePreset::Spanner => ("SPANNER_EMULATOR_HOST", format!("127.0.0.1:{port}")),
         // Firebase is routed through prepare_firebase_service, never here.
-        ServicePreset::Firebase | ServicePreset::FirebaseAuth => {
-            ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}"))
-        }
+        ServicePreset::Firebase
+        | ServicePreset::FirebaseAuth
+        | ServicePreset::CloudTasks
+        | ServicePreset::CloudScheduler => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -1954,6 +1971,8 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::Spanner => "spanner",
         ServicePreset::Firebase => "firebase",
         ServicePreset::FirebaseAuth => "firebase-auth",
+        ServicePreset::CloudTasks => "cloud-tasks",
+        ServicePreset::CloudScheduler => "cloud-scheduler",
     }
 }
 
@@ -2375,6 +2394,31 @@ mod tests {
             .iter()
             .any(|k| k == "PUBSUB_EMULATOR_HOST"));
         assert_eq!(plan.command[2], "pubsub");
+    }
+
+    #[test]
+    fn cloud_builtin_presets_resolve_and_export() {
+        let svc = test_service("svc", &[]);
+        for (preset, kind, var) in [
+            (
+                ServicePreset::CloudTasks,
+                "cloud-tasks",
+                "CLOUD_TASKS_EMULATOR_HOST",
+            ),
+            (
+                ServicePreset::CloudScheduler,
+                "cloud-scheduler",
+                "CLOUD_SCHEDULER_EMULATOR_HOST",
+            ),
+        ] {
+            assert!(matches!(
+                resolve_preset_runtime(&svc, preset).unwrap(),
+                ResolvedRuntime::Builtin
+            ));
+            let plan = prepare_builtin_service(&svc, preset).unwrap();
+            assert_eq!(plan.command[2], kind);
+            assert!(plan.exported_env.iter().any(|k| k == var));
+        }
     }
 
     #[test]

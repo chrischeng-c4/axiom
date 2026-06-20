@@ -4627,6 +4627,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -9425,6 +9426,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -12496,14 +12498,17 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum 0.8.9",
+ "base64 0.22.1",
  "chrono",
  "clap",
+ "cron",
  "dirs",
  "jsonwebtoken",
  "libc",
  "prost 0.13.5",
  "prost-types",
  "protoc-bin-vendored",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",
