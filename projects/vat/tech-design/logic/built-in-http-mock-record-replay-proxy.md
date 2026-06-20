@@ -253,3 +253,36 @@ requirementDiagram
       verifies: record_then_replay
     }
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-http-mock-stub-and-mitm-smoke
+    name: "HTTP mock proxy stubs plain and HTTPS-MITM requests"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_emulator_httpmock -- --nocapture"
+    assertions:
+      - "a stubbed GET http://api.test/v1/x through the proxy returns the stub body with no network."
+      - "a client trusting the minted CA and using the proxy GETs a stubbed https://api.test/v1/y via CONNECT+MITM and receives the stub (no real upstream)."
+      - "with no stub, a first GET to a local upstream records+forwards and a second GET replays from the cassette with the upstream down."
+  - id: vat-http-mock-preset-run-smoke
+    name: "http-mock preset wires the runner's proxy + CA trust"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat http_mock_preset_exports_proxy_env -- --nocapture --ignored"
+    assertions:
+      - "a preset = http-mock vat.toml run exports HTTP(S)_PROXY + NO_PROXY + the CA-trust vars; the runner curls a stubbed https URL with no code change and gets the stub."
+  - id: vat-http-mock-lean-build
+    name: "lean build still compiles"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo build -p vat --no-default-features"
+    assertions:
+      - "vat compiles without the emulator feature; the http-mock emulator verb then errors cleanly, never a panic."
+```
