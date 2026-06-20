@@ -120,3 +120,42 @@ properties:
     additionalProperties: true
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-config-http-mock.schema.json"
+title: "vat.toml (HTTP mock preset addition)"
+type: object
+properties:
+  services:
+    type: array
+    items:
+      type: object
+      required: [id]
+      properties:
+        preset:
+          type: string
+          enum: [postgres, redis, nats, rabbitmq, mysql, mongo, firestore, pubsub, datastore, bigtable, spanner, firebase, firebase-auth, cloud-tasks, cloud-scheduler, cloud-workflows, cloud-storage, http-mock]
+          description: >
+            http-mock runs vat's built-in HTTP stub + record/replay proxy under
+            runtime=auto (built-in only). It exports a SET of env vars (not a
+            single host var): HTTP_PROXY/HTTPS_PROXY/ALL_PROXY point at the proxy,
+            NO_PROXY=localhost,127.0.0.1 keeps vat's other loopback emulators
+            direct, and CA-trust vars (SSL_CERT_FILE, CURL_CA_BUNDLE,
+            REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS, GIT_SSL_CAINFO) point at the
+            vat-minted CA so HTTPS MITM is trusted. The runner needs no code
+            change; tests register stubs via VAT_HTTP_MOCK_HOST/__admin. Built-in
+            only: runtime must stay auto.
+        runtime:
+          type: string
+          enum: [auto, native, docker]
+          default: auto
+        export:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+additionalProperties: true
+```
