@@ -8017,6 +8017,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                     );
                                     return MbValue::none();
                                 }
+                                // Strong cache: repeated ZoneInfo(key) returns the
+                                // SAME instance (CPython). no_cache() bypasses this.
+                                return super::stdlib::long_tail3_mod::zoneinfo_cached(&key);
                             }
                         }
                         // If `name` is a registered native class that has a

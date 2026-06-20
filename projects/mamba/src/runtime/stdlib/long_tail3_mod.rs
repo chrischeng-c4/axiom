@@ -771,6 +771,55 @@ unsafe extern "C" fn dispatch_available_timezones(_a: *const MbValue, _n: usize)
     MbValue::from_ptr(MbObject::new_set(elems))
 }
 
+thread_local! {
+    /// Strong cache of ZoneInfo instances keyed by zone name (CPython parity:
+    /// `ZoneInfo(k) is ZoneInfo(k)`).
+    static ZI_CACHE: std::cell::RefCell<HashMap<String, MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// A bare ZoneInfo instance carrying its `key` (no tz data — mamba models only
+/// the identity/key surface).
+fn zoneinfo_fresh(key: &str) -> MbValue {
+    let inst = MbObject::new_instance("ZoneInfo".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            fields.write().unwrap().insert(
+                "key".to_string(),
+                MbValue::from_ptr(MbObject::new_str(key.to_string())),
+            );
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// Cached ZoneInfo construction (used by the `ZoneInfo(key)` call path).
+pub fn zoneinfo_cached(key: &str) -> MbValue {
+    if let Some(c) = ZI_CACHE.with(|m| m.borrow().get(key).copied()) {
+        unsafe { super::super::rc::retain_if_ptr(c); }
+        return c;
+    }
+    let v = zoneinfo_fresh(key);
+    ZI_CACHE.with(|m| {
+        m.borrow_mut().insert(key.to_string(), v);
+    });
+    unsafe { super::super::rc::retain_if_ptr(v); }
+    v
+}
+
+/// `ZoneInfo.no_cache(key)` — a fresh, uncached instance (CPython).
+unsafe extern "C" fn dispatch_zoneinfo_no_cache(a: *const MbValue, n: usize) -> MbValue {
+    let args = if n == 0 || a.is_null() { &[][..] } else { unsafe { std::slice::from_raw_parts(a, n) } };
+    let key = args
+        .first()
+        .and_then(|v| v.as_ptr())
+        .and_then(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        })
+        .unwrap_or_else(|| "UTC".to_string());
+    zoneinfo_fresh(&key)
+}
+
 fn register_zoneinfo() {
     // Most of the surface is the standard class-shell / dispatcher set, but
     // `ZoneInfo` additionally exposes the classmethods `clear_cache`,
@@ -788,7 +837,11 @@ fn register_zoneinfo() {
                 let mut map = fields.write().unwrap();
                 map.insert("clear_cache".to_string(), MbValue::from_func(shell));
                 map.insert("from_file".to_string(), MbValue::from_func(shell));
-                map.insert("no_cache".to_string(), MbValue::from_func(shell));
+                let nc = dispatch_zoneinfo_no_cache as *const () as usize;
+                super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                    s.borrow_mut().insert(nc as u64);
+                });
+                map.insert("no_cache".to_string(), MbValue::from_func(nc));
             }
         }
     }
