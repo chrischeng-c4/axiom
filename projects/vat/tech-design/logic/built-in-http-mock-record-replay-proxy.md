@@ -170,7 +170,6 @@ commands:
       - "Each request resolves stub > cassette replay > (auto/record) forward-and-record to the real upstream; cassettes persist under --cassette-dir across runs."
       - "Built without the emulator feature, the verb errors cleanly (no panic); a malformed request never panics the proxy."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
