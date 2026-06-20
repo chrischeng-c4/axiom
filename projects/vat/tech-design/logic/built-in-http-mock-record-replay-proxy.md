@@ -70,7 +70,6 @@ flowchart TD
     runner --> teardown[stop service kills proxy; cassettes persist]
     teardown --> done([return exit code])
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
