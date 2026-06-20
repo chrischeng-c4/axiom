@@ -18,6 +18,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 /// Stable node identity (in k8s, the StatefulSet ordinal).
 pub type NodeId = u64;
 pub type Term = u64;
@@ -31,11 +33,22 @@ const ELECTION_MIN: u64 = 10;
 const HEARTBEAT_TIMEOUT: u64 = 3;
 
 /// One replicated command entry.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RaftEntry {
     pub term: Term,
     pub index: Index,
     pub command: Vec<u8>,
+}
+
+/// The durable hard state of a Raft node: what must survive a restart so the
+/// node never double-votes in a term or forgets acknowledged entries.
+///
+/// @spec projects/relay/tech-design/logic/raft-hard-state-persistence-fsyncpolicy-crash-safe-single-voter.md#logic
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedState {
+    pub term: Term,
+    pub voted_for: Option<NodeId>,
+    pub log: Vec<RaftEntry>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,6 +190,31 @@ impl RaftNode {
             election_timeout: ELECTION_MIN + id,
             heartbeat_elapsed: 0,
             outbox: Vec::new(),
+        }
+    }
+
+    /// Restore a node from durable [`PersistedState`]: term, votedFor and log
+    /// are recovered; volatile state (role, commit/apply indices) restarts as a
+    /// Follower and is re-derived via replication. Committed entries re-apply
+    /// idempotently downstream.
+    ///
+    /// @spec projects/relay/tech-design/logic/raft-hard-state-persistence-fsyncpolicy-crash-safe-single-voter.md#logic
+    pub fn from_persisted(id: NodeId, membership: &Membership, state: PersistedState) -> RaftNode {
+        let mut node = RaftNode::new(id, membership);
+        node.current_term = state.term;
+        node.voted_for = state.voted_for;
+        node.log = state.log;
+        node
+    }
+
+    /// Snapshot the durable hard state for [`crate::raft_store::RaftStore::save`].
+    ///
+    /// @spec projects/relay/tech-design/logic/raft-hard-state-persistence-fsyncpolicy-crash-safe-single-voter.md#logic
+    pub fn persisted(&self) -> PersistedState {
+        PersistedState {
+            term: self.current_term,
+            voted_for: self.voted_for,
+            log: self.log.clone(),
         }
     }
 
