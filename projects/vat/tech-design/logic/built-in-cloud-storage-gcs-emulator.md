@@ -220,3 +220,35 @@ requirementDiagram
       verifies: slashed_names
     }
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-cloud-storage-roundtrip-smoke
+    name: "Cloud Storage emulator uploads, downloads, lists, and deletes"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_emulator_storage -- --nocapture"
+    assertions:
+      - "a media upload then download (alt=media) returns the same bytes; a multipart upload round-trips; list with a prefix finds the object; delete removes it (404 after)."
+      - "object names with slashes work; no gcloud / Java / Docker required; the emulator starts in well under a second."
+  - id: vat-cloud-storage-preset-run-smoke
+    name: "cloud-storage preset exports STORAGE_EMULATOR_HOST"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat cloud_storage_preset_exports_host -- --nocapture --ignored"
+    assertions:
+      - "a preset = cloud-storage vat.toml run exports STORAGE_EMULATOR_HOST and the runner uploads then downloads an object byte-identical; nothing remains after teardown."
+  - id: vat-cloud-storage-lean-build
+    name: "lean build still compiles"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo build -p vat --no-default-features"
+    assertions:
+      - "vat compiles without the emulator feature; the cloud-storage emulator verb then errors cleanly, never a panic."
+```
