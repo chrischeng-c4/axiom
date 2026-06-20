@@ -93,7 +93,6 @@ properties:
     description: "Self-exec invocation: [<vat exe>, emulator, <kind>, --host-port, 127.0.0.1:<port>]."
 additionalProperties: true
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
