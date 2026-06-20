@@ -1218,6 +1218,10 @@ pub fn mb_str_hash(s: MbValue) -> MbValue {
     use std::hash::{Hash, Hasher};
     unsafe {
         if let Some(st) = as_str(s) {
+            // CPython: hash of the empty string is 0.
+            if st.is_empty() {
+                return MbValue::from_int(0);
+            }
             let mut hasher = DefaultHasher::new();
             st.hash(&mut hasher);
             let h = (hasher.finish() >> 17) as i64;

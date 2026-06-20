@@ -857,9 +857,11 @@ fn parse_fstring_parts(content: &str, is_raw: bool) -> Result<Vec<FStringPart>, 
             };
             if let Some(conv) = effective_conv {
                 if conv == 'r' || conv == 'a' {
+                    // `!r` -> repr(); `!a` -> ascii() (backslash-escapes non-ASCII).
+                    let fname = if conv == 'a' { "ascii" } else { "repr" };
                     let inner = Spanned::new(expr_node, span);
                     expr_node = Expr::Call {
-                        func: Box::new(Spanned::new(Expr::Ident("repr".to_string()), span)),
+                        func: Box::new(Spanned::new(Expr::Ident(fname.to_string()), span)),
                         args: vec![CallArg::Positional(inner)],
                     };
                 }
