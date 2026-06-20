@@ -6,9 +6,9 @@
 use crate::error::KvError;
 use crate::types::{KvKey, KvValue};
 use parking_lot::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Default number of shards (power of 2 for efficient modulo)
@@ -2033,7 +2033,8 @@ impl KvEngine {
 
     /// Score of a member (ZSCORE).
     pub fn zscore(&self, key: &KvKey, member: &str) -> Result<Option<f64>, KvError> {
-        self.shard_for_key(key.as_str()).zscore(key.as_str(), member)
+        self.shard_for_key(key.as_str())
+            .zscore(key.as_str(), member)
     }
 
     /// Increment a member's score (ZINCRBY). Returns the new score.

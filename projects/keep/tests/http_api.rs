@@ -47,7 +47,13 @@ async fn set_get_delete_roundtrip() {
     let (app, _) = app();
 
     // PUT a structured JSON value.
-    let (st, _) = send_json(&app, "PUT", "/v1/kv/foo", json!({"value": {"a": 1, "b": [2, 3]}})).await;
+    let (st, _) = send_json(
+        &app,
+        "PUT",
+        "/v1/kv/foo",
+        json!({"value": {"a": 1, "b": [2, 3]}}),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
 
     // GET it back.
@@ -56,7 +62,11 @@ async fn set_get_delete_roundtrip() {
     assert_eq!(body["value"], json!({"a": 1, "b": [2, 3]}));
 
     // HEAD => 200.
-    let req = Request::builder().method("HEAD").uri("/v1/kv/foo").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .method("HEAD")
+        .uri("/v1/kv/foo")
+        .body(Body::empty())
+        .unwrap();
     let (st, _) = send(&app, req).await;
     assert_eq!(st, StatusCode::OK);
 
@@ -87,14 +97,20 @@ async fn claim_check_blob_roundtrip() {
     assert_eq!(st, StatusCode::OK);
 
     // GET returns the bytes verbatim as octet-stream.
-    let req = Request::builder().method("GET").uri("/v1/kv/result:job-1").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .method("GET")
+        .uri("/v1/kv/result:job-1")
+        .body(Body::empty())
+        .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(
         resp.headers().get(header::CONTENT_TYPE).unwrap(),
         "application/octet-stream"
     );
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(bytes.as_ref(), blob.as_slice());
 }
 
@@ -111,12 +127,24 @@ async fn incr_and_cas() {
     assert_eq!(body["value"], json!(3));
 
     // CAS: expect 3 -> 99 succeeds.
-    let (st, body) = send_json(&app, "POST", "/v1/kv/counter/cas", json!({"expected": 3, "new": 99})).await;
+    let (st, body) = send_json(
+        &app,
+        "POST",
+        "/v1/kv/counter/cas",
+        json!({"expected": 3, "new": 99}),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["swapped"], json!(true));
 
     // CAS with wrong expected fails to swap.
-    let (st, body) = send_json(&app, "POST", "/v1/kv/counter/cas", json!({"expected": 3, "new": 0})).await;
+    let (st, body) = send_json(
+        &app,
+        "POST",
+        "/v1/kv/counter/cas",
+        json!({"expected": 3, "new": 0}),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["swapped"], json!(false));
 }
@@ -134,7 +162,13 @@ async fn batch_mset_mget() {
     .await;
     assert_eq!(st, StatusCode::OK);
 
-    let (st, body) = send_json(&app, "POST", "/v1/kv:mget", json!({"keys": ["k1", "k2", "missing"]})).await;
+    let (st, body) = send_json(
+        &app,
+        "POST",
+        "/v1/kv:mget",
+        json!({"keys": ["k1", "k2", "missing"]}),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     let values = body["values"].as_array().unwrap();
     assert_eq!(values[0], json!("v1"));
@@ -165,12 +199,24 @@ async fn scan_by_prefix() {
 async fn locks_lifecycle() {
     let (app, _) = app();
 
-    let (st, body) = send_json(&app, "POST", "/v1/locks/job", json!({"owner": "a", "ttl_ms": 60000})).await;
+    let (st, body) = send_json(
+        &app,
+        "POST",
+        "/v1/locks/job",
+        json!({"owner": "a", "ttl_ms": 60000}),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["acquired"], json!(true));
 
     // A different owner cannot acquire.
-    let (st, body) = send_json(&app, "POST", "/v1/locks/job", json!({"owner": "b", "ttl_ms": 60000})).await;
+    let (st, body) = send_json(
+        &app,
+        "POST",
+        "/v1/locks/job",
+        json!({"owner": "b", "ttl_ms": 60000}),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["acquired"], json!(false));
 
@@ -184,7 +230,13 @@ async fn locks_lifecycle() {
 async fn list_push_pop() {
     let (app, _) = app();
 
-    let (st, body) = send_json(&app, "POST", "/v1/lists/q/rpush", json!({"values": ["a", "b", "c"]})).await;
+    let (st, body) = send_json(
+        &app,
+        "POST",
+        "/v1/lists/q/rpush",
+        json!({"values": ["a", "b", "c"]}),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["length"], json!(3));
 
@@ -197,18 +249,27 @@ async fn list_push_pop() {
 async fn probes_and_drain() {
     let (app, state) = app();
 
-    let req = Request::builder().uri("/healthz").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/healthz")
+        .body(Body::empty())
+        .unwrap();
     let (st, body) = send(&app, req).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body, b"ok");
 
-    let req = Request::builder().uri("/readyz").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/readyz")
+        .body(Body::empty())
+        .unwrap();
     let (st, _) = send(&app, req).await;
     assert_eq!(st, StatusCode::OK);
 
     // Once draining, readyz flips to 503 so k8s stops routing.
     state.start_drain();
-    let req = Request::builder().uri("/readyz").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/readyz")
+        .body(Body::empty())
+        .unwrap();
     let (st, _) = send(&app, req).await;
     assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE);
 }
@@ -220,25 +281,37 @@ async fn metrics_records_per_route_requests() {
     send_json(&app, "PUT", "/v1/kv/m", json!({"value": 1})).await;
     send_json(&app, "GET", "/v1/kv/m", Value::Null).await;
 
-    let req = Request::builder().uri("/metrics").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/metrics")
+        .body(Body::empty())
+        .unwrap();
     let (st, bytes) = send(&app, req).await;
     assert_eq!(st, StatusCode::OK);
     let text = String::from_utf8_lossy(&bytes);
     // Request counter labelled by the matched route pattern (not the raw key).
-    assert!(text.contains("keep_http_requests_total"), "missing request counter");
+    assert!(
+        text.contains("keep_http_requests_total"),
+        "missing request counter"
+    );
     assert!(
         text.contains("route=\"/v1/kv/{key}\""),
         "missing matched-route label:\n{text}"
     );
     // Latency histogram + the existing engine gauges.
-    assert!(text.contains("keep_http_request_duration_seconds_bucket"), "missing histogram");
+    assert!(
+        text.contains("keep_http_request_duration_seconds_bucket"),
+        "missing histogram"
+    );
     assert!(text.contains("keep_keys_total"), "engine gauges dropped");
 }
 
 #[tokio::test]
 async fn cluster_endpoint_reports_topology() {
     let (app, _) = app();
-    let req = Request::builder().uri("/cluster").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/cluster")
+        .body(Body::empty())
+        .unwrap();
     let (st, bytes) = send(&app, req).await;
     assert_eq!(st, StatusCode::OK);
     let v: Value = serde_json::from_slice(&bytes).unwrap();
@@ -250,7 +323,10 @@ async fn cluster_endpoint_reports_topology() {
 #[tokio::test]
 async fn openapi_document_is_served() {
     let (app, _) = app();
-    let req = Request::builder().uri("/openapi.json").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/openapi.json")
+        .body(Body::empty())
+        .unwrap();
     let (st, bytes) = send(&app, req).await;
     assert_eq!(st, StatusCode::OK);
     let doc: Value = serde_json::from_slice(&bytes).unwrap();

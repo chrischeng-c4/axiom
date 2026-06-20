@@ -79,7 +79,11 @@ pub async fn zadd(
     Json(req): Json<ZAddRequest>,
 ) -> Result<Json<CountResponse>, ApiErr> {
     let k = key_of(&key)?;
-    let members: Vec<(String, f64)> = req.members.into_iter().map(|m| (m.member, m.score)).collect();
+    let members: Vec<(String, f64)> = req
+        .members
+        .into_iter()
+        .map(|m| (m.member, m.score))
+        .collect();
     let count = st.engine.zadd(&k, members).map_err(ApiErr::from)?;
     ack_durable(&st).await;
     Ok(Json(CountResponse { count }))

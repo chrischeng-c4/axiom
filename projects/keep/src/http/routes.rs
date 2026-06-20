@@ -72,7 +72,10 @@ pub fn router(state: AppState) -> Router {
             post(sets::sadd).get(sets::smembers).delete(sets::srem),
         )
         .route("/v1/sets/{key}/length", get(sets::scard))
-        .route("/v1/sets/{key}/members/{member}", axum::routing::head(sets::sismember))
+        .route(
+            "/v1/sets/{key}/members/{member}",
+            axum::routing::head(sets::sismember),
+        )
         // sorted sets
         .route(
             "/v1/zsets/{key}",
