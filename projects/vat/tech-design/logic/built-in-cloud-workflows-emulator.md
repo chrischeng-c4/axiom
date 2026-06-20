@@ -269,3 +269,130 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; the cloud-workflows emulator verb then errors cleanly, never a panic."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md
+    action: create
+    section: changes
+    impl_mode: hand-written
+    reason: "Define the Cloud Workflows emulator TD."
+  - path: projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md
+    action: validate
+    section: logic
+    impl_mode: hand-written
+    reason: "Record the REST + interpreter + expression + dispatch lifecycle."
+  - path: projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md
+    action: validate
+    section: schema
+    impl_mode: hand-written
+    reason: "Record the execution evidence and exported env."
+  - path: projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md
+    action: validate
+    section: config
+    impl_mode: hand-written
+    reason: "Record the cloud-workflows builtin-only preset."
+  - path: projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md
+    action: validate
+    section: cli
+    impl_mode: hand-written
+    reason: "Record the vat emulator cloud-workflows kind."
+  - path: projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Record preset, expression, interpreter, try/subworkflow, and dispatch coverage."
+  - path: projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md
+    action: validate
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Record workflow-dispatch, sibling-orchestration, and lean-build coverage."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#config"
+    summary: "Add serde_yaml to the emulator feature plus the integration test entry."
+  - path: projects/vat/src/emulator/workflows/expr.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#logic"
+    summary: "The ${...} expression evaluator: a Pratt evaluator over serde_json::Value with a bounded operator/function set; errors never panic."
+  - path: projects/vat/src/emulator/workflows/interp.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#logic"
+    summary: "The step interpreter: assign/call(http+sys.log+subworkflow)/switch/for/try-retry-except/next/return/raise over a parsed workflow, with a step budget guard, using dispatch.rs for http."
+  - path: projects/vat/src/emulator/workflows/mod.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#logic"
+    summary: "axum Workflows v1 REST server (create/get workflow, create/get execution) over an in-memory store; runs executions to completion via the interpreter."
+  - path: projects/vat/src/emulator/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#logic"
+    summary: "Register the workflows module and the CloudWorkflows serve arm."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#cli"
+    summary: "Add the CloudWorkflows EmulatorKind arm."
+  - path: projects/vat/src/commands/emulator.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#cli"
+    summary: "Map the CloudWorkflows EmulatorKind to the emulator serve dispatch."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#config"
+    summary: "Add the CloudWorkflows ServicePreset and include it in is_emulator/is_builtin/is_builtin_only."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#logic"
+    summary: "Extend builtin_emulator_info and service_preset_name and fill the new exhaustive preset arm."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#config"
+    summary: "Document the built-in Cloud Workflows emulator."
+  - path: projects/vat/README.md
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#config"
+    summary: "Document the built-in Cloud Workflows emulator preset."
+  - path: projects/vat/tests
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#unit-test"
+      - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#e2e-test"
+    summary: "Add tests/vat_emulator_workflows.rs integration test."
+```
