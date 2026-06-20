@@ -236,20 +236,29 @@ preferred**:
   Docker image when it is not; `runtime = "native"` / `"docker"` force one path.
   Datastore/broker presets: `postgres`, `redis`, `nats`, `rabbitmq`, `mysql`,
   `mongo`.
-- `preset` (emulators) — `firestore`, `pubsub`, `datastore`, `bigtable`,
+- `preset` (built-in Rust emulators) — `pubsub` and `firebase-auth` run vat's
+  **own** in-process emulator under `runtime = auto`: pure Rust, instant start,
+  **no gcloud / Java / firebase-tools / Docker**. `pubsub` is a google.pubsub.v1
+  gRPC server (topics/subscriptions, Publish, Pull, StreamingPull, Acknowledge);
+  `firebase-auth` is a Firebase Auth (Identity Toolkit) REST server (signUp,
+  signInWithPassword, lookup, …). They export `PUBSUB_EMULATOR_HOST` /
+  `FIREBASE_AUTH_EMULATOR_HOST`. `pubsub` still accepts `runtime = native`
+  (gcloud) or `runtime = docker` (the cloud-cli image) as a full-fidelity
+  fallback; `firebase-auth` is built-in only. The async emulator stack sits
+  behind a default-on `emulator` Cargo feature (`--no-default-features` drops it).
+  ```toml
+  [[services]]
+  id = "ps"
+  preset = "pubsub"          # built-in gRPC emulator → PUBSUB_EMULATOR_HOST
+  ```
+- `preset` (external emulators) — `firestore`, `datastore`, `bigtable`,
   `spanner` wrap the GCP `gcloud beta emulators` family. Native needs gcloud +
   Java + the gcloud component; `runtime = auto` falls back to the cloud-cli
   Docker image (Spanner uses its own image) when the component is missing.
-  Each exports the well-known host var (e.g. `FIRESTORE_EMULATOR_HOST`,
-  `PUBSUB_EMULATOR_HOST`). `preset = "firebase"` is the Firebase Emulator Suite
-  bundle: it requires a `firebase.json`, runs `firebase emulators:start`, and
-  exports each configured emulator's `*_EMULATOR_HOST` (native-only — no Docker
-  fallback). Example:
-  ```toml
-  [[services]]
-  id = "fb"
-  preset = "firebase"        # reads ./firebase.json, exports *_EMULATOR_HOST
-  ```
+  Each exports the well-known host var (e.g. `FIRESTORE_EMULATOR_HOST`).
+  `preset = "firebase"` is the Firebase Emulator Suite bundle: it requires a
+  `firebase.json`, runs `firebase emulators:start`, and exports each configured
+  emulator's `*_EMULATOR_HOST` (native-only — no Docker fallback).
 - `image` — a Docker-only dependency that has no native equivalent (e.g.
   AlloyDB). Requires `container_port`; `image_env` is passed into the container;
   in `export`, `{host}`/`{port}` resolve to the mapped host endpoint and

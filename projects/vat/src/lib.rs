@@ -34,6 +34,8 @@
 pub mod cluster;
 pub mod commands;
 pub mod config;
+#[cfg(feature = "emulator")]
+pub mod emulator;
 pub mod event;
 pub mod gpu;
 pub mod id;
