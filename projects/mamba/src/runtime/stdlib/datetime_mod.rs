@@ -134,6 +134,22 @@ fn tzinfo_field(val: MbValue) -> Option<MbValue> {
     None
 }
 
+/// The `key` of a `zoneinfo.ZoneInfo` instance (e.g. "UTC"), if `tz` is one.
+fn zoneinfo_key(tz: MbValue) -> Option<String> {
+    let ptr = tz.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if class_name == "ZoneInfo" {
+                let k = fields.read().ok()?.get("key").copied()?;
+                if let ObjData::Str(ref s) = (*k.as_ptr()?).data {
+                    return Some(s.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// utcoffset of a tzinfo value in whole seconds. Fixed `datetime.timezone`
 /// instances read their stored offset; user tzinfo subclasses are asked via
 /// their `utcoffset(None)` method (returning a timedelta).
@@ -151,6 +167,14 @@ pub(crate) fn tz_utcoffset_seconds(tz: MbValue) -> Option<i64> {
                         .ok()?
                         .get("_offset_seconds")
                         .and_then(|v| v.as_int());
+                }
+                // zoneinfo.ZoneInfo("UTC") is a fixed zero offset. Other zones
+                // need tz-data we do not carry, so treat them as offset-unknown.
+                if class_name == "ZoneInfo" {
+                    return match zoneinfo_key(tz).as_deref() {
+                        Some("UTC") => Some(0),
+                        _ => None,
+                    };
                 }
             }
         }
@@ -595,6 +619,41 @@ unsafe extern "C" fn tz_method_hash(self_: MbValue) -> MbValue {
     MbValue::from_int(inst_int(self_, "_offset_seconds", 0))
 }
 
+/// `datetime.utcoffset()` — `None` when naive, else `tzinfo.utcoffset(self)`.
+unsafe extern "C" fn dt_method_utcoffset(self_: MbValue) -> MbValue {
+    match inst_offset_checked(self_) {
+        Ok(Some(secs)) => timedelta_from_us(secs as i128 * 1_000_000),
+        _ => MbValue::none(),
+    }
+}
+
+/// `datetime.dst()` — `None` when naive, else `tzinfo.dst(self)`.
+unsafe extern "C" fn dt_method_dst(self_: MbValue) -> MbValue {
+    let Some(tz) = tzinfo_field(self_) else { return MbValue::none() };
+    // ZoneInfo("UTC") has zero DST; other zones need tz-data we lack.
+    if let Some(key) = zoneinfo_key(tz) {
+        return if key == "UTC" { timedelta_from_us(0) } else { MbValue::none() };
+    }
+    let method = MbValue::from_ptr(MbObject::new_str("dst".to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![self_]));
+    super::super::class::mb_call_method(tz, method, args)
+}
+
+/// `datetime.tzname()` — `None` when naive, else `tzinfo.tzname(self)`.
+unsafe extern "C" fn dt_method_tzname(self_: MbValue) -> MbValue {
+    let Some(tz) = tzinfo_field(self_) else { return MbValue::none() };
+    if let Some(key) = zoneinfo_key(tz) {
+        return if key == "UTC" {
+            MbValue::from_ptr(MbObject::new_str("UTC".to_string()))
+        } else {
+            MbValue::none()
+        };
+    }
+    let method = MbValue::from_ptr(MbObject::new_str("tzname".to_string()));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![self_]));
+    super::super::class::mb_call_method(tz, method, args)
+}
+
 /// `datetime.date()` — project the date part as a date instance.
 unsafe extern "C" fn dt_method_date(self_: MbValue) -> MbValue {
     let y = inst_int(self_, "year", 1970);
@@ -952,6 +1011,18 @@ pub fn register() {
         dt_inst.insert(
             "date".into(),
             MbValue::from_func(dt_method_date as *const () as usize),
+        );
+        dt_inst.insert(
+            "utcoffset".into(),
+            MbValue::from_func(dt_method_utcoffset as *const () as usize),
+        );
+        dt_inst.insert(
+            "dst".into(),
+            MbValue::from_func(dt_method_dst as *const () as usize),
+        );
+        dt_inst.insert(
+            "tzname".into(),
+            MbValue::from_func(dt_method_tzname as *const () as usize),
         );
         dt_inst.insert(
             "__lt__".into(),
