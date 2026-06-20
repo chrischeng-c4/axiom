@@ -427,3 +427,16 @@ changes:
 - [unit-test] UT1..UT7 cover preset+env, CA mint, cassette, stub matcher, stub-over-proxy, HTTPS MITM, and record/replay — the MITM and record/replay paths are exercised deterministically.
 - [e2e-test] Self-contained proxy smoke + a preset-run smoke + lean-build check.
 - [changes] Bounded list mapping Cargo, the four httpmock files, cli/run/config wiring, docs, and the test to their driving sections.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic is codegen-ready: builtin framework + CA mint + three request forms + stub/cassette/forward core.
+- [schema] Evidence (env set, stub, cassette) fully specified and consistent with run evidence.
+- [config] http-mock builtin-only preset + multi-env export unambiguous.
+- [cli] vat emulator http-mock verb + ca-path/cassette-dir + routing clear, no-panic stated.
+- [unit-test] UT1..UT7 give deterministic coverage incl HTTPS MITM and record/replay.
+- [e2e-test] proxy smoke + preset-run + lean-build checks.
+- [changes] Bounded change list mapping every artifact to its driving section.
