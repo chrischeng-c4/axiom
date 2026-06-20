@@ -32,6 +32,11 @@ chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
 crc32fast = "1.4"
 futures.workspace = true
+# Broker log-tailing on relay (#124, behind the `relay-wal` feature). Off by
+# default so the serving binary stays HTTP-client-free; relay is h2c so reqwest
+# uses rustls (no openssl) when enabled.
+relay = { path = "../relay", optional = true }
+reqwest = { workspace = true, optional = true }
 rayon = "1.10"
 # simdeez_f compiles anndists' SIMD distance kernels (aarch64 NEON `asimd`,
 # x86 AVX2/SSE2) for DistL2/DistDot. The cosine path routes through DistDot on
@@ -72,6 +77,8 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 [features]
 default = []
 jieba = ["dep:jieba-rs"]
+# relay-wal — tail relay's broadcast as the WAL backend (#124), instead of NATS.
+relay-wal = ["dep:relay", "dep:reqwest"]
 operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars"]
 # OTLP trace export. Compiled into the release binary (lumen-release.yml / build.sh
 # pass --features otel); off in plain dev builds so they don't pay the OTLP build

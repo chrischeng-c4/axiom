@@ -6191,6 +6191,7 @@ dependencies = [
  "proptest",
  "rand 0.8.6",
  "rayon",
+ "relay",
  "reqwest 0.12.28",
  "roaring",
  "rustc-hash 2.1.2",
