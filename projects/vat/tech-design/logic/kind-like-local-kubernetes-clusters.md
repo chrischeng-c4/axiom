@@ -476,3 +476,16 @@ changes:
       - "projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#e2e-test"
     summary: "Add cluster unavailable, run-scoped KUBECONFIG, and standalone lifecycle smoke coverage (gated on a real backend)."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract logic is complete and codegen-ready: a single Mermaid Plus flow binds run-scoped and standalone paths, with explicit error terminals (cluster_backend_unavailable, cluster_create_timeout) and a keep-policy teardown branch.
+- [schema] ClusterRunRecord and the standalone registry record are fully specified with bounded enums and additionalProperties false, matching how state surfaces through ServiceRunRecord and vat state.
+- [config] The cluster/k8s_version/nodes service additions are a clean fourth backing; exclusivity, the 1..9 nodes bound, and the {kubeconfig}/KUBECONFIG export contract are unambiguous.
+- [cli] vat cluster create/ls/delete/kubeconfig forms and flags are concrete and consistent with the registry and backend-resolution design.
+- [unit-test] UT1..UT5 give deterministic, Docker-free coverage of exclusivity, serde, knob rejection, naming, and no-panic resolution.
+- [e2e-test] The smoke set pairs an always-run unavailable assertion with gated run-scoped and standalone lifecycles that skip without a backend; commands and assertions are runnable.
+- [changes] The bounded change list maps every source file (config.rs, cluster.rs, run.rs, commands/cluster.rs, cli.rs, commands/mod.rs, state.rs, paths.rs, lib.rs, llm.rs, README, tests) to its driving section, with no unrelated scope.
