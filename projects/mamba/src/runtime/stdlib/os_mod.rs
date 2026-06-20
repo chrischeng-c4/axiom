@@ -2076,24 +2076,94 @@ fn mb_os_kill(args: &[MbValue]) -> MbValue {
     }
 }
 
-/// os.execv(path, args) — empty args sequence raises ValueError (CPython).
+/// os.exec*(path, args[, env]) — the exec family validates its arguments before
+/// it would replace the process. CPython rejects: an empty argv (ValueError), an
+/// empty argv[0] (ValueError), env keys/values with embedded NUL or '=' in a key
+/// (ValueError), and a program that cannot be found (FileNotFoundError/OSError).
 fn mb_os_execv(args: &[MbValue]) -> MbValue {
     let argv = args.get(1).copied().unwrap_or_else(MbValue::none);
-    let empty = argv
-        .as_ptr()
-        .map(|ptr| unsafe {
-            match &(*ptr).data {
-                ObjData::List(lock) => lock.read().unwrap().is_empty(),
-                ObjData::Tuple(items) => items.is_empty(),
-                _ => false,
+    let items: Option<Vec<MbValue>> = argv.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::List(lock) => Some(lock.read().unwrap().to_vec()),
+            ObjData::Tuple(items) => Some(items.to_vec()),
+            _ => None,
+        }
+    });
+    if let Some(items) = &items {
+        if items.is_empty() {
+            return raise("ValueError", "execv() arg 2 must not be empty".to_string());
+        }
+        // CPython: the first argv element must be a non-empty string.
+        let first_empty = items[0]
+            .as_ptr()
+            .map(|p| unsafe { matches!(&(*p).data, ObjData::Str(s) if s.is_empty()) })
+            .unwrap_or(false);
+        if first_empty {
+            return raise(
+                "ValueError",
+                "execv() arg 2 first element cannot be empty".to_string(),
+            );
+        }
+    }
+    // execve / execvpe: validate the environment mapping (arg 3) before exec.
+    // Keys may not contain NUL or '='; values may not contain NUL.
+    if let Some(env) = args.get(2).copied() {
+        if let Some(ptr) = env.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let map = lock.read().unwrap();
+                    for (k, v) in map.iter() {
+                        if let super::super::dict_ops::DictKey::Str(ks) = k {
+                            if ks.contains('\0') || ks.contains('=') {
+                                return raise(
+                                    "ValueError",
+                                    "illegal environment variable name".to_string(),
+                                );
+                            }
+                        }
+                        let val_has_nul = v
+                            .as_ptr()
+                            .map(|vp| matches!(&(*vp).data, ObjData::Str(vs) if vs.contains('\0')))
+                            .unwrap_or(false);
+                        if val_has_nul {
+                            return raise("ValueError", "embedded null byte".to_string());
+                        }
+                    }
+                }
             }
-        })
-        .unwrap_or(false);
-    if empty {
-        return raise("ValueError", "execv() arg 2 must not be empty".to_string());
+        }
+    }
+    // The program must resolve to an existing file (directly or on PATH) before
+    // exec is attempted; otherwise CPython raises FileNotFoundError (an OSError).
+    if let Some(path) = args.first().copied().and_then(extract_str) {
+        if !path.is_empty() && !exec_program_exists(&path) {
+            return raise(
+                "FileNotFoundError",
+                format!("[Errno 2] No such file or directory: '{path}'"),
+            );
+        }
     }
     // Presence-only otherwise: a real exec would not return.
     MbValue::none()
+}
+
+/// True if `prog` names an existing file directly, or (when it has no path
+/// separator) is found in one of the PATH directories.
+fn exec_program_exists(prog: &str) -> bool {
+    if std::path::Path::new(prog).exists() {
+        return true;
+    }
+    if prog.contains('/') {
+        return false;
+    }
+    if let Ok(pathvar) = std::env::var("PATH") {
+        for dir in pathvar.split(':') {
+            if !dir.is_empty() && std::path::Path::new(dir).join(prog).exists() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// os.umask(mask) — non-int mask raises TypeError; otherwise return prev (0).
