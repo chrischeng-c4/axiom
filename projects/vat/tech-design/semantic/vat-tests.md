@@ -289,6 +289,26 @@ semantic_domain:
           role: "test"
           section_type: "unit-test"
           domain: "projects/vat/tests"
+      - path: "projects/vat/tests/vat_emulator_storage.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "test_case"]
+        symbols:
+          - name: "vat_bin"
+            kind: "function"
+            public: false
+          - name: "enc"
+            kind: "function"
+            public: false
+          - name: "cloud_storage_emulator_roundtrips"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "unit-test"
+          domain: "projects/vat/tests"
 ```
 
 ## Unit Test
@@ -314,6 +334,7 @@ evidence:
     - path: "projects/vat/tests/vat_emulator_tasks.rs"
     - path: "projects/vat/tests/vat_emulator_scheduler.rs"
     - path: "projects/vat/tests/vat_emulator_workflows.rs"
+    - path: "projects/vat/tests/vat_emulator_storage.rs"
 ---
 requirementDiagram
 

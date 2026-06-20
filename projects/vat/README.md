@@ -27,7 +27,7 @@ cleans up according to the run policy.
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Agent-Native GPU-Native Dev Containers | - | implemented | verified | smoke | ready | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), GCP/Firebase emulators (including built-in Rust Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, and a Cloud Workflows interpreter), and host GPU access without a VM. |
+| Agent-Native GPU-Native Dev Containers | - | implemented | verified | smoke | ready | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), GCP/Firebase emulators (including built-in Rust Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, a Cloud Workflows interpreter, and Cloud Storage), and host GPU access without a VM. |
 
 ## AW Verification Snapshot
 
@@ -38,9 +38,9 @@ cleans up according to the run policy.
 | Tech design root | `projects/vat/tech-design` |
 | TD lock | `projects/vat/tech-design/td.lock` |
 | External-contract inventory | `projects/vat/tests/aw-ec.toml` |
-| Source ownership | full codegen, 100.0% (56/56) |
+| Source ownership | full codegen, 100.0% (58/58) |
 | Semantic coverage | 100.0% |
-| Traceability coverage | 95.2% |
+| Traceability coverage | 95.3% |
 | External-contract gate | passed, 6/6 |
 | Test gate | `cargo test -p vat` passed |
 | Health gate | `aw health vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
@@ -52,7 +52,7 @@ cleans up according to the run policy.
 | ID | agent-native-gpu-native-dev-containers |
 | Root WI | - |
 | Status | verified |
-| Promise | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), GCP/Firebase emulators (including built-in Rust Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, and a Cloud Workflows interpreter), and host GPU access without a VM. |
+| Promise | vat runs sandboxed host-process environments over copy-on-write workspaces so coding and ML agents get structured state, local test runner evidence, fork/snapshot, ephemeral local Kubernetes clusters (kind/k3d/minikube), GCP/Firebase emulators (including built-in Rust Pub/Sub, Firebase Auth, Cloud Tasks, Cloud Scheduler, a Cloud Workflows interpreter, and Cloud Storage), and host GPU access without a VM. |
 | Required Verification | smoke |
 | Gate Inventory | `cargo test -p vat`; `rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured projects/vat/README.md`; `rg -n -e 'Apple GPU' -e Metal -e MPS -e MLX -e tensorflow-metal projects/vat/README.md projects/vat/src/gpu.rs`; `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md` |
 
@@ -66,6 +66,7 @@ cleans up according to the run policy.
 | Built-in Rust emulators (Pub/Sub gRPC + Firebase Auth REST) | change | #145 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_auth --test vat_emulator_pubsub -- --nocapture` |
 | Built-in Rust emulators (Cloud Tasks + Cloud Scheduler) | change | #146 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_tasks --test vat_emulator_scheduler -- --nocapture` |
 | Built-in Rust emulator (Cloud Workflows subset interpreter) | change | #147 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_workflows -- --nocapture` |
+| Built-in Rust emulator (Cloud Storage / GCS) | change | #148 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_storage -- --nocapture` |
 | Copy-on-write fork and snapshot lifecycle | epic | - | implemented | verified | smoke | `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md` |
 | Resource isolation boundary | epic | - | implemented | verified | smoke | `rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox` |
 
