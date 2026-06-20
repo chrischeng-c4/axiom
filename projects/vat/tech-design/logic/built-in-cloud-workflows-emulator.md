@@ -396,3 +396,16 @@ changes:
       - "projects/vat/tech-design/logic/built-in-cloud-workflows-emulator.md#e2e-test"
     summary: "Add tests/vat_emulator_workflows.rs integration test."
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] The Mermaid Plus flow captures the builtin/self-spawn framing, the REST entry (createWorkflow/createExecution), and the interpreter dispatch (assign/call-http-or-subworkflow/switch/for/try/return) sharing dispatch.rs.
+- [schema] The execution evidence (preset, builtin_emulator, exported host var, execution state/result/error) is precise and consistent with run evidence.
+- [config] The cloud-workflows builtin-only preset (runtime must stay auto, no gcloud/docker) and the supported-subset note are unambiguous.
+- [cli] The vat emulator cloud-workflows contract is clear including the REST surface and the no-panic-on-unsupported guarantee.
+- [unit-test] UT1..UT5 cover preset classification, the expression evaluator, the core interpreter, try/subworkflow, and http dispatch — units are pure, the dispatch one self-contained.
+- [e2e-test] Self-contained workflow-dispatch integration + a sibling-orchestration smoke + lean-build check.
+- [changes] Bounded list mapping Cargo, expr/interp/mod, cli/run/config, docs, and the test to their driving sections.
