@@ -311,7 +311,11 @@ async fn k8s(_args: K8sArgs) -> Result<()> {
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
-    init_tracing(&args.log_level, args.log_format, args.otlp_endpoint.as_deref());
+    init_tracing(
+        &args.log_level,
+        args.log_format,
+        args.otlp_endpoint.as_deref(),
+    );
 
     let engine = Arc::new(Engine::new());
 
@@ -321,7 +325,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
     if let Some(endpoint) = args.otlp_endpoint.as_deref() {
         match init_otel_meter(endpoint, engine.clone()) {
             Ok(()) => tracing::info!(otlp_endpoint = endpoint, "OTLP metrics push enabled"),
-            Err(e) => tracing::error!(error = %e, "OTLP metrics init failed; /metrics pull still works"),
+            Err(e) => {
+                tracing::error!(error = %e, "OTLP metrics init failed; /metrics pull still works")
+            }
         }
     }
 
@@ -714,17 +720,15 @@ fn build_otel_tracer(
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(exporter)
-        .with_trace_config(
-            opentelemetry_sdk::trace::Config::default().with_resource(
-                opentelemetry_sdk::Resource::new(vec![
-                    opentelemetry::KeyValue::new("service.name", "lumen"),
-                    opentelemetry::KeyValue::new(
-                        "service.version",
-                        env!("CARGO_PKG_VERSION").to_string(),
-                    ),
-                ]),
-            ),
-        )
+        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
+            opentelemetry_sdk::Resource::new(vec![
+                opentelemetry::KeyValue::new("service.name", "lumen"),
+                opentelemetry::KeyValue::new(
+                    "service.version",
+                    env!("CARGO_PKG_VERSION").to_string(),
+                ),
+            ]),
+        ))
         .install_batch(opentelemetry_sdk::runtime::Tokio)?;
     Ok(tracer)
 }
@@ -768,20 +772,62 @@ fn init_otel_meter(
             let _ = meter
                 .u64_observable_counter($name)
                 .with_description($desc)
-                .with_callback(move |o| o.observe(eng.metrics().$field.load(Ordering::Relaxed), &[]))
+                .with_callback(move |o| {
+                    o.observe(eng.metrics().$field.load(Ordering::Relaxed), &[])
+                })
                 .init();
         }};
     }
-    obs_counter!("lumen_index_writes_total", index_writes_total, "Total index writes");
-    obs_counter!("lumen_index_bytes_total", index_bytes_total, "Total bytes indexed");
-    obs_counter!("lumen_search_requests_total", search_requests_total, "Total search requests");
-    obs_counter!("lumen_search_latency_ms_sum", search_latency_ms_sum, "Search latency ms sum");
-    obs_counter!("lumen_search_latency_ms_count", search_latency_ms_count, "Search latency count");
-    obs_counter!("lumen_duplicates_requests_total", duplicates_requests_total, "Total duplicates requests");
-    obs_counter!("lumen_collections_created_total", collections_created_total, "Total collections created");
-    obs_counter!("lumen_schema_fields_total", schema_fields_total, "Total schema fields");
-    obs_counter!("lumen_posting_cache_hits_total", posting_cache_hits_total, "Posting cache hits");
-    obs_counter!("lumen_posting_cache_misses_total", posting_cache_misses_total, "Posting cache misses");
+    obs_counter!(
+        "lumen_index_writes_total",
+        index_writes_total,
+        "Total index writes"
+    );
+    obs_counter!(
+        "lumen_index_bytes_total",
+        index_bytes_total,
+        "Total bytes indexed"
+    );
+    obs_counter!(
+        "lumen_search_requests_total",
+        search_requests_total,
+        "Total search requests"
+    );
+    obs_counter!(
+        "lumen_search_latency_ms_sum",
+        search_latency_ms_sum,
+        "Search latency ms sum"
+    );
+    obs_counter!(
+        "lumen_search_latency_ms_count",
+        search_latency_ms_count,
+        "Search latency count"
+    );
+    obs_counter!(
+        "lumen_duplicates_requests_total",
+        duplicates_requests_total,
+        "Total duplicates requests"
+    );
+    obs_counter!(
+        "lumen_collections_created_total",
+        collections_created_total,
+        "Total collections created"
+    );
+    obs_counter!(
+        "lumen_schema_fields_total",
+        schema_fields_total,
+        "Total schema fields"
+    );
+    obs_counter!(
+        "lumen_posting_cache_hits_total",
+        posting_cache_hits_total,
+        "Posting cache hits"
+    );
+    obs_counter!(
+        "lumen_posting_cache_misses_total",
+        posting_cache_misses_total,
+        "Posting cache misses"
+    );
 
     // storage_bytes is a gauge (can decrease).
     {
@@ -789,7 +835,9 @@ fn init_otel_meter(
         let _ = meter
             .u64_observable_gauge("lumen_storage_bytes")
             .with_description("Current storage bytes")
-            .with_callback(move |o| o.observe(eng.metrics().storage_bytes.load(Ordering::Relaxed), &[]))
+            .with_callback(move |o| {
+                o.observe(eng.metrics().storage_bytes.load(Ordering::Relaxed), &[])
+            })
             .init();
     }
 
