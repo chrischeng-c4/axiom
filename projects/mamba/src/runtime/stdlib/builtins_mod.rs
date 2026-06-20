@@ -300,6 +300,9 @@ unsafe extern "C" fn dispatch_pow(args_ptr: *const MbValue, nargs: usize) -> MbV
 
 unsafe extern "C" fn dispatch_divmod(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
+    if nargs != 2 {
+        return raise_type_error(&format!("divmod expected 2 arguments, got {nargs}"));
+    }
     let a = args.first().copied().unwrap_or_else(MbValue::none);
     let b = args.get(1).copied().unwrap_or_else(MbValue::none);
     super::super::builtins::mb_divmod(a, b)

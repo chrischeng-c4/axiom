@@ -203,6 +203,12 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
                         None => MbValue::none(),
                     };
                 }
+                ObjData::Tuple(ref items) => {
+                    return match validated_bytes_from_items(items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytes(d)),
+                        None => MbValue::none(),
+                    };
+                }
                 // A BigInt count is too large for a size-sized integer.
                 ObjData::BigInt(_) => {
                     raise_count_overflow();
@@ -300,6 +306,12 @@ pub fn mb_bytearray_new(source: MbValue) -> MbValue {
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap().clone();
                     return match validated_bytes_from_items(&items) {
+                        Some(d) => MbValue::from_ptr(MbObject::new_bytearray(d)),
+                        None => MbValue::none(),
+                    };
+                }
+                ObjData::Tuple(ref items) => {
+                    return match validated_bytes_from_items(items) {
                         Some(d) => MbValue::from_ptr(MbObject::new_bytearray(d)),
                         None => MbValue::none(),
                     };
