@@ -146,3 +146,17 @@ properties:
       additionalProperties: true
 additionalProperties: true
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat emulator
+    usage: "vat emulator cloud-storage --host-port 127.0.0.1:<PORT>"
+    behavior:
+      - "Hidden verb: vat spawns itself as the service process for the cloud-storage preset."
+      - "Serves the GCS JSON API v1 subset over an in-memory store: bucket create/get/list/delete (auto-create on upload), object upload (media/multipart/minimal resumable), download (alt=media), metadata, list (prefix), delete."
+      - "Object names with slashes are percent-decoded; size and md5Hash are reported so SDK integrity checks pass. The runner reaches it through STORAGE_EMULATOR_HOST."
+      - "Built without the emulator feature, the verb errors cleanly (no panic); an unknown object returns a structured 404."
+```
