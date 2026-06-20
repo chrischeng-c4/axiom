@@ -200,7 +200,6 @@ requirementDiagram
       verifies: pubsub_emulator_publish_pull
     }
 ```
-
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
