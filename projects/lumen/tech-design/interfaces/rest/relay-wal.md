@@ -54,7 +54,6 @@ flowchart TD
     suite([in-process relay]) --> t_pub[publish 3] --> a_pub([seqs 1,2,3])
     suite --> t_tail[subscribe + tail] --> a_tail([3 records in order])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
