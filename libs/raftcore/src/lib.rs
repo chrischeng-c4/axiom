@@ -1,4 +1,4 @@
-//! Self-contained single-shard Raft consensus core (no external dependency).
+//! Self-contained Raft consensus core (no external dependency).
 //!
 //! [`RaftNode`] is **step-driven**: it never spawns timers or threads. A driver
 //! calls [`tick`](RaftNode::tick) to advance logical time and
@@ -10,9 +10,16 @@
 //!
 //! Replicated-state-machine model: the Raft log holds opaque **command** bytes.
 //! Once an entry commits (acked by a majority of voters), every node surfaces it
-//! via [`take_committed`](RaftNode::take_committed) for the relay layer to apply
-//! to its own engine — relay's append-only durable log is the state machine and
-//! is never rewritten here.
+//! via [`take_committed`](RaftNode::take_committed) for the consumer to apply to
+//! its own state machine.
+//!
+//! **Snapshots / log compaction** keep the log bounded for large state machines:
+//! a consumer that has applied up to some index snapshots its state machine and
+//! calls [`compact`](RaftNode::compact); the Raft log before that index is
+//! dropped. A leader replicating to a follower whose next index has been
+//! compacted away ships the snapshot (`InstallSnapshot`) instead of replaying
+//! the whole history; the follower installs it and surfaces the bytes via
+//! [`take_installed_snapshot`](RaftNode::take_installed_snapshot).
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,13 +46,20 @@ pub struct RaftEntry {
 }
 
 /// The durable hard state of a Raft node: what must survive a restart so the
-/// node never double-votes in a term or forgets acknowledged entries.
-///
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// node never double-votes in a term or forgets acknowledged entries. Carries
+/// the compaction point + snapshot bytes so a restarted node can still serve
+/// lagging followers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedState {
     pub term: Term,
     pub voted_for: Option<NodeId>,
     pub log: Vec<RaftEntry>,
+    #[serde(default)]
+    pub snapshot_index: Index,
+    #[serde(default)]
+    pub snapshot_term: Term,
+    #[serde(default)]
+    pub snapshot: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,12 +101,32 @@ pub struct AppendResp {
     pub match_index: Index,
 }
 
+/// Ship a state-machine snapshot to a follower whose needed entries have been
+/// compacted away. `data` is opaque (the consumer's serialized state machine).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InstallSnapshotReq {
+    pub term: Term,
+    pub leader: NodeId,
+    pub snapshot_index: Index,
+    pub snapshot_term: Term,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InstallSnapshotResp {
+    pub term: Term,
+    /// The snapshot index the follower now holds.
+    pub snapshot_index: Index,
+}
+
 #[derive(Clone, Debug)]
 pub enum RaftMsg {
     Vote(VoteReq),
     VoteResp(VoteResp),
     Append(AppendReq),
     AppendResp(AppendResp),
+    InstallSnapshot(InstallSnapshotReq),
+    InstallSnapshotResp(InstallSnapshotResp),
 }
 
 /// A message the driver must deliver to node `to`.
@@ -128,8 +162,7 @@ pub fn auto_membership(n: u64) -> Membership {
     }
 }
 
-/// A single-shard Raft participant.
-///
+/// A single Raft-group participant.
 pub struct RaftNode {
     id: NodeId,
     voters: Vec<NodeId>,
@@ -139,9 +172,16 @@ pub struct RaftNode {
     role: Role,
     current_term: Term,
     voted_for: Option<NodeId>,
+    /// In-memory log; `log[0]` has index `snapshot_index + 1`.
     log: Vec<RaftEntry>,
     commit_index: Index,
     last_applied: Index,
+
+    // compaction
+    snapshot_index: Index,
+    snapshot_term: Term,
+    snapshot: Vec<u8>,
+    installed_snapshot: Option<Vec<u8>>,
 
     // leader-only, per peer
     next_index: HashMap<NodeId, Index>,
@@ -180,6 +220,10 @@ impl RaftNode {
             log: Vec::new(),
             commit_index: 0,
             last_applied: 0,
+            snapshot_index: 0,
+            snapshot_term: 0,
+            snapshot: Vec::new(),
+            installed_snapshot: None,
             next_index: HashMap::new(),
             match_index: HashMap::new(),
             votes: HashSet::new(),
@@ -192,26 +236,32 @@ impl RaftNode {
         }
     }
 
-    /// Restore a node from durable [`PersistedState`]: term, votedFor and log
-    /// are recovered; volatile state (role, commit/apply indices) restarts as a
-    /// Follower and is re-derived via replication. Committed entries re-apply
-    /// idempotently downstream.
-    ///
+    /// Restore a node from durable [`PersistedState`]: term, votedFor, log and
+    /// the compaction point are recovered; volatile state (role, commit/apply)
+    /// restarts as a Follower at the snapshot point and is re-derived via
+    /// replication. Committed entries re-apply idempotently downstream.
     pub fn from_persisted(id: NodeId, membership: &Membership, state: PersistedState) -> RaftNode {
         let mut node = RaftNode::new(id, membership);
         node.current_term = state.term;
         node.voted_for = state.voted_for;
         node.log = state.log;
+        node.snapshot_index = state.snapshot_index;
+        node.snapshot_term = state.snapshot_term;
+        node.snapshot = state.snapshot;
+        node.commit_index = node.snapshot_index;
+        node.last_applied = node.snapshot_index;
         node
     }
 
-    /// Snapshot the durable hard state for [`crate::raft_store::RaftStore::save`].
-    ///
+    /// Snapshot the durable hard state for the consumer's store.
     pub fn persisted(&self) -> PersistedState {
         PersistedState {
             term: self.current_term,
             voted_for: self.voted_for,
             log: self.log.clone(),
+            snapshot_index: self.snapshot_index,
+            snapshot_term: self.snapshot_term,
+            snapshot: self.snapshot.clone(),
         }
     }
 
@@ -233,8 +283,17 @@ impl RaftNode {
     pub fn commit_index(&self) -> Index {
         self.commit_index
     }
+    /// Highest log index (covers compacted prefix): `snapshot_index + log.len()`.
     pub fn last_index(&self) -> Index {
-        self.log.len() as Index
+        self.snapshot_index + self.log.len() as Index
+    }
+    /// Last index folded into a snapshot (0 = none).
+    pub fn snapshot_index(&self) -> Index {
+        self.snapshot_index
+    }
+    /// Number of resident log entries (post-compaction).
+    pub fn log_len(&self) -> usize {
+        self.log.len()
     }
     /// Last known leader for the current term (for producer redirect).
     pub fn leader(&self) -> Option<NodeId> {
@@ -242,17 +301,21 @@ impl RaftNode {
     }
 
     fn last_term(&self) -> Term {
-        self.log.last().map(|e| e.term).unwrap_or(0)
+        self.log
+            .last()
+            .map(|e| e.term)
+            .unwrap_or(self.snapshot_term)
     }
 
+    /// Term of the entry at `index` (snapshot point or a resident entry).
     fn term_at(&self, index: Index) -> Term {
         if index == 0 {
             0
+        } else if index <= self.snapshot_index {
+            self.snapshot_term
         } else {
-            self.log
-                .get((index - 1) as usize)
-                .map(|e| e.term)
-                .unwrap_or(0)
+            let pos = (index - self.snapshot_index - 1) as usize;
+            self.log.get(pos).map(|e| e.term).unwrap_or(0)
         }
     }
 
@@ -269,11 +332,34 @@ impl RaftNode {
     pub fn take_committed(&mut self) -> Vec<RaftEntry> {
         let mut out = Vec::new();
         while self.last_applied < self.commit_index {
-            let e = self.log[self.last_applied as usize].clone();
-            out.push(e);
-            self.last_applied += 1;
+            let idx = self.last_applied + 1;
+            let pos = (idx - self.snapshot_index - 1) as usize;
+            out.push(self.log[pos].clone());
+            self.last_applied = idx;
         }
         out
+    }
+
+    /// A snapshot received from a leader, for the consumer to load into its state
+    /// machine (call once after [`handle`] processes an `InstallSnapshot`).
+    pub fn take_installed_snapshot(&mut self) -> Option<Vec<u8>> {
+        self.installed_snapshot.take()
+    }
+
+    /// Compact the log up through `up_to` (must be applied): the consumer has
+    /// snapshotted its state machine to `snapshot` bytes, so entries `<= up_to`
+    /// can be dropped. The snapshot is what a leader later ships to a follower
+    /// whose next index has been compacted away.
+    pub fn compact(&mut self, up_to: Index, snapshot: Vec<u8>) {
+        if up_to <= self.snapshot_index || up_to > self.last_applied {
+            return;
+        }
+        let term = self.term_at(up_to);
+        let drop = (up_to - self.snapshot_index) as usize;
+        self.log.drain(0..drop.min(self.log.len()));
+        self.snapshot_index = up_to;
+        self.snapshot_term = term;
+        self.snapshot = snapshot;
     }
 
     fn send(&mut self, to: NodeId, msg: RaftMsg) {
@@ -373,6 +459,22 @@ impl RaftNode {
             .next_index
             .get(&peer)
             .unwrap_or(&(self.last_index() + 1));
+        // Needed entries compacted away → ship the snapshot instead.
+        if next <= self.snapshot_index {
+            let (term, si, st) = (self.current_term, self.snapshot_index, self.snapshot_term);
+            let data = self.snapshot.clone();
+            self.send(
+                peer,
+                RaftMsg::InstallSnapshot(InstallSnapshotReq {
+                    term,
+                    leader: self.id,
+                    snapshot_index: si,
+                    snapshot_term: st,
+                    data,
+                }),
+            );
+            return;
+        }
         let prev_index = next.saturating_sub(1);
         let prev_term = self.term_at(prev_index);
         let entries: Vec<RaftEntry> = self
@@ -397,7 +499,6 @@ impl RaftNode {
 
     /// Append a command on the leader and replicate it. Returns its index, or
     /// `None` if this node is not the leader.
-    ///
     pub fn propose(&mut self, command: Vec<u8>) -> Option<Index> {
         if self.role != Role::Leader {
             return None;
@@ -414,13 +515,14 @@ impl RaftNode {
     }
 
     /// Feed an incoming message from `from`.
-    ///
     pub fn handle(&mut self, from: NodeId, msg: RaftMsg) {
         match msg {
             RaftMsg::Vote(req) => self.handle_vote(from, req),
             RaftMsg::VoteResp(resp) => self.handle_vote_resp(from, resp),
             RaftMsg::Append(req) => self.handle_append(req),
             RaftMsg::AppendResp(resp) => self.handle_append_resp(from, resp),
+            RaftMsg::InstallSnapshot(req) => self.handle_install_snapshot(req),
+            RaftMsg::InstallSnapshotResp(resp) => self.handle_install_snapshot_resp(from, resp),
         }
     }
 
@@ -476,9 +578,11 @@ impl RaftNode {
         self.step_down(req.term);
         self.leader_id = Some(leader);
 
-        // Log matching: the entry preceding the new ones must agree.
+        // Log matching: the entry preceding the new ones must agree. Anything at
+        // or below our snapshot point is implicitly matched.
         if req.prev_log_index > self.last_index()
-            || self.term_at(req.prev_log_index) != req.prev_log_term
+            || (req.prev_log_index > self.snapshot_index
+                && self.term_at(req.prev_log_index) != req.prev_log_term)
         {
             let term = self.current_term;
             self.send(
@@ -492,9 +596,13 @@ impl RaftNode {
             return;
         }
 
-        // Append, truncating any conflicting suffix.
+        // Append, skipping entries already covered by the snapshot and truncating
+        // any conflicting suffix.
         for e in &req.entries {
-            let pos = (e.index - 1) as usize;
+            if e.index <= self.snapshot_index {
+                continue;
+            }
+            let pos = (e.index - self.snapshot_index - 1) as usize;
             if pos < self.log.len() {
                 if self.log[pos].term != e.term {
                     self.log.truncate(pos);
@@ -539,9 +647,69 @@ impl RaftNode {
                 self.send_append_to(from);
             }
         } else {
-            // Log mismatch: back off and retry.
+            // Log mismatch: back off and retry (snapshot kicks in once next falls
+            // to or below the compaction point).
             let n = self.next_index.entry(from).or_insert(1);
             *n = (*n).saturating_sub(1).max(1);
+            self.send_append_to(from);
+        }
+    }
+
+    fn handle_install_snapshot(&mut self, req: InstallSnapshotReq) {
+        if req.term < self.current_term {
+            let (term, si) = (self.current_term, self.snapshot_index);
+            self.send(
+                req.leader,
+                RaftMsg::InstallSnapshotResp(InstallSnapshotResp {
+                    term,
+                    snapshot_index: si,
+                }),
+            );
+            return;
+        }
+        self.step_down(req.term);
+        self.leader_id = Some(req.leader);
+        if req.snapshot_index > self.snapshot_index {
+            // Install: drop the resident log (the follower was behind), adopt the
+            // snapshot point, and surface the bytes for the consumer to load.
+            self.log.clear();
+            self.snapshot_index = req.snapshot_index;
+            self.snapshot_term = req.snapshot_term;
+            self.snapshot = req.data.clone();
+            self.installed_snapshot = Some(req.data);
+            if self.commit_index < req.snapshot_index {
+                self.commit_index = req.snapshot_index;
+            }
+            self.last_applied = req.snapshot_index;
+        }
+        let (term, si) = (self.current_term, self.snapshot_index);
+        self.send(
+            req.leader,
+            RaftMsg::InstallSnapshotResp(InstallSnapshotResp {
+                term,
+                snapshot_index: si,
+            }),
+        );
+    }
+
+    fn handle_install_snapshot_resp(&mut self, from: NodeId, resp: InstallSnapshotResp) {
+        if resp.term > self.current_term {
+            self.step_down(resp.term);
+            return;
+        }
+        if self.role != Role::Leader || resp.term != self.current_term {
+            return;
+        }
+        let m = resp.snapshot_index;
+        if m > *self.match_index.get(&from).unwrap_or(&0) {
+            self.match_index.insert(from, m);
+        }
+        self.next_index.insert(from, m + 1);
+        let old = self.commit_index;
+        self.maybe_commit();
+        if self.commit_index > old {
+            self.broadcast_append();
+        } else if *self.next_index.get(&from).unwrap_or(&1) <= self.last_index() {
             self.send_append_to(from);
         }
     }

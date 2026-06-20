@@ -22,6 +22,7 @@ fn persisted_state_round_trips() {
         term: 5,
         voted_for: Some(2),
         log: vec![entry(1, 1, 10), entry(3, 2, 20), entry(5, 3, 30)],
+        ..Default::default()
     };
     RaftStore::open(dir.path().to_str().unwrap(), 0, FsyncPolicy::Always)
         .unwrap()
