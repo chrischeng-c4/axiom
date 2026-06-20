@@ -2,37 +2,6 @@
 id: semantic-vat-commands
 summary: Semantic coverage for "projects/vat/src/commands"
 fill_sections: [schema, unit-test, changes]
-capability_refs:
-  - id: agent-native-gpu-native-dev-containers
-    role: primary
-    gap: host-process-execution-and-gpu-visibility
-    claim: host-process-execution-and-gpu-visibility
-    coverage: partial
-    rationale: "The vat command layer exposes the host-process GPU report command used by agents to verify local GPU visibility."
-  - id: agent-native-gpu-native-dev-containers
-    role: primary
-    gap: agent-legible-state-and-diff-surface
-    claim: agent-legible-state-and-diff-surface
-    coverage: partial
-    rationale: "The vat command layer exposes state, diff, logs, JSON events, and the LLM usage guide."
-  - id: agent-native-gpu-native-dev-containers
-    role: primary
-    gap: local-agent-test-runner-protocol
-    claim: local-agent-test-runner-protocol
-    coverage: partial
-    rationale: "The vat command layer loads vat.toml runners, starts services, waits for readiness, runs commands, and records evidence."
-  - id: agent-native-gpu-native-dev-containers
-    role: primary
-    gap: copy-on-write-fork-and-snapshot-lifecycle
-    claim: copy-on-write-fork-and-snapshot-lifecycle
-    coverage: partial
-    rationale: "The vat command layer exposes snapshot and fork operations over copy-on-write workspaces."
-  - id: agent-native-gpu-native-dev-containers
-    role: primary
-    gap: resource-isolation-boundary
-    claim: resource-isolation-boundary
-    coverage: partial
-    rationale: "The vat command layer routes run requests through configured isolation boundaries."
 ---
 
 # Semantic TD: vat/commands
@@ -136,6 +105,12 @@ semantic_domain:
           - name: "firebase_emulator_host_var"
             kind: "function"
             public: false
+          - name: "prepare_builtin_service"
+            kind: "function"
+            public: false
+          - name: "builtin_emulator_info"
+            kind: "function"
+            public: false
           - name: "gcloud_component"
             kind: "function"
             public: false
@@ -223,6 +198,9 @@ semantic_domain:
             kind: "module"
             public: true
           - name: "diff"
+            kind: "module"
+            public: true
+          - name: "emulator"
             kind: "module"
             public: true
           - name: "gpu"
@@ -369,6 +347,20 @@ semantic_domain:
           - name: "load_record"
             kind: "function"
             public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/commands"
+      - path: "projects/vat/src/commands/emulator.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "exec"
+            kind: "function"
+            public: true
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
