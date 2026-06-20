@@ -1045,6 +1045,7 @@ fn register_ssl_classes() {
             ("load_verify_locations", ctx_load_path_checked as usize),
             ("set_ecdh_curve", ctx_set_ecdh_curve as usize),
             ("wrap_socket", ctx_wrap_socket as usize),
+            ("set_servername_callback", ctx_set_servername_callback as usize),
         ];
         for (m, addr) in typed {
             super::super::module::register_variadic_func(*addr as u64);
@@ -1055,7 +1056,6 @@ fn register_ssl_classes() {
             "set_alpn_protocols",
             "set_npn_protocols",
             "wrap_bio",
-            "set_servername_callback",
             "cert_store_stats",
             "get_ca_certs",
         ] {
@@ -1063,6 +1063,16 @@ fn register_ssl_classes() {
         }
         super::super::class::mb_class_register("SSLContext", Vec::new(), methods);
     }
+}
+
+/// SSLContext.set_servername_callback(cb): the callback must be None or a
+/// callable (CPython raises TypeError otherwise). Otherwise a no-op stub.
+unsafe extern "C" fn ctx_set_servername_callback(_self_v: MbValue, args: MbValue) -> MbValue {
+    let cb = first_arg(args);
+    if !cb.is_none() && super::super::builtins::mb_callable(cb).as_bool() != Some(true) {
+        return raise_err("TypeError", "not a callable object");
+    }
+    MbValue::none()
 }
 
 pub fn register() {
