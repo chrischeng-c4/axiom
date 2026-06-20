@@ -89,7 +89,6 @@ flowchart TD
     suite --> t_role[membership N=4] --> a_role([ordinal 3 learner])
     suite --> t_smoke[kind smoke script] --> a_smoke([manual/CI failover])
 ```
-
 ## Changes
 <!-- type: changes lang: yaml -->
 
