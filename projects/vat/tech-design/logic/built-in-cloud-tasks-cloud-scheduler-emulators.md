@@ -256,3 +256,130 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; the cloud-tasks/cloud-scheduler emulator verbs then error cleanly, never a panic."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md
+    action: create
+    section: changes
+    impl_mode: hand-written
+    reason: "Define the Cloud Tasks / Scheduler emulator TD."
+  - path: projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md
+    action: validate
+    section: logic
+    impl_mode: hand-written
+    reason: "Record the REST serving, dispatch, and cron lifecycle."
+  - path: projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md
+    action: validate
+    section: schema
+    impl_mode: hand-written
+    reason: "Record the emulator dispatch evidence and exported env."
+  - path: projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md
+    action: validate
+    section: config
+    impl_mode: hand-written
+    reason: "Record the cloud-tasks/cloud-scheduler builtin-only presets."
+  - path: projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md
+    action: validate
+    section: cli
+    impl_mode: hand-written
+    reason: "Record the vat emulator cloud-tasks/cloud-scheduler kinds."
+  - path: projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Record preset parsing, builtin resolution, export, and dispatch coverage."
+  - path: projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md
+    action: validate
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Record tasks-dispatch, scheduler-dispatch, builtin-preset run, and lean-build coverage."
+  - path: projects/vat/Cargo.toml
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#config"
+    summary: "Add reqwest and cron to the emulator feature plus the two new integration test entries."
+  - path: projects/vat/src/emulator/dispatch.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#logic"
+    summary: "Shared dispatch_http: reqwest POST to a target with optional OIDC JWT, reused by both emulators."
+  - path: projects/vat/src/emulator/tasks.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#logic"
+    summary: "Cloud Tasks v2 REST emulator (queues/tasks CRUD) with scheduleTime + :run dispatch."
+  - path: projects/vat/src/emulator/scheduler.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#logic"
+    summary: "Cloud Scheduler v1 REST emulator (jobs CRUD, :run/:pause/:resume) with a cron ticker firing httpTarget."
+  - path: projects/vat/src/emulator/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#logic"
+    summary: "Register dispatch/tasks/scheduler modules and the CloudTasks/CloudScheduler serve arms."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#cli"
+    summary: "Add the CloudTasks/CloudScheduler EmulatorKind arms."
+  - path: projects/vat/src/commands/emulator.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#cli"
+    summary: "Map the two new EmulatorKind arms to the emulator serve dispatch."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#config"
+    summary: "Add the CloudTasks/CloudScheduler ServicePreset variants and include them in is_builtin/is_builtin_only."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#logic"
+    summary: "Extend builtin_emulator_info and fill the new exhaustive preset arms."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#config"
+    summary: "Document the built-in Cloud Tasks/Scheduler emulators."
+  - path: projects/vat/README.md
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#config"
+    summary: "Document the built-in Cloud Tasks/Scheduler emulator presets."
+  - path: projects/vat/tests
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#unit-test"
+      - "projects/vat/tech-design/logic/built-in-cloud-tasks-cloud-scheduler-emulators.md#e2e-test"
+    summary: "Add tests/vat_emulator_tasks.rs and tests/vat_emulator_scheduler.rs dispatch integration tests."
+```
