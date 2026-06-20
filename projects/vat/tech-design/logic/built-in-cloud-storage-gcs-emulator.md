@@ -75,3 +75,39 @@ flowchart TD
     runner --> teardown[stop service kills emulator child; blobs vanish]
     teardown --> done([return exit code])
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-cloud-storage-evidence.schema.json"
+title: "Vat Cloud Storage emulator evidence"
+type: object
+description: "Service-evidence shape and the GCS object resource for vat's built-in Cloud Storage emulator."
+properties:
+  preset:
+    type: string
+    enum: [cloud-storage]
+  prepare_mode:
+    type: string
+    enum: [builtin_emulator]
+  exported_env:
+    type: array
+    items: { type: string }
+    description: "Host env var exported to the runner: STORAGE_EMULATOR_HOST (the var the GCS SDKs read)."
+  object:
+    type: object
+    description: "A GCS object resource as returned by the JSON API."
+    properties:
+      kind: { type: string }
+      bucket: { type: string }
+      name: { type: string }
+      size: { type: string }
+      contentType: { type: string }
+      generation: { type: string }
+      md5Hash: { type: string }
+      updated: { type: string }
+    additionalProperties: true
+additionalProperties: true
+```
