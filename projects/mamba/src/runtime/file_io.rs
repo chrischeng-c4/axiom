@@ -531,17 +531,27 @@ pub fn mb_file_write(handle: MbValue, text: MbValue) -> MbValue {
 /// file.writelines(lines) → None
 /// Writes each element of the iterable to the file (no separator added).
 pub fn mb_file_writelines(handle: MbValue, lines: MbValue) -> MbValue {
-    if let Some(items_ptr) = lines.as_ptr() {
-        let items: Vec<MbValue> = unsafe {
-            if let super::rc::ObjData::List(ref lock) = (*items_ptr).data {
-                lock.read().unwrap().to_vec()
-            } else {
-                Vec::new()
-            }
-        };
+    let iter_handle = super::iter::mb_iter(lines);
+    if iter_handle.is_none() {
+        return MbValue::none();
+    }
+    // Fast path: drain the iterator batch (avoids per-element HashMap lookups).
+    if let Some(items) = super::iter::drain_iter_to_vec(iter_handle) {
         for item in items {
             mb_file_write(handle, item);
         }
+        return MbValue::none();
+    }
+    // Fallback: standard iterator protocol.
+    loop {
+        if super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
+            break;
+        }
+        let item = super::iter::mb_next(iter_handle);
+        if item.is_none() && super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
+            break;
+        }
+        mb_file_write(handle, item);
     }
     MbValue::none()
 }
