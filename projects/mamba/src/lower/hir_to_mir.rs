@@ -8797,11 +8797,20 @@ impl<'a> HirToMir<'a> {
                 } else {
                     self.sym_to_vreg.insert(*target, val_vreg);
                 }
-                // Also store to global so it persists outside comprehension scope
-                self.current_stmts.push(MirInst::StoreGlobal {
-                    name: *target,
-                    value: val_vreg,
-                });
+                // A walrus target binds in the *enclosing* scope (PEP 572). At
+                // module scope that scope is global, and a target the resolver
+                // bound to a real (non-synthetic, < 1_000_000) module/enclosing
+                // symbol also needs the global store so it persists outside a
+                // comprehension's own scope. But a walrus inside a regular
+                // function body binds a function-LOCAL (a synthetic sym
+                // >= 1_000_000): it must NOT leak to module globals
+                // (function_local_does_not_escape).
+                if self.in_module_scope || target.0 < 1_000_000 {
+                    self.current_stmts.push(MirInst::StoreGlobal {
+                        name: *target,
+                        value: val_vreg,
+                    });
+                }
                 val_vreg
             }
         }
