@@ -133,3 +133,17 @@ properties:
       additionalProperties: true
 additionalProperties: true
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: vat emulator
+    usage: "vat emulator openapi --host-port 127.0.0.1:<PORT> --spec <path>"
+    behavior:
+      - "Hidden verb: vat spawns itself as the service process for the openapi preset; --spec is the resolved OpenAPI document path used only by this kind."
+      - "Serves a mock HTTP server: each request is matched against the spec's operations (path templating like /users/{id}); a 2xx (else default) response is generated from its example, examples, or a schema-synthesized body."
+      - "An unmatched path returns 404; a malformed spec degrades gracefully and never panics."
+      - "The same engine backs the http-mock proxy's /__admin/openapi source (resolution order stub > openapi > cassette > forward). Built without the emulator feature, the verb errors cleanly."
+```
