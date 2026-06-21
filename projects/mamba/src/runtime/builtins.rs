@@ -993,6 +993,46 @@ fn print_dict_key(k: &super::dict_ops::DictKey) {
 }
 
 /// len(value) — return the length of a collection.
+/// Validate the result of a user `__len__` call per CPython: it must be a
+/// non-negative integer. A non-integer return raises `TypeError`; a negative
+/// one raises `ValueError`. If the `__len__` call itself already raised, the
+/// pending exception is propagated untouched. `True`/`False` count as 1/0 and
+/// arbitrary-precision ints pass through. Returns the validated value, or
+/// `none()` after raising (the caller's epilogue check observes the pending
+/// exception). This keeps `len(obj)` and `bool(obj)` reporting the *same*
+/// error for an illegal `__len__`.
+pub(crate) fn validate_len_result(result: MbValue) -> MbValue {
+    // The __len__ call itself raised — propagate without re-judging the value.
+    if super::exception::current_exception_type().is_some() {
+        return result;
+    }
+    // bool is an int subclass; True == 1, False == 0 (both >= 0).
+    if result.is_bool() {
+        return result;
+    }
+    if let Some(n) = result.as_int() {
+        if n < 0 {
+            raise_value_error("__len__() should return >= 0".to_string());
+            return MbValue::none();
+        }
+        return result;
+    }
+    // Arbitrary-precision ints are valid (non-negative) lengths.
+    if let Some(ptr) = result.as_ptr() {
+        unsafe {
+            if let ObjData::BigInt(_) = (*ptr).data {
+                return result;
+            }
+        }
+    }
+    // Any non-integer return is a TypeError, matching CPython's len().
+    let tn = value_type_name(result);
+    raise_type_error(format!(
+        "'{tn}' object cannot be interpreted as an integer"
+    ));
+    MbValue::none()
+}
+
 pub fn mb_len(val: MbValue) -> MbValue {
     // Iterator handles encode as tagged ints. For range iterators we can
     // compute the remaining element count in O(1) from (current, stop, step);
@@ -1112,7 +1152,8 @@ pub fn mb_len(val: MbValue) -> MbValue {
                         let method_name =
                             MbValue::from_ptr(MbObject::new_str("__len__".to_string()));
                         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-                        return super::class::mb_call_method(val, method_name, args);
+                        let result = super::class::mb_call_method(val, method_name, args);
+                        return validate_len_result(result);
                     }
                     if let Some(f) = fields.read().unwrap().get("__len__").copied() {
                         if let Some(addr) = f.as_func() {
@@ -1585,14 +1626,32 @@ pub fn mb_bool(val: MbValue) -> MbValue {
                         if let Some(iv) = result.as_int() {
                             return MbValue::from_bool(iv != 0);
                         }
+                    } else if super::class::class_bool_is_blocked(class_name) {
+                        // `__bool__ = None` disables truth-testing; calling the
+                        // None slot raises, even when __len__ exists.
+                        raise_type_error("'NoneType' object is not callable".to_string());
+                        return MbValue::from_bool(false);
                     }
-                    // __len__ fallback
+                    // __len__ fallback (validated like len(), so bool() and
+                    // len() surface the same error for an illegal __len__).
                     let len_method = super::class::lookup_method(class_name, "__len__");
                     if !len_method.is_none() {
                         let result = super::class::mb_call_method1(len_method, val);
-                        if let Some(iv) = result.as_int() {
+                        let checked = validate_len_result(result);
+                        if let Some(iv) = checked.as_int() {
                             return MbValue::from_bool(iv != 0);
                         }
+                        if checked.is_bool() {
+                            return MbValue::from_bool(checked.as_bool() == Some(true));
+                        }
+                        if let Some(p) = checked.as_ptr() {
+                            if let ObjData::BigInt(ref b) = (*p).data {
+                                use num_traits::Zero;
+                                return MbValue::from_bool(!b.is_zero());
+                            }
+                        }
+                        // validate_len_result raised: fall through with a
+                        // pending exception (the value below is discarded).
                     }
                     true
                 }
@@ -9113,14 +9172,30 @@ pub fn mb_is_truthy(val: MbValue) -> i64 {
                         if let Some(iv) = result.as_int() {
                             return if iv != 0 { 1 } else { 0 };
                         }
+                    } else if super::class::class_bool_is_blocked(class_name) {
+                        // `__bool__ = None` disables truth-testing entirely.
+                        raise_type_error("'NoneType' object is not callable".to_string());
+                        return 0;
                     }
-                    // __len__ fallback: truthy if len != 0
+                    // __len__ fallback: truthy if len != 0 (validated).
                     let len_method = super::class::lookup_method(class_name, "__len__");
                     if !len_method.is_none() {
                         let result = super::class::mb_call_method1(len_method, val);
-                        if let Some(iv) = result.as_int() {
+                        let checked = validate_len_result(result);
+                        if let Some(iv) = checked.as_int() {
                             return if iv != 0 { 1 } else { 0 };
                         }
+                        if checked.is_bool() {
+                            return if checked.as_bool() == Some(true) { 1 } else { 0 };
+                        }
+                        if let Some(p) = checked.as_ptr() {
+                            if let ObjData::BigInt(ref b) = (*p).data {
+                                use num_traits::Zero;
+                                return if b.is_zero() { 0 } else { 1 };
+                            }
+                        }
+                        // validate_len_result raised: fall through with a
+                        // pending exception (the value below is discarded).
                     }
                     // Empty Flag members (value 0, e.g. `RED & BLUE`) are
                     // falsy; plain Enum members stay default-truthy.

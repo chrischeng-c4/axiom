@@ -23,6 +23,12 @@ pub struct Parser<'a> {
     /// multiple per-target `Stmt::Assign`s. Drained in LIFO order before
     /// the parser consumes any new tokens, so insertion order is preserved.
     pub(crate) pending_stmts: Vec<Spanned<Stmt>>,
+    /// True when the next `parse_expr` is the top of an expression statement,
+    /// where a bare walrus (`a := 5`) is a SyntaxError in CPython (it must be
+    /// parenthesized). Captured-and-cleared at `parse_expr` entry so only the
+    /// statement-top level — not parenthesized or nested sub-expressions — is
+    /// affected.
+    pub(crate) stmt_expr_toplevel: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -33,6 +39,7 @@ impl<'a> Parser<'a> {
             source,
             file_id,
             pending_stmts: Vec::new(),
+            stmt_expr_toplevel: false,
         }
     }
 
