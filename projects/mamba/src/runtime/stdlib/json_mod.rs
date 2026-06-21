@@ -197,6 +197,21 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                     // Sort keys if requested
                     let effective_val = if sort_keys { sort_dict_keys(val) } else { val };
 
+                    // A custom default=/cls= encoder hook: serialize otherwise-
+                    // unserializable objects via the hook (a JSONEncoder
+                    // subclass instance's default(), or a plain default
+                    // callable). cls() is instantiated to obtain that method.
+                    let hook = if let Some(d) = map.get("default").copied().filter(|v| !v.is_none()) {
+                        d
+                    } else if let Some(c) = map.get("cls").copied().filter(|v| !v.is_none()) {
+                        super::super::class::mb_call0(c)
+                    } else {
+                        MbValue::none()
+                    };
+                    if !hook.is_none() {
+                        return mb_json_dumps_with_hook(effective_val, ensure_ascii, hook);
+                    }
+
                     if let Some(n) = indent {
                         return mb_json_dumps_pretty(effective_val, MbValue::from_int(n));
                     }
@@ -593,6 +608,43 @@ fn format_json_custom(val: &serde_json::Value, item_sep: &str, key_sep: &str) ->
 // ── MbValue → serde_json::Value ──
 
 fn mbvalue_to_json(val: MbValue) -> serde_json::Value {
+    mbvalue_to_json_h(val, MbValue::none())
+}
+
+/// Invoke a json.dumps default hook on an unserializable object: a
+/// JSONEncoder-subclass instance routes to its `default()` method; a plain
+/// `default=` callable is called directly. Returns the replacement value (or
+/// none() with a pending exception if the hook raised).
+fn call_default_hook(hook: MbValue, obj: MbValue) -> MbValue {
+    if let Some(ptr) = hook.as_ptr() {
+        let is_inst = unsafe { matches!(&(*ptr).data, ObjData::Instance { .. }) };
+        if is_inst {
+            let name = MbValue::from_ptr(MbObject::new_str("default".to_string()));
+            let args = MbValue::from_ptr(MbObject::new_list(vec![obj]));
+            return super::super::class::mb_call_method(hook, name, args);
+        }
+    }
+    super::super::class::mb_call1_val(hook, obj)
+}
+
+/// json.dumps with a custom `default=`/`cls=` hook: serialize honoring the hook
+/// for otherwise-unserializable objects. Propagates a hook exception (e.g. the
+/// base encoder's TypeError) instead of producing output.
+fn mb_json_dumps_with_hook(val: MbValue, ensure_ascii: bool, hook: MbValue) -> MbValue {
+    let json_val = mbvalue_to_json_h(val, hook);
+    if super::super::exception::current_exception_type().is_some() {
+        return MbValue::none();
+    }
+    let s = serialize_json_cpython(&json_val, ensure_ascii);
+    MbValue::from_ptr(MbObject::new_str(s))
+}
+
+/// Convert an MbValue to a serde_json::Value. When `hook` is non-None it is a
+/// json.dumps `default=` callable or a JSONEncoder-subclass instance whose
+/// `default()` is invoked for otherwise-unserializable objects (set/instance),
+/// mirroring CPython's encoder hook; the returned value is then serialized
+/// recursively. With a None hook this is the plain converter.
+fn mbvalue_to_json_h(val: MbValue, hook: MbValue) -> serde_json::Value {
     if val.is_none() {
         serde_json::Value::Null
     } else if let Some(b) = val.as_bool() {
@@ -613,32 +665,48 @@ fn mbvalue_to_json(val: MbValue) -> serde_json::Value {
                 ObjData::Str(s) => serde_json::Value::String(s.clone()),
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
-                    let arr: Vec<serde_json::Value> =
-                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
+                    let arr: Vec<serde_json::Value> = items
+                        .iter()
+                        .map(|v| mbvalue_to_json_h(*v, hook))
+                        .collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Dict(ref lock) => {
                     let map = lock.read().unwrap();
                     let obj: serde_json::Map<String, serde_json::Value> = map
                         .iter()
-                        .map(|(k, v)| (k.to_string(), mbvalue_to_json(*v)))
+                        .map(|(k, v)| (k.to_string(), mbvalue_to_json_h(*v, hook)))
                         .collect();
                     serde_json::Value::Object(obj)
                 }
                 ObjData::Tuple(items) => {
-                    let arr: Vec<serde_json::Value> =
-                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
+                    let arr: Vec<serde_json::Value> = items
+                        .iter()
+                        .map(|v| mbvalue_to_json_h(*v, hook))
+                        .collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Set(ref lock) => {
+                    if !hook.is_none() {
+                        let r = call_default_hook(hook, val);
+                        return mbvalue_to_json_h(r, hook);
+                    }
                     let items = lock.read().unwrap();
-                    let arr: Vec<serde_json::Value> =
-                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
+                    let arr: Vec<serde_json::Value> = items
+                        .iter()
+                        .map(|v| mbvalue_to_json_h(*v, hook))
+                        .collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::FrozenSet(items) => {
-                    let arr: Vec<serde_json::Value> =
-                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
+                    if !hook.is_none() {
+                        let r = call_default_hook(hook, val);
+                        return mbvalue_to_json_h(r, hook);
+                    }
+                    let arr: Vec<serde_json::Value> = items
+                        .iter()
+                        .map(|v| mbvalue_to_json_h(*v, hook))
+                        .collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Bytes(data) => {
@@ -673,6 +741,10 @@ fn mbvalue_to_json(val: MbValue) -> serde_json::Value {
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
+                }
+                ObjData::Instance { .. } if !hook.is_none() => {
+                    let r = call_default_hook(hook, val);
+                    return mbvalue_to_json_h(r, hook);
                 }
                 _ => serde_json::Value::Null,
             }
