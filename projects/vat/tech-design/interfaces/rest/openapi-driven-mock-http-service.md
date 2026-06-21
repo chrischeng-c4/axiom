@@ -254,36 +254,6 @@ changes:
     section: changes
     impl_mode: hand-written
     reason: "Define the OpenAPI mock TD."
-  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
-    action: validate
-    section: logic
-    impl_mode: hand-written
-    reason: "Record the spec parse + match + response generation + http-mock source lifecycle."
-  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
-    action: validate
-    section: schema
-    impl_mode: hand-written
-    reason: "Record the mock response evidence and exported env."
-  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
-    action: validate
-    section: config
-    impl_mode: hand-written
-    reason: "Record the openapi builtin-only preset and its spec field."
-  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
-    action: validate
-    section: cli
-    impl_mode: hand-written
-    reason: "Record the vat emulator openapi verb and its spec arg."
-  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
-    action: validate
-    section: unit-test
-    impl_mode: hand-written
-    reason: "Record preset, respond-example/schema, templating, ref/depth, and http-mock-source coverage."
-  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
-    action: validate
-    section: e2e-test
-    impl_mode: hand-written
-    reason: "Record standalone/proxy, preset-run, and lean-build coverage."
   - path: projects/vat/src/emulator/openapi.rs
     action: add
     section: logic
@@ -347,8 +317,8 @@ changes:
     refs:
       - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config"
     summary: "Document the openapi preset (spec -> mock) and the http-mock OpenAPI source."
-  - path: projects/vat/tests
-    action: modify
+  - path: projects/vat/tests/vat_emulator_openapi.rs
+    action: add
     section: unit-test
     impl_mode: hand-written
     refs:
@@ -356,9 +326,6 @@ changes:
       - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#e2e-test"
     summary: "Add tests/vat_emulator_openapi.rs (standalone + http-mock OpenAPI source)."
 ```
-
-# Reviews
-
 ## Review
 <!-- verdict: approve -->
 
