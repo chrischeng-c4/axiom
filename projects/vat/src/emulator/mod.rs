@@ -13,6 +13,7 @@
 pub mod auth;
 pub mod dispatch;
 pub mod httpmock;
+pub mod openapi;
 pub mod pubsub;
 pub mod scheduler;
 pub mod storage;
@@ -34,6 +35,10 @@ pub enum Kind {
         ca_path: String,
         cassette_dir: String,
     },
+    /// The OpenAPI mock serves responses from a spec document.
+    Openapi {
+        spec: String,
+    },
 }
 
 /// Serve the selected emulator on `host_port` (e.g. `127.0.0.1:8085`) until the
@@ -50,6 +55,7 @@ pub async fn serve(kind: Kind, host_port: &str) -> Result<()> {
             ca_path,
             cassette_dir,
         } => httpmock::serve(host_port, &ca_path, &cassette_dir).await,
+        Kind::Openapi { spec } => openapi::serve(host_port, &spec).await,
     }
 }
 // CODEGEN-END

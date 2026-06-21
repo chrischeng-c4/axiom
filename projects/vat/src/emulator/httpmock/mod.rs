@@ -5,9 +5,11 @@
 //! A transparent forward proxy: the runner gets `HTTP(S)_PROXY` and a CA-trust
 //! bundle (see [`ca`]), so its outbound calls — plain HTTP and, via CONNECT +
 //! MITM, HTTPS — are intercepted with **zero app code change**. Each request
-//! resolves: a registered [`stub`] wins; else a recorded [`cassette`] replays;
-//! else (auto/record) it forwards to the real upstream and records. `/__admin/*`
-//! origin-form requests are the control API. HTTP/1.1; never panics on bad input.
+//! resolves: a registered [`stub`] wins; else a registered OpenAPI spec (see
+//! [`crate::emulator::openapi`]) answers from the contract; else a recorded
+//! [`cassette`] replays; else (auto/record) it forwards to the real upstream and
+//! records. `/__admin/*` origin-form requests are the control API (stubs +
+//! `/__admin/openapi`). HTTP/1.1; never panics on bad input.
 //!
 //! @spec projects/vat/tech-design/logic/built-in-http-mock-record-replay-proxy.md#logic
 
@@ -30,11 +32,14 @@ use ca::CaStore;
 use cassette::{Cassettes, Recording};
 use stub::Registry;
 
+use crate::emulator::openapi::{OpenApiSpec, Registration, SpecRegistry};
+
 type BoxBody = http_body_util::combinators::BoxBody<Bytes, Infallible>;
 
 struct Proxy {
     ca: CaStore,
     stubs: Registry,
+    openapi: SpecRegistry,
     cassettes: Cassettes,
     client: reqwest::Client,
 }
@@ -65,6 +70,7 @@ pub async fn serve(host_port: &str, ca_path: &str, cassette_dir: &str) -> Result
     let proxy = Arc::new(Proxy {
         ca,
         stubs: Registry::default(),
+        openapi: SpecRegistry::default(),
         cassettes: Cassettes::new(cassette_dir),
         client: reqwest::Client::builder()
             .danger_accept_invalid_certs(true) // upstream TLS is recorded, not verified
@@ -195,7 +201,16 @@ impl Proxy {
             );
         }
 
-        // 2) Cassette replay (keyed on the full authority).
+        // 2) A registered OpenAPI spec answers the operation from the contract.
+        if let Some(r) = self.openapi.respond(host, &method, &path) {
+            return full(
+                StatusCode::from_u16(r.status).unwrap_or(StatusCode::OK),
+                vec![("content-type".into(), r.content_type)],
+                Bytes::from(r.body),
+            );
+        }
+
+        // 3) Cassette replay (keyed on the full authority).
         let key = Cassettes::key(&method, authority, &path_and_query, &body);
         if let Some(rec) = self.cassettes.get(&key) {
             return full(
@@ -205,7 +220,7 @@ impl Proxy {
             );
         }
 
-        // 3) Forward to the real upstream and record (auto mode).
+        // 4) Forward to the real upstream and record (auto mode).
         let url = format!("{scheme}://{authority}{path_and_query}");
         let m = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
         let mut rb = self.client.request(m, &url);
@@ -268,6 +283,24 @@ impl Proxy {
             },
             (Method::DELETE, "/__admin/stubs") => {
                 self.stubs.clear();
+                json_resp(StatusCode::OK, json!({ "ok": true }))
+            }
+            (Method::POST, "/__admin/openapi") => {
+                match serde_json::from_slice::<Registration>(&body) {
+                    Ok(reg) => match OpenApiSpec::from_str(&reg.spec) {
+                        Ok(spec) => {
+                            self.openapi.add(reg.host, spec);
+                            json_resp(StatusCode::OK, json!({ "ok": true }))
+                        }
+                        Err(e) => {
+                            json_resp(StatusCode::BAD_REQUEST, json!({ "error": e.to_string() }))
+                        }
+                    },
+                    Err(e) => json_resp(StatusCode::BAD_REQUEST, json!({ "error": e.to_string() })),
+                }
+            }
+            (Method::DELETE, "/__admin/openapi") => {
+                self.openapi.clear();
                 json_resp(StatusCode::OK, json!({ "ok": true }))
             }
             (Method::GET, "/__admin/recordings") => {

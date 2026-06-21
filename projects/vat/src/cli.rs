@@ -121,6 +121,9 @@ enum Cmd {
         /// Cassette dir (http-mock only).
         #[arg(long)]
         cassette_dir: Option<String>,
+        /// OpenAPI spec path (openapi only).
+        #[arg(long)]
+        spec: Option<String>,
     },
 }
 
@@ -135,6 +138,7 @@ pub enum EmulatorKind {
     CloudWorkflows,
     CloudStorage,
     HttpMock,
+    Openapi,
 }
 
 /// Standalone `vat cluster` verbs. Clusters created here outlive a single run;
@@ -242,7 +246,8 @@ pub fn run() -> Result<ExitCode> {
             host_port,
             ca_path,
             cassette_dir,
-        } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir),
+            spec,
+        } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir, spec),
     }
 }
 // CODEGEN-END

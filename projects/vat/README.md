@@ -268,10 +268,18 @@ preferred**:
   outbound HTTP/HTTPS — even hardcoded `https://api.example.com` — is intercepted
   with **no app code change**: register stubs at `$VAT_HTTP_MOCK_HOST/__admin/stubs`,
   and unstubbed calls record to a cassette once then replay offline forever.
-  `pubsub` still accepts `runtime = native` (gcloud) / `runtime = docker` (the
-  cloud-cli image) as a full-fidelity fallback; the others are built-in only (no
-  official emulator exists). The async emulator stack sits behind a default-on
-  `emulator` Cargo feature (`--no-default-features` drops it).
+  `openapi` (`preset = "openapi"`, `spec = "api.yaml"`) reads an **OpenAPI
+  document and serves spec-derived responses** (the response `example`, else a
+  schema-synthesized body; path templating like `/users/{id}` and `$ref`) — a
+  working fake of a documented API with no stubs or recording. It runs standalone
+  (point your base URL at `$OPENAPI_MOCK_HOST`) and also backs the http-mock proxy:
+  `POST $VAT_HTTP_MOCK_HOST/__admin/openapi` registers a spec for a host, so a
+  proxied `https://` call is answered from the contract (resolution order **stub >
+  openapi > cassette > forward**). `pubsub` still accepts `runtime = native`
+  (gcloud) / `runtime = docker` (the cloud-cli image) as a full-fidelity fallback;
+  the others are built-in only (no official emulator exists). The async emulator
+  stack sits behind a default-on `emulator` Cargo feature (`--no-default-features`
+  drops it).
   ```toml
   [[services]]
   id = "ps"
