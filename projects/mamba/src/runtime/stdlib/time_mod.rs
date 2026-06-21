@@ -878,6 +878,28 @@ pub fn mb_time_strftime(fmt: MbValue, st: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(out))
 }
 
+/// Parse a `%z`-style UTC offset (`+0500`, `-08:00`, `+05`) into seconds.
+fn parse_utc_offset(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let mut chars = s.chars();
+    let sign = match chars.next()? {
+        '+' => 1,
+        '-' => -1,
+        _ => return None,
+    };
+    let digits: Vec<u32> = chars.filter_map(|c| c.to_digit(10)).collect();
+    if digits.len() < 2 {
+        return None;
+    }
+    let hh = (digits[0] * 10 + digits[1]) as i64;
+    let mm = if digits.len() >= 4 {
+        (digits[2] * 10 + digits[3]) as i64
+    } else {
+        0
+    };
+    Some(sign * (hh * 3600 + mm * 60))
+}
+
 /// time.strptime(string, format=None) -> struct_time
 pub fn mb_time_strptime(s: MbValue, fmt: MbValue) -> MbValue {
     if is_bytes_value(s) || is_bytes_value(fmt) {
@@ -885,6 +907,25 @@ pub fn mb_time_strptime(s: MbValue, fmt: MbValue) -> MbValue {
     }
     let input = extract_str(s).unwrap_or_default();
     let format_str = extract_str(fmt).unwrap_or_else(|| "%a %b %e %H:%M:%S %Y".to_string());
+    // A lone `%Z` (zone name) or `%z` (offset) directive: chrono's
+    // NaiveDateTime parse can't carry a zone name or bare offset, so handle the
+    // single-directive forms directly. CPython fills the rest with its defaults
+    // (1900-01-01, a Monday → tm_wday 0, tm_yday 1).
+    match format_str.trim() {
+        "%Z" => {
+            let zone = MbValue::from_ptr(MbObject::new_str(input.trim().to_string()));
+            return new_struct_time_instance(1900, 1, 1, 0, 0, 0, 0, 1, 0, MbValue::none(), zone);
+        }
+        "%z" => {
+            if let Some(off) = parse_utc_offset(&input) {
+                return new_struct_time_instance(
+                    1900, 1, 1, 0, 0, 0, 0, 1, 0,
+                    MbValue::from_int(off), MbValue::none(),
+                );
+            }
+        }
+        _ => {}
+    }
     match NaiveDateTime::parse_from_str(&input, &format_str) {
         Ok(n) => {
             let utc = Utc.from_utc_datetime(&n);
