@@ -1204,7 +1204,6 @@ fn register_email_subs() {
             "InvalidMultipartContentTransferEncodingDefect",
             "UndecodableBytesDefect",
             "InvalidBase64PaddingDefect",
-            "InvalidBase64CharactersDefect",
             "InvalidBase64LengthDefect",
             "InvalidHeaderDefect",
             "HeaderDefect",
@@ -1213,7 +1212,13 @@ fn register_email_subs() {
         ],
         &[],
         &[],
-        &[],
+        // InvalidBase64CharactersDefect is a class-name string (not a shell
+        // func) so isinstance(msg.defects[0], errors.InvalidBase64CharactersDefect)
+        // matches the instance email_mod appends on a malformed base64 payload.
+        &[(
+            "InvalidBase64CharactersDefect",
+            "InvalidBase64CharactersDefect",
+        )],
     );
     register_with(
         "email.feedparser",

@@ -849,6 +849,41 @@ extern "C" fn m_get_charset(this: MbValue) -> MbValue {
     }
 }
 
+/// True if a base64 body is structurally malformed (a non-alphabet character,
+/// or an alphabet character after `=` padding) — the case CPython's strict
+/// validation rejects, then re-decodes leniently while recording an
+/// InvalidBase64CharactersDefect. Whitespace is ignored; clean base64 → false.
+fn base64_has_char_defect(s: &str) -> bool {
+    let mut seen_pad = false;
+    for c in s.chars() {
+        if c.is_whitespace() { continue; }
+        let b = c as u32;
+        if b == '=' as u32 { seen_pad = true; continue; }
+        let is_alpha = c.is_ascii_alphanumeric() || c == '+' || c == '/';
+        if !is_alpha || seen_pad {
+            return true;
+        }
+    }
+    false
+}
+
+/// Append a parsing-defect instance (by class name) to `msg.defects`.
+fn append_defect(msg: MbValue, class_name: &str) {
+    let defect = make_instance(class_name, vec![]);
+    if let Some(list) = field_get(msg, "defects") {
+        if let Some(ptr) = list.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    retain(defect);
+                    lock.write().unwrap().push(defect);
+                    return;
+                }
+            }
+        }
+    }
+    field_set(msg, "defects", new_list(vec![defect]));
+}
+
 unsafe extern "C" fn m_get_payload(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
@@ -913,6 +948,12 @@ unsafe extern "C" fn m_get_payload(this: MbValue, args: MbValue) -> MbValue {
     let decoded: Vec<u8> = match cte.as_str() {
         "base64" => {
             let txt: String = raw.iter().map(|&b| b as char).collect();
+            // A malformed base64 body decodes best-effort but records a defect
+            // (CPython: get_payload(decode=True) collects an
+            // InvalidBase64CharactersDefect rather than raising).
+            if base64_has_char_defect(&txt) {
+                append_defect(this, "InvalidBase64CharactersDefect");
+            }
             base64_decode(&txt)
         }
         "quoted-printable" => {
@@ -2376,6 +2417,9 @@ pub fn register() {
     for (cls, bases) in msg_classes {
         register_native_class(cls, bases, message_methods());
     }
+    // Parsing-defect class collected on malformed payloads; registered so
+    // isinstance(msg.defects[0], errors.InvalidBase64CharactersDefect) holds.
+    register_native_class("InvalidBase64CharactersDefect", &["object"], vec![]);
     // Parser classes
     register_native_class(
         "Parser",
