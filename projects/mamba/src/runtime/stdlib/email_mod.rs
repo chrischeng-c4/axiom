@@ -1735,7 +1735,8 @@ fn decode_header_impl(s: &str) -> Vec<MbValue> {
                 idx += 1;
                 continue;
             }
-            out.push(new_tuple(vec![new_str(text.to_string()), MbValue::none()]));
+            // CPython returns an unencoded run as bytes with a None charset.
+            out.push(new_tuple(vec![new_bytes(data.clone()), MbValue::none()]));
         } else {
             let cs = charset.clone().unwrap_or_default();
             out.push(new_tuple(vec![new_bytes(data.clone()), new_str(cs)]));

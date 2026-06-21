@@ -338,6 +338,25 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: false,
     },
+    // NEGATIVE GUARD: keyword.iskeyword/issoftkeyword accept ANY object (a
+    // non-str compares unequal to every kwlist entry -> False, no raise), so
+    // the generated `s: str` sig must NOT be enforced. Overrides the typeshed row.
+    StdlibSig {
+        module: "keyword",
+        qualifier: "",
+        name: "iskeyword",
+        kind: SigKind::ModuleFn,
+        params: &[p("s", CoreTy::Unknown)],
+        enforceable: false,
+    },
+    StdlibSig {
+        module: "keyword",
+        qualifier: "",
+        name: "issoftkeyword",
+        kind: SigKind::ModuleFn,
+        params: &[p("s", CoreTy::Unknown)],
+        enforceable: false,
+    },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for
