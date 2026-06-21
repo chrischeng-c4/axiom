@@ -637,8 +637,15 @@ impl TypeChecker {
                 // outer variable's type (e.g. outer `i = 0` flipped from int
                 // to float when an inner `(i := i + 1)` walrus was lowered).
                 let sym = if self.comprehension_depth > 0 {
-                    self.symbols
-                        .define_in_enclosing_scope(target.clone(), SymbolKind::Variable)
+                    // Escape ALL enclosing comprehension scopes (one pushed per
+                    // nesting level) to the nearest non-comprehension scope, so a
+                    // walrus in a nested comprehension still binds in the real
+                    // enclosing scope (nested_comp_walrus_leaks_enclosing).
+                    self.symbols.define_levels_up(
+                        self.comprehension_depth as usize,
+                        target.clone(),
+                        SymbolKind::Variable,
+                    )
                 } else {
                     self.symbols.define(target.clone(), SymbolKind::Variable)
                 };

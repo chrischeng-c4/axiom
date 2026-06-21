@@ -171,6 +171,19 @@ impl SymbolTable {
         self.define_in_scope(target_scope, name, kind)
     }
 
+    /// Define a name `levels` parent-scopes up from the current scope. For a
+    /// walrus inside NESTED comprehensions (PEP 572) the target must bind in the
+    /// nearest enclosing NON-comprehension scope — i.e. skip past each
+    /// comprehension's own pushed scope (`comprehension_depth` of them). With
+    /// `levels == 1` this matches define_in_enclosing_scope (single comp).
+    pub fn define_levels_up(&mut self, levels: usize, name: String, kind: SymbolKind) -> SymbolId {
+        let mut scope = self.current_scope;
+        for _ in 0..levels {
+            scope = self.scopes[scope].parent.unwrap_or(scope);
+        }
+        self.define_in_scope(scope, name, kind)
+    }
+
     /// Define a symbol in a specific scope (for walrus-in-comprehension, PEP 572).
     pub fn define_in_scope(
         &mut self,
