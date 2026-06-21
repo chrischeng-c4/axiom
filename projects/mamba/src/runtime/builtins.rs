@@ -4004,6 +4004,11 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         let lb = ub.map(|(_, d)| d).unwrap_or(b);
         return mb_values_eq(la, lb);
     }
+    // PEP 604 union cross-representation equality: a `X | Y` UnionType equals
+    // the typing.Union[X, Y] alias (and is order-insensitive) by member set.
+    if let Some(eq) = super::stdlib::typing_mod::union_values_equal(a, b) {
+        return eq;
+    }
     // slice == slice compares (start, stop, step) structurally (CPython).
     if let (Some(ta), Some(tb)) = (slice_as_tuple(a), slice_as_tuple(b)) {
         return mb_values_eq(ta, tb);
@@ -5959,6 +5964,12 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                             )),
                         );
                         return MbValue::none();
+                    }
+                    // PEP 604 `X | Y` union: hash by member set, matching
+                    // typing.Union[...] so the two representations hash alike
+                    // (int | str and typing.Union[int, str] are equal).
+                    if class_name == "UnionType" {
+                        return super::stdlib::typing_mod::alias_hash_value(val);
                     }
                     // __hash__ dunder dispatch
                     let hash_method = super::class::lookup_method(class_name, "__hash__");
