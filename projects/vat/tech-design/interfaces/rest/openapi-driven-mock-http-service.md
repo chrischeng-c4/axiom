@@ -95,3 +95,41 @@ properties:
     additionalProperties: true
 additionalProperties: true
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-config-openapi.schema.json"
+title: "vat.toml (OpenAPI preset addition)"
+type: object
+properties:
+  services:
+    type: array
+    items:
+      type: object
+      required: [id]
+      properties:
+        preset:
+          type: string
+          enum: [postgres, redis, nats, rabbitmq, mysql, mongo, firestore, pubsub, datastore, bigtable, spanner, firebase, firebase-auth, cloud-tasks, cloud-scheduler, cloud-workflows, cloud-storage, http-mock, openapi]
+          description: >
+            openapi runs vat's built-in OpenAPI mock server under runtime=auto
+            (built-in only). It requires a `spec` (path to an OpenAPI document
+            relative to vat.toml) and serves spec-derived responses; the runner
+            points its base URL at the exported OPENAPI_MOCK_HOST. The same engine
+            also backs the http-mock proxy's /__admin/openapi source.
+        spec:
+          type: string
+          description: "Path (relative to vat.toml) to the OpenAPI 3.x (or Swagger 2.0) document. Required for the openapi preset; rejected for others."
+        runtime:
+          type: string
+          enum: [auto, native, docker]
+          default: auto
+        export:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+additionalProperties: true
+```
