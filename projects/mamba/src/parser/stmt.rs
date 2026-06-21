@@ -619,6 +619,15 @@ impl<'a> Parser<'a> {
             } else if self.peek_kind() == Some(TokenKind::Slash) {
                 // `/` positional-only separator — everything before it is
                 // positional-only (introspection metadata; binding unchanged).
+                // CPython requires at least one parameter to precede `/`, so a
+                // solo slash (`def h(/)`) or one after only `*`/`**` is a
+                // SyntaxError.
+                if !params.iter().any(|p| p.kind == ParamKind::Regular) {
+                    return Err(crate::error::MambaError::syntax(
+                        self.span_from(p_start),
+                        "at least one argument must precede /",
+                    ));
+                }
                 self.advance();
                 for p in params.iter_mut() {
                     if p.kind == ParamKind::Regular {

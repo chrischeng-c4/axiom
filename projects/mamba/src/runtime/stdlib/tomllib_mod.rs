@@ -28,11 +28,33 @@ unsafe fn as_string(val: MbValue) -> Option<String> {
     }
 }
 
-fn toml_to_mbvalue(val: &toml::Value) -> MbValue {
+fn toml_to_mbvalue(val: &toml::Value, parse_float: MbValue) -> MbValue {
     match val {
         toml::Value::String(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
         toml::Value::Integer(i) => MbValue::from_int(*i),
-        toml::Value::Float(f) => MbValue::from_float(*f),
+        toml::Value::Float(f) => {
+            if parse_float.is_none() {
+                return MbValue::from_float(*f);
+            }
+            // CPython calls parse_float on the raw float token; its result must
+            // not be a dict or list (those would shadow a real number).
+            let tok = MbValue::from_ptr(MbObject::new_str(f.to_string()));
+            let r = super::super::class::mb_call1_val(parse_float, tok);
+            unsafe {
+                if let Some(ptr) = r.as_ptr() {
+                    if matches!((*ptr).data, ObjData::Dict(_) | ObjData::List(_)) {
+                        super::super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "parse_float must not return dicts or lists".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
+                    }
+                }
+            }
+            r
+        }
         toml::Value::Boolean(b) => MbValue::from_bool(*b),
         toml::Value::Datetime(dt) => {
             // CPython tomllib returns real datetime/date/time objects. Build
@@ -62,7 +84,7 @@ fn toml_to_mbvalue(val: &toml::Value) -> MbValue {
             }
         }
         toml::Value::Array(arr) => {
-            let items: Vec<MbValue> = arr.iter().map(toml_to_mbvalue).collect();
+            let items: Vec<MbValue> = arr.iter().map(|v| toml_to_mbvalue(v, parse_float)).collect();
             MbValue::from_ptr(MbObject::new_list(items))
         }
         toml::Value::Table(tbl) => {
@@ -72,7 +94,7 @@ fn toml_to_mbvalue(val: &toml::Value) -> MbValue {
             // (see #2109 comment in json_mod).
             let pairs: Vec<(String, MbValue)> = tbl
                 .iter()
-                .map(|(k, v)| (k.clone(), toml_to_mbvalue(v)))
+                .map(|(k, v)| (k.clone(), toml_to_mbvalue(v, parse_float)))
                 .collect();
             let dict = MbObject::new_dict_with_capacity(pairs.len());
             unsafe {
@@ -88,9 +110,31 @@ fn toml_to_mbvalue(val: &toml::Value) -> MbValue {
     }
 }
 
-fn parse_toml_string(source: &str) -> MbValue {
+/// Pull a `parse_float` callback out of a trailing kwargs dict. Method-call
+/// kwargs (e.g. `tomllib.loads(s, parse_float=f)`) are packed into a trailing
+/// Dict arg, so scan the args after the source string for it.
+unsafe fn extract_parse_float(args: &[MbValue]) -> MbValue {
+    for a in args.iter().skip(1) {
+        if let Some(ptr) = a.as_ptr() {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let map = lock.read().unwrap();
+                if let Some(v) = map
+                    .get(&super::super::dict_ops::DictKey::Str("parse_float".to_string()))
+                    .copied()
+                {
+                    if !v.is_none() {
+                        return v;
+                    }
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+fn parse_toml_string(source: &str, parse_float: MbValue) -> MbValue {
     match toml::from_str::<toml::Value>(source) {
-        Ok(v) => toml_to_mbvalue(&v),
+        Ok(v) => toml_to_mbvalue(&v, parse_float),
         Err(e) => {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
@@ -107,8 +151,9 @@ unsafe extern "C" fn dispatch_loads(args_ptr: *const MbValue, nargs: usize) -> M
     let Some(arg) = args.first().copied() else {
         return MbValue::from_ptr(MbObject::new_dict());
     };
+    let parse_float = extract_parse_float(args);
     match as_string(arg) {
-        Some(s) => parse_toml_string(&s),
+        Some(s) => parse_toml_string(&s, parse_float),
         None => {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -129,6 +174,7 @@ unsafe extern "C" fn dispatch_load(args_ptr: *const MbValue, nargs: usize) -> Mb
     let Some(arg) = args.first().copied() else {
         return MbValue::from_ptr(MbObject::new_dict());
     };
+    let parse_float = extract_parse_float(args);
     // tomllib.load reads bytes; a text file object (io.StringIO) is a TypeError
     // in CPython — the source must be opened in binary mode.
     if let Some(p) = arg.as_ptr() {
@@ -147,7 +193,7 @@ unsafe extern "C" fn dispatch_load(args_ptr: *const MbValue, nargs: usize) -> Mb
     }
     if let Some(path) = as_string(arg) {
         match std::fs::read_to_string(&path) {
-            Ok(src) => parse_toml_string(&src),
+            Ok(src) => parse_toml_string(&src, parse_float),
             Err(e) => {
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
@@ -178,7 +224,7 @@ unsafe extern "C" fn dispatch_load(args_ptr: *const MbValue, nargs: usize) -> Mb
             _ => None,
         });
         match src {
-            Some(s) => parse_toml_string(&s),
+            Some(s) => parse_toml_string(&s, parse_float),
             None => MbValue::from_ptr(MbObject::new_dict()),
         }
     }
