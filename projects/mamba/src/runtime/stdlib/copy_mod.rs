@@ -402,6 +402,50 @@ fn record_memoized(orig: MbValue, copy: MbValue) {
 /// Core deepcopy recursion. `memo` maps a source object's NaN-boxed bits to its
 /// freshly-built copy so repeated references and cycles collapse to one object.
 fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
+    // A slice is atomic for shallow copy (copy.copy returns it unchanged) but
+    // deepcopy rebuilds it: CPython has no _deepcopy_atomic entry for slice, so
+    // it reconstructs via slice.__reduce__ with deep-copied start/stop/step.
+    // Intercept before is_atomic() (which deliberately keeps slice atomic for
+    // the shallow path).
+    if let Some(ptr) = obj.as_ptr() {
+        let is_slice = unsafe {
+            matches!(&(*ptr).data, ObjData::Instance { class_name, .. } if class_name == "slice")
+        };
+        if is_slice {
+            let key = obj.to_bits();
+            if let Some(existing) = memo.get(&key) {
+                let v = *existing;
+                unsafe { super::super::rc::retain_if_ptr(v); }
+                return v;
+            }
+            let (start, stop, step) = unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    let g = fields.read().unwrap();
+                    (
+                        g.get("start").copied().unwrap_or_else(MbValue::none),
+                        g.get("stop").copied().unwrap_or_else(MbValue::none),
+                        g.get("step").copied().unwrap_or_else(MbValue::none),
+                    )
+                } else {
+                    (MbValue::none(), MbValue::none(), MbValue::none())
+                }
+            };
+            let ds = deepcopy_memo(start, memo);
+            let dt = deepcopy_memo(stop, memo);
+            let dp = deepcopy_memo(step, memo);
+            let result = super::super::builtins::mb_slice(ds, dt, dp);
+            // mb_slice retains each arg for its own storage; release our
+            // deepcopy-owned handles so each refcount lands at one.
+            unsafe {
+                super::super::rc::release_if_ptr(ds);
+                super::super::rc::release_if_ptr(dt);
+                super::super::rc::release_if_ptr(dp);
+            }
+            memo.insert(key, result);
+            record_memoized(obj, result);
+            return result;
+        }
+    }
     if is_atomic(obj) {
         return return_identity(obj);
     }
