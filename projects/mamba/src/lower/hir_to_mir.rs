@@ -8569,6 +8569,15 @@ impl<'a> HirToMir<'a> {
                 generators,
                 ty,
             } => {
+                // Snapshot the local vreg map so a comp-walrus target bound to an
+                // enclosing/global symbol can be dropped afterwards (PEP 572:
+                // `[(j := i) for ...]` leaves `j` in the enclosing scope). The comp
+                // walrus also StoreGlobals such a target; the stale comp-internal
+                // vreg must NOT shadow that global on the post-comp read, while
+                // within-comp reads (accumulators `(acc := acc + i)`) still use the
+                // live vreg. Loop vars are restored by lower_comprehension_loops, so
+                // the only changed <1M/cell entries left are such walrus targets.
+                let pre_vregs = self.sym_to_vreg.clone();
                 let list = self.fresh_vreg();
                 self.current_stmts.push(MirInst::MakeList {
                     dest: list,
@@ -8596,6 +8605,15 @@ impl<'a> HirToMir<'a> {
                         ty: none_ty,
                     });
                 });
+                let changed: Vec<SymbolId> = self.sym_to_vreg.iter()
+                    .filter(|(s, v)| pre_vregs.get(*s).copied() != Some(**v))
+                    .map(|(s, _)| *s)
+                    .collect();
+                for s in changed {
+                    if s.0 < 1_000_000 || self.cell_override.contains(&s.0) {
+                        self.sym_to_vreg.remove(&s);
+                    }
+                }
                 list
             }
             HirExpr::AnyAllComp {
