@@ -249,3 +249,116 @@ e2e_tests:
     assertions:
       - "vat compiles without the emulator feature; the openapi emulator verb then errors cleanly, never a panic."
 ```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
+    action: create
+    section: changes
+    impl_mode: hand-written
+    reason: "Define the OpenAPI mock TD."
+  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
+    action: validate
+    section: logic
+    impl_mode: hand-written
+    reason: "Record the spec parse + match + response generation + http-mock source lifecycle."
+  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
+    action: validate
+    section: schema
+    impl_mode: hand-written
+    reason: "Record the mock response evidence and exported env."
+  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
+    action: validate
+    section: config
+    impl_mode: hand-written
+    reason: "Record the openapi builtin-only preset and its spec field."
+  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
+    action: validate
+    section: cli
+    impl_mode: hand-written
+    reason: "Record the vat emulator openapi verb and its spec arg."
+  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
+    action: validate
+    section: unit-test
+    impl_mode: hand-written
+    reason: "Record preset, respond-example/schema, templating, ref/depth, and http-mock-source coverage."
+  - path: projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md
+    action: validate
+    section: e2e-test
+    impl_mode: hand-written
+    reason: "Record standalone/proxy, preset-run, and lean-build coverage."
+  - path: projects/vat/src/emulator/openapi.rs
+    action: add
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#logic"
+    summary: "OpenAPI mock engine: OpenApiSpec value-walk, respond(method,path) with path templating + response/body selection + example_from_schema ($ref + depth guard); standalone axum server."
+  - path: projects/vat/src/emulator/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#logic"
+    summary: "Register the openapi module and the Openapi serve arm (carrying the spec path)."
+  - path: projects/vat/src/emulator/httpmock/mod.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#logic"
+    summary: "Add the OpenAPI source + /__admin/openapi route; resolution order stub > openapi > cassette > forward."
+  - path: projects/vat/src/cli.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#cli"
+    summary: "Add the Openapi EmulatorKind and the optional --spec arg on the hidden Emulator verb."
+  - path: projects/vat/src/commands/emulator.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#cli"
+    summary: "Pass --spec through and map Openapi to the emulator serve dispatch."
+  - path: projects/vat/src/config.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config"
+    summary: "Add the Openapi ServicePreset, the spec ServiceConfig field, classification, and validate_openapi_service (requires spec)."
+  - path: projects/vat/src/commands/run.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#logic"
+    summary: "Extend builtin_emulator_info/service_preset_name + dead arms; give prepare_builtin_service the workspace root so the openapi branch resolves the spec to an absolute --spec."
+  - path: projects/vat/src/commands/llm.rs
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config"
+    summary: "Document the openapi preset and the http-mock OpenAPI source."
+  - path: projects/vat/README.md
+    action: modify
+    section: config
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config"
+    summary: "Document the openapi preset (spec -> mock) and the http-mock OpenAPI source."
+  - path: projects/vat/tests
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#unit-test"
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#e2e-test"
+    summary: "Add tests/vat_emulator_openapi.rs (standalone + http-mock OpenAPI source)."
+```
