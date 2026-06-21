@@ -38,9 +38,9 @@ cleans up according to the run policy.
 | Tech design root | `projects/vat/tech-design` |
 | TD lock | `projects/vat/tech-design/td.lock` |
 | External-contract inventory | `projects/vat/tests/aw-ec.toml` |
-| Source ownership | full codegen, 100.0% (63/63) |
+| Source ownership | full codegen, 100.0% (65/65) |
 | Semantic coverage | 100.0% |
-| Traceability coverage | 95.5% |
+| Traceability coverage | 95.6% |
 | External-contract gate | passed, 6/6 |
 | Test gate | `cargo test -p vat` passed |
 | Health gate | `aw health vat --verify-traceability --verify-cb --verify-cold --verify-tests --verify-ec` |
@@ -68,6 +68,7 @@ cleans up according to the run policy.
 | Built-in Rust emulator (Cloud Workflows subset interpreter) | change | #147 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_workflows -- --nocapture` |
 | Built-in Rust emulator (Cloud Storage / GCS) | change | #148 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_storage -- --nocapture` |
 | Built-in HTTP mock + record/replay proxy (HTTPS MITM) | change | #149 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_httpmock -- --nocapture` |
+| OpenAPI-driven mock HTTP service (spec → responses) | change | #150 | implemented | verified | smoke | `cargo test -p vat --test vat_emulator_openapi -- --nocapture` |
 | Copy-on-write fork and snapshot lifecycle | epic | - | implemented | verified | smoke | `rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md` |
 | Resource isolation boundary | epic | - | implemented | verified | smoke | `rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox` |
 
