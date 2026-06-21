@@ -114,7 +114,7 @@ properties:
           enum: [postgres, redis, nats, rabbitmq, mysql, mongo, firestore, pubsub, datastore, bigtable, spanner, firebase, firebase-auth, cloud-tasks, cloud-scheduler, cloud-workflows, cloud-storage, http-mock, openapi]
           description: >
             openapi runs vat's built-in OpenAPI mock server under runtime=auto
-            (built-in only). It requires a `spec` (path to an OpenAPI document
+            (built-in only). It requires a spec (path to an OpenAPI document
             relative to vat.toml) and serves spec-derived responses; the runner
             points its base URL at the exported OPENAPI_MOCK_HOST. The same engine
             also backs the http-mock proxy's /__admin/openapi source.
@@ -131,7 +131,6 @@ properties:
       additionalProperties: true
 additionalProperties: true
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
