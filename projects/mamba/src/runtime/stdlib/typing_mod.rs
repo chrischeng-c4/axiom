@@ -589,6 +589,16 @@ fn alias_key(v: MbValue) -> String {
                     .unwrap_or_default();
                 return format!("A:{kind}:{origin}[{args}]{{{meta}}}");
             }
+            "UnionType" => {
+                // Same key shape as a typing.Union alias (kind "union", no
+                // origin/metadata) so the two representations dedup/hash alike.
+                let args = alias_args_vec(v)
+                    .into_iter()
+                    .map(alias_key)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                return format!("A:union:[{args}]{{}}");
+            }
             _ => {}
         }
     }
@@ -630,10 +640,12 @@ fn alias_args_vec(alias: MbValue) -> Vec<MbValue> {
 }
 
 fn alias_kind(v: MbValue) -> Option<String> {
-    if instance_class_of(v).as_deref() == Some("typing.Alias") {
-        instance_field_of(v, "_kind").and_then(|x| extract_str(x))
-    } else {
-        None
+    match instance_class_of(v).as_deref() {
+        Some("typing.Alias") => instance_field_of(v, "_kind").and_then(|x| extract_str(x)),
+        // A PEP 604 `X | Y` UnionType is the same union as a typing.Union alias
+        // for equality/hashing (cross-representation), so it reports "union".
+        Some("UnionType") => Some("union".to_string()),
+        _ => None,
     }
 }
 
@@ -777,6 +789,20 @@ unsafe extern "C" fn typing_alias_eq_m(self_v: MbValue, args: MbValue) -> MbValu
     MbValue::from_bool(aliases_equal(self_v, other))
 }
 
+/// Cross-representation union equality: when at least one side is a PEP 604
+/// `X | Y` UnionType and both resolve to a union, compare member sets (so
+/// `int | str == typing.Union[int, str]` and `== str | int`). Returns None for
+/// the non-union or pure-typing.Alias cases (those keep their existing paths).
+pub(crate) fn union_values_equal(a: MbValue, b: MbValue) -> Option<bool> {
+    let is_union = |v: MbValue| alias_kind(v).as_deref() == Some("union");
+    let either_runtime = instance_class_of(a).as_deref() == Some("UnionType")
+        || instance_class_of(b).as_deref() == Some("UnionType");
+    if either_runtime && is_union(a) && is_union(b) {
+        return Some(aliases_equal(a, b));
+    }
+    None
+}
+
 fn aliases_equal(a: MbValue, b: MbValue) -> bool {
     let (Some(ka), Some(kb)) = (alias_kind(a), alias_kind(b)) else {
         return false;
@@ -797,18 +823,27 @@ fn aliases_equal(a: MbValue, b: MbValue) -> bool {
 }
 
 unsafe extern "C" fn typing_alias_hash_m(self_v: MbValue, _args: MbValue) -> MbValue {
+    alias_hash_value(self_v)
+}
+
+/// Hash of a typing alias OR a PEP 604 UnionType — a polynomial over a blob of
+/// (kind | origin | member keys | metadata), member keys sorted for
+/// union/literal so it is order-insensitive. A UnionType reports kind "union"
+/// (alias_kind) and the origin is dropped for unions, so `int | str` and
+/// `typing.Union[int, str]` (which differ only by __origin__) hash identically.
+pub(crate) fn alias_hash_value(self_v: MbValue) -> MbValue {
     use super::super::rc::ObjData;
     // Annotated metadata participates in the hash; unhashable members
     // (list/dict/set) raise like CPython.
     if let Some(meta) = instance_field_of(self_v, "__metadata__") {
         for m in tuple_items(meta) {
             if let Some(ptr) = m.as_ptr() {
-                let bad = match &(*ptr).data {
+                let bad = unsafe { match &(*ptr).data {
                     ObjData::List(_) => Some("list"),
                     ObjData::Dict(_) => Some("dict"),
                     ObjData::Set(_) => Some("set"),
                     _ => None,
-                };
+                } };
                 if let Some(tn) = bad {
                     super::super::exception::mb_raise(
                         new_str_v("TypeError"),
@@ -824,9 +859,16 @@ unsafe extern "C" fn typing_alias_hash_m(self_v: MbValue, _args: MbValue) -> MbV
     if kind == "union" || kind == "literal" {
         keys.sort();
     }
-    let origin_key = instance_field_of(self_v, "__origin__")
-        .map(alias_key)
-        .unwrap_or_default();
+    let origin_key = if kind == "union" {
+        // A union's origin is always typing.Union (implied); excluding it lets a
+        // `X | Y` UnionType and the typing.Union[X, Y] alias — which differ only
+        // by their __origin__ — hash identically.
+        String::new()
+    } else {
+        instance_field_of(self_v, "__origin__")
+            .map(alias_key)
+            .unwrap_or_default()
+    };
     let meta_key = instance_field_of(self_v, "__metadata__")
         .map(|m| {
             tuple_items(m)
