@@ -9036,7 +9036,13 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
     // bool is a subclass of int in Python (#1680) — `xs[True]` ≡ `xs[1]`.
     // Coerce a bool key to an int before any container dispatch so the
     // built-in indexing paths don't hit the strict `as_int()` rejection.
-    let key = if key.is_bool() {
+    // EXCEPT a typing special form (Literal[True]): its subscript stores the
+    // value itself, where a bool must stay a bool so Literal[True] != Literal[1].
+    let obj_is_typing_form = obj.as_ptr().map(|p| unsafe {
+        matches!(&(*p).data,
+            ObjData::Instance { class_name, .. } if class_name == "typing.SpecialForm")
+    }).unwrap_or(false);
+    let key = if key.is_bool() && !obj_is_typing_form {
         MbValue::from_int(key.as_int_pyint().unwrap_or(0))
     } else {
         key
