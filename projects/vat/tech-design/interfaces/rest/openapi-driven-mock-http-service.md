@@ -326,48 +326,6 @@ changes:
       - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#e2e-test"
     summary: "Add tests/vat_emulator_openapi.rs (standalone + http-mock OpenAPI source)."
 ```
-## Review
-<!-- verdict: approve -->
-
-- Sections cohere; engine + standalone preset + http-mock source match the approved plan. No scenarios needed. Proceed to contract.
-
-## Review
-<!-- verdict: approve -->
-
-- Sections cohere: the shared engine (`OpenApiSpec` value-walk → `respond`),
-  the standalone `openapi` preset, and the http-mock OpenAPI source match the
-  approved plan. Built-in only, no new crate, lean build preserved.
-- No scenarios needed (deterministic spec → response). Proceed to contract.
-
-## Review
-<!-- verdict: approve -->
-
-- Sections cohere: shared engine (OpenApiSpec value-walk -> respond), standalone
-  openapi preset, and the http-mock OpenAPI source match the approved plan.
-  Built-in only, no new crate, lean build preserved. No scenarios needed
-  (deterministic spec -> response). Proceed to contract.
-
-## Review
-<!-- verdict: approve -->
-
-Sections cohere: shared engine (OpenApiSpec value-walk -> respond), standalone
-openapi preset, and the http-mock OpenAPI source match the approved plan.
-Built-in only, no new crate, lean build preserved. No scenarios needed
-(deterministic spec -> response). Proceed to contract.
-
-# Reviews
-
-### Review 1
-**Verdict:** approve
-
-- [logic] Engine lifecycle parse -> match -> select response -> example/schema body -> http-mock source order is coherent and matches the approved plan.
-- [schema] Mock response evidence (status/content_type/source) and exported env captured.
-- [config] openapi built-in-only preset and the spec field are correct; runtime stays auto.
-- [cli] emulator openapi verb plus the --spec arg are correct.
-- [unit-test] preset/respond-example/respond-schema/templating/ref-depth/http-mock-source coverage is complete.
-- [e2e-test] standalone, proxy, preset-run, and lean-build are covered.
-- [changes] hand-written change set is complete; no scenarios needed.
-
 # Reviews
 
 ### Review 1
