@@ -217,3 +217,35 @@ requirementDiagram
       verifies: http_mock_source
     }
 ```
+
+## E2E Test
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: vat-openapi-standalone-and-proxy-smoke
+    name: "OpenAPI mock serves spec responses standalone and via the http-mock proxy"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat --test vat_emulator_openapi -- --nocapture"
+    assertions:
+      - "spawning `vat emulator openapi --spec <tmp spec>` and GETting a documented path returns the spec's example; an undocumented path returns 404."
+      - "registering a spec for a host on the http-mock proxy answers a proxied HTTPS-MITM GET to that host from the spec (no stub, no upstream)."
+  - id: vat-openapi-preset-run-smoke
+    name: "openapi preset serves a spec-derived response to the runner"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo test -p vat openapi_preset_serves_spec -- --nocapture --ignored"
+    assertions:
+      - "a preset = openapi vat.toml run exports OPENAPI_MOCK_HOST and the runner curls a documented operation, getting the spec-derived response with no app code change."
+  - id: vat-openapi-lean-build
+    name: "lean build still compiles"
+    capability_id: agent-native-gpu-native-dev-containers
+    contract_id: local-agent-test-runner-protocol
+    category: behavior
+    command: "cargo build -p vat --no-default-features"
+    assertions:
+      - "vat compiles without the emulator feature; the openapi emulator verb then errors cleanly, never a panic."
+```
