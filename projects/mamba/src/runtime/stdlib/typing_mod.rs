@@ -668,6 +668,10 @@ fn make_alias(
             super::super::rc::retain_if_ptr(*a);
         }
     }
+    // __parameters__: the free TypeVars in the args (PEP 585/484/695), so a
+    // parameterized alias can be re-subscripted and introspected. Computed
+    // before `args` is moved into the __args__ tuple.
+    fields.insert("__parameters__".to_string(), typevar_params_tuple(&args));
     fields.insert(
         "__args__".to_string(),
         MbValue::from_ptr(MbObject::new_tuple(args)),
@@ -687,6 +691,101 @@ fn make_alias(
         fields.insert("_repr_name".to_string(), new_str_v(rn));
     }
     instance_with("typing.Alias", fields)
+}
+
+fn is_typevar(v: MbValue) -> bool {
+    instance_class_of(v).as_deref() == Some("TypeVar")
+}
+
+fn collect_params_into(v: MbValue, out: &mut Vec<MbValue>) {
+    if is_typevar(v) {
+        if !out.iter().any(|p| p.to_bits() == v.to_bits()) {
+            out.push(v);
+        }
+        return;
+    }
+    if matches!(instance_class_of(v).as_deref(), Some("typing.Alias") | Some("UnionType")) {
+        for a in alias_args_vec(v) {
+            collect_params_into(a, out);
+        }
+    }
+}
+
+/// The `__parameters__` tuple for `args` — the free TypeVars appearing
+/// (recursively) in them, order-preserving and deduplicated.
+pub(crate) fn typevar_params_tuple(args: &[MbValue]) -> MbValue {
+    let mut params = Vec::new();
+    for a in args {
+        collect_params_into(*a, &mut params);
+    }
+    for p in &params {
+        unsafe { super::super::rc::retain_if_ptr(*p); }
+    }
+    MbValue::from_ptr(MbObject::new_tuple(params))
+}
+
+/// Substitute TypeVars in `v` (recursively into nested aliases/unions) using
+/// `sub` (typevar identity bits → replacement value).
+fn substitute_typevars(v: MbValue, sub: &rustc_hash::FxHashMap<u64, MbValue>) -> MbValue {
+    if is_typevar(v) {
+        return sub.get(&v.to_bits()).copied().unwrap_or(v);
+    }
+    match instance_class_of(v).as_deref() {
+        Some("typing.Alias") => {
+            let kind = alias_kind(v).unwrap_or_default();
+            let origin = instance_field_of(v, "__origin__").unwrap_or_else(MbValue::none);
+            let repr_name = instance_field_of(v, "_repr_name").and_then(extract_str);
+            let new_args: Vec<MbValue> = alias_args_vec(v)
+                .into_iter()
+                .map(|a| substitute_typevars(a, sub))
+                .collect();
+            make_alias(&kind, origin, new_args, repr_name.as_deref(), None)
+        }
+        Some("UnionType") => {
+            let new_args: Vec<MbValue> = alias_args_vec(v)
+                .into_iter()
+                .map(|a| substitute_typevars(a, sub))
+                .collect();
+            super::super::builtins::make_union_type_value(new_args)
+        }
+        _ => v,
+    }
+}
+
+/// Subscript a parameterized typing.Alias / UnionType: `alias[args]` substitutes
+/// its __parameters__ with the provided args (arity-checked, TypeError on a
+/// wrong count), mirroring CPython's `__getitem__` on a generic/union alias.
+pub(crate) fn alias_subscript(self_v: MbValue, key: MbValue) -> MbValue {
+    let params = instance_field_of(self_v, "__parameters__")
+        .map(tuple_items)
+        .unwrap_or_default();
+    let provided = key
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                super::super::rc::ObjData::Tuple(t) => Some(t.to_vec()),
+                _ => None,
+            }
+        })
+        .unwrap_or_else(|| vec![key]);
+    if params.is_empty() || provided.len() != params.len() {
+        super::super::exception::mb_raise(
+            new_str_v("TypeError"),
+            new_str_v(&format!(
+                "Too {} arguments for {}; actual {}, expected {}",
+                if provided.len() >= params.len() { "many" } else { "few" },
+                alias_repr(self_v),
+                provided.len(),
+                params.len(),
+            )),
+        );
+        return MbValue::none();
+    }
+    let mut sub = rustc_hash::FxHashMap::default();
+    for (p, val) in params.iter().zip(provided.iter()) {
+        sub.insert(p.to_bits(), *val);
+    }
+    substitute_typevars(self_v, &sub)
 }
 
 /// Human repr of an alias argument (class reprs use the bare name).

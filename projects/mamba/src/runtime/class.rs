@@ -9328,6 +9328,12 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                             .unwrap_or_default();
                         return super::stdlib::typing_mod::special_form_subscript(&name, key);
                     }
+                    // A parameterized generic alias / union (`(int | T)[str]`,
+                    // `list[T][int]`) substitutes its __parameters__ with the
+                    // subscript args (arity-checked).
+                    if class_name == "typing.Alias" || class_name == "UnionType" {
+                        return super::stdlib::typing_mod::alias_subscript(obj, key);
+                    }
                     // namedtuple instances: int / slice indexing dispatches via
                     // an ephemeral tuple of the ordered field values so the
                     // existing tuple_ops paths handle bounds, negatives, and

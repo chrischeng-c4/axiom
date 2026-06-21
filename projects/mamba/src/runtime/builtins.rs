@@ -3184,6 +3184,12 @@ fn collect_union_operand(v: MbValue, out: &mut Vec<MbValue>) -> bool {
                     out.push(v);
                     true
                 }
+                // PEP 585/604: a generic alias (`list[int]`, `list[T]`) is a
+                // valid union operand — `list[T] | int` joins it as a member.
+                ObjData::Instance { class_name, .. } if class_name == "typing.Alias" => {
+                    out.push(v);
+                    true
+                }
                 _ => false,
             }
         }
@@ -3192,12 +3198,17 @@ fn collect_union_operand(v: MbValue, out: &mut Vec<MbValue>) -> bool {
     }
 }
 
-fn make_union_type_value(parts: Vec<MbValue>) -> MbValue {
+pub(crate) fn make_union_type_value(parts: Vec<MbValue>) -> MbValue {
+    // __parameters__: the free TypeVars in the members (computed before `parts`
+    // is moved into the __args__ tuple).
+    let params = super::stdlib::typing_mod::typevar_params_tuple(&parts);
     let args = MbValue::from_ptr(MbObject::new_tuple(parts));
     let inst = MbObject::new_instance("UnionType".to_string());
     unsafe {
         if let ObjData::Instance { fields, .. } = &(*inst).data {
-            fields.write().unwrap().insert("__args__".to_string(), args);
+            let mut f = fields.write().unwrap();
+            f.insert("__args__".to_string(), args);
+            f.insert("__parameters__".to_string(), params);
         }
     }
     MbValue::from_ptr(inst)
