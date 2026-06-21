@@ -54,14 +54,11 @@ pub fn register() {
 }
 
 pub fn mb_numbers_Number() -> MbValue {
-    // The numeric-tower ABCs cannot be instantiated (CPython ABCMeta).
-    super::super::exception::mb_raise(
-        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(
-            "Can't instantiate abstract class Number".to_string(),
-        )),
-    );
-    MbValue::none()
+    // numbers.Number declares no abstract methods, so unlike the lower tower
+    // ABCs (Complex/Real/Rational/Integral) it is concrete and instantiates
+    // (CPython). The instance carries class_name "numbers.Number" so
+    // isinstance(Number(), numbers.Number) holds (numbers_value_rank).
+    MbValue::from_ptr(MbObject::new_instance("numbers.Number".to_string()))
 }
 
 pub fn mb_numbers_Complex() -> MbValue {
@@ -114,11 +111,12 @@ mod tests {
 
     #[test]
     fn test_numbers_abcs_raise_on_instantiation() {
-        // CPython: the numeric-tower ABCs cannot be instantiated; each call
-        // raises TypeError and returns None. Calls run one at a time so each
-        // pending exception is observed before the next raise.
-        let cases: [(fn() -> MbValue, &str); 5] = [
-            (mb_numbers_Number, "Number"),
+        // CPython: the lower numeric-tower ABCs (those with abstract methods)
+        // cannot be instantiated; each call raises TypeError and returns None.
+        // numbers.Number is concrete (no abstract methods) and is exercised
+        // separately below. Calls run one at a time so each pending exception
+        // is observed before the next raise.
+        let cases: [(fn() -> MbValue, &str); 4] = [
             (mb_numbers_Complex, "Complex"),
             (mb_numbers_Real, "Real"),
             (mb_numbers_Rational, "Rational"),
@@ -131,5 +129,8 @@ mod tests {
             assert_eq!(exc.as_deref(), Some("TypeError"), "for {expected}");
             super::super::super::exception::mb_clear_exception();
         }
+        // numbers.Number declares no abstract methods → it instantiates.
+        let n = mb_numbers_Number();
+        assert!(!n.is_none(), "Number() should instantiate");
     }
 }

@@ -3510,6 +3510,13 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     }
 
     if let Some(addr) = obj.as_func() {
+        // numbers.Number.__abstractmethods__ is frozenset() — Number declares no
+        // abstract methods (it is concrete); the lower tower ABCs are unaffected.
+        if attr_name == "__abstractmethods__"
+            && super::stdlib::numbers_mod::numbers_abc_rank(addr as u64) == Some(0)
+        {
+            return MbValue::from_ptr(MbObject::new_frozenset(vec![]));
+        }
         let native_type =
             super::module::NATIVE_TYPE_NAMES.with(|map| map.borrow().get(&(addr as u64)).cloned());
         if let Some(nt) = native_type {
@@ -7359,6 +7366,10 @@ fn numbers_value_rank(obj: MbValue) -> Option<u8> {
             match &(*ptr).data {
                 ObjData::Complex(..) => return Some(1),
                 ObjData::BigInt(_) => return Some(4),
+                // A bare numbers.Number() instance sits at the tower root.
+                ObjData::Instance { class_name, .. } if class_name == "numbers.Number" => {
+                    return Some(0);
+                }
                 _ => {}
             }
         }
