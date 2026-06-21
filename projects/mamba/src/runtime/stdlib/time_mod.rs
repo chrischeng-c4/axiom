@@ -820,22 +820,61 @@ pub fn mb_time_get_clock_info(name: MbValue) -> MbValue {
 }
 
 /// time.strftime(format, struct_time=None) -> str
+/// Replace `%w` in a strftime format with the value derived from the
+/// struct_time tm_wday field (Python Mon=0..Sun=6 → strftime Sun=0..Sat=6).
+/// CPython's strftime reads %w from the supplied tm_wday rather than the
+/// recomputed date, so an inconsistent/zero-filled tuple formats correctly.
+/// For a consistent struct_time this equals chrono's date-derived %w, so
+/// normal calls are unaffected. `%%` and all other directives pass through.
+fn substitute_wday_directive(fmt: &str, tm_wday: i64) -> String {
+    let w = (((tm_wday % 7) + 7) % 7 + 1) % 7;
+    let mut out = String::with_capacity(fmt.len());
+    let mut chars = fmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            match chars.peek() {
+                Some('%') => { chars.next(); out.push_str("%%"); }
+                Some('w') => { chars.next(); out.push_str(&w.to_string()); }
+                _ => out.push('%'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 pub fn mb_time_strftime(fmt: MbValue, st: MbValue) -> MbValue {
     if is_bytes_value(fmt) {
         return raise_type_error("strftime() argument 1 must be str, not bytes");
     }
     let format_str = extract_str(fmt).unwrap_or_default();
-    let naive = if st.is_none() {
-        Local::now().naive_local()
-    } else {
-        match struct_time_to_naive(st) {
-            Some(n) => n,
-            None => return MbValue::from_ptr(MbObject::new_str(String::new())),
-        }
+    if st.is_none() {
+        // chrono uses the same %-directive vocabulary as strftime(3) for the
+        // common cases CPython exposes (%Y %m %d %H %M %S %A %a %B %b %p %j %%).
+        let out = Local::now().naive_local().format(&format_str).to_string();
+        return MbValue::from_ptr(MbObject::new_str(out));
+    }
+    // CPython substitutes the documented minimums for zero-valued month/day
+    // fields and takes %w from the struct_time's tm_wday, so zero-filled /
+    // inconsistent tuples like `(2000,)+(0,)*8` still format. Build the date
+    // here (not via the shared struct_time_to_naive, which mktime/asctime use
+    // with CPython's different out-of-range normalization).
+    let items = extract_tuple_items(st);
+    if items.len() < 6 {
+        return MbValue::from_ptr(MbObject::new_str(String::new()));
+    }
+    let geti = |i: usize| items.get(i).and_then(|v| extract_int(*v)).unwrap_or(0);
+    let y = geti(0) as i32;
+    let mo = { let m = geti(1); if m == 0 { 1 } else { m } } as u32;
+    let d = { let dd = geti(2); if dd == 0 { 1 } else { dd } } as u32;
+    let (h, mi, s) = (geti(3) as u32, geti(4) as u32, geti(5) as u32);
+    let naive = match chrono::NaiveDate::from_ymd_opt(y, mo, d).and_then(|nd| nd.and_hms_opt(h, mi, s)) {
+        Some(n) => n,
+        None => return MbValue::from_ptr(MbObject::new_str(String::new())),
     };
-    // chrono uses the same %-directive vocabulary as strftime(3) for the
-    // common cases CPython exposes (%Y %m %d %H %M %S %A %a %B %b %p %j %%).
-    let out = naive.format(&format_str).to_string();
+    let resolved = substitute_wday_directive(&format_str, geti(6));
+    let out = naive.format(&resolved).to_string();
     MbValue::from_ptr(MbObject::new_str(out))
 }
 

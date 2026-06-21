@@ -5330,11 +5330,25 @@ pub fn extract_items(val: MbValue) -> Vec<MbValue> {
     }
     // Fallback: standard iterator protocol.
     let mut items = Vec::new();
+    // A generator/iterator that raises mid-iteration leaves a pending
+    // exception; stop and let the caller (set()/list()/heapq.merge/sorted/…)
+    // propagate it rather than swallowing it as end-of-iteration. StopIteration
+    // is the normal exhaustion signal and must not be treated as an error.
+    let raised = || {
+        super::exception::mb_has_exception().as_bool() == Some(true)
+            && super::exception::current_exception_type().as_deref() != Some("StopIteration")
+    };
     loop {
         if super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
             break;
         }
+        if raised() {
+            break;
+        }
         let item = super::iter::mb_next(iter_handle);
+        if raised() {
+            break;
+        }
         if item.is_none() && super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
             break;
         }
