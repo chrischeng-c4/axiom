@@ -2443,11 +2443,46 @@ unsafe extern "C" fn bh_parse_request(self_v: MbValue, _args: MbValue) -> MbValu
     set_inst_field(self_v, "requestline",
         MbValue::from_ptr(MbObject::new_str(trimmed.to_string())));
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
-    let (command, path, version) = match parts.len() {
-        3 => (parts[0], parts[1], parts[2]),
-        2 => (parts[0], parts[1], "HTTP/0.9"),
-        _ => return MbValue::from_bool(false),
+    // Reject like CPython BaseHTTPRequestHandler.parse_request: write an error
+    // page via send_error and return False. An empty line is silently dropped.
+    let send_err = |code: i64, msg: String| -> MbValue {
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(code),
+            MbValue::from_ptr(MbObject::new_str(msg)),
+        ]));
+        bh_send_error(self_v, args);
+        MbValue::from_bool(false)
     };
+    if parts.is_empty() {
+        return MbValue::from_bool(false);
+    }
+    // With ≥3 tokens the last is the protocol version: validate it first
+    // (CPython order) — a non `HTTP/<int>.<int>` version is a 400, and a major
+    // version ≥ 2 is a 505 "Invalid HTTP version".
+    let version = if parts.len() >= 3 {
+        let v = parts[parts.len() - 1];
+        let base = v.strip_prefix("HTTP/");
+        let nums = base.and_then(|b| {
+            let mut it = b.split('.');
+            let major = it.next()?.parse::<i64>().ok()?;
+            let minor = it.next()?.parse::<i64>().ok()?;
+            if it.next().is_some() { return None; }
+            Some((major, minor))
+        });
+        match nums {
+            None => return send_err(400, format!("Bad request version ({v:?})")),
+            Some((major, _)) if major >= 2 => {
+                return send_err(505, format!("Invalid HTTP version ({})", base.unwrap_or("")));
+            }
+            Some(_) => v,
+        }
+    } else {
+        "HTTP/0.9"
+    };
+    if !(2..=3).contains(&parts.len()) {
+        return send_err(400, format!("Bad request syntax ({trimmed:?})"));
+    }
+    let (command, path) = (parts[0], parts[1]);
     set_inst_field(self_v, "command",
         MbValue::from_ptr(MbObject::new_str(command.to_string())));
     set_inst_field(self_v, "path",
