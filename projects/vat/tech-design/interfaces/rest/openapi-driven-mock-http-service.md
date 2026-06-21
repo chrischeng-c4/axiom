@@ -380,3 +380,16 @@ Built-in only, no new crate, lean build preserved. No scenarios needed
 - [unit-test] preset/respond-example/respond-schema/templating/ref-depth/http-mock-source coverage is complete.
 - [e2e-test] standalone, proxy, preset-run, and lean-build are covered.
 - [changes] hand-written change set is complete; no scenarios needed.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Spec parse -> operation match (path templating) -> response select -> example/schema body -> http-mock source order is fully specified and matches the impl plan.
+- [schema] Mock response evidence and exported env are correct.
+- [config] openapi built-in-only preset + spec field are correct; runtime stays auto.
+- [cli] emulator openapi verb + --spec arg are correct.
+- [unit-test] preset/respond-example/respond-schema/templating/ref-depth/http-mock-source coverage is complete.
+- [e2e-test] standalone, proxy, preset-run, and lean-build are covered.
+- [changes] hand-written change set is complete and consistent with the sections.
