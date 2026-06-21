@@ -61,7 +61,6 @@ flowchart TD
     serve --> proxy{http-mock resolution stub openapi cassette forward}
     proxy --> done([response delivered])
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
