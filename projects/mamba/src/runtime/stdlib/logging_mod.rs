@@ -1539,6 +1539,145 @@ fn register_native_class(name: &str, methods: Vec<(&str, *const ())>) {
     super::super::class::mb_class_register(name, vec!["object".to_string()], map);
 }
 
+// ── logging.config.BaseConfigurator (cfg:// reference resolution) ──
+
+/// BaseConfigurator(config) — stores the config dict for later cfg://
+/// resolution via convert(). Wired as the `logging.config.BaseConfigurator`
+/// module attr in long_tail2_mod.
+pub unsafe extern "C" fn dispatch_baseconfigurator(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { args_slice(args_ptr, nargs) };
+    let config = arg_or_none(a, 0);
+    make_instance("BaseConfigurator", vec![("config", config)])
+}
+
+/// Look up a string key in an MbValue dict; None if absent or not a dict.
+fn dict_lookup_str(d: MbValue, key: &str) -> Option<MbValue> {
+    let ptr = d.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let k = super::super::dict_ops::DictKey::Str(key.to_string());
+            return lock.read().unwrap().get(&k).copied();
+        }
+    }
+    None
+}
+
+/// Index `d` by a `[idx]` segment (CPython `d[idx]`): a dict accepts an int or
+/// str key (missing → KeyError); a list accepts an int index (oob → IndexError,
+/// non-int → TypeError). Raises and returns none() on failure.
+fn cfg_index(d: MbValue, idx: &str) -> MbValue {
+    let is_digit = !idx.is_empty() && idx.bytes().all(|b| b.is_ascii_digit());
+    if let Some(ptr) = d.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Dict(ref lock) => {
+                    let key = if is_digit {
+                        super::super::dict_ops::DictKey::Int(idx.parse().unwrap_or(-1))
+                    } else {
+                        super::super::dict_ops::DictKey::Str(idx.to_string())
+                    };
+                    return match lock.read().unwrap().get(&key).copied() {
+                        Some(v) => { retain(v); v }
+                        None => raise(
+                            "KeyError",
+                            if is_digit { idx.to_string() } else { format!("'{idx}'") },
+                        ),
+                    };
+                }
+                ObjData::List(ref lock) => {
+                    if !is_digit {
+                        return raise("TypeError", "list indices must be integers".to_string());
+                    }
+                    let g = lock.read().unwrap();
+                    let n: i64 = idx.parse().unwrap_or(-1);
+                    if n >= 0 && (n as usize) < g.len() {
+                        let v = g[n as usize];
+                        retain(v);
+                        return v;
+                    }
+                    return raise("IndexError", "list index out of range".to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    raise("TypeError", format!("'{idx}' index into non-subscriptable object"))
+}
+
+/// Split a leading WORD (`[A-Za-z_]\w*`) off `s`; returns (word, rest).
+fn split_word(s: &str) -> Option<(&str, &str)> {
+    let bytes = s.as_bytes();
+    let c0 = *bytes.first()?;
+    if !(c0.is_ascii_alphabetic() || c0 == b'_') {
+        return None;
+    }
+    let mut i = 1;
+    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+        i += 1;
+    }
+    Some((&s[..i], &s[i..]))
+}
+
+/// Resolve a `cfg://` suffix against self.config, mirroring CPython's
+/// BaseConfigurator.cfg_convert: a leading word indexes the config dict, then
+/// `.attr` / `[index]` segments walk into it. A malformed prefix raises
+/// ValueError; a missing key/index raises KeyError.
+fn cfg_convert(this: MbValue, value: &str) -> MbValue {
+    let config = field_get(this, "config");
+    let Some((word, rest0)) = split_word(value) else {
+        return raise("ValueError", format!("Unable to convert {value:?}"));
+    };
+    let mut d = match dict_lookup_str(config, word) {
+        Some(v) => v,
+        None => return raise("KeyError", format!("'{word}'")),
+    };
+    let mut rest = rest0;
+    while !rest.is_empty() {
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let Some((attr, r)) = split_word(after_dot) else {
+                return raise("ValueError", format!("Unable to convert {value:?} at {rest:?}"));
+            };
+            d = match dict_lookup_str(d, attr) {
+                Some(v) => v,
+                None => return raise("KeyError", format!("'{attr}'")),
+            };
+            rest = r;
+        } else if rest.starts_with('[') {
+            let Some(close) = rest.find(']') else {
+                return raise("ValueError", format!("Unable to convert {value:?} at {rest:?}"));
+            };
+            let idx = &rest[1..close];
+            let after = &rest[close + 1..];
+            d = cfg_index(d, idx);
+            if super::super::exception::current_exception_type().is_some() {
+                return MbValue::none();
+            }
+            rest = after;
+        } else {
+            return raise("ValueError", format!("Unable to convert {value:?} at {rest:?}"));
+        }
+    }
+    retain(d);
+    d
+}
+
+/// BaseConfigurator.convert(value) — resolve a `cfg://...` reference string
+/// against the stored config; any other value passes through unchanged.
+extern "C" fn m_baseconfigurator_convert(this: MbValue, value: MbValue) -> MbValue {
+    if is_str_value(value) {
+        let s = extract_str(value);
+        // CONVERT_PATTERN: ^(?P<prefix>[a-z]+)://(?P<suffix>.*)$
+        if let Some(pos) = s.find("://") {
+            let prefix = &s[..pos];
+            if !prefix.is_empty() && prefix.bytes().all(|b| b.is_ascii_lowercase()) && prefix == "cfg" {
+                return cfg_convert(this, &s[pos + 3..]);
+            }
+        }
+    }
+    retain(value);
+    value
+}
+
 /// Register the logging module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -1572,6 +1711,10 @@ pub fn register() {
     );
 
     // ── Register native classes with methods (CLASS_REGISTRY) ──
+    register_native_class(
+        "BaseConfigurator",
+        vec![("convert", m_baseconfigurator_convert as *const ())],
+    );
     register_native_class(
         "Logger",
         vec![
