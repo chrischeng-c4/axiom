@@ -1,8 +1,12 @@
 version = 1
 project = "vat"
 td_path = "projects/vat/tech-design"
-generated_at = "2026-06-20T19:03:57.964385+00:00"
-digest = "sha256:5ad0493b78c1a99c20a9ce6f902732eb10d96419e57e008032811827721ce5e3"
+generated_at = "2026-06-21T03:50:10.291168+00:00"
+digest = "sha256:66cbbcbba8c827647f5f7d8f426e20246bbefb8650f201b124b6d2191977dda3"
+
+[[files]]
+path = "interfaces/rest/openapi-driven-mock-http-service.md"
+digest = "sha256:cdab86df29caf5314c40eaa98261e9a69a8db4ff3012b777f88627516100b63f"
 
 [[files]]
 path = "logic/built-in-cloud-storage-gcs-emulator.md"
@@ -174,8 +178,8 @@ digest = "sha256:1cb7d290f685bce33af5a11210a84be1e9aea62dd50fe68ea0f4c802247f035
 
 [[files]]
 path = "semantic/vat-src.md"
-digest = "sha256:fd33eda7c60d610f7dde712545b06aaac5bb7b74eb084bc9bc63de4148a43dee"
+digest = "sha256:1b5526631845075632b3d3e02dd85038883f855fba8d54e4ba7d4cf29343c518"
 
 [[files]]
 path = "semantic/vat-tests.md"
-digest = "sha256:9b6e4031cd843eb8b2ac8493c081aafbaf84e5f1081b0896465becc64d524a32"
+digest = "sha256:cfbe55a62e834a097f34afe28f37b206c3de13f8715464988cda9537a36a6947"

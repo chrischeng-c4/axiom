@@ -900,6 +900,32 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/vat/src/emulator/httpmock"
+      - path: "projects/vat/src/emulator/openapi.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "MockResponse"
+            kind: "struct"
+            public: true
+          - name: "OpenApiSpec"
+            kind: "struct"
+            public: true
+          - name: "SpecRegistry"
+            kind: "struct"
+            public: true
+          - name: "Registration"
+            kind: "struct"
+            public: true
+          - name: "serve"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
 ```
 
 ## Changes

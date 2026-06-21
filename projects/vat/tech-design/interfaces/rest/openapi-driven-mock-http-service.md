@@ -261,6 +261,13 @@ changes:
     refs:
       - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#logic"
     summary: "OpenAPI mock engine: OpenApiSpec value-walk, respond(method,path) with path templating + response/body selection + example_from_schema ($ref + depth guard); standalone axum server."
+  - path: projects/vat/src/emulator/openapi.rs
+    action: add
+    section: schema
+    impl_mode: hand-written
+    refs:
+      - "projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#schema"
+    summary: "MockResponse evidence (status, content_type, body) produced from the matched operation; the exported OPENAPI_MOCK_HOST base is wired in run.rs."
   - path: projects/vat/src/emulator/mod.rs
     action: modify
     section: logic
