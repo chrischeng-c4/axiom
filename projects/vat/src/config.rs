@@ -138,6 +138,12 @@ pub struct ServiceConfig {
     /// Cluster node count (default 1). Only meaningful with `cluster`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nodes: Option<u32>,
+    /// Path (relative to vat.toml) to an OpenAPI document. Required for the
+    /// `openapi` preset, which serves spec-derived mock responses; rejected for
+    /// every other backing.
+    /// @spec projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default)]
@@ -188,6 +194,7 @@ pub enum ServicePreset {
     CloudWorkflows,
     CloudStorage,
     HttpMock,
+    Openapi,
 }
 
 impl ServicePreset {
@@ -208,6 +215,7 @@ impl ServicePreset {
                 | ServicePreset::CloudWorkflows
                 | ServicePreset::CloudStorage
                 | ServicePreset::HttpMock
+                | ServicePreset::Openapi
         )
     }
 
@@ -224,6 +232,7 @@ impl ServicePreset {
                 | ServicePreset::CloudWorkflows
                 | ServicePreset::CloudStorage
                 | ServicePreset::HttpMock
+                | ServicePreset::Openapi
         )
     }
 
@@ -239,6 +248,7 @@ impl ServicePreset {
                 | ServicePreset::CloudWorkflows
                 | ServicePreset::CloudStorage
                 | ServicePreset::HttpMock
+                | ServicePreset::Openapi
         )
     }
 }
@@ -401,6 +411,8 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
                     validate_cluster_service(service)?;
                 } else if service.preset == Some(ServicePreset::Firebase) {
                     validate_firebase_service(cfg, service)?;
+                } else if service.preset == Some(ServicePreset::Openapi) {
+                    validate_openapi_service(service)?;
                 }
                 // other presets: no extra checks here.
             }
@@ -424,6 +436,12 @@ pub fn validate(cfg: &VatConfig) -> Result<()> {
                     service.id
                 );
             }
+        }
+        if service.spec.is_some() && service.preset != Some(ServicePreset::Openapi) {
+            bail!(
+                "service `{}` sets `spec` but only the `openapi` preset accepts it",
+                service.id
+            );
         }
         if let PortSpec::Auto(value) = &service.port {
             if value != "auto" {
@@ -547,6 +565,25 @@ fn validate_cluster_service(service: &ServiceConfig) -> Result<()> {
                 service.id
             );
         }
+    }
+    Ok(())
+}
+
+/// The `openapi` preset serves spec-derived mock responses, so it requires a
+/// `spec` pointing at an OpenAPI document.
+/// @spec projects/vat/tech-design/interfaces/rest/openapi-driven-mock-http-service.md#config
+fn validate_openapi_service(service: &ServiceConfig) -> Result<()> {
+    if service
+        .spec
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        bail!(
+            "service `{}` preset `openapi` must set `spec` to an OpenAPI document path",
+            service.id
+        );
     }
     Ok(())
 }
@@ -784,6 +821,7 @@ artifacts = ["out.txt"]
                 cluster: None,
                 k8s_version: None,
                 nodes: None,
+                spec: None,
                 version: None,
                 port: PortSpec::default(),
                 seed: Vec::new(),
@@ -828,6 +866,7 @@ artifacts = ["out.txt"]
                     cluster: None,
                     k8s_version: None,
                     nodes: None,
+                    spec: None,
                     version: None,
                     port: PortSpec::default(),
                     seed: Vec::new(),
@@ -848,6 +887,7 @@ artifacts = ["out.txt"]
                     cluster: None,
                     k8s_version: None,
                     nodes: None,
+                    spec: None,
                     version: None,
                     port: PortSpec::default(),
                     seed: Vec::new(),
@@ -906,6 +946,7 @@ artifacts = ["out.txt"]
             cluster: None,
             k8s_version: None,
             nodes: None,
+            spec: None,
             version: None,
             port: PortSpec::default(),
             seed: Vec::new(),
@@ -1156,6 +1197,36 @@ artifacts = ["out.txt"]
             svc.runtime = ServiceRuntime::Docker;
             assert!(validate(&cfg_with_service(svc)).is_err());
         }
+    }
+
+    #[test]
+    fn openapi_preset_classifies_builtin_and_requires_spec() {
+        let parsed: ServicePreset =
+            serde_json::from_value(serde_json::Value::String("openapi".into())).unwrap();
+        assert_eq!(parsed, ServicePreset::Openapi);
+        assert!(ServicePreset::Openapi.is_emulator());
+        assert!(ServicePreset::Openapi.is_builtin());
+        assert!(ServicePreset::Openapi.is_builtin_only());
+
+        // openapi without a `spec` → rejected.
+        let mut svc = bare_service("svc");
+        svc.preset = Some(ServicePreset::Openapi);
+        assert!(validate(&cfg_with_service(svc.clone())).is_err());
+
+        // openapi with a `spec` → ok.
+        svc.spec = Some("api.yaml".into());
+        assert!(validate(&cfg_with_service(svc.clone())).is_ok());
+
+        // a built-in-only preset must keep runtime = auto, even with a spec.
+        let mut docker = svc.clone();
+        docker.runtime = ServiceRuntime::Docker;
+        assert!(validate(&cfg_with_service(docker)).is_err());
+
+        // `spec` on a non-openapi preset → rejected.
+        let mut other = bare_service("svc");
+        other.preset = Some(ServicePreset::Pubsub);
+        other.spec = Some("api.yaml".into());
+        assert!(validate(&cfg_with_service(other)).is_err());
     }
 }
 // CODEGEN-END
