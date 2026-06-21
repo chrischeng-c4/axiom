@@ -144,7 +144,6 @@ commands:
       - "An unmatched path returns 404; a malformed spec degrades gracefully and never panics."
       - "The same engine backs the http-mock proxy's /__admin/openapi source (resolution order stub > openapi > cassette > forward). Built without the emulator feature, the verb errors cleanly."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
