@@ -209,8 +209,7 @@ pub fn register() {
     register_with(
         "logging.config",
         &[
-            // classes / configurators
-            "BaseConfigurator",
+            // classes / configurators (present-only shells)
             "ConvertingDict",
             "ConvertingList",
             "ConvertingMixin",
@@ -238,6 +237,12 @@ pub fn register() {
             ("fileConfig", dispatch_file_config as *const () as usize),
             ("listen", dispatch_class_shell as *const () as usize),
             ("stopListening", dispatch_noop as *const () as usize),
+            // BaseConfigurator is a real class: stores config + convert() resolves
+            // cfg:// references (raises KeyError/ValueError on bad refs).
+            (
+                "BaseConfigurator",
+                super::logging_mod::dispatch_baseconfigurator as *const () as usize,
+            ),
             ("valid_ident", dispatch_false as *const () as usize),
         ],
         &[("DEFAULT_LOGGING_CONFIG_PORT", 9030), ("RESET_ERROR", 54)],
