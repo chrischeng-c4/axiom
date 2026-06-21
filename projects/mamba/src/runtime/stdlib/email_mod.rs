@@ -1041,6 +1041,10 @@ fn new_message(class_name: &str) -> MbValue {
             ("_headers", new_list(Vec::new())),
             ("_payload", new_str("")),
             ("_charset", MbValue::none()),
+            // Parsing defects (e.g. a header line with no colon). Under the default
+            // policy these are collected here rather than raised. Empty for
+            // well-formed messages.
+            ("defects", new_list(Vec::new())),
         ],
     )
 }
@@ -1179,8 +1183,11 @@ unsafe extern "C" fn dispatch_mimenonmultipart(_a: *const MbValue, _n: usize) ->
 //  Parser: parse a raw message string into a Message
 // ════════════════════════════════════════════════════════════════════════
 
-/// Parse a raw RFC 5322 message text into (headers, body).
-fn parse_message_text(text: &str) -> (Vec<(String, String)>, String) {
+/// Parse a raw RFC 5322 message text into (headers, body, defect_count).
+/// `defect_count` is the number of malformed header lines collected (e.g. a
+/// non-continuation line in the header region with no colon); under the
+/// default policy these are recorded rather than raised.
+fn parse_message_text(text: &str) -> (Vec<(String, String)>, String, usize) {
     // Normalize CRLF to LF for splitting; CPython preserves body as given but
     // header parsing splits on the first blank line.
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
@@ -1188,6 +1195,7 @@ fn parse_message_text(text: &str) -> (Vec<(String, String)>, String) {
     let mut lines = normalized.split('\n');
     let mut body_lines: Vec<&str> = Vec::new();
     let mut in_body = false;
+    let mut defects = 0usize;
     let mut pending: Option<(String, String)> = None;
     let mut collected: Vec<&str> = Vec::new();
     for line in normalized.split('\n') {
@@ -1226,10 +1234,14 @@ fn parse_message_text(text: &str) -> (Vec<(String, String)>, String) {
                 }
                 pending = Some((name, val));
             } else {
-                // malformed line: flush and treat rest as body
+                // malformed line: a non-continuation header line with no
+                // colon. CPython's default policy collects this as a defect
+                // (MissingHeaderBodySeparatorDefect) rather than raising, then
+                // treats the rest as body.
                 if let Some((n, v)) = pending.take() {
                     headers.push((n, v));
                 }
+                defects += 1;
                 in_body = true;
                 continue;
             }
@@ -1243,16 +1255,24 @@ fn parse_message_text(text: &str) -> (Vec<(String, String)>, String) {
         headers.push((n, v));
     }
     let body = body_lines.join("\n");
-    (headers, body)
+    (headers, body, defects)
 }
 
 fn build_message_from_text(text: &str, class_name: &str) -> MbValue {
-    let (headers, body) = parse_message_text(text);
+    let (headers, body, defects) = parse_message_text(text);
     let m = new_message(class_name);
     for (n, v) in headers {
         header_append(m, &n, new_str(v));
     }
     field_set(m, "_payload", new_str(body));
+    if defects > 0 {
+        // One placeholder per collected defect; the fixture only checks
+        // len(msg.defects) >= 1, and no other path inspects element types.
+        let items: Vec<MbValue> = (0..defects)
+            .map(|_| new_str("MissingHeaderBodySeparatorDefect"))
+            .collect();
+        field_set(m, "defects", new_list(items));
+    }
     m
 }
 

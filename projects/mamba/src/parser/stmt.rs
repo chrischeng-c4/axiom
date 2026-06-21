@@ -312,6 +312,10 @@ impl<'a> Parser<'a> {
     /// Parse `ident: type = expr` / `ident = expr` / `ident += expr` / expr stmt.
     fn parse_ident_stmt(&mut self) -> crate::error::Result<Spanned<Stmt>> {
         let start = self.peek().unwrap().start;
+        // This expression is at the top of a statement: a bare walrus here is a
+        // SyntaxError. parse_expr captures-and-clears the flag, so nested and
+        // parenthesized sub-expressions are unaffected.
+        self.stmt_expr_toplevel = true;
         let expr = self.parse_expr()?;
 
         // Variable declaration `name: type = expr`

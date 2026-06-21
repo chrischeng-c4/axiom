@@ -6990,6 +6990,17 @@ fn mro_lookup_class_attr(class_name: &str, attr: &str) -> Option<MbValue> {
     })
 }
 
+/// True iff `__bool__` resolves to an explicit `None` via the MRO's class
+/// attributes. CPython treats `__bool__ = None` as disabling truth-testing
+/// (calling it raises `TypeError: 'NoneType' object is not callable`), even
+/// when `__len__` exists. Only call this when method lookup for `__bool__`
+/// already returned None, so a real `def __bool__` in a nearer MRO entry has
+/// already taken precedence (lookup_method interleaves methods + class_attrs
+/// per class, so a None here means it shadows any farther definition).
+pub(crate) fn class_bool_is_blocked(class_name: &str) -> bool {
+    matches!(mro_lookup_class_attr(class_name, "__bool__"), Some(v) if v.is_none())
+}
+
 // ── Method Resolution Order (C3 Linearization) ──
 
 /// Compute MRO using simplified C3 linearization.
