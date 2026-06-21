@@ -61,3 +61,37 @@ flowchart TD
     serve --> proxy{http-mock resolution stub openapi cassette forward}
     proxy --> done([response delivered])
 ```
+
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "vat-openapi-mock-evidence.schema.json"
+title: "Vat OpenAPI mock evidence"
+type: object
+description: "Service-evidence shape and the generated mock response for vat's OpenAPI mock engine."
+properties:
+  preset:
+    type: string
+    enum: [openapi]
+  prepare_mode:
+    type: string
+    enum: [builtin_emulator]
+  spec:
+    type: string
+    description: "Path to the OpenAPI document (relative to vat.toml), resolved to an absolute path for the emulator process."
+  exported_env:
+    type: array
+    items: { type: string }
+    description: "OPENAPI_MOCK_HOST (and any export targets) point at http://127.0.0.1:<port>."
+  mock_response:
+    type: object
+    description: "A response generated from the spec for a matched operation."
+    properties:
+      status: { type: integer }
+      content_type: { type: string }
+      source: { type: string, enum: [example, examples, schema] }
+    additionalProperties: true
+additionalProperties: true
+```
