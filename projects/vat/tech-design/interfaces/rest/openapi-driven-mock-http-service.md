@@ -147,3 +147,73 @@ commands:
       - "An unmatched path returns 404; a malformed spec degrades gracefully and never panics."
       - "The same engine backs the http-mock proxy's /__admin/openapi source (resolution order stub > openapi > cassette > forward). Built without the emulator feature, the verb errors cleanly."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: vat-openapi-driven-mock-http-service-unit-tests
+---
+requirementDiagram
+    requirement preset_parses_builtin {
+      id: UT1
+      text: "ServicePreset round-trips openapi, classifies as built-in and built-in-only, and validate requires a spec (rejects openapi without spec and rejects an explicit runtime)."
+      risk: high
+      verifymethod: test
+    }
+    requirement respond_example {
+      id: UT2
+      text: "respond(method,path) returns a 2xx response built from the operation's response example when present."
+      risk: high
+      verifymethod: test
+    }
+    requirement respond_schema {
+      id: UT3
+      text: "When no example exists, the response body is synthesized from the schema (object/array/scalar) respecting example/default/enum."
+      risk: high
+      verifymethod: test
+    }
+    requirement path_templating {
+      id: UT4
+      text: "Templated paths (/users/{id}) match a concrete path; an undocumented path returns None."
+      risk: medium
+      verifymethod: test
+    }
+    requirement ref_and_depth {
+      id: UT5
+      text: "$ref resolves within the document and a self-referential schema is depth-guarded (no infinite recursion / panic)."
+      risk: high
+      verifymethod: test
+    }
+    requirement http_mock_source {
+      id: UT6
+      text: "A spec registered on the http-mock proxy answers a proxied request to its host from the spec (stub > openapi > cassette order)."
+      risk: high
+      verifymethod: test
+    }
+    test config_openapi_tests {
+      type: functional
+      verifies: preset_parses_builtin
+    }
+    test respond_example_tests {
+      type: functional
+      verifies: respond_example
+    }
+    test respond_schema_tests {
+      type: functional
+      verifies: respond_schema
+    }
+    test path_template_tests {
+      type: functional
+      verifies: path_templating
+    }
+    test ref_depth_tests {
+      type: functional
+      verifies: ref_and_depth
+    }
+    test http_mock_openapi_tests {
+      type: functional
+      verifies: http_mock_source
+    }
+```
