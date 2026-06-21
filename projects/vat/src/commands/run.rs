@@ -749,7 +749,7 @@ fn prepare_service(
         match resolve_preset_runtime(service, preset)? {
             ResolvedRuntime::Native => prepare_preset_service(vat, cfg, service, preset)?,
             ResolvedRuntime::Docker => prepare_preset_docker_service(vat, service, preset)?,
-            ResolvedRuntime::Builtin => prepare_builtin_service(service, preset)?,
+            ResolvedRuntime::Builtin => prepare_builtin_service(service, preset, &cfg.root)?,
         }
     } else {
         let env = export_command_service_env(service);
@@ -1247,6 +1247,7 @@ fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) 
         ServicePreset::CloudWorkflows => ("cloud-workflows", "CLOUD_WORKFLOWS_EMULATOR_HOST"),
         ServicePreset::CloudStorage => ("cloud-storage", "STORAGE_EMULATOR_HOST"),
         ServicePreset::HttpMock => ("http-mock", "VAT_HTTP_MOCK_HOST"),
+        ServicePreset::Openapi => ("openapi", "OPENAPI_MOCK_HOST"),
         // Non-built-in presets never reach this path.
         _ => ("", ""),
     }
@@ -1256,7 +1257,11 @@ fn builtin_emulator_info(preset: ServicePreset) -> (&'static str, &'static str) 
 /// <kind> --host-port`) as the service process — a pure Rust in-process server
 /// with no external tooling. The runner reaches it via the exported host var.
 /// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#logic
-fn prepare_builtin_service(service: &ServiceConfig, preset: ServicePreset) -> Result<ServicePlan> {
+fn prepare_builtin_service(
+    service: &ServiceConfig,
+    preset: ServicePreset,
+    root: &Path,
+) -> Result<ServicePlan> {
     let port = resolve_service_port(&service.port)?;
     let exe =
         std::env::current_exe().context("resolve the vat executable for the built-in emulator")?;
@@ -1285,6 +1290,14 @@ fn prepare_builtin_service(service: &ServiceConfig, preset: ServicePreset) -> Re
         command.push(cassette_dir.to_string_lossy().into_owned());
         http_mock_env(&host_port, &ca_path.to_string_lossy())
     } else {
+        // The openapi preset resolves its spec (relative to vat.toml) to an
+        // absolute path for the spawned emulator process and serves from it.
+        if preset == ServicePreset::Openapi {
+            let spec = service.spec.as_deref().unwrap_or_default();
+            let spec_path = crate::config::resolve_relative(root, Path::new(spec));
+            command.push("--spec".to_string());
+            command.push(spec_path.to_string_lossy().into_owned());
+        }
         let mut env = BTreeMap::new();
         if service.export.is_empty() {
             env.insert(default_var.to_string(), host_port.clone());
@@ -1467,7 +1480,8 @@ fn preset_image(preset: ServicePreset, version: Option<&str>) -> String {
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
         | ServicePreset::CloudStorage
-        | ServicePreset::HttpMock => ("node", "20-slim"),
+        | ServicePreset::HttpMock
+        | ServicePreset::Openapi => ("node", "20-slim"),
     };
     format!("{repo}:{}", version.unwrap_or(default_tag))
 }
@@ -1492,7 +1506,8 @@ fn preset_container_port(preset: ServicePreset) -> u16 {
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
         | ServicePreset::CloudStorage
-        | ServicePreset::HttpMock => 4400,
+        | ServicePreset::HttpMock
+        | ServicePreset::Openapi => 4400,
     }
 }
 
@@ -1550,7 +1565,8 @@ fn preset_container_env(preset: ServicePreset) -> BTreeMap<String, String> {
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
         | ServicePreset::CloudStorage
-        | ServicePreset::HttpMock => {}
+        | ServicePreset::HttpMock
+        | ServicePreset::Openapi => {}
     }
     env
 }
@@ -1648,7 +1664,7 @@ fn cold_prepare_service_image(
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock => {}
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock | ServicePreset::Openapi => {}
     }
     Ok(())
 }
@@ -1699,7 +1715,8 @@ fn required_binaries(preset: ServicePreset) -> &'static [&'static str] {
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
         | ServicePreset::CloudStorage
-        | ServicePreset::HttpMock => &["firebase", "java"],
+        | ServicePreset::HttpMock
+        | ServicePreset::Openapi => &["firebase", "java"],
     }
 }
 
@@ -1889,7 +1906,8 @@ fn preset_command(preset: ServicePreset, port: u16, data_dir: &Path) -> Vec<Stri
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
         | ServicePreset::CloudStorage
-        | ServicePreset::HttpMock => {
+        | ServicePreset::HttpMock
+        | ServicePreset::Openapi => {
             vec!["firebase".to_string(), "emulators:start".to_string()]
         }
     }
@@ -1940,7 +1958,7 @@ fn preset_ready_probe(preset: ServicePreset, port: u16) -> ReadyProbe {
         | ServicePreset::Datastore
         | ServicePreset::Bigtable
         | ServicePreset::Spanner
-        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock => ReadyProbe::Tcp {
+        | ServicePreset::Firebase | ServicePreset::FirebaseAuth | ServicePreset::CloudTasks | ServicePreset::CloudScheduler | ServicePreset::CloudWorkflows | ServicePreset::CloudStorage | ServicePreset::HttpMock | ServicePreset::Openapi => ReadyProbe::Tcp {
             host: "127.0.0.1".to_string(),
             port,
         },
@@ -1978,7 +1996,8 @@ fn preset_exports(
         | ServicePreset::CloudScheduler
         | ServicePreset::CloudWorkflows
         | ServicePreset::CloudStorage
-        | ServicePreset::HttpMock => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
+        | ServicePreset::HttpMock
+        | ServicePreset::Openapi => ("FIREBASE_EMULATOR_HUB", format!("127.0.0.1:{port}")),
     };
     let mut env = BTreeMap::new();
     if service.export.is_empty() {
@@ -2045,6 +2064,7 @@ fn service_preset_name(preset: ServicePreset) -> &'static str {
         ServicePreset::CloudWorkflows => "cloud-workflows",
         ServicePreset::CloudStorage => "cloud-storage",
         ServicePreset::HttpMock => "http-mock",
+        ServicePreset::Openapi => "openapi",
     }
 }
 
@@ -2306,6 +2326,7 @@ mod tests {
             cluster: None,
             k8s_version: None,
             nodes: None,
+            spec: None,
             version: None,
             port: PortSpec::default(),
             seed: Vec::new(),
@@ -2328,6 +2349,7 @@ mod tests {
             cluster: None,
             k8s_version: None,
             nodes: None,
+            spec: None,
             version: None,
             port: PortSpec::default(),
             seed: Vec::new(),
@@ -2449,7 +2471,8 @@ mod tests {
     #[test]
     fn prepare_builtin_service_exports_host_and_self_command() {
         let svc = test_service("auth", &[]);
-        let plan = prepare_builtin_service(&svc, ServicePreset::FirebaseAuth).unwrap();
+        let plan =
+            prepare_builtin_service(&svc, ServicePreset::FirebaseAuth, Path::new(".")).unwrap();
         assert_eq!(plan.prepare_mode, "builtin_emulator");
         assert!(plan
             .exported_env
@@ -2459,8 +2482,12 @@ mod tests {
         assert_eq!(plan.command[2], "firebase-auth");
         assert_eq!(plan.command[3], "--host-port");
 
-        let plan =
-            prepare_builtin_service(&test_service("ps", &[]), ServicePreset::Pubsub).unwrap();
+        let plan = prepare_builtin_service(
+            &test_service("ps", &[]),
+            ServicePreset::Pubsub,
+            Path::new("."),
+        )
+        .unwrap();
         assert!(plan
             .exported_env
             .iter()
@@ -2506,7 +2533,7 @@ mod tests {
                 resolve_preset_runtime(&svc, preset).unwrap(),
                 ResolvedRuntime::Builtin
             ));
-            let plan = prepare_builtin_service(&svc, preset).unwrap();
+            let plan = prepare_builtin_service(&svc, preset, Path::new(".")).unwrap();
             assert_eq!(plan.command[2], kind);
             assert!(plan.exported_env.iter().any(|k| k == var));
         }

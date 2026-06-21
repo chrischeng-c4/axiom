@@ -110,12 +110,20 @@ artifacts = ["test-results/**", "playwright-report/**"]
   CA-trust bundle so the runner's outbound third-party API calls (even hardcoded
   `https://`) are intercepted with no code change. Register stubs at
   `$VAT_HTTP_MOCK_HOST/__admin/stubs`; unstubbed calls record once then replay
-  offline. `pubsub` still accepts `runtime = native` (gcloud) / `runtime =
-  docker` (image) as a fidelity fallback; the others are built-in only (no
-  official emulator exists).
+  offline. `openapi` reads an OpenAPI document (`preset = "openapi"`,
+  `spec = "api.yaml"`) and serves spec-derived responses (example, else a
+  schema-synthesized body; path templating + `$ref`) — a working fake of a
+  documented API with no stubs or recording. It runs standalone (the runner points
+  its base URL at `$OPENAPI_MOCK_HOST`) and also backs the http-mock proxy:
+  `POST $VAT_HTTP_MOCK_HOST/__admin/openapi` registers a spec for a host, so a
+  proxied `https://` call is answered from the contract (resolution: stub >
+  openapi > cassette > forward). `pubsub` still accepts `runtime = native`
+  (gcloud) / `runtime = docker` (image) as a fidelity fallback; the others are
+  built-in only (no official emulator exists).
 - Removing mocks: declare the emulator presets your code touches (the runner hits
-  real local services) and add `http-mock` for arbitrary third-party HTTP — tests
-  then need no hand-rolled service or HTTP-client mocks.
+  real local services), add `http-mock` for arbitrary third-party HTTP, and
+  `openapi` to fake a documented API from its spec — tests then need no
+  hand-rolled service or HTTP-client mocks.
 - A `cluster` service spins up an ephemeral local Kubernetes cluster (kind, k3d,
   or minikube; `auto` picks the first installed). vat creates it before the
   runner, exports `KUBECONFIG` (the `{kubeconfig}` token) plus

@@ -96,3 +96,7 @@ required-features = ["emulator"]
 [[test]]
 name = "vat_emulator_httpmock"
 required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_openapi"
+required-features = ["emulator"]
