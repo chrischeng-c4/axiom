@@ -885,17 +885,9 @@ unsafe extern "C" fn dispatch_get_mixed_type_key(_args: *const MbValue, _n: usiz
     MbValue::none()
 }
 
-// Class-constructor stubs. The surface fixtures only assert
-// `callable(ipaddress.IPv4Address)` (and the five sibling classes), which
-// requires `resolve_callable` to return `Some` — i.e. the name must be a
-// `from_func` value, not an Instance class-shell. No external code does
-// `isinstance(x, ipaddress.IPv4Address)` or constructs these shells (checked
-// via grep over src/), so re-registering them as func stubs is safe.
-//
-// IPv4Address / IPv6Address delegate to ip_address (best-effort: real address
-// construction). Network / Interface delegate to ip_network / ip_interface so
-// `ipaddress.IPv4Network("…")` still yields a live handle. Calling them with no
-// args returns None (CPython would raise; surface coverage only needs callable).
+// Class-constructor stubs. These stay as TAG_FUNC values so `callable()` and
+// direct construction work, while the distinct v4/v6 bodies prevent release
+// optimization from folding both public classes into one function address.
 unsafe extern "C" fn dispatch_class_ipv4_address(
     args_ptr: *const MbValue,
     nargs: usize,
@@ -903,7 +895,18 @@ unsafe extern "C" fn dispatch_class_ipv4_address(
     if nargs == 0 {
         return MbValue::none();
     }
-    mb_ipaddress_ip_address(unsafe { *args_ptr })
+    let arg = unsafe { *args_ptr };
+    if let Some(i) = arg.as_int() {
+        if (0..=0xFFFF_FFFF_i64).contains(&i) {
+            return make_handle(IpState::V4(i as u32));
+        }
+    }
+    if let Some(s) = extract_str(arg) {
+        if let Some(a) = parse_ipv4(&s) {
+            return make_handle(IpState::V4(a));
+        }
+    }
+    raise("AddressValueError", "Expected 4 octets in address")
 }
 
 unsafe extern "C" fn dispatch_class_ipv6_address(
@@ -913,7 +916,18 @@ unsafe extern "C" fn dispatch_class_ipv6_address(
     if nargs == 0 {
         return MbValue::none();
     }
-    mb_ipaddress_ip_address(unsafe { *args_ptr })
+    let arg = unsafe { *args_ptr };
+    if let Some(i) = arg.as_int() {
+        if i >= 0 {
+            return make_handle(IpState::V6((i as u128).to_be_bytes()));
+        }
+    }
+    if let Some(s) = extract_str(arg) {
+        if let Some(b) = parse_ipv6(&s) {
+            return make_handle(IpState::V6(b));
+        }
+    }
+    raise("AddressValueError", "At least 3 parts expected in IPv6 address")
 }
 
 unsafe extern "C" fn dispatch_class_ipv4_network(
