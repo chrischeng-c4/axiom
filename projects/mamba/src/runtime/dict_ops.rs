@@ -1319,11 +1319,12 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
         }
     };
     let stub_class = dict_stub_class(receiver);
-    // __class__-tagged xml stubs (Element / XMLParser / TreeBuilder) route
+    // __class__-tagged xml stubs (Element / ElementTree / XMLParser /
+    // TreeBuilder) route
     // their method surface to xml_mod; None falls through to plain-dict
     // semantics (only for dunders the dict intrinsics already guard).
     if let Some(ref cls) = stub_class {
-        if matches!(cls.as_str(), "Element" | "XMLParser" | "TreeBuilder") {
+        if matches!(cls.as_str(), "Element" | "ElementTree" | "XMLParser" | "TreeBuilder") {
             if let Some(result) =
                 super::stdlib::xml_mod::dispatch_xml_stub_method(cls, name, receiver, args)
             {
