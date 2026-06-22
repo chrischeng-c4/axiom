@@ -10695,6 +10695,9 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
                 }
+                if class_name == "HTTPStatus" {
+                    return super::stdlib::http_mod::mb_httpstatus_call(arg);
+                }
                 // typing.NewType wrappers are identity callables.
                 if class_name == "typing.NewType" {
                     super::rc::retain_if_ptr(arg);
