@@ -844,9 +844,18 @@ unsafe extern "C" fn ctx_load_path_checked(_self_v: MbValue, args: MbValue) -> M
 /// CPython argument contract holds: a non-socket first argument fails with
 /// AttributeError when wrap_socket reaches for the socket surface.
 unsafe extern "C" fn ctx_wrap_socket(_self_v: MbValue, args: MbValue) -> MbValue {
-    let sock = first_arg(args);
-    let is_instance = sock
-        .as_ptr()
+    let (pos, kwargs) = split_method_kwargs(
+        args,
+        &[
+            "server_side",
+            "do_handshake_on_connect",
+            "suppress_ragged_eofs",
+            "server_hostname",
+            "session",
+        ],
+    );
+    let sock = pos.first().copied().unwrap_or_else(MbValue::none);
+    let is_instance = sock.as_ptr()
         .map(|p| matches!((*p).data, ObjData::Instance { .. }))
         .unwrap_or(false);
     if !is_instance {
@@ -854,6 +863,35 @@ unsafe extern "C" fn ctx_wrap_socket(_self_v: MbValue, args: MbValue) -> MbValue
             "AttributeError",
             &format!("'{}' object has no attribute 'fileno'", py_type_name(sock)),
         );
+    }
+    let server_side = kwarg(kwargs, "server_side")
+        .or_else(|| pos.get(1).copied())
+        .map(|v| super::super::builtins::mb_bool(v).as_bool().unwrap_or(false))
+        .unwrap_or(false);
+    let server_hostname = kwarg(kwargs, "server_hostname")
+        .or_else(|| pos.get(4).copied());
+    if server_side && server_hostname.map_or(false, |v| !v.is_none()) {
+        return raise_err("ValueError", "server_hostname can only be specified in client mode");
+    }
+    if let Some(v) = server_hostname {
+        if let Some(err) = validate_server_hostname(v) {
+            return err;
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn ctx_wrap_bio(_self_v: MbValue, args: MbValue) -> MbValue {
+    let (pos, kwargs) = split_method_kwargs(
+        args,
+        &["server_side", "server_hostname", "session"],
+    );
+    let server_hostname = kwarg(kwargs, "server_hostname")
+        .or_else(|| pos.get(3).copied());
+    if let Some(v) = server_hostname {
+        if let Some(err) = validate_server_hostname(v) {
+            return err;
+        }
     }
     MbValue::none()
 }
@@ -916,6 +954,70 @@ fn args_vec(args: MbValue) -> Vec<MbValue> {
         }
     }
     Vec::new()
+}
+
+fn is_allowed_kwargs_dict(v: MbValue, allowed: &[&str]) -> bool {
+    let Some(ptr) = v.as_ptr() else { return false };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            return !map.is_empty() && map.keys().all(|k| matches!(
+                k,
+                DictKey::Str(s) if allowed.contains(&s.as_str())
+            ));
+        }
+    }
+    false
+}
+
+fn split_method_kwargs(args: MbValue, allowed: &[&str]) -> (Vec<MbValue>, Option<MbValue>) {
+    let mut items = args_vec(args);
+    let kwargs = match items.last().copied() {
+        Some(last) if is_allowed_kwargs_dict(last, allowed) => {
+            items.pop();
+            Some(last)
+        }
+        _ => None,
+    };
+    (items, kwargs)
+}
+
+fn kwarg(kwargs: Option<MbValue>, key: &str) -> Option<MbValue> {
+    let ptr = kwargs?.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            return lock.read().unwrap().get(&DictKey::Str(key.to_string())).copied();
+        }
+    }
+    None
+}
+
+fn validate_server_hostname(v: MbValue) -> Option<MbValue> {
+    if v.is_none() {
+        return None;
+    }
+    let s = match v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    }) {
+        Some(s) => s,
+        None => {
+            return Some(raise_err(
+                "TypeError",
+                &format!("server_hostname must be str, not {}", py_type_name(v)),
+            ));
+        }
+    };
+    if s.contains('\0') {
+        return Some(raise_err("TypeError", "server_hostname cannot contain NUL"));
+    }
+    if s.is_empty() || s.starts_with('.') {
+        return Some(raise_err("ValueError", "server_hostname cannot be empty or start with a dot"));
+    }
+    None
 }
 
 /// `SSLError.__init__` — OSError-style: 2+ args store (errno, strerror);
@@ -1045,6 +1147,7 @@ fn register_ssl_classes() {
             ("load_verify_locations", ctx_load_path_checked as usize),
             ("set_ecdh_curve", ctx_set_ecdh_curve as usize),
             ("wrap_socket", ctx_wrap_socket as usize),
+            ("wrap_bio", ctx_wrap_bio as usize),
             ("set_servername_callback", ctx_set_servername_callback as usize),
         ];
         for (m, addr) in typed {
@@ -1055,7 +1158,6 @@ fn register_ssl_classes() {
             "load_default_certs",
             "set_alpn_protocols",
             "set_npn_protocols",
-            "wrap_bio",
             "cert_store_stats",
             "get_ca_certs",
         ] {
