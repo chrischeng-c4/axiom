@@ -866,7 +866,7 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 | Native Test And Product-Flow E2E | #3785 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready_for_basic | Jet native runner, reporter, product-flow e2e, and trace gates are green for the Basic production-readiness contract. |
 | WASM And Multi-Target Execution | #3783 | implemented | passing | smoke, conformance, corpus, negative | partial | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
 | Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
-| OpenAPI Client Codegen | #153 | planned | planned | smoke, conformance | not_ready | Standalone `jet codegen openapi` reads an OpenAPI 3.0/3.1 spec and generates TypeScript types, a typed fetch client, and TanStack Query hooks. Developer-tooling track, separate from the Basic FE-on-DOM production gate; not wired into the build pipeline. |
+| OpenAPI Client Codegen | #153 | implemented | verified | smoke, conformance | ready | Standalone `jet codegen openapi` reads an OpenAPI 3.0/3.1 spec and generates TypeScript types, a typed fetch client, and TanStack Query hooks. Developer-tooling track, separate from the Basic FE-on-DOM production gate; not wired into the build pipeline. |
 
 ## Rust-Native Frontend Toolchain Replacement
 
@@ -995,10 +995,10 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| openapi-client-codegen | #153 | planned | `jet codegen openapi <spec> --out <dir>` reads an OpenAPI 3.0/3.1 document and generates frontend TypeScript: `types.ts` (component and inline schemas to interfaces/unions), `client.ts` (a typed `createClient` fetch factory with one function per operation), and `hooks.ts` (TanStack Query `useXxxQuery`/`useXxxMutation` via `createHooks`). 3.0 `nullable` and 3.1 type-array nullability are reconciled, output is deterministic, and no new Rust crates are added. The command is standalone and is not wired into the build pipeline. | smoke, conformance | `cargo test -p jet --lib codegen -- --nocapture`<br>`cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/fixtures/codegen |
+| openapi-client-codegen | #153 | verified | `jet codegen openapi <spec> --out <dir>` reads an OpenAPI 3.0/3.1 document and generates frontend TypeScript: `types.ts` (component and inline schemas to interfaces/unions), `client.ts` (a typed `createClient` fetch factory with one function per operation), and `hooks.ts` (TanStack Query `useXxxQuery`/`useXxxMutation` via `createHooks`). 3.0 `nullable` and 3.1 type-array nullability are reconciled, output is deterministic, and no new Rust crates are added. The command is standalone and is not wired into the build pipeline. | smoke, conformance | `cargo test -p jet --lib codegen -- --nocapture`<br>`cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/fixtures/codegen |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| OpenAPI codegen readiness | epic | #153 | planned | planned | none | Standalone jet codegen openapi generator covering OpenAPI 3.0/3.1 parse, ref resolution, schema-to-TS mapping, typed fetch client, and React Query hooks |
-| OpenAPI 3.0/3.1 Schema Mapping | change | #153 | planned | planned | conformance | `cargo test -p jet --lib codegen -- --nocapture`<br>projects/jet/tests/fixtures/codegen |
-| Typed Fetch Client And Hooks Emission | change | #153 | planned | planned | conformance | `cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/__snapshots__/codegen |
+| OpenAPI codegen readiness | epic | #153 | implemented | verified | conformance | Standalone jet codegen openapi generator covering OpenAPI 3.0/3.1 parse, ref resolution, schema-to-TS mapping, typed fetch client, and React Query hooks |
+| OpenAPI 3.0/3.1 Schema Mapping | change | #153 | implemented | verified | conformance | `cargo test -p jet --lib codegen -- --nocapture`<br>projects/jet/tests/fixtures/codegen |
+| Typed Fetch Client And Hooks Emission | change | #153 | implemented | verified | conformance | `cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/__snapshots__/codegen |
