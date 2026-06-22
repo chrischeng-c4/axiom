@@ -427,6 +427,7 @@ pub enum HirExpr {
 pub struct HirComprehension {
     pub var: SymbolId,
     pub extra_vars: Vec<SymbolId>,
+    pub unpack_target: bool,
     pub iter: HirExpr,
     pub conditions: Vec<HirExpr>,
     pub is_async: bool,
