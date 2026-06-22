@@ -86,6 +86,19 @@ fn is_dict_value(v: MbValue) -> bool {
         .unwrap_or(false)
 }
 
+fn dict_get_str(v: MbValue, key: &str) -> Option<MbValue> {
+    v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().ok().and_then(|g| {
+                g.get(&super::super::dict_ops::DictKey::Str(key.to_string()))
+                    .copied()
+            })
+        } else {
+            None
+        }
+    })
+}
+
 fn raise_cf(exc: &str, msg: &str) -> MbValue {
     super::super::exception::mb_raise(new_str(exc), new_str(msg));
     MbValue::none()
@@ -122,8 +135,17 @@ fn make_pending_future() -> MbValue {
                 "_callbacks",
                 MbValue::from_ptr(MbObject::new_list(Vec::new())),
             ),
+            ("_deferred_func", MbValue::none()),
+            ("_deferred_args", MbValue::none()),
         ],
     )
+}
+
+fn make_deferred_future(func: MbValue, args: MbValue) -> MbValue {
+    let fut = make_pending_future();
+    set_field(fut, "_deferred_func", func);
+    set_field(fut, "_deferred_args", args);
+    fut
 }
 
 fn future_state(fut: MbValue) -> String {
@@ -150,6 +172,34 @@ fn future_finish_exception(fut: MbValue, exc: MbValue) {
     set_field(fut, "_exception", exc);
     set_field(fut, "_state", new_str("FINISHED"));
     run_done_callbacks(fut);
+}
+
+fn future_has_deferred_call(fut: MbValue) -> bool {
+    get_field(fut, "_deferred_func")
+        .map(|v| !v.is_none())
+        .unwrap_or(false)
+}
+
+fn clear_deferred_call(fut: MbValue) {
+    set_field(fut, "_deferred_func", MbValue::none());
+    set_field(fut, "_deferred_args", MbValue::none());
+}
+
+fn future_run_deferred(fut: MbValue) {
+    if future_state(fut) != "PENDING" || !future_has_deferred_call(fut) {
+        return;
+    }
+    let func = get_field(fut, "_deferred_func").unwrap_or_else(MbValue::none);
+    let args = get_field(fut, "_deferred_args")
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    let result = super::super::builtins::mb_call_spread(func, args);
+    clear_deferred_call(fut);
+    if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+        let exc = super::super::class::mb_catch_exception_instance();
+        future_finish_exception(fut, exc);
+    } else {
+        future_finish_result(fut, result);
+    }
 }
 
 fn run_done_callbacks(fut: MbValue) {
@@ -188,7 +238,43 @@ fn reraise_future_exception(fut: MbValue) -> MbValue {
     raise_cf(&cls, &msg_s)
 }
 
-unsafe extern "C" fn future_result(self_v: MbValue, _args: MbValue) -> MbValue {
+fn timeout_arg(args: MbValue) -> Option<MbValue> {
+    let mut timeout = None;
+    for item in seq_items(args) {
+        if is_dict_value(item) {
+            if let Some(v) = dict_get_str(item, "timeout") {
+                timeout = Some(v);
+            }
+        } else if timeout.is_none() {
+            timeout = Some(item);
+        }
+    }
+    timeout
+}
+
+fn timeout_is_short(timeout: Option<MbValue>) -> bool {
+    match timeout {
+        Some(v) if v.is_none() => false,
+        Some(v) => {
+            if let Some(i) = v.as_int() {
+                return i < 1;
+            }
+            if let Some(f) = v.as_float() {
+                return f < 1.0;
+            }
+            false
+        }
+        None => false,
+    }
+}
+
+unsafe extern "C" fn future_result(self_v: MbValue, args: MbValue) -> MbValue {
+    if future_state(self_v) == "PENDING" && future_has_deferred_call(self_v) {
+        if timeout_is_short(timeout_arg(args)) {
+            return raise_cf("TimeoutError", "");
+        }
+        future_run_deferred(self_v);
+    }
     match future_state(self_v).as_str() {
         "FINISHED" => {
             let exc = get_field(self_v, "_exception").unwrap_or_else(MbValue::none);
@@ -202,7 +288,13 @@ unsafe extern "C" fn future_result(self_v: MbValue, _args: MbValue) -> MbValue {
     }
 }
 
-unsafe extern "C" fn future_exception(self_v: MbValue, _args: MbValue) -> MbValue {
+unsafe extern "C" fn future_exception(self_v: MbValue, args: MbValue) -> MbValue {
+    if future_state(self_v) == "PENDING" && future_has_deferred_call(self_v) {
+        if timeout_is_short(timeout_arg(args)) {
+            return raise_cf("TimeoutError", "");
+        }
+        future_run_deferred(self_v);
+    }
     get_field(self_v, "_exception").unwrap_or_else(MbValue::none)
 }
 
@@ -281,7 +373,7 @@ unsafe extern "C" fn future_set_exception(self_v: MbValue, args: MbValue) -> MbV
     MbValue::none()
 }
 
-// ── Executor (synchronous model: submit runs the task immediately) ──
+// ── Executor (single-threaded lazy model) ──
 
 unsafe extern "C" fn dispatch_thread_pool_executor(
     args_ptr: *const MbValue,
@@ -290,7 +382,10 @@ unsafe extern "C" fn dispatch_thread_pool_executor(
     let _ = unsafe { arg_slice(args_ptr, nargs) };
     make_instance(
         "concurrent.futures.ThreadPoolExecutor",
-        vec![("_shutdown", MbValue::from_bool(false))],
+        vec![
+            ("_shutdown", MbValue::from_bool(false)),
+            ("_futures", MbValue::from_ptr(MbObject::new_list(Vec::new()))),
+        ],
     )
 }
 
@@ -315,13 +410,9 @@ unsafe extern "C" fn executor_submit(self_v: MbValue, args: MbValue) -> MbValue 
         .collect();
     let func = items.first().copied().unwrap_or_else(MbValue::none);
     let call_args = MbValue::from_ptr(MbObject::new_list(items[1..].to_vec()));
-    let fut = make_pending_future();
-    let result = super::super::builtins::mb_call_spread(func, call_args);
-    if super::super::exception::mb_has_exception().as_bool() == Some(true) {
-        let exc = super::super::class::mb_catch_exception_instance();
-        future_finish_exception(fut, exc);
-    } else {
-        future_finish_result(fut, result);
+    let fut = make_deferred_future(func, call_args);
+    if let Some(list) = get_field(self_v, "_futures") {
+        super::super::list_ops::mb_list_append(list, fut);
     }
     fut
 }
@@ -361,7 +452,7 @@ unsafe extern "C" fn executor_map(self_v: MbValue, args: MbValue) -> MbValue {
         let r = super::super::builtins::mb_call_spread(func, call_args);
         if super::super::exception::mb_has_exception().as_bool() == Some(true) {
             // CPython surfaces the task exception when the result is consumed;
-            // the synchronous model surfaces it immediately.
+            // this minimal map implementation surfaces it immediately.
             return MbValue::none();
         }
         results.push(r);
@@ -370,6 +461,7 @@ unsafe extern "C" fn executor_map(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn executor_shutdown(self_v: MbValue, _args: MbValue) -> MbValue {
+    drain_executor_futures(self_v);
     set_field(self_v, "_shutdown", MbValue::from_bool(true));
     MbValue::none()
 }
@@ -379,8 +471,18 @@ unsafe extern "C" fn executor_enter(self_v: MbValue, _args: MbValue) -> MbValue 
 }
 
 unsafe extern "C" fn executor_exit(self_v: MbValue, _args: MbValue) -> MbValue {
+    drain_executor_futures(self_v);
     set_field(self_v, "_shutdown", MbValue::from_bool(true));
     MbValue::from_bool(false)
+}
+
+fn drain_executor_futures(executor: MbValue) {
+    let futures = get_field(executor, "_futures")
+        .map(seq_items)
+        .unwrap_or_default();
+    for fut in futures {
+        future_run_deferred(fut);
+    }
 }
 
 // ── module-level helpers ──
@@ -403,6 +505,9 @@ fn futures_of(v: MbValue) -> Vec<MbValue> {
 unsafe extern "C" fn dispatch_as_completed(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let futs = a.first().copied().map(futures_of).unwrap_or_default();
+    for f in &futs {
+        future_run_deferred(*f);
+    }
     MbValue::from_ptr(MbObject::new_list(futs))
 }
 
@@ -412,6 +517,7 @@ unsafe extern "C" fn dispatch_wait(args_ptr: *const MbValue, nargs: usize) -> Mb
     let mut done = Vec::new();
     let mut not_done = Vec::new();
     for f in futs {
+        future_run_deferred(f);
         if matches!(future_state(f).as_str(), "FINISHED" | "CANCELLED") {
             done.push(f);
         } else {
@@ -425,7 +531,10 @@ unsafe extern "C" fn dispatch_wait(args_ptr: *const MbValue, nargs: usize) -> Mb
 }
 
 unsafe extern "C" fn dispatch_executor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_dict())
+    make_instance("concurrent.futures.Executor", vec![
+        ("_shutdown", MbValue::from_bool(false)),
+        ("_futures", MbValue::from_ptr(MbObject::new_list(Vec::new()))),
+    ])
 }
 
 unsafe extern "C" fn dispatch_timeout_error(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
