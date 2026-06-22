@@ -122,3 +122,11 @@ requirement R5 {
   verifymethod: Test
 }
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract is complete and codegen-ready: the Mermaid Plus flowchart models the full pipeline (read, parse, normalize 3.0/3.1, resolve refs, emit types/client/hooks, write) with a parse-failure terminal and the types-only/no-hooks decision branches that match the CLI flags.
+- [unit-test] Contract is complete: R1-R5 map one-to-one onto the acceptance criteria (nullable reconciliation, schema-to-TS mapping, typed client functions, React Query hooks, deterministic golden output) with appropriate risk and verify methods.
