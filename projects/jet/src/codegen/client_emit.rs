@@ -6,13 +6,22 @@
 use crate::codegen::plan::OperationPlan;
 use crate::codegen::tsmap::TypeMap;
 use crate::codegen::types_emit::HEADER;
-use crate::codegen::GenOptions;
+use crate::codegen::{GenOptions, HttpClient};
 
-/// Static fetch runtime shared by every generated client.
+/// Static request runtime shared by every generated client. The body depends
+/// only on the chosen [`HttpClient`] backend — the `ClientConfig`/`request`
+/// contract is the same, so `client.ts` and `hooks.ts` never change.
 ///
-/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
-pub fn emit_runtime() -> String {
-    let body = r##"export interface ClientConfig {
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/select-http-client-backend-fetch-axios-for-openapi-codegen.md#logic
+pub fn emit_runtime(http_client: HttpClient) -> String {
+    let body = match http_client {
+        HttpClient::Fetch => FETCH_RUNTIME,
+        HttpClient::Axios => AXIOS_RUNTIME,
+    };
+    format!("{HEADER}{body}")
+}
+
+const FETCH_RUNTIME: &str = r##"export interface ClientConfig {
   baseUrl: string;
   fetch?: typeof fetch;
   headers?: Record<string, string>;
@@ -50,8 +59,37 @@ export async function request<T>(config: ClientConfig, args: RequestArgs): Promi
   return (await response.json()) as T;
 }
 "##;
-    format!("{HEADER}{body}")
+
+const AXIOS_RUNTIME: &str = r##"import axios from "axios";
+import type { AxiosInstance } from "axios";
+
+export interface ClientConfig {
+  baseUrl: string;
+  axios?: AxiosInstance;
+  headers?: Record<string, string>;
 }
+
+export interface RequestArgs {
+  method: string;
+  path: string;
+  query?: Record<string, unknown>;
+  body?: unknown;
+  headers?: Record<string, string>;
+}
+
+export async function request<T>(config: ClientConfig, args: RequestArgs): Promise<T> {
+  const instance = config.axios ?? axios.create();
+  const response = await instance.request<T>({
+    method: args.method,
+    baseURL: config.baseUrl,
+    url: args.path,
+    params: args.query,
+    data: args.body,
+    headers: { "Content-Type": "application/json", ...config.headers, ...args.headers },
+  });
+  return response.data;
+}
+"##;
 
 /// Render `client.ts`.
 ///
@@ -143,7 +181,7 @@ mod tests {
     use super::*;
     use crate::codegen::openapi::Spec;
     use crate::codegen::plan;
-    use crate::codegen::{build_type_map, GenOptions};
+    use crate::codegen::{build_type_map, GenOptions, HttpClient};
     use std::path::PathBuf;
 
     fn opts() -> GenOptions {
@@ -151,6 +189,7 @@ mod tests {
             spec_path: PathBuf::new(),
             out_dir: PathBuf::new(),
             client_name: "createClient".to_string(),
+            http_client: HttpClient::Fetch,
             emit_types: true,
             emit_client: true,
             emit_hooks: true,
@@ -180,10 +219,24 @@ mod tests {
 
     #[test]
     fn runtime_has_request_helper() {
-        let rt = emit_runtime();
+        let rt = emit_runtime(HttpClient::Fetch);
         assert!(rt
             .contains("export async function request<T>(config: ClientConfig, args: RequestArgs)"));
         assert!(rt.contains("if (response.status === 204)"));
+        assert!(rt.contains("const doFetch = config.fetch ?? fetch;"));
+    }
+
+    #[test]
+    fn axios_runtime_uses_axios() {
+        let rt = emit_runtime(HttpClient::Axios);
+        assert!(rt.contains("import axios from \"axios\";"));
+        assert!(rt.contains("import type { AxiosInstance } from \"axios\";"));
+        assert!(rt.contains("axios?: AxiosInstance;"));
+        assert!(rt.contains("config.axios ?? axios.create()"));
+        assert!(rt.contains("return response.data;"));
+        // Same request/ClientConfig contract as the fetch runtime.
+        assert!(rt
+            .contains("export async function request<T>(config: ClientConfig, args: RequestArgs)"));
     }
 }
 // HANDWRITE-END
