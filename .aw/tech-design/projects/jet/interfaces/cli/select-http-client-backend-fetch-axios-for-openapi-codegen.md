@@ -92,11 +92,3 @@ requirement R4 {
   verifymethod: Test
 }
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicable: the change is a runtime-emission branch (fetch vs axios) selected by `--http`, correctly modeled as a decision between two runtime emitters with a shared client/hooks tail.
-- [unit-test] Applicable: R1-R4 cover axios runtime emission, fetch runtime unchanged, backend-invariant client/hooks/types/index, and the no-new-Rust-crate constraint.
