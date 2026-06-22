@@ -408,29 +408,15 @@ unsafe extern "C" fn method_add_argument(self_v: MbValue, args: MbValue) -> MbVa
     // resolved keywords (option_strings, dest, **kwargs) — matching CPython.
     if !custom_action.is_none() {
         let opt_list = new_list(spec.option_strings.iter().map(|s| new_str(s)).collect());
-        // Build kwargs dict mirroring the resolved spec for the Action __init__.
-        let init_kwargs = MbObject::new_dict();
-        unsafe {
-            if let ObjData::Dict(ref lock) = (*init_kwargs).data {
-                let mut g = lock.write().unwrap();
-                let mut put = |k: &str, v: MbValue| {
-                    super::super::rc::retain_if_ptr(v);
-                    g.insert(DictKey::Str(k.to_string()), v);
-                };
-                put("const", spec.const_v);
-                put("default", spec.default_v);
-                put("nargs", spec.nargs);
-                put("type", spec.type_v);
-                put("choices", spec.choices);
-                put("help", spec.help_v);
-                put("metavar", spec.metavar);
-                put("required", MbValue::from_bool(spec.required));
-            }
-        }
+        // The generic user-class init path does not expand a trailing kwargs
+        // dict yet; pass the CPython-resolved `const` / `default` slots
+        // positionally so user Action __init__ methods observe them at
+        // add_argument time.
         let ctor_args = new_list(vec![
             opt_list,
             new_str(&spec.dest),
-            MbValue::from_ptr(init_kwargs),
+            spec.const_v,
+            spec.default_v,
         ]);
         let built = super::super::class::mb_instance_new_with_init(custom_action, ctor_args);
         // The user Action __init__ (if any) raising propagates as a pending
