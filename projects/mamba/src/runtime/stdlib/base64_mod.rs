@@ -1269,16 +1269,19 @@ pub fn mb_base64_decodebytes(data: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_bytes(b64_decode_with(&bytes, B64_CHARS)))
 }
 
-/// Read all bytes from a file-like object by calling its `read()` method.
-/// The returned value may be bytes/bytearray/str; coerce to a byte vector.
-fn read_all_bytes(fileobj: MbValue) -> Vec<u8> {
+/// Read all bytes from a binary file-like object by calling its `read()` method.
+/// A text stream (`read()` returns str) is rejected without consuming it twice.
+fn read_all_binary(fileobj: MbValue) -> Result<Vec<u8>, MbValue> {
     let empty = MbValue::from_ptr(MbObject::new_list(vec![]));
     let res = super::super::class::mb_call_method(
         fileobj,
         MbValue::from_ptr(MbObject::new_str("read".to_string())),
         empty,
     );
-    unsafe { extract_bytes_ref(&res) }.into_owned()
+    if res.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) }) {
+        return Err(raise_type_error("expected bytes-like object, not str"));
+    }
+    Ok(unsafe { extract_bytes_ref(&res) }.into_owned())
 }
 
 /// Write a byte buffer to a file-like object via its `write()` method.
@@ -1298,25 +1301,14 @@ fn write_bytes(fileobj: MbValue, data: Vec<u8>) {
 /// chunk's base64 encoding (with a trailing `\n`) into `output` via
 /// `binascii.b2a_base64`. We read the whole input through the file object's
 /// `read()` method, then emit 57-byte chunks each followed by `\n`.
-/// True when `f.read()` yields str (a text stream like StringIO): the
-/// legacy base64 stream APIs only accept binary file objects.
-fn reads_text(fileobj: MbValue) -> bool {
-    let name = MbValue::from_ptr(MbObject::new_str("read".to_string()));
-    let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-    let result = super::super::class::mb_call_method(fileobj, name, args);
-    result
-        .as_ptr()
-        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
-}
-
 pub fn mb_base64_encode_stream(input: MbValue, output: MbValue) -> MbValue {
     const MAXBINSIZE: usize = 57;
     // CPython: the legacy stream API requires binary file objects — a text
     // source (StringIO, whose read() yields str) raises TypeError.
-    if reads_text(input) {
-        return raise_type_error("expected bytes-like object, not str");
-    }
-    let data = read_all_bytes(input);
+    let data = match read_all_binary(input) {
+        Ok(data) => data,
+        Err(err) => return err,
+    };
     for chunk in data.chunks(MAXBINSIZE) {
         let mut line = b64_encode_with(chunk, B64_CHARS);
         line.push(b'\n');
@@ -1332,10 +1324,10 @@ pub fn mb_base64_encode_stream(input: MbValue, output: MbValue) -> MbValue {
 /// reading the entire input and decoding once is byte-for-byte equivalent to
 /// the line-by-line loop for the standard alphabet.
 pub fn mb_base64_decode_stream(input: MbValue, output: MbValue) -> MbValue {
-    if reads_text(input) {
-        return raise_type_error("expected bytes-like object, not str");
-    }
-    let data = read_all_bytes(input);
+    let data = match read_all_binary(input) {
+        Ok(data) => data,
+        Err(err) => return err,
+    };
     let decoded = b64_decode_with(&data, B64_CHARS);
     write_bytes(output, decoded);
     MbValue::none()
