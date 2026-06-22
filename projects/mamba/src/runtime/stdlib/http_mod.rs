@@ -661,17 +661,20 @@ pub fn register() {
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*http_status).data {
             let mut f = fields.write().unwrap();
-            for &(code, name, _phrase) in cclab_mamba_registry::http::canonical_codes() {
-                f.insert(name.to_string(), MbValue::from_int(code as i64));
+            let members = MbObject::new_dict();
+            if let ObjData::Dict(ref lock) = (*members).data {
+                let mut map = lock.write().unwrap();
+                for &(code, name, phrase) in cclab_mamba_registry::http::canonical_codes() {
+                    let member = make_status_member(code, name, phrase);
+                    f.insert(name.to_string(), member);
+                    super::super::rc::retain_if_ptr(member);
+                    map.insert(
+                        super::super::dict_ops::DictKey::Str(name.to_string()),
+                        member,
+                    );
+                }
             }
-            // `HTTPStatus.__members__` is an (ordered) mapping name→member. We
-            // expose plain ints as the member values: CPython's IntEnum members
-            // ARE ints, and the conformance fixtures only compare members to
-            // ints (`100 <= member <= 599`). A name→int dict makes
-            // `HTTPStatus.__members__.values()` iterate ints that compare
-            // correctly. Insertion order follows the canonical table (= CPython
-            // definition order).
-            f.insert("__members__".to_string(), make_status_members_dict());
+            f.insert("__members__".to_string(), MbValue::from_ptr(members));
         }
     }
     http_attrs.insert("HTTPStatus".into(), MbValue::from_ptr(http_status));
@@ -974,24 +977,51 @@ fn make_handler_responses_dict() -> MbValue {
     MbValue::from_ptr(dict)
 }
 
-/// Build `HTTPStatus.__members__`: an ordered dict mapping each member name
-/// (str key) to its value (int). Order follows the canonical table, which is
-/// CPython's HTTPStatus definition order.
-fn make_status_members_dict() -> MbValue {
-    use super::super::dict_ops::DictKey;
-    let dict = MbObject::new_dict();
+/// Build one CPython-like `HTTPStatus` IntEnum member.
+fn make_status_member(code: u16, name: &str, phrase: &str) -> MbValue {
+    let inst_ptr = MbObject::new_instance("HTTPStatus".to_string());
+    let inst = MbValue::from_ptr(inst_ptr);
     unsafe {
-        if let ObjData::Dict(ref lock) = (*dict).data {
-            let mut map = lock.write().unwrap();
-            for &(code, name, _phrase) in cclab_mamba_registry::http::canonical_codes() {
-                map.insert(
-                    DictKey::Str(name.to_string()),
-                    MbValue::from_int(code as i64),
-                );
+        if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+            let mut f = fields.write().unwrap();
+            let value = MbValue::from_int(code as i64);
+            f.insert("value".to_string(), value);
+            f.insert("_value_".to_string(), value);
+            f.insert(
+                "name".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            f.insert(
+                "_name_".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            f.insert(
+                "phrase".to_string(),
+                MbValue::from_ptr(MbObject::new_str(phrase.to_string())),
+            );
+            f.insert(
+                "description".to_string(),
+                MbValue::from_ptr(MbObject::new_str(phrase.to_string())),
+            );
+        }
+    }
+    inst
+}
+
+/// Underlying integer for a `HTTPStatus` member instance.
+pub fn http_status_member_value(v: MbValue) -> Option<MbValue> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if class_name == "HTTPStatus" {
+                let value = fields.read().unwrap().get("value").copied()?;
+                if value.as_int().is_some() {
+                    return Some(value);
+                }
             }
         }
     }
-    MbValue::from_ptr(dict)
+    None
 }
 
 pub fn mb_httpstatus_call(arg: MbValue) -> MbValue {
@@ -999,11 +1029,11 @@ pub fn mb_httpstatus_call(arg: MbValue) -> MbValue {
         raise("ValueError", "None is not a valid HTTPStatus".to_string());
         return MbValue::none();
     };
-    if cclab_mamba_registry::http::canonical_codes()
+    if let Some(&(_, name, phrase)) = cclab_mamba_registry::http::canonical_codes()
         .iter()
-        .any(|(known, _, _)| i64::from(*known) == code)
+        .find(|(known, _, _)| i64::from(*known) == code)
     {
-        return MbValue::from_int(code);
+        return make_status_member(code as u16, name, phrase);
     }
     raise("ValueError", format!("{code} is not a valid HTTPStatus"));
     MbValue::none()
@@ -2523,6 +2553,10 @@ fn status_phrase(code: i64) -> &'static str {
     }
 }
 
+fn status_code_arg(v: MbValue) -> Option<i64> {
+    v.as_int().or_else(|| http_status_member_value(v).and_then(|value| value.as_int()))
+}
+
 /// `self.protocol_version` (instance or inherited class attr), default HTTP/1.0.
 fn handler_proto(self_v: MbValue) -> String {
     let v = super::super::class::mb_getattr(
@@ -2573,7 +2607,7 @@ fn handler_wfile_write(self_v: MbValue, data: Vec<u8>) {
 /// status line (deferred until end_headers, matching CPython).
 unsafe extern "C" fn bh_send_response_only(self_v: MbValue, args: MbValue) -> MbValue {
     let pos = req_args_vec(args);
-    let code = pos.first().and_then(|v| v.as_int()).unwrap_or(0);
+    let code = pos.first().and_then(|v| status_code_arg(*v)).unwrap_or(0);
     let msg = pos.get(1).copied().and_then(extract_str)
         .unwrap_or_else(|| status_phrase(code).to_string());
     let proto = handler_proto(self_v);
@@ -2639,7 +2673,7 @@ unsafe extern "C" fn bh_end_headers(self_v: MbValue, _args: MbValue) -> MbValue 
 /// text/html body from DEFAULT_ERROR_MESSAGE.
 unsafe extern "C" fn bh_send_error(self_v: MbValue, args: MbValue) -> MbValue {
     let pos = req_args_vec(args);
-    let code = pos.first().and_then(|v| v.as_int()).unwrap_or(0);
+    let code = pos.first().and_then(|v| status_code_arg(*v)).unwrap_or(0);
     let phrase = status_phrase(code);
     let message = pos.get(1).copied().and_then(extract_str)
         .unwrap_or_else(|| phrase.to_string());
