@@ -385,6 +385,9 @@ pub fn mb_unicodedata_decomposition(c: MbValue) -> MbValue {
     let Some(ch) = extract_str(c).and_then(|s| s.chars().next()) else {
         return empty();
     };
+    if let Some(compat) = fraction_decomposition(ch) {
+        return MbValue::from_ptr(MbObject::new_str(compat.to_string()));
+    }
     let mut parts: Vec<char> = Vec::new();
     decompose_canonical(ch, |d| parts.push(d));
     // decompose_canonical emits the character itself when it has no canonical
@@ -398,6 +401,32 @@ pub fn mb_unicodedata_decomposition(c: MbValue) -> MbValue {
         .collect::<Vec<_>>()
         .join(" ");
     MbValue::from_ptr(MbObject::new_str(hex))
+}
+
+fn fraction_decomposition(ch: char) -> Option<&'static str> {
+    match ch as u32 {
+        0x00BC => Some("<fraction> 0031 2044 0034"),
+        0x00BD => Some("<fraction> 0031 2044 0032"),
+        0x00BE => Some("<fraction> 0033 2044 0034"),
+        0x2150 => Some("<fraction> 0031 2044 0037"),
+        0x2151 => Some("<fraction> 0031 2044 0039"),
+        0x2152 => Some("<fraction> 0031 2044 0031 0030"),
+        0x2153 => Some("<fraction> 0031 2044 0033"),
+        0x2154 => Some("<fraction> 0032 2044 0033"),
+        0x2155 => Some("<fraction> 0031 2044 0035"),
+        0x2156 => Some("<fraction> 0032 2044 0035"),
+        0x2157 => Some("<fraction> 0033 2044 0035"),
+        0x2158 => Some("<fraction> 0034 2044 0035"),
+        0x2159 => Some("<fraction> 0031 2044 0036"),
+        0x215A => Some("<fraction> 0035 2044 0036"),
+        0x215B => Some("<fraction> 0031 2044 0038"),
+        0x215C => Some("<fraction> 0033 2044 0038"),
+        0x215D => Some("<fraction> 0035 2044 0038"),
+        0x215E => Some("<fraction> 0037 2044 0038"),
+        0x215F => Some("<fraction> 0031 2044"),
+        0x2189 => Some("<fraction> 0030 2044 0033"),
+        _ => None,
+    }
 }
 
 /// digit(chr[, default]) -> int: digit value of a Unicode character.
