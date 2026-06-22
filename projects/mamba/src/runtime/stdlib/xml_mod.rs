@@ -891,13 +891,20 @@ pub fn mb_xml_fromstring(val: MbValue) -> MbValue {
     let bytes = s.as_bytes();
     let mut i = 0;
     skip_prolog(bytes, &mut i);
-    // Undefined entity references are a ParseError (the 5 standard names and
-    // character refs are fine).
-    if let Some(bad) = find_undefined_entity(&s) {
+    // Malformed/undefined entity references outside ignored XML markup are a
+    // ParseError (the 5 standard names and character refs are fine).
+    if let Some(bad) = find_bad_entity_reference(&s) {
         return raise_parse_error(&format!("undefined entity {bad}: line 1, column 0"));
     }
     match parse_element(bytes, &mut i) {
-        Some(elem) => elem,
+        Some(elem) => {
+            skip_trailing_misc(bytes, &mut i);
+            if i < bytes.len() {
+                raise_parse_error("junk after document element: line 1, column 0")
+            } else {
+                elem
+            }
+        }
         None => raise_parse_error(if s.trim().is_empty() {
             "no element found: line 1, column 0"
         } else {
@@ -906,19 +913,59 @@ pub fn mb_xml_fromstring(val: MbValue) -> MbValue {
     }
 }
 
-/// First `&name;` reference that is not a standard entity or char ref.
-fn find_undefined_entity(s: &str) -> Option<String> {
-    let mut rest = s;
-    while let Some(i) = rest.find('&') {
-        let after = &rest[i + 1..];
-        let end = after.find(';')?;
-        let name = &after[..end];
+/// First malformed `&` reference, or `&name;` reference that is not a standard
+/// entity or char ref. CDATA/comment/PI/DOCTYPE bodies do not expand entities.
+fn find_bad_entity_reference(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"<![CDATA[") {
+            if let Some(end) = find_bytes(&bytes[i + 9..], b"]]>") {
+                i += 9 + end + 3;
+                continue;
+            }
+            return None;
+        }
+        if bytes[i..].starts_with(b"<!--") {
+            if let Some(end) = find_bytes(&bytes[i + 4..], b"-->") {
+                i += 4 + end + 3;
+                continue;
+            }
+            return None;
+        }
+        if bytes[i..].starts_with(b"<?") {
+            if let Some(end) = find_bytes(&bytes[i + 2..], b"?>") {
+                i += 2 + end + 2;
+                continue;
+            }
+            return None;
+        }
+        if bytes[i..].starts_with(b"<!") {
+            if let Some(end) = bytes[i..].iter().position(|b| *b == b'>') {
+                i += end + 1;
+                continue;
+            }
+            return None;
+        }
+        if bytes[i] != b'&' {
+            i += 1;
+            continue;
+        }
+        let after = &bytes[i + 1..];
+        let Some(end) = after.iter().position(|b| *b == b';') else {
+            return Some("&".to_string());
+        };
+        let name = std::str::from_utf8(&after[..end]).unwrap_or("");
         if !matches!(name, "lt" | "gt" | "amp" | "quot" | "apos") && !name.starts_with('#') {
             return Some(format!("&{name};"));
         }
-        rest = &after[end + 1..];
+        i += end + 2;
     }
     None
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|window| window == needle)
 }
 
 /// CPython ElementPath rejections: absolute paths on elements and 0-based
@@ -988,6 +1035,25 @@ fn skip_ws(bytes: &[u8], i: &mut usize) {
         && (bytes[*i] == b' ' || bytes[*i] == b'\n' || bytes[*i] == b'\t' || bytes[*i] == b'\r')
     {
         *i += 1;
+    }
+}
+
+fn skip_trailing_misc(bytes: &[u8], i: &mut usize) {
+    loop {
+        skip_ws(bytes, i);
+        if bytes[*i..].starts_with(b"<!--") {
+            if let Some(end) = find_bytes(&bytes[*i + 4..], b"-->") {
+                *i += 4 + end + 3;
+                continue;
+            }
+        }
+        if bytes[*i..].starts_with(b"<?") {
+            if let Some(end) = find_bytes(&bytes[*i + 2..], b"?>") {
+                *i += 2 + end + 2;
+                continue;
+            }
+        }
+        break;
     }
 }
 
