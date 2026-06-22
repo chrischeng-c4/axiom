@@ -18,6 +18,7 @@ pub enum DictKey {
     /// them together correctly.
     Float(u64),
     Str(String),
+    Bytes(Vec<u8>),
     Bool(bool),
     None,
     /// User-class instance key: `hash_val` comes from `__hash__`, `ptr` holds
@@ -61,6 +62,7 @@ impl Clone for DictKey {
             DictKey::Int(i) => DictKey::Int(*i),
             DictKey::Float(b) => DictKey::Float(*b),
             DictKey::Str(s) => DictKey::Str(s.clone()),
+            DictKey::Bytes(b) => DictKey::Bytes(b.clone()),
             DictKey::Bool(b) => DictKey::Bool(*b),
             DictKey::None => DictKey::None,
             DictKey::Instance {
@@ -134,6 +136,7 @@ impl std::hash::Hash for DictKey {
                 match self {
                     DictKey::Int(i) => i.hash(state),
                     DictKey::Float(b) => b.hash(state),
+                    DictKey::Bytes(b) => b.hash(state),
                     DictKey::Bool(b) => b.hash(state),
                     DictKey::None => {}
                     DictKey::Instance { hash_val, .. } => hash_val.hash(state),
@@ -154,6 +157,7 @@ impl PartialEq for DictKey {
             (DictKey::Int(a), DictKey::Int(b)) => a == b,
             (DictKey::Float(a), DictKey::Float(b)) => a == b,
             (DictKey::Str(a), DictKey::Str(b)) => a == b,
+            (DictKey::Bytes(a), DictKey::Bytes(b)) => a == b,
             (DictKey::Bool(a), DictKey::Bool(b)) => a == b,
             (DictKey::None, DictKey::None) => true,
             (
@@ -250,12 +254,36 @@ impl indexmap::Equivalent<DictKey> for String {
     }
 }
 
+fn format_bytes_key(data: &[u8]) -> String {
+    let has_single = data.contains(&b'\'');
+    let has_double = data.contains(&b'"');
+    let use_double = has_single && !has_double;
+    let quote = if use_double { b'"' } else { b'\'' };
+    let mut out = String::with_capacity(data.len() + 3);
+    out.push('b');
+    out.push(quote as char);
+    for &b in data {
+        match b {
+            b'\\' => out.push_str("\\\\"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            c if c == quote => { out.push('\\'); out.push(c as char); }
+            0x20..=0x7E => out.push(b as char),
+            c => out.push_str(&format!("\\x{c:02x}")),
+        }
+    }
+    out.push(quote as char);
+    out
+}
+
 impl std::fmt::Display for DictKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DictKey::Int(i) => write!(f, "{i}"),
             DictKey::Float(bits) => write!(f, "{}", dict_key_display(&DictKey::Float(*bits))),
             DictKey::Str(s) => write!(f, "{s}"),
+            DictKey::Bytes(b) => write!(f, "{}", format_bytes_key(b)),
             DictKey::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
             DictKey::None => write!(f, "None"),
             DictKey::Instance {
@@ -367,6 +395,7 @@ pub fn to_dict_key(val: MbValue) -> DictKey {
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(ref s) => return DictKey::Str(s.clone()),
+                ObjData::Bytes(ref b) => return DictKey::Bytes(b.clone()),
                 ObjData::Tuple(_) => {
                     // Structural hash via mb_tuple_hash; retain the tuple object
                     // so element-wise eq can break collisions.
@@ -415,6 +444,7 @@ pub fn dict_key_to_mbvalue(key: &DictKey) -> MbValue {
         DictKey::Int(i) => MbValue::from_int(*i),
         DictKey::Float(bits) => MbValue::from_float(f64::from_bits(*bits)),
         DictKey::Str(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
+        DictKey::Bytes(b) => MbValue::from_ptr(MbObject::new_bytes(b.clone())),
         DictKey::Bool(b) => MbValue::from_bool(*b),
         DictKey::None => MbValue::none(),
         DictKey::Instance { ptr, .. } => {
@@ -444,6 +474,7 @@ pub fn dict_key_raw_str(key: &DictKey) -> String {
     match key {
         DictKey::Int(i) => i.to_string(),
         DictKey::Str(s) => s.clone(),
+        DictKey::Bytes(b) => format_bytes_key(b),
         DictKey::Bool(b) => {
             if *b {
                 "True".to_string()
@@ -476,6 +507,7 @@ pub fn dict_key_display(key: &DictKey) -> String {
                 .unwrap_or_default()
         }
         DictKey::Str(s) => format!("'{s}'"),
+        DictKey::Bytes(b) => format_bytes_key(b),
         DictKey::Bool(b) => {
             if *b {
                 "True".to_string()
