@@ -33,26 +33,65 @@ thread_local! {
 /// Look up a compiled `Regex` for `pat`, compiling+caching on miss.
 /// Returns `Err(message)` on compile failure (caller raises `re.error`).
 /// Translate Python `re` spellings the Rust `regex` crate spells
-/// differently. Today: `\Z` (Python end-of-string) → `\z` (Rust). Walks
-/// escape state so `\\Z` (literal backslash + Z) is left alone; character
-/// classes need no special casing because `\Z` is invalid inside one in
-/// both dialects.
+/// differently:
+/// - `\Z` (Python end-of-string) → `\z` (Rust).
+/// - `(?>...)` (Python atomic group) → `(?:...)`.
+///
+/// Rust's regex engine is DFA/NFA based and never backtracks catastrophically,
+/// so downgrading atomic groups to non-capturing groups preserves match
+/// language for the supported subset while keeping fnmatch-generated patterns
+/// compilable. The scan avoids escaped text and character classes.
 fn py_pattern_to_rust(pat: &str) -> String {
     let mut out = String::with_capacity(pat.len());
-    let mut chars = pat.chars();
-    while let Some(c) = chars.next() {
+    let chars: Vec<char> = pat.chars().collect();
+    let mut i = 0usize;
+    let mut in_class = false;
+
+    while i < chars.len() {
+        let c = chars[i];
         if c == '\\' {
-            match chars.next() {
-                Some('Z') => out.push_str("\\z"),
-                Some(other) => {
+            if i + 1 < chars.len() {
+                let next = chars[i + 1];
+                if next == 'Z' {
+                    out.push_str("\\z");
+                } else {
                     out.push('\\');
-                    out.push(other);
+                    out.push(next);
                 }
-                None => out.push('\\'),
+                i += 2;
+            } else {
+                out.push('\\');
+                i += 1;
             }
-        } else {
-            out.push(c);
+            continue;
         }
+
+        if c == '[' && !in_class {
+            in_class = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == ']' && in_class {
+            in_class = false;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+
+        if !in_class
+            && c == '('
+            && i + 2 < chars.len()
+            && chars[i + 1] == '?'
+            && chars[i + 2] == '>'
+        {
+            out.push_str("(?:");
+            i += 3;
+            continue;
+        }
+
+        out.push(c);
+        i += 1;
     }
     out
 }
