@@ -137,7 +137,7 @@ Browser Bridge baselines may use Playwright only from an explicit
 may use `npm ci` or Playwright as Jet's fixture/runtime path. Phase 3 build work
 stays behind those replacement contracts.
 
-Five command families make those two toolchains work:
+These command families make those two toolchains work:
 
 | Family | Target command | Current command | Owns | Capability contract |
 |---|---|---|---|---|
@@ -147,6 +147,7 @@ Five command families make those two toolchains work:
 | Serve | `jet serve [--prod] [--wasm]` | same; dev mode delegates to the dev serving surface for now | Detached and production serving | Agent-first serving returns machine-readable URL/session metadata. With `--prod`: production static serving suitable to replace a tuned nginx-style frontend deployment. Without `--prod`: detached dev serving compatibility. With `--wasm`: serve the Advanced FE-on-WASM target. |
 | Browser Bridge | `jet bb ...` | same; legacy `jet browser ...` remains | Browser automation and WASM bridge | Agent-first browser control. Default launch mode is headless and detached, returning a controllable browser/session handle. Explicit attach/headful modes are for human inspection. Owns click/drag/key/wheel/eval/screenshot/capture, DOM oracle capture, WASM runtime capture, and browser API bridge into FE-on-WASM |
 | Test, e2e, trace | `jet test`, `jet e2e`, `jet trace` | same | Verification and evidence | Basic validates TS/DOM toolchain behavior with a Jet-owned TS test runtime that is auto-available under `jet test` and does not need an npm package. Advanced reuses the same surfaces for WASM runtime checks, DOM-oracle parity, Browser Bridge evidence, trace replay, and diagnostics. |
+| Codegen | `jet codegen openapi <spec> --out <dir>` | same | API client generation | Read an OpenAPI 3.0/3.1 spec and generate frontend TypeScript: types, a typed fetch client, and TanStack Query (React Query) hooks. Standalone developer-tooling generator; not part of the build pipeline. |
 
 The dependency direction is intentionally one-way:
 
@@ -400,6 +401,7 @@ jet dev --wasm --debug            # Legacy foreground FE-on-WASM dev server
 jet dev shutdown -p <port>        # Legacy stop command for a Jet dev server
 jet build                         # Build production DOM target
 jet build --wasm                  # Build production FE-on-WASM target
+jet codegen openapi <spec> --out <dir>   # Generate TS types + fetch client + React Query hooks from OpenAPI 3.0/3.1
 jet test                          # Basic: Jet-native TS tests with built-in test API
 jet e2e                           # Basic/Advanced: product-flow and parity e2e
 jet trace                         # Basic/Advanced: inspect/replay/compare trace evidence
@@ -864,6 +866,7 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 | Native Test And Product-Flow E2E | #3785 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready_for_basic | Jet native runner, reporter, product-flow e2e, and trace gates are green for the Basic production-readiness contract. |
 | WASM And Multi-Target Execution | #3783 | implemented | passing | smoke, conformance, corpus, negative | partial | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
 | Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
+| OpenAPI Client Codegen | #153 | planned | planned | smoke, conformance | not_ready | Standalone `jet codegen openapi` reads an OpenAPI 3.0/3.1 spec and generates TypeScript types, a typed fetch client, and TanStack Query hooks. Developer-tooling track, separate from the Basic FE-on-DOM production gate; not wired into the build pipeline. |
 
 ## Rust-Native Frontend Toolchain Replacement
 
@@ -987,3 +990,15 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 | Library DOM/WASM Parity Fixtures | change | #4072 | implemented | verified | conformance | `cargo test -p jet --test react_dom_oracle_conformance library_dom_wasm_parity -- --nocapture`<br>projects/jet/parity/data/fixtures/libraries |
 | MUI Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/mui-visual-demo |
 | AntD Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression antd_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/antd-visual-demo |
+
+### OpenAPI Client Codegen
+
+| ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
+|---|---:|---|---|---|---|
+| openapi-client-codegen | #153 | planned | `jet codegen openapi <spec> --out <dir>` reads an OpenAPI 3.0/3.1 document and generates frontend TypeScript: `types.ts` (component and inline schemas to interfaces/unions), `client.ts` (a typed `createClient` fetch factory with one function per operation), and `hooks.ts` (TanStack Query `useXxxQuery`/`useXxxMutation` via `createHooks`). 3.0 `nullable` and 3.1 type-array nullability are reconciled, output is deterministic, and no new Rust crates are added. The command is standalone and is not wired into the build pipeline. | smoke, conformance | `cargo test -p jet --lib codegen -- --nocapture`<br>`cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/fixtures/codegen |
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| OpenAPI codegen readiness | epic | #153 | planned | planned | none | Standalone jet codegen openapi generator covering OpenAPI 3.0/3.1 parse, ref resolution, schema-to-TS mapping, typed fetch client, and React Query hooks |
+| OpenAPI 3.0/3.1 Schema Mapping | change | #153 | planned | planned | conformance | `cargo test -p jet --lib codegen -- --nocapture`<br>projects/jet/tests/fixtures/codegen |
+| Typed Fetch Client And Hooks Emission | change | #153 | planned | planned | conformance | `cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/__snapshots__/codegen |
