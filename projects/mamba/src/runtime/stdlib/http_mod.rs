@@ -2672,6 +2672,53 @@ fn split_url(url: &str) -> (String, String, String) {
     }
 }
 
+fn request_url_fields(url: &str) -> (String, String, String, String, MbValue) {
+    let (scheme, host, path) = split_url(url);
+    let selector = {
+        let p = path.split('#').next().unwrap_or("");
+        if p.is_empty() { "/".to_string() } else { p.to_string() }
+    };
+    let fragment = match url.split_once('#') {
+        Some((_, frag)) => MbValue::from_ptr(MbObject::new_str(frag.to_string())),
+        None => MbValue::none(),
+    };
+    (scheme, host, selector, url.to_string(), fragment)
+}
+
+fn assign_request_url_fields(self_v: MbValue, url: &str) {
+    let (scheme, host, selector, full_url, fragment) = request_url_fields(url);
+    set_inst_field(self_v, "full_url", MbValue::from_ptr(MbObject::new_str(full_url)));
+    set_inst_field(self_v, "host", MbValue::from_ptr(MbObject::new_str(host)));
+    set_inst_field(self_v, "type", MbValue::from_ptr(MbObject::new_str(scheme)));
+    set_inst_field(self_v, "selector", MbValue::from_ptr(MbObject::new_str(selector)));
+    set_inst_field(self_v, "fragment", fragment);
+}
+
+pub fn request_setattr(self_v: MbValue, attr_s: &str, value: MbValue) -> bool {
+    if attr_s != "full_url" {
+        return false;
+    }
+    let Some(url) = extract_str(value) else {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "full_url must be a string".to_string(),
+            )),
+        );
+        return true;
+    };
+    let (scheme, host, _) = split_url(&url);
+    if scheme.is_empty() || host.is_empty() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str("unknown url type".to_string())),
+        );
+        return true;
+    }
+    assign_request_url_fields(self_v, &url);
+    true
+}
+
 /// Read an HTTPMessage's ordered (key, value) header pairs.
 fn http_message_pairs(self_v: MbValue) -> Vec<(String, String)> {
     let headers = req_field(self_v, "_headers").unwrap_or_else(MbValue::none);
@@ -2858,36 +2905,15 @@ unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> Mb
         .unwrap_or_else(MbValue::none);
     let method = kwarg("method").unwrap_or_else(MbValue::none);
 
-    let (scheme, host, path) = split_url(&url);
     let inst = MbObject::new_instance(REQUEST_CLASS.to_string());
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
             let mut f = fields.write().unwrap();
-            f.insert(
-                "full_url".into(),
-                MbValue::from_ptr(MbObject::new_str(url.clone())),
-            );
+            let (scheme, host, selector, full_url, fragment) = request_url_fields(&url);
+            f.insert("full_url".into(), MbValue::from_ptr(MbObject::new_str(full_url)));
             f.insert("host".into(), MbValue::from_ptr(MbObject::new_str(host)));
             f.insert("type".into(), MbValue::from_ptr(MbObject::new_str(scheme)));
-            // selector: path+query (no fragment); "/" for a bare host URL.
-            let selector = {
-                let p = path.split('#').next().unwrap_or("");
-                if p.is_empty() {
-                    "/".to_string()
-                } else {
-                    p.to_string()
-                }
-            };
-            f.insert(
-                "selector".into(),
-                MbValue::from_ptr(MbObject::new_str(selector)),
-            );
-            // fragment: the part after '#', or None when absent (CPython 3.12+).
-            // Not sent on the wire, but exposed as `req.fragment`.
-            let fragment = match url.split_once('#') {
-                Some((_, frag)) => MbValue::from_ptr(MbObject::new_str(frag.to_string())),
-                None => MbValue::none(),
-            };
+            f.insert("selector".into(), MbValue::from_ptr(MbObject::new_str(selector)));
             f.insert("fragment".into(), fragment);
             f.insert("data".into(), data);
             f.insert("method".into(), method);
