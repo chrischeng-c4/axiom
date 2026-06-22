@@ -764,6 +764,18 @@ pub fn mb_global_set_id(id: MbValue, value: MbValue) {
     });
 }
 
+/// Delete a global variable by integer id (SymbolId).
+/// The id is passed as raw i64 (not NaN-boxed).
+pub fn mb_global_del_id(id: MbValue) {
+    let key = id.to_bits() as i64;
+    GLOBAL_ID_NAMESPACE.with(|ns| {
+        let old = ns.borrow_mut().remove(&key);
+        if let Some(prev) = old {
+            unsafe { super::rc::release_if_ptr(prev); }
+        }
+    });
+}
+
 // ── Helpers ──
 
 fn extract_str(val: MbValue) -> Option<String> {

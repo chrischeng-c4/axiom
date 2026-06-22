@@ -810,6 +810,55 @@ pub fn mb_list_delitem(list: MbValue, index: MbValue) {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
+                if let Some(kp) = index.as_ptr() {
+                    if let ObjData::Tuple(ref parts) = (*kp).data {
+                        if parts.len() == 3 {
+                            let mut items = lock.write().unwrap();
+                            let len = items.len() as i64;
+                            let step = parts[2].as_int_pyint().unwrap_or(1);
+                            if step == 0 {
+                                super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                                    MbValue::from_ptr(MbObject::new_str("slice step cannot be zero".to_string())),
+                                );
+                                return;
+                            }
+                            let (start, stop) = if step > 0 {
+                                let s = parts[0].as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(0);
+                                let e = parts[1].as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(len);
+                                (s, e)
+                            } else {
+                                let s = parts[0].as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(len - 1);
+                                let e = parts[1].as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(-1);
+                                (s, e)
+                            };
+                            let mut positions = Vec::new();
+                            let mut i = start;
+                            if step > 0 {
+                                while i < stop {
+                                    if i >= 0 && i < len {
+                                        positions.push(i as usize);
+                                    }
+                                    i += step;
+                                }
+                            } else {
+                                while i > stop {
+                                    if i >= 0 && i < len {
+                                        positions.push(i as usize);
+                                    }
+                                    i += step;
+                                }
+                            }
+                            for idx in positions.into_iter().rev() {
+                                if idx < items.len() {
+                                    let removed = items.remove(idx);
+                                    super::rc::release_if_ptr(removed);
+                                }
+                            }
+                            return;
+                        }
+                    }
+                }
                 if let Some(idx) = index.as_int() {
                     let mut items = lock.write().unwrap();
                     let len = items.len() as i64;

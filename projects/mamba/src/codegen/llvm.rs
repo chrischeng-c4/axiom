@@ -472,6 +472,11 @@ fn generate_inst(ir: &mut String, inst: &MirInst, tcx: &TypeContext) {
                 name.0, value.0
             ));
         }
+        MirInst::DeleteGlobal { name } => {
+            ir.push_str(&format!(
+                "  call void @mb_global_del_id(i64 {})\n", name.0
+            ));
+        }
         MirInst::LoadCell { dest, cell_idx, .. } => {
             ir.push_str(&format!(
                 "  %v{} = call i64 @mb_cell_get(i64 {})\n",
