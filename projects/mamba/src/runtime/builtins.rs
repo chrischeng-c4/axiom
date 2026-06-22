@@ -7449,7 +7449,11 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
         unsafe {
             match &(*ptr).data {
                 ObjData::Instance { class_name, .. } => {
-                    if class_name == "__unbound_method__" || class_name == "__bound_native_method__"
+                    if super::stdlib::enum_mod::is_functional_enum_class(obj) {
+                        return MbValue::from_bool(true);
+                    }
+                    if class_name == "__unbound_method__"
+                        || class_name == "__bound_native_method__"
                     {
                         return MbValue::from_bool(true);
                     }
@@ -8300,6 +8304,12 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 if class_name == "HTTPStatus" {
                     let arg = items.first().copied().unwrap_or_else(MbValue::none);
                     return super::stdlib::http_mod::mb_httpstatus_call(arg);
+                }
+                // Functional-API enum class objects reached through dotted
+                // module-call lowering, e.g. uuid.SafeUUID(0).
+                if super::stdlib::enum_mod::is_functional_enum_class(func) {
+                    let arg = items.first().copied().unwrap_or_else(MbValue::none);
+                    return super::stdlib::enum_mod::mb_functional_enum_call(func, arg);
                 }
                 // functools.lru_cache wrapper: look up cache or invoke inner.
                 if class_name == "functools.lru_cache_wrapper" {

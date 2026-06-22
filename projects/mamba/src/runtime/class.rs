@@ -8127,6 +8127,11 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
     // so that issubclass(type_obj, base_type_obj) works correctly (#974).
     let child_name = resolve_class_name(child).unwrap_or_default();
     let parent_name = resolve_class_name(parent).unwrap_or_default();
+    if super::stdlib::enum_mod::is_functional_enum_class(child)
+        && matches!(parent_name.as_str(), "Enum" | "object")
+    {
+        return MbValue::from_bool(true);
+    }
     // Reflexivity holds for any class; in the string model two equal names
     // are the same class, so answer before the known-class validation.
     if !child_name.is_empty() && child_name == parent_name {
