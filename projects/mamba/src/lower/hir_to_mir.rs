@@ -4015,6 +4015,33 @@ impl<'a> HirToMir<'a> {
                     for dec_expr in decorators.iter().rev() {
                         let result_vreg = self.fresh_vreg();
                         match dec_expr {
+                            HirExpr::Var(dec_sym, _)
+                                if !self.user_class_syms.contains(&dec_sym.0)
+                                    && self.class_syms
+                                        .get(&dec_sym.0)
+                                        .map(|name| {
+                                            matches!(
+                                                name.as_str(),
+                                                "property" | "staticmethod" | "classmethod"
+                                            )
+                                        })
+                                        .unwrap_or(false) =>
+                            {
+                                let class_name = self.class_syms.get(&dec_sym.0).cloned()
+                                    .unwrap_or_default();
+                                let extern_name = match class_name.as_str() {
+                                    "property" => "mb_property_new",
+                                    "staticmethod" => "mb_staticmethod_new",
+                                    "classmethod" => "mb_classmethod_new",
+                                    _ => unreachable!(),
+                                };
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(result_vreg),
+                                    name: extern_name.to_string(),
+                                    args: vec![func_vreg],
+                                    ty: any_ty,
+                                });
+                            }
                             HirExpr::Var(dec_sym, _) if self.user_funcs.contains(&dec_sym.0) => {
                                 self.current_stmts.push(MirInst::Call {
                                     dest: Some(result_vreg),
@@ -6734,6 +6761,17 @@ impl<'a> HirToMir<'a> {
             }
             HirExpr::UnaryOp { op, operand, ty } => {
                 let inner = self.lower_expr(operand);
+                if matches!(*op, crate::hir::HirUnaryOp::Not) {
+                    let boxed = self.box_operand(inner, operand.ty());
+                    let dest = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(dest),
+                        name: "mb_not".to_string(),
+                        args: vec![boxed],
+                        ty: self.tcx.any(),
+                    });
+                    return dest;
+                }
                 let dest = self.fresh_vreg();
                 // Negation must be BigInt-aware: a raw MirUnaryOp::Neg negates
                 // the NaN-boxed BigInt pointer bits (yielding garbage, e.g.
@@ -6945,9 +6983,7 @@ impl<'a> HirToMir<'a> {
                 // and build a bogus exception object. Route the CALL form to the
                 // real descriptor constructors. (The @decorator form is handled
                 // separately at class-registration time.)
-                if !self.user_class_syms.contains(&func_sym.0)
-                    && !self.builtin_syms.contains_key(&func_sym.0)
-                {
+                if !self.user_class_syms.contains(&func_sym.0) {
                     if let Some(class_name) = self.class_syms.get(&func_sym.0).cloned() {
                         match class_name.as_str() {
                             "property" => {
