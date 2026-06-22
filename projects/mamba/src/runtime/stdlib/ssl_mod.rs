@@ -328,6 +328,86 @@ unsafe extern "C" fn init_ssl_context(self_v: MbValue, args: MbValue) -> MbValue
     MbValue::none()
 }
 
+// ── MemoryBIO ───────────────────────────────────────────────────────────────
+
+fn memory_bio_buffer(inst: MbValue) -> Vec<u8> {
+    get_field(inst, "_buffer")
+        .and_then(|v| v.as_ptr())
+        .and_then(|p| unsafe {
+            if let ObjData::Bytes(ref b) = (*p).data {
+                Some(b.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn memory_bio_eof_written(inst: MbValue) -> bool {
+    get_field(inst, "_eof_written")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn memory_bio_set_state(inst: MbValue, data: Vec<u8>, eof_written: bool) {
+    let pending = data.len() as i64;
+    set_field(inst, "_buffer", MbValue::from_ptr(MbObject::new_bytes(data)));
+    set_field(inst, "_eof_written", MbValue::from_bool(eof_written));
+    set_field(inst, "pending", MbValue::from_int(pending));
+    set_field(inst, "eof", MbValue::from_bool(eof_written && pending == 0));
+}
+
+unsafe extern "C" fn memory_bio_init(self_v: MbValue, args: MbValue) -> MbValue {
+    if !args_vec(args).is_empty() {
+        return raise_err("TypeError", "MemoryBIO() takes no arguments");
+    }
+    memory_bio_set_state(self_v, Vec::new(), false);
+    MbValue::none()
+}
+
+unsafe extern "C" fn memory_bio_write(self_v: MbValue, args: MbValue) -> MbValue {
+    let data_arg = first_arg(args);
+    let Some(bytes) = super::super::builtins::try_bytes_like(data_arg) else {
+        return raise_err(
+            "TypeError",
+            &format!("a bytes-like object is required, not '{}'", py_type_name(data_arg)),
+        );
+    };
+    let mut buf = memory_bio_buffer(self_v);
+    let written = bytes.len() as i64;
+    buf.extend_from_slice(&bytes);
+    memory_bio_set_state(self_v, buf, memory_bio_eof_written(self_v));
+    MbValue::from_int(written)
+}
+
+unsafe extern "C" fn memory_bio_read(self_v: MbValue, args: MbValue) -> MbValue {
+    let size_arg = first_arg(args);
+    let size = if size_arg.is_none() {
+        None
+    } else {
+        match as_int_like(size_arg) {
+            Some(n) if n >= 0 => Some(n as usize),
+            Some(_) => None,
+            None => {
+                return raise_err(
+                    "TypeError",
+                    &format!("'{}' object cannot be interpreted as an integer", py_type_name(size_arg)),
+                );
+            }
+        }
+    };
+    let mut buf = memory_bio_buffer(self_v);
+    let take = size.unwrap_or(buf.len()).min(buf.len());
+    let out: Vec<u8> = buf.drain(0..take).collect();
+    memory_bio_set_state(self_v, buf, memory_bio_eof_written(self_v));
+    MbValue::from_ptr(MbObject::new_bytes(out))
+}
+
+unsafe extern "C" fn memory_bio_write_eof(self_v: MbValue, _args: MbValue) -> MbValue {
+    memory_bio_set_state(self_v, memory_bio_buffer(self_v), true);
+    MbValue::none()
+}
+
 /// Generic no-op SSLContext method (load_cert_chain / set_ciphers / ...): returns None.
 unsafe extern "C" fn ctx_method_noop(_self_v: MbValue, _args: MbValue) -> MbValue {
     MbValue::none()
@@ -1165,6 +1245,23 @@ fn register_ssl_classes() {
         }
         super::super::class::mb_class_register("SSLContext", Vec::new(), methods);
     }
+
+    // MemoryBIO: an in-memory byte FIFO used by SSLObject/wrap_bio tests.
+    {
+        let init_addr = memory_bio_init as usize;
+        super::super::module::register_variadic_func(init_addr as u64);
+        let mut methods: HashMap<String, MbValue> = HashMap::new();
+        methods.insert("__init__".to_string(), MbValue::from_func(init_addr));
+        for (name, addr) in [
+            ("write", memory_bio_write as usize),
+            ("read", memory_bio_read as usize),
+            ("write_eof", memory_bio_write_eof as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
+        super::super::class::mb_class_register("MemoryBIO", Vec::new(), methods);
+    }
 }
 
 /// SSLContext.set_servername_callback(cb): the callback must be None or a
@@ -1440,6 +1537,7 @@ pub fn register() {
         "SSLContext",
         "SSLObject",
         "SSLSocket",
+        "MemoryBIO",
         "SSLError",
         "SSLZeroReturnError",
         "SSLWantReadError",
@@ -1501,7 +1599,6 @@ pub fn register() {
             dispatch_create_default_context as *const () as usize,
         ),
         ("SSLSession", dispatch_class_shell as *const () as usize),
-        ("MemoryBIO", dispatch_class_shell as *const () as usize),
         ("wrap_socket", dispatch_wrap_socket as *const () as usize),
         (
             "match_hostname",
