@@ -1654,6 +1654,53 @@ fn extract_func_addr(val: MbValue) -> u64 {
     0
 }
 
+fn memoryview_field(view: MbValue, name: &str) -> Option<MbValue> {
+    let ptr = view.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+            if class_name == "memoryview" {
+                return fields.read().unwrap().get(name).copied();
+            }
+        }
+    }
+    None
+}
+
+fn memoryview_readonly(view: MbValue) -> bool {
+    if let Some(ro) = memoryview_field(view, "_readonly") {
+        return ro.as_bool() == Some(true);
+    }
+    let Some(buf) = memoryview_field(view, "_buffer") else {
+        return true;
+    };
+    let writable = buf.as_ptr().map_or(false, |bp| unsafe {
+        matches!((*bp).data, ObjData::ByteArray(_))
+    });
+    !writable
+}
+
+fn memoryview_slice(view: MbValue, start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
+    let Some(buf) = memoryview_field(view, "_buffer") else {
+        return MbValue::from_ptr(MbObject::new_instance("memoryview".to_string()));
+    };
+    let sliced = super::bytes_ops::mb_bytes_slice_full(buf, start, stop, step);
+    let stride = step.as_int().unwrap_or(1);
+    let inst = MbObject::new_instance("memoryview".to_string());
+    unsafe {
+        if let ObjData::Instance { fields, .. } = &(*inst).data {
+            let mut f = fields.write().unwrap();
+            f.insert("_buffer".to_string(), sliced);
+            let obj = memoryview_field(view, "_obj").unwrap_or(buf);
+            super::rc::retain_if_ptr(obj);
+            f.insert("_obj".to_string(), obj);
+            f.insert("_readonly".to_string(), MbValue::from_bool(memoryview_readonly(view)));
+            f.insert("_contiguous".to_string(), MbValue::from_bool(stride == 1));
+            f.insert("_stride".to_string(), MbValue::from_int(stride));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
 // ── Instance Creation ──
 
 /// Create a new instance of a class, calling __init__ if present.
@@ -4011,22 +4058,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             "itemsize" | "ndim" => return MbValue::from_int(1),
                             "nbytes" => {
                                 let buf = fields.read().unwrap().get("_buffer").copied();
-                                if let Some(b) = buf {
-                                    if let Some(bp) = b.as_ptr() {
-                                        match (*bp).data {
-                                            ObjData::Bytes(ref data) => {
-                                                return MbValue::from_int(data.len() as i64)
-                                            }
-                                            ObjData::ByteArray(ref lock) => {
-                                                return MbValue::from_int(
-                                                    lock.read().unwrap().len() as i64,
-                                                )
-                                            }
-                                            _ => return MbValue::from_int(0),
-                                        }
-                                    }
-                                }
-                                return MbValue::from_int(0);
+                                let nbytes = buf
+                                    .and_then(super::builtins::try_bytes_like)
+                                    .map(|data| data.len() as i64)
+                                    .unwrap_or(0);
+                                return MbValue::from_int(nbytes);
                             }
                             "shape" => {
                                 // Resolve the underlying bytes-like length via the
@@ -4044,8 +4080,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 ]));
                             }
                             "strides" => {
+                                let stride = fields
+                                    .read()
+                                    .unwrap()
+                                    .get("_stride")
+                                    .and_then(|v| v.as_int())
+                                    .unwrap_or(1);
                                 return MbValue::from_ptr(MbObject::new_tuple(vec![
-                                    MbValue::from_int(1),
+                                    MbValue::from_int(stride),
                                 ]));
                             }
                             "format" => {
@@ -4067,13 +4109,22 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                     });
                                 return MbValue::from_bool(!writable);
                             }
-                            // Byte-flat views are always contiguous in every layout.
                             "contiguous" | "c_contiguous" | "f_contiguous" => {
-                                return MbValue::from_bool(true)
+                                let contiguous = fields
+                                    .read()
+                                    .unwrap()
+                                    .get("_contiguous")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(true);
+                                return MbValue::from_bool(contiguous);
                             }
                             // `mv.obj` is the underlying object the view exposes.
                             "obj" => {
-                                if let Some(b) = fields.read().unwrap().get("_buffer").copied() {
+                                let b = {
+                                    let g = fields.read().unwrap();
+                                    g.get("_obj").copied().or_else(|| g.get("_buffer").copied())
+                                };
+                                if let Some(b) = b {
                                     super::rc::retain_if_ptr(b);
                                     return b;
                                 }
@@ -9154,24 +9205,15 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                                     obj, items[0], items[1], items[2],
                                 );
                             }
-                            // memoryview[a:b:c] — forward to bytes slice
-                            // against the backing buffer. The lowering pass
-                            // packs `mv[1:4]` as a 3-tuple key, so it lands
-                            // here rather than the slice-Instance path
+                            // memoryview[a:b:c] — preserve a memoryview
+                            // result plus contiguity metadata. The lowering
+                            // pass packs `mv[1:4]` as a 3-tuple key, so it
+                            // lands here rather than the slice-Instance path
                             // below. (#1256 sub-priority 4)
-                            super::rc::ObjData::Instance {
-                                ref class_name,
-                                ref fields,
-                            } if class_name == "memoryview" => {
-                                let buf = fields.read().unwrap().get("_buffer").copied();
-                                if let Some(b) = buf {
-                                    if !b.is_none() {
-                                        return super::bytes_ops::mb_bytes_slice_full(
-                                            b, items[0], items[1], items[2],
-                                        );
-                                    }
-                                }
-                                return MbValue::from_ptr(MbObject::new_bytes(vec![]));
+                            super::rc::ObjData::Instance { ref class_name, .. }
+                                if class_name == "memoryview" =>
+                            {
+                                return memoryview_slice(obj, items[0], items[1], items[2]);
                             }
                             _ => {} // Instance / other → general dispatch below.
                         }
@@ -9401,11 +9443,9 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         }
                         return super::tuple_ops::mb_tuple_getitem(t, key);
                     }
-                    // memoryview[i] — forward to the backing bytes/bytearray
-                    // buffer's getitem. Mirrors the bytes path: integer index
-                    // returns the byte value; slice returns a new bytes via
-                    // `mb_bytes_slice_full` (which mb_bytes_getitem doesn't
-                    // handle — it's integer-only).
+                    // memoryview[i] — forward scalar indexes to the backing
+                    // bytes/bytearray buffer. Slices return a new memoryview
+                    // with byte-flat contiguity metadata.
                     // (#1256 sub-priority 4 — memoryview indexing gap)
                     if class_name == "memoryview" {
                         let buf = fields
@@ -9432,9 +9472,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                                     let stop = g.get("stop").copied().unwrap_or(MbValue::none());
                                     let step = g.get("step").copied().unwrap_or(MbValue::none());
                                     drop(g);
-                                    return super::bytes_ops::mb_bytes_slice_full(
-                                        buf, start, stop, step,
-                                    );
+                                    return memoryview_slice(obj, start, stop, step);
                                 }
                             }
                         }
@@ -11349,58 +11387,29 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "memoryview" {
                     match name.as_str() {
                         "tobytes" => {
-                            // Return the underlying buffer as bytes (copy when bytearray).
+                            // Return the readable bytes from the underlying buffer.
                             let buf = fields.read().unwrap().get("_buffer").copied();
-                            if let Some(b) = buf {
-                                if let Some(bp) = b.as_ptr() {
-                                    match (*bp).data {
-                                        ObjData::Bytes(_) => {
-                                            super::rc::retain_if_ptr(b);
-                                            return b;
-                                        }
-                                        ObjData::ByteArray(ref lock) => {
-                                            let data = lock.read().unwrap().clone();
-                                            return MbValue::from_ptr(MbObject::new_bytes(data));
-                                        }
-                                        _ => {}
-                                    }
-                                }
+                            if let Some(data) = buf.and_then(super::builtins::try_bytes_like) {
+                                return MbValue::from_ptr(MbObject::new_bytes(data));
                             }
                             return MbValue::from_ptr(MbObject::new_bytes(vec![]));
                         }
                         "tolist" => {
                             // Return list of int byte values.
                             let buf = fields.read().unwrap().get("_buffer").copied();
-                            if let Some(b) = buf {
-                                if let Some(bp) = b.as_ptr() {
-                                    let bytes_vec: Option<Vec<u8>> = match (*bp).data {
-                                        ObjData::Bytes(ref data) => Some(data.clone()),
-                                        ObjData::ByteArray(ref lock) => {
-                                            Some(lock.read().unwrap().clone())
-                                        }
-                                        _ => None,
-                                    };
-                                    if let Some(bv) = bytes_vec {
-                                        let items: Vec<MbValue> = bv
-                                            .iter()
-                                            .map(|byte| MbValue::from_int(*byte as i64))
-                                            .collect();
-                                        return MbValue::from_ptr(MbObject::new_list(items));
-                                    }
-                                }
+                            if let Some(bv) = buf.and_then(super::builtins::try_bytes_like) {
+                                let items: Vec<MbValue> = bv
+                                    .iter()
+                                    .map(|byte| MbValue::from_int(*byte as i64))
+                                    .collect();
+                                return MbValue::from_ptr(MbObject::new_list(items));
                             }
                             return MbValue::from_ptr(MbObject::new_list(vec![]));
                         }
                         "release" => return MbValue::none(),
                         "hex" => {
                             let buf = fields.read().unwrap().get("_buffer").copied();
-                            let bytes_vec: Option<Vec<u8>> =
-                                buf.and_then(|b| b.as_ptr())
-                                    .and_then(|bp| match &(*bp).data {
-                                        ObjData::Bytes(d) => Some(d.clone()),
-                                        ObjData::ByteArray(lk) => Some(lk.read().unwrap().clone()),
-                                        _ => None,
-                                    });
+                            let bytes_vec = buf.and_then(super::builtins::try_bytes_like);
                             let hexs = bytes_vec
                                 .unwrap_or_default()
                                 .iter()
@@ -11423,6 +11432,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 super::rc::retain_if_ptr(buf);
                                 g.insert("_buffer".to_string(), buf);
                                 g.insert("_readonly".to_string(), MbValue::from_bool(true));
+                                let obj = fields.read().unwrap()
+                                    .get("_obj").copied().unwrap_or(buf);
+                                super::rc::retain_if_ptr(obj);
+                                g.insert("_obj".to_string(), obj);
+                                if let Some(v) = fields.read().unwrap().get("_contiguous").copied() {
+                                    g.insert("_contiguous".to_string(), v);
+                                }
+                                if let Some(v) = fields.read().unwrap().get("_stride").copied() {
+                                    g.insert("_stride".to_string(), v);
+                                }
                             }
                             return MbValue::from_ptr(inst);
                         }
