@@ -357,6 +357,23 @@ fn memory_bio_set_state(inst: MbValue, data: Vec<u8>, eof_written: bool) {
     set_field(inst, "eof", MbValue::from_bool(eof_written && pending == 0));
 }
 
+fn is_non_contiguous_memoryview(v: MbValue) -> bool {
+    let Some(ptr) = v.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+            if class_name == "memoryview" {
+                return fields.read().unwrap()
+                    .get("_contiguous")
+                    .and_then(|flag| flag.as_bool())
+                    == Some(false);
+            }
+        }
+    }
+    false
+}
+
 unsafe extern "C" fn memory_bio_init(self_v: MbValue, args: MbValue) -> MbValue {
     if !args_vec(args).is_empty() {
         return raise_err("TypeError", "MemoryBIO() takes no arguments");
@@ -367,6 +384,9 @@ unsafe extern "C" fn memory_bio_init(self_v: MbValue, args: MbValue) -> MbValue 
 
 unsafe extern "C" fn memory_bio_write(self_v: MbValue, args: MbValue) -> MbValue {
     let data_arg = first_arg(args);
+    if is_non_contiguous_memoryview(data_arg) {
+        return raise_err("BufferError", "memoryview: underlying buffer is not contiguous");
+    }
     let Some(bytes) = super::super::builtins::try_bytes_like(data_arg) else {
         return raise_err(
             "TypeError",
