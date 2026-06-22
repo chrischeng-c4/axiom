@@ -2,7 +2,7 @@
 //!
 //! @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#unit-test
 
-use jet::codegen::{generate, GenOptions, GeneratedOutput};
+use jet::codegen::{generate, GenOptions, GeneratedOutput, HttpClient};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -11,6 +11,7 @@ fn full_opts() -> GenOptions {
         spec_path: PathBuf::new(),
         out_dir: PathBuf::new(),
         client_name: "createClient".to_string(),
+        http_client: HttpClient::Fetch,
         emit_types: true,
         emit_client: true,
         emit_hooks: true,
@@ -41,6 +42,38 @@ fn minimal_matches_golden_snapshots() {
     assert_eq!(
         file(&out, "runtime.ts"),
         include_str!("../__snapshots__/codegen/minimal__runtime.ts")
+    );
+    assert_eq!(
+        file(&out, "client.ts"),
+        include_str!("../__snapshots__/codegen/minimal__client.ts")
+    );
+    assert_eq!(
+        file(&out, "hooks.ts"),
+        include_str!("../__snapshots__/codegen/minimal__hooks.ts")
+    );
+    assert_eq!(
+        file(&out, "index.ts"),
+        include_str!("../__snapshots__/codegen/minimal__index.ts")
+    );
+}
+
+/// `--http axios` swaps only `runtime.ts`; every other file is byte-identical to
+/// the fetch goldens. The axios runtime is golden-checked separately.
+#[test]
+fn axios_backend_matches_golden_and_is_surface_invariant() {
+    let spec = include_str!("../fixtures/codegen/minimal.json");
+    let mut opts = full_opts();
+    opts.http_client = HttpClient::Axios;
+    let out = generate(spec, &opts).expect("generate minimal (axios)");
+
+    assert_eq!(
+        file(&out, "runtime.ts"),
+        include_str!("../__snapshots__/codegen/minimal__runtime.axios.ts")
+    );
+    // types/client/hooks/index are backend-invariant: same as the fetch goldens.
+    assert_eq!(
+        file(&out, "types.ts"),
+        include_str!("../__snapshots__/codegen/minimal__types.ts")
     );
     assert_eq!(
         file(&out, "client.ts"),

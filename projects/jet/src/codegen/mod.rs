@@ -21,6 +21,18 @@ pub mod types_emit;
 use openapi::Spec;
 use tsmap::TypeMap;
 
+/// HTTP runtime backend for the generated client.
+///
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/select-http-client-backend-fetch-axios-for-openapi-codegen.md#logic
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HttpClient {
+    /// Native `fetch` (zero runtime dependency).
+    #[default]
+    Fetch,
+    /// `axios` (peer dependency of the generated output).
+    Axios,
+}
+
 /// What the generator emits, selected by CLI flags.
 ///
 /// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
@@ -29,6 +41,7 @@ pub struct GenOptions {
     pub spec_path: PathBuf,
     pub out_dir: PathBuf,
     pub client_name: String,
+    pub http_client: HttpClient,
     pub emit_types: bool,
     pub emit_client: bool,
     pub emit_hooks: bool,
@@ -65,7 +78,7 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     if opts.emit_client {
         files.push(GeneratedFile {
             rel_path: "runtime.ts".to_string(),
-            contents: client_emit::emit_runtime(),
+            contents: client_emit::emit_runtime(opts.http_client),
         });
         files.push(GeneratedFile {
             rel_path: "client.ts".to_string(),
@@ -155,6 +168,7 @@ mod tests {
             spec_path: PathBuf::new(),
             out_dir: PathBuf::new(),
             client_name: "createClient".to_string(),
+            http_client: HttpClient::Fetch,
             emit_types: true,
             emit_client: true,
             emit_hooks: true,
@@ -233,6 +247,41 @@ mod tests {
             .contents
             .contains("export function makeApi(config: ClientConfig)"));
         assert!(client.contents.contains("ReturnType<typeof makeApi>"));
+    }
+
+    fn content<'a>(out: &'a GeneratedOutput, name: &str) -> &'a str {
+        out.files
+            .iter()
+            .find(|f| f.rel_path == name)
+            .unwrap()
+            .contents
+            .as_str()
+    }
+
+    #[test]
+    fn http_backend_only_changes_runtime() {
+        let fetch = generate(MINIMAL, &full_opts()).unwrap();
+        let mut axios_opts = full_opts();
+        axios_opts.http_client = HttpClient::Axios;
+        let axios = generate(MINIMAL, &axios_opts).unwrap();
+
+        // Everything except runtime.ts is byte-identical across backends.
+        for name in ["types.ts", "client.ts", "hooks.ts", "index.ts"] {
+            assert_eq!(
+                content(&fetch, name),
+                content(&axios, name),
+                "{name} differs across backends"
+            );
+        }
+
+        // The fetch runtime uses native fetch; the axios runtime imports axios.
+        let fetch_rt = content(&fetch, "runtime.ts");
+        assert!(fetch_rt.contains("const doFetch = config.fetch ?? fetch;"));
+        assert!(!fetch_rt.contains("axios"));
+        let axios_rt = content(&axios, "runtime.ts");
+        assert!(axios_rt.contains("import axios from \"axios\";"));
+        assert!(axios_rt.contains("axios?: AxiosInstance;"));
+        assert!(axios_rt.contains("config.axios ?? axios.create()"));
     }
 }
 // HANDWRITE-END

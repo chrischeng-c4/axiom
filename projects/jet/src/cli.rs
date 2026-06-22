@@ -487,6 +487,17 @@ pub fn command() -> Command {
                                 .long("client-name")
                                 .default_value("createClient")
                                 .help("Name of the generated client factory function."),
+                        )
+                        .arg(
+                            Arg::new("http")
+                                .long("http")
+                                .value_parser(["fetch", "axios"])
+                                .default_value("fetch")
+                                .help(
+                                    "HTTP runtime for the generated client: \
+                                     native `fetch` (default) or `axios` (peer \
+                                     dependency of the generated output).",
+                                ),
                         ),
                 ),
         )
@@ -1604,10 +1615,15 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     root_dir.join(out_arg)
                 };
                 let types_only = om.get_flag("types-only");
+                let http_client = match om.get_one::<String>("http").map(String::as_str) {
+                    Some("axios") => crate::codegen::HttpClient::Axios,
+                    _ => crate::codegen::HttpClient::Fetch,
+                };
                 let opts = crate::codegen::GenOptions {
                     spec_path,
                     out_dir,
                     client_name: om.get_one::<String>("client-name").cloned().unwrap(),
+                    http_client,
                     emit_types: true,
                     emit_client: !types_only,
                     emit_hooks: !types_only && !om.get_flag("no-hooks"),
