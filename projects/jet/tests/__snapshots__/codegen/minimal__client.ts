@@ -2,18 +2,18 @@
 
 import type { ClientConfig } from "./runtime";
 import { request } from "./runtime";
-import type { NewPet, Pet } from "./types";
+import type { CreatePetData, CreatePetResponse, GetPetByIdData, GetPetByIdResponse, ListPetsData, ListPetsResponse } from "./types";
 
 export function createClient(config: ClientConfig) {
   return {
-    listPets(params: { limit?: number }): Promise<Pet[]> {
-      return request<Pet[]>(config, { method: "GET", path: `/pets`, query: { limit: params.limit } });
+    listPets(data: ListPetsData): Promise<ListPetsResponse> {
+      return request<ListPetsResponse>(config, { method: "GET", path: `/pets`, query: { limit: data.query?.limit } });
     },
-    createPet(params: { body: NewPet }): Promise<Pet> {
-      return request<Pet>(config, { method: "POST", path: `/pets`, body: params.body });
+    createPet(data: CreatePetData): Promise<CreatePetResponse> {
+      return request<CreatePetResponse>(config, { method: "POST", path: `/pets`, body: data.body });
     },
-    getPetById(params: { petId: number }): Promise<Pet> {
-      return request<Pet>(config, { method: "GET", path: `/pets/${params.petId}` });
+    getPetById(data: GetPetByIdData): Promise<GetPetByIdResponse> {
+      return request<GetPetByIdResponse>(config, { method: "GET", path: `/pets/${data.path.petId}` });
     },
   };
 }

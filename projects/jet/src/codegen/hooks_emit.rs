@@ -1,6 +1,7 @@
-// SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+// SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
 // HANDWRITE-BEGIN
-//! Emits `hooks.ts`: TanStack Query (React Query) hooks bound to the client.
+//! Emits `hooks.ts`: TanStack Query (React Query) hooks bound to the client,
+//! using the per-operation `XxxData` / `XxxResponse` types.
 //!
 //! `@tanstack/react-query` is a peer dependency of the *generated output*, not
 //! of jet — only `import` statements reference it.
@@ -8,20 +9,18 @@
 use crate::codegen::client_emit::type_import;
 use crate::codegen::names::to_pascal;
 use crate::codegen::plan::OperationPlan;
-use crate::codegen::tsmap::TypeMap;
-use crate::codegen::types_emit::HEADER;
 
 /// Render `hooks.ts`.
 ///
-/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
-pub fn emit(plans: &[OperationPlan], tm: &TypeMap) -> String {
-    let mut out = String::from(HEADER);
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
+pub fn emit(plans: &[OperationPlan]) -> String {
+    let mut out = String::from(crate::codegen::types_emit::HEADER);
     out.push_str("import { useMutation, useQuery } from \"@tanstack/react-query\";\n");
     out.push_str(
         "import type { UseMutationOptions, UseQueryOptions } from \"@tanstack/react-query\";\n",
     );
     out.push_str("import type { ApiClient } from \"./client\";\n");
-    out.push_str(&type_import(tm));
+    out.push_str(&type_import(plans));
     out.push('\n');
 
     out.push_str("export function createHooks(client: ApiClient) {\n");
@@ -35,59 +34,35 @@ pub fn emit(plans: &[OperationPlan], tm: &TypeMap) -> String {
 }
 
 fn emit_hook(p: &OperationPlan) -> String {
-    let hook_stem = to_pascal(&p.fn_name);
-    let ret = &p.return_type;
+    let stem = to_pascal(&p.fn_name);
+    let resp = &p.response_type_name;
+    let fn_name = &p.fn_name;
     if p.is_query {
-        let key = query_key(p);
-        match p.params_type() {
-            Some(params_ty) => format!(
-                "    use{stem}Query(params: {params_ty}, options?: Omit<UseQueryOptions<{ret}>, \"queryKey\" | \"queryFn\">) {{\n\
-                 \x20     return useQuery<{ret}>({{ queryKey: {key}, queryFn: () => client.{fn}(params), ...options }});\n\
+        match &p.data_type_name {
+            Some(data) => format!(
+                "    use{stem}Query(data: {data}, options?: Omit<UseQueryOptions<{resp}>, \"queryKey\" | \"queryFn\">) {{\n\
+                 \x20     return useQuery<{resp}>({{ queryKey: [\"{fn_name}\", data], queryFn: () => client.{fn_name}(data), ...options }});\n\
                  \x20   }},\n",
-                stem = hook_stem,
-                params_ty = params_ty,
-                ret = ret,
-                key = key,
-                fn = p.fn_name,
             ),
             None => format!(
-                "    use{stem}Query(options?: Omit<UseQueryOptions<{ret}>, \"queryKey\" | \"queryFn\">) {{\n\
-                 \x20     return useQuery<{ret}>({{ queryKey: {key}, queryFn: () => client.{fn}(), ...options }});\n\
+                "    use{stem}Query(options?: Omit<UseQueryOptions<{resp}>, \"queryKey\" | \"queryFn\">) {{\n\
+                 \x20     return useQuery<{resp}>({{ queryKey: [\"{fn_name}\"], queryFn: () => client.{fn_name}(), ...options }});\n\
                  \x20   }},\n",
-                stem = hook_stem,
-                ret = ret,
-                key = key,
-                fn = p.fn_name,
             ),
         }
     } else {
-        match p.params_type() {
-            Some(params_ty) => format!(
-                "    use{stem}Mutation(options?: UseMutationOptions<{ret}, Error, {vars}>) {{\n\
-                 \x20     return useMutation<{ret}, Error, {vars}>({{ mutationFn: (variables) => client.{fn}(variables), ...options }});\n\
+        match &p.data_type_name {
+            Some(data) => format!(
+                "    use{stem}Mutation(options?: UseMutationOptions<{resp}, Error, {data}>) {{\n\
+                 \x20     return useMutation<{resp}, Error, {data}>({{ mutationFn: (data) => client.{fn_name}(data), ...options }});\n\
                  \x20   }},\n",
-                stem = hook_stem,
-                ret = ret,
-                vars = params_ty,
-                fn = p.fn_name,
             ),
             None => format!(
-                "    use{stem}Mutation(options?: UseMutationOptions<{ret}, Error, void>) {{\n\
-                 \x20     return useMutation<{ret}, Error, void>({{ mutationFn: () => client.{fn}(), ...options }});\n\
+                "    use{stem}Mutation(options?: UseMutationOptions<{resp}, Error, void>) {{\n\
+                 \x20     return useMutation<{resp}, Error, void>({{ mutationFn: () => client.{fn_name}(), ...options }});\n\
                  \x20   }},\n",
-                stem = hook_stem,
-                ret = ret,
-                fn = p.fn_name,
             ),
         }
-    }
-}
-
-fn query_key(p: &OperationPlan) -> String {
-    if p.param_fields.is_empty() {
-        format!("[\"{}\"]", p.fn_name)
-    } else {
-        format!("[\"{}\", params]", p.fn_name)
     }
 }
 
@@ -101,31 +76,45 @@ mod tests {
         let s: Spec = serde_json::from_str(json).unwrap();
         let tm = build_type_map(&s);
         let plans = plan::build(&s, &tm);
-        emit(&plans, &tm)
+        emit(&plans)
     }
 
     #[test]
-    fn get_becomes_query_hook() {
+    fn get_becomes_query_hook_with_data() {
         let out = render(
             r##"{"paths":{"/pets/{petId}":{"get":{"operationId":"getPetById",
             "parameters":[{"name":"petId","in":"path","required":true,"schema":{"type":"integer"}}],
             "responses":{"200":{"content":{"application/json":{"schema":{"type":"string"}}}}}}}}}"##,
         );
-        assert!(out.contains("import { useMutation, useQuery } from \"@tanstack/react-query\";"));
-        assert!(out.contains("useGetPetByIdQuery(params: { petId: number }"));
-        assert!(out.contains("queryKey: [\"getPetById\", params]"));
-        assert!(out.contains("queryFn: () => client.getPetById(params)"));
+        assert!(
+            out.contains("import type { GetPetByIdData, GetPetByIdResponse } from \"./types\";")
+        );
+        assert!(out.contains("useGetPetByIdQuery(data: GetPetByIdData, options?: Omit<UseQueryOptions<GetPetByIdResponse>"));
+        assert!(out.contains("queryKey: [\"getPetById\", data]"));
+        assert!(out.contains("queryFn: () => client.getPetById(data)"));
     }
 
     #[test]
-    fn post_becomes_mutation_hook() {
+    fn post_becomes_mutation_hook_with_data() {
         let out = render(
             r##"{"paths":{"/pets":{"post":{"operationId":"createPet",
             "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},
             "responses":{"201":{"content":{"application/json":{"schema":{"type":"object"}}}}}}}}}"##,
         );
-        assert!(out.contains("useCreatePetMutation(options?: UseMutationOptions<"));
-        assert!(out.contains("mutationFn: (variables) => client.createPet(variables)"));
+        assert!(out.contains(
+            "useCreatePetMutation(options?: UseMutationOptions<CreatePetResponse, Error, CreatePetData>)"
+        ));
+        assert!(out.contains("mutationFn: (data) => client.createPet(data)"));
+    }
+
+    #[test]
+    fn no_input_query_hook_omits_data() {
+        let out = render(
+            r##"{"paths":{"/health":{"get":{"operationId":"health","responses":{"200":{"content":{"application/json":{"schema":{"type":"boolean"}}}}}}}}}"##,
+        );
+        assert!(out.contains("useHealthQuery(options?: Omit<UseQueryOptions<HealthResponse>"));
+        assert!(out.contains("queryKey: [\"health\"]"));
+        assert!(out.contains("queryFn: () => client.health()"));
     }
 }
 // HANDWRITE-END

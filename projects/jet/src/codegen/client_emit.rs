@@ -1,12 +1,13 @@
-// SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+// SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
 // HANDWRITE-BEGIN
-//! Emits `runtime.ts` (the fetch base) and `client.ts` (a `createClient`
-//! factory with one typed function per operation).
+//! Emits `runtime.ts` (the fetch or axios base) and `client.ts` (a `createClient`
+//! factory with one typed function per operation, taking a grouped `data` arg).
 
+use crate::codegen::names::{self, is_ident};
 use crate::codegen::plan::OperationPlan;
-use crate::codegen::tsmap::TypeMap;
 use crate::codegen::types_emit::HEADER;
 use crate::codegen::{GenOptions, HttpClient};
+use std::collections::BTreeSet;
 
 /// Static request runtime shared by every generated client. The body depends
 /// only on the chosen [`HttpClient`] backend — the `ClientConfig`/`request`
@@ -93,12 +94,12 @@ export async function request<T>(config: ClientConfig, args: RequestArgs): Promi
 
 /// Render `client.ts`.
 ///
-/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
-pub fn emit_client(plans: &[OperationPlan], tm: &TypeMap, opts: &GenOptions) -> String {
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
+pub fn emit_client(plans: &[OperationPlan], opts: &GenOptions) -> String {
     let mut out = String::from(HEADER);
     out.push_str("import type { ClientConfig } from \"./runtime\";\n");
     out.push_str("import { request } from \"./runtime\";\n");
-    out.push_str(&type_import(tm));
+    out.push_str(&type_import(plans));
     out.push('\n');
 
     let factory = &opts.client_name;
@@ -118,61 +119,115 @@ pub fn emit_client(plans: &[OperationPlan], tm: &TypeMap, opts: &GenOptions) -> 
 }
 
 fn emit_method(p: &OperationPlan) -> String {
-    let sig = match p.params_type() {
-        Some(t) => format!("(params: {t})"),
+    let sig = match &p.data_type_name {
+        Some(name) => format!("(data: {name})"),
         None => "()".to_string(),
     };
 
     let mut args = vec![
         format!("method: \"{}\"", p.http_method),
-        format!("path: {}", p.path_template),
+        format!("path: {}", path_template(p)),
     ];
-    if !p.query_pairs.is_empty() {
+    if !p.query_params.is_empty() {
         let entries = p
-            .query_pairs
+            .query_params
             .iter()
-            .map(|(k, access)| format!("{}: {}", crate::codegen::names::prop_key(k), access))
+            .map(|f| {
+                format!(
+                    "{}: {}",
+                    names::prop_key(&f.name),
+                    access("data.query", !p.query_required(), &f.name)
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         args.push(format!("query: {{ {entries} }}"));
     }
-    if !p.header_pairs.is_empty() {
+    if !p.header_params.is_empty() {
         let entries = p
-            .header_pairs
+            .header_params
             .iter()
-            .map(|(k, access)| {
-                format!("{}: String({})", crate::codegen::names::prop_key(k), access)
+            .map(|f| {
+                format!(
+                    "{}: String({})",
+                    names::prop_key(&f.name),
+                    access("data.headers", !p.headers_required(), &f.name)
+                )
             })
             .collect::<Vec<_>>()
             .join(", ");
         args.push(format!("headers: {{ {entries} }}"));
     }
-    if p.has_body {
-        args.push("body: params.body".to_string());
+    if p.body.is_some() {
+        args.push("body: data.body".to_string());
     }
 
+    let resp = &p.response_type_name;
     format!(
-        "    {name}{sig}: Promise<{ret}> {{\n      return request<{ret}>(config, {{ {args} }});\n    }},\n",
+        "    {name}{sig}: Promise<{resp}> {{\n      return request<{resp}>(config, {{ {args} }});\n    }},\n",
         name = p.fn_name,
         sig = sig,
-        ret = p.return_type,
+        resp = resp,
         args = args.join(", "),
     )
 }
 
-/// `import type { A, B } from "./types";` for all component type names.
-pub fn type_import(tm: &TypeMap) -> String {
-    if tm.names.is_empty() {
+/// `/pets/{petId}` → `` `/pets/${data.path.petId}` ``.
+fn path_template(p: &OperationPlan) -> String {
+    let mut out = String::from("`");
+    let mut chars = p.path_raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            let mut name = String::new();
+            for c in chars.by_ref() {
+                if c == '}' {
+                    break;
+                }
+                name.push(c);
+            }
+            out.push_str("${");
+            out.push_str(&access("data.path", false, &name));
+            out.push('}');
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('`');
+    out
+}
+
+/// Member access against a grouped sub-object, e.g. `data.query?.limit` or
+/// `data.headers["X-Id"]`.
+fn access(base: &str, optional: bool, name: &str) -> String {
+    if is_ident(name) {
+        if optional {
+            format!("{base}?.{name}")
+        } else {
+            format!("{base}.{name}")
+        }
+    } else {
+        let key = name.replace('\\', "\\\\").replace('"', "\\\"");
+        if optional {
+            format!("{base}?.[\"{key}\"]")
+        } else {
+            format!("{base}[\"{key}\"]")
+        }
+    }
+}
+
+/// `import type { ... } from "./types";` for the per-operation type names.
+pub fn type_import(plans: &[OperationPlan]) -> String {
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for p in plans {
+        if let Some(d) = &p.data_type_name {
+            names.insert(d.clone());
+        }
+        names.insert(p.response_type_name.clone());
+    }
+    if names.is_empty() {
         return String::new();
     }
-    let mut names: Vec<&String> = tm.names.values().collect();
-    names.sort();
-    names.dedup();
-    let list = names
-        .iter()
-        .map(|n| n.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let list = names.into_iter().collect::<Vec<_>>().join(", ");
     format!("import type {{ {list} }} from \"./types\";\n")
 }
 
@@ -181,7 +236,7 @@ mod tests {
     use super::*;
     use crate::codegen::openapi::Spec;
     use crate::codegen::plan;
-    use crate::codegen::{build_type_map, GenOptions, HttpClient};
+    use crate::codegen::{build_type_map, GenOptions};
     use std::path::PathBuf;
 
     fn opts() -> GenOptions {
@@ -196,47 +251,61 @@ mod tests {
         }
     }
 
-    #[test]
-    fn client_method_with_path_param_and_body() {
-        let s: Spec = serde_json::from_str(
-            r##"{"components":{"schemas":{"Pet":{"type":"object","properties":{"id":{"type":"integer"}}}}},
-            "paths":{"/pets":{"post":{"operationId":"createPet",
-              "requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Pet"}}}},
-              "responses":{"201":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Pet"}}}}}}}}}"##,
-        )
-        .unwrap();
+    fn render(json: &str) -> String {
+        let s: Spec = serde_json::from_str(json).unwrap();
         let tm = build_type_map(&s);
         let plans = plan::build(&s, &tm);
-        let out = emit_client(&plans, &tm, &opts());
-        assert!(out.contains("import type { Pet } from \"./types\";"));
-        assert!(out.contains("export function createClient(config: ClientConfig) {"));
-        assert!(out.contains("createPet(params: { body: Pet }): Promise<Pet> {"));
-        assert!(out.contains(
-            "return request<Pet>(config, { method: \"POST\", path: `/pets`, body: params.body });"
-        ));
-        assert!(out.contains("export type ApiClient = ReturnType<typeof createClient>;"));
+        emit_client(&plans, &opts())
     }
 
     #[test]
-    fn runtime_has_request_helper() {
-        let rt = emit_runtime(HttpClient::Fetch);
-        assert!(rt
-            .contains("export async function request<T>(config: ClientConfig, args: RequestArgs)"));
-        assert!(rt.contains("if (response.status === 204)"));
-        assert!(rt.contains("const doFetch = config.fetch ?? fetch;"));
+    fn client_method_takes_grouped_data() {
+        let out = render(
+            r##"{"components":{"schemas":{"Pet":{"type":"object","properties":{"id":{"type":"integer"}}}}},
+            "paths":{"/pets/{petId}":{"get":{"operationId":"getPetById",
+              "parameters":[{"name":"petId","in":"path","required":true,"schema":{"type":"integer"}}],
+              "responses":{"200":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Pet"}}}}}}}}}"##,
+        );
+        assert!(
+            out.contains("import type { GetPetByIdData, GetPetByIdResponse } from \"./types\";")
+        );
+        assert!(out.contains("getPetById(data: GetPetByIdData): Promise<GetPetByIdResponse> {"));
+        assert!(out.contains("return request<GetPetByIdResponse>(config, { method: \"GET\", path: `/pets/${data.path.petId}` });"));
     }
 
     #[test]
-    fn axios_runtime_uses_axios() {
-        let rt = emit_runtime(HttpClient::Axios);
-        assert!(rt.contains("import axios from \"axios\";"));
-        assert!(rt.contains("import type { AxiosInstance } from \"axios\";"));
-        assert!(rt.contains("axios?: AxiosInstance;"));
-        assert!(rt.contains("config.axios ?? axios.create()"));
-        assert!(rt.contains("return response.data;"));
-        // Same request/ClientConfig contract as the fetch runtime.
-        assert!(rt
-            .contains("export async function request<T>(config: ClientConfig, args: RequestArgs)"));
+    fn client_query_and_body_access() {
+        let out = render(
+            r##"{"paths":{"/pets":{
+              "get":{"operationId":"listPets","parameters":[{"name":"limit","in":"query","required":false,"schema":{"type":"integer"}}],
+                "responses":{"200":{"content":{"application/json":{"schema":{"type":"array","items":{"type":"string"}}}}}}},
+              "post":{"operationId":"createPet","requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},
+                "responses":{"201":{"content":{"application/json":{"schema":{"type":"string"}}}}}}}}}"##,
+        );
+        assert!(out.contains("listPets(data: ListPetsData): Promise<ListPetsResponse> {"));
+        assert!(out.contains("query: { limit: data.query?.limit }"));
+        assert!(out.contains("createPet(data: CreatePetData): Promise<CreatePetResponse> {"));
+        assert!(out.contains("body: data.body"));
+    }
+
+    #[test]
+    fn no_input_operation_takes_no_arg() {
+        let out = render(
+            r##"{"paths":{"/health":{"get":{"operationId":"health","responses":{"200":{"content":{"application/json":{"schema":{"type":"boolean"}}}}}}}}}"##,
+        );
+        assert!(out.contains("health(): Promise<HealthResponse> {"));
+        assert!(out.contains("import type { HealthResponse } from \"./types\";"));
+    }
+
+    #[test]
+    fn runtime_fetch_and_axios() {
+        let fetch = emit_runtime(HttpClient::Fetch);
+        assert!(fetch.contains("const doFetch = config.fetch ?? fetch;"));
+        assert!(!fetch.contains("axios"));
+        let axios = emit_runtime(HttpClient::Axios);
+        assert!(axios.contains("import axios from \"axios\";"));
+        assert!(axios.contains("config.axios ?? axios.create()"));
+        assert!(axios.contains("return response.data;"));
     }
 }
 // HANDWRITE-END
