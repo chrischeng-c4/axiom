@@ -2261,6 +2261,23 @@ pub fn mb_builtin_type_obj(name: MbValue) -> MbValue {
     make_type_object(&name_str)
 }
 
+fn value_is_abstractmethod_marker(val: MbValue) -> bool {
+    let Some(ptr) = val.as_ptr() else {
+        return false;
+    };
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            return lock
+                .read()
+                .unwrap()
+                .get("__isabstractmethod__")
+                .and_then(|v| v.as_bool())
+                == Some(true);
+        }
+    }
+    false
+}
+
 /// type(name, bases, dict) — 3-arg form: dynamically create a new class.
 ///
 /// `name` is a string (the class name), `bases` is a tuple of base class names
@@ -2292,32 +2309,7 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
                 ObjData::Tuple(items) => {
                     let names: Vec<String> = items
                         .iter()
-                        .filter_map(|item| {
-                            item.as_ptr().and_then(|p| match &(*p).data {
-                                ObjData::Str(s) => Some(s.clone()),
-                                ObjData::Instance {
-                                    class_name: cn,
-                                    fields,
-                                } => {
-                                    if cn == "type" {
-                                        fields.read().ok().and_then(|f| {
-                                            f.get("__name__").and_then(|v| {
-                                                v.as_ptr().and_then(|vp| {
-                                                    if let ObjData::Str(ref s) = (*vp).data {
-                                                        Some(s.clone())
-                                                    } else {
-                                                        None
-                                                    }
-                                                })
-                                            })
-                                        })
-                                    } else {
-                                        Some(cn.clone())
-                                    }
-                                }
-                                _ => None,
-                            })
-                        })
+                        .filter_map(|item| super::class::resolve_class_name(*item))
                         .collect();
                     if names.is_empty() {
                         vec!["object".to_string()]
@@ -2338,12 +2330,16 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     // __repr__, etc. passed through the dict are properly dispatched.
     let mut methods = std::collections::HashMap::new();
     let mut class_attrs: Vec<(String, MbValue)> = Vec::new();
+    let mut abstract_names: Vec<String> = Vec::new();
     if let Some(ptr) = dict.as_ptr() {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let pairs = lock.read().unwrap();
                 for (k, v) in pairs.iter() {
                     let key = k.to_string();
+                    if value_is_abstractmethod_marker(*v) {
+                        abstract_names.push(key.clone());
+                    }
                     let is_callable = resolve_callable(*v).is_some();
                     let is_dunder = key.starts_with("__") && key.ends_with("__");
                     if is_callable || (is_dunder && !v.is_none()) {
@@ -2364,6 +2360,18 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     for (key, val) in &class_attrs {
         let attr_name_val = MbValue::from_ptr(MbObject::new_str(key.clone()));
         super::class::mb_class_set_class_attr(cls_name_val, attr_name_val, *val);
+    }
+    if !abstract_names.is_empty() {
+        let names = MbValue::from_ptr(MbObject::new_list(
+            abstract_names
+                .into_iter()
+                .map(|name| MbValue::from_ptr(MbObject::new_str(name)))
+                .collect(),
+        ));
+        super::class::mb_class_set_abstractmethods(
+            MbValue::from_ptr(MbObject::new_str(class_name.clone())),
+            names,
+        );
     }
 
     // 6. Return a type object
@@ -7978,6 +7986,16 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         .unwrap_or_default();
                     if let Some(result) =
                         super::class::mb_collections_abc_reject_abstract_instantiation(&name)
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        super::class::mb_user_abc_reject_abstract_instantiation(&name)
+                    {
+                        return result;
+                    }
+                    if let Some(result) =
+                        super::class::mb_contextlib_abc_reject_abstract_instantiation(&name)
                     {
                         return result;
                     }
