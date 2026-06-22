@@ -6158,6 +6158,17 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                         }
                     }
                 }
+                // urllib.request.Request.full_url is a property setter: changing it
+                // re-parses derived fields, and invalid URLs raise ValueError.
+                if class_name == "urllib.request.Request" {
+                    if let Some(kp) = attr.as_ptr() {
+                        if let ObjData::Str(ref attr_s) = (*kp).data {
+                            if super::stdlib::http_mod::request_setattr(obj, attr_s, value) {
+                                return;
+                            }
+                        }
+                    }
+                }
                 // weakref.ref.__callback__ is a read-only attribute in CPython:
                 // `r.__callback__ = ...` raises AttributeError.
                 if class_name == "ReferenceType" {
