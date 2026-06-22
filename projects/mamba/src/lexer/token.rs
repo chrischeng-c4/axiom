@@ -598,6 +598,70 @@ fn lex_fstr_inner(lex: &mut logos::Lexer<TokenKind>, close_quote: u8) -> Option<
     None // unterminated
 }
 
+fn is_dec_digit_byte(b: u8) -> bool {
+    b.is_ascii_digit()
+}
+
+fn is_hex_digit_byte(b: u8) -> bool {
+    b.is_ascii_hexdigit()
+}
+
+fn is_oct_digit_byte(b: u8) -> bool {
+    matches!(b, b'0'..=b'7')
+}
+
+fn is_bin_digit_byte(b: u8) -> bool {
+    matches!(b, b'0' | b'1')
+}
+
+fn underscores_between_digits(s: &str, is_digit: fn(u8) -> bool) -> bool {
+    let bytes = s.as_bytes();
+    for (i, b) in bytes.iter().enumerate() {
+        if *b == b'_' {
+            if i == 0 || i + 1 == bytes.len() {
+                return false;
+            }
+            if !is_digit(bytes[i - 1]) || !is_digit(bytes[i + 1]) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn parse_decimal_int_literal(s: &str) -> Option<i64> {
+    if !underscores_between_digits(s, is_dec_digit_byte) {
+        return None;
+    }
+    let digits = s.replace('_', "");
+    if digits.starts_with('0') && digits.chars().any(|c| c != '0') {
+        return None;
+    }
+    digits.parse::<i64>().ok()
+}
+
+fn parse_decimal_float_literal(s: &str) -> Option<f64> {
+    if !underscores_between_digits(s, is_dec_digit_byte) {
+        return None;
+    }
+    s.replace('_', "").parse::<f64>().ok()
+}
+
+fn parse_complex_literal(s: &str) -> Option<f64> {
+    parse_decimal_float_literal(&s[..s.len() - 1])
+}
+
+fn parse_prefixed_int_literal(s: &str, radix: u32, is_digit: fn(u8) -> bool) -> Option<i64> {
+    let mut body = &s[2..];
+    if let Some(rest) = body.strip_prefix('_') {
+        body = rest;
+    }
+    if body.is_empty() || !underscores_between_digits(body, is_digit) {
+        return None;
+    }
+    i64::from_str_radix(&body.replace('_', ""), radix).ok()
+}
+
 /// Token kind produced by the lexer.
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t]+")]
@@ -714,34 +778,36 @@ pub enum TokenKind {
     // regex consumed the numeric body and `j` fell through to Ident.
     // Digit runs allow PEP 515 underscores (`2_0j`, `1_000.5`, `1_0e3`); the
     // `_` separators are stripped before `parse::<f64>()`, which rejects them.
-    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| {
-        let s = lex.slice();
-        s[..s.len()-1].replace('_', "").parse::<f64>().ok()
-    }, priority = 4)]
-    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| {
-        let s = lex.slice();
-        s[..s.len()-1].replace('_', "").parse::<f64>().ok()
-    }, priority = 4)]
-    #[regex(r"[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| {
-        let s = lex.slice();
-        s[..s.len()-1].replace('_', "").parse::<f64>().ok()
-    }, priority = 3)]
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| parse_complex_literal(lex.slice()), priority = 4)]
+    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| parse_complex_literal(lex.slice()), priority = 4)]
+    #[regex(r"[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| parse_complex_literal(lex.slice()), priority = 4)]
     Complex(f64),
-    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
-    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
-    #[regex(r"[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?", |lex| parse_decimal_float_literal(lex.slice()), priority = 4)]
+    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?", |lex| parse_decimal_float_literal(lex.slice()), priority = 4)]
+    #[regex(r"[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*", |lex| parse_decimal_float_literal(lex.slice()), priority = 4)]
     Float(f64),
-    #[regex(r"0[xX][0-9a-fA-F][0-9a-fA-F_]*", |lex| {
-        i64::from_str_radix(&lex.slice()[2..].replace('_', ""), 16).ok()
+    #[regex(r"0[xX]_?[0-9a-fA-F][0-9a-fA-F_]*", |lex| {
+        parse_prefixed_int_literal(lex.slice(), 16, is_hex_digit_byte)
     }, priority = 3)]
-    #[regex(r"0[oO][0-7][0-7_]*", |lex| {
-        i64::from_str_radix(&lex.slice()[2..].replace('_', ""), 8).ok()
+    #[regex(r"0[oO]_?[0-7][0-7_]*", |lex| {
+        parse_prefixed_int_literal(lex.slice(), 8, is_oct_digit_byte)
     }, priority = 3)]
-    #[regex(r"0[bB][01][01_]*", |lex| {
-        i64::from_str_radix(&lex.slice()[2..].replace('_', ""), 2).ok()
+    #[regex(r"0[bB]_?[01][01_]*", |lex| {
+        parse_prefixed_int_literal(lex.slice(), 2, is_bin_digit_byte)
     }, priority = 3)]
-    #[regex(r"[0-9][0-9_]*", |lex| lex.slice().replace('_', "").parse::<i64>().ok(), priority = 2)]
+    #[regex(r"[0-9][0-9_]*", |lex| parse_decimal_int_literal(lex.slice()), priority = 2)]
     Int(i64),
+    #[regex(r"0[xX][A-Za-z0-9_]*", priority = 1)]
+    #[regex(r"0[oO][A-Za-z0-9_]*", priority = 1)]
+    #[regex(r"0[bB][A-Za-z0-9_]*", priority = 1)]
+    #[regex(r"0_[A-Za-z][A-Za-z0-9_]*", priority = 3)]
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ][A-Za-z0-9_]+", priority = 2)]
+    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ][A-Za-z0-9_]+", priority = 2)]
+    #[regex(r"[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ][A-Za-z0-9_]+", priority = 2)]
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*[eE][+-]?[A-Za-z0-9_]*", priority = 1)]
+    #[regex(r"\.[0-9][0-9_]*[eE][+-]?[A-Za-z0-9_]*", priority = 1)]
+    #[regex(r"[0-9][0-9_]*[eE][+-]?[A-Za-z0-9_]*", priority = 1)]
+    InvalidNumber,
 
     // Regular strings
     #[regex(r#""([^"\\]|\\.)*""#, |lex| {
@@ -1072,6 +1138,7 @@ impl std::fmt::Display for TokenKind {
             Self::Complex(v) => write!(f, "{v}j"),
             Self::Int(v) => write!(f, "{v}"),
             Self::Float(v) => write!(f, "{v}"),
+            Self::InvalidNumber => f.write_str("invalid number"),
             Self::Str(v) => write!(f, "\"{v}\""),
             Self::TripleStr(v) => write!(f, "\"\"\"{v}\"\"\""),
             Self::FStr(v) => write!(f, "f\"{v}\""),
