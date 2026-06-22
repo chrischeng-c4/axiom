@@ -29,6 +29,9 @@ pub struct Parser<'a> {
     /// statement-top level — not parenthesized or nested sub-expressions — is
     /// affected.
     pub(crate) stmt_expr_toplevel: bool,
+    /// True while parsing statements that execute directly in a class body.
+    /// Function and lambda bodies nested inside a class temporarily clear this.
+    pub(crate) in_class_body: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -40,6 +43,7 @@ impl<'a> Parser<'a> {
             file_id,
             pending_stmts: Vec::new(),
             stmt_expr_toplevel: false,
+            in_class_body: false,
         }
     }
 
