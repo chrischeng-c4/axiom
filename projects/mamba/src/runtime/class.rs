@@ -4426,6 +4426,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 }
                             }
                             _ => {
+                                if let Some(meta_desc) =
+                                    metaclass_data_descriptor_for_class(s, &attr_name)
+                                {
+                                    let cls_val = MbValue::from_ptr(
+                                        MbObject::new_str(s.clone()),
+                                    );
+                                    return invoke_descriptor_get(meta_desc, cls_val);
+                                }
                                 // Class methods and class attributes via MRO
                                 let method = lookup_method(s, &attr_name);
                                 if !method.is_none() {
@@ -5112,21 +5120,12 @@ fn invoke_descriptor_get(desc: MbValue, instance: MbValue) -> MbValue {
             }
         }
     }
-    // General __get__ protocol: call desc.__get__(self, obj, objtype)
-    // P2-R3: pass (desc, instance, objtype) instead of just (instance).
+    // General __get__ protocol. try_get_dunder returns the unbound descriptor
+    // method; call that callable directly with (desc, instance, owner).
     if let Some(method) = try_get_dunder(desc, "__get__") {
-        let addr = extract_func_addr(method);
-        if addr != 0 {
-            let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
-            if is_registered {
-                // Build objtype: the class name of the instance as a string MbValue.
-                let objtype = get_instance_class_name_value(instance);
-                // REQ: JIT-compiled functions use SystemV/C calling convention.
-                let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                    unsafe { std::mem::transmute(addr as usize) };
-                return func(desc, instance, objtype);
-            }
-        }
+        let objtype = get_instance_class_name_value(instance);
+        let args = MbValue::from_ptr(MbObject::new_list(vec![desc, instance, objtype]));
+        return super::builtins::mb_call_spread(method, args);
     }
     desc
 }
@@ -6591,6 +6590,36 @@ pub fn mb_delattr(obj: MbValue, attr: MbValue) {
     let attr_name = extract_str(attr).unwrap_or_default();
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
+            if let ObjData::Str(ref class_name) = (*ptr).data {
+                let is_class =
+                    CLASS_REGISTRY.with(|r| r.borrow().contains_key(class_name.as_str()));
+                if is_class {
+                    let removed = CLASS_REGISTRY.with(|reg| {
+                        let mut reg = reg.borrow_mut();
+                        let Some(cls) = reg.get_mut(class_name.as_str()) else {
+                            return false;
+                        };
+                        let attr_val = cls.class_attrs.remove(&attr_name);
+                        let method_val = cls.methods.remove(&attr_name);
+                        let removed = attr_val.is_some() || method_val.is_some();
+                        drop(reg);
+                        for val in attr_val.into_iter().chain(method_val.into_iter()) {
+                            super::rc::release_if_ptr(val);
+                        }
+                        removed
+                    });
+                    invalidate_method_cache();
+                    if !removed {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "type object '{class_name}' has no attribute '{attr_name}'"
+                            ))),
+                        );
+                    }
+                    return;
+                }
+            }
             if let ObjData::Instance {
                 ref class_name,
                 ref fields,
@@ -7124,6 +7153,20 @@ fn mro_lookup_class_attr(class_name: &str, attr: &str) -> Option<MbValue> {
         }
         None
     })
+}
+
+fn metaclass_data_descriptor_for_class(class_name: &str, attr: &str) -> Option<MbValue> {
+    let meta = CLASS_REGISTRY.with(|reg| {
+        reg.borrow()
+            .get(class_name)
+            .and_then(|cls| cls.metaclass.clone())
+    })?;
+    let candidate = lookup_method(&meta, attr);
+    if !candidate.is_none() && is_data_descriptor(candidate) {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 /// True iff `__bool__` resolves to an explicit `None` via the MRO's class
@@ -13963,6 +14006,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     let is_class =
                         CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(&class_name_str));
                     if is_class {
+                        if let Some(meta_desc) =
+                            metaclass_data_descriptor_for_class(&class_name_str, &name)
+                        {
+                            let cls_val =
+                                MbValue::from_ptr(MbObject::new_str(class_name_str.clone()));
+                            let callable = invoke_descriptor_get(meta_desc, cls_val);
+                            return super::builtins::mb_call_spread(callable, args);
+                        }
                         let method = lookup_method(&class_name_str, &name);
                         if !method.is_none() {
                             let (actual_method, dk) = unwrap_descriptor_method(method);
