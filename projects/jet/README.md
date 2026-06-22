@@ -147,7 +147,7 @@ These command families make those two toolchains work:
 | Serve | `jet serve [--prod] [--wasm]` | same; dev mode delegates to the dev serving surface for now | Detached and production serving | Agent-first serving returns machine-readable URL/session metadata. With `--prod`: production static serving suitable to replace a tuned nginx-style frontend deployment. Without `--prod`: detached dev serving compatibility. With `--wasm`: serve the Advanced FE-on-WASM target. |
 | Browser Bridge | `jet bb ...` | same; legacy `jet browser ...` remains | Browser automation and WASM bridge | Agent-first browser control. Default launch mode is headless and detached, returning a controllable browser/session handle. Explicit attach/headful modes are for human inspection. Owns click/drag/key/wheel/eval/screenshot/capture, DOM oracle capture, WASM runtime capture, and browser API bridge into FE-on-WASM |
 | Test, e2e, trace | `jet test`, `jet e2e`, `jet trace` | same | Verification and evidence | Basic validates TS/DOM toolchain behavior with a Jet-owned TS test runtime that is auto-available under `jet test` and does not need an npm package. Advanced reuses the same surfaces for WASM runtime checks, DOM-oracle parity, Browser Bridge evidence, trace replay, and diagnostics. |
-| Codegen | `jet codegen openapi <spec> --out <dir>` | same | API client generation | Read an OpenAPI 3.0/3.1 spec and generate frontend TypeScript: types, a typed fetch client, and TanStack Query (React Query) hooks. Standalone developer-tooling generator; not part of the build pipeline. |
+| Codegen | `jet codegen openapi <spec> --out <dir> [--http fetch\|axios]` | same | API client generation | Read an OpenAPI 3.0/3.1 spec and generate frontend TypeScript: types, a typed client (fetch or axios runtime), and TanStack Query (React Query) hooks. Standalone developer-tooling generator; not part of the build pipeline. |
 
 The dependency direction is intentionally one-way:
 
@@ -401,7 +401,8 @@ jet dev --wasm --debug            # Legacy foreground FE-on-WASM dev server
 jet dev shutdown -p <port>        # Legacy stop command for a Jet dev server
 jet build                         # Build production DOM target
 jet build --wasm                  # Build production FE-on-WASM target
-jet codegen openapi <spec> --out <dir>   # Generate TS types + fetch client + React Query hooks from OpenAPI 3.0/3.1
+jet codegen openapi <spec> --out <dir>            # Generate TS types + client + React Query hooks from OpenAPI 3.0/3.1
+jet codegen openapi <spec> --out <dir> --http axios  # Same, but emit an axios-based runtime instead of fetch
 jet test                          # Basic: Jet-native TS tests with built-in test API
 jet e2e                           # Basic/Advanced: product-flow and parity e2e
 jet trace                         # Basic/Advanced: inspect/replay/compare trace evidence
@@ -995,10 +996,11 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| openapi-client-codegen | #153 | verified | `jet codegen openapi <spec> --out <dir>` reads an OpenAPI 3.0/3.1 document and generates frontend TypeScript: `types.ts` (component and inline schemas to interfaces/unions), `client.ts` (a typed `createClient` fetch factory with one function per operation), and `hooks.ts` (TanStack Query `useXxxQuery`/`useXxxMutation` via `createHooks`). 3.0 `nullable` and 3.1 type-array nullability are reconciled, output is deterministic, and no new Rust crates are added. The command is standalone and is not wired into the build pipeline. | smoke, conformance | `cargo test -p jet --lib codegen -- --nocapture`<br>`cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/fixtures/codegen |
+| openapi-client-codegen | #153 | verified | `jet codegen openapi <spec> --out <dir>` reads an OpenAPI 3.0/3.1 document and generates frontend TypeScript: `types.ts` (component and inline schemas to interfaces/unions), `client.ts` (a typed `createClient` factory with one function per operation, over a `fetch` or `axios` runtime via `--http`), and `hooks.ts` (TanStack Query `useXxxQuery`/`useXxxMutation` via `createHooks`). 3.0 `nullable` and 3.1 type-array nullability are reconciled, output is deterministic, and no new Rust crates are added. The command is standalone and is not wired into the build pipeline. | smoke, conformance | `cargo test -p jet --lib codegen -- --nocapture`<br>`cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/fixtures/codegen |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | OpenAPI codegen readiness | epic | #153 | implemented | verified | conformance | Standalone jet codegen openapi generator covering OpenAPI 3.0/3.1 parse, ref resolution, schema-to-TS mapping, typed fetch client, and React Query hooks |
 | OpenAPI 3.0/3.1 Schema Mapping | change | #153 | implemented | verified | conformance | `cargo test -p jet --lib codegen -- --nocapture`<br>projects/jet/tests/fixtures/codegen |
 | Typed Fetch Client And Hooks Emission | change | #153 | implemented | verified | conformance | `cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/__snapshots__/codegen |
+| HTTP Client Backend (fetch/axios) | change | #154 | implemented | verified | conformance | `cargo test -p jet --test openapi_golden -- --nocapture`<br>projects/jet/tests/__snapshots__/codegen |
