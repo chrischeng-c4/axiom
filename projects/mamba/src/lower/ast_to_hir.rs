@@ -1899,7 +1899,7 @@ fn annotation_repr_opt(ty: &ast::TypeExpr) -> Option<String> {
 
 fn type_expr_repr(ty: &ast::TypeExpr) -> String {
     match ty {
-        ast::TypeExpr::Named(n) => n.clone(),
+        ast::TypeExpr::Named(n) => ast::strip_forward_ref_name(n).unwrap_or(n).to_string(),
         ast::TypeExpr::Generic { name, args } => {
             let inner: Vec<String> = args.iter().map(|a| type_expr_repr(&a.node)).collect();
             format!("{}[{}]", name, inner.join(", "))
@@ -2232,6 +2232,7 @@ impl<'a> AstLowerer<'a> {
                 "str" => self.checker.tcx.str(),
                 "None" => self.checker.tcx.none(),
                 "Any" => self.checker.tcx.any(),
+                n if ast::strip_forward_ref_name(n).is_some() => self.checker.tcx.any(),
                 _ => {
                     // Try type alias, then class symbol in checker
                     if let Some(id) = self.checker.tcx.resolve_alias(name) {
