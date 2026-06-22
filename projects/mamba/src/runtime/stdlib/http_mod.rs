@@ -1454,16 +1454,25 @@ fn sequence_elements(v: MbValue) -> Option<Vec<MbValue>> {
         match &(*ptr).data {
             ObjData::List(ref lock) => Some(lock.read().unwrap().iter().copied().collect()),
             ObjData::Tuple(ref t) => Some(t.to_vec()),
-            ObjData::Dict(ref lock) => {
-                let map = lock.read().unwrap();
-                Some(
-                    map.keys()
-                        .map(super::super::dict_ops::dict_key_to_mbvalue)
-                        .collect(),
-                )
-            }
+            ObjData::Dict(_) => dict_key_elements(v),
             ObjData::Set(ref lock) => Some(lock.read().unwrap().iter().copied().collect()),
+            ObjData::Instance { .. } => {
+                let backing = super::super::class::unwrap_dictlike_data(v)?;
+                dict_key_elements(backing)
+            }
             _ => None,
+        }
+    }
+}
+
+fn dict_key_elements(mapping: MbValue) -> Option<Vec<MbValue>> {
+    let ptr = mapping.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = &(*ptr).data {
+            let map = lock.read().unwrap();
+            Some(map.keys().map(super::super::dict_ops::dict_key_to_mbvalue).collect())
+        } else {
+            None
         }
     }
 }
