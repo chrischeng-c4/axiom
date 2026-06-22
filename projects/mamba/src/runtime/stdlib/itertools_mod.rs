@@ -1,12 +1,11 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// itertools module for Mamba (#392).
 ///
 /// Provides eager list-returning implementations:
 /// chain, islice, zip_longest, product, permutations,
 /// combinations, repeat, accumulate
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 /// Extract a String from an MbValue that wraps a heap Str.
 #[allow(dead_code)]
@@ -55,9 +54,7 @@ fn kwargs_get(val: MbValue, name: &str) -> Option<MbValue> {
 /// when none of the expected keywords are present.
 fn split_kwargs(a: &[MbValue], expected: &[&str]) -> (usize, MbValue) {
     if let Some(last) = a.last().copied() {
-        if is_kwargs_dict(last)
-            && expected.iter().any(|k| kwargs_get(last, k).is_some())
-        {
+        if is_kwargs_dict(last) && expected.iter().any(|k| kwargs_get(last, k).is_some()) {
             return (a.len() - 1, last);
         }
     }
@@ -224,7 +221,8 @@ unsafe extern "C" fn dispatch_zip_longest(args_ptr: *const MbValue, nargs: usize
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let guard = lock.read().unwrap();
                     for k in guard.keys() {
-                        if !matches!(k, super::super::dict_ops::DictKey::Str(s) if s == "fillvalue") {
+                        if !matches!(k, super::super::dict_ops::DictKey::Str(s) if s == "fillvalue")
+                        {
                             return raise_type_error(
                                 "zip_longest() got an unexpected keyword argument",
                             );
@@ -301,10 +299,7 @@ unsafe extern "C" fn dispatch_combinations_with_replacement(
         Ok(r) => r,
         Err(e) => return e,
     };
-    mb_itertools_combinations_with_replacement(
-        a.get(0).copied().unwrap_or_else(MbValue::none),
-        r,
-    )
+    mb_itertools_combinations_with_replacement(a.get(0).copied().unwrap_or_else(MbValue::none), r)
 }
 
 unsafe extern "C" fn dispatch_repeat(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -403,9 +398,7 @@ unsafe extern "C" fn dispatch_groupby(args_ptr: *const MbValue, nargs: usize) ->
     let key = kwargs_get(kw, "key")
         .or_else(|| if npos >= 2 { a.get(1).copied() } else { None })
         .unwrap_or_else(MbValue::none);
-    if !key.is_none()
-        && super::super::builtins::mb_callable(key).as_bool() != Some(true)
-    {
+    if !key.is_none() && super::super::builtins::mb_callable(key).as_bool() != Some(true) {
         return raise_type_error("groupby() key argument must be callable or None");
     }
     mb_itertools_groupby(iterable, key)
@@ -512,7 +505,8 @@ fn extract_list(val: MbValue) -> Vec<MbValue> {
                 ObjData::Set(ref lock) => return lock.read().unwrap().to_vec(),
                 ObjData::FrozenSet(items) => return items.clone(),
                 ObjData::Str(s) => {
-                    return s.chars()
+                    return s
+                        .chars()
                         .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
                         .collect();
                 }
@@ -625,7 +619,9 @@ pub fn mb_itertools_islice(
                     break;
                 }
                 let item = super::super::iter::mb_next(iter_handle);
-                if item.is_none() && super::super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
+                if item.is_none()
+                    && super::super::iter::mb_has_next(iter_handle).as_bool() == Some(false)
+                {
                     break;
                 }
                 acc.push(item);
@@ -778,10 +774,7 @@ fn mb_itertools_zip_longest_n(iters: &[MbValue], fill: MbValue) -> MbValue {
 }
 
 /// itertools.permutations(iterable, r) -> r-length permutations
-pub fn mb_itertools_permutations(
-    iterable: MbValue,
-    r: MbValue,
-) -> MbValue {
+pub fn mb_itertools_permutations(iterable: MbValue, r: MbValue) -> MbValue {
     let items = extract_list(iterable);
     let r_val = r.as_int().unwrap_or(items.len() as i64) as usize;
 
@@ -811,8 +804,7 @@ fn permute_helper(
     for &idx in available {
         if current.len() < r {
             current.push(items[idx]);
-            let remaining: Vec<usize> =
-                available.iter().copied().filter(|&i| i != idx).collect();
+            let remaining: Vec<usize> = available.iter().copied().filter(|&i| i != idx).collect();
             permute_helper(items, &remaining, r, current, result);
             current.pop();
         }
@@ -820,10 +812,7 @@ fn permute_helper(
 }
 
 /// itertools.combinations(iterable, r) -> r-length combinations
-pub fn mb_itertools_combinations(
-    iterable: MbValue,
-    r: MbValue,
-) -> MbValue {
+pub fn mb_itertools_combinations(iterable: MbValue, r: MbValue) -> MbValue {
     let items = extract_list(iterable);
     let r_val = r.as_int().unwrap_or(items.len() as i64) as usize;
 
@@ -858,10 +847,7 @@ fn combine_helper(
 
 /// itertools.combinations_with_replacement(iterable, r)
 /// — r-length combinations allowing the same element to be picked repeatedly.
-pub fn mb_itertools_combinations_with_replacement(
-    iterable: MbValue,
-    r: MbValue,
-) -> MbValue {
+pub fn mb_itertools_combinations_with_replacement(iterable: MbValue, r: MbValue) -> MbValue {
     let items = extract_list(iterable);
     let r_val = r.as_int().unwrap_or(0).max(0) as usize;
 
@@ -937,7 +923,9 @@ pub fn mb_itertools_count(start: MbValue, step: MbValue, limit: MbValue) -> MbVa
 
     let mut result = Vec::with_capacity(n as usize);
     if use_float {
-        let s = start_f.or_else(|| start_int.map(|v| v as f64)).unwrap_or(0.0);
+        let s = start_f
+            .or_else(|| start_int.map(|v| v as f64))
+            .unwrap_or(0.0);
         let d = step_f.or_else(|| step_int.map(|v| v as f64)).unwrap_or(1.0);
         for i in 0..n {
             result.push(MbValue::from_float(s + d * i as f64));
@@ -1199,9 +1187,7 @@ pub fn mb_itertools_batched(iterable: MbValue, n: MbValue) -> MbValue {
     if n_int < 1 {
         super::super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "n must be at least one".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("n must be at least one".to_string())),
         );
         return MbValue::from_ptr(MbObject::new_list(Vec::new()));
     }
@@ -1333,8 +1319,7 @@ mod tests {
             MbValue::from_int(2),
             MbValue::from_int(3),
         ]);
-        let result =
-            mb_itertools_combinations(list, MbValue::from_int(2));
+        let result = mb_itertools_combinations(list, MbValue::from_int(2));
         let items = extract_list(result);
         // C(3,2) = 3
         assert_eq!(items.len(), 3);
@@ -1342,8 +1327,7 @@ mod tests {
 
     #[test]
     fn test_repeat() {
-        let result =
-            mb_itertools_repeat(MbValue::from_int(7), MbValue::from_int(4));
+        let result = mb_itertools_repeat(MbValue::from_int(7), MbValue::from_int(4));
         let items = extract_list(result);
         assert_eq!(items.len(), 4);
         for item in &items {
@@ -1407,10 +1391,18 @@ mod tests {
     #[test]
     fn test_py312_islice_start_stop() {
         let lst = make_list(vec![
-            MbValue::from_int(0), MbValue::from_int(1), MbValue::from_int(2),
-            MbValue::from_int(3), MbValue::from_int(4),
+            MbValue::from_int(0),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+            MbValue::from_int(4),
         ]);
-        let result = mb_itertools_islice(lst, MbValue::from_int(1), MbValue::from_int(4), MbValue::from_int(1));
+        let result = mb_itertools_islice(
+            lst,
+            MbValue::from_int(1),
+            MbValue::from_int(4),
+            MbValue::from_int(1),
+        );
         let items = extract_list(result);
         assert_eq!(items.len(), 3);
         assert_eq!(items[0].as_int(), Some(1));
@@ -1430,7 +1422,8 @@ mod tests {
     #[test]
     fn test_py312_accumulate_prefix_sums() {
         let lst = make_list(vec![
-            MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
             MbValue::from_int(3),
         ]);
         let result = mb_itertools_accumulate(lst);
@@ -1443,7 +1436,9 @@ mod tests {
     #[test]
     fn test_py312_combinations_count() {
         let lst = make_list(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]);
         let result = mb_itertools_combinations(lst, MbValue::from_int(2));
         let items = extract_list(result);
@@ -1495,8 +1490,10 @@ mod tests {
     fn test_takewhile_stops_at_first_false() {
         // takewhile(x < 3, [1,2,3,4]) == [1,2]
         let lst = make_list(vec![
-            MbValue::from_int(1), MbValue::from_int(2),
-            MbValue::from_int(3), MbValue::from_int(4),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+            MbValue::from_int(4),
         ]);
         let pred = make_pred_lt3();
         let result = mb_itertools_takewhile(pred, lst);
@@ -1511,7 +1508,9 @@ mod tests {
     fn test_takewhile_empty_when_pred_false_from_start() {
         // takewhile(x < 3, [5,6,7]) == []
         let lst = make_list(vec![
-            MbValue::from_int(5), MbValue::from_int(6), MbValue::from_int(7),
+            MbValue::from_int(5),
+            MbValue::from_int(6),
+            MbValue::from_int(7),
         ]);
         let pred = make_pred_lt3();
         let result = mb_itertools_takewhile(pred, lst);
@@ -1524,8 +1523,10 @@ mod tests {
     fn test_dropwhile_skips_leading_true() {
         // dropwhile(x < 3, [1,2,3,4]) == [3,4]
         let lst = make_list(vec![
-            MbValue::from_int(1), MbValue::from_int(2),
-            MbValue::from_int(3), MbValue::from_int(4),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
+            MbValue::from_int(4),
         ]);
         let pred = make_pred_lt3();
         let result = mb_itertools_dropwhile(pred, lst);
@@ -1540,7 +1541,9 @@ mod tests {
     fn test_dropwhile_keeps_all_when_pred_false_from_start() {
         // dropwhile(x < 3, [5,6,7]) == [5,6,7]
         let lst = make_list(vec![
-            MbValue::from_int(5), MbValue::from_int(6), MbValue::from_int(7),
+            MbValue::from_int(5),
+            MbValue::from_int(6),
+            MbValue::from_int(7),
         ]);
         let pred = make_pred_lt3();
         let result = mb_itertools_dropwhile(pred, lst);
@@ -1554,8 +1557,10 @@ mod tests {
     fn test_filterfalse_keeps_even_numbers() {
         // filterfalse(is_odd, [0,1,2,3,4]) == [0,2,4]
         let lst = make_list(vec![
-            MbValue::from_int(0), MbValue::from_int(1),
-            MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(0),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
             MbValue::from_int(4),
         ]);
         let pred = make_pred_is_odd();
@@ -1572,7 +1577,9 @@ mod tests {
     fn test_filterfalse_empty_when_all_true() {
         // filterfalse(is_odd, [1,3,5]) == []
         let lst = make_list(vec![
-            MbValue::from_int(1), MbValue::from_int(3), MbValue::from_int(5),
+            MbValue::from_int(1),
+            MbValue::from_int(3),
+            MbValue::from_int(5),
         ]);
         let pred = make_pred_is_odd();
         let result = mb_itertools_filterfalse(pred, lst);
@@ -1605,8 +1612,13 @@ mod tests {
             MbValue::from_int(4),
         );
         let items = extract_list(r);
-        assert_eq!(items.iter().map(|v| v.as_int().unwrap()).collect::<Vec<_>>(),
-            vec![10, 13, 16, 19]);
+        assert_eq!(
+            items
+                .iter()
+                .map(|v| v.as_int().unwrap())
+                .collect::<Vec<_>>(),
+            vec![10, 13, 16, 19]
+        );
     }
 
     #[test]
@@ -1618,8 +1630,13 @@ mod tests {
             MbValue::from_int(6),
         );
         let items = extract_list(r);
-        assert_eq!(items.iter().map(|v| v.as_int().unwrap()).collect::<Vec<_>>(),
-            vec![5, 4, 3, 2, 1, 0]);
+        assert_eq!(
+            items
+                .iter()
+                .map(|v| v.as_int().unwrap())
+                .collect::<Vec<_>>(),
+            vec![5, 4, 3, 2, 1, 0]
+        );
     }
 
     #[test]
@@ -1643,14 +1660,16 @@ mod tests {
         // handle (int id) that next() drives forever; verify a bounded prefix
         // 0,1,2,... . (Materializing it via extract_list would loop forever by
         // design, which is why this no longer asserts len()==0.)
-        let r = mb_itertools_count(
-            MbValue::from_int(0),
-            MbValue::from_int(1),
-            MbValue::none(),
+        let r = mb_itertools_count(MbValue::from_int(0), MbValue::from_int(1), MbValue::none());
+        assert!(
+            r.as_int().is_some(),
+            "count() with no bound must be a lazy iterator handle"
         );
-        assert!(r.as_int().is_some(), "count() with no bound must be a lazy iterator handle");
         for expected in 0..10i64 {
-            assert_eq!(super::super::super::iter::mb_next(r).as_int(), Some(expected));
+            assert_eq!(
+                super::super::super::iter::mb_next(r).as_int(),
+                Some(expected)
+            );
         }
     }
 
@@ -1670,12 +1689,19 @@ mod tests {
     fn test_cycle_basic() {
         // cycle([1, 2, 3], 2) == [1, 2, 3, 1, 2, 3]
         let lst = make_list(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]);
         let r = mb_itertools_cycle(lst, MbValue::from_int(2));
         let items = extract_list(r);
-        assert_eq!(items.iter().map(|v| v.as_int().unwrap()).collect::<Vec<_>>(),
-            vec![1, 2, 3, 1, 2, 3]);
+        assert_eq!(
+            items
+                .iter()
+                .map(|v| v.as_int().unwrap())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 1, 2, 3]
+        );
     }
 
     #[test]
@@ -1693,10 +1719,16 @@ mod tests {
         // bounded prefix repeats 1,2,1,2,... .
         let lst = make_list(vec![MbValue::from_int(1), MbValue::from_int(2)]);
         let r = mb_itertools_cycle(lst, MbValue::none());
-        assert!(r.as_int().is_some(), "cycle() with no bound must be a lazy iterator handle");
+        assert!(
+            r.as_int().is_some(),
+            "cycle() with no bound must be a lazy iterator handle"
+        );
         for i in 0..10usize {
             let expected = if i % 2 == 0 { 1 } else { 2 };
-            assert_eq!(super::super::super::iter::mb_next(r).as_int(), Some(expected));
+            assert_eq!(
+                super::super::super::iter::mb_next(r).as_int(),
+                Some(expected)
+            );
         }
     }
 
@@ -1713,7 +1745,12 @@ mod tests {
         let lst = make_list(vec![MbValue::from_int(7)]);
         let r = mb_itertools_cycle(lst, MbValue::from_int(3));
         let items = extract_list(r);
-        assert_eq!(items.iter().map(|v| v.as_int().unwrap()).collect::<Vec<_>>(),
-            vec![7, 7, 7]);
+        assert_eq!(
+            items
+                .iter()
+                .map(|v| v.as_int().unwrap())
+                .collect::<Vec<_>>(),
+            vec![7, 7, 7]
+        );
     }
 }

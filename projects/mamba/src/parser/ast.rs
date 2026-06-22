@@ -150,10 +150,7 @@ pub enum Stmt {
     /// Bare type annotation without a value: `x: int` (#1014).
     ///
     /// Used in class bodies and module scope (e.g. ORM field declarations).
-    BareAnnotation {
-        name: Name,
-        ty: Spanned<TypeExpr>,
-    },
+    BareAnnotation { name: Name, ty: Spanned<TypeExpr> },
     /// `try: ... except E as e: ... finally: ...` (#225)
     Try {
         body: Vec<Spanned<Stmt>>,
@@ -204,8 +201,18 @@ pub enum Stmt {
 /// Augmented assignment operator (#221).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AugOp {
-    Add, Sub, Mul, Div, FloorDiv, Mod, Pow,
-    BitAnd, BitOr, BitXor, LShift, RShift,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
     MatMul,
 }
 
@@ -247,7 +254,7 @@ pub struct Param {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamKind {
     Regular,
-    Star,      // *args
+    Star,       // *args
     DoubleStar, // **kwargs
 }
 
@@ -276,10 +283,7 @@ pub enum Pattern {
     /// Binding: `x`
     Binding(Name),
     /// Enum constructor: `Shape.Circle(r)`
-    Constructor {
-        path: Vec<Name>,
-        fields: Vec<Name>,
-    },
+    Constructor { path: Vec<Name>, fields: Vec<Name> },
     /// Literal pattern
     Literal(Expr),
     /// OR pattern: `p1 | p2` (#237)
@@ -464,21 +468,41 @@ pub enum FStringPart {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
     // Arithmetic
-    Add, Sub, Mul, Div, FloorDiv, Mod, Pow, MatMul,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    MatMul,
     // Comparison
-    Eq, NotEq, Lt, Gt, LtEq, GtEq,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
     // Logical
-    And, Or,
+    And,
+    Or,
     // Bitwise (#209)
-    BitAnd, BitOr, BitXor, LShift, RShift,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
     // Identity / Membership (#212)
-    Is, IsNot, In, NotIn,
+    Is,
+    IsNot,
+    In,
+    NotIn,
 }
 
 /// Unary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
-    Pos,    // + (unary positive)
+    Pos, // + (unary positive)
     Neg,
     Not,
     BitNot, // ~ (#209)
@@ -490,13 +514,19 @@ pub enum TypeExpr {
     /// Simple type name: `int`, `float`, `MyClass`
     Named(Name),
     /// Generic type: `list[int]`, `dict[str, int]`
-    Generic { name: Name, args: Vec<Spanned<TypeExpr>> },
+    Generic {
+        name: Name,
+        args: Vec<Spanned<TypeExpr>>,
+    },
     /// Optional shorthand: `T?` => `T | None`
     Optional(Box<Spanned<TypeExpr>>),
     /// Union type: `int | str`
     Union(Vec<Spanned<TypeExpr>>),
     /// Function type: `(int, int) -> int`
-    Fn { params: Vec<Spanned<TypeExpr>>, ret: Box<Spanned<TypeExpr>> },
+    Fn {
+        params: Vec<Spanned<TypeExpr>>,
+        ret: Box<Spanned<TypeExpr>>,
+    },
     /// Tuple type: `tuple[int, str]`
     Tuple(Vec<Spanned<TypeExpr>>),
 }

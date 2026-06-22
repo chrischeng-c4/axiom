@@ -56,12 +56,12 @@
 //! the standardize sweep grows a `stdlib_surface` section type. Until
 //! then, this file is hand-authored and pinned by tests.
 
-use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
-use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
-use super::super::value::MbValue;
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 
 // Module-level state. CPython's `calendar.setfirstweekday(n)` mutates a
 // process-wide slot read back by `firstweekday()`. We mirror that with an
@@ -158,14 +158,20 @@ unsafe extern "C" fn dispatch_html_calendar(args_ptr: *const MbValue, nargs: usi
     mb_calendar_class_new("HTMLCalendar", ctor_firstweekday(all), None)
 }
 
-unsafe extern "C" fn dispatch_locale_text_calendar(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_locale_text_calendar(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let all = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (pos, _kw) = split_args(all);
     let locale = pos.get(1).copied().unwrap_or_else(MbValue::none);
     mb_calendar_class_new("LocaleTextCalendar", ctor_firstweekday(all), Some(locale))
 }
 
-unsafe extern "C" fn dispatch_locale_html_calendar(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_locale_html_calendar(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let all = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (pos, _kw) = split_args(all);
     let locale = pos.get(1).copied().unwrap_or_else(MbValue::none);
@@ -185,8 +191,12 @@ fn ctor_firstweekday(all: &[MbValue]) -> MbValue {
         if let Some(ptr) = kw.as_ptr() {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
-                    if let Some(v) = lock.read().unwrap()
-                        .get(&super::super::dict_ops::DictKey::Str("firstweekday".to_string()))
+                    if let Some(v) = lock
+                        .read()
+                        .unwrap()
+                        .get(&super::super::dict_ops::DictKey::Str(
+                            "firstweekday".to_string(),
+                        ))
                         .copied()
                     {
                         return v;
@@ -204,29 +214,29 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("isleap",            dispatch_isleap            as usize),
-        ("leapdays",          dispatch_leapdays          as usize),
-        ("monthrange",        dispatch_monthrange        as usize),
-        ("weekday",           dispatch_weekday           as usize),
-        ("monthcalendar",     dispatch_monthcalendar     as usize),
-        ("firstweekday",      dispatch_firstweekday      as usize),
-        ("setfirstweekday",   dispatch_setfirstweekday   as usize),
-        ("timegm",            dispatch_timegm            as usize),
-        ("prmonth",           dispatch_prmonth           as usize),
-        ("prcal",             dispatch_prcal             as usize),
-        ("prweek",            dispatch_prweek            as usize),
-        ("month",             dispatch_month             as usize),
-        ("calendar",          dispatch_calendar_fn       as usize),
-        ("week",              dispatch_week              as usize),
-        ("weekheader",        dispatch_weekheader        as usize),
-        ("format",            dispatch_format            as usize),
-        ("formatstring",      dispatch_formatstring      as usize),
-        ("main",              dispatch_main              as usize),
-        ("different_locale",  dispatch_different_locale  as usize),
-        ("global_enum",       dispatch_global_enum       as usize),
-        ("Calendar",          dispatch_calendar_cls      as usize),
-        ("TextCalendar",      dispatch_text_calendar     as usize),
-        ("HTMLCalendar",      dispatch_html_calendar     as usize),
+        ("isleap", dispatch_isleap as usize),
+        ("leapdays", dispatch_leapdays as usize),
+        ("monthrange", dispatch_monthrange as usize),
+        ("weekday", dispatch_weekday as usize),
+        ("monthcalendar", dispatch_monthcalendar as usize),
+        ("firstweekday", dispatch_firstweekday as usize),
+        ("setfirstweekday", dispatch_setfirstweekday as usize),
+        ("timegm", dispatch_timegm as usize),
+        ("prmonth", dispatch_prmonth as usize),
+        ("prcal", dispatch_prcal as usize),
+        ("prweek", dispatch_prweek as usize),
+        ("month", dispatch_month as usize),
+        ("calendar", dispatch_calendar_fn as usize),
+        ("week", dispatch_week as usize),
+        ("weekheader", dispatch_weekheader as usize),
+        ("format", dispatch_format as usize),
+        ("formatstring", dispatch_formatstring as usize),
+        ("main", dispatch_main as usize),
+        ("different_locale", dispatch_different_locale as usize),
+        ("global_enum", dispatch_global_enum as usize),
+        ("Calendar", dispatch_calendar_cls as usize),
+        ("TextCalendar", dispatch_text_calendar as usize),
+        ("HTMLCalendar", dispatch_html_calendar as usize),
         ("LocaleTextCalendar", dispatch_locale_text_calendar as usize),
         ("LocaleHTMLCalendar", dispatch_locale_html_calendar as usize),
     ];
@@ -266,32 +276,69 @@ pub fn register() {
         };
         set_attr("cssclasses", str_list(&HTML_CSS));
         set_attr("cssclasses_weekday_head", str_list(&HTML_CSS_WEEKDAY_HEAD));
-        set_attr("cssclass_noday", MbValue::from_ptr(MbObject::new_str("noday".to_string())));
-        set_attr("cssclass_month", MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH.to_string())));
-        set_attr("cssclass_month_head", MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH_HEAD.to_string())));
-        set_attr("cssclass_year", MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR.to_string())));
-        set_attr("cssclass_year_head", MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR_HEAD.to_string())));
+        set_attr(
+            "cssclass_noday",
+            MbValue::from_ptr(MbObject::new_str("noday".to_string())),
+        );
+        set_attr(
+            "cssclass_month",
+            MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH.to_string())),
+        );
+        set_attr(
+            "cssclass_month_head",
+            MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH_HEAD.to_string())),
+        );
+        set_attr(
+            "cssclass_year",
+            MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR.to_string())),
+        );
+        set_attr(
+            "cssclass_year_head",
+            MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR_HEAD.to_string())),
+        );
     }
 
     // Data attributes — sequences eagerly built at register-time so
     // `callable(calendar.month_name) == False` parity holds.
     attrs.insert("month_name".to_string(), mb_calendar_month_name());
     attrs.insert("month_abbr".to_string(), mb_calendar_month_abbr());
-    attrs.insert("day_name".to_string(),   mb_calendar_day_name());
-    attrs.insert("day_abbr".to_string(),   mb_calendar_day_abbr());
-    attrs.insert("mdays".to_string(),      mb_calendar_mdays());
+    attrs.insert("day_name".to_string(), mb_calendar_day_name());
+    attrs.insert("day_abbr".to_string(), mb_calendar_day_abbr());
+    attrs.insert("mdays".to_string(), mb_calendar_mdays());
 
     // Weekday integer constants (0..6).
-    for (i, name) in ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]
-        .iter().enumerate()
+    for (i, name) in [
+        "MONDAY",
+        "TUESDAY",
+        "WEDNESDAY",
+        "THURSDAY",
+        "FRIDAY",
+        "SATURDAY",
+        "SUNDAY",
+    ]
+    .iter()
+    .enumerate()
     {
         attrs.insert(name.to_string(), MbValue::from_int(i as i64));
     }
 
     // Month integer constants (1..12).
-    for (i, name) in ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE",
-                      "JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"]
-        .iter().enumerate()
+    for (i, name) in [
+        "JANUARY",
+        "FEBRUARY",
+        "MARCH",
+        "APRIL",
+        "MAY",
+        "JUNE",
+        "JULY",
+        "AUGUST",
+        "SEPTEMBER",
+        "OCTOBER",
+        "NOVEMBER",
+        "DECEMBER",
+    ]
+    .iter()
+    .enumerate()
     {
         attrs.insert(name.to_string(), MbValue::from_int((i + 1) as i64));
     }
@@ -305,17 +352,20 @@ pub fn register() {
     // own name makes specific catches discriminate, and the names are listed
     // in exception.rs under ValueError so `except ValueError` / `except
     // Exception` also catch them (CPython: both subclass ValueError).
-    attrs.insert("error".to_string(),
-        make_error_class("error"));
-    attrs.insert("IllegalMonthError".to_string(),
-        MbValue::from_ptr(MbObject::new_str("IllegalMonthError".to_string())));
-    attrs.insert("IllegalWeekdayError".to_string(),
-        MbValue::from_ptr(MbObject::new_str("IllegalWeekdayError".to_string())));
+    attrs.insert("error".to_string(), make_error_class("error"));
+    attrs.insert(
+        "IllegalMonthError".to_string(),
+        MbValue::from_ptr(MbObject::new_str("IllegalMonthError".to_string())),
+    );
+    attrs.insert(
+        "IllegalWeekdayError".to_string(),
+        MbValue::from_ptr(MbObject::new_str("IllegalWeekdayError".to_string())),
+    );
 
     // IntEnum re-exports (`Day`, `Month`, `IntEnum` itself) — passive
     // sentinels with class_name set so identity checks work.
-    attrs.insert("Day".to_string(),     make_enum_class("Day"));
-    attrs.insert("Month".to_string(),   make_enum_class("Month"));
+    attrs.insert("Day".to_string(), make_enum_class("Day"));
+    attrs.insert("Month".to_string(), make_enum_class("Month"));
     attrs.insert("IntEnum".to_string(), make_enum_class("IntEnum"));
 
     // Module re-exports — exposed as None placeholders. User code that
@@ -332,12 +382,19 @@ pub fn register() {
 
 fn make_error_class(name: &str) -> MbValue {
     let mut fields = FxHashMap::default();
-    fields.insert("__name__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(name.to_string())));
-    fields.insert("__module__".to_string(),
-        MbValue::from_ptr(MbObject::new_str("calendar".to_string())));
+    fields.insert(
+        "__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    fields.insert(
+        "__module__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("calendar".to_string())),
+    );
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: name.to_string(),
             fields: RwLock::new(fields),
@@ -348,12 +405,19 @@ fn make_error_class(name: &str) -> MbValue {
 
 fn make_enum_class(name: &str) -> MbValue {
     let mut fields = FxHashMap::default();
-    fields.insert("__name__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(name.to_string())));
-    fields.insert("__module__".to_string(),
-        MbValue::from_ptr(MbObject::new_str("calendar".to_string())));
+    fields.insert(
+        "__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
+    fields.insert(
+        "__module__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("calendar".to_string())),
+    );
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: name.to_string(),
             fields: RwLock::new(fields),
@@ -374,7 +438,10 @@ fn mb_calendar_class_new(name: &str, firstweekday: MbValue, locale: Option<MbVal
     }
     attach_calendar_methods(&mut fields, name, fw as usize);
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: name.to_string(),
             fields: RwLock::new(fields),
@@ -407,8 +474,16 @@ fn attach_calendar_methods(fields: &mut FxHashMap<String, MbValue>, name: &str, 
     put_method(fields, "itermonthdays2", ITERMONTHDAYS2[fw] as usize);
     put_method(fields, "itermonthdays3", ITERMONTHDAYS3[fw] as usize);
     put_method(fields, "itermonthdays4", ITERMONTHDAYS4[fw] as usize);
-    put_method(fields, "monthdatescalendar", MONTHDATESCALENDAR[fw] as usize);
-    put_method(fields, "monthdays2calendar", MONTHDAYS2CALENDAR[fw] as usize);
+    put_method(
+        fields,
+        "monthdatescalendar",
+        MONTHDATESCALENDAR[fw] as usize,
+    );
+    put_method(
+        fields,
+        "monthdays2calendar",
+        MONTHDAYS2CALENDAR[fw] as usize,
+    );
     put_method(fields, "monthdayscalendar", MONTHDAYSCALENDAR[fw] as usize);
     put_method(fields, "yeardatescalendar", YEARDATESCALENDAR[fw] as usize);
     put_method(fields, "yeardays2calendar", YEARDAYS2CALENDAR[fw] as usize);
@@ -474,9 +549,15 @@ fn is_leap(y: i64) -> bool {
 #[inline]
 fn days_in_month(y: i64, m: i64) -> i64 {
     match m {
-        1|3|5|7|8|10|12 => 31,
-        4|6|9|11 => 30,
-        2 => if is_leap(y) { 29 } else { 28 },
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap(y) {
+                29
+            } else {
+                28
+            }
+        }
         _ => 30,
     }
 }
@@ -517,7 +598,10 @@ pub fn mb_calendar_monthrange(year: MbValue, month: MbValue) -> MbValue {
     let m = month.as_int().unwrap_or(1);
     // CPython: monthrange raises IllegalMonthError for month ∉ 1..=12.
     if !(1..=12).contains(&m) {
-        return calendar_raise("IllegalMonthError", format!("bad month number {m}; must be 1-12"));
+        return calendar_raise(
+            "IllegalMonthError",
+            format!("bad month number {m}; must be 1-12"),
+        );
     }
     let days = days_in_month(y, m);
     let wd = zeller_weekday(y, m, 1);
@@ -546,9 +630,15 @@ pub fn mb_calendar_monthcalendar(year: MbValue, month: MbValue) -> MbValue {
     let lead = (first_wd - fw).rem_euclid(7) as usize;
 
     let mut days: Vec<i64> = Vec::with_capacity(lead + dim as usize);
-    for _ in 0..lead { days.push(0); }
-    for d in 1..=dim { days.push(d); }
-    while days.len() % 7 != 0 { days.push(0); }
+    for _ in 0..lead {
+        days.push(0);
+    }
+    for d in 1..=dim {
+        days.push(d);
+    }
+    while days.len() % 7 != 0 {
+        days.push(0);
+    }
 
     let mut weeks: Vec<MbValue> = Vec::new();
     for chunk in days.chunks(7) {
@@ -610,7 +700,11 @@ pub fn mb_calendar_setfirstweekday(v: MbValue) -> MbValue {
 pub fn mb_calendar_timegm(tup: MbValue) -> MbValue {
     // struct_time Instance path: read named fields directly.
     let st_fields: Option<[i64; 6]> = tup.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             if class_name == "struct_time" {
                 let f = fields.read().unwrap();
                 let rd = |k: &str, d: i64| f.get(k).and_then(|v| v.as_int()).unwrap_or(d);
@@ -626,28 +720,44 @@ pub fn mb_calendar_timegm(tup: MbValue) -> MbValue {
         }
         None
     });
-    let items: Vec<MbValue> = tup.as_ptr().map(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::Tuple(items) => items.clone(),
-            ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-            _ => Vec::new(),
-        }
-    }).unwrap_or_default();
+    let items: Vec<MbValue> = tup
+        .as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(items) => items.clone(),
+                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
+                _ => Vec::new(),
+            }
+        })
+        .unwrap_or_default();
     let g = |i: usize, default: i64| items.get(i).and_then(|v| v.as_int()).unwrap_or(default);
     let (year, month, day, hour, minute, second) = if let Some(s) = st_fields {
         (s[0], s[1].max(1).min(12), s[2], s[3], s[4], s[5])
     } else {
-        (g(0, 1970), g(1, 1).max(1).min(12), g(2, 1), g(3, 0), g(4, 0), g(5, 0))
+        (
+            g(0, 1970),
+            g(1, 1).max(1).min(12),
+            g(2, 1),
+            g(3, 0),
+            g(4, 0),
+            g(5, 0),
+        )
     };
 
     // Days from 1970-01-01 to (year, month, day): sum year-day and month-day deltas.
     let mut days: i64 = 0;
     if year >= 1970 {
-        for y in 1970..year { days += if is_leap(y) { 366 } else { 365 }; }
+        for y in 1970..year {
+            days += if is_leap(y) { 366 } else { 365 };
+        }
     } else {
-        for y in year..1970 { days -= if is_leap(y) { 366 } else { 365 }; }
+        for y in year..1970 {
+            days -= if is_leap(y) { 366 } else { 365 };
+        }
     }
-    for m in 1..month { days += days_in_month(year, m); }
+    for m in 1..month {
+        days += days_in_month(year, m);
+    }
     days += day - 1;
 
     let secs = days * 86_400 + hour * 3600 + minute * 60 + second;
@@ -657,32 +767,62 @@ pub fn mb_calendar_timegm(tup: MbValue) -> MbValue {
 // -- Data attribute constructors --
 
 pub fn mb_calendar_month_name() -> MbValue {
-    let names = ["","January","February","March","April","May","June",
-                 "July","August","September","October","November","December"];
-    let vals: Vec<MbValue> = names.iter()
-        .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string()))).collect();
+    let names = [
+        "",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    let vals: Vec<MbValue> = names
+        .iter()
+        .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string())))
+        .collect();
     MbValue::from_ptr(MbObject::new_list(vals))
 }
 
 pub fn mb_calendar_month_abbr() -> MbValue {
-    let names = ["","Jan","Feb","Mar","Apr","May","Jun",
-                 "Jul","Aug","Sep","Oct","Nov","Dec"];
-    let vals: Vec<MbValue> = names.iter()
-        .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string()))).collect();
+    let names = [
+        "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let vals: Vec<MbValue> = names
+        .iter()
+        .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string())))
+        .collect();
     MbValue::from_ptr(MbObject::new_list(vals))
 }
 
 pub fn mb_calendar_day_name() -> MbValue {
-    let names = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-    let vals: Vec<MbValue> = names.iter()
-        .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string()))).collect();
+    let names = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ];
+    let vals: Vec<MbValue> = names
+        .iter()
+        .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string())))
+        .collect();
     MbValue::from_ptr(MbObject::new_list(vals))
 }
 
 pub fn mb_calendar_day_abbr() -> MbValue {
-    let names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-    let vals: Vec<MbValue> = names.iter()
-        .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string()))).collect();
+    let names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let vals: Vec<MbValue> = names
+        .iter()
+        .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string())))
+        .collect();
     MbValue::from_ptr(MbObject::new_list(vals))
 }
 
@@ -707,12 +847,29 @@ pub fn mb_calendar_mdays() -> MbValue {
 type CalFn = unsafe extern "C" fn(*const MbValue, usize) -> MbValue;
 
 const MONTH_FULL: [&str; 13] = [
-    "", "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
+    "",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 const DAY_ABBR3: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL: [&str; 7] = [
-    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 ];
 
 /// Days since the proleptic-Gregorian epoch (0001-01-01 == ordinal 1, like
@@ -803,9 +960,15 @@ fn monthdays_seq(fw: i64, y: i64, m: i64) -> Vec<i64> {
     let days_before = (day1 - fw).rem_euclid(7);
     let days_after = (fw - day1 - ndays).rem_euclid(7);
     let mut out = Vec::with_capacity((days_before + ndays + days_after) as usize);
-    for _ in 0..days_before { out.push(0); }
-    for d in 1..=ndays { out.push(d); }
-    for _ in 0..days_after { out.push(0); }
+    for _ in 0..days_before {
+        out.push(0);
+    }
+    for d in 1..=ndays {
+        out.push(d);
+    }
+    for _ in 0..days_after {
+        out.push(0);
+    }
     out
 }
 
@@ -848,7 +1011,10 @@ fn itermonthdays2_impl(fw: i64, y: i64, m: i64) -> MbValue {
     // IllegalMonthError for month ∉ 1..=12. Fire ONLY on the invalid month so
     // valid input is untouched; mirror monthrange's message verbatim.
     if !(1..=12).contains(&m) {
-        return calendar_raise("IllegalMonthError", format!("bad month number {m}; must be 1-12"));
+        return calendar_raise(
+            "IllegalMonthError",
+            format!("bad month number {m}; must be 1-12"),
+        );
     }
     let vals: Vec<MbValue> = monthdays_seq(fw, y, m)
         .into_iter()
@@ -906,7 +1072,9 @@ where
 }
 
 fn monthdatescalendar_impl(fw: i64, y: i64, m: i64) -> MbValue {
-    weeks_of(monthdates_seq(fw, y, m), |(yy, mm, dd)| make_date(*yy, *mm, *dd))
+    weeks_of(monthdates_seq(fw, y, m), |(yy, mm, dd)| {
+        make_date(*yy, *mm, *dd)
+    })
 }
 
 fn monthdayscalendar_impl(fw: i64, y: i64, m: i64) -> MbValue {
@@ -993,7 +1161,9 @@ fn kwarg_str(kw: &Option<MbValue>, key: &str) -> Option<String> {
     let ptr = kw.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            if let Some(v) = lock.read().unwrap()
+            if let Some(v) = lock
+                .read()
+                .unwrap()
                 .get(&super::super::dict_ops::DictKey::Str(key.to_string()))
                 .copied()
             {
@@ -1011,11 +1181,17 @@ fn kwarg_str(kw: &Option<MbValue>, key: &str) -> Option<String> {
 }
 
 fn kwarg_bool(kw: &Option<MbValue>, key: &str, default: bool) -> bool {
-    let Some(kw) = kw else { return default; };
-    let Some(ptr) = kw.as_ptr() else { return default; };
+    let Some(kw) = kw else {
+        return default;
+    };
+    let Some(ptr) = kw.as_ptr() else {
+        return default;
+    };
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            if let Some(v) = lock.read().unwrap()
+            if let Some(v) = lock
+                .read()
+                .unwrap()
                 .get(&super::super::dict_ops::DictKey::Str(key.to_string()))
                 .copied()
             {
@@ -1036,7 +1212,9 @@ fn kwarg_int(kw: &Option<MbValue>, key: &str) -> Option<i64> {
     let ptr = kw.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            if let Some(v) = lock.read().unwrap()
+            if let Some(v) = lock
+                .read()
+                .unwrap()
                 .get(&super::super::dict_ops::DictKey::Str(key.to_string()))
                 .copied()
             {
@@ -1063,18 +1241,30 @@ fn module_fw() -> i64 {
 
 /// Collect the string elements of a list/tuple MbValue (for `format`/`formatstring`).
 fn read_str_cols(v: MbValue) -> Vec<String> {
-    let items: Vec<MbValue> = v.as_ptr().map(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-            ObjData::Tuple(items) => items.clone(),
-            _ => Vec::new(),
-        }
-    }).unwrap_or_default();
-    items.iter().map(|it| {
-        it.as_ptr().and_then(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
-        }).unwrap_or_default()
-    }).collect()
+    let items: Vec<MbValue> = v
+        .as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
+                ObjData::Tuple(items) => items.clone(),
+                _ => Vec::new(),
+            }
+        })
+        .unwrap_or_default();
+    items
+        .iter()
+        .map(|it| {
+            it.as_ptr()
+                .and_then(|p| unsafe {
+                    if let ObjData::Str(ref s) = (*p).data {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
+        })
+        .collect()
 }
 
 // ---- Module-level convenience functions (bound to a global TextCalendar) ----
@@ -1087,7 +1277,13 @@ unsafe extern "C" fn dispatch_month(args_ptr: *const MbValue, nargs: usize) -> M
     let month = pos_or_kw_int(pos, 1, &kw, "themonth", 1);
     let w = pos_or_kw_int(pos, 2, &kw, "w", 0).max(2) as usize;
     let l = pos_or_kw_int(pos, 3, &kw, "l", 0).max(1) as usize;
-    MbValue::from_ptr(MbObject::new_str(fmt_text_month(module_fw(), year, month, w, l)))
+    MbValue::from_ptr(MbObject::new_str(fmt_text_month(
+        module_fw(),
+        year,
+        month,
+        w,
+        l,
+    )))
 }
 
 /// calendar.prmonth(theyear, themonth, w=0, l=0) -> prints formatmonth.
@@ -1111,7 +1307,14 @@ unsafe extern "C" fn dispatch_calendar_fn(args_ptr: *const MbValue, nargs: usize
     let l = pos_or_kw_int(pos, 2, &kw, "l", 1).max(1) as usize;
     let c = pos_or_kw_int(pos, 3, &kw, "c", 6) as usize;
     let m = pos_or_kw_int(pos, 4, &kw, "m", 3).max(1) as usize;
-    MbValue::from_ptr(MbObject::new_str(fmt_text_year(module_fw(), year, w, l, c, m)))
+    MbValue::from_ptr(MbObject::new_str(fmt_text_year(
+        module_fw(),
+        year,
+        w,
+        l,
+        c,
+        m,
+    )))
 }
 
 /// calendar.prcal(theyear, w=0, l=0, c=6, m=3) -> prints formatyear.
@@ -1238,7 +1441,12 @@ fn fmt_text_month(fw: i64, year: i64, month: i64, w: usize, l: usize) -> String 
     let l = l.max(1);
     let nl = "\n".repeat(l);
     let mut s = String::new();
-    s.push_str(rstrip(&fmt_text_monthname_w(year, month, 7 * (w + 1) - 1, true)));
+    s.push_str(rstrip(&fmt_text_monthname_w(
+        year,
+        month,
+        7 * (w + 1) - 1,
+        true,
+    )));
     s.push_str(&nl);
     s.push_str(rstrip(&fmt_text_weekheader(fw, w)));
     s.push_str(&nl);
@@ -1381,31 +1589,39 @@ unsafe extern "C" fn text_prweek(args_ptr: *const MbValue, nargs: usize) -> MbVa
 }
 
 fn read_week_pairs(v: MbValue) -> Vec<(i64, i64)> {
-    let items: Vec<MbValue> = v.as_ptr().map(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-            ObjData::Tuple(items) => items.clone(),
-            _ => Vec::new(),
-        }
-    }).unwrap_or_default();
-    items.iter().map(|pair| {
-        pair.as_ptr().map(|p| unsafe {
-            match &(*p).data {
-                ObjData::Tuple(it) => (
-                    it.first().and_then(|x| x.as_int()).unwrap_or(0),
-                    it.get(1).and_then(|x| x.as_int()).unwrap_or(0),
-                ),
-                ObjData::List(ref lk) => {
-                    let g = lk.read().unwrap();
-                    (
-                        g.first().and_then(|x| x.as_int()).unwrap_or(0),
-                        g.get(1).and_then(|x| x.as_int()).unwrap_or(0),
-                    )
-                }
-                _ => (0, 0),
+    let items: Vec<MbValue> = v
+        .as_ptr()
+        .map(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
+                ObjData::Tuple(items) => items.clone(),
+                _ => Vec::new(),
             }
-        }).unwrap_or((0, 0))
-    }).collect()
+        })
+        .unwrap_or_default();
+    items
+        .iter()
+        .map(|pair| {
+            pair.as_ptr()
+                .map(|p| unsafe {
+                    match &(*p).data {
+                        ObjData::Tuple(it) => (
+                            it.first().and_then(|x| x.as_int()).unwrap_or(0),
+                            it.get(1).and_then(|x| x.as_int()).unwrap_or(0),
+                        ),
+                        ObjData::List(ref lk) => {
+                            let g = lk.read().unwrap();
+                            (
+                                g.first().and_then(|x| x.as_int()).unwrap_or(0),
+                                g.get(1).and_then(|x| x.as_int()).unwrap_or(0),
+                            )
+                        }
+                        _ => (0, 0),
+                    }
+                })
+                .unwrap_or((0, 0))
+        })
+        .collect()
 }
 
 unsafe extern "C" fn html_formatweekday(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -1450,7 +1666,11 @@ unsafe extern "C" fn html_formatweek(args_ptr: *const MbValue, nargs: usize) -> 
         if *d == 0 {
             s.push_str("<td class=\"noday\">&nbsp;</td>");
         } else {
-            s.push_str(&format!("<td class=\"{}\">{}</td>", HTML_CSS[*wd as usize % 7], d));
+            s.push_str(&format!(
+                "<td class=\"{}\">{}</td>",
+                HTML_CSS[*wd as usize % 7],
+                d
+            ));
         }
     }
     s.push_str("</tr>");
@@ -1470,12 +1690,15 @@ unsafe extern "C" fn html_formatmonthname(args_ptr: *const MbValue, nargs: usize
     let s = if withyear {
         format!(
             "<tr><th colspan=\"7\" class=\"{}\">{} {}</th></tr>",
-            HTML_CSS_MONTH_HEAD, MONTH_FULL[month as usize % 13], year
+            HTML_CSS_MONTH_HEAD,
+            MONTH_FULL[month as usize % 13],
+            year
         )
     } else {
         format!(
             "<tr><th colspan=\"7\" class=\"{}\">{}</th></tr>",
-            HTML_CSS_MONTH_HEAD, MONTH_FULL[month as usize % 13]
+            HTML_CSS_MONTH_HEAD,
+            MONTH_FULL[month as usize % 13]
         )
     };
     MbValue::from_ptr(MbObject::new_str(s))
@@ -1491,12 +1714,15 @@ fn html_format_month(fw: i64, year: i64, month: i64, withyear: bool) -> String {
     let name = if withyear {
         format!(
             "<tr><th colspan=\"7\" class=\"{}\">{} {}</th></tr>",
-            HTML_CSS_MONTH_HEAD, MONTH_FULL[month as usize % 13], year
+            HTML_CSS_MONTH_HEAD,
+            MONTH_FULL[month as usize % 13],
+            year
         )
     } else {
         format!(
             "<tr><th colspan=\"7\" class=\"{}\">{}</th></tr>",
-            HTML_CSS_MONTH_HEAD, MONTH_FULL[month as usize % 13]
+            HTML_CSS_MONTH_HEAD,
+            MONTH_FULL[month as usize % 13]
         )
     };
     s.push_str(&name);
@@ -1522,7 +1748,11 @@ fn html_format_month(fw: i64, year: i64, month: i64, withyear: bool) -> String {
             if *d == 0 {
                 s.push_str("<td class=\"noday\">&nbsp;</td>");
             } else {
-                s.push_str(&format!("<td class=\"{}\">{}</td>", HTML_CSS[*wd as usize % 7], d));
+                s.push_str(&format!(
+                    "<td class=\"{}\">{}</td>",
+                    HTML_CSS[*wd as usize % 7],
+                    d
+                ));
             }
         }
         s.push_str("</tr>\n");
@@ -1558,7 +1788,11 @@ fn html_format_year_fw(fw: i64, year: i64, width: i64) -> String {
 }
 
 fn html_format_yearpage(fw: i64, year: i64, width: i64, encoding: &str) -> String {
-    let enc = if encoding.is_empty() { "utf-8" } else { encoding };
+    let enc = if encoding.is_empty() {
+        "utf-8"
+    } else {
+        encoding
+    };
     let mut s = String::new();
     s.push_str(&format!("<?xml version=\"1.0\" encoding=\"{}\"?>\n", enc));
     s.push_str("<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n");
@@ -1628,7 +1862,11 @@ fn recv_css_list(recv: MbValue, name: &str, default: &[&str; 7]) -> Vec<String> 
 
 fn extract_str_val(v: MbValue) -> Option<String> {
     v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -1648,12 +1886,19 @@ fn themed_formatday(recv: MbValue, day: i64, weekday: i64) -> String {
         )
     } else {
         let css = recv_css_list(recv, "cssclasses", &HTML_CSS);
-        format!("<td class=\"{}\">{}</td>", css[weekday.rem_euclid(7) as usize], day)
+        format!(
+            "<td class=\"{}\">{}</td>",
+            css[weekday.rem_euclid(7) as usize],
+            day
+        )
     }
 }
 
 fn themed_formatweek(recv: MbValue, week: &[(i64, i64)]) -> String {
-    let cells: String = week.iter().map(|(d, wd)| themed_formatday(recv, *d, *wd)).collect();
+    let cells: String = week
+        .iter()
+        .map(|(d, wd)| themed_formatday(recv, *d, *wd))
+        .collect();
     format!("<tr>{cells}</tr>")
 }
 
@@ -1674,12 +1919,15 @@ fn themed_formatmonthname(recv: MbValue, year: i64, month: i64, withyear: bool) 
     if withyear {
         format!(
             "<tr><th colspan=\"7\" class=\"{}\">{} {}</th></tr>",
-            css, MONTH_FULL[month as usize % 13], year
+            css,
+            MONTH_FULL[month as usize % 13],
+            year
         )
     } else {
         format!(
             "<tr><th colspan=\"7\" class=\"{}\">{}</th></tr>",
-            css, MONTH_FULL[month as usize % 13]
+            css,
+            MONTH_FULL[month as usize % 13]
         )
     }
 }
@@ -1777,23 +2025,40 @@ pub fn html_calendar_subclass_method(
     let new_str = |s: String| MbValue::from_ptr(MbObject::new_str(s));
     match method {
         "formatmonth" => Some(new_str(themed_format_month(
-            recv, arg_int(0, 1970), arg_int(1, 1), arg_bool(2, true),
+            recv,
+            arg_int(0, 1970),
+            arg_int(1, 1),
+            arg_bool(2, true),
         ))),
         "formatmonthname" => Some(new_str(themed_formatmonthname(
-            recv, arg_int(0, 1970), arg_int(1, 1), arg_bool(2, true),
+            recv,
+            arg_int(0, 1970),
+            arg_int(1, 1),
+            arg_bool(2, true),
         ))),
         "formatweekheader" => Some(new_str(themed_formatweekheader(recv))),
         "formatweek" => {
             let week = week_arg(args.first().copied().unwrap_or_else(MbValue::none));
             Some(new_str(themed_formatweek(recv, &week)))
         }
-        "formatday" => Some(new_str(themed_formatday(recv, arg_int(0, 0), arg_int(1, 0)))),
+        "formatday" => Some(new_str(themed_formatday(
+            recv,
+            arg_int(0, 0),
+            arg_int(1, 0),
+        ))),
         "formatweekday" => {
             let wd = arg_int(0, 0).rem_euclid(7) as usize;
             let css = recv_css_list(recv, "cssclasses_weekday_head", &HTML_CSS_WEEKDAY_HEAD);
-            Some(new_str(format!("<th class=\"{}\">{}</th>", css[wd], DAY_ABBR3[wd])))
+            Some(new_str(format!(
+                "<th class=\"{}\">{}</th>",
+                css[wd], DAY_ABBR3[wd]
+            )))
         }
-        "formatyear" => Some(new_str(themed_format_year(recv, arg_int(0, 1970), arg_int(1, 3)))),
+        "formatyear" => Some(new_str(themed_format_year(
+            recv,
+            arg_int(0, 1970),
+            arg_int(1, 3),
+        ))),
         "monthdays2calendar" => {
             let fw = recv_firstweekday(recv);
             let (y, m) = (arg_int(0, 1970), arg_int(1, 1));
@@ -1818,19 +2083,42 @@ pub fn html_calendar_subclass_method(
 }
 
 fn html_css_defaults(fields: &mut FxHashMap<String, MbValue>) {
-    let css_list: Vec<MbValue> = HTML_CSS.iter()
+    let css_list: Vec<MbValue> = HTML_CSS
+        .iter()
         .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
         .collect();
-    fields.insert("cssclasses".to_string(), MbValue::from_ptr(MbObject::new_list(css_list)));
-    let head_list: Vec<MbValue> = HTML_CSS_WEEKDAY_HEAD.iter()
+    fields.insert(
+        "cssclasses".to_string(),
+        MbValue::from_ptr(MbObject::new_list(css_list)),
+    );
+    let head_list: Vec<MbValue> = HTML_CSS_WEEKDAY_HEAD
+        .iter()
         .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
         .collect();
-    fields.insert("cssclasses_weekday_head".to_string(), MbValue::from_ptr(MbObject::new_list(head_list)));
-    fields.insert("cssclass_noday".to_string(), MbValue::from_ptr(MbObject::new_str("noday".to_string())));
-    fields.insert("cssclass_month_head".to_string(), MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH_HEAD.to_string())));
-    fields.insert("cssclass_month".to_string(), MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH.to_string())));
-    fields.insert("cssclass_year".to_string(), MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR.to_string())));
-    fields.insert("cssclass_year_head".to_string(), MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR_HEAD.to_string())));
+    fields.insert(
+        "cssclasses_weekday_head".to_string(),
+        MbValue::from_ptr(MbObject::new_list(head_list)),
+    );
+    fields.insert(
+        "cssclass_noday".to_string(),
+        MbValue::from_ptr(MbObject::new_str("noday".to_string())),
+    );
+    fields.insert(
+        "cssclass_month_head".to_string(),
+        MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH_HEAD.to_string())),
+    );
+    fields.insert(
+        "cssclass_month".to_string(),
+        MbValue::from_ptr(MbObject::new_str(HTML_CSS_MONTH.to_string())),
+    );
+    fields.insert(
+        "cssclass_year".to_string(),
+        MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR.to_string())),
+    );
+    fields.insert(
+        "cssclass_year_head".to_string(),
+        MbValue::from_ptr(MbObject::new_str(HTML_CSS_YEAR_HEAD.to_string())),
+    );
 }
 
 // ---- Monomorphized dispatcher generation ----
@@ -1880,8 +2168,13 @@ def_fw_nullary!(iterweekdays_4, 4, iterweekdays_impl);
 def_fw_nullary!(iterweekdays_5, 5, iterweekdays_impl);
 def_fw_nullary!(iterweekdays_6, 6, iterweekdays_impl);
 const ITERWEEKDAYS: [CalFn; 7] = [
-    iterweekdays_0, iterweekdays_1, iterweekdays_2,
-    iterweekdays_3, iterweekdays_4, iterweekdays_5, iterweekdays_6,
+    iterweekdays_0,
+    iterweekdays_1,
+    iterweekdays_2,
+    iterweekdays_3,
+    iterweekdays_4,
+    iterweekdays_5,
+    iterweekdays_6,
 ];
 
 macro_rules! mono7_ym {
@@ -1910,28 +2203,127 @@ macro_rules! mono7_yw {
     };
 }
 
-mono7_ym!(ITERMONTHDATES, itermonthdates_impl,
-    imd_dates_0, imd_dates_1, imd_dates_2, imd_dates_3, imd_dates_4, imd_dates_5, imd_dates_6);
-mono7_ym!(ITERMONTHDAYS, itermonthdays_impl,
-    imd_0, imd_1, imd_2, imd_3, imd_4, imd_5, imd_6);
-mono7_ym!(ITERMONTHDAYS2, itermonthdays2_impl,
-    imd2_0, imd2_1, imd2_2, imd2_3, imd2_4, imd2_5, imd2_6);
-mono7_ym!(ITERMONTHDAYS3, itermonthdays3_impl,
-    imd3_0, imd3_1, imd3_2, imd3_3, imd3_4, imd3_5, imd3_6);
-mono7_ym!(ITERMONTHDAYS4, itermonthdays4_impl,
-    imd4_0, imd4_1, imd4_2, imd4_3, imd4_4, imd4_5, imd4_6);
-mono7_ym!(MONTHDATESCALENDAR, monthdatescalendar_impl,
-    mdc_0, mdc_1, mdc_2, mdc_3, mdc_4, mdc_5, mdc_6);
-mono7_ym!(MONTHDAYS2CALENDAR, monthdays2calendar_impl,
-    md2c_0, md2c_1, md2c_2, md2c_3, md2c_4, md2c_5, md2c_6);
-mono7_ym!(MONTHDAYSCALENDAR, monthdayscalendar_impl,
-    mdsc_0, mdsc_1, mdsc_2, mdsc_3, mdsc_4, mdsc_5, mdsc_6);
-mono7_yw!(YEARDATESCALENDAR, yeardatescalendar_impl,
-    ydc_0, ydc_1, ydc_2, ydc_3, ydc_4, ydc_5, ydc_6);
-mono7_yw!(YEARDAYS2CALENDAR, yeardays2calendar_impl,
-    yd2c_0, yd2c_1, yd2c_2, yd2c_3, yd2c_4, yd2c_5, yd2c_6);
-mono7_yw!(YEARDAYSCALENDAR, yeardayscalendar_impl,
-    ydsc_0, ydsc_1, ydsc_2, ydsc_3, ydsc_4, ydsc_5, ydsc_6);
+mono7_ym!(
+    ITERMONTHDATES,
+    itermonthdates_impl,
+    imd_dates_0,
+    imd_dates_1,
+    imd_dates_2,
+    imd_dates_3,
+    imd_dates_4,
+    imd_dates_5,
+    imd_dates_6
+);
+mono7_ym!(
+    ITERMONTHDAYS,
+    itermonthdays_impl,
+    imd_0,
+    imd_1,
+    imd_2,
+    imd_3,
+    imd_4,
+    imd_5,
+    imd_6
+);
+mono7_ym!(
+    ITERMONTHDAYS2,
+    itermonthdays2_impl,
+    imd2_0,
+    imd2_1,
+    imd2_2,
+    imd2_3,
+    imd2_4,
+    imd2_5,
+    imd2_6
+);
+mono7_ym!(
+    ITERMONTHDAYS3,
+    itermonthdays3_impl,
+    imd3_0,
+    imd3_1,
+    imd3_2,
+    imd3_3,
+    imd3_4,
+    imd3_5,
+    imd3_6
+);
+mono7_ym!(
+    ITERMONTHDAYS4,
+    itermonthdays4_impl,
+    imd4_0,
+    imd4_1,
+    imd4_2,
+    imd4_3,
+    imd4_4,
+    imd4_5,
+    imd4_6
+);
+mono7_ym!(
+    MONTHDATESCALENDAR,
+    monthdatescalendar_impl,
+    mdc_0,
+    mdc_1,
+    mdc_2,
+    mdc_3,
+    mdc_4,
+    mdc_5,
+    mdc_6
+);
+mono7_ym!(
+    MONTHDAYS2CALENDAR,
+    monthdays2calendar_impl,
+    md2c_0,
+    md2c_1,
+    md2c_2,
+    md2c_3,
+    md2c_4,
+    md2c_5,
+    md2c_6
+);
+mono7_ym!(
+    MONTHDAYSCALENDAR,
+    monthdayscalendar_impl,
+    mdsc_0,
+    mdsc_1,
+    mdsc_2,
+    mdsc_3,
+    mdsc_4,
+    mdsc_5,
+    mdsc_6
+);
+mono7_yw!(
+    YEARDATESCALENDAR,
+    yeardatescalendar_impl,
+    ydc_0,
+    ydc_1,
+    ydc_2,
+    ydc_3,
+    ydc_4,
+    ydc_5,
+    ydc_6
+);
+mono7_yw!(
+    YEARDAYS2CALENDAR,
+    yeardays2calendar_impl,
+    yd2c_0,
+    yd2c_1,
+    yd2c_2,
+    yd2c_3,
+    yd2c_4,
+    yd2c_5,
+    yd2c_6
+);
+mono7_yw!(
+    YEARDAYSCALENDAR,
+    yeardayscalendar_impl,
+    ydsc_0,
+    ydsc_1,
+    ydsc_2,
+    ydsc_3,
+    ydsc_4,
+    ydsc_5,
+    ydsc_6
+);
 
 // TextCalendar.formatweekheader(width)
 unsafe extern "C" fn text_formatweekheader(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -1958,7 +2350,9 @@ macro_rules! def_text_monthname {
                 kwarg_bool(&kw, "withyear", true)
             };
             let _ = $fw;
-            MbValue::from_ptr(MbObject::new_str(fmt_text_monthname(year, month, width, withyear)))
+            MbValue::from_ptr(MbObject::new_str(fmt_text_monthname(
+                year, month, width, withyear,
+            )))
         }
     };
 }
@@ -1969,9 +2363,7 @@ def_text_monthname!(tmn_3, 3);
 def_text_monthname!(tmn_4, 4);
 def_text_monthname!(tmn_5, 5);
 def_text_monthname!(tmn_6, 6);
-const TEXT_FORMATMONTHNAME: [CalFn; 7] = [
-    tmn_0, tmn_1, tmn_2, tmn_3, tmn_4, tmn_5, tmn_6,
-];
+const TEXT_FORMATMONTHNAME: [CalFn; 7] = [tmn_0, tmn_1, tmn_2, tmn_3, tmn_4, tmn_5, tmn_6];
 
 // TextCalendar.formatmonth(theyear, themonth, w=0, l=0)
 macro_rules! def_text_month {
@@ -2001,9 +2393,7 @@ def_text_month!(tm_3, 3);
 def_text_month!(tm_4, 4);
 def_text_month!(tm_5, 5);
 def_text_month!(tm_6, 6);
-const TEXT_FORMATMONTH: [CalFn; 7] = [
-    tm_0, tm_1, tm_2, tm_3, tm_4, tm_5, tm_6,
-];
+const TEXT_FORMATMONTH: [CalFn; 7] = [tm_0, tm_1, tm_2, tm_3, tm_4, tm_5, tm_6];
 
 // TextCalendar.prmonth(theyear, themonth, w=0, l=0) — prints formatmonth.
 macro_rules! def_text_prmonth {
@@ -2026,9 +2416,7 @@ def_text_prmonth!(tpm_3, 3);
 def_text_prmonth!(tpm_4, 4);
 def_text_prmonth!(tpm_5, 5);
 def_text_prmonth!(tpm_6, 6);
-const TEXT_PRMONTH: [CalFn; 7] = [
-    tpm_0, tpm_1, tpm_2, tpm_3, tpm_4, tpm_5, tpm_6,
-];
+const TEXT_PRMONTH: [CalFn; 7] = [tpm_0, tpm_1, tpm_2, tpm_3, tpm_4, tpm_5, tpm_6];
 
 // TextCalendar.formatyear(theyear, w=2, l=1, c=6, m=3)
 macro_rules! def_text_year {
@@ -2051,9 +2439,7 @@ def_text_year!(ty_3, 3);
 def_text_year!(ty_4, 4);
 def_text_year!(ty_5, 5);
 def_text_year!(ty_6, 6);
-const TEXT_FORMATYEAR: [CalFn; 7] = [
-    ty_0, ty_1, ty_2, ty_3, ty_4, ty_5, ty_6,
-];
+const TEXT_FORMATYEAR: [CalFn; 7] = [ty_0, ty_1, ty_2, ty_3, ty_4, ty_5, ty_6];
 
 // TextCalendar.pryear(theyear, ...) — prints formatyear.
 macro_rules! def_text_pryear {
@@ -2077,9 +2463,7 @@ def_text_pryear!(tpy_3, 3);
 def_text_pryear!(tpy_4, 4);
 def_text_pryear!(tpy_5, 5);
 def_text_pryear!(tpy_6, 6);
-const TEXT_PRYEAR: [CalFn; 7] = [
-    tpy_0, tpy_1, tpy_2, tpy_3, tpy_4, tpy_5, tpy_6,
-];
+const TEXT_PRYEAR: [CalFn; 7] = [tpy_0, tpy_1, tpy_2, tpy_3, tpy_4, tpy_5, tpy_6];
 
 // HTMLCalendar.formatmonth(theyear, themonth, withyear=True)
 macro_rules! def_html_month {
@@ -2094,7 +2478,9 @@ macro_rules! def_html_month {
             } else {
                 kwarg_bool(&kw, "withyear", true)
             };
-            MbValue::from_ptr(MbObject::new_str(html_format_month($fw, year, month, withyear)))
+            MbValue::from_ptr(MbObject::new_str(html_format_month(
+                $fw, year, month, withyear,
+            )))
         }
     };
 }
@@ -2105,9 +2491,7 @@ def_html_month!(hm_3, 3);
 def_html_month!(hm_4, 4);
 def_html_month!(hm_5, 5);
 def_html_month!(hm_6, 6);
-const HTML_FORMATMONTH: [CalFn; 7] = [
-    hm_0, hm_1, hm_2, hm_3, hm_4, hm_5, hm_6,
-];
+const HTML_FORMATMONTH: [CalFn; 7] = [hm_0, hm_1, hm_2, hm_3, hm_4, hm_5, hm_6];
 
 // HTMLCalendar.formatyear(theyear, width=3)
 macro_rules! def_html_year {
@@ -2127,9 +2511,7 @@ def_html_year!(hy_3, 3);
 def_html_year!(hy_4, 4);
 def_html_year!(hy_5, 5);
 def_html_year!(hy_6, 6);
-const HTML_FORMATYEAR: [CalFn; 7] = [
-    hy_0, hy_1, hy_2, hy_3, hy_4, hy_5, hy_6,
-];
+const HTML_FORMATYEAR: [CalFn; 7] = [hy_0, hy_1, hy_2, hy_3, hy_4, hy_5, hy_6];
 
 // HTMLCalendar.formatyearpage(theyear, width=3, css='calendar.css', encoding=None)
 macro_rules! def_html_yearpage {
@@ -2140,14 +2522,20 @@ macro_rules! def_html_yearpage {
             let year = arg_int(a, 0, 1970);
             let width = arg_int(a, 1, 3);
             // encoding: positional[3] or kwarg, default utf-8 (None → utf-8).
-            let encoding = a.get(3).and_then(|v| {
-                if v.is_none() { None } else {
-                    v.as_ptr().and_then(|p| match &(*p).data {
-                        ObjData::Str(ref s) => Some(s.clone()),
-                        _ => None,
-                    })
-                }
-            }).or_else(|| kwarg_str(&kw, "encoding")).unwrap_or_else(|| "utf-8".to_string());
+            let encoding = a
+                .get(3)
+                .and_then(|v| {
+                    if v.is_none() {
+                        None
+                    } else {
+                        v.as_ptr().and_then(|p| match &(*p).data {
+                            ObjData::Str(ref s) => Some(s.clone()),
+                            _ => None,
+                        })
+                    }
+                })
+                .or_else(|| kwarg_str(&kw, "encoding"))
+                .unwrap_or_else(|| "utf-8".to_string());
             // CPython returns the page encoded to bytes. The page is pure ASCII,
             // so ascii / utf-8 / latin-1 yield identical byte sequences.
             let page = html_format_yearpage($fw, year, width, &encoding);
@@ -2162,31 +2550,35 @@ def_html_yearpage!(hyp_3, 3);
 def_html_yearpage!(hyp_4, 4);
 def_html_yearpage!(hyp_5, 5);
 def_html_yearpage!(hyp_6, 6);
-const HTML_FORMATYEARPAGE: [CalFn; 7] = [
-    hyp_0, hyp_1, hyp_2, hyp_3, hyp_4, hyp_5, hyp_6,
-];
+const HTML_FORMATYEARPAGE: [CalFn; 7] = [hyp_0, hyp_1, hyp_2, hyp_3, hyp_4, hyp_5, hyp_6];
 
 // HANDWRITE-END
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::rc::ObjData;
+    use super::*;
 
     fn tuple_int_at(val: MbValue, idx: usize) -> Option<i64> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Tuple(ref items) = (*ptr).data {
                 items.get(idx).and_then(|v| v.as_int())
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
     fn list_len(val: MbValue) -> usize {
-        val.as_ptr().map(|ptr| unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().len()
-            } else { 0 }
-        }).unwrap_or(0)
+        val.as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    lock.read().unwrap().len()
+                } else {
+                    0
+                }
+            })
+            .unwrap_or(0)
     }
 
     fn list_str_at(val: MbValue, idx: usize) -> Option<String> {
@@ -2194,18 +2586,30 @@ mod tests {
             if let ObjData::List(ref lock) = (*ptr).data {
                 lock.read().unwrap().get(idx).copied().and_then(|v| {
                     v.as_ptr().and_then(|p| {
-                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                        if let ObjData::Str(ref s) = (*p).data {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
                     })
                 })
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
     fn list_int_at(val: MbValue, idx: usize) -> Option<i64> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(idx).copied().and_then(|v| v.as_int())
-            } else { None }
+                lock.read()
+                    .unwrap()
+                    .get(idx)
+                    .copied()
+                    .and_then(|v| v.as_int())
+            } else {
+                None
+            }
         })
     }
 
@@ -2214,7 +2618,9 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     let f = fields.read().unwrap();
-                    if let Some(v) = f.get(field) { return *v; }
+                    if let Some(v) = f.get(field) {
+                        return *v;
+                    }
                 }
             }
         }
@@ -2223,7 +2629,11 @@ mod tests {
 
     fn get_str(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
     }
 
@@ -2231,28 +2641,43 @@ mod tests {
 
     #[test]
     fn test_isleap_400() {
-        assert_eq!(mb_calendar_isleap(MbValue::from_int(2000)).as_bool(), Some(true));
+        assert_eq!(
+            mb_calendar_isleap(MbValue::from_int(2000)).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_isleap_100() {
-        assert_eq!(mb_calendar_isleap(MbValue::from_int(1900)).as_bool(), Some(false));
+        assert_eq!(
+            mb_calendar_isleap(MbValue::from_int(1900)).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
     fn test_isleap_4() {
-        assert_eq!(mb_calendar_isleap(MbValue::from_int(2024)).as_bool(), Some(true));
+        assert_eq!(
+            mb_calendar_isleap(MbValue::from_int(2024)).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_isleap_odd() {
-        assert_eq!(mb_calendar_isleap(MbValue::from_int(2023)).as_bool(), Some(false));
+        assert_eq!(
+            mb_calendar_isleap(MbValue::from_int(2023)).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
     fn test_isleap_2100() {
         // Divisible by 100, not 400 — not a leap year.
-        assert_eq!(mb_calendar_isleap(MbValue::from_int(2100)).as_bool(), Some(false));
+        assert_eq!(
+            mb_calendar_isleap(MbValue::from_int(2100)).as_bool(),
+            Some(false)
+        );
     }
 
     // -- leapdays --
@@ -2310,36 +2735,44 @@ mod tests {
     #[test]
     fn test_weekday_2024_01_01_monday() {
         // 2024-01-01 is a Monday → 0
-        let r = mb_calendar_weekday(MbValue::from_int(2024),
-                                    MbValue::from_int(1),
-                                    MbValue::from_int(1));
+        let r = mb_calendar_weekday(
+            MbValue::from_int(2024),
+            MbValue::from_int(1),
+            MbValue::from_int(1),
+        );
         assert_eq!(r.as_int(), Some(0));
     }
 
     #[test]
     fn test_weekday_2000_01_01_saturday() {
         // 2000-01-01 is a Saturday → 5
-        let r = mb_calendar_weekday(MbValue::from_int(2000),
-                                    MbValue::from_int(1),
-                                    MbValue::from_int(1));
+        let r = mb_calendar_weekday(
+            MbValue::from_int(2000),
+            MbValue::from_int(1),
+            MbValue::from_int(1),
+        );
         assert_eq!(r.as_int(), Some(5));
     }
 
     #[test]
     fn test_weekday_1970_01_01_thursday() {
         // 1970-01-01 (Unix epoch) is a Thursday → 3
-        let r = mb_calendar_weekday(MbValue::from_int(1970),
-                                    MbValue::from_int(1),
-                                    MbValue::from_int(1));
+        let r = mb_calendar_weekday(
+            MbValue::from_int(1970),
+            MbValue::from_int(1),
+            MbValue::from_int(1),
+        );
         assert_eq!(r.as_int(), Some(3));
     }
 
     #[test]
     fn test_weekday_2026_05_16_saturday() {
         // 2026-05-16 is a Saturday → 5
-        let r = mb_calendar_weekday(MbValue::from_int(2026),
-                                    MbValue::from_int(5),
-                                    MbValue::from_int(16));
+        let r = mb_calendar_weekday(
+            MbValue::from_int(2026),
+            MbValue::from_int(5),
+            MbValue::from_int(16),
+        );
         assert_eq!(r.as_int(), Some(5));
     }
 
@@ -2350,8 +2783,7 @@ mod tests {
         // 2024-01: starts Monday (firstweekday=0 default), 31 days.
         // → 5 weeks, last week padded with trailing zeros.
         FIRST_WEEKDAY.store(0, Ordering::Relaxed);
-        let cal = mb_calendar_monthcalendar(MbValue::from_int(2024),
-                                            MbValue::from_int(1));
+        let cal = mb_calendar_monthcalendar(MbValue::from_int(2024), MbValue::from_int(1));
         assert_eq!(list_len(cal), 5);
     }
 
@@ -2360,13 +2792,17 @@ mod tests {
         // 2024-02-01 is Thursday; with firstweekday=0 the first week has
         // three leading zeros [0, 0, 0, 1, 2, 3, 4].
         FIRST_WEEKDAY.store(0, Ordering::Relaxed);
-        let cal = mb_calendar_monthcalendar(MbValue::from_int(2024),
-                                            MbValue::from_int(2));
-        let week0 = cal.as_ptr().map(|ptr| unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap()[0]
-            } else { MbValue::none() }
-        }).unwrap_or_else(MbValue::none);
+        let cal = mb_calendar_monthcalendar(MbValue::from_int(2024), MbValue::from_int(2));
+        let week0 = cal
+            .as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    lock.read().unwrap()[0]
+                } else {
+                    MbValue::none()
+                }
+            })
+            .unwrap_or_else(MbValue::none);
         assert_eq!(list_int_at(week0, 0), Some(0));
         assert_eq!(list_int_at(week0, 1), Some(0));
         assert_eq!(list_int_at(week0, 2), Some(0));
@@ -2436,8 +2872,12 @@ mod tests {
     fn test_timegm_epoch() {
         // (1970, 1, 1, 0, 0, 0) → 0
         let tup = MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_int(1970), MbValue::from_int(1), MbValue::from_int(1),
-            MbValue::from_int(0),    MbValue::from_int(0), MbValue::from_int(0),
+            MbValue::from_int(1970),
+            MbValue::from_int(1),
+            MbValue::from_int(1),
+            MbValue::from_int(0),
+            MbValue::from_int(0),
+            MbValue::from_int(0),
         ]));
         assert_eq!(mb_calendar_timegm(tup).as_int(), Some(0));
     }
@@ -2447,8 +2887,12 @@ mod tests {
         // (2024, 1, 1, 0, 0, 0) — CPython: calendar.timegm((2024,1,1,0,0,0))
         // == 1704067200
         let tup = MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_int(2024), MbValue::from_int(1), MbValue::from_int(1),
-            MbValue::from_int(0),    MbValue::from_int(0), MbValue::from_int(0),
+            MbValue::from_int(2024),
+            MbValue::from_int(1),
+            MbValue::from_int(1),
+            MbValue::from_int(0),
+            MbValue::from_int(0),
+            MbValue::from_int(0),
         ]));
         assert_eq!(mb_calendar_timegm(tup).as_int(), Some(1_704_067_200));
     }
@@ -2465,14 +2909,23 @@ mod tests {
     fn test_locale_text_calendar_carries_locale() {
         let loc = MbValue::from_ptr(MbObject::new_str("en_US.UTF-8".to_string()));
         let inst = mb_calendar_class_new("LocaleTextCalendar", MbValue::from_int(0), Some(loc));
-        assert_eq!(get_str(get_field(inst, "locale")).as_deref(), Some("en_US.UTF-8"));
+        assert_eq!(
+            get_str(get_field(inst, "locale")).as_deref(),
+            Some("en_US.UTF-8")
+        );
     }
 
     #[test]
     fn test_make_error_class_carries_name() {
         let e = make_error_class("IllegalMonthError");
-        assert_eq!(get_str(get_field(e, "__name__")).as_deref(), Some("IllegalMonthError"));
-        assert_eq!(get_str(get_field(e, "__module__")).as_deref(), Some("calendar"));
+        assert_eq!(
+            get_str(get_field(e, "__name__")).as_deref(),
+            Some("IllegalMonthError")
+        );
+        assert_eq!(
+            get_str(get_field(e, "__module__")).as_deref(),
+            Some("calendar")
+        );
     }
 
     #[test]

@@ -1,11 +1,10 @@
+use super::rc::{MbObject, ObjData};
+use super::value::MbValue;
 /// List operations for the Mamba runtime (#285) — thread-safe.
 ///
 /// Implements Python-compatible list methods. All mutable collection access
 /// goes through RwLock guards for thread-safety.
-
 use smallvec::smallvec;
-use super::value::MbValue;
-use super::rc::{MbObject, ObjData};
 
 fn normalize_index(idx: i64, len: i64) -> i64 {
     let i = if idx < 0 { idx + len } else { idx };
@@ -49,94 +48,180 @@ pub fn mb_list_from(elements: Vec<MbValue>) -> MbValue {
 /// is the ≥30% reduction the issue asks for.
 pub fn mb_list_new_1(a: MbValue) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
     }
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a]))
 }
 
 pub fn mb_list_new_2(a: MbValue, b: MbValue) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
-        if b.is_ptr() { super::rc::retain_if_ptr(b); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
+        if b.is_ptr() {
+            super::rc::retain_if_ptr(b);
+        }
     }
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b]))
 }
 
 pub fn mb_list_new_3(a: MbValue, b: MbValue, c: MbValue) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
-        if b.is_ptr() { super::rc::retain_if_ptr(b); }
-        if c.is_ptr() { super::rc::retain_if_ptr(c); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
+        if b.is_ptr() {
+            super::rc::retain_if_ptr(b);
+        }
+        if c.is_ptr() {
+            super::rc::retain_if_ptr(c);
+        }
     }
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c]))
 }
 
 pub fn mb_list_new_4(a: MbValue, b: MbValue, c: MbValue, d: MbValue) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
-        if b.is_ptr() { super::rc::retain_if_ptr(b); }
-        if c.is_ptr() { super::rc::retain_if_ptr(c); }
-        if d.is_ptr() { super::rc::retain_if_ptr(d); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
+        if b.is_ptr() {
+            super::rc::retain_if_ptr(b);
+        }
+        if c.is_ptr() {
+            super::rc::retain_if_ptr(c);
+        }
+        if d.is_ptr() {
+            super::rc::retain_if_ptr(d);
+        }
     }
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d]))
 }
 
-pub fn mb_list_new_5(
-    a: MbValue, b: MbValue, c: MbValue, d: MbValue, e: MbValue,
-) -> MbValue {
+pub fn mb_list_new_5(a: MbValue, b: MbValue, c: MbValue, d: MbValue, e: MbValue) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
-        if b.is_ptr() { super::rc::retain_if_ptr(b); }
-        if c.is_ptr() { super::rc::retain_if_ptr(c); }
-        if d.is_ptr() { super::rc::retain_if_ptr(d); }
-        if e.is_ptr() { super::rc::retain_if_ptr(e); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
+        if b.is_ptr() {
+            super::rc::retain_if_ptr(b);
+        }
+        if c.is_ptr() {
+            super::rc::retain_if_ptr(c);
+        }
+        if d.is_ptr() {
+            super::rc::retain_if_ptr(d);
+        }
+        if e.is_ptr() {
+            super::rc::retain_if_ptr(e);
+        }
     }
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e]))
 }
 
 pub fn mb_list_new_6(
-    a: MbValue, b: MbValue, c: MbValue, d: MbValue, e: MbValue, f: MbValue,
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
 ) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
-        if b.is_ptr() { super::rc::retain_if_ptr(b); }
-        if c.is_ptr() { super::rc::retain_if_ptr(c); }
-        if d.is_ptr() { super::rc::retain_if_ptr(d); }
-        if e.is_ptr() { super::rc::retain_if_ptr(e); }
-        if f.is_ptr() { super::rc::retain_if_ptr(f); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
+        if b.is_ptr() {
+            super::rc::retain_if_ptr(b);
+        }
+        if c.is_ptr() {
+            super::rc::retain_if_ptr(c);
+        }
+        if d.is_ptr() {
+            super::rc::retain_if_ptr(d);
+        }
+        if e.is_ptr() {
+            super::rc::retain_if_ptr(e);
+        }
+        if f.is_ptr() {
+            super::rc::retain_if_ptr(f);
+        }
     }
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e, f]))
 }
 
 pub fn mb_list_new_7(
-    a: MbValue, b: MbValue, c: MbValue, d: MbValue,
-    e: MbValue, f: MbValue, g: MbValue,
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
+    g: MbValue,
 ) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
-        if b.is_ptr() { super::rc::retain_if_ptr(b); }
-        if c.is_ptr() { super::rc::retain_if_ptr(c); }
-        if d.is_ptr() { super::rc::retain_if_ptr(d); }
-        if e.is_ptr() { super::rc::retain_if_ptr(e); }
-        if f.is_ptr() { super::rc::retain_if_ptr(f); }
-        if g.is_ptr() { super::rc::retain_if_ptr(g); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
+        if b.is_ptr() {
+            super::rc::retain_if_ptr(b);
+        }
+        if c.is_ptr() {
+            super::rc::retain_if_ptr(c);
+        }
+        if d.is_ptr() {
+            super::rc::retain_if_ptr(d);
+        }
+        if e.is_ptr() {
+            super::rc::retain_if_ptr(e);
+        }
+        if f.is_ptr() {
+            super::rc::retain_if_ptr(f);
+        }
+        if g.is_ptr() {
+            super::rc::retain_if_ptr(g);
+        }
     }
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e, f, g]))
 }
 
 pub fn mb_list_new_8(
-    a: MbValue, b: MbValue, c: MbValue, d: MbValue,
-    e: MbValue, f: MbValue, g: MbValue, h: MbValue,
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
+    g: MbValue,
+    h: MbValue,
 ) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
-        if b.is_ptr() { super::rc::retain_if_ptr(b); }
-        if c.is_ptr() { super::rc::retain_if_ptr(c); }
-        if d.is_ptr() { super::rc::retain_if_ptr(d); }
-        if e.is_ptr() { super::rc::retain_if_ptr(e); }
-        if f.is_ptr() { super::rc::retain_if_ptr(f); }
-        if g.is_ptr() { super::rc::retain_if_ptr(g); }
-        if h.is_ptr() { super::rc::retain_if_ptr(h); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
+        if b.is_ptr() {
+            super::rc::retain_if_ptr(b);
+        }
+        if c.is_ptr() {
+            super::rc::retain_if_ptr(c);
+        }
+        if d.is_ptr() {
+            super::rc::retain_if_ptr(d);
+        }
+        if e.is_ptr() {
+            super::rc::retain_if_ptr(e);
+        }
+        if f.is_ptr() {
+            super::rc::retain_if_ptr(f);
+        }
+        if g.is_ptr() {
+            super::rc::retain_if_ptr(g);
+        }
+        if h.is_ptr() {
+            super::rc::retain_if_ptr(h);
+        }
     }
     MbValue::from_ptr(MbObject::new_list_inline(smallvec![a, b, c, d, e, f, g, h]))
 }
@@ -145,38 +230,91 @@ pub fn mb_list_new_8(
 /// FFI call is still cheaper than `1+N` separate ones for the
 /// `data = [...10 ints...]` shape used by list_sort_builtin.
 pub fn mb_list_new_9(
-    a: MbValue, b: MbValue, c: MbValue, d: MbValue, e: MbValue,
-    f: MbValue, g: MbValue, h: MbValue, i: MbValue,
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
+    g: MbValue,
+    h: MbValue,
+    i: MbValue,
 ) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
-        if b.is_ptr() { super::rc::retain_if_ptr(b); }
-        if c.is_ptr() { super::rc::retain_if_ptr(c); }
-        if d.is_ptr() { super::rc::retain_if_ptr(d); }
-        if e.is_ptr() { super::rc::retain_if_ptr(e); }
-        if f.is_ptr() { super::rc::retain_if_ptr(f); }
-        if g.is_ptr() { super::rc::retain_if_ptr(g); }
-        if h.is_ptr() { super::rc::retain_if_ptr(h); }
-        if i.is_ptr() { super::rc::retain_if_ptr(i); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
+        if b.is_ptr() {
+            super::rc::retain_if_ptr(b);
+        }
+        if c.is_ptr() {
+            super::rc::retain_if_ptr(c);
+        }
+        if d.is_ptr() {
+            super::rc::retain_if_ptr(d);
+        }
+        if e.is_ptr() {
+            super::rc::retain_if_ptr(e);
+        }
+        if f.is_ptr() {
+            super::rc::retain_if_ptr(f);
+        }
+        if g.is_ptr() {
+            super::rc::retain_if_ptr(g);
+        }
+        if h.is_ptr() {
+            super::rc::retain_if_ptr(h);
+        }
+        if i.is_ptr() {
+            super::rc::retain_if_ptr(i);
+        }
     }
     MbValue::from_ptr(MbObject::new_list(vec![a, b, c, d, e, f, g, h, i]))
 }
 
 pub fn mb_list_new_10(
-    a: MbValue, b: MbValue, c: MbValue, d: MbValue, e: MbValue,
-    f: MbValue, g: MbValue, h: MbValue, i: MbValue, j: MbValue,
+    a: MbValue,
+    b: MbValue,
+    c: MbValue,
+    d: MbValue,
+    e: MbValue,
+    f: MbValue,
+    g: MbValue,
+    h: MbValue,
+    i: MbValue,
+    j: MbValue,
 ) -> MbValue {
     unsafe {
-        if a.is_ptr() { super::rc::retain_if_ptr(a); }
-        if b.is_ptr() { super::rc::retain_if_ptr(b); }
-        if c.is_ptr() { super::rc::retain_if_ptr(c); }
-        if d.is_ptr() { super::rc::retain_if_ptr(d); }
-        if e.is_ptr() { super::rc::retain_if_ptr(e); }
-        if f.is_ptr() { super::rc::retain_if_ptr(f); }
-        if g.is_ptr() { super::rc::retain_if_ptr(g); }
-        if h.is_ptr() { super::rc::retain_if_ptr(h); }
-        if i.is_ptr() { super::rc::retain_if_ptr(i); }
-        if j.is_ptr() { super::rc::retain_if_ptr(j); }
+        if a.is_ptr() {
+            super::rc::retain_if_ptr(a);
+        }
+        if b.is_ptr() {
+            super::rc::retain_if_ptr(b);
+        }
+        if c.is_ptr() {
+            super::rc::retain_if_ptr(c);
+        }
+        if d.is_ptr() {
+            super::rc::retain_if_ptr(d);
+        }
+        if e.is_ptr() {
+            super::rc::retain_if_ptr(e);
+        }
+        if f.is_ptr() {
+            super::rc::retain_if_ptr(f);
+        }
+        if g.is_ptr() {
+            super::rc::retain_if_ptr(g);
+        }
+        if h.is_ptr() {
+            super::rc::retain_if_ptr(h);
+        }
+        if i.is_ptr() {
+            super::rc::retain_if_ptr(i);
+        }
+        if j.is_ptr() {
+            super::rc::retain_if_ptr(j);
+        }
     }
     MbValue::from_ptr(MbObject::new_list(vec![a, b, c, d, e, f, g, h, i, j]))
 }
@@ -240,12 +378,11 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                 ObjData::Str(s) => {
                     // Class-body enum classes: list(Color) is the canonical
                     // member list, not the class-name string's characters.
-                    if let Some(members) =
-                        super::stdlib::enum_class::class_canonical_members(s)
-                    {
+                    if let Some(members) = super::stdlib::enum_class::class_canonical_members(s) {
                         return MbValue::from_ptr(MbObject::new_list_borrowed(members));
                     }
-                    let items: Vec<MbValue> = s.chars()
+                    let items: Vec<MbValue> = s
+                        .chars()
                         .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
                         .collect();
                     return MbValue::from_ptr(MbObject::new_list(items));
@@ -270,7 +407,8 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                     // their internal keys.
                     let element_children = {
                         let guard = lock.read().unwrap();
-                        let is_element = guard.get("__class__")
+                        let is_element = guard
+                            .get("__class__")
                             .and_then(|v| v.as_ptr())
                             .map(|p| matches!(&(*p).data, ObjData::Str(s) if s == "Element"))
                             .unwrap_or(false);
@@ -290,14 +428,19 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                         }
                     }
                     // Iterating a dict yields its keys.
-                    let keys: Vec<MbValue> = lock.read().unwrap().keys()
+                    let keys: Vec<MbValue> = lock
+                        .read()
+                        .unwrap()
+                        .keys()
                         .map(|k| super::dict_ops::dict_key_to_mbvalue(k))
                         .collect();
                     return MbValue::from_ptr(MbObject::new_list(keys));
                 }
-                ObjData::Instance { ref class_name, ref fields, .. }
-                    if class_name == "collections.deque" =>
-                {
+                ObjData::Instance {
+                    ref class_name,
+                    ref fields,
+                    ..
+                } if class_name == "collections.deque" => {
                     let guard = fields.read().unwrap();
                     if let Some(items) = guard.get("_items") {
                         if let Some(ip) = items.as_ptr() {
@@ -514,7 +657,13 @@ pub fn mb_list_setitem(list: MbValue, index: MbValue, value: MbValue) {
 }
 
 /// list[start:stop] = iterable — replace slice with elements from value list.
-pub fn mb_list_setslice(list: MbValue, start: MbValue, stop: MbValue, _step: MbValue, value: MbValue) {
+pub fn mb_list_setslice(
+    list: MbValue,
+    start: MbValue,
+    stop: MbValue,
+    _step: MbValue,
+    value: MbValue,
+) {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             // bytearray[start:stop] = bytes-like — splice u8 values.
@@ -556,8 +705,14 @@ pub fn mb_list_setslice(list: MbValue, start: MbValue, stop: MbValue, _step: MbV
                 };
                 let mut data = lock.write().unwrap();
                 let len = data.len() as i64;
-                let s = start.as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(0) as usize;
-                let e = stop.as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(len) as usize;
+                let s = start
+                    .as_int_pyint()
+                    .map(|i| clamp_index(i, len))
+                    .unwrap_or(0) as usize;
+                let e = stop
+                    .as_int_pyint()
+                    .map(|i| clamp_index(i, len))
+                    .unwrap_or(len) as usize;
                 let s = s.min(data.len());
                 let e = e.min(data.len()).max(s);
                 data.splice(s..e, new_bytes);
@@ -578,7 +733,10 @@ pub fn mb_list_setslice(list: MbValue, start: MbValue, stop: MbValue, _step: MbV
                 let mut items = lock.write().unwrap();
                 let len = items.len() as i64;
                 let s = start.as_int().map(|i| clamp_index(i, len)).unwrap_or(0) as usize;
-                let e = stop.as_int().map(|i| clamp_index(i, len)).unwrap_or(len as i64) as usize;
+                let e = stop
+                    .as_int()
+                    .map(|i| clamp_index(i, len))
+                    .unwrap_or(len as i64) as usize;
                 let s = s.min(items.len());
                 let e = e.min(items.len()).max(s);
 
@@ -637,9 +795,7 @@ pub fn mb_list_slice(list: MbValue, start: MbValue, stop: MbValue) -> MbValue {
 }
 
 /// Full slice with step: list[start:stop:step]. Handles None for defaults.
-pub fn mb_list_slice_full(
-    list: MbValue, start: MbValue, stop: MbValue, step: MbValue,
-) -> MbValue {
+pub fn mb_list_slice_full(list: MbValue, start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
@@ -649,7 +805,9 @@ pub fn mb_list_slice_full(
                 if st == 0 {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str("slice step cannot be zero".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "slice step cannot be zero".to_string(),
+                        )),
                     );
                     return mb_list_new();
                 }
@@ -664,28 +822,48 @@ pub fn mb_list_slice_full(
 
 /// Compute Python slice indices and extract elements.
 fn slice_indices(
-    items: &[MbValue], len: i64, start: MbValue, stop: MbValue, step: i64,
+    items: &[MbValue],
+    len: i64,
+    start: MbValue,
+    stop: MbValue,
+    step: i64,
 ) -> Vec<MbValue> {
     // bool ≤ int (#1680): accept bool slice bounds.
     let (s, e) = if step > 0 {
-        let s = start.as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(0);
-        let e = stop.as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(len);
+        let s = start
+            .as_int_pyint()
+            .map(|i| clamp_index(i, len))
+            .unwrap_or(0);
+        let e = stop
+            .as_int_pyint()
+            .map(|i| clamp_index(i, len))
+            .unwrap_or(len);
         (s, e)
     } else {
-        let s = start.as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(len - 1);
-        let e = stop.as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(-1);
+        let s = start
+            .as_int_pyint()
+            .map(|i| clamp_index(i, len))
+            .unwrap_or(len - 1);
+        let e = stop
+            .as_int_pyint()
+            .map(|i| clamp_index(i, len))
+            .unwrap_or(-1);
         (s, e)
     };
     let mut result = Vec::new();
     let mut i = s;
     if step > 0 {
         while i < e {
-            if i >= 0 && i < len { result.push(items[i as usize]); }
+            if i >= 0 && i < len {
+                result.push(items[i as usize]);
+            }
             i += step;
         }
     } else {
         while i > e {
-            if i >= 0 && i < len { result.push(items[i as usize]); }
+            if i >= 0 && i < len {
+                result.push(items[i as usize]);
+            }
             i += step;
         }
     }
@@ -817,8 +995,7 @@ pub fn mb_list_remove(list: MbValue, value: MbValue) {
                 // Scan a snapshot WITHOUT holding the lock: mb_eq can
                 // re-enter user __eq__ that mutates this list (reentrancy
                 // hardening — holding the write lock across it deadlocks).
-                let snapshot: Vec<MbValue> =
-                    lock.read().unwrap().iter().copied().collect();
+                let snapshot: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
                 let mut found_pos: Option<usize> = None;
                 for (i, v) in snapshot.iter().enumerate() {
                     if super::builtins::mb_eq(*v, value).as_bool() == Some(true) {
@@ -858,18 +1035,20 @@ pub fn mb_list_extend(list: MbValue, other: MbValue) {
                 ObjData::Set(ref lock) => Some(lock.read().unwrap().to_vec()),
                 ObjData::FrozenSet(ref items) => Some(items.clone()),
                 ObjData::Dict(ref lock) => Some(
-                    lock.read().unwrap().keys()
+                    lock.read()
+                        .unwrap()
+                        .keys()
                         .map(super::dict_ops::dict_key_to_mbvalue)
-                        .collect()
+                        .collect(),
                 ),
                 ObjData::Str(ref s) => Some(
                     s.chars()
                         .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
-                        .collect()
+                        .collect(),
                 ),
-                ObjData::Bytes(ref data) => Some(
-                    data.iter().map(|&b| MbValue::from_int(b as i64)).collect()
-                ),
+                ObjData::Bytes(ref data) => {
+                    Some(data.iter().map(|&b| MbValue::from_int(b as i64)).collect())
+                }
                 _ => None,
             }
         } else {
@@ -877,7 +1056,9 @@ pub fn mb_list_extend(list: MbValue, other: MbValue) {
         };
         if let (Some(ptr), Some(cloned)) = (list.as_ptr(), cloned) {
             if let ObjData::List(ref lock) = (*ptr).data {
-                for elem in &cloned { super::rc::retain_if_ptr(*elem); }
+                for elem in &cloned {
+                    super::rc::retain_if_ptr(*elem);
+                }
                 lock.write().unwrap().extend(cloned);
             }
         }
@@ -967,7 +1148,11 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                         return;
                     }
                     let named_key = key.as_ptr().and_then(|p| {
-                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                        if let ObjData::Str(ref s) = (*p).data {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
                     });
                     // Snapshot the elements, then release the lock while the
                     // key callable runs: mb_call1_val can re-enter the runtime
@@ -992,7 +1177,9 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                         indexed.push((item, k));
                     }
                     indexed.sort_by(|a, b| mb_value_cmp_pub(a.1, b.1));
-                    if do_reverse { indexed.reverse(); }
+                    if do_reverse {
+                        indexed.reverse();
+                    }
                     let mut items = lock.write().unwrap();
                     *items = indexed.into_iter().map(|(v, _)| v).collect();
                 } else {
@@ -1003,7 +1190,9 @@ pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
                     } else {
                         items.sort_by(|a, b| mb_value_cmp_pub(*a, *b));
                     }
-                    if do_reverse { items.reverse(); }
+                    if do_reverse {
+                        items.reverse();
+                    }
                 }
             }
         }
@@ -1015,7 +1204,9 @@ pub fn mb_list_copy(list: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                return MbValue::from_ptr(MbObject::new_list_borrowed(lock.read().unwrap().to_vec()));
+                return MbValue::from_ptr(MbObject::new_list_borrowed(
+                    lock.read().unwrap().to_vec(),
+                ));
             }
         }
     }
@@ -1034,7 +1225,12 @@ pub fn mb_list_index(list: MbValue, value: MbValue) -> MbValue {
 /// and return its absolute index. CPython's signature is `(value, start=0,
 /// stop=sys.maxsize)` — both bounds optional, both clamped, negatives counted
 /// from the end. Raises ValueError when not found.
-pub fn mb_list_index_range(list: MbValue, value: MbValue, start: MbValue, stop: MbValue) -> MbValue {
+pub fn mb_list_index_range(
+    list: MbValue,
+    value: MbValue,
+    start: MbValue,
+    stop: MbValue,
+) -> MbValue {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
@@ -1046,10 +1242,18 @@ pub fn mb_list_index_range(list: MbValue, value: MbValue, start: MbValue, stop: 
                 // Resolve start: default 0; negatives count from the end and
                 // clamp to 0; positives clamp to len.
                 let mut s = start.as_int().unwrap_or(0);
-                if s < 0 { s = (s + len).max(0); } else if s > len { s = len; }
+                if s < 0 {
+                    s = (s + len).max(0);
+                } else if s > len {
+                    s = len;
+                }
                 // Resolve stop: default `len`; same clamp rules.
                 let mut e = stop.as_int().unwrap_or(len);
-                if e < 0 { e = (e + len).max(0); } else if e > len { e = len; }
+                if e < 0 {
+                    e = (e + len).max(0);
+                } else if e > len {
+                    e = len;
+                }
                 if s < e {
                     for (i, item) in items.iter().enumerate().take(e as usize).skip(s as usize) {
                         if super::builtins::mb_eq(*item, value).as_bool() == Some(true) {
@@ -1058,14 +1262,19 @@ pub fn mb_list_index_range(list: MbValue, value: MbValue, start: MbValue, stop: 
                     }
                 }
                 let repr = super::builtins::mb_repr(value);
-                let repr_s = repr.as_ptr().and_then(|p| {
-                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
-                }).unwrap_or_default();
+                let repr_s = repr
+                    .as_ptr()
+                    .and_then(|p| {
+                        if let ObjData::Str(ref s) = (*p).data {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        format!("{repr_s} is not in list"),
-                    )),
+                    MbValue::from_ptr(MbObject::new_str(format!("{repr_s} is not in list"))),
                 );
                 return MbValue::none();
             }
@@ -1084,10 +1293,13 @@ pub fn mb_list_count(list: MbValue, value: MbValue) -> MbValue {
                 let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
                 // Identity-first like CPython list.count (PyObject_RichCompareBool):
                 // a self-unequal element such as NaN still counts the same object.
-                let n = items.iter().filter(|v| {
-                    super::builtins::mb_is_identity(**v, value).as_bool() == Some(true)
-                        || super::builtins::mb_eq(**v, value).as_bool() == Some(true)
-                }).count();
+                let n = items
+                    .iter()
+                    .filter(|v| {
+                        super::builtins::mb_is_identity(**v, value).as_bool() == Some(true)
+                            || super::builtins::mb_eq(**v, value).as_bool() == Some(true)
+                    })
+                    .count();
                 return MbValue::from_int(n as i64);
             }
         }
@@ -1100,10 +1312,15 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
     // Range iterator handles look like ints. Match CPython's
     // range.__contains__ — O(1) math check, never iterates the range.
     if let Some((current, stop, step)) = super::iter::mb_iter_range_params(container) {
-        if step == 0 { return MbValue::from_bool(false); }
+        if step == 0 {
+            return MbValue::from_bool(false);
+        }
         let in_range = |v: i64| -> bool {
-            let in_bounds = if step > 0 { v >= current && v < stop }
-                            else { v <= current && v > stop };
+            let in_bounds = if step > 0 {
+                v >= current && v < stop
+            } else {
+                v <= current && v > stop
+            };
             in_bounds && (v - current).rem_euclid(step.abs()) == 0
         };
         // Exact int / bool: CPython's O(1) arithmetic membership test.
@@ -1142,8 +1359,7 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                 ObjData::List(ref lock) => {
                     // Snapshot then release: mb_eq may re-enter user __eq__
                     // that mutates this list (see mb_list_index_range).
-                    let items: Vec<MbValue> =
-                        lock.read().unwrap().iter().copied().collect();
+                    let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
                     for item in items.iter() {
                         // CPython `x in seq` is identity-first (`x is e or x == e`
                         // via PyObject_RichCompareBool), so a self-unequal element
@@ -1168,9 +1384,7 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                 }
                 ObjData::Str(ref s) => {
                     // Class-body enum class: `member in Color` / `value in Color`.
-                    if let Some(found) =
-                        super::stdlib::enum_class::class_contains(s, value)
-                    {
+                    if let Some(found) = super::stdlib::enum_class::class_contains(s, value) {
                         return MbValue::from_bool(found);
                     }
                     if let Some(vp) = value.as_ptr() {
@@ -1189,7 +1403,9 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                         if tn != "set" {
                             super::exception::mb_raise(
                                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                                MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+                                MbValue::from_ptr(MbObject::new_str(format!(
+                                    "unhashable type: '{tn}'"
+                                ))),
                             );
                             return MbValue::none();
                         }
@@ -1209,7 +1425,9 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                         if tn != "set" {
                             super::exception::mb_raise(
                                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                                MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+                                MbValue::from_ptr(MbObject::new_str(format!(
+                                    "unhashable type: '{tn}'"
+                                ))),
                             );
                             return MbValue::none();
                         }
@@ -1229,7 +1447,9 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                     if let Some(tn) = super::set_ops::unhashable_type_name(value) {
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "unhashable type: '{tn}'"
+                            ))),
                         );
                         return MbValue::none();
                     }
@@ -1254,7 +1474,8 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                     // User-defined iterable / sequence: check __contains__ first,
                     // fall back to iterator protocol + equality.
                     let contains_method = super::class::mb_lookup_dunder(
-                        container, MbValue::from_ptr(MbObject::new_str("__contains__".into())),
+                        container,
+                        MbValue::from_ptr(MbObject::new_str("__contains__".into())),
                     );
                     if !contains_method.is_none() {
                         // Call __contains__(self, value) via 2-arg dispatch.
@@ -1309,10 +1530,7 @@ pub fn mb_list_len(list: MbValue) -> MbValue {
 pub fn mb_is_sequence(val: MbValue) -> MbValue {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
-            return MbValue::from_bool(matches!(
-                (*ptr).data,
-                ObjData::List(_) | ObjData::Tuple(_)
-            ));
+            return MbValue::from_bool(matches!((*ptr).data, ObjData::List(_) | ObjData::Tuple(_)));
         }
     }
     MbValue::from_bool(false)
@@ -1553,7 +1771,12 @@ pub fn dispatch_list_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
         unsafe {
             if let Some(ptr) = args.as_ptr() {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    return lock.read().unwrap().get(i).copied().unwrap_or(MbValue::none());
+                    return lock
+                        .read()
+                        .unwrap()
+                        .get(i)
+                        .copied()
+                        .unwrap_or(MbValue::none());
                 }
             }
             MbValue::none()
@@ -1570,17 +1793,41 @@ pub fn dispatch_list_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
         }
     };
     match name {
-        "append" => { mb_list_append(receiver, arg(0)); MbValue::none() }
-        "insert" => { mb_list_insert(receiver, arg(0), arg(1)); MbValue::none() }
-        "pop" => {
-            if argc() > 0 { mb_list_pop_at(receiver, arg(0)) }
-            else { mb_list_pop(receiver) }
+        "append" => {
+            mb_list_append(receiver, arg(0));
+            MbValue::none()
         }
-        "remove" => { mb_list_remove(receiver, arg(0)); MbValue::none() }
-        "extend" => { mb_list_extend(receiver, arg(0)); MbValue::none() }
-        "clear" => { mb_list_clear(receiver); MbValue::none() }
-        "reverse" => { mb_list_reverse(receiver); MbValue::none() }
-        "sort" => { mb_list_sort(receiver); MbValue::none() }
+        "insert" => {
+            mb_list_insert(receiver, arg(0), arg(1));
+            MbValue::none()
+        }
+        "pop" => {
+            if argc() > 0 {
+                mb_list_pop_at(receiver, arg(0))
+            } else {
+                mb_list_pop(receiver)
+            }
+        }
+        "remove" => {
+            mb_list_remove(receiver, arg(0));
+            MbValue::none()
+        }
+        "extend" => {
+            mb_list_extend(receiver, arg(0));
+            MbValue::none()
+        }
+        "clear" => {
+            mb_list_clear(receiver);
+            MbValue::none()
+        }
+        "reverse" => {
+            mb_list_reverse(receiver);
+            MbValue::none()
+        }
+        "sort" => {
+            mb_list_sort(receiver);
+            MbValue::none()
+        }
         "copy" => mb_list_copy(receiver),
         "index" => {
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
@@ -1594,8 +1841,14 @@ pub fn dispatch_list_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
         "__getitem__" => mb_list_getitem(receiver, arg(0)),
         // `[].__dir__()` — same name set as dir([]) (already sorted).
         "__dir__" => super::class::mb_dir(receiver),
-        "__setitem__" => { mb_list_setitem(receiver, arg(0), arg(1)); MbValue::none() }
-        "__delitem__" => { mb_list_delitem(receiver, arg(0)); MbValue::none() }
+        "__setitem__" => {
+            mb_list_setitem(receiver, arg(0), arg(1));
+            MbValue::none()
+        }
+        "__delitem__" => {
+            mb_list_delitem(receiver, arg(0));
+            MbValue::none()
+        }
         "__contains__" => mb_list_contains(receiver, arg(0)),
         "__len__" => mb_list_len(receiver),
         "__iter__" => super::iter::mb_iter(receiver),
@@ -1617,9 +1870,9 @@ pub fn dispatch_list_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
         _ => {
             super::exception::mb_raise(
                 MbValue::from_ptr(super::rc::MbObject::new_str("AttributeError".to_string())),
-                MbValue::from_ptr(super::rc::MbObject::new_str(
-                    format!("'list' object has no attribute '{name}'"),
-                )),
+                MbValue::from_ptr(super::rc::MbObject::new_str(format!(
+                    "'list' object has no attribute '{name}'"
+                ))),
             );
             MbValue::none()
         }
@@ -1642,8 +1895,14 @@ mod tests {
     fn test_from_elements() {
         let list = mb_list_from(vec![MbValue::from_int(1), MbValue::from_int(2)]);
         assert_eq!(mb_list_len(list).as_int(), Some(2));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(1));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(1)).as_int(), Some(2));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(1)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(1)).as_int(),
+            Some(2)
+        );
     }
 
     // ── #2178 unpack-assign zero-copy fast path ──
@@ -1665,8 +1924,14 @@ mod tests {
         // mb_seq_len_boxed reports the correct length for tuples.
         assert_eq!(mb_seq_len_boxed(out).as_int(), Some(3));
         // mb_list_getitem already handles tuples — the lowering path is sound.
-        assert_eq!(mb_list_getitem(out, MbValue::from_int(0)).as_float(), Some(1.0));
-        assert_eq!(mb_list_getitem(out, MbValue::from_int(2)).as_float(), Some(3.0));
+        assert_eq!(
+            mb_list_getitem(out, MbValue::from_int(0)).as_float(),
+            Some(1.0)
+        );
+        assert_eq!(
+            mb_list_getitem(out, MbValue::from_int(2)).as_float(),
+            Some(3.0)
+        );
     }
 
     /// `mb_seq_for_unpack` on a list also returns the same pointer (no copy).
@@ -1721,19 +1986,35 @@ mod tests {
     #[test]
     fn test_getitem() {
         let list = mb_list_from(vec![
-            MbValue::from_int(10), MbValue::from_int(20), MbValue::from_int(30),
+            MbValue::from_int(10),
+            MbValue::from_int(20),
+            MbValue::from_int(30),
         ]);
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(10));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(2)).as_int(), Some(30));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(10)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(2)).as_int(),
+            Some(30)
+        );
     }
 
     #[test]
     fn test_getitem_negative_index() {
         let list = mb_list_from(vec![
-            MbValue::from_int(10), MbValue::from_int(20), MbValue::from_int(30),
+            MbValue::from_int(10),
+            MbValue::from_int(20),
+            MbValue::from_int(30),
         ]);
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(-1)).as_int(), Some(30));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(-3)).as_int(), Some(10));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(-1)).as_int(),
+            Some(30)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(-3)).as_int(),
+            Some(10)
+        );
     }
 
     #[test]
@@ -1745,7 +2026,9 @@ mod tests {
 
     #[test]
     fn test_bytearray_setitem() {
-        let ba = MbValue::from_ptr(super::super::rc::MbObject::new_bytearray(vec![72u8, 101, 108, 108, 111]));
+        let ba = MbValue::from_ptr(super::super::rc::MbObject::new_bytearray(vec![
+            72u8, 101, 108, 108, 111,
+        ]));
         mb_list_setitem(ba, MbValue::from_int(0), MbValue::from_int(74)); // 'J'
         if let Some(ptr) = ba.as_ptr() {
             unsafe {
@@ -1768,14 +2051,20 @@ mod tests {
     fn test_setitem() {
         let list = mb_list_from(vec![MbValue::from_int(1), MbValue::from_int(2)]);
         mb_list_setitem(list, MbValue::from_int(0), MbValue::from_int(99));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(99));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(99)
+        );
     }
 
     #[test]
     fn test_setitem_negative() {
         let list = mb_list_from(vec![MbValue::from_int(1), MbValue::from_int(2)]);
         mb_list_setitem(list, MbValue::from_int(-1), MbValue::from_int(88));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(1)).as_int(), Some(88));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(1)).as_int(),
+            Some(88)
+        );
     }
 
     #[test]
@@ -1785,7 +2074,10 @@ mod tests {
         let list = mb_list_from(vec![MbValue::from_int(1)]);
         mb_list_setitem(list, MbValue::from_int(5), MbValue::from_int(99));
         assert_eq!(mb_list_len(list).as_int(), Some(1));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(1));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(1)
+        );
         crate::runtime::exception::mb_clear_exception();
     }
 
@@ -1794,11 +2086,16 @@ mod tests {
     #[test]
     fn test_delitem() {
         let list = mb_list_from(vec![
-            MbValue::from_int(10), MbValue::from_int(20), MbValue::from_int(30),
+            MbValue::from_int(10),
+            MbValue::from_int(20),
+            MbValue::from_int(30),
         ]);
         mb_list_delitem(list, MbValue::from_int(1));
         assert_eq!(mb_list_len(list).as_int(), Some(2));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(1)).as_int(), Some(30));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(1)).as_int(),
+            Some(30)
+        );
     }
 
     #[test]
@@ -1806,7 +2103,10 @@ mod tests {
         let list = mb_list_from(vec![MbValue::from_int(10), MbValue::from_int(20)]);
         mb_list_delitem(list, MbValue::from_int(-1));
         assert_eq!(mb_list_len(list).as_int(), Some(1));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(10));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(10)
+        );
     }
 
     #[test]
@@ -1823,14 +2123,20 @@ mod tests {
         let list = mb_list_from(vec![MbValue::from_int(2), MbValue::from_int(3)]);
         mb_list_insert(list, MbValue::from_int(0), MbValue::from_int(1));
         assert_eq!(mb_list_len(list).as_int(), Some(3));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(1));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(1)
+        );
     }
 
     #[test]
     fn test_insert_middle() {
         let list = mb_list_from(vec![MbValue::from_int(1), MbValue::from_int(3)]);
         mb_list_insert(list, MbValue::from_int(1), MbValue::from_int(2));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(1)).as_int(), Some(2));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(1)).as_int(),
+            Some(2)
+        );
     }
 
     #[test]
@@ -1845,7 +2151,9 @@ mod tests {
     #[test]
     fn test_pop() {
         let list = mb_list_from(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]);
         assert_eq!(mb_list_pop(list).as_int(), Some(3));
         assert_eq!(mb_list_len(list).as_int(), Some(2));
@@ -1867,16 +2175,24 @@ mod tests {
     #[test]
     fn test_pop_at() {
         let list = mb_list_from(vec![
-            MbValue::from_int(10), MbValue::from_int(20), MbValue::from_int(30),
+            MbValue::from_int(10),
+            MbValue::from_int(20),
+            MbValue::from_int(30),
         ]);
-        assert_eq!(mb_list_pop_at(list, MbValue::from_int(1)).as_int(), Some(20));
+        assert_eq!(
+            mb_list_pop_at(list, MbValue::from_int(1)).as_int(),
+            Some(20)
+        );
         assert_eq!(mb_list_len(list).as_int(), Some(2));
     }
 
     #[test]
     fn test_pop_at_negative() {
         let list = mb_list_from(vec![MbValue::from_int(10), MbValue::from_int(20)]);
-        assert_eq!(mb_list_pop_at(list, MbValue::from_int(-1)).as_int(), Some(20));
+        assert_eq!(
+            mb_list_pop_at(list, MbValue::from_int(-1)).as_int(),
+            Some(20)
+        );
     }
 
     #[test]
@@ -1890,21 +2206,31 @@ mod tests {
     #[test]
     fn test_remove() {
         let list = mb_list_from(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]);
         mb_list_remove(list, MbValue::from_int(2));
         assert_eq!(mb_list_len(list).as_int(), Some(2));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(1)).as_int(), Some(3));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(1)).as_int(),
+            Some(3)
+        );
     }
 
     #[test]
     fn test_remove_first_occurrence() {
         let list = mb_list_from(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(1),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(1),
         ]);
         mb_list_remove(list, MbValue::from_int(1));
         assert_eq!(mb_list_len(list).as_int(), Some(2));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(2));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(2)
+        );
     }
 
     #[test]
@@ -1947,11 +2273,19 @@ mod tests {
     #[test]
     fn test_reverse() {
         let list = mb_list_from(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]);
         mb_list_reverse(list);
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(3));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(2)).as_int(), Some(1));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(3)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(2)).as_int(),
+            Some(1)
+        );
     }
 
     #[test]
@@ -1966,26 +2300,43 @@ mod tests {
     #[test]
     fn test_sort() {
         let list = mb_list_from(vec![
-            MbValue::from_int(3), MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
         ]);
         mb_list_sort(list);
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(1));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(1)).as_int(), Some(2));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(2)).as_int(), Some(3));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(1)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(1)).as_int(),
+            Some(2)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(2)).as_int(),
+            Some(3)
+        );
     }
 
     #[test]
     fn test_sort_already_sorted() {
         let list = mb_list_from(vec![MbValue::from_int(1), MbValue::from_int(2)]);
         mb_list_sort(list);
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(1));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(1)
+        );
     }
 
     #[test]
     fn test_sort_single_element() {
         let list = mb_list_from(vec![MbValue::from_int(5)]);
         mb_list_sort(list);
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(5));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(5)
+        );
     }
 
     // ── copy ──
@@ -2013,7 +2364,9 @@ mod tests {
     #[test]
     fn test_index_found() {
         let list = mb_list_from(vec![
-            MbValue::from_int(10), MbValue::from_int(20), MbValue::from_int(30),
+            MbValue::from_int(10),
+            MbValue::from_int(20),
+            MbValue::from_int(30),
         ]);
         assert_eq!(mb_list_index(list, MbValue::from_int(20)).as_int(), Some(1));
     }
@@ -2038,7 +2391,9 @@ mod tests {
     #[test]
     fn test_count() {
         let list = mb_list_from(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(1),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(1),
         ]);
         assert_eq!(mb_list_count(list, MbValue::from_int(1)).as_int(), Some(2));
         assert_eq!(mb_list_count(list, MbValue::from_int(2)).as_int(), Some(1));
@@ -2050,13 +2405,22 @@ mod tests {
     #[test]
     fn test_contains() {
         let list = mb_list_from(vec![MbValue::from_int(1), MbValue::from_int(2)]);
-        assert_eq!(mb_list_contains(list, MbValue::from_int(1)).as_bool(), Some(true));
-        assert_eq!(mb_list_contains(list, MbValue::from_int(3)).as_bool(), Some(false));
+        assert_eq!(
+            mb_list_contains(list, MbValue::from_int(1)).as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            mb_list_contains(list, MbValue::from_int(3)).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
     fn test_contains_non_list() {
-        assert_eq!(mb_list_contains(MbValue::from_int(1), MbValue::from_int(1)).as_bool(), Some(false));
+        assert_eq!(
+            mb_list_contains(MbValue::from_int(1), MbValue::from_int(1)).as_bool(),
+            Some(false)
+        );
     }
 
     // ── len ──
@@ -2132,7 +2496,10 @@ mod tests {
     #[test]
     fn test_eq_non_list() {
         // Delegates to mb_eq, so non-list inputs still get sane equality.
-        assert_eq!(mb_list_eq(MbValue::from_int(1), MbValue::from_int(2)).as_bool(), Some(false));
+        assert_eq!(
+            mb_list_eq(MbValue::from_int(1), MbValue::from_int(2)).as_bool(),
+            Some(false)
+        );
     }
 
     // ── sequence protocol ──
@@ -2178,23 +2545,33 @@ mod tests {
     #[test]
     fn test_slice() {
         let list = mb_list_from(vec![
-            MbValue::from_int(0), MbValue::from_int(1),
-            MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(0),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]);
         let sliced = mb_list_slice(list, MbValue::from_int(1), MbValue::from_int(3));
         assert_eq!(mb_list_len(sliced).as_int(), Some(2));
-        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(0)).as_int(), Some(1));
+        assert_eq!(
+            mb_list_getitem(sliced, MbValue::from_int(0)).as_int(),
+            Some(1)
+        );
     }
 
     #[test]
     fn test_slice_negative_indices() {
         let list = mb_list_from(vec![
-            MbValue::from_int(0), MbValue::from_int(1),
-            MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(0),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]);
         let sliced = mb_list_slice(list, MbValue::from_int(-3), MbValue::from_int(-1));
         assert_eq!(mb_list_len(sliced).as_int(), Some(2));
-        assert_eq!(mb_list_getitem(sliced, MbValue::from_int(0)).as_int(), Some(1));
+        assert_eq!(
+            mb_list_getitem(sliced, MbValue::from_int(0)).as_int(),
+            Some(1)
+        );
     }
 
     #[test]
@@ -2206,7 +2583,11 @@ mod tests {
 
     #[test]
     fn test_slice_non_list() {
-        let sliced = mb_list_slice(MbValue::from_int(1), MbValue::from_int(0), MbValue::from_int(1));
+        let sliced = mb_list_slice(
+            MbValue::from_int(1),
+            MbValue::from_int(0),
+            MbValue::from_int(1),
+        );
         assert_eq!(mb_list_len(sliced).as_int(), Some(0));
     }
 
@@ -2247,7 +2628,9 @@ mod tests {
     #[test]
     fn test_dispatch_count() {
         let list = mb_list_from(vec![
-            MbValue::from_int(1), MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(1),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
         ]);
         let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1)]));
         let r = dispatch_list_method("count", list, args);
@@ -2275,11 +2658,22 @@ mod tests {
     #[test]
     fn test_py312_list_negative_index() {
         let list = mb_list_from(vec![
-            MbValue::from_int(10), MbValue::from_int(20), MbValue::from_int(30),
+            MbValue::from_int(10),
+            MbValue::from_int(20),
+            MbValue::from_int(30),
         ]);
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(-1)).as_int(), Some(30));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(-2)).as_int(), Some(20));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(-3)).as_int(), Some(10));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(-1)).as_int(),
+            Some(30)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(-2)).as_int(),
+            Some(20)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(-3)).as_int(),
+            Some(10)
+        );
     }
 
     #[test]
@@ -2296,29 +2690,48 @@ mod tests {
         let list = mb_list_from(vec![MbValue::from_int(1), MbValue::from_int(2)]);
         mb_list_insert(list, MbValue::from_int(100), MbValue::from_int(99));
         assert_eq!(mb_list_len(list).as_int(), Some(3));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(-1)).as_int(), Some(99));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(-1)).as_int(),
+            Some(99)
+        );
     }
 
     #[test]
     fn test_py312_list_remove_only_first() {
         let list = mb_list_from(vec![
-            MbValue::from_int(1), MbValue::from_int(2),
-            MbValue::from_int(1), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(1),
+            MbValue::from_int(3),
         ]);
         mb_list_remove(list, MbValue::from_int(1));
         assert_eq!(mb_list_len(list).as_int(), Some(3));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(2));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(1)).as_int(), Some(1));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(2)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(1)).as_int(),
+            Some(1)
+        );
     }
 
     #[test]
     fn test_py312_list_reverse() {
         let list = mb_list_from(vec![
-            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+            MbValue::from_int(3),
         ]);
         mb_list_reverse(list);
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(3));
-        assert_eq!(mb_list_getitem(list, MbValue::from_int(2)).as_int(), Some(1));
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(0)).as_int(),
+            Some(3)
+        );
+        assert_eq!(
+            mb_list_getitem(list, MbValue::from_int(2)).as_int(),
+            Some(1)
+        );
     }
 
     #[test]
@@ -2347,8 +2760,14 @@ mod tests {
     #[test]
     fn test_py312_list_contains_bool_int_separate() {
         let list = mb_list_from(vec![MbValue::from_int(5), MbValue::from_bool(true)]);
-        assert_eq!(mb_list_contains(list, MbValue::from_int(5)).as_bool(), Some(true));
-        assert_eq!(mb_list_contains(list, MbValue::from_int(0)).as_bool(), Some(false));
+        assert_eq!(
+            mb_list_contains(list, MbValue::from_int(5)).as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            mb_list_contains(list, MbValue::from_int(0)).as_bool(),
+            Some(false)
+        );
     }
 
     // TODO: enable when mb_list_slice_step is implemented
@@ -2364,5 +2783,4 @@ mod tests {
     //     assert_eq!(mb_list_getitem(sliced, MbValue::from_int(1)).as_int(), Some(2));
     //     assert_eq!(mb_list_getitem(sliced, MbValue::from_int(2)).as_int(), Some(4));
     // }
-
 }

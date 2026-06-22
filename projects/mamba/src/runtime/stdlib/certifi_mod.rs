@@ -1,3 +1,5 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// certifi module for Mamba (#1483).
 ///
 /// Returns a usable CA-bundle path so SSL libraries that call
@@ -14,18 +16,15 @@
 ///
 /// CPython exposes `certifi.core` as a submodule. The stub returns
 /// `where`'s function as a callable handle so attribute reads succeed.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 const CA_BUNDLE_CANDIDATES: &[&str] = &[
-    "/etc/ssl/cert.pem",                            // macOS / OpenBSD / LibreSSL
-    "/etc/ssl/certs/ca-certificates.crt",           // Debian / Ubuntu / Alpine
-    "/etc/pki/tls/certs/ca-bundle.crt",             // RHEL / CentOS / Fedora
+    "/etc/ssl/cert.pem",                  // macOS / OpenBSD / LibreSSL
+    "/etc/ssl/certs/ca-certificates.crt", // Debian / Ubuntu / Alpine
+    "/etc/pki/tls/certs/ca-bundle.crt",   // RHEL / CentOS / Fedora
     "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
-    "/usr/local/share/certs/ca-root-nss.crt",       // FreeBSD
-    "/etc/ssl/ca-bundle.pem",                       // OpenSUSE
+    "/usr/local/share/certs/ca-root-nss.crt", // FreeBSD
+    "/etc/ssl/ca-bundle.pem",                 // OpenSUSE
 ];
 
 fn resolve_ca_bundle() -> String {
@@ -88,8 +87,8 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::rc::ObjData;
+    use super::*;
 
     #[test]
     fn where_returns_string_path() {

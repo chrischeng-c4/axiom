@@ -43,8 +43,7 @@ impl<'a> QueryExecutor<'a> {
     pub fn fetch_all<T, F>(&self, sql: &str, bind_fn: F) -> Result<Vec<T>>
     where
         T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
-        F: Fn(Query<'_, Postgres, PgArguments>) -> Query<'_, Postgres, PgArguments>
-            + Clone,
+        F: Fn(Query<'_, Postgres, PgArguments>) -> Query<'_, Postgres, PgArguments> + Clone,
     {
         self.rt.block_on(self.inner.fetch_all(sql, bind_fn))
     }
@@ -61,11 +60,7 @@ impl<'a> QueryExecutor<'a> {
         self.rt.block_on(self.inner.fetch_rows(sql, params))
     }
 
-    pub fn fetch_optional_row(
-        &self,
-        sql: &str,
-        params: &[ExtractedValue],
-    ) -> Result<Option<Row>> {
+    pub fn fetch_optional_row(&self, sql: &str, params: &[ExtractedValue]) -> Result<Option<Row>> {
         self.rt.block_on(self.inner.fetch_optional_row(sql, params))
     }
 }

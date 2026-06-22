@@ -18,7 +18,6 @@
 /// all. The assertion is centralized in `assert_all_outputs_match` so a
 /// dedicated regression test (`mismatch_aborts_perf_comparison_2563`) can
 /// pin the contract without re-running the whole bench corpus.
-
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -93,7 +92,7 @@ fn run_cpython(src: &str, iters: u32) -> Option<(Duration, String)> {
     // during timed iterations by redirecting stdout; only the final iteration
     // captures output for correctness comparison.
     let timer_script = format!(
-r#"import time, sys, os, io
+        r#"import time, sys, os, io
 # Compile once
 __src = {src:?}
 # Warm-up (unredirected)
@@ -130,7 +129,10 @@ print(__buf.getvalue(), end='')
         .ok()?;
 
     if !output.status.success() {
-        eprintln!("[cpython stderr] {}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "[cpython stderr] {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         return None;
     }
 
@@ -144,12 +146,16 @@ print(__buf.getvalue(), end='')
 /// Run a single benchmark and return the result row.
 fn bench(name: &'static str, src: &'static str, iters: u32) -> PerfResult {
     let (mamba_dur, mamba_out) = run_mamba(src, iters);
-    let (cpython_dur, cpython_out) = run_cpython(src, iters)
-        .unwrap_or((Duration::from_secs(999), String::new()));
+    let (cpython_dur, cpython_out) =
+        run_cpython(src, iters).unwrap_or((Duration::from_secs(999), String::new()));
 
     let mamba_us = mamba_dur.as_secs_f64() * 1e6 / iters as f64;
     let cpython_us = cpython_dur.as_secs_f64() * 1e6 / iters as f64;
-    let speedup = if mamba_us > 0.0 { cpython_us / mamba_us } else { 0.0 };
+    let speedup = if mamba_us > 0.0 {
+        cpython_us / mamba_us
+    } else {
+        0.0
+    };
     let output_match = mamba_out.trim() == cpython_out.trim();
 
     PerfResult {
@@ -170,8 +176,7 @@ fn bench(name: &'static str, src: &'static str, iters: u32) -> PerfResult {
 /// outputs, and quotes the Python source snippet ("benchmark command")
 /// so a worker can reproduce without re-running the whole corpus.
 fn assert_all_outputs_match(results: &[PerfResult]) {
-    let mismatched: Vec<&PerfResult> =
-        results.iter().filter(|r| !r.output_match).collect();
+    let mismatched: Vec<&PerfResult> = results.iter().filter(|r| !r.output_match).collect();
     if mismatched.is_empty() {
         return;
     }
@@ -203,19 +208,29 @@ fn assert_all_outputs_match(results: &[PerfResult]) {
 
 fn print_table(results: &[PerfResult]) {
     println!();
-    println!("┌{:─<34}┬{:─<16}┬{:─<16}┬{:─<12}┬{:─<9}┐",
-        "", "", "", "", "");
-    println!("│ {:<32} │ {:>14} │ {:>14} │ {:>10} │ {:<7} │",
-        "Benchmark", "Mamba (us/op)", "Py3.12 (us/op)", "Speedup", "Match");
-    println!("├{:─<34}┼{:─<16}┼{:─<16}┼{:─<12}┼{:─<9}┤",
-        "", "", "", "", "");
+    println!(
+        "┌{:─<34}┬{:─<16}┬{:─<16}┬{:─<12}┬{:─<9}┐",
+        "", "", "", "", ""
+    );
+    println!(
+        "│ {:<32} │ {:>14} │ {:>14} │ {:>10} │ {:<7} │",
+        "Benchmark", "Mamba (us/op)", "Py3.12 (us/op)", "Speedup", "Match"
+    );
+    println!(
+        "├{:─<34}┼{:─<16}┼{:─<16}┼{:─<12}┼{:─<9}┤",
+        "", "", "", "", ""
+    );
     for r in results {
         let match_str = if r.output_match { "OK" } else { "DIFF" };
-        println!("│ {:<32} │ {:>14.1} │ {:>14.1} │ {:>9.1}x │ {:<7} │",
-            r.name, r.mamba_us, r.cpython_us, r.speedup, match_str);
+        println!(
+            "│ {:<32} │ {:>14.1} │ {:>14.1} │ {:>9.1}x │ {:<7} │",
+            r.name, r.mamba_us, r.cpython_us, r.speedup, match_str
+        );
     }
-    println!("└{:─<34}┴{:─<16}┴{:─<16}┴{:─<12}┴{:─<9}┘",
-        "", "", "", "", "");
+    println!(
+        "└{:─<34}┴{:─<16}┴{:─<16}┴{:─<12}┴{:─<9}┘",
+        "", "", "", "", ""
+    );
     println!();
 }
 
@@ -225,93 +240,128 @@ fn print_table(results: &[PerfResult]) {
 fn perf_comparison_mamba_vs_py312() {
     let results = vec![
         // ── Numeric ──
-        bench("int_sum_1m_typed", r#"
+        bench(
+            "int_sum_1m_typed",
+            r#"
 total: int = 0
 i: int = 0
 while i < 1000000:
     total = total + i
     i = i + 1
-"#, 5),
-
-        bench("int_sum_1m_untyped", r#"
+"#,
+            5,
+        ),
+        bench(
+            "int_sum_1m_untyped",
+            r#"
 total = 0
 i = 0
 while i < 1000000:
     total = total + i
     i = i + 1
-"#, 5),
-
-        bench("int_mul_factorial_20", r#"
+"#,
+            5,
+        ),
+        bench(
+            "int_mul_factorial_20",
+            r#"
 result: int = 1
 i: int = 1
 while i <= 20:
     result = result * i
     i = i + 1
-"#, 200),
-
+"#,
+            200,
+        ),
         // ── Recursion ──
-        bench("fib_25_typed", r#"
+        bench(
+            "fib_25_typed",
+            r#"
 def fib(n: int) -> int:
     if n <= 1:
         return n
     return fib(n - 1) + fib(n - 2)
 print(fib(25))
-"#, 5),
-
-        bench("fib_25_untyped", r#"
+"#,
+            5,
+        ),
+        bench(
+            "fib_25_untyped",
+            r#"
 def fib(n):
     if n <= 1:
         return n
     return fib(n - 1) + fib(n - 2)
 print(fib(25))
-"#, 5),
-
-        bench("factorial_15_typed", r#"
+"#,
+            5,
+        ),
+        bench(
+            "factorial_15_typed",
+            r#"
 def fact(n: int) -> int:
     if n <= 1:
         return 1
     return n * fact(n - 1)
 print(fact(15))
-"#, 200),
-
+"#,
+            200,
+        ),
         // ── Range loop (JIT-specialized native counter) ──
-        bench("range_sum_1m_typed", r#"
+        bench(
+            "range_sum_1m_typed",
+            r#"
 total: int = 0
 for i in range(1000000):
     total = total + i
 print(total)
-"#, 5),
-
-        bench("range_loop_noop_1m", r#"
+"#,
+            5,
+        ),
+        bench(
+            "range_loop_noop_1m",
+            r#"
 x: int = 0
 for i in range(1000000):
     x = x + 1
 print(x)
-"#, 5),
-
+"#,
+            5,
+        ),
         // ── Collections ──
-        bench("list_comprehension_10k", r#"
+        bench(
+            "list_comprehension_10k",
+            r#"
 result = [i * i for i in range(10000)]
 print(len(result))
-"#, 20),
-
-        bench("dict_build_1k", r#"
+"#,
+            20,
+        ),
+        bench(
+            "dict_build_1k",
+            r#"
 d = {}
 i = 0
 while i < 1000:
     d[i] = i * i
     i = i + 1
 print(len(d))
-"#, 50),
-
-        bench("list_sort_1k", r#"
+"#,
+            50,
+        ),
+        bench(
+            "list_sort_1k",
+            r#"
 data = list(range(1000, 0, -1))
 sorted_data = sorted(data)
 print(sorted_data[0], sorted_data[-1])
-"#, 50),
-
+"#,
+            50,
+        ),
         // ── Generators ──
-        bench("generator_sum_10k", r#"
+        bench(
+            "generator_sum_10k",
+            r#"
 def gen(n):
     i = 0
     while i < n:
@@ -322,10 +372,13 @@ total = 0
 for x in gen(10000):
     total = total + x
 print(total)
-"#, 10),
-
+"#,
+            10,
+        ),
         // ── String ops ──
-        bench("str_join_1k", r#"
+        bench(
+            "str_join_1k",
+            r#"
 parts = []
 i = 0
 while i < 1000:
@@ -333,10 +386,13 @@ while i < 1000:
     i = i + 1
 result = ",".join(parts)
 print(len(result))
-"#, 20),
-
+"#,
+            20,
+        ),
         // ── Closures / higher-order ──
-        bench("closure_counter_10k", r#"
+        bench(
+            "closure_counter_10k",
+            r#"
 def make_counter():
     count = 0
     def inc():
@@ -351,10 +407,13 @@ while i < 10000:
     c()
     i = i + 1
 print(c())
-"#, 10),
-
+"#,
+            10,
+        ),
         // ── Class ──
-        bench("class_instance_10k", r#"
+        bench(
+            "class_instance_10k",
+            r#"
 class Point:
     def __init__(self, x, y):
         self.x = x
@@ -369,10 +428,13 @@ while i < 10000:
     total = total + p.mag()
     i = i + 1
 print(total)
-"#, 5),
-
+"#,
+            5,
+        ),
         // ── Exception handling ──
-        bench("try_except_loop_10k", r#"
+        bench(
+            "try_except_loop_10k",
+            r#"
 total = 0
 i = 0
 while i < 10000:
@@ -382,7 +444,9 @@ while i < 10000:
         pass
     i = i + 1
 print(total)
-"#, 10),
+"#,
+            10,
+        ),
     ];
 
     print_table(&results);
@@ -462,10 +526,28 @@ fn mismatch_message_names_fixture_and_command_2563() {
         .map(|s| s.clone())
         .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
         .unwrap_or_default();
-    assert!(msg.contains("fixture=fixture_alpha"), "panic must name fixture: {msg}");
-    assert!(msg.contains("command="), "panic must name benchmark command: {msg}");
-    assert!(msg.contains("print(beta)"), "panic must quote the source: {msg}");
-    assert!(msg.contains("delta"), "panic must show mamba output preview: {msg}");
-    assert!(msg.contains("gamma"), "panic must show cpython output preview: {msg}");
-    assert!(msg.contains("#2563"), "panic must cite the tracking issue: {msg}");
+    assert!(
+        msg.contains("fixture=fixture_alpha"),
+        "panic must name fixture: {msg}"
+    );
+    assert!(
+        msg.contains("command="),
+        "panic must name benchmark command: {msg}"
+    );
+    assert!(
+        msg.contains("print(beta)"),
+        "panic must quote the source: {msg}"
+    );
+    assert!(
+        msg.contains("delta"),
+        "panic must show mamba output preview: {msg}"
+    );
+    assert!(
+        msg.contains("gamma"),
+        "panic must show cpython output preview: {msg}"
+    );
+    assert!(
+        msg.contains("#2563"),
+        "panic must cite the tracking issue: {msg}"
+    );
 }

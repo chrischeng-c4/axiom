@@ -46,16 +46,15 @@ impl BrokerConfig {
     ///
     /// If `BROKER_TYPE` is not set, defaults to NATS if available.
     pub fn from_env() -> Result<Self, TaskError> {
-        let broker_type = std::env::var("BROKER_TYPE")
-            .unwrap_or_else(|_| "nats".to_string());
+        let broker_type = std::env::var("BROKER_TYPE").unwrap_or_else(|_| "nats".to_string());
 
         match broker_type.to_lowercase().as_str() {
             #[cfg(feature = "nats")]
             "nats" => {
                 let url = std::env::var("NATS_URL")
                     .unwrap_or_else(|_| "nats://localhost:4222".to_string());
-                let stream_name = std::env::var("NATS_STREAM")
-                    .unwrap_or_else(|_| "TASKS".to_string());
+                let stream_name =
+                    std::env::var("NATS_STREAM").unwrap_or_else(|_| "TASKS".to_string());
 
                 Ok(BrokerConfig::Nats(NatsBrokerConfig {
                     url,
@@ -66,10 +65,11 @@ impl BrokerConfig {
 
             #[cfg(feature = "pubsub")]
             "pubsub" | "gcp" | "google" => {
-                let project_id = std::env::var("PUBSUB_PROJECT_ID").ok()
+                let project_id = std::env::var("PUBSUB_PROJECT_ID")
+                    .ok()
                     .or_else(|| std::env::var("GOOGLE_CLOUD_PROJECT").ok());
-                let topic_name = std::env::var("PUBSUB_TOPIC")
-                    .unwrap_or_else(|_| "tasks".to_string());
+                let topic_name =
+                    std::env::var("PUBSUB_TOPIC").unwrap_or_else(|_| "tasks".to_string());
                 let subscription_name = std::env::var("PUBSUB_SUBSCRIPTION")
                     .unwrap_or_else(|_| "task-worker".to_string());
 
@@ -123,9 +123,7 @@ impl BrokerConfig {
     pub fn into_broker(self) -> BrokerInstance {
         match self {
             #[cfg(feature = "nats")]
-            BrokerConfig::Nats(config) => {
-                BrokerInstance::Nats(Box::new(NatsBroker::new(config)))
-            }
+            BrokerConfig::Nats(config) => BrokerInstance::Nats(Box::new(NatsBroker::new(config))),
 
             #[cfg(feature = "pubsub")]
             BrokerConfig::PubSub(config) => {
@@ -190,14 +188,16 @@ mod tests {
         let config = BrokerConfig::from_env();
 
         #[cfg(feature = "nats")]
-        assert!(config.is_ok(), "Expected successful config with default NATS broker");
+        assert!(
+            config.is_ok(),
+            "Expected successful config with default NATS broker"
+        );
 
         // Restore original value
         if let Some(val) = original {
             std::env::set_var("BROKER_TYPE", val);
         }
     }
-
 
     #[test]
     fn test_from_env_nats() {

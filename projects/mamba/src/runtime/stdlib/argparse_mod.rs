@@ -21,10 +21,10 @@
 //! `mb_class_register`, so `parser.add_argument(...)` / `ns.x` dispatch through
 //! the normal MRO path with no class.rs changes.
 
-use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 use super::super::dict_ops::DictKey;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use std::collections::HashMap;
 
 // ── Class names (registered via mb_class_register) ──
 const PARSER_CLASS: &str = "ArgumentParser";
@@ -64,7 +64,11 @@ fn new_str(s: &str) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -80,7 +84,9 @@ fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
 }
 
 fn is_dict(val: MbValue) -> bool {
-    val.as_ptr().map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) }).unwrap_or(false)
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
 }
 
 /// Turn a list/tuple value into a Vec<MbValue>; anything else → empty.
@@ -116,8 +122,8 @@ struct ArgSpec {
     option_strings: Vec<String>,
     dest: String,
     is_positional: bool,
-    action: String,      // "store", "store_true", "store_false", "append", or "" for custom
-    nargs: MbValue,      // None, "?", "*", "+", or int
+    action: String, // "store", "store_true", "store_false", "append", or "" for custom
+    nargs: MbValue, // None, "?", "*", "+", or int
     const_v: MbValue,
     default_v: MbValue,
     type_v: MbValue,
@@ -150,8 +156,12 @@ fn derive_dest(option_strings: &[String], explicit: Option<String>) -> String {
 }
 
 fn truthy(val: MbValue) -> bool {
-    if let Some(b) = val.as_bool() { return b; }
-    if let Some(i) = val.as_int() { return i != 0; }
+    if let Some(b) = val.as_bool() {
+        return b;
+    }
+    if let Some(i) = val.as_int() {
+        return i != 0;
+    }
     !val.is_none()
 }
 
@@ -170,7 +180,11 @@ fn make_action(spec: &ArgSpec) -> MbValue {
     set_field(act, "metavar", spec.metavar);
     set_field(act, "required", MbValue::from_bool(spec.required));
     set_field(act, "_action", new_str(&spec.action));
-    set_field(act, "_is_positional", MbValue::from_bool(spec.is_positional));
+    set_field(
+        act,
+        "_is_positional",
+        MbValue::from_bool(spec.is_positional),
+    );
     set_field(act, "_custom_action", spec.custom_action);
     act
 }
@@ -202,7 +216,10 @@ unsafe extern "C" fn dispatch_argument_parser(args_ptr: *const MbValue, nargs: u
             // 'resolve'); anything else raises ValueError at construction.
             if let Some(ch) = dict_get(kw, "conflict_handler").and_then(extract_str) {
                 if ch != "error" && ch != "resolve" {
-                    raise("ValueError", &format!("invalid conflict_resolution value: '{ch}'"));
+                    raise(
+                        "ValueError",
+                        &format!("invalid conflict_resolution value: '{ch}'"),
+                    );
                     return MbValue::none();
                 }
             }
@@ -252,7 +269,10 @@ macro_rules! dispatch_stub_class {
     };
 }
 dispatch_stub_class!(dispatch_help_formatter, "HelpFormatter");
-dispatch_stub_class!(dispatch_raw_description_formatter, "RawDescriptionHelpFormatter");
+dispatch_stub_class!(
+    dispatch_raw_description_formatter,
+    "RawDescriptionHelpFormatter"
+);
 dispatch_stub_class!(dispatch_raw_text_formatter, "RawTextHelpFormatter");
 dispatch_stub_class!(dispatch_defaults_formatter, "ArgumentDefaultsHelpFormatter");
 dispatch_stub_class!(dispatch_metavar_type_formatter, "MetavarTypeHelpFormatter");
@@ -269,7 +289,11 @@ unsafe extern "C" fn dispatch_ngettext(args_ptr: *const MbValue, nargs: usize) -
     let singular = pos.first().copied().unwrap_or_else(MbValue::none);
     let plural = pos.get(1).copied().unwrap_or(singular);
     let n = pos.get(2).copied().and_then(|v| v.as_int()).unwrap_or(1);
-    if n == 1 { singular } else { plural }
+    if n == 1 {
+        singular
+    } else {
+        plural
+    }
 }
 
 // ── ArgumentParser methods (registered class; receive (self, args_list)) ──
@@ -294,11 +318,16 @@ unsafe extern "C" fn method_add_argument(self_v: MbValue, args: MbValue) -> MbVa
     // Reject a duplicated option string (CPython raises argparse.ArgumentError).
     if !is_positional {
         for existing in parser_actions(self_v) {
-            let opts = get_field(existing, "option_strings").map(seq_items).unwrap_or_default();
+            let opts = get_field(existing, "option_strings")
+                .map(seq_items)
+                .unwrap_or_default();
             for o in opts {
                 if let Some(s) = extract_str(o) {
                     if names.contains(&s) {
-                        raise("ArgumentError", &format!("argument {s}: conflicting option string: {s}"));
+                        raise(
+                            "ArgumentError",
+                            &format!("argument {s}: conflicting option string: {s}"),
+                        );
                         return MbValue::none();
                     }
                 }
@@ -309,7 +338,8 @@ unsafe extern "C" fn method_add_argument(self_v: MbValue, args: MbValue) -> MbVa
     // Resolve dest.
     let explicit_dest = dict_get(kwargs, "dest").and_then(extract_str);
     let dest = if is_positional {
-        explicit_dest.unwrap_or_else(|| names.first().cloned().unwrap_or_default().replace('-', "_"))
+        explicit_dest
+            .unwrap_or_else(|| names.first().cloned().unwrap_or_default().replace('-', "_"))
     } else {
         derive_dest(&names, explicit_dest)
     };
@@ -335,10 +365,14 @@ unsafe extern "C" fn method_add_argument(self_v: MbValue, args: MbValue) -> MbVa
     let mut default_v = dict_get(kwargs, "default").unwrap_or_else(MbValue::none);
     match action.as_str() {
         "store_true" => {
-            if dict_get(kwargs, "default").is_none() { default_v = MbValue::from_bool(false); }
+            if dict_get(kwargs, "default").is_none() {
+                default_v = MbValue::from_bool(false);
+            }
         }
         "store_false" => {
-            if dict_get(kwargs, "default").is_none() { default_v = MbValue::from_bool(true); }
+            if dict_get(kwargs, "default").is_none() {
+                default_v = MbValue::from_bool(true);
+            }
         }
         _ => {}
     }
@@ -397,7 +431,10 @@ unsafe extern "C" fn method_add_argument(self_v: MbValue, args: MbValue) -> MbVa
         // instance; our base Action has none, so seed the bookkeeping fields the
         // parse loop and __call__ rely on (without clobbering anything the user
         // __init__ already set).
-        if get_field(built, "dest").map(|v| v.is_none()).unwrap_or(true) {
+        if get_field(built, "dest")
+            .map(|v| v.is_none())
+            .unwrap_or(true)
+        {
             set_field(built, "dest", new_str(&spec.dest));
         }
         if get_field(built, "option_strings").is_none() {
@@ -406,7 +443,11 @@ unsafe extern "C" fn method_add_argument(self_v: MbValue, args: MbValue) -> MbVa
         }
         set_field(built, "_action", new_str("custom"));
         set_field(built, "_custom_action", built);
-        set_field(built, "_is_positional", MbValue::from_bool(spec.is_positional));
+        set_field(
+            built,
+            "_is_positional",
+            MbValue::from_bool(spec.is_positional),
+        );
         if get_field(built, "default").is_none() {
             set_field(built, "default", spec.default_v);
         }
@@ -468,7 +509,11 @@ unsafe extern "C" fn method_set_defaults(self_v: MbValue, args: MbValue) -> MbVa
 /// parser.get_default(dest) -> the registered default for dest.
 unsafe extern "C" fn method_get_default(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let dest = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let dest = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     // set_defaults wins over add_argument default.
     if let Some(defaults) = get_field(self_v, "_defaults") {
         if let Some(v) = dict_get(defaults, &dest) {
@@ -487,7 +532,11 @@ unsafe extern "C" fn method_get_default(self_v: MbValue, args: MbValue) -> MbVal
 unsafe extern "C" fn method_error(self_v: MbValue, args: MbValue) -> MbValue {
     let _ = self_v;
     let items = seq_items(args);
-    let msg = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let msg = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     raise("SystemExit", &msg);
     MbValue::none()
 }
@@ -498,8 +547,15 @@ unsafe extern "C" fn method_exit(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
     // Drop a trailing kwargs dict if present.
     let pos: Vec<MbValue> = items.iter().copied().filter(|v| !is_dict(*v)).collect();
-    let status = pos.first().copied()
-        .or_else(|| dict_get(items.last().copied().unwrap_or_else(MbValue::none), "status"))
+    let status = pos
+        .first()
+        .copied()
+        .or_else(|| {
+            dict_get(
+                items.last().copied().unwrap_or_else(MbValue::none),
+                "status",
+            )
+        })
         .and_then(|v| v.as_int())
         .unwrap_or(0);
     raise("SystemExit", &status.to_string());
@@ -570,7 +626,11 @@ unsafe extern "C" fn ns_ne(self_v: MbValue, args: MbValue) -> MbValue {
 /// Namespace.__contains__(self, key) -> bool.
 unsafe extern "C" fn ns_contains(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let key = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let key = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     if key.is_empty() {
         return MbValue::from_bool(false);
     }
@@ -591,7 +651,10 @@ unsafe extern "C" fn ns_getattr(_self_v: MbValue, args: MbValue) -> MbValue {
     let name = extract_str(args)
         .or_else(|| seq_items(args).first().copied().and_then(extract_str))
         .unwrap_or_default();
-    raise("AttributeError", &format!("'Namespace' object has no attribute '{name}'"));
+    raise(
+        "AttributeError",
+        &format!("'Namespace' object has no attribute '{name}'"),
+    );
     MbValue::none()
 }
 
@@ -599,7 +662,9 @@ unsafe extern "C" fn ns_getattr(_self_v: MbValue, args: MbValue) -> MbValue {
 
 /// ArgumentError.__str__(self) -> message (bare when no bound argument).
 unsafe extern "C" fn argerr_str(self_v: MbValue, _args: MbValue) -> MbValue {
-    let msg = get_field(self_v, "message").and_then(extract_str).unwrap_or_default();
+    let msg = get_field(self_v, "message")
+        .and_then(extract_str)
+        .unwrap_or_default();
     let arg = get_field(self_v, "argument_name").unwrap_or_else(MbValue::none);
     if arg.is_none() {
         new_str(&msg)
@@ -611,7 +676,9 @@ unsafe extern "C" fn argerr_str(self_v: MbValue, _args: MbValue) -> MbValue {
 
 /// ArgumentTypeError.__str__(self) -> message.
 unsafe extern "C" fn argtypeerr_str(self_v: MbValue, _args: MbValue) -> MbValue {
-    let msg = get_field(self_v, "message").and_then(extract_str).unwrap_or_default();
+    let msg = get_field(self_v, "message")
+        .and_then(extract_str)
+        .unwrap_or_default();
     new_str(&msg)
 }
 
@@ -646,7 +713,9 @@ unsafe extern "C" fn argtypeerr_init(self_v: MbValue, args: MbValue) -> MbValue 
 // ── Helpers reused by methods ──
 
 fn parser_actions(parser: MbValue) -> Vec<MbValue> {
-    get_field(parser, "_actions").map(seq_items).unwrap_or_default()
+    get_field(parser, "_actions")
+        .map(seq_items)
+        .unwrap_or_default()
 }
 
 /// Resolve the argv list: explicit first positional list/tuple, else process argv.
@@ -661,14 +730,18 @@ fn first_argv(items: &[MbValue]) -> Vec<String> {
 }
 
 fn is_seq(val: MbValue) -> bool {
-    val.as_ptr().map(|ptr| unsafe {
-        matches!((*ptr).data, ObjData::List(_) | ObjData::Tuple(_))
-    }).unwrap_or(false)
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::List(_) | ObjData::Tuple(_)) })
+        .unwrap_or(false)
 }
 
 fn value_to_arg_string(v: MbValue) -> Option<String> {
-    if let Some(s) = extract_str(v) { return Some(s); }
-    if let Some(i) = v.as_int() { return Some(i.to_string()); }
+    if let Some(s) = extract_str(v) {
+        return Some(s);
+    }
+    if let Some(i) = v.as_int() {
+        return Some(i.to_string());
+    }
     None
 }
 
@@ -729,7 +802,11 @@ fn apply_type(type_v: MbValue, raw: &str, parser: MbValue, argname: &str) -> MbV
     if let Some(exc_type) = super::super::exception::current_exception_type() {
         // Converter failed — translate to the argparse failure mode.
         super::super::exception::mb_clear_exception();
-        let label = if argname.is_empty() { String::new() } else { format!("argument {argname}: ") };
+        let label = if argname.is_empty() {
+            String::new()
+        } else {
+            format!("argument {argname}: ")
+        };
         let msg = format!("{label}invalid {raw}: '{raw}'");
         let _ = exc_type;
         if exit_on_error(parser) {
@@ -743,7 +820,9 @@ fn apply_type(type_v: MbValue, raw: &str, parser: MbValue, argname: &str) -> MbV
 }
 
 fn exit_on_error(parser: MbValue) -> bool {
-    get_field(parser, "_exit_on_error").and_then(|v| v.as_bool()).unwrap_or(true)
+    get_field(parser, "_exit_on_error")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
 }
 
 /// True if `value` is among the declared `choices` (None choices ⇒ always ok).
@@ -755,7 +834,8 @@ fn in_choices(choices: MbValue, value: MbValue) -> bool {
     if opts.is_empty() {
         return true;
     }
-    opts.iter().any(|c| super::super::builtins::mb_eq(*c, value).as_bool() == Some(true))
+    opts.iter()
+        .any(|c| super::super::builtins::mb_eq(*c, value).as_bool() == Some(true))
 }
 
 /// The core parsing engine. Returns (namespace, leftover_extras).
@@ -765,14 +845,23 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
 
     // Seed defaults (add_argument defaults first, set_defaults overrides last).
     for act in &actions {
-        let dest = get_field(*act, "dest").and_then(extract_str).unwrap_or_default();
-        if dest.is_empty() { continue; }
-        let action = get_field(*act, "_action").and_then(extract_str).unwrap_or_default();
+        let dest = get_field(*act, "dest")
+            .and_then(extract_str)
+            .unwrap_or_default();
+        if dest.is_empty() {
+            continue;
+        }
+        let action = get_field(*act, "_action")
+            .and_then(extract_str)
+            .unwrap_or_default();
         let default = get_field(*act, "default").unwrap_or_else(MbValue::none);
         let nargs = get_field(*act, "nargs").unwrap_or_else(MbValue::none);
         let seed = if action == "append" && default.is_none() {
             MbValue::none()
-        } else if matches!(nargs_kind(nargs).as_str(), "*") && default.is_none() && is_positional(*act) {
+        } else if matches!(nargs_kind(nargs).as_str(), "*")
+            && default.is_none()
+            && is_positional(*act)
+        {
             new_list(vec![])
         } else {
             default
@@ -795,8 +884,16 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
     }
 
     // Split optionals vs positionals.
-    let optionals: Vec<MbValue> = actions.iter().copied().filter(|a| !is_positional(*a)).collect();
-    let positionals: Vec<MbValue> = actions.iter().copied().filter(|a| is_positional(*a)).collect();
+    let optionals: Vec<MbValue> = actions
+        .iter()
+        .copied()
+        .filter(|a| !is_positional(*a))
+        .collect();
+    let positionals: Vec<MbValue> = actions
+        .iter()
+        .copied()
+        .filter(|a| is_positional(*a))
+        .collect();
 
     let mut extras: Vec<String> = Vec::new();
     let mut positional_values: Vec<String> = Vec::new();
@@ -819,8 +916,12 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
                 None => (tok.clone(), None),
             };
             if let Some(act) = find_optional(&optionals, &name) {
-                let dest = get_field(act, "dest").and_then(extract_str).unwrap_or_default();
-                let action = get_field(act, "_action").and_then(extract_str).unwrap_or_default();
+                let dest = get_field(act, "dest")
+                    .and_then(extract_str)
+                    .unwrap_or_default();
+                let action = get_field(act, "_action")
+                    .and_then(extract_str)
+                    .unwrap_or_default();
                 let type_v = get_field(act, "type").unwrap_or_else(MbValue::none);
                 let choices = get_field(act, "choices").unwrap_or_else(MbValue::none);
                 let nargs = get_field(act, "nargs").unwrap_or_else(MbValue::none);
@@ -829,12 +930,23 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
                 seen_dests.push(dest.clone());
 
                 match action.as_str() {
-                    "store_true" => { set_field(ns, &dest, MbValue::from_bool(true)); i += 1; }
-                    "store_false" => { set_field(ns, &dest, MbValue::from_bool(false)); i += 1; }
+                    "store_true" => {
+                        set_field(ns, &dest, MbValue::from_bool(true));
+                        i += 1;
+                    }
+                    "store_false" => {
+                        set_field(ns, &dest, MbValue::from_bool(false));
+                        i += 1;
+                    }
                     "append" => {
-                        let (val, consumed) = take_value(&argv, i, inline_val, type_v, choices, parser);
+                        let (val, consumed) =
+                            take_value(&argv, i, inline_val, type_v, choices, parser);
                         let cur = get_field(ns, &dest).unwrap_or_else(MbValue::none);
-                        let mut lst = if cur.is_none() { Vec::new() } else { seq_items(cur) };
+                        let mut lst = if cur.is_none() {
+                            Vec::new()
+                        } else {
+                            seq_items(cur)
+                        };
                         lst.push(val);
                         set_field(ns, &dest, new_list(lst));
                         i += consumed;
@@ -842,7 +954,14 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
                     _ => {
                         if !custom.is_none() {
                             // Custom action: __call__(parser, namespace, values, option_string).
-                            let (val, consumed) = take_value(&argv, i, inline_val, MbValue::none(), MbValue::none(), parser);
+                            let (val, consumed) = take_value(
+                                &argv,
+                                i,
+                                inline_val,
+                                MbValue::none(),
+                                MbValue::none(),
+                                parser,
+                            );
                             invoke_custom_action(custom, parser, ns, val, &name);
                             i += consumed;
                         } else if nargs_kind(nargs) == "?" {
@@ -860,7 +979,8 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
                                 i += 1;
                             }
                         } else {
-                            let (val, consumed) = take_value(&argv, i, inline_val, type_v, choices, parser);
+                            let (val, consumed) =
+                                take_value(&argv, i, inline_val, type_v, choices, parser);
                             set_field(ns, &dest, val);
                             i += consumed;
                         }
@@ -903,10 +1023,15 @@ fn run_parser(parser: MbValue, argv: &[String], _known: bool) -> (MbValue, Vec<S
     // Required-optional check.
     for act in &optionals {
         if get_field(*act, "required").and_then(|v| v.as_bool()) == Some(true) {
-            let dest = get_field(*act, "dest").and_then(extract_str).unwrap_or_default();
+            let dest = get_field(*act, "dest")
+                .and_then(extract_str)
+                .unwrap_or_default();
             if !seen_dests.contains(&dest) {
                 let metavar = optional_display_name(*act);
-                raise("SystemExit", &format!("the following arguments are required: {metavar}"));
+                raise(
+                    "SystemExit",
+                    &format!("the following arguments are required: {metavar}"),
+                );
                 return (ns, extras);
             }
         }
@@ -934,30 +1059,41 @@ fn assign_positionals(
 ) {
     let mut vi = 0;
     for act in positionals {
-        let dest = get_field(*act, "dest").and_then(extract_str).unwrap_or_default();
+        let dest = get_field(*act, "dest")
+            .and_then(extract_str)
+            .unwrap_or_default();
         let type_v = get_field(*act, "type").unwrap_or_else(MbValue::none);
         let choices = get_field(*act, "choices").unwrap_or_else(MbValue::none);
         let nargs = get_field(*act, "nargs").unwrap_or_else(MbValue::none);
         match nargs_kind(nargs).as_str() {
             "*" => {
-                let collected: Vec<MbValue> = values[vi..].iter().map(|raw| {
-                    let v = apply_type(type_v, raw, parser, &dest);
-                    check_choice(choices, v, raw, parser);
-                    v
-                }).collect();
+                let collected: Vec<MbValue> = values[vi..]
+                    .iter()
+                    .map(|raw| {
+                        let v = apply_type(type_v, raw, parser, &dest);
+                        check_choice(choices, v, raw, parser);
+                        v
+                    })
+                    .collect();
                 set_field(ns, &dest, new_list(collected));
                 vi = values.len();
             }
             "+" => {
                 if vi >= values.len() {
-                    raise("SystemExit", &format!("the following arguments are required: {dest}"));
+                    raise(
+                        "SystemExit",
+                        &format!("the following arguments are required: {dest}"),
+                    );
                     return;
                 }
-                let collected: Vec<MbValue> = values[vi..].iter().map(|raw| {
-                    let v = apply_type(type_v, raw, parser, &dest);
-                    check_choice(choices, v, raw, parser);
-                    v
-                }).collect();
+                let collected: Vec<MbValue> = values[vi..]
+                    .iter()
+                    .map(|raw| {
+                        let v = apply_type(type_v, raw, parser, &dest);
+                        check_choice(choices, v, raw, parser);
+                        v
+                    })
+                    .collect();
                 set_field(ns, &dest, new_list(collected));
                 vi = values.len();
             }
@@ -976,7 +1112,10 @@ fn assign_positionals(
                     set_field(ns, &dest, v);
                     vi += 1;
                 } else {
-                    raise("SystemExit", &format!("the following arguments are required: {dest}"));
+                    raise(
+                        "SystemExit",
+                        &format!("the following arguments are required: {dest}"),
+                    );
                     return;
                 }
             }
@@ -1006,23 +1145,36 @@ fn take_value(
     let argname = argv.get(i).map(|s| s.as_str()).unwrap_or("");
     if let Some(v) = inline_val {
         let coerced = apply_type(type_v, &v, parser, argname);
-        if coerced.is_none() { return (coerced, 1); }
+        if coerced.is_none() {
+            return (coerced, 1);
+        }
         check_choice(choices, coerced, &v, parser);
         return (coerced, 1);
     }
     if i + 1 < argv.len() {
         let raw = &argv[i + 1];
         let coerced = apply_type(type_v, raw, parser, argname);
-        if coerced.is_none() { return (coerced, 2); }
+        if coerced.is_none() {
+            return (coerced, 2);
+        }
         check_choice(choices, coerced, raw, parser);
         return (coerced, 2);
     }
     // Missing value.
-    raise("SystemExit", &format!("argument {}: expected one argument", argv[i]));
+    raise(
+        "SystemExit",
+        &format!("argument {}: expected one argument", argv[i]),
+    );
     (MbValue::none(), 1)
 }
 
-fn invoke_custom_action(custom_action_inst: MbValue, parser: MbValue, ns: MbValue, values: MbValue, _option_string: &str) {
+fn invoke_custom_action(
+    custom_action_inst: MbValue,
+    parser: MbValue,
+    ns: MbValue,
+    values: MbValue,
+    _option_string: &str,
+) {
     // The stored Action was already constructed; call its __call__. The
     // 4th argument `option_string` is left to its default — mamba's instance
     // method dispatch caps a bound call at 4 total values (self + 3), so a
@@ -1035,7 +1187,9 @@ fn invoke_custom_action(custom_action_inst: MbValue, parser: MbValue, ns: MbValu
 }
 
 fn is_positional(act: MbValue) -> bool {
-    get_field(act, "_is_positional").and_then(|v| v.as_bool()).unwrap_or(false)
+    get_field(act, "_is_positional")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
 }
 
 fn nargs_kind(nargs: MbValue) -> String {
@@ -1043,19 +1197,31 @@ fn nargs_kind(nargs: MbValue) -> String {
 }
 
 fn optional_display_name(act: MbValue) -> String {
-    let opts = get_field(act, "option_strings").map(seq_items).unwrap_or_default();
-    opts.first().copied().and_then(extract_str)
-        .unwrap_or_else(|| get_field(act, "dest").and_then(extract_str).unwrap_or_default())
+    let opts = get_field(act, "option_strings")
+        .map(seq_items)
+        .unwrap_or_default();
+    opts.first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_else(|| {
+            get_field(act, "dest")
+                .and_then(extract_str)
+                .unwrap_or_default()
+        })
 }
 
 fn looks_like_negative_number(tok: &str) -> bool {
-    tok.len() > 1 && tok.starts_with('-') && tok[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
+    tok.len() > 1
+        && tok.starts_with('-')
+        && tok[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
 /// Match an optional action by one of its option strings.
 fn find_optional(optionals: &[MbValue], name: &str) -> Option<MbValue> {
     for act in optionals {
-        let opts = get_field(*act, "option_strings").map(seq_items).unwrap_or_default();
+        let opts = get_field(*act, "option_strings")
+            .map(seq_items)
+            .unwrap_or_default();
         for o in opts {
             if extract_str(o).as_deref() == Some(name) {
                 return Some(*act);
@@ -1070,7 +1236,11 @@ fn find_optional(optionals: &[MbValue], name: &str) -> Option<MbValue> {
 /// subparsers.add_parser(name, **kwargs) -> a fresh ArgumentParser.
 unsafe extern "C" fn method_add_parser(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let name = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let name = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     // Duplicate subcommand name → argparse.ArgumentError (CPython).
     if let Some(parsers) = get_field(self_v, "_parsers") {
         if dict_get(parsers, &name).is_some() {
@@ -1114,11 +1284,23 @@ pub fn register() {
         ("Action", dispatch_action as usize),
         ("FileType", dispatch_filetype as usize),
         ("HelpFormatter", dispatch_help_formatter as usize),
-        ("RawDescriptionHelpFormatter", dispatch_raw_description_formatter as usize),
+        (
+            "RawDescriptionHelpFormatter",
+            dispatch_raw_description_formatter as usize,
+        ),
         ("RawTextHelpFormatter", dispatch_raw_text_formatter as usize),
-        ("ArgumentDefaultsHelpFormatter", dispatch_defaults_formatter as usize),
-        ("MetavarTypeHelpFormatter", dispatch_metavar_type_formatter as usize),
-        ("BooleanOptionalAction", dispatch_boolean_optional_action as usize),
+        (
+            "ArgumentDefaultsHelpFormatter",
+            dispatch_defaults_formatter as usize,
+        ),
+        (
+            "MetavarTypeHelpFormatter",
+            dispatch_metavar_type_formatter as usize,
+        ),
+        (
+            "BooleanOptionalAction",
+            dispatch_boolean_optional_action as usize,
+        ),
         // `ngettext` is a re-exported gettext function — callable surface only.
         // Excluded from `__all__` (CPython omits it too); the
         // `all_matches_public_names` fixture filters it by name.
@@ -1159,8 +1341,14 @@ pub fn register() {
     // `except argparse.ArgumentError` still matches the `mb_raise("ArgumentError",
     // ...)` instances; and calling the type-object routes construction through
     // the registered `__init__` (mb_instance_new_with_init type-object ctor hook).
-    attrs.insert("ArgumentError".into(), make_exception_type_object("ArgumentError"));
-    attrs.insert("ArgumentTypeError".into(), make_exception_type_object("ArgumentTypeError"));
+    attrs.insert(
+        "ArgumentError".into(),
+        make_exception_type_object("ArgumentError"),
+    );
+    attrs.insert(
+        "ArgumentTypeError".into(),
+        make_exception_type_object("ArgumentTypeError"),
+    );
 
     // Constants / sentinels.
     attrs.insert("SUPPRESS".into(), new_str("==SUPPRESS=="));
@@ -1172,14 +1360,29 @@ pub fn register() {
 
     // __all__ — the public name list (CPython 3.12).
     let all_names = [
-        "ArgumentParser", "ArgumentError", "ArgumentTypeError",
-        "BooleanOptionalAction", "FileType", "HelpFormatter",
-        "ArgumentDefaultsHelpFormatter", "RawDescriptionHelpFormatter",
-        "RawTextHelpFormatter", "MetavarTypeHelpFormatter", "Namespace",
-        "Action", "ONE_OR_MORE", "OPTIONAL", "PARSER", "REMAINDER",
-        "SUPPRESS", "ZERO_OR_MORE",
+        "ArgumentParser",
+        "ArgumentError",
+        "ArgumentTypeError",
+        "BooleanOptionalAction",
+        "FileType",
+        "HelpFormatter",
+        "ArgumentDefaultsHelpFormatter",
+        "RawDescriptionHelpFormatter",
+        "RawTextHelpFormatter",
+        "MetavarTypeHelpFormatter",
+        "Namespace",
+        "Action",
+        "ONE_OR_MORE",
+        "OPTIONAL",
+        "PARSER",
+        "REMAINDER",
+        "SUPPRESS",
+        "ZERO_OR_MORE",
     ];
-    attrs.insert("__all__".into(), new_list(all_names.iter().map(|s| new_str(s)).collect()));
+    attrs.insert(
+        "__all__".into(),
+        new_list(all_names.iter().map(|s| new_str(s)).collect()),
+    );
 
     super::register_module("argparse", attrs);
 }
@@ -1211,45 +1414,60 @@ type MethodSpec = (&'static str, usize, bool);
 /// Register the runtime classes in single `mb_class_register` calls each so a
 /// later registration never clobbers an earlier method table.
 fn register_classes() {
-    register_method_class(PARSER_CLASS, &[
-        ("add_argument", method_add_argument as usize, true),
-        ("parse_args", method_parse_args as usize, true),
-        ("parse_known_args", method_parse_known_args as usize, true),
-        ("set_defaults", method_set_defaults as usize, true),
-        ("get_default", method_get_default as usize, true),
-        ("add_subparsers", method_add_subparsers as usize, true),
-        ("error", method_error as usize, true),
-        ("exit", method_exit as usize, true),
-    ]);
+    register_method_class(
+        PARSER_CLASS,
+        &[
+            ("add_argument", method_add_argument as usize, true),
+            ("parse_args", method_parse_args as usize, true),
+            ("parse_known_args", method_parse_known_args as usize, true),
+            ("set_defaults", method_set_defaults as usize, true),
+            ("get_default", method_get_default as usize, true),
+            ("add_subparsers", method_add_subparsers as usize, true),
+            ("error", method_error as usize, true),
+            ("exit", method_exit as usize, true),
+        ],
+    );
 
-    register_method_class(NAMESPACE_CLASS, &[
-        ("__eq__", ns_eq as usize, true),
-        ("__ne__", ns_ne as usize, true),
-        ("__contains__", ns_contains as usize, true),
-        // `__getattr__` raises AttributeError on a missing attribute, matching
-        // CPython's plain-object Namespace. Registered NON-variadic because the
-        // runtime invokes the `__getattr__` slot as `func(self, name_string)`
-        // (mb_getattr) rather than through the variadic (self, args_list)
-        // packing. The runtime's mb_getattr_default / mb_hasattr now clear the
-        // pending AttributeError, so 3-arg getattr and hasattr keep working.
-        ("__getattr__", ns_getattr as usize, false),
-    ]);
+    register_method_class(
+        NAMESPACE_CLASS,
+        &[
+            ("__eq__", ns_eq as usize, true),
+            ("__ne__", ns_ne as usize, true),
+            ("__contains__", ns_contains as usize, true),
+            // `__getattr__` raises AttributeError on a missing attribute, matching
+            // CPython's plain-object Namespace. Registered NON-variadic because the
+            // runtime invokes the `__getattr__` slot as `func(self, name_string)`
+            // (mb_getattr) rather than through the variadic (self, args_list)
+            // packing. The runtime's mb_getattr_default / mb_hasattr now clear the
+            // pending AttributeError, so 3-arg getattr and hasattr keep working.
+            ("__getattr__", ns_getattr as usize, false),
+        ],
+    );
 
-    register_method_class(SUBPARSERS_CLASS, &[
-        ("add_parser", method_add_parser as usize, true),
-    ]);
+    register_method_class(
+        SUBPARSERS_CLASS,
+        &[("add_parser", method_add_parser as usize, true)],
+    );
 
     // ArgumentError / ArgumentTypeError are real Exception subclasses so the
     // except-clause matcher (which walks the registered class hierarchy)
     // recognises them and so `str(err)` dispatches our __str__.
-    register_method_class_with_base("ArgumentError", &["Exception"], &[
-        ("__init__", argerr_init as usize, true),
-        ("__str__", argerr_str as usize, true),
-    ]);
-    register_method_class_with_base("ArgumentTypeError", &["Exception"], &[
-        ("__init__", argtypeerr_init as usize, true),
-        ("__str__", argtypeerr_str as usize, true),
-    ]);
+    register_method_class_with_base(
+        "ArgumentError",
+        &["Exception"],
+        &[
+            ("__init__", argerr_init as usize, true),
+            ("__str__", argerr_str as usize, true),
+        ],
+    );
+    register_method_class_with_base(
+        "ArgumentTypeError",
+        &["Exception"],
+        &[
+            ("__init__", argtypeerr_init as usize, true),
+            ("__str__", argtypeerr_str as usize, true),
+        ],
+    );
 }
 
 /// Register a class and its method table in one shot.
@@ -1314,7 +1532,10 @@ mod tests {
     fn test_add_argument_returns_action_with_dest() {
         let parser = mb_argparse_new(MbValue::none());
         let act = mb_argparse_add_argument(parser, new_str("--foo"));
-        assert_eq!(get_field(act, "dest").and_then(extract_str), Some("foo".to_string()));
+        assert_eq!(
+            get_field(act, "dest").and_then(extract_str),
+            Some("foo".to_string())
+        );
     }
 
     #[test]
@@ -1341,7 +1562,10 @@ mod tests {
         mb_argparse_add_argument(parser, new_str("name"));
         let (ns, extras) = run_parser(parser, &["hello".to_string()], false);
         assert!(extras.is_empty());
-        assert_eq!(get_field(ns, "name").and_then(extract_str), Some("hello".to_string()));
+        assert_eq!(
+            get_field(ns, "name").and_then(extract_str),
+            Some("hello".to_string())
+        );
     }
 
     #[test]

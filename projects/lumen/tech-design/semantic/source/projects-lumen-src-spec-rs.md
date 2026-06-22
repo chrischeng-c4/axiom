@@ -1,7 +1,7 @@
 ---
 id: projects-lumen-src-spec-rs
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
@@ -35,6 +35,8 @@ Public API manifest for `projects/lumen/src/spec.rs` captured as a per-file rust
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Offline, machine-readable self-description for agent integration.
 //!
 //! The `lumen spec` CLI subset emits everything an LLM agent needs to wire
@@ -43,9 +45,10 @@ Public API manifest for `projects/lumen/src/spec.rs` captured as a per-file rust
 //! server and no network. This module is the single source for that surface;
 //! the CLI and the (legacy) `lumen-openapi-dump` binary both call into it.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// The full OpenAPI 3 document as pretty JSON (every route + schema).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn openapi_json() -> String {
     crate::api::openapi()
         .to_pretty_json()
@@ -53,12 +56,14 @@ pub fn openapi_json() -> String {
 }
 
 /// The full OpenAPI 3 document as YAML for LLM/agent reading.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn openapi_yaml() -> String {
     serde_yaml::to_string(&crate::api::openapi()).expect("OpenApi serializes to YAML")
 }
 
 /// Just the component schemas (the request/response data types) as pretty JSON
 /// — the JSON-Schema view an agent uses to build/validate request bodies.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn json_schema_json() -> String {
     let api = crate::api::openapi();
     serde_json::to_string_pretty(&json!({ "components": api.components }))
@@ -69,6 +74,7 @@ pub fn json_schema_json() -> String {
 /// `{name, description, request}` for `POST /collections/{id}/search` (or
 /// `/duplicates` where noted) using the exact wire form of every `QueryNode`
 /// variant plus sort / collapse.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn query_shapes() -> Value {
     json!({
         "search_endpoint": "POST /collections/{collection}/search",
@@ -132,6 +138,7 @@ pub fn query_shapes() -> Value {
 /// The field-type + analyzer + vector-metric catalog — what `type`/`analyzer`/
 /// `metric` values a `PUT /collections/{id}` schema may use. Mirrors the
 /// `FieldType` / `Analyzer` / `VectorMetric` enums.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn field_catalog() -> Value {
     json!({
         "schema_endpoint": "PUT /collections/{collection}",
@@ -152,6 +159,7 @@ pub fn field_catalog() -> Value {
 }
 
 /// The agent-facing LLM topic outline (`lumen llm outline`) as Markdown.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_outline_md() -> String {
     r#"# lumen LLM outline
 
@@ -161,7 +169,7 @@ Use the smallest topic that answers the task:
   flavor choices, connection, and non-goals.
 - `lumen llm integration` — recommended Postgres/AlloyDB adapter boundary:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
-  and no direct external writes to lumen's NATS WAL.
+  and no direct external writes to lumen's internal broker WAL.
 - `lumen llm quickstart` — copy-paste local create → index → search flow.
 - `lumen llm recipes` — task → ready-to-POST query bodies.
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
@@ -175,6 +183,7 @@ Use the smallest topic that answers the task:
 /// model, declare→ingest→search→hydrate workflow, search-flavor decision map,
 /// connection, and non-goals. Where exact wire shape is needed it points at
 /// `lumen spec` / `lumen llm recipes` so there is one source of truth.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_workflow_md() -> String {
     r#"# lumen workflow
 
@@ -232,6 +241,7 @@ body). `lumen llm integration` covers database/pubsub adapter boundaries.
 
 /// The recommended database/pubsub integration boundary (`lumen llm
 /// integration`) as Markdown.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_integration_md() -> String {
     r#"# lumen integration
 
@@ -250,8 +260,8 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 4. If upstream delivery can arrive out of order, carry a monotonic
    `source_version` / commit LSN in the adapter and suppress stale writes before
    POSTing.
-5. Do not publish directly to lumen's NATS stream. NATS JetStream is lumen's
-   internal WAL and fan-out substrate; external producers use the HTTP API so
+5. Do not publish directly to lumen's broker stream. Relay is lumen's internal
+   WAL and fan-out substrate; external producers use the HTTP API so
    every write goes through validation, routing, and the same log/apply path.
 
 ## Ownership boundary
@@ -266,6 +276,7 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 
 /// A copy-paste end-to-end (`lumen llm quickstart`) as Markdown: create → index
 /// → search against a local `lumen serve` on `:7373`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
 
@@ -321,6 +332,7 @@ More shapes: `lumen llm recipes`. Full schema: `lumen spec`.
 
 /// Task → ready-to-POST body recipes (`lumen llm recipes`) as Markdown, rendered
 /// from [`query_shapes`] so the bodies never drift from the canonical cookbook.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
 pub fn llm_recipes_md() -> String {
     let shapes = query_shapes();
     let endpoint = shapes["search_endpoint"].as_str().unwrap_or("");
@@ -342,6 +354,8 @@ pub fn llm_recipes_md() -> String {
     }
     out
 }
+// CODEGEN-END
+
 ````
 
 ## Changes

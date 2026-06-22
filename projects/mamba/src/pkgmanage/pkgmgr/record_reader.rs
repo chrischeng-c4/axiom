@@ -68,14 +68,18 @@ pub fn parse_record(text: &str) -> Result<Vec<RecordEntryDraft>, IndexError> {
         let size = if size_field.is_empty() {
             None
         } else {
-            Some(size_field.parse::<u64>().map_err(|_| IndexError::ParseError {
-                url: "<RECORD>".into(),
-                detail: format!(
-                    "RECORD line {}: invalid size {:?}",
-                    lineno + 1,
-                    size_field
-                ),
-            })?)
+            Some(
+                size_field
+                    .parse::<u64>()
+                    .map_err(|_| IndexError::ParseError {
+                        url: "<RECORD>".into(),
+                        detail: format!(
+                            "RECORD line {}: invalid size {:?}",
+                            lineno + 1,
+                            size_field
+                        ),
+                    })?,
+            )
         };
 
         out.push(RecordEntryDraft {
@@ -143,10 +147,7 @@ fn split_csv_row(line: &str, lineno: usize) -> Result<Vec<String>, IndexError> {
             if !cur.is_empty() {
                 return Err(IndexError::ParseError {
                     url: "<RECORD>".into(),
-                    detail: format!(
-                        "RECORD line {}: stray text before quoted field",
-                        lineno
-                    ),
+                    detail: format!("RECORD line {}: stray text before quoted field", lineno),
                 });
             }
             in_quotes = true;

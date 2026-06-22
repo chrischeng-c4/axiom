@@ -1,6 +1,13 @@
 ---
 id: relay-log-segments-retention
 summary: Full log lifecycle — roll the NDJSON log into size-bounded segment files, locate any seq by its segment (offset is per-segment), and prune the oldest whole segments by total bytes or age, advancing start_seq. Reads and broadcast replay clamp to the earliest surviving seq. Standalone.
+capability_refs:
+  - id: long-running-stability
+    role: primary
+    gap: segment-rotation-and-retention-recovery
+    claim: segment-rotation-and-retention-recovery
+    coverage: full
+    rationale: "Defines segment rotation, retention pruning, and multi-segment recovery for long-running broker stability."
 fill_sections: [logic, unit-test, changes]
 ---
 

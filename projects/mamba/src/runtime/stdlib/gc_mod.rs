@@ -1,3 +1,6 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use std::cell::Cell;
 /// gc module for Mamba (#653).
 ///
 /// Exposes Mamba's cycle-detecting garbage collector to Python userspace.
@@ -11,9 +14,6 @@
 /// `get_objects`) matches CPython 3.12 for the cases that do not depend on the
 /// collector physically reclaiming cyclic garbage.
 use std::collections::HashMap;
-use std::cell::Cell;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Module-local generation/freeze bookkeeping ──
 //
@@ -118,15 +118,21 @@ pub fn register() {
 
     // gc.garbage / gc.callbacks — list attributes (uncollectable garbage and
     // collection callbacks). Mamba has no cycle collector, so both stay empty.
-    attrs.insert("garbage".into(), MbValue::from_ptr(MbObject::new_list(vec![])));
-    attrs.insert("callbacks".into(), MbValue::from_ptr(MbObject::new_list(vec![])));
+    attrs.insert(
+        "garbage".into(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    attrs.insert(
+        "callbacks".into(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
 
     // Constants
-    attrs.insert("DEBUG_STATS".into(),  MbValue::from_int(1));
+    attrs.insert("DEBUG_STATS".into(), MbValue::from_int(1));
     attrs.insert("DEBUG_COLLECTABLE".into(), MbValue::from_int(2));
     attrs.insert("DEBUG_UNCOLLECTABLE".into(), MbValue::from_int(4));
     attrs.insert("DEBUG_SAVEALL".into(), MbValue::from_int(32));
-    attrs.insert("DEBUG_LEAK".into(),   MbValue::from_int(38));
+    attrs.insert("DEBUG_LEAK".into(), MbValue::from_int(38));
 
     super::register_module("gc", attrs);
 }
@@ -228,10 +234,7 @@ pub fn mb_gc_mod_get_threshold() -> MbValue {
 
 /// gc.set_threshold(threshold0[, threshold1, threshold2])
 pub fn mb_gc_mod_set_threshold(args: &[MbValue]) -> MbValue {
-    let threshold = args
-        .first()
-        .and_then(|v| v.as_int_pyint())
-        .unwrap_or(700) as usize;
+    let threshold = args.first().and_then(|v| v.as_int_pyint()).unwrap_or(700) as usize;
     super::super::gc::gc_set_threshold(threshold);
     MbValue::none()
 }
@@ -329,9 +332,23 @@ fn value_is_tracked(obj: MbValue) -> bool {
 fn is_builtin_type_name(name: &str) -> bool {
     matches!(
         name,
-        "int" | "float" | "bool" | "complex" | "str" | "bytes" | "bytearray"
-            | "type" | "object" | "NoneType" | "tuple" | "frozenset"
-            | "range" | "slice" | "memoryview" | "ellipsis" | "NotImplementedType"
+        "int"
+            | "float"
+            | "bool"
+            | "complex"
+            | "str"
+            | "bytes"
+            | "bytearray"
+            | "type"
+            | "object"
+            | "NoneType"
+            | "tuple"
+            | "frozenset"
+            | "range"
+            | "slice"
+            | "memoryview"
+            | "ellipsis"
+            | "NotImplementedType"
     )
 }
 
@@ -502,7 +519,9 @@ pub fn mb_gc_mod_get_referrers(_args: &[MbValue]) -> MbValue {
 /// Push `v` into `out`, retaining it if it is a heap pointer (the resulting
 /// list takes ownership of its elements).
 fn push_retained(out: &mut Vec<MbValue>, v: MbValue) {
-    unsafe { super::super::rc::retain_if_ptr(v); }
+    unsafe {
+        super::super::rc::retain_if_ptr(v);
+    }
     out.push(v);
 }
 

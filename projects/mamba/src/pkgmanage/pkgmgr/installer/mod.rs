@@ -5,7 +5,6 @@
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/installer.md#Schema
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/installer.md#Logic
-
 pub mod archive;
 pub mod layout;
 pub mod record;
@@ -56,7 +55,10 @@ pub struct InstallResult {
 #[derive(Debug, thiserror::Error)]
 pub enum InstallerError {
     #[error("malformed wheel{}: {detail}", path.as_ref().map(|p| format!(" at {}", p.display())).unwrap_or_default())]
-    MalformedWheel { path: Option<PathBuf>, detail: String },
+    MalformedWheel {
+        path: Option<PathBuf>,
+        detail: String,
+    },
 
     #[error("RECORD hash mismatch for {}: {detail}", path.display())]
     RecordHashMismatch { path: PathBuf, detail: String },
@@ -71,15 +73,24 @@ pub enum InstallerError {
     EditableNotSupported,
 
     #[error("no installed distribution matches '{name}' under {}", site_packages.display())]
-    NotInstalled { name: String, site_packages: PathBuf },
+    NotInstalled {
+        name: String,
+        site_packages: PathBuf,
+    },
 
     #[error("io error{}: {detail}", path.as_ref().map(|p| format!(" at {}", p.display())).unwrap_or_default())]
-    Io { path: Option<PathBuf>, detail: String },
+    Io {
+        path: Option<PathBuf>,
+        detail: String,
+    },
 }
 
 impl InstallerError {
     fn io(detail: impl Into<String>, path: Option<PathBuf>) -> Self {
-        InstallerError::Io { path, detail: detail.into() }
+        InstallerError::Io {
+            path,
+            detail: detail.into(),
+        }
     }
 }
 
@@ -133,10 +144,12 @@ impl Installer {
         // Read entry_points.txt before placement (needed for scripts).
         let entry_points_path = staging.join(&meta.dist_info_dir).join("entry_points.txt");
         let entry_points_text = if entry_points_path.exists() {
-            Some(fs::read_to_string(&entry_points_path).map_err(|e| InstallerError::Io {
-                path: Some(entry_points_path.clone()),
-                detail: e.to_string(),
-            })?)
+            Some(
+                fs::read_to_string(&entry_points_path).map_err(|e| InstallerError::Io {
+                    path: Some(entry_points_path.clone()),
+                    detail: e.to_string(),
+                })?,
+            )
         } else {
             None
         };
@@ -146,7 +159,9 @@ impl Installer {
 
         // Generate console-script wrappers from entry_points.txt.
         let console_scripts = if let Some(text) = entry_points_text {
-            let bin_dir = req.site_packages.parent()
+            let bin_dir = req
+                .site_packages
+                .parent()
                 .map(|p| p.join("bin"))
                 .unwrap_or_else(|| req.site_packages.join("bin"));
             scripts::write_console_scripts(&text, &bin_dir, &req.python_executable)?
@@ -199,7 +214,9 @@ impl Installer {
         let mut results = Vec::with_capacity(graph.nodes.len());
         let order = topological_order(graph);
         for name in order {
-            let Some(node) = graph.nodes.iter().find(|n| n.name == name) else { continue };
+            let Some(node) = graph.nodes.iter().find(|n| n.name == name) else {
+                continue;
+            };
             let artifact = cache_lookup(&node.name, &node.version)?;
             let req = InstallRequest {
                 artifact_path: artifact,
@@ -215,7 +232,10 @@ impl Installer {
 
 /// Lightweight already-installed probe: scans `site_packages` for a single
 /// `<name>-<version>.dist-info/` directory whose normalised name matches `name`.
-fn read_installed_dist_info(site_packages: &Path, name: &str) -> Result<Option<InstalledDistInfo>, InstallerError> {
+fn read_installed_dist_info(
+    site_packages: &Path,
+    name: &str,
+) -> Result<Option<InstalledDistInfo>, InstallerError> {
     if !site_packages.exists() {
         return Ok(None);
     }
@@ -231,7 +251,9 @@ fn read_installed_dist_info(site_packages: &Path, name: &str) -> Result<Option<I
             continue;
         }
         let stem = &s[..s.len() - ".dist-info".len()];
-        let Some((dist, version)) = stem.rsplit_once('-') else { continue };
+        let Some((dist, version)) = stem.rsplit_once('-') else {
+            continue;
+        };
         if normalise_name(dist) == normalised {
             return Ok(Some(InstalledDistInfo {
                 version: version.to_string(),
@@ -304,7 +326,8 @@ fn topological_order(graph: &ResolvedGraph) -> Vec<String> {
 
 /// Allocate a unique staging directory inside `parent`. Caller cleans up on success.
 fn tempdir_in(parent: &Path) -> Result<PathBuf, InstallerError> {
-    fs::create_dir_all(parent).map_err(|e| InstallerError::io(e.to_string(), Some(parent.to_path_buf())))?;
+    fs::create_dir_all(parent)
+        .map_err(|e| InstallerError::io(e.to_string(), Some(parent.to_path_buf())))?;
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -318,6 +341,9 @@ fn tempdir_in(parent: &Path) -> Result<PathBuf, InstallerError> {
             Err(e) => return Err(InstallerError::io(e.to_string(), Some(candidate))),
         }
     }
-    Err(InstallerError::io("could not allocate staging dir after 16 attempts", Some(parent.to_path_buf())))
+    Err(InstallerError::io(
+        "could not allocate staging dir after 16 attempts",
+        Some(parent.to_path_buf()),
+    ))
 }
 // HANDWRITE-END

@@ -215,7 +215,10 @@ impl Router {
         // Compile and cache
         if let Ok(re) = regex::Regex::new(pattern) {
             let matches = re.is_match(task_name);
-            self.regex_cache.write().unwrap().insert(pattern.to_string(), re);
+            self.regex_cache
+                .write()
+                .unwrap()
+                .insert(pattern.to_string(), re);
             matches
         } else {
             false
@@ -291,8 +294,14 @@ mod tests {
             .build();
 
         assert_eq!(router.route("send_email", &serde_json::json!({})), "email");
-        assert_eq!(router.route("process_payment", &serde_json::json!({})), "payments");
-        assert_eq!(router.route("unknown_task", &serde_json::json!({})), "default");
+        assert_eq!(
+            router.route("process_payment", &serde_json::json!({})),
+            "payments"
+        );
+        assert_eq!(
+            router.route("unknown_task", &serde_json::json!({})),
+            "default"
+        );
     }
 
     #[test]
@@ -304,10 +313,19 @@ mod tests {
             .build();
 
         assert_eq!(router.route("email.send", &serde_json::json!({})), "email");
-        assert_eq!(router.route("email.receive", &serde_json::json!({})), "email");
+        assert_eq!(
+            router.route("email.receive", &serde_json::json!({})),
+            "email"
+        );
         assert_eq!(router.route("math.add", &serde_json::json!({})), "math");
-        assert_eq!(router.route("tasks.email.urgent", &serde_json::json!({})), "high-priority");
-        assert_eq!(router.route("other.task", &serde_json::json!({})), "default");
+        assert_eq!(
+            router.route("tasks.email.urgent", &serde_json::json!({})),
+            "high-priority"
+        );
+        assert_eq!(
+            router.route("other.task", &serde_json::json!({})),
+            "default"
+        );
     }
 
     #[test]
@@ -319,7 +337,10 @@ mod tests {
 
         assert_eq!(router.route("user_123", &serde_json::json!({})), "users");
         assert_eq!(router.route("user_456", &serde_json::json!({})), "users");
-        assert_eq!(router.route("report_sales_monthly", &serde_json::json!({})), "reports");
+        assert_eq!(
+            router.route("report_sales_monthly", &serde_json::json!({})),
+            "reports"
+        );
         assert_eq!(router.route("user_abc", &serde_json::json!({})), "default");
     }
 
@@ -370,16 +391,20 @@ mod tests {
             .build();
 
         // Custom route wins
-        assert_eq!(router.route("special_task", &serde_json::json!({})), "custom-queue");
+        assert_eq!(
+            router.route("special_task", &serde_json::json!({})),
+            "custom-queue"
+        );
     }
 
     #[test]
     fn test_default_queue() {
-        let router = RouterConfig::new()
-            .default_queue("my-default")
-            .build();
+        let router = RouterConfig::new().default_queue("my-default").build();
 
-        assert_eq!(router.route("any_task", &serde_json::json!({})), "my-default");
+        assert_eq!(
+            router.route("any_task", &serde_json::json!({})),
+            "my-default"
+        );
     }
 
     #[test]

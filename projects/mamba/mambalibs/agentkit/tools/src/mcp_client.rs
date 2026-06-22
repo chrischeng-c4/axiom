@@ -326,10 +326,7 @@ mod tests {
     async fn list_tools_parses_minimal_entry_without_description() {
         let transport = ScriptedTransport::new(vec![
             ok_response(1, json!({ "protocolVersion": MCP_PROTOCOL_VERSION })),
-            ok_response(
-                2,
-                json!({ "tools": [ { "name": "ping" } ] }),
-            ),
+            ok_response(2, json!({ "tools": [ { "name": "ping" } ] })),
         ]);
         let client = McpClient::new(transport);
         client.initialize().await.unwrap();
@@ -350,5 +347,4 @@ mod tests {
         let back: McpToolCallResult = serde_json::from_str(&s).unwrap();
         assert_eq!(back, result);
     }
-
 }

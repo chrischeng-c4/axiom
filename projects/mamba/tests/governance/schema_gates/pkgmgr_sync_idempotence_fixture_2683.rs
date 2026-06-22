@@ -133,7 +133,9 @@ fn pkgmgr_sync_first_run_installs_locked_deps() {
         "`[first_run].must_create_env` must be true"
     );
     assert_eq!(
-        first.get("must_install_locked_dependency").and_then(|v| v.as_bool()),
+        first
+            .get("must_install_locked_dependency")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[first_run].must_install_locked_dependency` must be true"
     );
@@ -159,7 +161,9 @@ fn pkgmgr_sync_second_run_is_a_no_op() {
     );
 
     assert_eq!(
-        second.get("expected_exit_code").and_then(|v| v.as_integer()),
+        second
+            .get("expected_exit_code")
+            .and_then(|v| v.as_integer()),
         Some(0),
         "`[second_run].expected_exit_code` must be 0 — idempotent no-op exits clean"
     );
@@ -169,7 +173,9 @@ fn pkgmgr_sync_second_run_is_a_no_op() {
         "`[second_run].must_not_create_env` must be true — env already exists"
     );
     assert_eq!(
-        second.get("must_not_reinstall_packages").and_then(|v| v.as_bool()),
+        second
+            .get("must_not_reinstall_packages")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[second_run].must_not_reinstall_packages` must be true — \
          packages are already on disk"
@@ -179,10 +185,13 @@ fn pkgmgr_sync_second_run_is_a_no_op() {
 #[test]
 fn pkgmgr_sync_lockfile_assertion_is_unchanged() {
     let doc = crate::common::load_toml(&manifest_path());
-    let lock = doc.get("lockfile_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[lockfile_assertion]` block \
+    let lock = doc
+        .get("lockfile_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[lockfile_assertion]` block \
          (acceptance: \"Second sync does not change lockfile content.\")",
-    );
+        );
 
     assert_eq!(
         lock.get("file").and_then(|v| v.as_str()),
@@ -190,12 +199,14 @@ fn pkgmgr_sync_lockfile_assertion_is_unchanged() {
         "`[lockfile_assertion].file` must be `mamba.lock`"
     );
     assert_eq!(
-        lock.get("must_be_unchanged_between_runs").and_then(|v| v.as_bool()),
+        lock.get("must_be_unchanged_between_runs")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_assertion].must_be_unchanged_between_runs` must be true"
     );
     assert_eq!(
-        lock.get("byte_identical_between_runs").and_then(|v| v.as_bool()),
+        lock.get("byte_identical_between_runs")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_assertion].byte_identical_between_runs` must be true"
     );
@@ -243,13 +254,17 @@ fn pkgmgr_sync_environment_assertion_keeps_import_ok() {
 #[test]
 fn pkgmgr_sync_idempotence_assertion_reports_no_op() {
     let doc = crate::common::load_toml(&manifest_path());
-    let idem = doc.get("idempotence_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[idempotence_assertion]` block \
+    let idem = doc
+        .get("idempotence_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[idempotence_assertion]` block \
          (acceptance: \"Output states idempotent no-op or equivalent behavior.\")",
-    );
+        );
 
     assert_eq!(
-        idem.get("second_run_must_report_no_op").and_then(|v| v.as_bool()),
+        idem.get("second_run_must_report_no_op")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[idempotence_assertion].second_run_must_report_no_op` must be true"
     );

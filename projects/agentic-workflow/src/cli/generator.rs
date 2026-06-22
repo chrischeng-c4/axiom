@@ -515,7 +515,6 @@ mod tests {
                 total_files: 1,
                 eligible_files: 1,
                 codegen_files: 0,
-                fully_codegen_files: 0,
                 handwrite_files: 1,
                 unmarked_files: 0,
                 unsupported_codegen_files: Vec::new(),

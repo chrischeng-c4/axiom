@@ -45,10 +45,10 @@
 //!   tight loops). Pre-documented as Gate 2 carve-out in the bench
 //!   fixture; correctness is unaffected.
 
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // HANDWRITE-BEGIN
 
@@ -138,9 +138,15 @@ pub fn handle_num_den(id: u64) -> Option<(i64, i64)> {
 }
 
 fn drop_fraction_handle(id: u64) {
-    FRACTIONS.with(|m| { m.borrow_mut().remove(&id); });
-    FRACTION_IDS.with(|s| { s.borrow_mut().remove(&id); });
-    FRACTION_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
+    FRACTIONS.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
+    FRACTION_IDS.with(|s| {
+        s.borrow_mut().remove(&id);
+    });
+    FRACTION_REFCOUNTS.with(|r| {
+        r.borrow_mut().remove(&id);
+    });
 }
 
 /// `mb_retain_value` integer-handle dispatch (#2111).
@@ -178,8 +184,12 @@ pub fn release_handle(id: u64) -> bool {
 
 fn make_handle(state: FractionState) -> MbValue {
     let id = alloc_fraction_id();
-    FRACTIONS.with(|m| { m.borrow_mut().insert(id, state); });
-    FRACTION_IDS.with(|s| { s.borrow_mut().insert(id); });
+    FRACTIONS.with(|m| {
+        m.borrow_mut().insert(id, state);
+    });
+    FRACTION_IDS.with(|s| {
+        s.borrow_mut().insert(id);
+    });
     MbValue::from_int(id as i64)
 }
 
@@ -278,7 +288,11 @@ fn parse_fraction_str(raw: &str) -> Option<FractionState> {
         {
             return None;
         }
-        let int_val: i64 = if int_digits.is_empty() { 0 } else { int_digits.parse().ok()? };
+        let int_val: i64 = if int_digits.is_empty() {
+            0
+        } else {
+            int_digits.parse().ok()?
+        };
         let frac_val: i64 = frac_part.parse().ok()?;
         let scale = 10_i64.checked_pow(frac_part.len() as u32)?;
         let num = sign * (int_val.checked_mul(scale)?.checked_add(frac_val)?);
@@ -336,9 +350,13 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
     if let Some(p) = num.as_ptr() {
         if matches!(
             unsafe { &(*p).data },
-            ObjData::List(_) | ObjData::Tuple(_) | ObjData::Dict(_)
-                | ObjData::Set(_) | ObjData::FrozenSet(_)
-                | ObjData::Bytes(_) | ObjData::ByteArray(_)
+            ObjData::List(_)
+                | ObjData::Tuple(_)
+                | ObjData::Dict(_)
+                | ObjData::Set(_)
+                | ObjData::FrozenSet(_)
+                | ObjData::Bytes(_)
+                | ObjData::ByteArray(_)
         ) {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -450,12 +468,20 @@ pub fn mb_fraction_limit_denominator(handle: MbValue, max_den: MbValue) -> MbVal
     let (mut n, mut d) = (s.num, s.den);
     while d != 0 {
         let a = n.div_euclid(d);
-        let (p2, q2) = (a.saturating_mul(p1).saturating_add(p0),
-                        a.saturating_mul(q1).saturating_add(q0));
-        if q2 > m { break; }
-        p0 = p1; q0 = q1; p1 = p2; q1 = q2;
+        let (p2, q2) = (
+            a.saturating_mul(p1).saturating_add(p0),
+            a.saturating_mul(q1).saturating_add(q0),
+        );
+        if q2 > m {
+            break;
+        }
+        p0 = p1;
+        q0 = q1;
+        p1 = p2;
+        q1 = q2;
         let r = n - a * d;
-        n = d; d = r;
+        n = d;
+        d = r;
     }
     let k = (m - q0) / q1.max(1);
     let bound1 = FractionState::new(p0 + k * p1, q0 + k * q1);
@@ -473,13 +499,19 @@ pub fn mb_fraction_limit_denominator(handle: MbValue, max_den: MbValue) -> MbVal
 // ── Arithmetic — flat results, return a new handle.
 
 fn add_states(a: FractionState, b: FractionState) -> FractionState {
-    let num = a.num.saturating_mul(b.den).saturating_add(b.num.saturating_mul(a.den));
+    let num = a
+        .num
+        .saturating_mul(b.den)
+        .saturating_add(b.num.saturating_mul(a.den));
     let den = a.den.saturating_mul(b.den);
     FractionState::new(num, den)
 }
 
 fn sub_states(a: FractionState, b: FractionState) -> FractionState {
-    let num = a.num.saturating_mul(b.den).saturating_sub(b.num.saturating_mul(a.den));
+    let num = a
+        .num
+        .saturating_mul(b.den)
+        .saturating_sub(b.num.saturating_mul(a.den));
     let den = a.den.saturating_mul(b.den);
     FractionState::new(num, den)
 }
@@ -577,11 +609,17 @@ pub fn mb_fraction_pos(handle: MbValue) -> MbValue {
 }
 pub fn mb_fraction_neg(handle: MbValue) -> MbValue {
     let s = load(handle);
-    make_handle(FractionState { num: -s.num, den: s.den })
+    make_handle(FractionState {
+        num: -s.num,
+        den: s.den,
+    })
 }
 pub fn mb_fraction_abs(handle: MbValue) -> MbValue {
     let s = load(handle);
-    make_handle(FractionState { num: s.num.abs(), den: s.den })
+    make_handle(FractionState {
+        num: s.num.abs(),
+        den: s.den,
+    })
 }
 pub fn mb_fraction_trunc(handle: MbValue) -> MbValue {
     let s = load(handle);
@@ -627,9 +665,15 @@ pub fn mb_fraction_round(handle: MbValue, ndigits: MbValue) -> MbValue {
     let scaled = FractionState::new(s.num.saturating_mul(scale), s.den);
     let q = scaled.num.div_euclid(scaled.den);
     let r = scaled.num.rem_euclid(scaled.den);
-    let rounded_int = if 2 * r < scaled.den { q }
-        else if 2 * r > scaled.den { q + 1 }
-        else if q % 2 == 0 { q } else { q + 1 };
+    let rounded_int = if 2 * r < scaled.den {
+        q
+    } else if 2 * r > scaled.den {
+        q + 1
+    } else if q % 2 == 0 {
+        q
+    } else {
+        q + 1
+    };
     make_handle(FractionState::new(rounded_int, scale))
 }
 
@@ -653,9 +697,9 @@ pub fn mb_fraction_ne(a: MbValue, b: MbValue) -> MbValue {
 fn fraction_orderable(b: MbValue) -> bool {
     !(super::super::builtins::is_decimal_handle_value(b)
         || b.is_none()
-        || b.as_ptr().map(|p| unsafe {
-            matches!((*p).data, ObjData::Str(_) | ObjData::Complex(..))
-        }).unwrap_or(false))
+        || b.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Str(_) | ObjData::Complex(..)) })
+            .unwrap_or(false))
 }
 
 pub fn mb_fraction_lt(a: MbValue, b: MbValue) -> MbValue {
@@ -691,7 +735,10 @@ pub fn mb_fraction_hash(handle: MbValue) -> MbValue {
     // NaN-box window (`from_int` aborts beyond ±2^47 in debug builds).
     // The `hash()` builtin routes equality-consistent hashing through
     // `decimal_mod::mb_numeric_handle_integral_i64` / `_exact_f64` first.
-    let h = s.num.wrapping_mul(0x9E3779B97F4A7C15u64 as i64).wrapping_add(s.den);
+    let h = s
+        .num
+        .wrapping_mul(0x9E3779B97F4A7C15u64 as i64)
+        .wrapping_add(s.den);
     MbValue::from_int((h << 17) >> 17)
 }
 
@@ -763,8 +810,14 @@ dispatch_unary!(dispatch_fraction_repr, mb_fraction_repr);
 dispatch_unary!(dispatch_fraction_numerator, mb_fraction_numerator);
 dispatch_unary!(dispatch_fraction_denominator, mb_fraction_denominator);
 dispatch_unary!(dispatch_fraction_is_integer, mb_fraction_is_integer);
-dispatch_unary!(dispatch_fraction_as_integer_ratio, mb_fraction_as_integer_ratio);
-dispatch_binary!(dispatch_fraction_limit_denominator, mb_fraction_limit_denominator);
+dispatch_unary!(
+    dispatch_fraction_as_integer_ratio,
+    mb_fraction_as_integer_ratio
+);
+dispatch_binary!(
+    dispatch_fraction_limit_denominator,
+    mb_fraction_limit_denominator
+);
 dispatch_binary!(dispatch_fraction_eq, mb_fraction_eq);
 dispatch_binary!(dispatch_fraction_lt, mb_fraction_lt);
 dispatch_binary!(dispatch_fraction_le, mb_fraction_le);
@@ -847,10 +900,19 @@ pub fn register() {
         ("fraction_str", dispatch_fraction_str as usize),
         ("fraction_repr", dispatch_fraction_repr as usize),
         ("fraction_numerator", dispatch_fraction_numerator as usize),
-        ("fraction_denominator", dispatch_fraction_denominator as usize),
+        (
+            "fraction_denominator",
+            dispatch_fraction_denominator as usize,
+        ),
         ("fraction_is_integer", dispatch_fraction_is_integer as usize),
-        ("fraction_as_integer_ratio", dispatch_fraction_as_integer_ratio as usize),
-        ("fraction_limit_denominator", dispatch_fraction_limit_denominator as usize),
+        (
+            "fraction_as_integer_ratio",
+            dispatch_fraction_as_integer_ratio as usize,
+        ),
+        (
+            "fraction_limit_denominator",
+            dispatch_fraction_limit_denominator as usize,
+        ),
         ("fraction_eq", dispatch_fraction_eq as usize),
         ("fraction_lt", dispatch_fraction_lt as usize),
         ("fraction_le", dispatch_fraction_le as usize),
@@ -874,7 +936,10 @@ pub fn register() {
     // False even though the integer-handle dispatch already implements them.
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
-        map.insert(dispatch_Fraction as *const () as usize as u64, "Fraction".to_string());
+        map.insert(
+            dispatch_Fraction as *const () as usize as u64,
+            "Fraction".to_string(),
+        );
     });
 
     // Register the Fraction class method table so the class-attribute method
@@ -885,9 +950,15 @@ pub fn register() {
     // unbound method. CPython exposes these as class attributes.
     let mut methods: HashMap<String, MbValue> = HashMap::new();
     let class_methods: Vec<(&str, usize)> = vec![
-        ("as_integer_ratio", dispatch_fraction_as_integer_ratio as usize),
+        (
+            "as_integer_ratio",
+            dispatch_fraction_as_integer_ratio as usize,
+        ),
         ("is_integer", dispatch_fraction_is_integer as usize),
-        ("limit_denominator", dispatch_fraction_limit_denominator as usize),
+        (
+            "limit_denominator",
+            dispatch_fraction_limit_denominator as usize,
+        ),
         ("conjugate", dispatch_fraction_numerator as usize),
         ("numerator", dispatch_fraction_numerator as usize),
         ("denominator", dispatch_fraction_denominator as usize),
@@ -912,7 +983,11 @@ pub fn register() {
 #[allow(dead_code)]
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 

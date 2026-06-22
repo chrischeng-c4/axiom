@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// json module for Mamba — backed by serde_json.
 ///
 /// Provides: json.dumps(obj), json.loads(s), json.dumps(obj, indent),
@@ -8,11 +10,8 @@
 /// dispatch) is not yet emitted by score codegen. Same pattern as
 /// hashlib_mod/hmac_mod — handwrite during brute-force Phase 2, replace when
 /// aw standardize lands the stdlib-shim section type.
-
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 /// Safe wrapper over `from_raw_parts` — returns `&[]` for `nargs == 0`
 /// or null pointer (`from_raw_parts` requires a non-null aligned ptr
@@ -74,11 +73,21 @@ fn alloc_json_handle_id() -> u64 {
 }
 
 fn drop_json_handle(id: u64) {
-    ENCODERS.with(|m| { m.borrow_mut().remove(&id); });
-    ENCODER_IDS.with(|s| { s.borrow_mut().remove(&id); });
-    DECODERS.with(|m| { m.borrow_mut().remove(&id); });
-    DECODER_IDS.with(|s| { s.borrow_mut().remove(&id); });
-    JSON_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
+    ENCODERS.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
+    ENCODER_IDS.with(|s| {
+        s.borrow_mut().remove(&id);
+    });
+    DECODERS.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
+    DECODER_IDS.with(|s| {
+        s.borrow_mut().remove(&id);
+    });
+    JSON_REFCOUNTS.with(|r| {
+        r.borrow_mut().remove(&id);
+    });
 }
 
 /// `mb_retain_value` integer-handle dispatch (#2111).
@@ -128,15 +137,23 @@ pub fn is_json_decoder_handle(id: u64) -> bool {
 
 fn make_encoder_handle(cfg: EncoderCfg) -> MbValue {
     let id = alloc_json_handle_id();
-    ENCODERS.with(|m| { m.borrow_mut().insert(id, cfg); });
-    ENCODER_IDS.with(|s| { s.borrow_mut().insert(id); });
+    ENCODERS.with(|m| {
+        m.borrow_mut().insert(id, cfg);
+    });
+    ENCODER_IDS.with(|s| {
+        s.borrow_mut().insert(id);
+    });
     MbValue::from_int(id as i64)
 }
 
 fn make_decoder_handle(cfg: DecoderCfg) -> MbValue {
     let id = alloc_json_handle_id();
-    DECODERS.with(|m| { m.borrow_mut().insert(id, cfg); });
-    DECODER_IDS.with(|s| { s.borrow_mut().insert(id); });
+    DECODERS.with(|m| {
+        m.borrow_mut().insert(id, cfg);
+    });
+    DECODER_IDS.with(|s| {
+        s.borrow_mut().insert(id);
+    });
     MbValue::from_int(id as i64)
 }
 
@@ -167,16 +184,18 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let map = lock.read().unwrap();
                     let indent = map.get("indent").and_then(|v| v.as_int());
-                    let sort_keys = map.get("sort_keys").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let ensure_ascii = map.get("ensure_ascii").and_then(|v| v.as_bool()).unwrap_or(true);
+                    let sort_keys = map
+                        .get("sort_keys")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let ensure_ascii = map
+                        .get("ensure_ascii")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
                     let separators = map.get("separators");
 
                     // Sort keys if requested
-                    let effective_val = if sort_keys {
-                        sort_dict_keys(val)
-                    } else {
-                        val
-                    };
+                    let effective_val = if sort_keys { sort_dict_keys(val) } else { val };
 
                     if let Some(n) = indent {
                         return mb_json_dumps_pretty(effective_val, MbValue::from_int(n));
@@ -191,9 +210,15 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                         if let Some(sep_ptr) = sep_val.as_ptr() {
                             if let ObjData::Tuple(ref tup) = (*sep_ptr).data {
                                 if tup.len() == 2 {
-                                    let item_sep = extract_str_val(tup[0]).unwrap_or(", ".to_string());
-                                    let key_sep = extract_str_val(tup[1]).unwrap_or(": ".to_string());
-                                    return mb_json_dumps_separators(effective_val, &item_sep, &key_sep);
+                                    let item_sep =
+                                        extract_str_val(tup[0]).unwrap_or(", ".to_string());
+                                    let key_sep =
+                                        extract_str_val(tup[1]).unwrap_or(": ".to_string());
+                                    return mb_json_dumps_separators(
+                                        effective_val,
+                                        &item_sep,
+                                        &key_sep,
+                                    );
                                 }
                             }
                         }
@@ -291,7 +316,10 @@ unsafe extern "C" fn dispatch_jsonencoder_ctor(args_ptr: *const MbValue, nargs: 
 }
 
 /// json.JSONDecoder(...) constructor — returns an integer handle.
-unsafe extern "C" fn dispatch_jsondecoder_ctor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_jsondecoder_ctor(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     make_decoder_handle(DecoderCfg::default())
 }
 
@@ -324,16 +352,26 @@ unsafe extern "C" fn dispatch_detect_encoding(args_ptr: *const MbValue, nargs: u
 fn detect_from_bytes(b: &[u8]) -> &'static str {
     // UTF-32 BOMs (4 bytes)
     if b.len() >= 4 {
-        if b[..4] == [0x00, 0x00, 0xFE, 0xFF] { return "utf-32-be"; }
-        if b[..4] == [0xFF, 0xFE, 0x00, 0x00] { return "utf-32-le"; }
+        if b[..4] == [0x00, 0x00, 0xFE, 0xFF] {
+            return "utf-32-be";
+        }
+        if b[..4] == [0xFF, 0xFE, 0x00, 0x00] {
+            return "utf-32-le";
+        }
     }
     // UTF-16 BOMs (2 bytes)
     if b.len() >= 2 {
-        if b[..2] == [0xFE, 0xFF] { return "utf-16-be"; }
-        if b[..2] == [0xFF, 0xFE] { return "utf-16-le"; }
+        if b[..2] == [0xFE, 0xFF] {
+            return "utf-16-be";
+        }
+        if b[..2] == [0xFF, 0xFE] {
+            return "utf-16-le";
+        }
     }
     // UTF-8 BOM
-    if b.len() >= 3 && b[..3] == [0xEF, 0xBB, 0xBF] { return "utf-8-sig"; }
+    if b.len() >= 3 && b[..3] == [0xEF, 0xBB, 0xBF] {
+        return "utf-8-sig";
+    }
     // Heuristic for unmarked UTF-32 / UTF-16 (CPython logic):
     // If the first 4 bytes look like ASCII surrounded by zeros, infer wide encodings.
     if b.len() >= 4 {
@@ -352,10 +390,15 @@ fn detect_from_bytes(b: &[u8]) -> &'static str {
 
 /// `encoder.encode(obj)` — return a JSON string honoring the encoder's config.
 pub fn mb_json_encoder_encode(handle: MbValue, obj: MbValue) -> MbValue {
-    let cfg = handle.as_int()
+    let cfg = handle
+        .as_int()
         .and_then(|id| ENCODERS.with(|m| m.borrow().get(&(id as u64)).cloned()))
         .unwrap_or_default();
-    let effective = if cfg.sort_keys { sort_dict_keys(obj) } else { obj };
+    let effective = if cfg.sort_keys {
+        sort_dict_keys(obj)
+    } else {
+        obj
+    };
     if let Some(n) = cfg.indent {
         return mb_json_dumps_pretty(effective, MbValue::from_int(n));
     }
@@ -401,9 +444,16 @@ pub fn mb_json_decoder_decode(_handle: MbValue, s: MbValue) -> MbValue {
 /// CPython for inputs whose entire suffix is a single JSON value.
 pub fn mb_json_decoder_raw_decode(_handle: MbValue, s: MbValue, _idx: MbValue) -> MbValue {
     let parsed = mb_json_loads(s);
-    let end = s.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Str(ref sv) = (*p).data { Some(sv.len() as i64) } else { None }
-    }).unwrap_or(0);
+    let end = s
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Str(ref sv) = (*p).data {
+                Some(sv.len() as i64)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
     let tuple_items = vec![parsed, MbValue::from_int(end)];
     MbValue::from_ptr(MbObject::new_tuple(tuple_items))
 }
@@ -417,9 +467,18 @@ pub fn register() {
         ("loads", dispatch_loads as *const () as usize),
         ("dump", dispatch_dump as *const () as usize),
         ("load", dispatch_load as *const () as usize),
-        ("JSONEncoder", dispatch_jsonencoder_ctor as *const () as usize),
-        ("JSONDecoder", dispatch_jsondecoder_ctor as *const () as usize),
-        ("detect_encoding", dispatch_detect_encoding as *const () as usize),
+        (
+            "JSONEncoder",
+            dispatch_jsonencoder_ctor as *const () as usize,
+        ),
+        (
+            "JSONDecoder",
+            dispatch_jsondecoder_ctor as *const () as usize,
+        ),
+        (
+            "detect_encoding",
+            dispatch_detect_encoding as *const () as usize,
+        ),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -429,8 +488,10 @@ pub fn register() {
     }
 
     // Also register JSONDecodeError as an alias for ValueError
-    attrs.insert("JSONDecodeError".into(),
-        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())));
+    attrs.insert(
+        "JSONDecodeError".into(),
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+    );
 
     super::register_module("json", attrs);
 
@@ -449,7 +510,11 @@ pub fn register() {
 
 fn extract_str_val(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -468,13 +533,10 @@ fn sort_dict_keys(val: MbValue) -> MbValue {
                 // full deadlock derivation.
                 let pairs: Vec<(String, MbValue)> = {
                     let map = lock.read().unwrap();
-                    let mut keys: Vec<String> =
-                        map.keys().map(|k| k.to_string()).collect();
+                    let mut keys: Vec<String> = map.keys().map(|k| k.to_string()).collect();
                     keys.sort();
                     keys.into_iter()
-                        .filter_map(|k| {
-                            map.get(k.as_str()).map(|v| (k, sort_dict_keys(*v)))
-                        })
+                        .filter_map(|k| map.get(k.as_str()).map(|v| (k, sort_dict_keys(*v))))
                         .collect()
                 };
                 let new_dict = MbObject::new_dict_with_capacity(pairs.len());
@@ -505,16 +567,24 @@ fn format_json_custom(val: &serde_json::Value, item_sep: &str, key_sep: &str) ->
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => format!("\"{}\"", json_escape_body(s, true)),
         serde_json::Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(|v| format_json_custom(v, item_sep, key_sep)).collect();
+            let items: Vec<String> = arr
+                .iter()
+                .map(|v| format_json_custom(v, item_sep, key_sep))
+                .collect();
             format!("[{}]", items.join(item_sep))
         }
         serde_json::Value::Object(obj) => {
-            let items: Vec<String> = obj.iter().map(|(k, v)| {
-                format!("\"{}\"{}{}",
-                    json_escape_body(k, true),
-                    key_sep,
-                    format_json_custom(v, item_sep, key_sep))
-            }).collect();
+            let items: Vec<String> = obj
+                .iter()
+                .map(|(k, v)| {
+                    format!(
+                        "\"{}\"{}{}",
+                        json_escape_body(k, true),
+                        key_sep,
+                        format_json_custom(v, item_sep, key_sep)
+                    )
+                })
+                .collect();
             format!("{{{}}}", items.join(item_sep))
         }
     }
@@ -543,46 +613,45 @@ fn mbvalue_to_json(val: MbValue) -> serde_json::Value {
                 ObjData::Str(s) => serde_json::Value::String(s.clone()),
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap();
-                    let arr: Vec<serde_json::Value> = items.iter()
-                        .map(|v| mbvalue_to_json(*v))
-                        .collect();
+                    let arr: Vec<serde_json::Value> =
+                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Dict(ref lock) => {
                     let map = lock.read().unwrap();
-                    let obj: serde_json::Map<String, serde_json::Value> = map.iter()
+                    let obj: serde_json::Map<String, serde_json::Value> = map
+                        .iter()
                         .map(|(k, v)| (k.to_string(), mbvalue_to_json(*v)))
                         .collect();
                     serde_json::Value::Object(obj)
                 }
                 ObjData::Tuple(items) => {
-                    let arr: Vec<serde_json::Value> = items.iter()
-                        .map(|v| mbvalue_to_json(*v))
-                        .collect();
+                    let arr: Vec<serde_json::Value> =
+                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Set(ref lock) => {
                     let items = lock.read().unwrap();
-                    let arr: Vec<serde_json::Value> = items.iter()
-                        .map(|v| mbvalue_to_json(*v))
-                        .collect();
+                    let arr: Vec<serde_json::Value> =
+                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::FrozenSet(items) => {
-                    let arr: Vec<serde_json::Value> = items.iter()
-                        .map(|v| mbvalue_to_json(*v))
-                        .collect();
+                    let arr: Vec<serde_json::Value> =
+                        items.iter().map(|v| mbvalue_to_json(*v)).collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::Bytes(data) => {
-                    let arr: Vec<serde_json::Value> = data.iter()
+                    let arr: Vec<serde_json::Value> = data
+                        .iter()
                         .map(|b| serde_json::Value::Number((*b as u64).into()))
                         .collect();
                     serde_json::Value::Array(arr)
                 }
                 ObjData::ByteArray(ref lock) => {
                     let data = lock.read().unwrap();
-                    let arr: Vec<serde_json::Value> = data.iter()
+                    let arr: Vec<serde_json::Value> = data
+                        .iter()
                         .map(|b| serde_json::Value::Number((*b as u64).into()))
                         .collect();
                     serde_json::Value::Array(arr)
@@ -636,9 +705,7 @@ fn json_to_mbvalue(val: &serde_json::Value) -> MbValue {
                 MbValue::none()
             }
         }
-        serde_json::Value::String(s) => {
-            MbValue::from_ptr(MbObject::new_str(s.clone()))
-        }
+        serde_json::Value::String(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
         serde_json::Value::Array(arr) => {
             let items: Vec<MbValue> = arr.iter().map(json_to_mbvalue).collect();
             MbValue::from_ptr(MbObject::new_list(items))
@@ -657,7 +724,8 @@ fn json_to_mbvalue(val: &serde_json::Value) -> MbValue {
             // which is blocked on this read — a single-thread RwLock
             // self-deadlock that surfaces as a `dispatch_semaphore_wait`
             // hang on macOS once the alloc threshold is crossed mid-parse.
-            let pairs: Vec<(String, MbValue)> = obj.iter()
+            let pairs: Vec<(String, MbValue)> = obj
+                .iter()
                 .map(|(k, v)| (k.clone(), json_to_mbvalue(v)))
                 .collect();
             let dict = MbObject::new_dict_with_capacity(pairs.len());
@@ -721,7 +789,11 @@ fn serialize_mbvalue_cpython(val: MbValue, ensure_ascii: bool) -> String {
     // Handle top-level special floats (Infinity, -Infinity, NaN)
     if let Some(f) = val.as_float() {
         if f.is_infinite() {
-            return if f > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() };
+            return if f > 0.0 {
+                "Infinity".to_string()
+            } else {
+                "-Infinity".to_string()
+            };
         }
         if f.is_nan() {
             return "NaN".to_string();
@@ -776,12 +848,22 @@ fn serialize_json_cpython(val: &serde_json::Value, ensure_ascii: bool) -> String
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => format!("\"{}\"", json_escape_body(s, ensure_ascii)),
         serde_json::Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(|v| serialize_json_cpython(v, ensure_ascii)).collect();
+            let items: Vec<String> = arr
+                .iter()
+                .map(|v| serialize_json_cpython(v, ensure_ascii))
+                .collect();
             format!("[{}]", items.join(", "))
         }
         serde_json::Value::Object(obj) => {
-            let items: Vec<String> = obj.iter()
-                .map(|(k, v)| format!("\"{}\": {}", json_escape_body(k, ensure_ascii), serialize_json_cpython(v, ensure_ascii)))
+            let items: Vec<String> = obj
+                .iter()
+                .map(|(k, v)| {
+                    format!(
+                        "\"{}\": {}",
+                        json_escape_body(k, ensure_ascii),
+                        serialize_json_cpython(v, ensure_ascii)
+                    )
+                })
                 .collect();
             format!("{{{}}}", items.join(", "))
         }
@@ -794,8 +876,7 @@ pub fn mb_json_dumps_pretty(val: MbValue, indent: MbValue) -> MbValue {
     let n = indent.as_int().unwrap_or(2) as usize;
     // serde_json::to_string_pretty uses 2-space indent; for custom indent we format manually
     if n == 2 {
-        let s = serde_json::to_string_pretty(&json_val)
-            .unwrap_or_else(|_| "null".to_string());
+        let s = serde_json::to_string_pretty(&json_val).unwrap_or_else(|_| "null".to_string());
         MbValue::from_ptr(MbObject::new_str(s))
     } else {
         let indent_bytes = " ".repeat(n).into_bytes();
@@ -839,24 +920,24 @@ pub fn mb_json_dumps_pretty_indent_str(val: MbValue, indent: &str) -> MbValue {
 /// write lock.
 pub fn mb_json_loads(val: MbValue) -> MbValue {
     let json_str = val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     });
 
     match json_str {
-        Some(s) => {
-            match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(parsed) => json_to_mbvalue(&parsed),
-                Err(e) => {
-                    super::super::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(
-                            format!("json.loads: {e}")
-                        )),
-                    );
-                    MbValue::none()
-                }
+        Some(s) => match serde_json::from_str::<serde_json::Value>(&s) {
+            Ok(parsed) => json_to_mbvalue(&parsed),
+            Err(e) => {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!("json.loads: {e}"))),
+                );
+                MbValue::none()
             }
-        }
+        },
         None => MbValue::none(),
     }
 }
@@ -991,9 +1072,16 @@ mod tests {
     fn test_py312_json_dumps_int() {
         let v = MbValue::from_int(42);
         let j = mb_json_dumps(v);
-        let result = j.as_ptr().map(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data { s.clone() } else { String::new() }
-        }).unwrap_or_default();
+        let result = j
+            .as_ptr()
+            .map(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    s.clone()
+                } else {
+                    String::new()
+                }
+            })
+            .unwrap_or_default();
         assert_eq!(result, "42");
     }
 
@@ -1001,9 +1089,16 @@ mod tests {
     fn test_py312_json_dumps_bool_true() {
         let v = MbValue::from_bool(true);
         let j = mb_json_dumps(v);
-        let result = j.as_ptr().map(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data { s.clone() } else { String::new() }
-        }).unwrap_or_default();
+        let result = j
+            .as_ptr()
+            .map(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    s.clone()
+                } else {
+                    String::new()
+                }
+            })
+            .unwrap_or_default();
         assert_eq!(result, "true");
     }
 
@@ -1011,9 +1106,16 @@ mod tests {
     fn test_py312_json_dumps_none_is_null() {
         let v = MbValue::none();
         let j = mb_json_dumps(v);
-        let result = j.as_ptr().map(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data { s.clone() } else { String::new() }
-        }).unwrap_or_default();
+        let result = j
+            .as_ptr()
+            .map(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    s.clone()
+                } else {
+                    String::new()
+                }
+            })
+            .unwrap_or_default();
         assert_eq!(result, "null");
     }
 
@@ -1185,8 +1287,8 @@ mod tests {
     /// Set MAMBA_PERF=1 to print per-iteration timing for ad-hoc benchmarking.
     #[test]
     fn test_json_loads_dumps_nested_dict_loop_2109() {
-        use std::time::Instant;
         use super::super::super::rc::mb_release;
+        use std::time::Instant;
         let payload = r#"{"service": "mamba-api", "version": "0.3.48", "enabled": true, "timeout_ms": 5000, "retries": 3, "endpoints": [{"path": "/v1/status", "method": "GET", "auth": false}, {"path": "/v1/run", "method": "POST", "auth": true}], "feature_flags": {"tracing": true, "metrics": false}, "tags": ["prod", "us-east-1"]}"#;
         let iters: usize = 500;
 
@@ -1197,9 +1299,15 @@ mod tests {
             let parsed = mb_json_loads(s_val);
             let dumped = mb_json_dumps(parsed);
             unsafe {
-                if let Some(p) = s_val.as_ptr() { mb_release(p); }
-                if let Some(p) = parsed.as_ptr() { mb_release(p); }
-                if let Some(p) = dumped.as_ptr() { mb_release(p); }
+                if let Some(p) = s_val.as_ptr() {
+                    mb_release(p);
+                }
+                if let Some(p) = parsed.as_ptr() {
+                    mb_release(p);
+                }
+                if let Some(p) = dumped.as_ptr() {
+                    mb_release(p);
+                }
             }
         }
         let total_with_release = start.elapsed();

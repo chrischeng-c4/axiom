@@ -1,9 +1,9 @@
 //! Query builder helper functions.
 
-use crate::{DataBridgeError, Result};
-use unicode_normalization::UnicodeNormalization;
 use super::types::AggregateFunction;
 use super::window::WindowExpression;
+use crate::{DataBridgeError, Result};
+use unicode_normalization::UnicodeNormalization;
 
 /// Quotes a SQL identifier.
 ///
@@ -24,7 +24,9 @@ pub fn quote_identifier(name: &str) -> String {
 /// Supports both simple identifiers and schema-qualified names (e.g., "public.users").
 pub fn validate_identifier(name: &str) -> Result<()> {
     if name.is_empty() {
-        return Err(DataBridgeError::Query("Identifier cannot be empty".to_string()));
+        return Err(DataBridgeError::Query(
+            "Identifier cannot be empty".to_string(),
+        ));
     }
 
     // Check if this is a schema-qualified name (e.g., "public.users")
@@ -33,9 +35,10 @@ pub fn validate_identifier(name: &str) -> Result<()> {
 
         // Only allow schema.table format (two parts)
         if parts.len() != 2 {
-            return Err(DataBridgeError::Query(
-                format!("Invalid schema-qualified identifier '{}': must be in format 'schema.table'", name)
-            ));
+            return Err(DataBridgeError::Query(format!(
+                "Invalid schema-qualified identifier '{}': must be in format 'schema.table'",
+                name
+            )));
         }
 
         // Validate each part separately
@@ -53,7 +56,9 @@ pub fn validate_identifier(name: &str) -> Result<()> {
 /// Validates a single part of an identifier (no dots allowed).
 pub fn validate_identifier_part(name: &str) -> Result<()> {
     if name.is_empty() {
-        return Err(DataBridgeError::Query("Identifier part cannot be empty".to_string()));
+        return Err(DataBridgeError::Query(
+            "Identifier part cannot be empty".to_string(),
+        ));
     }
 
     // Normalize to NFKC to prevent Unicode confusables
@@ -61,61 +66,63 @@ pub fn validate_identifier_part(name: &str) -> Result<()> {
 
     // Check length (PostgreSQL limit is 63 bytes per part)
     if name.len() > 63 {
-        return Err(DataBridgeError::Query(
-            format!("Identifier '{}' exceeds maximum length of 63", name)
-        ));
+        return Err(DataBridgeError::Query(format!(
+            "Identifier '{}' exceeds maximum length of 63",
+            name
+        )));
     }
 
     // Must start with letter or underscore
-    let first_char = name.chars().next()
-        .ok_or_else(|| DataBridgeError::Query(
-            format!("Identifier '{}' is empty or invalid", name)
-        ))?;
+    let first_char = name.chars().next().ok_or_else(|| {
+        DataBridgeError::Query(format!("Identifier '{}' is empty or invalid", name))
+    })?;
     if !first_char.is_ascii_alphabetic() && first_char != '_' {
-        return Err(DataBridgeError::Query(
-            format!("Identifier '{}' must start with a letter or underscore", name)
-        ));
+        return Err(DataBridgeError::Query(format!(
+            "Identifier '{}' must start with a letter or underscore",
+            name
+        )));
     }
 
     // Rest must be alphanumeric or underscore
     for ch in name.chars() {
         if !ch.is_ascii_alphanumeric() && ch != '_' {
-            return Err(DataBridgeError::Query(
-                format!("Identifier '{}' contains invalid character '{}'", name, ch)
-            ));
+            return Err(DataBridgeError::Query(format!(
+                "Identifier '{}' contains invalid character '{}'",
+                name, ch
+            )));
         }
     }
 
     // Prevent system schema access
     let name_lower = name.to_lowercase();
     if name_lower.starts_with("pg_") {
-        return Err(DataBridgeError::Query(
-            format!("Access to PostgreSQL system catalog '{}' is not allowed", name)
-        ));
+        return Err(DataBridgeError::Query(format!(
+            "Access to PostgreSQL system catalog '{}' is not allowed",
+            name
+        )));
     }
 
     if name_lower == "information_schema" {
         return Err(DataBridgeError::Query(
-            "Access to information_schema is not allowed".to_string()
+            "Access to information_schema is not allowed".to_string(),
         ));
     }
 
     // Prevent SQL keywords
     const SQL_KEYWORDS: &[&str] = &[
-        "select", "insert", "update", "delete", "drop", "create", "alter",
-        "truncate", "grant", "revoke", "exec", "execute", "union", "declare",
-        "table", "index", "view", "schema", "database", "user", "role",
-        "from", "where", "join", "inner", "outer", "left", "right",
-        "on", "using", "and", "or", "not", "in", "exists", "between",
-        "like", "ilike", "is", "null", "true", "false", "case", "when",
-        "then", "else", "end", "as", "order", "by", "group", "having",
-        "limit", "offset", "distinct", "all", "any", "some",
+        "select", "insert", "update", "delete", "drop", "create", "alter", "truncate", "grant",
+        "revoke", "exec", "execute", "union", "declare", "table", "index", "view", "schema",
+        "database", "user", "role", "from", "where", "join", "inner", "outer", "left", "right",
+        "on", "using", "and", "or", "not", "in", "exists", "between", "like", "ilike", "is",
+        "null", "true", "false", "case", "when", "then", "else", "end", "as", "order", "by",
+        "group", "having", "limit", "offset", "distinct", "all", "any", "some",
     ];
 
     if SQL_KEYWORDS.contains(&name_lower.as_str()) {
-        return Err(DataBridgeError::Query(
-            format!("Identifier '{}' is a reserved SQL keyword", name)
-        ));
+        return Err(DataBridgeError::Query(format!(
+            "Identifier '{}' is a reserved SQL keyword",
+            name
+        )));
     }
 
     Ok(())
@@ -126,7 +133,9 @@ pub fn build_aggregate_sql(func: &AggregateFunction) -> String {
     match func {
         AggregateFunction::Count => "COUNT(*)".to_string(),
         AggregateFunction::CountColumn(col) => format!("COUNT({})", quote_identifier(col)),
-        AggregateFunction::CountDistinct(col) => format!("COUNT(DISTINCT {})", quote_identifier(col)),
+        AggregateFunction::CountDistinct(col) => {
+            format!("COUNT(DISTINCT {})", quote_identifier(col))
+        }
         AggregateFunction::Sum(col) => format!("SUM({})", quote_identifier(col)),
         AggregateFunction::Avg(col) => format!("AVG({})", quote_identifier(col)),
         AggregateFunction::Min(col) => format!("MIN({})", quote_identifier(col)),

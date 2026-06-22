@@ -2,25 +2,25 @@
 id: semantic-lumen-src
 summary: Semantic coverage for "projects/lumen/src"
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
     gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/src`."
-  - id: "agentic-integration"
+  - id: "cli-interface"
     role: primary
     gap: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
     claim: "lumen-spec-schema-openapi-json-yaml-json-schema-offline"
     coverage: full
     rationale: "The source spec module emits OpenAPI JSON, OpenAPI YAML, JSON-schema, and agent-facing schema surfaces."
-  - id: "agentic-integration"
+  - id: "cli-interface"
     role: primary
     gap: "query-shape-cookbook-field-analyzer-catalog"
     claim: "query-shape-cookbook-field-analyzer-catalog"
     coverage: full
     rationale: "The source spec module emits the query-shape cookbook and field/analyzer/vector metric catalogs."
-  - id: "agentic-integration"
+  - id: "cli-interface"
     role: primary
     gap: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
     claim: "lumen-llm-agent-topics-outline-workflow-integration-quickstart-recipes"
@@ -67,6 +67,10 @@ element UT_SOURCE_TESTS {
 ```yaml
 coverage_kind: semantic
 changes:
+  - action: annotate
+    section: schema
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the schema section."
   - action: annotate
     section: unit-test
     impl_mode: hand-written

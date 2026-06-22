@@ -30,10 +30,10 @@
 //!   via a thread-local `AtomicU64` counter, matching CPython's
 //!   "opaque, monotonic" contract. This is the perf-microbench target.
 
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 /// Monotonic cache-token counter. Mirrors CPython's
 /// `_abc_invalidation_counter` — opaque to callers; only equality /
@@ -81,7 +81,10 @@ dispatch_unary!(dispatch_abstractclassmethod, mb_abc_abstractclassmethod);
 dispatch_unary!(dispatch_abstractstaticmethod, mb_abc_abstractstaticmethod);
 dispatch_unary!(dispatch_abstractproperty, mb_abc_abstractproperty);
 dispatch_nullary!(dispatch_get_cache_token, mb_abc_get_cache_token);
-dispatch_unary!(dispatch_update_abstractmethods, mb_abc_update_abstractmethods);
+dispatch_unary!(
+    dispatch_update_abstractmethods,
+    mb_abc_update_abstractmethods
+);
 
 /// Register the abc module.
 pub fn register() {
@@ -91,10 +94,16 @@ pub fn register() {
         ("ABCMeta", dispatch_abcmeta as usize),
         ("abstractmethod", dispatch_abstractmethod as usize),
         ("abstractclassmethod", dispatch_abstractclassmethod as usize),
-        ("abstractstaticmethod", dispatch_abstractstaticmethod as usize),
+        (
+            "abstractstaticmethod",
+            dispatch_abstractstaticmethod as usize,
+        ),
         ("abstractproperty", dispatch_abstractproperty as usize),
         ("get_cache_token", dispatch_get_cache_token as usize),
-        ("update_abstractmethods", dispatch_update_abstractmethods as usize),
+        (
+            "update_abstractmethods",
+            dispatch_update_abstractmethods as usize,
+        ),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -132,7 +141,10 @@ pub fn register() {
 
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
-        map.insert(dispatch_abcmeta as *const () as usize as u64, "ABCMeta".to_string());
+        map.insert(
+            dispatch_abcmeta as *const () as usize as u64,
+            "ABCMeta".to_string(),
+        );
     });
 }
 
@@ -238,12 +250,20 @@ mod tests {
     fn dict_str_field(val: MbValue, key: &str) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(key)
+                lock.read()
+                    .unwrap()
+                    .get(key)
                     .and_then(|v| v.as_ptr())
                     .and_then(|p| {
-                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                        if let ObjData::Str(ref s) = (*p).data {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
                     })
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
@@ -251,7 +271,9 @@ mod tests {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 lock.read().unwrap().get(key).and_then(|v| v.as_bool())
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
@@ -259,7 +281,9 @@ mod tests {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 lock.read().unwrap().get(key).copied()
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
@@ -273,7 +297,10 @@ mod tests {
     #[test]
     fn test_abcmeta_fields() {
         let result = mb_abc_ABCMeta();
-        assert_eq!(dict_str_field(result, "__class__").as_deref(), Some("ABCMeta"));
+        assert_eq!(
+            dict_str_field(result, "__class__").as_deref(),
+            Some("ABCMeta")
+        );
         assert_eq!(dict_bool_field(result, "__abstract__"), Some(true));
     }
 
@@ -281,7 +308,10 @@ mod tests {
     fn test_abstractmethod_wraps_func() {
         let func = MbValue::from_int(42);
         let result = mb_abc_abstractmethod(func);
-        assert_eq!(dict_str_field(result, "__class__").as_deref(), Some("abstractmethod"));
+        assert_eq!(
+            dict_str_field(result, "__class__").as_deref(),
+            Some("abstractmethod")
+        );
         assert_eq!(dict_bool_field(result, "__abstract__"), Some(true));
         assert_eq!(dict_bool_field(result, "__isabstractmethod__"), Some(true));
         let stored_func = dict_val_field(result, "__func__").unwrap();
@@ -291,21 +321,30 @@ mod tests {
     #[test]
     fn test_abstractclassmethod_wraps_func() {
         let result = mb_abc_abstractclassmethod(MbValue::from_int(7));
-        assert_eq!(dict_str_field(result, "__class__").as_deref(), Some("abstractclassmethod"));
+        assert_eq!(
+            dict_str_field(result, "__class__").as_deref(),
+            Some("abstractclassmethod")
+        );
         assert_eq!(dict_bool_field(result, "__isabstractmethod__"), Some(true));
     }
 
     #[test]
     fn test_abstractstaticmethod_wraps_func() {
         let result = mb_abc_abstractstaticmethod(MbValue::from_int(8));
-        assert_eq!(dict_str_field(result, "__class__").as_deref(), Some("abstractstaticmethod"));
+        assert_eq!(
+            dict_str_field(result, "__class__").as_deref(),
+            Some("abstractstaticmethod")
+        );
         assert_eq!(dict_bool_field(result, "__isabstractmethod__"), Some(true));
     }
 
     #[test]
     fn test_abstractproperty_wraps_func() {
         let result = mb_abc_abstractproperty(MbValue::from_int(9));
-        assert_eq!(dict_str_field(result, "__class__").as_deref(), Some("abstractproperty"));
+        assert_eq!(
+            dict_str_field(result, "__class__").as_deref(),
+            Some("abstractproperty")
+        );
         assert_eq!(dict_bool_field(result, "__isabstractmethod__"), Some(true));
     }
 

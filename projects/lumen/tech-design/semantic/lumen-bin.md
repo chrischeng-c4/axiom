@@ -2,7 +2,7 @@
 id: semantic-lumen-bin
 summary: Semantic coverage for "projects/lumen/src/bin"
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
@@ -48,6 +48,10 @@ element UT_SOURCE_TESTS {
 ```yaml
 coverage_kind: semantic
 changes:
+  - action: annotate
+    section: schema
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the schema section."
   - action: annotate
     section: unit-test
     impl_mode: hand-written

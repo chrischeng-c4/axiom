@@ -396,25 +396,11 @@ pub struct MarkerCounts {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
-pub struct CodegenCoverage {
-    pub scope: Vec<String>,
-    pub total_files: usize,
-    pub codegen_files: usize,
-    pub handwrite_files: usize,
-    pub mixed_files: usize,
-    pub uncovered_files: Vec<String>,
-    pub handwrite_targets: Vec<String>,
-    pub percent: f64,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub struct RegenerabilityCoverage {
     pub scope: Vec<String>,
     pub total_files: usize,
     pub eligible_files: usize,
     pub codegen_files: usize,
-    pub fully_codegen_files: usize,
     pub handwrite_files: usize,
     pub unmarked_files: usize,
     pub unsupported_codegen_files: Vec<String>,
@@ -1044,7 +1030,10 @@ async fn run_project_standardize_health_gate(project: &str) -> Result<()> {
         "completion": health["completion"].clone(),
         "next": health["next"].clone(),
         "readiness": health["readiness"].clone(),
-        "health": health["report"].clone(),
+        "health": {
+            "axes": health["axes"].clone(),
+            "blockers": health["blockers"].clone(),
+        },
         "payload_path": payload_path,
     });
     print_json(&summary, false)?;
@@ -1222,6 +1211,36 @@ fn project_standardize_next_kind(status: &str, command: Option<&str>) -> String 
 fn project_standardize_readiness_summary(
     report: &crate::cli::project::ProjectHealthReport,
 ) -> serde_json::Value {
+    let ec_gen_generated_units = report.ec.case_count + report.ec.tool_manifest_count;
+    let ec_gen_expected_units =
+        report.ec.expected_case_count + report.ec.expected_tool_manifest_count;
+    let td_gen_generated_units = report.codegen_files;
+    let td_gen_expected_units = report.codegen_eligible_files;
+    let ec_gen_status = if !report.ec.evaluated {
+        "not_evaluated"
+    } else if ec_gen_expected_units == 0 {
+        "not_configured"
+    } else if report.ec.check_clean
+        && report.ec.case_count == report.ec.expected_case_count
+        && report.ec.tool_manifest_count == report.ec.expected_tool_manifest_count
+    {
+        "passed"
+    } else {
+        "blocked"
+    };
+    let td_passed = report.managed_ready
+        && report.semantic_ready
+        && report.traceability_ready
+        && report.td_lock.clean;
+    let td_gen_status = if report.regenerability_authority.required_for_production
+        && report.regenerability_authority.gap_count > 0
+    {
+        "blocked"
+    } else if report.codegen_percent >= 100.0 {
+        "passed"
+    } else {
+        "partial"
+    };
     serde_json::json!({
         "production_ready": report.production_ready,
         "production_status": &report.production_status,
@@ -1234,16 +1253,63 @@ fn project_standardize_readiness_summary(
         "managed_percent": report.managed_percent,
         "semantic_percent": report.semantic_percent,
         "traceability_percent": report.traceability_percent,
-        "regenerable_percent": report.regenerable_percent,
         "command_traceability_percent": report.command_traceability_percent,
         "blocker_count": report.blockers.len(),
         "production_blocker_count": report.production_blockers.len(),
         "workflow_lock_count": report.workflow_lock_count,
         "test_gate_status": &report.test_gates.status,
-        "cb_verify_evaluated": report.cb_verify_evaluated,
-        "cb_verify_clean": report.cb_verify_clean,
         "cold_rebuild_evaluated": report.cold_rebuild_evaluated,
         "cold_rebuild_clean": report.cold_rebuild_clean,
+        "axes": {
+            "capability": {
+                "status": if report.capability.blocker_count + report.claim_closure.blocker_count == 0
+                    && report.capability.production_percent >= 100.0 {
+                    "passed"
+                } else {
+                    "blocked"
+                },
+                "production_percent": report.capability.production_percent,
+                "claim_closure_percent": report.claim_closure.claim_closure_percent,
+            },
+            "ec": {
+                "status": &report.ec.status,
+                "verified": report.ec.verify_evaluated,
+                "passed_commands": report.ec.passed_count,
+                "command_count": report.ec.command_count,
+            },
+            "ec_gen": {
+                "status": ec_gen_status,
+                "document_kind": "ec",
+                "generated_units": ec_gen_generated_units,
+                "expected_units": ec_gen_expected_units,
+                "generated_percent": if ec_gen_expected_units == 0 {
+                    0.0
+                } else {
+                    coverage_percent(ec_gen_generated_units, ec_gen_expected_units)
+                },
+                "handwrite_units": 0,
+                "missing_units": ec_gen_expected_units.saturating_sub(ec_gen_generated_units),
+            },
+            "td": {
+                "status": if td_passed { "passed" } else { "blocked" },
+                "managed_percent": report.managed_percent,
+                "semantic_percent": report.semantic_percent,
+                "traceability_percent": report.traceability_percent,
+                "td_lock_clean": report.td_lock.clean,
+            },
+            "td_gen": {
+                "status": td_gen_status,
+                "document_kind": "td",
+                "generated_units": td_gen_generated_units,
+                "expected_units": td_gen_expected_units,
+                "generated_percent": coverage_percent(
+                    td_gen_generated_units,
+                    td_gen_expected_units,
+                ),
+                "handwrite_units": report.cb_ownership.handwrite_files,
+                "missing_units": report.cb_ownership.unmarked_files,
+            },
+        },
     })
 }
 
@@ -3477,8 +3543,6 @@ fn build_regenerability_coverage_with_options(
     verify_codegen_drift: bool,
 ) -> Result<RegenerabilityCoverage> {
     let mut codegen_files = 0usize;
-    let mut fully_codegen_files = 0usize;
-    let mut handwrite_files = 0usize;
     let mut eligible_files = 0usize;
     let mut unmarked_files = 0usize;
     let mut gap_files = Vec::new();
@@ -3502,12 +3566,6 @@ fn build_regenerability_coverage_with_options(
 
     for file in &inventory.files {
         eligible_files += 1;
-        if file.markers.codegen {
-            codegen_files += 1;
-        }
-        if file.markers.handwrite {
-            handwrite_files += 1;
-        }
         if !file.markers.managed() {
             unmarked_files += 1;
         }
@@ -3517,14 +3575,14 @@ fn build_regenerability_coverage_with_options(
         let codegen_drift = codegen_drift_set.contains(&file.rel);
         let non_replayable_codegen = non_replayable_codegen_set.contains(&file.rel);
         let snapshot_codegen = snapshot_codegen_set.contains(&file.rel);
-        let fully_codegen = file.markers.codegen
+        let ast_codegen = file.markers.codegen
             && !file.markers.handwrite
             && !unsupported_codegen
             && !non_replayable_codegen
             && !snapshot_codegen
             && !codegen_drift;
-        if fully_codegen {
-            fully_codegen_files += 1;
+        if ast_codegen {
+            codegen_files += 1;
         }
         if file.markers.handwrite
             || !file.markers.managed()
@@ -3554,8 +3612,11 @@ fn build_regenerability_coverage_with_options(
     let percent = if eligible_files == 0 {
         100.0
     } else {
-        (fully_codegen_files as f64 / eligible_files as f64) * 100.0
+        (codegen_files as f64 / eligible_files as f64) * 100.0
     };
+    let handwrite_files = eligible_files
+        .saturating_sub(codegen_files)
+        .saturating_sub(unmarked_files);
 
     let mut missing_generator_primitive_gaps = 0usize;
     let mut insufficient_td_section_gaps = 0usize;
@@ -3578,7 +3639,6 @@ fn build_regenerability_coverage_with_options(
         total_files,
         eligible_files,
         codegen_files,
-        fully_codegen_files,
         handwrite_files,
         unmarked_files,
         unsupported_codegen_files: inventory
@@ -3804,49 +3864,6 @@ fn extract_force_regen_replay_failure_path(failure: &str) -> Option<String> {
     failure
         .strip_suffix(": differs after TD replay")
         .map(str::to_string)
-}
-
-#[allow(dead_code)]
-fn build_codegen_coverage(inventory: &Inventory) -> CodegenCoverage {
-    let mut codegen_files = 0usize;
-    let mut handwrite_files = 0usize;
-    let mut mixed_files = 0usize;
-    let mut uncovered_files = Vec::new();
-    let mut handwrite_targets = Vec::new();
-
-    for file in &inventory.files {
-        if file.markers.handwrite {
-            handwrite_files += 1;
-            handwrite_targets.push(file.rel.clone());
-            if file.markers.codegen {
-                mixed_files += 1;
-            }
-            continue;
-        }
-        if file.markers.codegen {
-            codegen_files += 1;
-        } else {
-            uncovered_files.push(file.rel.clone());
-        }
-    }
-
-    let total_files = inventory.files.len();
-    let percent = if total_files == 0 {
-        100.0
-    } else {
-        (codegen_files as f64 / total_files as f64) * 100.0
-    };
-
-    CodegenCoverage {
-        scope: inventory.coverage.scope.clone(),
-        total_files,
-        codegen_files,
-        handwrite_files,
-        mixed_files,
-        uncovered_files,
-        handwrite_targets,
-        percent,
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7462,7 +7479,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::RegenDrift,
             &finding.target,
             "mainthread",
-            "mainthread: regenerate affected CODEGEN block and rerun aw cb check",
+            "mainthread: regenerate affected CODEGEN block and rerun aw td code-check",
             &finding.reason,
             true,
         );
@@ -7580,7 +7597,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::GeneratorPrimitiveGap,
             &file.rel,
             "mainthread",
-            "mainthread: implement replay-capable generator support for this CODEGEN-owned file class, then rerun aw cb gen --force-regen --project <project> --verify",
+            "mainthread: implement replay-capable generator support for this CODEGEN-owned file class, then rerun aw td gen --force-regen --project <project> --verify",
             &format!(
                 "{} is CODEGEN-marked but its language/workspace is not replay-verifiable by current generators",
                 file.language
@@ -7597,7 +7614,7 @@ fn choose_regenerable_action_with_project(
                         StandardizeActionKind::RegenDrift,
                         file,
                         "mainthread",
-                        "mainthread: repair CODEGEN replay drift, then rerun aw cb gen --force-regen --project <project> --verify",
+                        "mainthread: repair CODEGEN replay drift, then rerun aw td gen --force-regen --project <project> --verify",
                         "CODEGEN-owned file is not audit/replay clean",
                         true,
                     );
@@ -7680,7 +7697,7 @@ fn choose_regenerable_action_with_project(
             StandardizeActionKind::PromoteHandwrite,
             &file.rel,
             "mainthread",
-            "mainthread: replace HANDWRITE with CODEGEN by extending the spec/generator, then rerun aw cb check",
+            "mainthread: replace HANDWRITE with CODEGEN by extending the spec/generator, then rerun aw td code-check",
             "managed HANDWRITE remains; full regenerability requires CODEGEN ownership",
             true,
         );
@@ -10578,34 +10595,6 @@ fn print_traceability_text(coverage: &TraceabilityCoverage) {
     }
 }
 
-#[allow(dead_code)]
-fn print_codegen_coverage_text(coverage: &CodegenCoverage) {
-    eprintln!("Codegen Standardization Coverage");
-    eprintln!("  scope: {}", coverage.scope.join(", "));
-    eprintln!(
-        "  files: {} codegen-only / {} total ({:.1}%)",
-        coverage.codegen_files, coverage.total_files, coverage.percent
-    );
-    eprintln!(
-        "  blockers: {} files with HANDWRITE / {} mixed CODEGEN+HANDWRITE / {} uncovered",
-        coverage.handwrite_files,
-        coverage.mixed_files,
-        coverage.uncovered_files.len()
-    );
-    if !coverage.handwrite_targets.is_empty() {
-        eprintln!("  handwrite:");
-        for file in coverage.handwrite_targets.iter().take(20) {
-            eprintln!("    {}", file);
-        }
-    }
-    if !coverage.uncovered_files.is_empty() {
-        eprintln!("  uncovered:");
-        for file in coverage.uncovered_files.iter().take(20) {
-            eprintln!("    {}", file);
-        }
-    }
-}
-
 fn print_envelope_text(envelope: &StandardizeEnvelope) {
     print_coverage_text(&envelope.coverage);
     eprintln!(
@@ -11750,7 +11739,7 @@ test_cmd = "cargo test -p jet"
         let coverage = build_regenerability_coverage(Path::new("."), &inv, &semantic).unwrap();
         assert_eq!(coverage.total_files, 2);
         assert_eq!(coverage.eligible_files, 2);
-        assert_eq!(coverage.fully_codegen_files, 1);
+        assert_eq!(coverage.codegen_files, 1);
         assert_eq!(coverage.handwrite_files, 1);
         assert_eq!(coverage.gap_files, vec!["src/vendor.min.js"]);
         assert_eq!(coverage.percent, 50.0);
@@ -11822,8 +11811,7 @@ changes:
             build_regenerability_coverage_with_options(tmp.path(), &inv, &semantic, None, false)
                 .unwrap();
 
-        assert_eq!(coverage.codegen_files, 1);
-        assert_eq!(coverage.fully_codegen_files, 0);
+        assert_eq!(coverage.codegen_files, 0);
         assert_eq!(
             coverage.non_replayable_codegen_files,
             vec!["src/lib.rs".to_string()]
@@ -11902,8 +11890,7 @@ changes:
             build_regenerability_coverage_with_options(tmp.path(), &inv, &semantic, None, false)
                 .unwrap();
 
-        assert_eq!(coverage.codegen_files, 1);
-        assert_eq!(coverage.fully_codegen_files, 0);
+        assert_eq!(coverage.codegen_files, 0);
         assert_eq!(
             coverage.snapshot_codegen_files,
             vec!["src/lib.rs".to_string()]
@@ -11983,7 +11970,6 @@ changes:
                 .unwrap();
 
         assert_eq!(coverage.codegen_files, 1);
-        assert_eq!(coverage.fully_codegen_files, 1);
         assert!(coverage.snapshot_codegen_files.is_empty());
         assert!(coverage.gap_files.is_empty());
         assert_eq!(coverage.percent, 100.0);
@@ -12061,7 +12047,6 @@ changes:
                 .unwrap();
 
         assert_eq!(coverage.codegen_files, 1);
-        assert_eq!(coverage.fully_codegen_files, 1);
         assert!(coverage.snapshot_codegen_files.is_empty());
         assert!(coverage.gap_files.is_empty());
         assert_eq!(coverage.percent, 100.0);
@@ -12099,7 +12084,7 @@ changes:
 
         let semantic = empty_semantic(inv.coverage.scope.clone());
         let coverage = build_regenerability_coverage(Path::new("."), &inv, &semantic).unwrap();
-        assert_eq!(coverage.fully_codegen_files, 1);
+        assert_eq!(coverage.codegen_files, 1);
         assert!(coverage.unsupported_codegen_files.is_empty());
         assert!(coverage.gap_files.is_empty());
         assert_eq!(coverage.percent, 100.0);
@@ -12640,8 +12625,8 @@ command_refs:
             "aw wi draft init",
             "aw td",
             "aw td check",
-            "aw cb",
-            "aw cb gen",
+            "aw td gen",
+            "aw td code-check",
             "aw standardize",
             "aw standardize traceability",
             "aw standardize traceability report",

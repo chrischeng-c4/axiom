@@ -5,19 +5,54 @@
 #![cfg(feature = "stats")]
 
 use scikit::stats::{
-    // Descriptive statistics
-    skew, kurtosis, zscore, moment, raw_moment, mode, median, iqr, percentile,
-    geometric_mean, harmonic_mean, trim_mean, sem, variation, median_abs_deviation,
+    beta_fn,
+    binomial_coef,
+    chi2_contingency,
+    chisquare,
     describe,
-    // Hypothesis tests
-    ttest_1samp, ttest_ind, ttest_rel, f_oneway, chi2_contingency, chisquare,
-    pearsonr, spearmanr, mannwhitneyu, shapiro, kstest_normal,
     // Distributions - re-exported from distributions module
-    erf, gamma_fn, ln_gamma, beta_fn, factorial, binomial_coef,
-    incomplete_beta, lower_incomplete_gamma,
-    ContinuousDistribution, DiscreteDistribution,
-    Normal, Uniform, Exponential, Beta, StudentT, ChiSquared,
-    Binomial, Poisson,
+    erf,
+    f_oneway,
+    factorial,
+    gamma_fn,
+    geometric_mean,
+    harmonic_mean,
+    incomplete_beta,
+    iqr,
+    kstest_normal,
+    kurtosis,
+    ln_gamma,
+    lower_incomplete_gamma,
+    mannwhitneyu,
+    median,
+    median_abs_deviation,
+    mode,
+    moment,
+    pearsonr,
+    percentile,
+    raw_moment,
+    sem,
+    shapiro,
+    // Descriptive statistics
+    skew,
+    spearmanr,
+    trim_mean,
+    // Hypothesis tests
+    ttest_1samp,
+    ttest_ind,
+    ttest_rel,
+    variation,
+    zscore,
+    Beta,
+    Binomial,
+    ChiSquared,
+    ContinuousDistribution,
+    DiscreteDistribution,
+    Exponential,
+    Normal,
+    Poisson,
+    StudentT,
+    Uniform,
 };
 
 // ============================================================================
@@ -322,7 +357,7 @@ mod distribution_tests {
     #[test]
     fn test_beta() {
         let b = Beta::new(2.0, 5.0);
-        assert!((b.mean() - 2.0/7.0).abs() < 1e-10);
+        assert!((b.mean() - 2.0 / 7.0).abs() < 1e-10);
         // PDF at 0.5
         let pdf_val = b.pdf(0.5);
         assert!(pdf_val > 0.0);
@@ -341,7 +376,7 @@ mod distribution_tests {
     fn test_student_t() {
         let t = StudentT::new(10.0);
         assert_eq!(t.mean(), 0.0);
-        assert!((t.variance() - 10.0/8.0).abs() < 1e-10);
+        assert!((t.variance() - 10.0 / 8.0).abs() < 1e-10);
     }
 
     #[test]
@@ -366,7 +401,7 @@ mod distribution_tests {
         // B(1, 1) = 1
         assert!((beta_fn(1.0, 1.0) - 1.0).abs() < 1e-10);
         // B(2, 2) = 1/6
-        assert!((beta_fn(2.0, 2.0) - 1.0/6.0).abs() < 1e-10);
+        assert!((beta_fn(2.0, 2.0) - 1.0 / 6.0).abs() < 1e-10);
     }
 
     #[test]

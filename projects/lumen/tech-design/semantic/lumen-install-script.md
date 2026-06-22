@@ -2,7 +2,7 @@
 id: semantic-lumen-install-script
 summary: Lossless source-unit coverage for the lumen project install script.
 capability_refs:
-  - id: "ops-operability"
+  - id: "long-running-stability"
     role: primary
     claim: "stateless-serving-rebuild-from-log-no-pvc"
     coverage: partial

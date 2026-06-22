@@ -1,17 +1,16 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#rust-source-unit
 // CODEGEN-BEGIN
-//! Per-shard Raft skeleton.
+//! Per-shard replication surface.
 //!
-//! v1 ships the **surface** without the consensus machinery —
-//! readiness, the peer DNS map, role inspection, and the wire shape of
-//! the cluster state are all in place so callers and operators can
-//! depend on them. The actual log/election/snapshot is the next
-//! storage-tier slice (openraft).
+//! This module currently carries the public cluster-state DTOs — readiness,
+//! peer DNS map, role inspection, read-consistency parsing, and the wire shape
+//! of `/debug/cluster`. The next implementation slice wires this surface to
+//! `libs/raftcore` so multi-pod Lumen owns write ordering and primary/replica
+//! synchronization itself.
 //!
-//! Until that lands, the single-pod build behaves as if the pod is the
-//! permanent leader of its shard (writes go through, reads return the
-//! freshest data). Multi-pod K8s deployments will fail to make progress
-//! on the data plane — by design — until the openraft wiring lands.
+//! The old broker-owned framing is stale: Relay remains an explicit external
+//! broker mode, but Lumen's multi-pod auto path should use Lumen-owned
+//! primary/replica replication.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -158,7 +157,7 @@ impl RaftGroup {
 }
 
 /// Live cluster snapshot for `/debug/cluster`. Cheap to clone; updated
-/// in place from background tasks once the openraft wiring lands.
+/// in place from background replication tasks.
 #[derive(Debug)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-raft-rs.md#source
 pub struct ClusterState {

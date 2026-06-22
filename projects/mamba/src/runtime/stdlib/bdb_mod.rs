@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// bdb module for Mamba (#1261).
 ///
 /// Minimal callable-dispatcher shim covering the top-level
@@ -17,10 +19,7 @@
 /// surface) is tracked separately under #1261; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the
 /// stub-only conversion long-tail has closed against.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 const BDB_CLASS: &str = "Bdb";
 
@@ -92,7 +91,11 @@ fn new_str(s: String) -> MbValue {
 
 fn extract_str(v: MbValue) -> Option<String> {
     v.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*p).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -195,7 +198,10 @@ unsafe extern "C" fn m_get_break(self_v: MbValue, args: MbValue) -> MbValue {
     let entry = super::super::dict_ops::mb_dict_get(breaks, new_str(filename), MbValue::none());
     let hit = entry.as_ptr().is_some_and(|p| unsafe {
         if let ObjData::List(ref lk) = (*p).data {
-            lk.read().unwrap().iter().any(|v| v.as_int() == Some(lineno))
+            lk.read()
+                .unwrap()
+                .iter()
+                .any(|v| v.as_int() == Some(lineno))
         } else {
             false
         }
@@ -292,10 +298,14 @@ fn make_bdbquit_type() -> MbValue {
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
             let mut g = fields.write().unwrap();
-            g.insert("__name__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("BdbQuit".to_string())));
-            g.insert("__module__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("bdb".to_string())));
+            g.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("BdbQuit".to_string())),
+            );
+            g.insert(
+                "__module__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("bdb".to_string())),
+            );
         }
     }
     MbValue::from_ptr(inst)
@@ -328,11 +338,14 @@ pub fn register() {
     // BdbQuit is a real `type` object (recipe B): type(BdbQuit).__name__ == "type".
     attrs.insert("BdbQuit".into(), make_bdbquit_type());
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("CO_ASYNC_GENERATOR".into(), MbValue::from_int(512));
     attrs.insert("CO_COROUTINE".into(), MbValue::from_int(128));
     attrs.insert("CO_GENERATOR".into(), MbValue::from_int(32));
-    attrs.insert("GENERATOR_AND_COROUTINE_FLAGS".into(), MbValue::from_int(672));
+    attrs.insert(
+        "GENERATOR_AND_COROUTINE_FLAGS".into(),
+        MbValue::from_int(672),
+    );
     super::register_module("bdb", attrs);
 
     // Bridge the Bdb constructor func -> its class name so accessing a
@@ -387,15 +400,37 @@ pub fn register() {
         super::super::module::register_variadic_func(*addr as u64);
     }
     for name in [
-        "run", "runctx", "set_trace", "set_continue",
-        "set_step", "set_next", "set_return", "set_until",
-        "clear_bpbynumber", "clear_all_file_breaks",
-        "get_breaks", "get_file_breaks",
-        "get_all_breaks", "canonic", "reset",
-        "trace_dispatch", "dispatch_line", "dispatch_call", "dispatch_return",
-        "dispatch_exception", "stop_here", "break_here", "break_anywhere",
-        "do_clear", "user_call", "user_line", "user_return", "user_exception",
-        "format_stack_entry", "is_skipped_module", "message",
+        "run",
+        "runctx",
+        "set_trace",
+        "set_continue",
+        "set_step",
+        "set_next",
+        "set_return",
+        "set_until",
+        "clear_bpbynumber",
+        "clear_all_file_breaks",
+        "get_breaks",
+        "get_file_breaks",
+        "get_all_breaks",
+        "canonic",
+        "reset",
+        "trace_dispatch",
+        "dispatch_line",
+        "dispatch_call",
+        "dispatch_return",
+        "dispatch_exception",
+        "stop_here",
+        "break_here",
+        "break_anywhere",
+        "do_clear",
+        "user_call",
+        "user_line",
+        "user_return",
+        "user_exception",
+        "format_stack_entry",
+        "is_skipped_module",
+        "message",
         "error",
     ] {
         methods.insert(name.to_string(), MbValue::from_func(stub));

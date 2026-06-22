@@ -28,10 +28,10 @@
 //! shape (`name`/`value`) but keeps its own `_MambaFunctionalEnum` container
 //! representation.
 
-use std::cell::{Cell, RefCell};
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
 use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
+use std::cell::{Cell, RefCell};
 
 /// Enum flavor that determines auto() progression, iteration canonicality,
 /// bitwise-composition support, and raw-value equality.
@@ -136,8 +136,7 @@ fn enum_kind_for(class_name: &str) -> Option<EnumKind> {
         match ancestor.as_str() {
             // Data-type mixins / metaclass bases whose members stay raw
             // values (member-IS-its-data-type, e.g. IntEnum arithmetic).
-            "IntEnum" | "ReprEnum"
-            | "EnumType" | "EnumMeta" | "EnumCheck" | "FlagBoundary" => {
+            "IntEnum" | "ReprEnum" | "EnumType" | "EnumMeta" | "EnumCheck" | "FlagBoundary" => {
                 rejected = true;
             }
             "IntFlag" => saw_int_flag = true,
@@ -194,8 +193,11 @@ fn is_method_like(v: MbValue) -> bool {
             if let ObjData::Instance { ref class_name, .. } = (*p).data {
                 return matches!(
                     class_name.as_str(),
-                    "__property__" | "__classmethod__" | "__staticmethod__"
-                        | "__cached_property__" | "__unbound_method__"
+                    "__property__"
+                        | "__classmethod__"
+                        | "__staticmethod__"
+                        | "__cached_property__"
+                        | "__unbound_method__"
                 );
             }
         }
@@ -224,9 +226,12 @@ fn member_class_and_name(v: MbValue) -> Option<(String, String)> {
     }
     let p = v.as_ptr()?;
     unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*p).data {
-            let registered =
-                ENUM_CLASSES.with(|m| m.borrow().contains_key(class_name.as_str()));
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*p).data
+        {
+            let registered = ENUM_CLASSES.with(|m| m.borrow().contains_key(class_name.as_str()));
             if registered {
                 let name = fields
                     .read()
@@ -285,11 +290,7 @@ fn new_member(class_name: &str, member_name: &str, value: MbValue) -> MbValue {
 /// member Instance to store in `class_attrs` instead of the raw value.
 /// Returns `None` to store the raw value unchanged (non-enum class, reserved
 /// name, or method-like value).
-pub fn maybe_convert_class_attr(
-    class_name: &str,
-    attr: &str,
-    value: MbValue,
-) -> Option<MbValue> {
+pub fn maybe_convert_class_attr(class_name: &str, attr: &str, value: MbValue) -> Option<MbValue> {
     let kind = enum_kind_for(class_name)?;
     if is_reserved_name(attr) || is_method_like(value) {
         return None;
@@ -312,7 +313,11 @@ pub fn maybe_convert_class_attr(
         let resolved = if value.as_int() == Some(super::enum_mod::AUTO_SENTINEL) {
             let v = info.next_auto;
             info.next_auto = if kind.is_flag() {
-                if v > 0 { v << 1 } else { 1 }
+                if v > 0 {
+                    v << 1
+                } else {
+                    1
+                }
             } else {
                 v + 1
             };
@@ -320,7 +325,11 @@ pub fn maybe_convert_class_attr(
         } else {
             if let Some(iv) = value.as_int() {
                 info.next_auto = if kind.is_flag() {
-                    if iv > 0 { 1i64 << (64 - iv.leading_zeros() as i64) } else { 1 }
+                    if iv > 0 {
+                        1i64 << (64 - iv.leading_zeros() as i64)
+                    } else {
+                        1
+                    }
                 } else {
                     iv + 1
                 };
@@ -350,7 +359,10 @@ pub fn maybe_convert_class_attr(
         // named members (B = 3) stay reachable by name/value but are
         // excluded from `list(FlagCls)` (CPython 3.12).
         let canonical = if kind.is_flag() {
-            resolved.as_int().map(|v| v.count_ones() == 1).unwrap_or(true)
+            resolved
+                .as_int()
+                .map(|v| v.count_ones() == 1)
+                .unwrap_or(true)
         } else {
             true
         };
@@ -460,8 +472,7 @@ pub fn is_enum_member(v: MbValue) -> bool {
     if let Some(p) = v.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*p).data {
-                return ENUM_CLASSES
-                    .with(|m| m.borrow().contains_key(class_name.as_str()));
+                return ENUM_CLASSES.with(|m| m.borrow().contains_key(class_name.as_str()));
             }
         }
     }
@@ -473,9 +484,7 @@ pub fn class_canonical_members(class_name: &str) -> Option<Vec<MbValue>> {
     if !have_enum_classes() {
         return None;
     }
-    ENUM_CLASSES.with(|m| {
-        m.borrow().get(class_name).map(|i| i.canonical.clone())
-    })
+    ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.canonical.clone()))
 }
 
 /// `len(Color)` — canonical member count.
@@ -483,9 +492,7 @@ pub fn class_member_count(class_name: &str) -> Option<i64> {
     if !have_enum_classes() {
         return None;
     }
-    ENUM_CLASSES.with(|m| {
-        m.borrow().get(class_name).map(|i| i.canonical.len() as i64)
-    })
+    ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.canonical.len() as i64))
 }
 
 /// `Color.__members__` — name→member mapping including aliases, in
@@ -494,9 +501,8 @@ pub fn members_map_dict(class_name: &str) -> Option<MbValue> {
     if !have_enum_classes() {
         return None;
     }
-    let entries: Vec<(String, MbValue)> = ENUM_CLASSES.with(|m| {
-        m.borrow().get(class_name).map(|i| i.by_name.clone())
-    })?;
+    let entries: Vec<(String, MbValue)> =
+        ENUM_CLASSES.with(|m| m.borrow().get(class_name).map(|i| i.by_name.clone()))?;
     let dict = super::super::dict_ops::mb_dict_new();
     for (name, member) in entries {
         let key = MbValue::from_ptr(MbObject::new_str(name));
@@ -577,8 +583,7 @@ pub fn enum_class_call(class_name: &str, args_list: MbValue) -> Option<MbValue> 
     if !missing.is_none() {
         let addr = super::super::class::registered_callable_addr(missing);
         if addr != 0 {
-            let cls_val =
-                MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
+            let cls_val = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
             // REQ: JIT-compiled functions use SystemV/C calling convention.
             let func: extern "C" fn(MbValue, MbValue) -> MbValue =
                 unsafe { std::mem::transmute(addr as usize) };
@@ -633,7 +638,11 @@ pub fn class_contains(class_name: &str, item: MbValue) -> Option<bool> {
     }
     if let Some(p) = item.as_ptr() {
         unsafe {
-            if let ObjData::Instance { class_name: ref icn, .. } = (*p).data {
+            if let ObjData::Instance {
+                class_name: ref icn,
+                ..
+            } = (*p).data
+            {
                 if icn == class_name {
                     return Some(true);
                 }
@@ -751,9 +760,7 @@ pub fn flag_member_is_empty(v: MbValue) -> bool {
         return false;
     }
     match member_class_and_int(v) {
-        Some((cls, value)) => {
-            class_kind(&cls).is_some_and(EnumKind::is_flag) && value == 0
-        }
+        Some((cls, value)) => class_kind(&cls).is_some_and(EnumKind::is_flag) && value == 0,
         None => false,
     }
 }
@@ -812,8 +819,7 @@ pub fn class_first_alias(class_name: &str) -> Option<(String, String)> {
                 // Same member object, or distinct members carrying equal
                 // values (the class-body translation can mint separate
                 // member objects for an alias).
-                *b == bits
-                    || super::super::builtins::mb_eq(*sv, mv).as_bool() == Some(true)
+                *b == bits || super::super::builtins::mb_eq(*sv, mv).as_bool() == Some(true)
             }) {
                 return Some((name.clone(), (*first).to_string()));
             }
@@ -846,7 +852,6 @@ pub fn class_member_int_values(class_name: &str) -> Option<Vec<(String, i64)>> {
     })
 }
 
-
 /// class_first_alias fallback for data-mixin enums (IntEnum et al.) that
 /// keep raw values as class attrs instead of ENUM_CLASSES members.
 pub fn attrs_first_alias(class_name: &str) -> Option<(String, String)> {
@@ -857,15 +862,17 @@ pub fn attrs_first_alias(class_name: &str) -> Option<(String, String)> {
             continue;
         }
         if value.as_int().is_none()
-            && value.as_ptr().map(|p| unsafe {
-                !matches!((*p).data, super::super::rc::ObjData::Str(_))
-            }).unwrap_or(true)
+            && value
+                .as_ptr()
+                .map(|p| unsafe { !matches!((*p).data, super::super::rc::ObjData::Str(_)) })
+                .unwrap_or(true)
         {
             continue; // only int/str member values participate
         }
-        if let Some((_, first)) = seen.iter().find(|(sv, _)| {
-            super::super::builtins::mb_eq(*sv, value).as_bool() == Some(true)
-        }) {
+        if let Some((_, first)) = seen
+            .iter()
+            .find(|(sv, _)| super::super::builtins::mb_eq(*sv, value).as_bool() == Some(true))
+        {
             return Some((name, first.clone()));
         }
         seen.push((value, name));

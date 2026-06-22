@@ -49,10 +49,9 @@ explicitly asks for Claude-specific behavior.
 | CLI | Use it for |
 |-----|------------|
 | `aw run` | Root-driven workflow runner. Choose exactly one root with `--project <project>`, `--capability <project>:<capability-id>`, or `--wi <id>`; follow `invoke.command` and `agent_prompt` until `completion.workflow_complete=true` or `requires_hitl=true`. |
-| `aw wi` | Work-item inventory, planning, and CRRR: `draft`, `list`, `show`, `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`, `enrich`, `validate`, `fill-section`, `review`, `arbitrate`. Planning commands write local artifacts under `/tmp/aw/{project}/...` and do not publish tracker changes. |
-| `aw td` | Tech-design lifecycle and checks: `create`, `validate`, `review`, `revise`, `merge`, `arbitrate`, plus read-only/utility verbs `check`, `ast`, `migrate-mermaid`, `claim`. |
-| `aw cb` | Code-artifact lifecycle: `gen`, `check`, `claim`, `fill`, `review`, `revise`, `arbitrate`. |
-| `aw standardize` | Existing-project takeover workflow and remediation guidance. Run `aw standardize <project>` first and follow its `next.command`; targeted layer commands are `audit`, `managed`, `semantic`, and `traceability`. Capability remediation routes through `aw capability`; readiness and regenerability metrics live in `aw health`. |
+| `aw wi` | Work-item inventory and planning: `draft`, `list`, `show`, `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`, `enrich`, `validate`, and `fill-section`. Planning commands write local artifacts under `/tmp/aw/{project}/...` and do not publish tracker changes. |
+| `aw td` | Tech-design and code-artifact lifecycle. TD defines candidate implementation structure; capability and EC gates are the source of product truth. Primary verbs are `create`, `validate`, `merge`, `check`, `ast`, `migrate-mermaid`, and `claim`; code-artifact verbs inherited by TD are `gen`, `gen-source`, `fill`, `code-check`, and `code-claim`. |
+| `aw standardize` | Existing-project takeover workflow and remediation guidance. Run `aw standardize --project <project>` first and follow its `next.command`; targeted layer commands are `audit`, `managed`, `semantic`, and `traceability`. Capability remediation routes through `aw capability`; readiness and regenerability metrics live in `aw health`. |
 | `aw capability` | Product capability completion loop. Verbs are `report`, `next`, `draft`, `apply-draft`, `init`, `migrate`, `run`, `check`, and `sweep`. For multi-project README rollout, run `sweep --write-rollout --human --skip-issue-inventory` first, then use the rollout/draft/WI/action queue artifacts instead of freehand README edits. Treat `create_wi:issue_inventory_skipped` as tracker-sync work, not WI backlog. Use `migrate` only for YAML/legacy-to-canonical Markdown conversion, and use `check --verify` when capability proof should include configured test gates. README is the default `cap_path` and uses `## Brief`, `## Capabilities`, `### Capability Index`, field-style capability contracts, and work-root tables. YAML `## Capability:` sections and legacy capability tables are migration input only. |
 | `aw health` | Aggregate project readiness metrics: capability readiness, managed/semantic/traceability coverage, command traceability, regenerable maturity, cb verify, cold verify, configured test gates, and HITL status. Run `aw health --project <project>` for production readiness; add focused sections such as `regenerable`, `gates`, or `blockers` only when detail is needed. Add `-v/--verbose` only when progress events are useful. Add targeted `--verify-*` flags only when intentionally debugging a subset. |
 
@@ -90,9 +89,9 @@ One `project-{name}` maps to one dedicated worktree and one agent session. Do
 not delete or force-overwrite `main` or `project-*` without explicit user
 confirmation. Prefer non-destructive convergence for stale `project-*` refs.
 
-WI never creates or switches git branches. TD/CB lifecycle branches
-(`td-<id>` / `cb-<id>`) are short-lived and may be created only when launched
-from `main`; off-main TD/CB commands stay on the current branch. When the user
+WI never creates or switches git branches. TD lifecycle branches
+(`td-<id>`) are short-lived and may be created only when launched
+from `main`; off-main TD commands stay on the current branch. When the user
 says "the mamba branch" or "the agentic-workflow branch" without a prefix, prefer
 `project-<name>` if it exists.
 
@@ -102,7 +101,7 @@ Canonical verb: `aw wi`. Legacy work-item aliases are removed from the active
 CLI surface.
 
 - One issue-platform id is one workflow root; do not invent a second slug.
-- Draft/CRRR intermediate state lives under `/tmp/aw/{project}/workitems`.
+- Draft/planning intermediate state lives under `/tmp/aw/{project}/workitems`.
 - Published state is projected to the issue platform configured in
   `.aw/config.toml`.
 - `.aw/issues/{open,closed}` is retired from the AW ecosystem. Do not create,
@@ -120,7 +119,7 @@ CLI surface.
 ## SDD and Codegen Rules
 
 Specs are the source of truth. Consult `projects/agentic-workflow/tech-design/` first;
-fall back to source code only when needed, then consider `aw cb claim`.
+fall back to source code only when needed, then consider `aw td code-claim`.
 
 New TD test taxonomy is artifact-oriented: use `unit-test` for generated unit
 test design and `e2e-test` for product journey / side-effect verification.
@@ -137,7 +136,7 @@ accessibility/readability smoke proof, and placeholder-free primary-state
 evidence before production readiness can be claimed.
 
 Every implementation change goes through Agentic Workflow unless the user explicitly asks
-to bypass it: `aw wi` -> `aw td` -> `aw cb` -> `aw td merge`. The
+to bypass it: `aw wi` -> `aw ec gen` -> `aw td create/gen/fill/code-check` -> `aw td merge`. The
 CLI owns the concrete phase queue, prompt text, validation gates, commits, git
 trailers, and next command.
 
@@ -183,6 +182,16 @@ rather than README rows. YAML `## Capability:` sections and legacy capability
 tables are migration input only. Verified progress requires closed/non-deferred
 work roots, passing declared verification gates or linked validation
 inventories, and resolving WI/TD refs. Do not use the old capability shorthand.
+Project-local `aw.toml` may declare `[capability.profile].traits`; agents must
+let those traits derive required baseline capabilities before adding
+domain-specific capability roots. Trait-derived baseline capabilities are a
+mandatory minimum, not the complete capability set, and traits are not README
+capabilities. `CapabilityType` classifies one capability's EC-dimension ceiling;
+it is not the project archetype. `http2_api` means the project owes a public API
+list baseline, not OpenAPI completeness. `kubernetes_native` derives a
+Kubernetes-native deployment baseline. `primary_replicas` derives a primary /
+replica topology baseline and should only be selected for projects that actually
+support that topology.
 
 Fix Agentic Workflow first when the pipeline breaks; do not work around a
 broken lifecycle.

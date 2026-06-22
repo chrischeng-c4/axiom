@@ -1,9 +1,9 @@
 # Example Lumen custom resources. Apply after `kubectl apply -k k8s/operator`.
-# The operator reconciles each into a full serving fleet + NATS write-log
+# The operator reconciles each into a full serving fleet + Relay write-log
 # broker. Inspect with: kubectl get lumen -A
 
 ---
-# Dev / kind: one serving pod, a single embedded-durability NATS broker, no
+# Dev / kind: one serving pod, a single managed Relay broker, no
 # auth, pretty logs, cluster-default storage. The smallest thing that runs.
 apiVersion: lumen.dev/v1alpha1
 kind: Lumen
@@ -19,14 +19,15 @@ spec:
       minReplicas: 1
       maxReplicas: 3
       targetCpuUtilization: 70
-  nats:
-    replicas: 1
+  broker:
+    image: relay:latest
     storage: 10Gi
 
 ---
-# Production: 6 serving pods (HPA 6→12), a 3-node HA JetStream cluster on SSD,
+# Production: 6 serving pods (HPA 6→12), external HA Relay broker,
 # bearer-token auth (tokens from a Secret), json logs, and Prometheus
-# ServiceMonitor + alerts.
+# ServiceMonitor + alerts. Managed relay-server stays single-replica; use
+# externalUrl for production HA until relay-raft exposes subscribe/len.
 apiVersion: lumen.dev/v1alpha1
 kind: Lumen
 metadata:
@@ -48,21 +49,18 @@ spec:
     cpu: "4"
     memory: 16Gi
     graceSecs: 45
-  nats:
-    replicas: 3
-    storage: 100Gi
-    storageClass: ssd
-    cpu: "2"
-    memory: 4Gi
+  broker:
+    externalUrl: http://relay.infra.svc:7000
+    subject: lumen-wal
   observability: true
 
 ---
-# Bring-your-own broker: point at an existing NATS/JetStream and the operator
+# Bring-your-own broker: point at an existing Relay and the operator
 # manages only the stateless serving fleet (no StatefulSet).
 apiVersion: lumen.dev/v1alpha1
 kind: Lumen
 metadata:
-  name: search-byo-nats
+  name: search-byo-relay
   namespace: default
 spec:
   image: lumen:latest
@@ -73,5 +71,5 @@ spec:
       minReplicas: 2
       maxReplicas: 8
       targetCpuUtilization: 70
-  nats:
-    externalUrl: nats://shared-jetstream.infra.svc:4222
+  broker:
+    externalUrl: http://shared-relay.infra.svc:7000

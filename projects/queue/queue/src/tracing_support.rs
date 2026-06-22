@@ -28,7 +28,11 @@ pub struct TaskSpanAttributes {
 }
 
 impl TaskSpanAttributes {
-    pub fn new(task_name: impl Into<String>, task_id: impl Into<String>, queue: impl Into<String>) -> Self {
+    pub fn new(
+        task_name: impl Into<String>,
+        task_id: impl Into<String>,
+        queue: impl Into<String>,
+    ) -> Self {
         Self {
             task_name: task_name.into(),
             task_id: task_id.into(),
@@ -54,7 +58,10 @@ impl TaskSpanAttributes {
 /// This sets up OTLP export to the specified endpoint (defaults to localhost:4317).
 /// The tracer is installed globally and will be used for all subsequent spans.
 #[cfg(feature = "tracing-otel")]
-pub fn init_tracing(service_name: &str, otlp_endpoint: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn init_tracing(
+    service_name: &str,
+    otlp_endpoint: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::Resource;
 
@@ -72,10 +79,7 @@ pub fn init_tracing(service_name: &str, otlp_endpoint: Option<&str>) -> Result<(
     let _tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(exporter)
-        .with_trace_config(
-            opentelemetry_sdk::trace::Config::default()
-                .with_resource(resource)
-        )
+        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(resource))
         .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
     Ok(())

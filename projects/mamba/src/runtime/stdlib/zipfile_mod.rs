@@ -1,3 +1,7 @@
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 /// zipfile module for Mamba (#445) — real ZIP container engine.
 ///
 /// ZipFile reads and writes the actual ZIP format (local file headers,
@@ -7,14 +11,9 @@
 /// append mode, extract/extractall to disk, member streaming via open()
 /// (read and write sides, including force_zip64 local-header layout), and
 /// ZipInfo records (defaults, from_file, is_dir, repr, pre-1980 ValueError).
-
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 const ZIPFILE_CLASS: &str = "ZipFile";
 const ZIPINFO_CLASS: &str = "ZipInfo";
@@ -51,7 +50,10 @@ fn make_instance(class_name: &str, fields_kv: Vec<(&str, MbValue)>) -> MbValue {
         fields.insert(k.to_string(), v);
     }
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: RwLock::new(fields),
@@ -70,7 +72,11 @@ fn new_bytes(b: Vec<u8>) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -85,17 +91,21 @@ fn extract_bytes(val: MbValue) -> Option<Vec<u8>> {
 }
 
 fn seq_items(val: MbValue) -> Vec<MbValue> {
-    val.as_ptr().and_then(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
-            ObjData::Tuple(items) => Some(items.clone()),
-            _ => None,
-        }
-    }).unwrap_or_default()
+    val.as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
+                ObjData::Tuple(items) => Some(items.clone()),
+                _ => None,
+            }
+        })
+        .unwrap_or_default()
 }
 
 fn is_dict_value(v: MbValue) -> bool {
-    v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+    v.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
 }
 
 fn kwarg(kw: MbValue, name: &str) -> Option<MbValue> {
@@ -104,7 +114,11 @@ fn kwarg(kw: MbValue, name: &str) -> Option<MbValue> {
     }
     let sentinel = MbValue::from_bits(u64::MAX);
     let v = super::super::dict_ops::mb_dict_get(kw, new_str(name), sentinel);
-    if v.to_bits() == u64::MAX { None } else { Some(v) }
+    if v.to_bits() == u64::MAX {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 fn raise_str(exc: &str, msg: &str) -> MbValue {
@@ -142,17 +156,23 @@ fn inflate(data: &[u8]) -> Vec<u8> {
 }
 
 fn u16le(b: &[u8], off: usize) -> u32 {
-    if off + 2 > b.len() { return 0; }
+    if off + 2 > b.len() {
+        return 0;
+    }
     u16::from_le_bytes([b[off], b[off + 1]]) as u32
 }
 
 fn u32le(b: &[u8], off: usize) -> u64 {
-    if off + 4 > b.len() { return 0; }
+    if off + 4 > b.len() {
+        return 0;
+    }
     u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]) as u64
 }
 
 fn u64le(b: &[u8], off: usize) -> u64 {
-    if off + 8 > b.len() { return 0; }
+    if off + 8 > b.len() {
+        return 0;
+    }
     u64::from_le_bytes(b[off..off + 8].try_into().unwrap())
 }
 
@@ -199,27 +219,30 @@ fn date_time_value(dt: &[i64]) -> MbValue {
 
 /// Build a ZipInfo instance with CPython's default attribute set.
 fn make_zipinfo(filename: &str, date_time: &[i64]) -> MbValue {
-    make_instance(ZIPINFO_CLASS, vec![
-        ("orig_filename", new_str(filename)),
-        ("filename", new_str(filename)),
-        ("date_time", date_time_value(date_time)),
-        ("compress_type", MbValue::from_int(0)),
-        ("comment", new_bytes(Vec::new())),
-        ("extra", new_bytes(Vec::new())),
-        ("create_system", MbValue::from_int(3)),
-        ("create_version", MbValue::from_int(20)),
-        ("extract_version", MbValue::from_int(20)),
-        ("reserved", MbValue::from_int(0)),
-        ("flag_bits", MbValue::from_int(0)),
-        ("volume", MbValue::from_int(0)),
-        ("internal_attr", MbValue::from_int(0)),
-        ("external_attr", MbValue::from_int(0)),
-        ("file_size", MbValue::from_int(0)),
-        ("compress_size", MbValue::from_int(0)),
-        ("CRC", MbValue::from_int(0)),
-        ("header_offset", MbValue::from_int(0)),
-        ("_compress_level", MbValue::none()),
-    ])
+    make_instance(
+        ZIPINFO_CLASS,
+        vec![
+            ("orig_filename", new_str(filename)),
+            ("filename", new_str(filename)),
+            ("date_time", date_time_value(date_time)),
+            ("compress_type", MbValue::from_int(0)),
+            ("comment", new_bytes(Vec::new())),
+            ("extra", new_bytes(Vec::new())),
+            ("create_system", MbValue::from_int(3)),
+            ("create_version", MbValue::from_int(20)),
+            ("extract_version", MbValue::from_int(20)),
+            ("reserved", MbValue::from_int(0)),
+            ("flag_bits", MbValue::from_int(0)),
+            ("volume", MbValue::from_int(0)),
+            ("internal_attr", MbValue::from_int(0)),
+            ("external_attr", MbValue::from_int(0)),
+            ("file_size", MbValue::from_int(0)),
+            ("compress_size", MbValue::from_int(0)),
+            ("CRC", MbValue::from_int(0)),
+            ("header_offset", MbValue::from_int(0)),
+            ("_compress_level", MbValue::none()),
+        ],
+    )
 }
 
 fn zi_int(zi: MbValue, key: &str) -> i64 {
@@ -241,7 +264,11 @@ fn zi_datetime(zi: MbValue) -> Vec<i64> {
 
 unsafe extern "C" fn d_zipinfo_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { arg_slice(args_ptr, nargs) };
-    let kw = a.iter().copied().find(|v| is_dict_value(*v)).unwrap_or_else(MbValue::none);
+    let kw = a
+        .iter()
+        .copied()
+        .find(|v| is_dict_value(*v))
+        .unwrap_or_else(MbValue::none);
     let pos: Vec<MbValue> = a.iter().copied().filter(|v| !is_dict_value(*v)).collect();
     let filename = kwarg(kw, "filename")
         .or_else(|| pos.first().copied())
@@ -266,7 +293,11 @@ unsafe extern "C" fn d_zipinfo_from_file(args_ptr: *const MbValue, nargs: usize)
     let Some(path) = a.first().copied().and_then(extract_str) else {
         return raise_str("TypeError", "from_file() requires a path");
     };
-    let arcname = a.get(1).copied().filter(|v| !is_dict_value(*v)).and_then(extract_str);
+    let arcname = a
+        .get(1)
+        .copied()
+        .filter(|v| !is_dict_value(*v))
+        .and_then(extract_str);
     let meta = match std::fs::metadata(&path) {
         Ok(m) => m,
         Err(e) => return raise_str("OSError", &format!("{e}: {path:?}")),
@@ -282,7 +313,11 @@ unsafe extern "C" fn d_zipinfo_from_file(args_ptr: *const MbValue, nargs: usize)
         set_field(zi, "file_size", MbValue::from_int(meta.len() as i64));
         set_field(zi, "external_attr", MbValue::from_int(0o600 << 16));
     } else {
-        set_field(zi, "external_attr", MbValue::from_int((0o40775 << 16) | 0x10));
+        set_field(
+            zi,
+            "external_attr",
+            MbValue::from_int((0o40775 << 16) | 0x10),
+        );
     }
     zi
 }
@@ -334,7 +369,10 @@ fn parse_zip(buf: &[u8]) -> Result<(Vec<Entry>, Vec<u8>), ()> {
     let count = u16le(buf, e + 10) as usize;
     let cd_off = u32le(buf, e + 16) as usize;
     let comment_len = u16le(buf, e + 20) as usize;
-    let comment = buf.get(e + 22..e + 22 + comment_len).unwrap_or(&[]).to_vec();
+    let comment = buf
+        .get(e + 22..e + 22 + comment_len)
+        .unwrap_or(&[])
+        .to_vec();
 
     let mut entries = Vec::new();
     let mut p = cd_off;
@@ -362,7 +400,9 @@ fn parse_zip(buf: &[u8]) -> Result<(Vec<Entry>, Vec<u8>), ()> {
             String::from_utf8_lossy(name_raw).to_string()
         };
         // ZIP64 extra (id 0x0001) overrides 0xFFFFFFFF sentinels.
-        let extra = buf.get(p + 46 + fn_len..p + 46 + fn_len + extra_len).unwrap_or(&[]);
+        let extra = buf
+            .get(p + 46 + fn_len..p + 46 + fn_len + extra_len)
+            .unwrap_or(&[]);
         let mut q = 0usize;
         while q + 4 <= extra.len() {
             let id = u16le(extra, q);
@@ -390,7 +430,10 @@ fn parse_zip(buf: &[u8]) -> Result<(Vec<Entry>, Vec<u8>), ()> {
         let lfn = u16le(buf, header_off + 26) as usize;
         let lex = u16le(buf, header_off + 28) as usize;
         let data_off = header_off + 30 + lfn + lex;
-        let cdata = buf.get(data_off..data_off + csize as usize).unwrap_or(&[]).to_vec();
+        let cdata = buf
+            .get(data_off..data_off + csize as usize)
+            .unwrap_or(&[])
+            .to_vec();
 
         let zi = make_zipinfo(&name, &dt_tuple_from_dos(dtime, ddate));
         set_field(zi, "compress_type", MbValue::from_int(comp as i64));
@@ -399,9 +442,17 @@ fn parse_zip(buf: &[u8]) -> Result<(Vec<Entry>, Vec<u8>), ()> {
         set_field(zi, "file_size", MbValue::from_int(usize_ as i64));
         set_field(zi, "header_offset", MbValue::from_int(header_off as i64));
         set_field(zi, "external_attr", MbValue::from_int(external_attr as i64));
-        set_field(zi, "extract_version", MbValue::from_int(extract_version as i64));
+        set_field(
+            zi,
+            "extract_version",
+            MbValue::from_int(extract_version as i64),
+        );
         set_field(zi, "flag_bits", MbValue::from_int(flags as i64));
-        entries.push(Entry { info: zi, cdata, force_zip64: false });
+        entries.push(Entry {
+            info: zi,
+            cdata,
+            force_zip64: false,
+        });
 
         p += 46 + fn_len + extra_len + cmt_len;
     }
@@ -424,7 +475,11 @@ fn serialize_zip(entries: &[Entry], comment: &[u8]) -> Vec<u8> {
         let need64 = e.force_zip64 || csize >= 0xFFFF_FFFF || usize_ >= 0xFFFF_FFFF;
         let version = if need64 { 45 } else { 20 };
         let header_off = out.len();
-        set_field(e.info, "header_offset", MbValue::from_int(header_off as i64));
+        set_field(
+            e.info,
+            "header_offset",
+            MbValue::from_int(header_off as i64),
+        );
 
         // Local file header.
         out.extend_from_slice(b"PK\x03\x04");
@@ -539,7 +594,9 @@ thread_local! {
 }
 
 fn zf_id(zf: MbValue) -> Option<u64> {
-    get_field(zf, "_id").and_then(|v| v.as_int()).map(|i| i as u64)
+    get_field(zf, "_id")
+        .and_then(|v| v.as_int())
+        .map(|i| i as u64)
 }
 
 fn with_zf<R>(zf: MbValue, f: impl FnOnce(&mut ZfState) -> R) -> Option<R> {
@@ -550,9 +607,8 @@ fn with_zf<R>(zf: MbValue, f: impl FnOnce(&mut ZfState) -> R) -> Option<R> {
 /// Refresh the `filelist` field from the store so attribute reads see the
 /// live entry list.
 fn refresh_filelist(zf: MbValue) {
-    let infos: Vec<MbValue> = with_zf(zf, |st| {
-        st.entries.iter().map(|e| e.info).collect()
-    }).unwrap_or_default();
+    let infos: Vec<MbValue> =
+        with_zf(zf, |st| st.entries.iter().map(|e| e.info).collect()).unwrap_or_default();
     set_field(zf, "filelist", MbValue::from_ptr(MbObject::new_list(infos)));
 }
 
@@ -560,7 +616,12 @@ fn refresh_filelist(zf: MbValue) {
 
 unsafe extern "C" fn d_zipfile_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { arg_slice(args_ptr, nargs) };
-    let kw = a.iter().copied().rev().find(|v| is_dict_value(*v)).unwrap_or_else(MbValue::none);
+    let kw = a
+        .iter()
+        .copied()
+        .rev()
+        .find(|v| is_dict_value(*v))
+        .unwrap_or_else(MbValue::none);
     let pos: Vec<MbValue> = a.iter().copied().filter(|v| !is_dict_value(*v)).collect();
     let target = pos.first().copied().unwrap_or_else(MbValue::none);
     let mode = kwarg(kw, "mode")
@@ -628,21 +689,27 @@ unsafe extern "C" fn d_zipfile_new(args_ptr: *const MbValue, nargs: usize) -> Mb
     });
     let comment_v = new_bytes(comment.clone());
     ZF_STORES.with(|stores| {
-        stores.borrow_mut().insert(id, ZfState {
-            entries,
-            comment,
-            mode,
-            closed: false,
-        });
+        stores.borrow_mut().insert(
+            id,
+            ZfState {
+                entries,
+                comment,
+                mode,
+                closed: false,
+            },
+        );
     });
-    let zf = make_instance(ZIPFILE_CLASS, vec![
-        ("_id", MbValue::from_int(id as i64)),
-        ("_target", target),
-        ("mode", new_str(&mode.to_string())),
-        ("compression", MbValue::from_int(compression)),
-        ("comment", comment_v),
-        ("fp", target),
-    ]);
+    let zf = make_instance(
+        ZIPFILE_CLASS,
+        vec![
+            ("_id", MbValue::from_int(id as i64)),
+            ("_target", target),
+            ("mode", new_str(&mode.to_string())),
+            ("compression", MbValue::from_int(compression)),
+            ("comment", comment_v),
+            ("fp", target),
+        ],
+    );
     refresh_filelist(zf);
     zf
 }
@@ -673,9 +740,14 @@ fn ensure_zf_open(zf: MbValue) -> Option<MbValue> {
 fn writestr_core(zf: MbValue, name_or_info: MbValue, data: Vec<u8>, force_zip64: bool) -> MbValue {
     let closed = with_zf(zf, |st| st.closed).unwrap_or(true);
     if closed {
-        return raise_str("ValueError", "Attempt to use ZIP archive that was already closed");
+        return raise_str(
+            "ValueError",
+            "Attempt to use ZIP archive that was already closed",
+        );
     }
-    let default_comp = get_field(zf, "compression").and_then(|v| v.as_int()).unwrap_or(0);
+    let default_comp = get_field(zf, "compression")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     let (info, comp) = if extract_str(name_or_info).is_some() {
         let raw_name = extract_str(name_or_info).unwrap_or_default();
         let name = raw_name.split('\0').next().unwrap_or("").to_string();
@@ -696,7 +768,11 @@ fn writestr_core(zf: MbValue, name_or_info: MbValue, data: Vec<u8>, force_zip64:
         set_field(info, "create_version", MbValue::from_int(45));
     }
     with_zf(zf, |st| {
-        st.entries.push(Entry { info, cdata, force_zip64 });
+        st.entries.push(Entry {
+            info,
+            cdata,
+            force_zip64,
+        });
     });
     refresh_filelist(zf);
     MbValue::none()
@@ -718,7 +794,11 @@ unsafe extern "C" fn method_write(self_v: MbValue, args: MbValue) -> MbValue {
     let Some(path) = items.first().copied().and_then(extract_str) else {
         return raise_str("TypeError", "write() requires a path");
     };
-    let arcname = items.get(1).copied().and_then(extract_str).unwrap_or_else(|| path.clone());
+    let arcname = items
+        .get(1)
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_else(|| path.clone());
     match std::fs::read(&path) {
         Ok(data) => writestr_core(self_v, new_str(&arcname), data, false),
         Err(e) => raise_str("OSError", &format!("{e}: {path:?}")),
@@ -729,10 +809,12 @@ unsafe extern "C" fn method_write(self_v: MbValue, args: MbValue) -> MbValue {
 
 fn find_entry_payload(zf: MbValue, name: &str) -> Option<(MbValue, Vec<u8>)> {
     with_zf(zf, |st| {
-        st.entries.iter()
+        st.entries
+            .iter()
             .find(|e| zi_str(e.info, "filename") == name)
             .map(|e| (e.info, e.cdata.clone()))
-    }).flatten()
+    })
+    .flatten()
 }
 
 fn decompress_entry(info: MbValue, cdata: &[u8]) -> Vec<u8> {
@@ -755,7 +837,11 @@ pub(crate) fn zip_pack(files: &[(String, Vec<u8>)]) -> Vec<u8> {
         set_field(zi, "file_size", MbValue::from_int(data.len() as i64));
         set_field(zi, "compress_size", MbValue::from_int(data.len() as i64));
         set_field(zi, "CRC", MbValue::from_int(crc32(data) as i64));
-        entries.push(Entry { info: zi, cdata: data.clone(), force_zip64: false });
+        entries.push(Entry {
+            info: zi,
+            cdata: data.clone(),
+            force_zip64: false,
+        });
     }
     serialize_zip(&entries, &[])
 }
@@ -782,41 +868,57 @@ unsafe extern "C" fn method_read(self_v: MbValue, args: MbValue) -> MbValue {
         return err;
     }
     let items = seq_items(args);
-    let name = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let name = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let Some((info, cdata)) = find_entry_payload(self_v, &name) else {
-        return raise_str("KeyError", &format!(
-            "There is no item named {name:?} in the archive"
-        ));
+        return raise_str(
+            "KeyError",
+            &format!("There is no item named {name:?} in the archive"),
+        );
     };
     let data = decompress_entry(info, &cdata);
     if crc32(&data) as i64 != zi_int(info, "CRC") {
-        return raise_str("zipfile.BadZipFile", &format!("Bad CRC-32 for file {name:?}"));
+        return raise_str(
+            "zipfile.BadZipFile",
+            &format!("Bad CRC-32 for file {name:?}"),
+        );
     }
     new_bytes(data)
 }
 
 unsafe extern "C" fn method_namelist(self_v: MbValue, _args: MbValue) -> MbValue {
     let names: Vec<MbValue> = with_zf(self_v, |st| {
-        st.entries.iter().map(|e| new_str(&zi_str(e.info, "filename"))).collect()
-    }).unwrap_or_default();
+        st.entries
+            .iter()
+            .map(|e| new_str(&zi_str(e.info, "filename")))
+            .collect()
+    })
+    .unwrap_or_default();
     MbValue::from_ptr(MbObject::new_list(names))
 }
 
 unsafe extern "C" fn method_infolist(self_v: MbValue, _args: MbValue) -> MbValue {
-    let infos: Vec<MbValue> = with_zf(self_v, |st| {
-        st.entries.iter().map(|e| e.info).collect()
-    }).unwrap_or_default();
+    let infos: Vec<MbValue> =
+        with_zf(self_v, |st| st.entries.iter().map(|e| e.info).collect()).unwrap_or_default();
     MbValue::from_ptr(MbObject::new_list(infos))
 }
 
 unsafe extern "C" fn method_getinfo(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let name = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let name = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     match find_entry_payload(self_v, &name) {
         Some((info, _)) => info,
-        None => raise_str("KeyError", &format!(
-            "There is no item named {name:?} in the archive"
-        )),
+        None => raise_str(
+            "KeyError",
+            &format!("There is no item named {name:?} in the archive"),
+        ),
     }
 }
 
@@ -832,7 +934,8 @@ unsafe extern "C" fn method_testzip(self_v: MbValue, _args: MbValue) -> MbValue 
             }
         }
         None
-    }).flatten();
+    })
+    .flatten();
     match bad {
         Some(name) => new_str(&name),
         None => MbValue::none(),
@@ -846,8 +949,16 @@ unsafe extern "C" fn method_open(self_v: MbValue, args: MbValue) -> MbValue {
         return err;
     }
     let items = seq_items(args);
-    let kw = items.iter().copied().find(|v| is_dict_value(*v)).unwrap_or_else(MbValue::none);
-    let name = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let kw = items
+        .iter()
+        .copied()
+        .find(|v| is_dict_value(*v))
+        .unwrap_or_else(MbValue::none);
+    let name = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let mode = kwarg(kw, "mode")
         .or_else(|| items.get(1).copied().filter(|v| !is_dict_value(*v)))
         .and_then(extract_str)
@@ -859,34 +970,47 @@ unsafe extern "C" fn method_open(self_v: MbValue, args: MbValue) -> MbValue {
         let force_zip64 = kwarg(kw, "force_zip64")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        return make_instance("zipfile._ZipWriteFile", vec![
-            ("_zf", self_v),
-            ("_name", new_str(&name)),
-            ("_force64", MbValue::from_bool(force_zip64)),
-            ("_chunks", new_bytes(Vec::new())),
-        ]);
+        return make_instance(
+            "zipfile._ZipWriteFile",
+            vec![
+                ("_zf", self_v),
+                ("_name", new_str(&name)),
+                ("_force64", MbValue::from_bool(force_zip64)),
+                ("_chunks", new_bytes(Vec::new())),
+            ],
+        );
     }
     let Some((info, cdata)) = find_entry_payload(self_v, &name) else {
-        return raise_str("KeyError", &format!(
-            "There is no item named {name:?} in the archive"
-        ));
+        return raise_str(
+            "KeyError",
+            &format!("There is no item named {name:?} in the archive"),
+        );
     };
     let data = decompress_entry(info, &cdata);
     let bad = crc32(&data) as i64 != zi_int(info, "CRC");
-    make_instance("zipfile.ZipExtFile", vec![
-        ("_data", new_bytes(data)),
-        ("_pos", MbValue::from_int(0)),
-        ("_bad", MbValue::from_bool(bad)),
-        ("name", new_str(&name)),
-    ])
+    make_instance(
+        "zipfile.ZipExtFile",
+        vec![
+            ("_data", new_bytes(data)),
+            ("_pos", MbValue::from_int(0)),
+            ("_bad", MbValue::from_bool(bad)),
+            ("name", new_str(&name)),
+        ],
+    )
 }
 
 unsafe extern "C" fn extfile_read(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
     let n = items.first().and_then(|v| v.as_int());
-    let data = get_field(self_v, "_data").and_then(extract_bytes).unwrap_or_default();
-    let pos = get_field(self_v, "_pos").and_then(|v| v.as_int()).unwrap_or(0) as usize;
-    let bad = get_field(self_v, "_bad").and_then(|v| v.as_bool()).unwrap_or(false);
+    let data = get_field(self_v, "_data")
+        .and_then(extract_bytes)
+        .unwrap_or_default();
+    let pos = get_field(self_v, "_pos")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0) as usize;
+    let bad = get_field(self_v, "_bad")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let end = match n {
         Some(k) if k >= 0 => (pos + k as usize).min(data.len()),
         _ => data.len(),
@@ -894,15 +1018,25 @@ unsafe extern "C" fn extfile_read(self_v: MbValue, args: MbValue) -> MbValue {
     if pos >= data.len() {
         // Exhausted: a bad CRC surfaces at end-of-stream like CPython.
         if bad {
-            let name = get_field(self_v, "name").and_then(extract_str).unwrap_or_default();
-            return raise_str("zipfile.BadZipFile", &format!("Bad CRC-32 for file {name:?}"));
+            let name = get_field(self_v, "name")
+                .and_then(extract_str)
+                .unwrap_or_default();
+            return raise_str(
+                "zipfile.BadZipFile",
+                &format!("Bad CRC-32 for file {name:?}"),
+            );
         }
         return new_bytes(Vec::new());
     }
     set_field(self_v, "_pos", MbValue::from_int(end as i64));
     if end >= data.len() && bad && n.is_none() {
-        let name = get_field(self_v, "name").and_then(extract_str).unwrap_or_default();
-        return raise_str("zipfile.BadZipFile", &format!("Bad CRC-32 for file {name:?}"));
+        let name = get_field(self_v, "name")
+            .and_then(extract_str)
+            .unwrap_or_default();
+        return raise_str(
+            "zipfile.BadZipFile",
+            &format!("Bad CRC-32 for file {name:?}"),
+        );
     }
     new_bytes(data[pos..end].to_vec())
 }
@@ -917,11 +1051,21 @@ unsafe extern "C" fn extfile_exit(_self_v: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn writefile_write(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let chunk = items.first().copied()
+    let chunk = items
+        .first()
+        .copied()
         .and_then(extract_bytes)
-        .or_else(|| items.first().copied().and_then(extract_str).map(|s| s.into_bytes()))
+        .or_else(|| {
+            items
+                .first()
+                .copied()
+                .and_then(extract_str)
+                .map(|s| s.into_bytes())
+        })
         .unwrap_or_default();
-    let mut acc = get_field(self_v, "_chunks").and_then(extract_bytes).unwrap_or_default();
+    let mut acc = get_field(self_v, "_chunks")
+        .and_then(extract_bytes)
+        .unwrap_or_default();
     let n = chunk.len();
     acc.extend_from_slice(&chunk);
     set_field(self_v, "_chunks", new_bytes(acc));
@@ -935,8 +1079,12 @@ unsafe extern "C" fn writefile_close(self_v: MbValue, _args: MbValue) -> MbValue
     set_field(self_v, "_done", MbValue::from_bool(true));
     let zf = get_field(self_v, "_zf").unwrap_or_else(MbValue::none);
     let name = get_field(self_v, "_name").unwrap_or_else(MbValue::none);
-    let data = get_field(self_v, "_chunks").and_then(extract_bytes).unwrap_or_default();
-    let force64 = get_field(self_v, "_force64").and_then(|v| v.as_bool()).unwrap_or(false);
+    let data = get_field(self_v, "_chunks")
+        .and_then(extract_bytes)
+        .unwrap_or_default();
+    let force64 = get_field(self_v, "_force64")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     writestr_core(zf, name, data, force64)
 }
 
@@ -949,20 +1097,30 @@ unsafe extern "C" fn writefile_exit(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn method_extract(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let name = items.first().copied().and_then(extract_str).unwrap_or_default();
-    let dest = items.get(1).copied().and_then(extract_str).unwrap_or_else(|| ".".to_string());
+    let name = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let dest = items
+        .get(1)
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_else(|| ".".to_string());
     extract_one(self_v, &name, &dest)
 }
 
 fn extract_one(zf: MbValue, name: &str, dest: &str) -> MbValue {
     let Some((info, cdata)) = find_entry_payload(zf, name) else {
-        return raise_str("KeyError", &format!(
-            "There is no item named {name:?} in the archive"
-        ));
+        return raise_str(
+            "KeyError",
+            &format!("There is no item named {name:?} in the archive"),
+        );
     };
     let data = decompress_entry(info, &cdata);
     // Sanitize: strip leading slashes and drop '..' components.
-    let clean: Vec<&str> = name.split('/')
+    let clean: Vec<&str> = name
+        .split('/')
         .filter(|c| !c.is_empty() && *c != "..")
         .collect();
     let mut path = std::path::PathBuf::from(dest);
@@ -982,10 +1140,18 @@ fn extract_one(zf: MbValue, name: &str, dest: &str) -> MbValue {
 
 unsafe extern "C" fn method_extractall(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let dest = items.first().copied().and_then(extract_str).unwrap_or_else(|| ".".to_string());
+    let dest = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_else(|| ".".to_string());
     let names: Vec<String> = with_zf(self_v, |st| {
-        st.entries.iter().map(|e| zi_str(e.info, "filename")).collect()
-    }).unwrap_or_default();
+        st.entries
+            .iter()
+            .map(|e| zi_str(e.info, "filename"))
+            .collect()
+    })
+    .unwrap_or_default();
     for name in names {
         extract_one(self_v, &name, &dest);
     }
@@ -999,11 +1165,14 @@ unsafe extern "C" fn method_close(self_v: MbValue, _args: MbValue) -> MbValue {
     }
     if mode == 'w' || mode == 'a' {
         // Pick up a comment assigned after construction.
-        let comment = get_field(self_v, "comment").and_then(extract_bytes).unwrap_or_default();
+        let comment = get_field(self_v, "comment")
+            .and_then(extract_bytes)
+            .unwrap_or_default();
         let blob = with_zf(self_v, |st| {
             st.comment = comment.clone();
             serialize_zip(&st.entries, &st.comment)
-        }).unwrap_or_default();
+        })
+        .unwrap_or_default();
         let target = get_field(self_v, "_target").unwrap_or_else(MbValue::none);
         target_write(target, blob);
     }
@@ -1076,12 +1245,18 @@ pub fn register() {
     // type name through NATIVE_TYPE_NAMES.
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
-        map.insert(d_zipfile_badzipfile as *const () as usize as u64,
-            "zipfile.BadZipFile".to_string());
-        map.insert(d_zipinfo_new as *const () as usize as u64,
-            "zipfile.ZipInfo".to_string());
-        map.insert(d_zipfile_new as *const () as usize as u64,
-            ZIPFILE_CLASS.to_string());
+        map.insert(
+            d_zipfile_badzipfile as *const () as usize as u64,
+            "zipfile.BadZipFile".to_string(),
+        );
+        map.insert(
+            d_zipinfo_new as *const () as usize as u64,
+            "zipfile.ZipInfo".to_string(),
+        );
+        map.insert(
+            d_zipfile_new as *const () as usize as u64,
+            ZIPFILE_CLASS.to_string(),
+        );
     });
 
     super::register_module("zipfile", attrs);
@@ -1117,14 +1292,21 @@ fn register_zip_classes() {
     let mut zi: Map<String, MbValue> = Map::new();
     zi.insert("is_dir".into(), var(zipinfo_is_dir as *const () as usize));
     zi.insert("__repr__".into(), var(zipinfo_repr as *const () as usize));
-    zi.insert("from_file".into(), MbValue::from_func(d_zipinfo_from_file as *const () as usize));
+    zi.insert(
+        "from_file".into(),
+        MbValue::from_func(d_zipinfo_from_file as *const () as usize),
+    );
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        s.borrow_mut().insert(d_zipinfo_from_file as *const () as usize as u64);
+        s.borrow_mut()
+            .insert(d_zipinfo_from_file as *const () as usize as u64);
     });
     super::super::class::mb_class_register(ZIPINFO_CLASS, vec![], zi);
     // The qualified name is what NATIVE_TYPE_NAMES maps to for the gate.
     let mut zi2: Map<String, MbValue> = Map::new();
-    zi2.insert("from_file".into(), MbValue::from_func(d_zipinfo_from_file as *const () as usize));
+    zi2.insert(
+        "from_file".into(),
+        MbValue::from_func(d_zipinfo_from_file as *const () as usize),
+    );
     super::super::class::mb_class_register("zipfile.ZipInfo", vec![], zi2);
 
     let mut ext: Map<String, MbValue> = Map::new();
@@ -1172,7 +1354,11 @@ mod tests {
         let data = b"hello world".to_vec();
         set_field(zi, "file_size", MbValue::from_int(data.len() as i64));
         set_field(zi, "CRC", MbValue::from_int(crc32(&data) as i64));
-        let entries = vec![Entry { info: zi, cdata: data.clone(), force_zip64: false }];
+        let entries = vec![Entry {
+            info: zi,
+            cdata: data.clone(),
+            force_zip64: false,
+        }];
         let blob = serialize_zip(&entries, b"cmt");
         let (parsed, comment) = parse_zip(&blob).expect("parse back");
         assert_eq!(parsed.len(), 1);
@@ -1193,10 +1379,13 @@ mod tests {
     fn test_writestr_read_via_methods() {
         register();
         // In-memory BytesIO-like stand-in.
-        let fileobj = make_instance("BytesIO", vec![
-            ("_buffer", new_bytes(Vec::new())),
-            ("_pos", MbValue::from_int(0)),
-        ]);
+        let fileobj = make_instance(
+            "BytesIO",
+            vec![
+                ("_buffer", new_bytes(Vec::new())),
+                ("_pos", MbValue::from_int(0)),
+            ],
+        );
         let zf = mb_zipfile_new(fileobj, s("w"));
         unsafe {
             method_writestr(zf, list(vec![s("x.txt"), s("payload")]));

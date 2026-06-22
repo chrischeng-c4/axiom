@@ -7,7 +7,7 @@
 //! half). Its job is to **bound cold-start and broker retention**: a
 //! fresh serving node loads the latest RDB to get a baseline at
 //! `up_to_seq`, then tails the log from `up_to_seq + 1` instead of
-//! replaying the whole stream. The broker (NATS) then only needs to
+//! replaying the whole stream. The broker then only needs to
 //! retain history back to the oldest live RDB.
 //!
 //! An [`RdbStore`] is where snapshots live. v1 ships [`LocalFsRdbStore`]
@@ -54,7 +54,8 @@ impl RdbSnapshot {
     /// text float arrays — far smaller and faster to parse than JSON.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let mut raw = Vec::new();
-        ciborium::into_writer(self, &mut raw).map_err(|e| anyhow::anyhow!("cbor encode RDB: {e}"))?;
+        ciborium::into_writer(self, &mut raw)
+            .map_err(|e| anyhow::anyhow!("cbor encode RDB: {e}"))?;
         Ok(lz4_flex::compress_prepend_size(&raw))
     }
 

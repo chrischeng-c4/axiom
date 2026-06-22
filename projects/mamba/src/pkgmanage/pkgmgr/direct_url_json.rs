@@ -180,7 +180,10 @@ pub fn parse_direct_url_json(src: &str) -> Result<DirectUrlJson, IndexError> {
     let has_vcs = obj.contains_key("vcs_info");
     let has_archive = obj.contains_key("archive_info");
     let has_dir = obj.contains_key("dir_info");
-    let info_count = [has_vcs, has_archive, has_dir].iter().filter(|b| **b).count();
+    let info_count = [has_vcs, has_archive, has_dir]
+        .iter()
+        .filter(|b| **b)
+        .count();
     if info_count == 0 {
         return Err(IndexError::ParseError {
             url: "<direct_url.json>".into(),
@@ -230,7 +233,10 @@ fn decode_vcs(v: &Value) -> Result<DirectUrlInfo, IndexError> {
         .get("requested_revision")
         .and_then(|v| v.as_str())
         .map(String::from);
-    let commit_id = t.get("commit_id").and_then(|v| v.as_str()).map(String::from);
+    let commit_id = t
+        .get("commit_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let resolved_revision = t
         .get("resolved_revision")
         .and_then(|v| v.as_str())
@@ -254,9 +260,7 @@ fn decode_archive(v: &Value) -> Result<DirectUrlInfo, IndexError> {
         for (k, val) in map {
             let s = val.as_str().ok_or_else(|| IndexError::ParseError {
                 url: "<direct_url.json>".into(),
-                detail: format!(
-                    "direct_url.json: archive_info.hashes.{k} must be a string"
-                ),
+                detail: format!("direct_url.json: archive_info.hashes.{k} must be a string"),
             })?;
             hashes.push((k.clone(), s.to_string()));
         }
@@ -264,12 +268,14 @@ fn decode_archive(v: &Value) -> Result<DirectUrlInfo, IndexError> {
         hashes.sort_by(|a, b| a.0.cmp(&b.0));
     } else if let Some(single) = t.get("hash").and_then(|v| v.as_str()) {
         // Older `hash = "sha256=..."` form. Split on '=' once.
-        let (algo, digest) = single.split_once('=').ok_or_else(|| IndexError::ParseError {
-            url: "<direct_url.json>".into(),
-            detail: format!(
-                "direct_url.json: archive_info.hash {single:?} must be `algo=digest`"
-            ),
-        })?;
+        let (algo, digest) = single
+            .split_once('=')
+            .ok_or_else(|| IndexError::ParseError {
+                url: "<direct_url.json>".into(),
+                detail: format!(
+                    "direct_url.json: archive_info.hash {single:?} must be `algo=digest`"
+                ),
+            })?;
         hashes.push((algo.to_string(), digest.to_string()));
     }
 
@@ -373,10 +379,13 @@ mod tests {
         match d.info {
             DirectUrlInfo::Archive { hashes } => {
                 // Deterministic — alphabetical sort.
-                assert_eq!(hashes, vec![
-                    ("md5".to_string(), "def".to_string()),
-                    ("sha256".to_string(), "abc".to_string()),
-                ]);
+                assert_eq!(
+                    hashes,
+                    vec![
+                        ("md5".to_string(), "def".to_string()),
+                        ("sha256".to_string(), "abc".to_string()),
+                    ]
+                );
             }
             other => panic!("expected Archive, got {other:?}"),
         }
@@ -560,10 +569,7 @@ mod tests {
             url: "https://e.test/foo.tar.gz".into(),
             subdirectory: None,
             info: DirectUrlInfo::Archive {
-                hashes: vec![
-                    ("sha256".into(), "z".into()),
-                    ("md5".into(), "a".into()),
-                ],
+                hashes: vec![("sha256".into(), "z".into()), ("md5".into(), "a".into())],
             },
         };
         let body = render_direct_url_json(&d);

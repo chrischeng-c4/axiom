@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-use crate::{TaskError, TaskMessage};
 use super::{Broker, BrokerCapabilities, BrokerMessage, DelayedBroker, DeliveryModel, PushBroker};
+use crate::{TaskError, TaskMessage};
 
 /// Cloud Tasks REST API v2 base URL
 const CLOUD_TASKS_API_BASE: &str = "https://cloudtasks.googleapis.com/v2";
@@ -84,21 +84,19 @@ impl CloudTasksConfig {
         let project_id = std::env::var("GCP_PROJECT_ID")
             .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
             .map_err(|_| {
-                TaskError::Configuration(
-                    "GCP_PROJECT_ID or GOOGLE_CLOUD_PROJECT not set".into(),
-                )
+                TaskError::Configuration("GCP_PROJECT_ID or GOOGLE_CLOUD_PROJECT not set".into())
             })?;
 
-        let location = std::env::var("CLOUDTASKS_LOCATION")
-            .unwrap_or_else(|_| "us-central1".to_string());
+        let location =
+            std::env::var("CLOUDTASKS_LOCATION").unwrap_or_else(|_| "us-central1".to_string());
 
         let worker_url = std::env::var("METEOR_WORKER_URL")
             .map_err(|_| TaskError::Configuration("METEOR_WORKER_URL not set".into()))?;
 
         let service_account_email = std::env::var("CLOUDTASKS_SERVICE_ACCOUNT").ok();
         let oidc_audience = std::env::var("CLOUDTASKS_OIDC_AUDIENCE").ok();
-        let default_queue = std::env::var("CLOUDTASKS_QUEUE")
-            .unwrap_or_else(|_| "default".to_string());
+        let default_queue =
+            std::env::var("CLOUDTASKS_QUEUE").unwrap_or_else(|_| "default".to_string());
         let credentials_path = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
         let max_retry_count = std::env::var("CLOUDTASKS_MAX_RETRIES")
             .ok()
@@ -357,9 +355,7 @@ impl CloudTasksBroker {
             .header("Metadata-Flavor", "Google")
             .send()
             .await
-            .map_err(|e| {
-                TaskError::Authentication(format!("Failed to fetch OIDC token: {}", e))
-            })?;
+            .map_err(|e| TaskError::Authentication(format!("Failed to fetch OIDC token: {}", e)))?;
 
         if !response.status().is_success() {
             return Err(TaskError::Authentication(format!(
@@ -368,12 +364,9 @@ impl CloudTasksBroker {
             )));
         }
 
-        let token_response: MetadataTokenResponse = response
-            .json()
-            .await
-            .map_err(|e| {
-                TaskError::Authentication(format!("Failed to parse token response: {}", e))
-            })?;
+        let token_response: MetadataTokenResponse = response.json().await.map_err(|e| {
+            TaskError::Authentication(format!("Failed to parse token response: {}", e))
+        })?;
 
         Ok((token_response.access_token, token_response.expires_in))
     }
@@ -397,10 +390,7 @@ impl CloudTasksBroker {
         })?;
 
         let sa_key: ServiceAccountKey = serde_json::from_str(&key_data).map_err(|e| {
-            TaskError::Authentication(format!(
-                "Failed to parse service account key file: {}",
-                e
-            ))
+            TaskError::Authentication(format!("Failed to parse service account key file: {}", e))
         })?;
 
         // Create JWT assertion
@@ -414,16 +404,16 @@ impl CloudTasksBroker {
             exp: now + 3600, // 1 hour
         };
 
-        let encoding_key = EncodingKey::from_rsa_pem(sa_key.private_key.as_bytes())
-            .map_err(|e| {
+        let encoding_key =
+            EncodingKey::from_rsa_pem(sa_key.private_key.as_bytes()).map_err(|e| {
                 TaskError::Authentication(format!(
                     "Failed to parse private key from SA key file: {}",
                     e
                 ))
             })?;
 
-        let jwt = encode(&JwtHeader::new(Algorithm::RS256), &claims, &encoding_key)
-            .map_err(|e| {
+        let jwt =
+            encode(&JwtHeader::new(Algorithm::RS256), &claims, &encoding_key).map_err(|e| {
                 TaskError::Authentication(format!("Failed to create JWT assertion: {}", e))
             })?;
 
@@ -449,15 +439,9 @@ impl CloudTasksBroker {
             )));
         }
 
-        let token_response: TokenExchangeResponse = response
-            .json()
-            .await
-            .map_err(|e| {
-                TaskError::Authentication(format!(
-                    "Failed to parse token exchange response: {}",
-                    e
-                ))
-            })?;
+        let token_response: TokenExchangeResponse = response.json().await.map_err(|e| {
+            TaskError::Authentication(format!("Failed to parse token exchange response: {}", e))
+        })?;
 
         tracing::debug!(
             "Obtained access token from SA key file (expires in {}s)",
@@ -474,22 +458,22 @@ impl CloudTasksBroker {
         message: &TaskMessage,
         schedule_time: Option<DateTime<Utc>>,
     ) -> Result<CreateTaskRequest, TaskError> {
-        let payload_json = serde_json::to_vec(message)
-            .map_err(|e| TaskError::Serialization(e.to_string()))?;
-        let body_b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &payload_json,
-        );
+        let payload_json =
+            serde_json::to_vec(message).map_err(|e| TaskError::Serialization(e.to_string()))?;
+        let body_b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &payload_json);
 
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
 
-        let oidc_token = self.config.service_account_email.as_ref().map(|email| {
-            OidcTokenField {
+        let oidc_token = self
+            .config
+            .service_account_email
+            .as_ref()
+            .map(|email| OidcTokenField {
                 service_account_email: email.clone(),
                 audience: Some(self.config.effective_audience().to_string()),
-            }
-        });
+            });
 
         let schedule_time_str = schedule_time.map(|t| t.to_rfc3339());
 
@@ -523,11 +507,7 @@ impl CloudTasksBroker {
     /// - `email` claim matches the configured `service_account_email`
     /// - `aud` claim matches `oidc_audience` or `worker_url`
     /// - `exp` claim has not passed
-    fn validate_inbound_jwt(
-        &self,
-        jwt_token: &str,
-        expected_email: &str,
-    ) -> Result<(), TaskError> {
+    fn validate_inbound_jwt(&self, jwt_token: &str, expected_email: &str) -> Result<(), TaskError> {
         // Split JWT into parts and decode payload (middle segment)
         let parts: Vec<&str> = jwt_token.split('.').collect();
         if parts.len() != 3 {
@@ -536,17 +516,14 @@ impl CloudTasksBroker {
             ));
         }
 
-        let payload_bytes = base64::Engine::decode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            parts[1],
-        )
-        .map_err(|e| {
-            TaskError::Authentication(format!("Failed to decode JWT payload: {}", e))
-        })?;
+        let payload_bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, parts[1])
+                .map_err(|e| {
+                    TaskError::Authentication(format!("Failed to decode JWT payload: {}", e))
+                })?;
 
-        let claims: InboundOidcClaims = serde_json::from_slice(&payload_bytes).map_err(|e| {
-            TaskError::Authentication(format!("Failed to parse JWT claims: {}", e))
-        })?;
+        let claims: InboundOidcClaims = serde_json::from_slice(&payload_bytes)
+            .map_err(|e| TaskError::Authentication(format!("Failed to parse JWT claims: {}", e)))?;
 
         // Check email claim
         match &claims.email {
@@ -568,9 +545,9 @@ impl CloudTasksBroker {
         let expected_audience = self.config.effective_audience();
         let audience_valid = match &claims.aud {
             Some(serde_json::Value::String(aud)) => aud == expected_audience,
-            Some(serde_json::Value::Array(auds)) => auds.iter().any(|a| {
-                a.as_str().map_or(false, |s| s == expected_audience)
-            }),
+            Some(serde_json::Value::Array(auds)) => auds
+                .iter()
+                .any(|a| a.as_str().map_or(false, |s| s == expected_audience)),
             _ => false,
         };
         if !audience_valid {
@@ -594,31 +571,20 @@ impl CloudTasksBroker {
     /// Map GCP HTTP error status to TaskError
     fn map_gcp_error(status: reqwest::StatusCode, body: &str) -> TaskError {
         match status.as_u16() {
-            404 => TaskError::TaskNotFound(
-                body.to_string(),
-            ),
-            401 | 403 => TaskError::Authentication(
-                format!("GCP API authentication error ({}): {}", status, body),
-            ),
-            409 => TaskError::AlreadyExists(
-                body.to_string(),
-            ),
+            404 => TaskError::TaskNotFound(body.to_string()),
+            401 | 403 => TaskError::Authentication(format!(
+                "GCP API authentication error ({}): {}",
+                status, body
+            )),
+            409 => TaskError::AlreadyExists(body.to_string()),
             429 => TaskError::RateLimited(Duration::from_secs(60)),
-            500..=599 => TaskError::Backend(
-                format!("GCP API server error ({}): {}", status, body),
-            ),
-            _ => TaskError::Backend(
-                format!("GCP API error ({}): {}", status, body),
-            ),
+            500..=599 => TaskError::Backend(format!("GCP API server error ({}): {}", status, body)),
+            _ => TaskError::Backend(format!("GCP API error ({}): {}", status, body)),
         }
     }
 
     /// Send a task creation request to Cloud Tasks API
-    async fn create_task(
-        &self,
-        queue: &str,
-        request: &CreateTaskRequest,
-    ) -> Result<(), TaskError> {
+    async fn create_task(&self, queue: &str, request: &CreateTaskRequest) -> Result<(), TaskError> {
         let client = self.client.read().await;
         let client = client.as_ref().ok_or(TaskError::NotConnected)?;
 
@@ -751,9 +717,7 @@ impl PushBroker for CloudTasksBroker {
         if let Some(ref expected_email) = self.config.service_account_email {
             let auth_header = headers
                 .get("authorization")
-                .ok_or_else(|| {
-                    TaskError::Authentication("Missing Authorization header".into())
-                })?;
+                .ok_or_else(|| TaskError::Authentication("Missing Authorization header".into()))?;
 
             if !auth_header.starts_with("Bearer ") {
                 return Err(TaskError::Authentication(
@@ -766,8 +730,8 @@ impl PushBroker for CloudTasksBroker {
         }
 
         // Parse the task message
-        let payload: TaskMessage = serde_json::from_slice(body)
-            .map_err(|e| TaskError::Deserialization(e.to_string()))?;
+        let payload: TaskMessage =
+            serde_json::from_slice(body).map_err(|e| TaskError::Deserialization(e.to_string()))?;
 
         // Extract delivery info from Cloud Tasks headers
         let delivery_tag = headers
@@ -804,8 +768,8 @@ impl DelayedBroker for CloudTasksBroker {
     ) -> Result<(), TaskError> {
         // Clamp delay to Cloud Tasks maximum (30 days)
         let clamped = delay.min(Duration::from_secs(MAX_DELAY_SECS));
-        let schedule_time = Utc::now() + chrono::Duration::from_std(clamped)
-            .unwrap_or_else(|_| chrono::Duration::zero());
+        let schedule_time = Utc::now()
+            + chrono::Duration::from_std(clamped).unwrap_or_else(|_| chrono::Duration::zero());
 
         tracing::debug!(
             task_id = %message.id,
@@ -927,7 +891,10 @@ mod tests {
             oidc_audience: Some("https://custom-audience.example.com".to_string()),
             ..test_config()
         };
-        assert_eq!(cfg.effective_audience(), "https://custom-audience.example.com");
+        assert_eq!(
+            cfg.effective_audience(),
+            "https://custom-audience.example.com"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -939,7 +906,10 @@ mod tests {
         let cache = OidcTokenCache::new();
         assert!(cache.access_token.is_none());
         assert!(cache.expires_at.is_none());
-        assert!(!cache.is_valid(), "Fresh cache with no token should be invalid");
+        assert!(
+            !cache.is_valid(),
+            "Fresh cache with no token should be invalid"
+        );
     }
 
     #[test]
@@ -980,7 +950,10 @@ mod tests {
             access_token: None,
             expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
         };
-        assert!(!cache.is_valid(), "Cache without access_token should be invalid");
+        assert!(
+            !cache.is_valid(),
+            "Cache without access_token should be invalid"
+        );
     }
 
     #[test]
@@ -989,7 +962,10 @@ mod tests {
             access_token: Some("token-abc".to_string()),
             expires_at: None,
         };
-        assert!(!cache.is_valid(), "Cache without expires_at should be invalid");
+        assert!(
+            !cache.is_valid(),
+            "Cache without expires_at should be invalid"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1022,10 +998,15 @@ mod tests {
     fn test_build_create_task_request_immediate() {
         let broker = CloudTasksBroker::new(test_config());
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
         // HTTP request fields
-        assert_eq!(req.task.http_request.url, "https://app.example.com/meteor/push/default");
+        assert_eq!(
+            req.task.http_request.url,
+            "https://app.example.com/meteor/push/default"
+        );
         assert_eq!(req.task.http_request.http_method, "POST");
         assert_eq!(
             req.task.http_request.headers.get("Content-Type").unwrap(),
@@ -1054,11 +1035,20 @@ mod tests {
     fn test_build_create_task_request_has_oidc_token() {
         let broker = CloudTasksBroker::new(test_config());
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
-        let oidc = req.task.http_request.oidc_token.as_ref()
+        let oidc = req
+            .task
+            .http_request
+            .oidc_token
+            .as_ref()
             .expect("OIDC token should be present when service_account_email is set");
-        assert_eq!(oidc.service_account_email, "sa@my-project.iam.gserviceaccount.com");
+        assert_eq!(
+            oidc.service_account_email,
+            "sa@my-project.iam.gserviceaccount.com"
+        );
         assert_eq!(
             oidc.audience.as_deref(),
             Some("https://app.example.com"),
@@ -1070,7 +1060,9 @@ mod tests {
     fn test_build_create_task_request_no_oidc_without_service_account() {
         let broker = CloudTasksBroker::new(test_config_no_sa());
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
         assert!(
             req.task.http_request.oidc_token.is_none(),
@@ -1086,10 +1078,15 @@ mod tests {
         };
         let broker = CloudTasksBroker::new(cfg);
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
         let oidc = req.task.http_request.oidc_token.as_ref().unwrap();
-        assert_eq!(oidc.audience.as_deref(), Some("https://custom-aud.example.com"));
+        assert_eq!(
+            oidc.audience.as_deref(),
+            Some("https://custom-aud.example.com")
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1106,7 +1103,9 @@ mod tests {
             .build_create_task_request("default", &msg, Some(schedule))
             .unwrap();
 
-        let sched_str = req.task.schedule_time
+        let sched_str = req
+            .task
+            .schedule_time
             .as_ref()
             .expect("schedule_time should be present for delayed publish");
 
@@ -1126,7 +1125,9 @@ mod tests {
         };
         let broker = CloudTasksBroker::new(cfg);
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
         assert_eq!(req.task.dispatch_deadline.as_deref(), Some("300s"));
     }
@@ -1137,10 +1138,8 @@ mod tests {
 
     #[test]
     fn test_map_gcp_error_404_to_task_not_found() {
-        let err = CloudTasksBroker::map_gcp_error(
-            reqwest::StatusCode::NOT_FOUND,
-            "Queue not found",
-        );
+        let err =
+            CloudTasksBroker::map_gcp_error(reqwest::StatusCode::NOT_FOUND, "Queue not found");
         match err {
             TaskError::TaskNotFound(msg) => assert!(msg.contains("Queue not found")),
             other => panic!("Expected TaskNotFound, got: {:?}", other),
@@ -1164,10 +1163,8 @@ mod tests {
 
     #[test]
     fn test_map_gcp_error_403_to_authentication() {
-        let err = CloudTasksBroker::map_gcp_error(
-            reqwest::StatusCode::FORBIDDEN,
-            "Permission denied",
-        );
+        let err =
+            CloudTasksBroker::map_gcp_error(reqwest::StatusCode::FORBIDDEN, "Permission denied");
         match err {
             TaskError::Authentication(msg) => {
                 assert!(msg.contains("403"));
@@ -1179,10 +1176,8 @@ mod tests {
 
     #[test]
     fn test_map_gcp_error_409_to_already_exists() {
-        let err = CloudTasksBroker::map_gcp_error(
-            reqwest::StatusCode::CONFLICT,
-            "Task already exists",
-        );
+        let err =
+            CloudTasksBroker::map_gcp_error(reqwest::StatusCode::CONFLICT, "Task already exists");
         match err {
             TaskError::AlreadyExists(msg) => assert!(msg.contains("Task already exists")),
             other => panic!("Expected AlreadyExists, got: {:?}", other),
@@ -1234,10 +1229,7 @@ mod tests {
 
     #[test]
     fn test_map_gcp_error_unknown_status_to_backend() {
-        let err = CloudTasksBroker::map_gcp_error(
-            reqwest::StatusCode::IM_A_TEAPOT,
-            "I'm a teapot",
-        );
+        let err = CloudTasksBroker::map_gcp_error(reqwest::StatusCode::IM_A_TEAPOT, "I'm a teapot");
         match err {
             TaskError::Backend(msg) => {
                 assert!(msg.contains("418"));
@@ -1266,13 +1258,28 @@ mod tests {
         let task = json_val.get("task").expect("should have 'task' field");
 
         // camelCase field names
-        assert!(task.get("httpRequest").is_some(), "should use camelCase 'httpRequest'");
-        assert!(task.get("scheduleTime").is_some(), "should use camelCase 'scheduleTime'");
-        assert!(task.get("dispatchDeadline").is_some(), "should use camelCase 'dispatchDeadline'");
+        assert!(
+            task.get("httpRequest").is_some(),
+            "should use camelCase 'httpRequest'"
+        );
+        assert!(
+            task.get("scheduleTime").is_some(),
+            "should use camelCase 'scheduleTime'"
+        );
+        assert!(
+            task.get("dispatchDeadline").is_some(),
+            "should use camelCase 'dispatchDeadline'"
+        );
 
         let http_req = task.get("httpRequest").unwrap();
-        assert!(http_req.get("httpMethod").is_some(), "should use camelCase 'httpMethod'");
-        assert!(http_req.get("oidcToken").is_some(), "should use camelCase 'oidcToken'");
+        assert!(
+            http_req.get("httpMethod").is_some(),
+            "should use camelCase 'httpMethod'"
+        );
+        assert!(
+            http_req.get("oidcToken").is_some(),
+            "should use camelCase 'oidcToken'"
+        );
 
         let oidc = http_req.get("oidcToken").unwrap();
         assert!(
@@ -1285,7 +1292,9 @@ mod tests {
     fn test_create_task_request_omits_null_schedule_time() {
         let broker = CloudTasksBroker::new(test_config());
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
         let json_val = serde_json::to_value(&req).unwrap();
         let task = json_val.get("task").unwrap();
@@ -1300,7 +1309,9 @@ mod tests {
     fn test_create_task_request_omits_oidc_when_no_service_account() {
         let broker = CloudTasksBroker::new(test_config_no_sa());
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
         let json_val = serde_json::to_value(&req).unwrap();
         let http_req = json_val["task"]["httpRequest"].as_object().unwrap();
@@ -1329,7 +1340,10 @@ mod tests {
         assert_eq!(result.delivery_tag, "task-123");
         assert_eq!(result.payload.task_name, "compute.sum");
         assert!(!result.redelivered);
-        assert_eq!(result.headers.get("x-cloudtasks-taskname").unwrap(), "task-123");
+        assert_eq!(
+            result.headers.get("x-cloudtasks-taskname").unwrap(),
+            "task-123"
+        );
     }
 
     #[test]
@@ -1339,7 +1353,10 @@ mod tests {
         let body = serde_json::to_vec(&msg).unwrap();
 
         let mut headers = HashMap::new();
-        headers.insert("x-cloudtasks-taskname".to_string(), "task-retry".to_string());
+        headers.insert(
+            "x-cloudtasks-taskname".to_string(),
+            "task-retry".to_string(),
+        );
         headers.insert("x-cloudtasks-taskretrycount".to_string(), "3".to_string());
 
         let result = broker.parse_push_request(&headers, &body).unwrap();
@@ -1367,11 +1384,17 @@ mod tests {
         let body = serde_json::to_vec(&msg).unwrap();
 
         let mut headers = HashMap::new();
-        headers.insert("x-cloudtasks-taskname".to_string(), "task-no-retry".to_string());
+        headers.insert(
+            "x-cloudtasks-taskname".to_string(),
+            "task-no-retry".to_string(),
+        );
         // No x-cloudtasks-taskretrycount header
 
         let result = broker.parse_push_request(&headers, &body).unwrap();
-        assert!(!result.redelivered, "Missing retry count header should default to 0 (not redelivered)");
+        assert!(
+            !result.redelivered,
+            "Missing retry count header should default to 0 (not redelivered)"
+        );
     }
 
     #[test]
@@ -1433,7 +1456,10 @@ mod tests {
             Err(TaskError::Authentication(msg)) => {
                 assert!(msg.contains("Invalid Authorization header format"));
             }
-            other => panic!("Expected Authentication error for non-Bearer, got: {:?}", other),
+            other => panic!(
+                "Expected Authentication error for non-Bearer, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1451,7 +1477,10 @@ mod tests {
 
         let mut headers = HashMap::new();
         headers.insert("authorization".to_string(), format!("Bearer {}", jwt_token));
-        headers.insert("x-cloudtasks-taskname".to_string(), "valid-task".to_string());
+        headers.insert(
+            "x-cloudtasks-taskname".to_string(),
+            "valid-task".to_string(),
+        );
 
         let result = broker.parse_push_request(&headers, &body);
         assert!(result.is_ok(), "Valid Bearer token should pass");
@@ -1466,7 +1495,10 @@ mod tests {
 
         // No Authorization header, but no service_account_email configured either
         let result = broker.parse_push_request(&HashMap::new(), &body);
-        assert!(result.is_ok(), "Auth check should be skipped when service_account_email is None");
+        assert!(
+            result.is_ok(),
+            "Auth check should be skipped when service_account_email is None"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1622,7 +1654,9 @@ mod tests {
     async fn test_create_task_not_connected_returns_error() {
         let broker = CloudTasksBroker::new(test_config());
         // Don't call connect() — client is None
-        let req = broker.build_create_task_request("default", &sample_message(), None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &sample_message(), None)
+            .unwrap();
         let result = broker.create_task("default", &req).await;
         match result {
             Err(TaskError::NotConnected) => {} // expected
@@ -1657,9 +1691,15 @@ mod tests {
     #[tokio::test]
     async fn test_new_broker_starts_disconnected() {
         let broker = CloudTasksBroker::new(test_config());
-        assert!(broker.client.read().await.is_none(), "New broker should not have an HTTP client");
+        assert!(
+            broker.client.read().await.is_none(),
+            "New broker should not have an HTTP client"
+        );
         let cache = broker.token_cache.read().await;
-        assert!(!cache.is_valid(), "New broker should have empty token cache");
+        assert!(
+            !cache.is_valid(),
+            "New broker should have empty token cache"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1800,7 +1840,10 @@ mod tests {
             Err(TaskError::Authentication(msg)) => {
                 assert!(msg.contains("Failed to read service account key file"));
             }
-            other => panic!("Expected Authentication error for bad path, got: {:?}", other),
+            other => panic!(
+                "Expected Authentication error for bad path, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1816,15 +1859,15 @@ mod tests {
             "https://app.example.com",
             Utc::now().timestamp() + 3600,
         );
-        let result = broker.validate_inbound_jwt(
-            &jwt,
-            "sa@my-project.iam.gserviceaccount.com",
-        );
+        let result = broker.validate_inbound_jwt(&jwt, "sa@my-project.iam.gserviceaccount.com");
         match result {
             Err(TaskError::Authentication(msg)) => {
                 assert!(msg.contains("email mismatch"), "Got: {}", msg);
             }
-            other => panic!("Expected Authentication error for email mismatch, got: {:?}", other),
+            other => panic!(
+                "Expected Authentication error for email mismatch, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1836,15 +1879,15 @@ mod tests {
             "https://wrong-audience.example.com",
             Utc::now().timestamp() + 3600,
         );
-        let result = broker.validate_inbound_jwt(
-            &jwt,
-            "sa@my-project.iam.gserviceaccount.com",
-        );
+        let result = broker.validate_inbound_jwt(&jwt, "sa@my-project.iam.gserviceaccount.com");
         match result {
             Err(TaskError::Authentication(msg)) => {
                 assert!(msg.contains("audience mismatch"), "Got: {}", msg);
             }
-            other => panic!("Expected Authentication error for audience mismatch, got: {:?}", other),
+            other => panic!(
+                "Expected Authentication error for audience mismatch, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1856,40 +1899,39 @@ mod tests {
             "https://app.example.com",
             Utc::now().timestamp() - 3600, // expired 1 hour ago
         );
-        let result = broker.validate_inbound_jwt(
-            &jwt,
-            "sa@my-project.iam.gserviceaccount.com",
-        );
+        let result = broker.validate_inbound_jwt(&jwt, "sa@my-project.iam.gserviceaccount.com");
         match result {
             Err(TaskError::Authentication(msg)) => {
                 assert!(msg.contains("expired"), "Got: {}", msg);
             }
-            other => panic!("Expected Authentication error for expired token, got: {:?}", other),
+            other => panic!(
+                "Expected Authentication error for expired token, got: {:?}",
+                other
+            ),
         }
     }
 
     #[test]
     fn test_validate_inbound_jwt_malformed_token() {
         let broker = CloudTasksBroker::new(test_config());
-        let result = broker.validate_inbound_jwt(
-            "not.a.valid-jwt",
-            "sa@my-project.iam.gserviceaccount.com",
-        );
+        let result =
+            broker.validate_inbound_jwt("not.a.valid-jwt", "sa@my-project.iam.gserviceaccount.com");
         assert!(result.is_err(), "Malformed JWT should fail validation");
     }
 
     #[test]
     fn test_validate_inbound_jwt_wrong_segment_count() {
         let broker = CloudTasksBroker::new(test_config());
-        let result = broker.validate_inbound_jwt(
-            "only-one-segment",
-            "sa@my-project.iam.gserviceaccount.com",
-        );
+        let result = broker
+            .validate_inbound_jwt("only-one-segment", "sa@my-project.iam.gserviceaccount.com");
         match result {
             Err(TaskError::Authentication(msg)) => {
                 assert!(msg.contains("expected 3 segments"), "Got: {}", msg);
             }
-            other => panic!("Expected Authentication error for wrong segments, got: {:?}", other),
+            other => panic!(
+                "Expected Authentication error for wrong segments, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1901,10 +1943,7 @@ mod tests {
             "https://app.example.com",
             Utc::now().timestamp() + 3600,
         );
-        let result = broker.validate_inbound_jwt(
-            &jwt,
-            "sa@my-project.iam.gserviceaccount.com",
-        );
+        let result = broker.validate_inbound_jwt(&jwt, "sa@my-project.iam.gserviceaccount.com");
         assert!(result.is_ok(), "Valid JWT should pass validation");
     }
 
@@ -1921,10 +1960,7 @@ mod tests {
             r#"{"aud":"https://app.example.com","exp":9999999999}"#,
         );
         let jwt = format!("{}.{}.fake_sig", header, payload);
-        let result = broker.validate_inbound_jwt(
-            &jwt,
-            "sa@my-project.iam.gserviceaccount.com",
-        );
+        let result = broker.validate_inbound_jwt(&jwt, "sa@my-project.iam.gserviceaccount.com");
         match result {
             Err(TaskError::Authentication(msg)) => {
                 assert!(msg.contains("missing 'email' claim"), "Got: {}", msg);
@@ -1951,11 +1987,11 @@ mod tests {
             claims.to_string().as_bytes(),
         );
         let jwt = format!("{}.{}.fake_sig", header, payload);
-        let result = broker.validate_inbound_jwt(
-            &jwt,
-            "sa@my-project.iam.gserviceaccount.com",
+        let result = broker.validate_inbound_jwt(&jwt, "sa@my-project.iam.gserviceaccount.com");
+        assert!(
+            result.is_ok(),
+            "JWT with audience array containing expected aud should pass"
         );
-        assert!(result.is_ok(), "JWT with audience array containing expected aud should pass");
     }
 
     // -----------------------------------------------------------------------
@@ -1970,9 +2006,13 @@ mod tests {
         };
         let broker = CloudTasksBroker::new(cfg);
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
-        let retry_cfg = req.task.retry_config
+        let retry_cfg = req
+            .task
+            .retry_config
             .as_ref()
             .expect("retry_config should be present when max_retry_count is set");
         assert_eq!(retry_cfg.max_retry_count, Some(5));
@@ -1983,7 +2023,9 @@ mod tests {
         // Default test_config has max_retry_count: None
         let broker = CloudTasksBroker::new(test_config());
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
         assert!(
             req.task.retry_config.is_none(),
@@ -1999,12 +2041,15 @@ mod tests {
         };
         let broker = CloudTasksBroker::new(cfg);
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
         let json_val = serde_json::to_value(&req).unwrap();
         let task = json_val.get("task").unwrap();
 
-        let retry = task.get("retryConfig")
+        let retry = task
+            .get("retryConfig")
             .expect("should use camelCase 'retryConfig'");
         assert_eq!(
             retry.get("maxRetryCount").and_then(|v| v.as_u64()),
@@ -2017,7 +2062,9 @@ mod tests {
     fn test_retry_config_omitted_in_json_when_none() {
         let broker = CloudTasksBroker::new(test_config());
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
         let json_val = serde_json::to_value(&req).unwrap();
         let task = json_val.get("task").unwrap();
@@ -2037,9 +2084,14 @@ mod tests {
         };
         let broker = CloudTasksBroker::new(cfg);
         let msg = sample_message();
-        let req = broker.build_create_task_request("default", &msg, None).unwrap();
+        let req = broker
+            .build_create_task_request("default", &msg, None)
+            .unwrap();
 
-        let retry_cfg = req.task.retry_config.as_ref()
+        let retry_cfg = req
+            .task
+            .retry_config
+            .as_ref()
             .expect("retry_config should be present even with count=0");
         assert_eq!(retry_cfg.max_retry_count, Some(0));
     }

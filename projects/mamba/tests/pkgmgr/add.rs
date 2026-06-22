@@ -85,7 +85,10 @@ fn add_records_dep_in_manifest_and_lockfile() {
     );
 
     let lock = std::fs::read_to_string(tmp.path().join("mamba.lock")).unwrap();
-    assert!(lock.contains("name = \"frozen_demo_pkg\""), "lock name: {lock}");
+    assert!(
+        lock.contains("name = \"frozen_demo_pkg\""),
+        "lock name: {lock}"
+    );
     assert!(lock.contains("version = \"0.1.0\""), "lock version: {lock}");
     assert!(lock.contains("format_version = 1"), "lock fmt: {lock}");
     assert!(lock.contains("input_hash = "), "lock hash: {lock}");
@@ -170,11 +173,7 @@ fn add_resolves_against_frozen_index_when_version_omitted() {
     let index = frozen_index_with("frozen_demo_pkg", &["0.1.0", "0.2.0"]);
     let out = run_add(
         tmp.path(),
-        &[
-            "frozen_demo_pkg",
-            "--index",
-            index.path().to_str().unwrap(),
-        ],
+        &["frozen_demo_pkg", "--index", index.path().to_str().unwrap()],
     );
     assert!(out.status.success());
 
@@ -190,16 +189,12 @@ fn add_upserts_existing_dep_in_place() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(run_init(tmp.path()).status.success());
 
-    assert!(
-        run_add(tmp.path(), &["foo==1.0.0", "--offline"])
-            .status
-            .success()
-    );
-    assert!(
-        run_add(tmp.path(), &["foo==1.1.0", "--offline"])
-            .status
-            .success()
-    );
+    assert!(run_add(tmp.path(), &["foo==1.0.0", "--offline"])
+        .status
+        .success());
+    assert!(run_add(tmp.path(), &["foo==1.1.0", "--offline"])
+        .status
+        .success());
 
     let manifest = std::fs::read_to_string(tmp.path().join("mamba.toml")).unwrap();
     assert!(
@@ -336,7 +331,9 @@ fn add_prefers_native_wheel_over_purepy_via_tags() {
     } else {
         None
     };
-    let Some(native_filename) = native_filename else { return };
+    let Some(native_filename) = native_filename else {
+        return;
+    };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let (server_url, native_sha) = rt.block_on(async {

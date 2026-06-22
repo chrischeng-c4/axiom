@@ -1,18 +1,21 @@
+use super::super::dict_ops::DictKey;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// inspect module for Mamba (#438).
 ///
 /// Provides introspection utilities for examining live objects at runtime.
 /// Functions check object types and extract member information from instances.
 /// Some functions are stubs pending full closure/function object support.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::dict_ops::DictKey;
 
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -73,29 +76,39 @@ fn arg_items(args: MbValue) -> Vec<MbValue> {
             }
         }
     }
-    if args.is_none() { Vec::new() } else { vec![args] }
+    if args.is_none() {
+        Vec::new()
+    } else {
+        vec![args]
+    }
 }
 
 /// First positional argument of a packed args value.
 fn first_arg(args: MbValue) -> MbValue {
-    arg_items(args).first().copied().unwrap_or_else(MbValue::none)
+    arg_items(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none)
 }
 
 /// If the LAST item is a plain dict whose string keys are all in `allowed`
 /// (or `allowed` is empty, meaning any keys), pop it and return its entries
 /// as a name → value map (kwargs trailing-dict call convention).
-fn pop_trailing_kwargs(
-    items: &mut Vec<MbValue>,
-    allowed: &[&str],
-) -> Vec<(String, MbValue)> {
-    let Some(last) = items.last().copied() else { return Vec::new() };
-    let Some(ptr) = last.as_ptr() else { return Vec::new() };
+fn pop_trailing_kwargs(items: &mut Vec<MbValue>, allowed: &[&str]) -> Vec<(String, MbValue)> {
+    let Some(last) = items.last().copied() else {
+        return Vec::new();
+    };
+    let Some(ptr) = last.as_ptr() else {
+        return Vec::new();
+    };
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let map = lock.read().unwrap();
             let mut out: Vec<(String, MbValue)> = Vec::new();
             for (k, v) in map.iter() {
-                let DictKey::Str(s) = k else { return Vec::new() };
+                let DictKey::Str(s) = k else {
+                    return Vec::new();
+                };
                 if !allowed.is_empty() && !allowed.contains(&s.as_str()) {
                     return Vec::new();
                 }
@@ -215,9 +228,16 @@ fn classify_for_introspection(v: MbValue) -> Introspected {
     }
     if let Some(ptr) = v.as_ptr() {
         unsafe {
-            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
                 if class_name == "type" {
-                    if let Some(n) = fields.read().unwrap().get("__name__")
+                    if let Some(n) = fields
+                        .read()
+                        .unwrap()
+                        .get("__name__")
                         .copied()
                         .and_then(extract_str)
                     {
@@ -291,7 +311,10 @@ pub fn register() {
         ("getdoc", d_getdoc as *const () as usize),
         ("getcomments", d_none as *const () as usize),
         ("cleandoc", d_cleandoc as *const () as usize),
-        ("classify_class_attrs", d_classify_class_attrs as *const () as usize),
+        (
+            "classify_class_attrs",
+            d_classify_class_attrs as *const () as usize,
+        ),
         ("getattr_static", d_getattr_static as *const () as usize),
         ("isdatadescriptor", d_isdatadescriptor as *const () as usize),
         ("currentframe", d_currentframe as *const () as usize),
@@ -320,12 +343,18 @@ pub fn register() {
     // `inspect.Parameter.POSITIONAL_ONLY` / `.empty` resolve through
     // class-attribute lookup to the shared singletons.
     register_signature_classes();
-    attrs.insert("Parameter".to_string(),
-        MbValue::from_ptr(MbObject::new_str("inspect.Parameter".to_string())));
-    attrs.insert("Signature".to_string(),
-        MbValue::from_ptr(MbObject::new_str("inspect.Signature".to_string())));
-    attrs.insert("BoundArguments".to_string(),
-        MbValue::from_ptr(MbObject::new_str("inspect.BoundArguments".to_string())));
+    attrs.insert(
+        "Parameter".to_string(),
+        MbValue::from_ptr(MbObject::new_str("inspect.Parameter".to_string())),
+    );
+    attrs.insert(
+        "Signature".to_string(),
+        MbValue::from_ptr(MbObject::new_str("inspect.Signature".to_string())),
+    );
+    attrs.insert(
+        "BoundArguments".to_string(),
+        MbValue::from_ptr(MbObject::new_str("inspect.BoundArguments".to_string())),
+    );
     attrs.insert("FullArgSpec".to_string(), make_empty_class("FullArgSpec"));
     attrs.insert("ArgSpec".to_string(), make_empty_class("ArgSpec"));
     attrs.insert("ArgInfo".to_string(), make_empty_class("ArgInfo"));
@@ -354,27 +383,71 @@ pub fn register() {
         attrs.insert((*name).to_string(), MbValue::from_int(*val));
     }
 
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("AGEN_CLOSED".into(), MbValue::from_ptr(MbObject::new_str("AGEN_CLOSED".to_string())));
-    attrs.insert("AGEN_CREATED".into(), MbValue::from_ptr(MbObject::new_str("AGEN_CREATED".to_string())));
-    attrs.insert("AGEN_RUNNING".into(), MbValue::from_ptr(MbObject::new_str("AGEN_RUNNING".to_string())));
-    attrs.insert("AGEN_SUSPENDED".into(), MbValue::from_ptr(MbObject::new_str("AGEN_SUSPENDED".to_string())));
-    attrs.insert("CORO_CLOSED".into(), MbValue::from_ptr(MbObject::new_str("CORO_CLOSED".to_string())));
-    attrs.insert("CORO_CREATED".into(), MbValue::from_ptr(MbObject::new_str("CORO_CREATED".to_string())));
-    attrs.insert("CORO_RUNNING".into(), MbValue::from_ptr(MbObject::new_str("CORO_RUNNING".to_string())));
-    attrs.insert("CORO_SUSPENDED".into(), MbValue::from_ptr(MbObject::new_str("CORO_SUSPENDED".to_string())));
-    attrs.insert("GEN_CLOSED".into(), MbValue::from_ptr(MbObject::new_str("GEN_CLOSED".to_string())));
-    attrs.insert("GEN_CREATED".into(), MbValue::from_ptr(MbObject::new_str("GEN_CREATED".to_string())));
-    attrs.insert("GEN_RUNNING".into(), MbValue::from_ptr(MbObject::new_str("GEN_RUNNING".to_string())));
-    attrs.insert("GEN_SUSPENDED".into(), MbValue::from_ptr(MbObject::new_str("GEN_SUSPENDED".to_string())));
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "AGEN_CLOSED".into(),
+        MbValue::from_ptr(MbObject::new_str("AGEN_CLOSED".to_string())),
+    );
+    attrs.insert(
+        "AGEN_CREATED".into(),
+        MbValue::from_ptr(MbObject::new_str("AGEN_CREATED".to_string())),
+    );
+    attrs.insert(
+        "AGEN_RUNNING".into(),
+        MbValue::from_ptr(MbObject::new_str("AGEN_RUNNING".to_string())),
+    );
+    attrs.insert(
+        "AGEN_SUSPENDED".into(),
+        MbValue::from_ptr(MbObject::new_str("AGEN_SUSPENDED".to_string())),
+    );
+    attrs.insert(
+        "CORO_CLOSED".into(),
+        MbValue::from_ptr(MbObject::new_str("CORO_CLOSED".to_string())),
+    );
+    attrs.insert(
+        "CORO_CREATED".into(),
+        MbValue::from_ptr(MbObject::new_str("CORO_CREATED".to_string())),
+    );
+    attrs.insert(
+        "CORO_RUNNING".into(),
+        MbValue::from_ptr(MbObject::new_str("CORO_RUNNING".to_string())),
+    );
+    attrs.insert(
+        "CORO_SUSPENDED".into(),
+        MbValue::from_ptr(MbObject::new_str("CORO_SUSPENDED".to_string())),
+    );
+    attrs.insert(
+        "GEN_CLOSED".into(),
+        MbValue::from_ptr(MbObject::new_str("GEN_CLOSED".to_string())),
+    );
+    attrs.insert(
+        "GEN_CREATED".into(),
+        MbValue::from_ptr(MbObject::new_str("GEN_CREATED".to_string())),
+    );
+    attrs.insert(
+        "GEN_RUNNING".into(),
+        MbValue::from_ptr(MbObject::new_str("GEN_RUNNING".to_string())),
+    );
+    attrs.insert(
+        "GEN_SUSPENDED".into(),
+        MbValue::from_ptr(MbObject::new_str("GEN_SUSPENDED".to_string())),
+    );
     attrs.insert("TPFLAGS_IS_ABSTRACT".into(), MbValue::from_int(1048576));
 
     // ── surface: missing CPython 3.12 public names (auto-added) ──
     // Predicate functions (is*): callable, return False for arbitrary objects.
     let predicate_fns: &[&str] = &[
-        "isabstract", "isasyncgen", "iscode", "iscoroutine",
-        "isframe", "isgenerator", "isgetsetdescriptor", "iskeyword",
-        "ismemberdescriptor", "ismethoddescriptor", "ismethodwrapper",
+        "isabstract",
+        "isasyncgen",
+        "iscode",
+        "iscoroutine",
+        "isframe",
+        "isgenerator",
+        "isgetsetdescriptor",
+        "iskeyword",
+        "ismemberdescriptor",
+        "ismethoddescriptor",
+        "ismethodwrapper",
         "istraceback",
     ];
     for name in predicate_fns {
@@ -387,13 +460,27 @@ pub fn register() {
 
     // Non-predicate functions: callable, return None placeholder.
     let plain_fns: &[&str] = &[
-        "findsource", "formatannotation",
-        "formatannotationrelativeto", "get_annotations", "getabsfile",
-        "getargs", "getasyncgenlocals", "getasyncgenstate",
-        "getblock", "getcallargs", "getcoroutinelocals",
-        "getcoroutinestate", "getgeneratorlocals",
-        "getgeneratorstate", "getlineno", "getmembers_static", "getmodulename",
-        "indentsize", "markcoroutinefunction", "namedtuple", "walktree",
+        "findsource",
+        "formatannotation",
+        "formatannotationrelativeto",
+        "get_annotations",
+        "getabsfile",
+        "getargs",
+        "getasyncgenlocals",
+        "getasyncgenstate",
+        "getblock",
+        "getcallargs",
+        "getcoroutinelocals",
+        "getcoroutinestate",
+        "getgeneratorlocals",
+        "getgeneratorstate",
+        "getlineno",
+        "getmembers_static",
+        "getmodulename",
+        "indentsize",
+        "markcoroutinefunction",
+        "namedtuple",
+        "walktree",
     ];
     for name in plain_fns {
         let addr = d_none as *const () as usize;
@@ -419,9 +506,18 @@ pub fn register() {
 
     // Classes / type-like names: minimal present+callable stubs.
     for name in &[
-        "Arguments", "Attribute", "BlockFinder", "BufferFlags",
-        "ClassFoundException", "ClosureVars", "EndOfBlock", "FrameInfo",
-        "OrderedDict", "Traceback", "attrgetter", "make_weakref",
+        "Arguments",
+        "Attribute",
+        "BlockFinder",
+        "BufferFlags",
+        "ClassFoundException",
+        "ClosureVars",
+        "EndOfBlock",
+        "FrameInfo",
+        "OrderedDict",
+        "Traceback",
+        "attrgetter",
+        "make_weakref",
     ] {
         attrs.insert((*name).to_string(), make_empty_class(*name));
     }
@@ -429,15 +525,31 @@ pub fn register() {
     // Submodule references CPython's inspect re-exports. Surface fixtures only
     // assert presence (hasattr); represent as minimal named stubs.
     for name in &[
-        "abc", "ast", "builtins", "collections", "dis", "enum", "functools",
-        "importlib", "itertools", "linecache", "os", "re", "sys", "token",
-        "tokenize", "types",
+        "abc",
+        "ast",
+        "builtins",
+        "collections",
+        "dis",
+        "enum",
+        "functools",
+        "importlib",
+        "itertools",
+        "linecache",
+        "os",
+        "re",
+        "sys",
+        "token",
+        "tokenize",
+        "types",
     ] {
         attrs.insert((*name).to_string(), make_empty_class(*name));
     }
 
     // modulesbyfile: CPython exposes an (empty) cache dict.
-    attrs.insert("modulesbyfile".into(), MbValue::from_ptr(MbObject::new_dict()));
+    attrs.insert(
+        "modulesbyfile".into(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
 
     super::register_module("inspect", attrs);
 }
@@ -566,7 +678,11 @@ unsafe extern "C" fn d_getmro(args_ptr: *const MbValue, nargs: usize) -> MbValue
             MbValue::from_ptr(MbObject::new_tuple(items))
         }
         _ => {
-            let label = if v.as_int().is_some() { "int" } else { "object" };
+            let label = if v.as_int().is_some() {
+                "int"
+            } else {
+                "object"
+            };
             raise_exc(
                 "AttributeError",
                 &format!("'{label}' object has no attribute '__mro__'"),
@@ -697,9 +813,7 @@ unsafe extern "C" fn d_getdoc(args_ptr: *const MbValue, nargs: usize) -> MbValue
             for ancestor in super::super::class::class_mro_list(&cls).iter().skip(1) {
                 let m = super::super::class::lookup_method(ancestor, &mname);
                 if !m.is_none() {
-                    if let Some(s) =
-                        extract_str(super::super::closure::mb_func_get_doc(m))
-                    {
+                    if let Some(s) = extract_str(super::super::closure::mb_func_get_doc(m)) {
                         return clean(s);
                     }
                 }
@@ -779,9 +893,16 @@ unsafe extern "C" fn d_classify_class_attrs(args_ptr: *const MbValue, nargs: usi
             let inst = MbObject::new_instance("Attribute".to_string());
             let av = MbValue::from_ptr(inst);
             inst_set_field(av, "name", MbValue::from_ptr(MbObject::new_str(attr)));
-            inst_set_field(av, "kind", MbValue::from_ptr(MbObject::new_str(kind.to_string())));
-            inst_set_field(av, "defining_class",
-                MbValue::from_ptr(MbObject::new_str(cn.clone())));
+            inst_set_field(
+                av,
+                "kind",
+                MbValue::from_ptr(MbObject::new_str(kind.to_string())),
+            );
+            inst_set_field(
+                av,
+                "defining_class",
+                MbValue::from_ptr(MbObject::new_str(cn.clone())),
+            );
             inst_set_field(av, "object", value);
             out.push(av);
         }
@@ -794,9 +915,16 @@ unsafe extern "C" fn d_classify_class_attrs(args_ptr: *const MbValue, nargs: usi
             let av = MbValue::from_ptr(inst);
             let desc = super::super::class::make_member_descriptor(cn, &slot);
             inst_set_field(av, "name", MbValue::from_ptr(MbObject::new_str(slot)));
-            inst_set_field(av, "kind", MbValue::from_ptr(MbObject::new_str("data".to_string())));
-            inst_set_field(av, "defining_class",
-                MbValue::from_ptr(MbObject::new_str(cn.clone())));
+            inst_set_field(
+                av,
+                "kind",
+                MbValue::from_ptr(MbObject::new_str("data".to_string())),
+            );
+            inst_set_field(
+                av,
+                "defining_class",
+                MbValue::from_ptr(MbObject::new_str(cn.clone())),
+            );
             inst_set_field(av, "object", desc);
             out.push(av);
         }
@@ -827,9 +955,8 @@ unsafe extern "C" fn d_getattr_static(args_ptr: *const MbValue, nargs: usize) ->
     };
     let default = a.get(2).copied();
 
-    let cls_name: Option<String> = inst_class_name(obj).or_else(|| {
-        extract_str(obj).filter(|s| super::super::class::class_is_registered(s))
-    });
+    let cls_name: Option<String> = inst_class_name(obj)
+        .or_else(|| extract_str(obj).filter(|s| super::super::class::class_is_registered(s)));
 
     if let Some(cn) = &cls_name {
         let mut mro = super::super::class::class_mro_list(cn);
@@ -839,7 +966,10 @@ unsafe extern "C" fn d_getattr_static(args_ptr: *const MbValue, nargs: usize) ->
         // 1. __slots__ entries → member descriptor (data descriptors beat
         //    everything else).
         for c in &mro {
-            if super::super::class::class_slot_names(c).iter().any(|n| n == &name) {
+            if super::super::class::class_slot_names(c)
+                .iter()
+                .any(|n| n == &name)
+            {
                 return super::super::class::make_member_descriptor(c, &name);
             }
         }
@@ -931,10 +1061,14 @@ fn make_empty_class(name: &str) -> MbValue {
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
             let mut g = fields.write().unwrap();
-            g.insert("__name__".to_string(),
-                MbValue::from_ptr(MbObject::new_str(name.to_string())));
-            g.insert("__module__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("inspect".to_string())));
+            g.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name.to_string())),
+            );
+            g.insert(
+                "__module__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("inspect".to_string())),
+            );
         }
     }
     MbValue::from_ptr(inst)
@@ -956,7 +1090,11 @@ pub fn mb_inspect_isfunction(obj: MbValue) -> MbValue {
     // distinct from functions.
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
-            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
                 if class_name == "type" {
                     return MbValue::from_bool(false);
                 }
@@ -987,9 +1125,7 @@ pub fn mb_inspect_isclass(obj: MbValue) -> MbValue {
         if super::super::class::class_is_registered(&s) {
             return MbValue::from_bool(true);
         }
-        let is_class = s.chars().next()
-            .map(|c| c.is_uppercase())
-            .unwrap_or(false);
+        let is_class = s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
         return MbValue::from_bool(is_class);
     }
     MbValue::from_bool(false)
@@ -1015,12 +1151,8 @@ pub fn mb_inspect_getmembers(obj: MbValue) -> MbValue {
                     let fields = fields.read().unwrap();
                     let mut members = Vec::new();
                     for (name, value) in fields.iter() {
-                        let name_val = MbValue::from_ptr(
-                            MbObject::new_str(name.clone()),
-                        );
-                        let tuple = MbValue::from_ptr(
-                            MbObject::new_tuple(vec![name_val, *value]),
-                        );
+                        let name_val = MbValue::from_ptr(MbObject::new_str(name.clone()));
+                        let tuple = MbValue::from_ptr(MbObject::new_tuple(vec![name_val, *value]));
                         members.push(tuple);
                     }
                     MbValue::from_ptr(MbObject::new_list(members))
@@ -1029,12 +1161,8 @@ pub fn mb_inspect_getmembers(obj: MbValue) -> MbValue {
                     let map = lock.read().unwrap();
                     let mut members = Vec::new();
                     for (name, value) in map.iter() {
-                        let name_val = MbValue::from_ptr(
-                            MbObject::new_str(name.to_string()),
-                        );
-                        let tuple = MbValue::from_ptr(
-                            MbObject::new_tuple(vec![name_val, *value]),
-                        );
+                        let name_val = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+                        let tuple = MbValue::from_ptr(MbObject::new_tuple(vec![name_val, *value]));
                         members.push(tuple);
                     }
                     MbValue::from_ptr(MbObject::new_list(members))
@@ -1136,7 +1264,9 @@ fn register_signature_classes() {
 // ── _ParameterKind methods ──
 
 fn pk_value(slf: MbValue) -> i64 {
-    inst_field(slf, "_value").and_then(|v| v.as_int()).unwrap_or(0)
+    inst_field(slf, "_value")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0)
 }
 
 unsafe extern "C" fn pk_str(slf: MbValue, _args: MbValue) -> MbValue {
@@ -1144,9 +1274,13 @@ unsafe extern "C" fn pk_str(slf: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn pk_repr(slf: MbValue, _args: MbValue) -> MbValue {
-    let name = inst_field(slf, "_name").and_then(extract_str).unwrap_or_default();
+    let name = inst_field(slf, "_name")
+        .and_then(extract_str)
+        .unwrap_or_default();
     MbValue::from_ptr(MbObject::new_str(format!(
-        "<_ParameterKind.{}: {}>", name, pk_value(slf)
+        "<_ParameterKind.{}: {}>",
+        name,
+        pk_value(slf)
     )))
 }
 
@@ -1200,12 +1334,20 @@ fn make_parameter(
 ) -> MbValue {
     let inst = MbObject::new_instance("inspect.Parameter".to_string());
     let v = MbValue::from_ptr(inst);
-    inst_set_field(v, "name", MbValue::from_ptr(MbObject::new_str(name.to_string())));
+    inst_set_field(
+        v,
+        "name",
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
     inst_set_field(v, "kind", kind_singleton(kind));
     inst_set_field(v, "default", default);
     inst_set_field(v, "annotation", annotation);
     if let Some(a) = anno_str {
-        inst_set_field(v, "_anno_str", MbValue::from_ptr(MbObject::new_str(a.to_string())));
+        inst_set_field(
+            v,
+            "_anno_str",
+            MbValue::from_ptr(MbObject::new_str(a.to_string())),
+        );
     }
     v
 }
@@ -1308,7 +1450,11 @@ fn param_equal(a: MbValue, b: MbValue) -> bool {
     if inst_class_name(b).as_deref() != Some("inspect.Parameter") {
         return false;
     }
-    let fname = |o: MbValue| inst_field(o, "name").and_then(extract_str).unwrap_or_default();
+    let fname = |o: MbValue| {
+        inst_field(o, "name")
+            .and_then(extract_str)
+            .unwrap_or_default()
+    };
     let fkind = |o: MbValue| inst_field(o, "kind").and_then(kind_value).unwrap_or(1);
     if fname(a) != fname(b) || fkind(a) != fkind(b) {
         return false;
@@ -1347,9 +1493,22 @@ fn param_hash_value(p: MbValue) -> i64 {
             h = h.wrapping_mul(1099511628211);
         }
     };
-    fold(&inst_field(p, "name").and_then(extract_str).unwrap_or_default());
-    fold(&inst_field(p, "kind").and_then(kind_value).unwrap_or(1).to_string());
-    fold(&inst_field(p, "_anno_str").and_then(extract_str).unwrap_or_default());
+    fold(
+        &inst_field(p, "name")
+            .and_then(extract_str)
+            .unwrap_or_default(),
+    );
+    fold(
+        &inst_field(p, "kind")
+            .and_then(kind_value)
+            .unwrap_or(1)
+            .to_string(),
+    );
+    fold(
+        &inst_field(p, "_anno_str")
+            .and_then(extract_str)
+            .unwrap_or_default(),
+    );
     let has_default = inst_field(p, "default")
         .map(|d| !is_empty_sentinel(d))
         .unwrap_or(false);
@@ -1363,18 +1522,22 @@ unsafe extern "C" fn p_hash(slf: MbValue, _args: MbValue) -> MbValue {
 
 /// Render one parameter the way CPython str(Parameter) does.
 fn param_render(p: MbValue) -> String {
-    let name = inst_field(p, "name").and_then(extract_str).unwrap_or_default();
+    let name = inst_field(p, "name")
+        .and_then(extract_str)
+        .unwrap_or_default();
     let kind = inst_field(p, "kind").and_then(kind_value).unwrap_or(1);
     let mut out = match kind {
         2 => format!("*{name}"),
         4 => format!("**{name}"),
         _ => name,
     };
-    let anno = inst_field(p, "_anno_str").and_then(extract_str).or_else(|| {
-        inst_field(p, "annotation")
-            .filter(|a| !is_empty_sentinel(*a) && !a.is_none())
-            .map(repr_str)
-    });
+    let anno = inst_field(p, "_anno_str")
+        .and_then(extract_str)
+        .or_else(|| {
+            inst_field(p, "annotation")
+                .filter(|a| !is_empty_sentinel(*a) && !a.is_none())
+                .map(repr_str)
+        });
     if let Some(a) = &anno {
         out.push_str(": ");
         out.push_str(a);
@@ -1398,7 +1561,8 @@ unsafe extern "C" fn p_str(slf: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn p_repr(slf: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(format!(
-        "<Parameter \"{}\">", param_render(slf)
+        "<Parameter \"{}\">",
+        param_render(slf)
     )))
 }
 
@@ -1406,8 +1570,12 @@ unsafe extern "C" fn p_repr(slf: MbValue, _args: MbValue) -> MbValue {
 
 /// Ordered Parameter instances of a Signature.
 fn signature_params(sig: MbValue) -> Vec<MbValue> {
-    let Some(params_dict) = inst_field(sig, "parameters") else { return Vec::new() };
-    let Some(ptr) = params_dict.as_ptr() else { return Vec::new() };
+    let Some(params_dict) = inst_field(sig, "parameters") else {
+        return Vec::new();
+    };
+    let Some(ptr) = params_dict.as_ptr() else {
+        return Vec::new();
+    };
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             lock.read().unwrap().values().copied().collect()
@@ -1423,7 +1591,9 @@ fn make_signature(params: &[MbValue], ret_anno: Option<String>) -> MbValue {
     let v = MbValue::from_ptr(inst);
     let dict = MbValue::from_ptr(MbObject::new_dict());
     for p in params {
-        let name = inst_field(*p, "name").and_then(extract_str).unwrap_or_default();
+        let name = inst_field(*p, "name")
+            .and_then(extract_str)
+            .unwrap_or_default();
         super::super::dict_ops::mb_dict_setitem(
             dict,
             MbValue::from_ptr(MbObject::new_str(name)),
@@ -1433,9 +1603,16 @@ fn make_signature(params: &[MbValue], ret_anno: Option<String>) -> MbValue {
     inst_set_field(v, "parameters", dict);
     match &ret_anno {
         Some(r) => {
-            inst_set_field(v, "_ret_anno", MbValue::from_ptr(MbObject::new_str(r.clone())));
-            inst_set_field(v, "return_annotation",
-                MbValue::from_ptr(MbObject::new_str(r.clone())));
+            inst_set_field(
+                v,
+                "_ret_anno",
+                MbValue::from_ptr(MbObject::new_str(r.clone())),
+            );
+            inst_set_field(
+                v,
+                "return_annotation",
+                MbValue::from_ptr(MbObject::new_str(r.clone())),
+            );
         }
         None => {
             inst_set_field(v, "return_annotation", empty_singleton());
@@ -1459,7 +1636,9 @@ unsafe extern "C" fn s_init(slf: MbValue, args: MbValue) -> MbValue {
                 _ => Vec::new(),
             };
             for p in plist {
-                let name = inst_field(p, "name").and_then(extract_str).unwrap_or_default();
+                let name = inst_field(p, "name")
+                    .and_then(extract_str)
+                    .unwrap_or_default();
                 super::super::dict_ops::mb_dict_setitem(
                     dict,
                     MbValue::from_ptr(MbObject::new_str(name)),
@@ -1522,7 +1701,8 @@ unsafe extern "C" fn s_str(slf: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn s_repr(slf: MbValue, _args: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(format!(
-        "<Signature {}>", signature_render(slf)
+        "<Signature {}>",
+        signature_render(slf)
     )))
 }
 
@@ -1597,9 +1777,13 @@ fn bind_common(sig: MbValue, args: MbValue, partial: bool) -> MbValue {
         .iter()
         .map(|p| {
             (
-                inst_field(*p, "name").and_then(extract_str).unwrap_or_default(),
+                inst_field(*p, "name")
+                    .and_then(extract_str)
+                    .unwrap_or_default(),
                 inst_field(*p, "kind").and_then(kind_value).unwrap_or(1),
-                inst_field(*p, "default").map(|d| !is_empty_sentinel(d)).unwrap_or(false),
+                inst_field(*p, "default")
+                    .map(|d| !is_empty_sentinel(d))
+                    .unwrap_or(false),
             )
         })
         .collect();
@@ -1664,10 +1848,7 @@ fn bind_common(sig: MbValue, args: MbValue, partial: bool) -> MbValue {
     // Phase 3: required-argument check.
     if !partial {
         for (i, (name, kind, has_default)) in pinfo.iter().enumerate() {
-            if (*kind == 0 || *kind == 1 || *kind == 3)
-                && bound[i].is_none()
-                && !*has_default
-            {
+            if (*kind == 0 || *kind == 1 || *kind == 3) && bound[i].is_none() && !*has_default {
                 return insp_raise(
                     "TypeError",
                     &format!("missing a required argument: '{name}'"),
@@ -1689,7 +1870,10 @@ fn bind_common(sig: MbValue, args: MbValue, partial: bool) -> MbValue {
         match kind {
             2 => {
                 if !var_pos.is_empty() {
-                    set(name, MbValue::from_ptr(MbObject::new_tuple(var_pos.clone())));
+                    set(
+                        name,
+                        MbValue::from_ptr(MbObject::new_tuple(var_pos.clone())),
+                    );
                 }
             }
             4 => {
@@ -1730,7 +1914,10 @@ fn make_bound_arguments(
         let ptr = arguments.as_ptr()?;
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                lock.read().unwrap().get(&DictKey::Str(name.to_string())).copied()
+                lock.read()
+                    .unwrap()
+                    .get(&DictKey::Str(name.to_string()))
+                    .copied()
             } else {
                 None
             }
@@ -1816,10 +2003,16 @@ unsafe extern "C" fn ba_eq(slf: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn ba_apply_defaults(slf: MbValue, _args: MbValue) -> MbValue {
-    let Some(sig) = inst_field(slf, "signature") else { return MbValue::none() };
+    let Some(sig) = inst_field(slf, "signature") else {
+        return MbValue::none();
+    };
     let params = signature_params(sig);
-    let Some(arguments) = inst_field(slf, "arguments") else { return MbValue::none() };
-    let Some(ptr) = arguments.as_ptr() else { return MbValue::none() };
+    let Some(arguments) = inst_field(slf, "arguments") else {
+        return MbValue::none();
+    };
+    let Some(ptr) = arguments.as_ptr() else {
+        return MbValue::none();
+    };
 
     // Collect the new ordered contents first, then swap them in.
     let mut new_entries: Vec<(String, MbValue)> = Vec::new();
@@ -1827,12 +2020,13 @@ unsafe extern "C" fn ba_apply_defaults(slf: MbValue, _args: MbValue) -> MbValue 
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let current = lock.read().unwrap();
             for p in &params {
-                let name = inst_field(*p, "name").and_then(extract_str).unwrap_or_default();
+                let name = inst_field(*p, "name")
+                    .and_then(extract_str)
+                    .unwrap_or_default();
                 let kind = inst_field(*p, "kind").and_then(kind_value).unwrap_or(1);
                 if let Some(v) = current.get(&DictKey::Str(name.clone())) {
                     new_entries.push((name, *v));
-                } else if let Some(d) =
-                    inst_field(*p, "default").filter(|d| !is_empty_sentinel(*d))
+                } else if let Some(d) = inst_field(*p, "default").filter(|d| !is_empty_sentinel(*d))
                 {
                     new_entries.push((name, d));
                 } else if kind == 2 {
@@ -1956,19 +2150,18 @@ mod tests {
         let s = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
         assert_eq!(mb_inspect_isfunction(s).as_bool(), Some(false));
 
-        assert_eq!(mb_inspect_isfunction(MbValue::none()).as_bool(), Some(false));
+        assert_eq!(
+            mb_inspect_isfunction(MbValue::none()).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
     fn test_isclass() {
-        let class_name = MbValue::from_ptr(
-            MbObject::new_str("MyClass".to_string()),
-        );
+        let class_name = MbValue::from_ptr(MbObject::new_str("MyClass".to_string()));
         assert_eq!(mb_inspect_isclass(class_name).as_bool(), Some(true));
 
-        let not_class = MbValue::from_ptr(
-            MbObject::new_str("my_function".to_string()),
-        );
+        let not_class = MbValue::from_ptr(MbObject::new_str("my_function".to_string()));
         assert_eq!(mb_inspect_isclass(not_class).as_bool(), Some(false));
     }
 
@@ -1978,14 +2171,8 @@ mod tests {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*inst).data {
                 let mut fields = fields.write().unwrap();
-                fields.insert(
-                    "x".to_string(),
-                    MbValue::from_int(10),
-                );
-                fields.insert(
-                    "y".to_string(),
-                    MbValue::from_int(20),
-                );
+                fields.insert("x".to_string(), MbValue::from_int(10));
+                fields.insert("y".to_string(), MbValue::from_int(20));
             }
         }
         let obj = MbValue::from_ptr(inst);

@@ -47,10 +47,14 @@ const REPS: usize = 50;
 // EC env override: vat exports LUMEN_BENCH_PG_DSN / LUMEN_BENCH_OS_URL when it
 // provisions pg + OpenSearch; fall back to the local-dev defaults otherwise.
 fn pg_dsn() -> String {
-    std::env::var("LUMEN_BENCH_PG_DSN").unwrap_or_else(|_| "host=/tmp dbname=lumenbench".to_string())
+    std::env::var("LUMEN_BENCH_PG_DSN")
+        .unwrap_or_else(|_| "host=/tmp dbname=lumenbench".to_string())
 }
 fn os_url() -> String {
     std::env::var("LUMEN_BENCH_OS_URL").unwrap_or_else(|_| "http://localhost:9200".to_string())
+}
+fn require_db_peers() -> bool {
+    env_flag_enabled("LUMEN_REQUIRE_DB_PEERS")
 }
 
 const CELLS: &[&str] = &[
@@ -748,9 +752,13 @@ fn lumen_native_frame(cell: &str) -> Vec<u8> {
 // postgres: tokio-postgres
 // ---------------------------------------------------------------------------
 async fn pg_setup(docs: &[Doc], table: &str) -> Option<tokio_postgres::Client> {
-    let (client, connection) = match tokio_postgres::connect(&pg_dsn(), tokio_postgres::NoTls).await {
+    let (client, connection) = match tokio_postgres::connect(&pg_dsn(), tokio_postgres::NoTls).await
+    {
         Ok(c) => c,
         Err(e) => {
+            if require_db_peers() {
+                panic!("postgres required by LUMEN_REQUIRE_DB_PEERS=1 but unavailable: {e}");
+            }
             eprintln!("  ! postgres unavailable ({e}); skipping pg");
             return None;
         }
@@ -881,6 +889,10 @@ async fn os_setup(docs: &[Doc], index: &str) -> Option<(reqwest::Client, String)
     let client = reqwest::Client::new();
     let base = os_url();
     if client.get(&base).send().await.is_err() {
+        assert!(
+            !require_db_peers(),
+            "OpenSearch required by LUMEN_REQUIRE_DB_PEERS=1 but unavailable on {base}"
+        );
         eprintln!("  ! OpenSearch unavailable on {base}; skipping os");
         return None;
     }
@@ -1433,6 +1445,10 @@ async fn competitive_perf_gate() {
     let pg = pg_setup(&docs, pg_table).await;
     println!("loading opensearch ...");
     let os = os_setup(&docs, os_index).await;
+    if require_db_peers() {
+        assert!(pg.is_some(), "postgres peer is required for this EC gate");
+        assert!(os.is_some(), "OpenSearch peer is required for this EC gate");
+    }
 
     // measure
     let mut lumen_s = std::collections::BTreeMap::new();

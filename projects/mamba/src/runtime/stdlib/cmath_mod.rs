@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// cmath module for Mamba (#1265 Task #38, wave-2 ship #1).
 ///
 /// Complex math functions backed by libstd f64. Complex values are
@@ -11,8 +13,6 @@
 /// handwrite during brute-force Phase 2, replace when score
 /// standardize lands the stdlib-shim section type.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Variadic dispatchers (callable from module-attr context) ──
 // NOTE: dispatcher fn names must start with `dispatch_` so the surface
@@ -81,7 +81,8 @@ unsafe extern "C" fn dispatch_isclose(args_ptr: *const MbValue, nargs: usize) ->
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // rel_tol / abs_tol are keyword-only: read the trailing kwargs dict.
     let kw = a.last().copied().filter(|v| {
-        v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        v.as_ptr()
+            .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
     });
     let kwarg = |key: &str| -> Option<MbValue> {
         let ptr = kw?.as_ptr()?;
@@ -101,17 +102,16 @@ unsafe extern "C" fn dispatch_isclose(args_ptr: *const MbValue, nargs: usize) ->
         ("abs_tol", &mut abs_tol as *mut f64, 3usize),
     ] {
         let v = kwarg(name).or_else(|| {
-            a.get(default_pos)
-                .copied()
-                .filter(|x| !x.as_ptr().is_some_and(|p| unsafe {
-                    matches!((*p).data, ObjData::Dict(_))
-                }))
+            a.get(default_pos).copied().filter(|x| {
+                !x.as_ptr()
+                    .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            })
         });
         if let Some(v) = v {
             // A complex tolerance is a TypeError (must be real).
-            let is_complex = v.as_ptr().is_some_and(|p| unsafe {
-                matches!((*p).data, ObjData::Complex(..))
-            });
+            let is_complex = v
+                .as_ptr()
+                .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Complex(..)) });
             if is_complex {
                 super::super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -176,7 +176,10 @@ pub fn register() {
     // Constants
     attrs.insert("pi".to_string(), MbValue::from_float(std::f64::consts::PI));
     attrs.insert("e".to_string(), MbValue::from_float(std::f64::consts::E));
-    attrs.insert("tau".to_string(), MbValue::from_float(std::f64::consts::TAU));
+    attrs.insert(
+        "tau".to_string(),
+        MbValue::from_float(std::f64::consts::TAU),
+    );
     attrs.insert("inf".to_string(), MbValue::from_float(f64::INFINITY));
     attrs.insert("infj".to_string(), make_complex(0.0, f64::INFINITY));
     attrs.insert("nan".to_string(), MbValue::from_float(f64::NAN));
@@ -193,8 +196,12 @@ fn as_f64(val: MbValue) -> Option<f64> {
 
 /// Extract (real, imag) from a Complex, 2-tuple, real float, or int.
 fn extract_complex(val: MbValue) -> (f64, f64) {
-    if let Some(f) = val.as_float() { return (f, 0.0); }
-    if let Some(i) = val.as_int() { return (i as f64, 0.0); }
+    if let Some(f) = val.as_float() {
+        return (f, 0.0);
+    }
+    if let Some(i) = val.as_int() {
+        return (i as f64, 0.0);
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             match (*ptr).data {
@@ -229,11 +236,16 @@ struct Errno {
     erange: bool, // range error → OverflowError
 }
 impl Errno {
-    fn new() -> Self { Errno { edom: false, erange: false } }
+    fn new() -> Self {
+        Errno {
+            edom: false,
+            erange: false,
+        }
+    }
 }
 
 const CM_LARGE_DOUBLE: f64 = f64::MAX / 4.0;
-const M_LN2: f64 = std::f64::consts::LN_2;   // 0.6931471805599453
+const M_LN2: f64 = std::f64::consts::LN_2; // 0.6931471805599453
 const M_LN10: f64 = std::f64::consts::LN_10; // 2.302585092994046
 
 // CM_SCALE_UP must be even; CM_SCALE_DOWN = -(CM_SCALE_UP+1)/2.
@@ -243,9 +255,13 @@ const CM_SCALE_DOWN: i32 = -(CM_SCALE_UP + 1) / 2;
 
 // Used only by the unit tests below; kept for test-side complex arithmetic.
 #[allow(dead_code)]
-fn cadd(a: (f64, f64), b: (f64, f64)) -> (f64, f64) { (a.0 + b.0, a.1 + b.1) }
+fn cadd(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    (a.0 + b.0, a.1 + b.1)
+}
 #[allow(dead_code)]
-fn csub(a: (f64, f64), b: (f64, f64)) -> (f64, f64) { (a.0 - b.0, a.1 - b.1) }
+fn csub(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    (a.0 - b.0, a.1 - b.1)
+}
 #[allow(dead_code)]
 fn cmul(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
@@ -253,7 +269,9 @@ fn cmul(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
 
 fn ldexp(x: f64, exp: i32) -> f64 {
     // libc ldexp: x * 2^exp, preserving inf/nan/zero like CPython.
-    if x == 0.0 || !x.is_finite() { return x; }
+    if x == 0.0 || !x.is_finite() {
+        return x;
+    }
     x * exp2i(exp)
 }
 fn exp2i(exp: i32) -> f64 {
@@ -261,27 +279,39 @@ fn exp2i(exp: i32) -> f64 {
     if exp >= 0 {
         let mut r = 1.0_f64;
         let mut e = exp;
-        while e > 1023 { r *= 2.0_f64.powi(1023); e -= 1023; }
+        while e > 1023 {
+            r *= 2.0_f64.powi(1023);
+            e -= 1023;
+        }
         r * 2.0_f64.powi(e)
     } else {
         let mut r = 1.0_f64;
         let mut e = exp;
-        while e < -1022 { r *= 2.0_f64.powi(-1022); e += 1022; }
+        while e < -1022 {
+            r *= 2.0_f64.powi(-1022);
+            e += 1022;
+        }
         r * 2.0_f64.powi(e)
     }
 }
 
-fn copysign(mag: f64, sign: f64) -> f64 { mag.copysign(sign) }
+fn copysign(mag: f64, sign: f64) -> f64 {
+    mag.copysign(sign)
+}
 
 // log1p with CPython's accuracy fallback. Rust's ln_1p matches C log1p.
-fn log1p(x: f64) -> f64 { x.ln_1p() }
+fn log1p(x: f64) -> f64 {
+    x.ln_1p()
+}
 
 // Accurate real asinh matching the system libm CPython links against.
 // Rust's intrinsic f64::asinh can differ by a couple of ULP from glibc/Apple
 // libm; reproduce the standard high-accuracy reduction so complex inverse
 // functions agree with CPython bit-for-bit.
 fn m_asinh(x: f64) -> f64 {
-    if !x.is_finite() { return x; }
+    if !x.is_finite() {
+        return x;
+    }
     let ax = x.abs();
     if ax < 1e-9 {
         // asinh(x) ≈ x for tiny arguments (avoids spurious underflow work).
@@ -305,8 +335,16 @@ fn m_asinh(x: f64) -> f64 {
 fn special_type(d: f64) -> usize {
     if d.is_finite() {
         if d != 0.0 {
-            if d.is_sign_negative() { 1 } else { 4 }
-        } else if d.is_sign_negative() { 2 } else { 3 }
+            if d.is_sign_negative() {
+                1
+            } else {
+                4
+            }
+        } else if d.is_sign_negative() {
+            2
+        } else {
+            3
+        }
     } else if d.is_nan() {
         6
     } else if d.is_sign_negative() {
@@ -333,8 +371,12 @@ fn cabs(z: (f64, f64)) -> f64 {
     // CPython _Py_c_abs: hypot with inf/nan special-casing. C99 hypot returns
     // +inf if either part is inf, even if the other is nan.
     if !z.0.is_finite() || !z.1.is_finite() {
-        if z.0.is_infinite() { return z.0.abs(); }
-        if z.1.is_infinite() { return z.1.abs(); }
+        if z.0.is_infinite() {
+            return z.0.abs();
+        }
+        if z.1.is_infinite() {
+            return z.1.abs();
+        }
         return f64::NAN;
     }
     z.0.hypot(z.1)
@@ -345,13 +387,69 @@ fn csqrt(z: (f64, f64), _errno: &mut Errno) -> (f64, f64) {
     let (x, y) = z;
     if !x.is_finite() || !y.is_finite() {
         const SQRT_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(INF,-INF),(0.0,-INF),(0.0,-INF),(0.0,INF),(0.0,INF),(INF,INF),(INF,N)],
-            [(INF,-INF),(U,U),(U,U),(U,U),(U,U),(INF,INF),(N,N)],
-            [(INF,-INF),(U,U),(0.0,-0.0),(0.0,0.0),(U,U),(INF,INF),(N,N)],
-            [(INF,-INF),(U,U),(0.0,-0.0),(0.0,0.0),(U,U),(INF,INF),(N,N)],
-            [(INF,-INF),(U,U),(U,U),(U,U),(U,U),(INF,INF),(N,N)],
-            [(INF,-INF),(INF,-0.0),(INF,-0.0),(INF,0.0),(INF,0.0),(INF,INF),(INF,N)],
-            [(INF,-INF),(N,N),(N,N),(N,N),(N,N),(INF,INF),(N,N)],
+            [
+                (INF, -INF),
+                (0.0, -INF),
+                (0.0, -INF),
+                (0.0, INF),
+                (0.0, INF),
+                (INF, INF),
+                (INF, N),
+            ],
+            [
+                (INF, -INF),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (INF, INF),
+                (N, N),
+            ],
+            [
+                (INF, -INF),
+                (U, U),
+                (0.0, -0.0),
+                (0.0, 0.0),
+                (U, U),
+                (INF, INF),
+                (N, N),
+            ],
+            [
+                (INF, -INF),
+                (U, U),
+                (0.0, -0.0),
+                (0.0, 0.0),
+                (U, U),
+                (INF, INF),
+                (N, N),
+            ],
+            [
+                (INF, -INF),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (INF, INF),
+                (N, N),
+            ],
+            [
+                (INF, -INF),
+                (INF, -0.0),
+                (INF, -0.0),
+                (INF, 0.0),
+                (INF, 0.0),
+                (INF, INF),
+                (INF, N),
+            ],
+            [
+                (INF, -INF),
+                (N, N),
+                (N, N),
+                (N, N),
+                (N, N),
+                (INF, INF),
+                (N, N),
+            ],
         ];
         return special_value(&SQRT_SPECIAL, x, y);
     }
@@ -386,13 +484,61 @@ fn clog(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
     let (x, y) = z;
     if !x.is_finite() || !y.is_finite() {
         const LOG_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(INF,-P34),(INF,-P),(INF,-P),(INF,P),(INF,P),(INF,P34),(INF,N)],
-            [(INF,-P12),(U,U),(U,U),(U,U),(U,U),(INF,P12),(N,N)],
-            [(INF,-P12),(U,U),(-INF,-P),(-INF,P),(U,U),(INF,P12),(N,N)],
-            [(INF,-P12),(U,U),(-INF,-0.0),(-INF,0.0),(U,U),(INF,P12),(N,N)],
-            [(INF,-P12),(U,U),(U,U),(U,U),(U,U),(INF,P12),(N,N)],
-            [(INF,-P14),(INF,-0.0),(INF,-0.0),(INF,0.0),(INF,0.0),(INF,P14),(INF,N)],
-            [(INF,N),(N,N),(N,N),(N,N),(N,N),(INF,N),(N,N)],
+            [
+                (INF, -P34),
+                (INF, -P),
+                (INF, -P),
+                (INF, P),
+                (INF, P),
+                (INF, P34),
+                (INF, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (-INF, -P),
+                (-INF, P),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (-INF, -0.0),
+                (-INF, 0.0),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P14),
+                (INF, -0.0),
+                (INF, -0.0),
+                (INF, 0.0),
+                (INF, 0.0),
+                (INF, P14),
+                (INF, N),
+            ],
+            [(INF, N), (N, N), (N, N), (N, N), (N, N), (INF, N), (N, N)],
         ];
         return special_value(&LOG_SPECIAL, x, y);
     }
@@ -440,13 +586,45 @@ fn cexp(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
             return r;
         }
         const EXP_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(0.0,0.0),(U,U),(0.0,-0.0),(0.0,0.0),(U,U),(0.0,0.0),(0.0,0.0)],
-            [(N,N),(U,U),(U,U),(U,U),(U,U),(N,N),(N,N)],
-            [(N,N),(U,U),(1.0,-0.0),(1.0,0.0),(U,U),(N,N),(N,N)],
-            [(N,N),(U,U),(1.0,-0.0),(1.0,0.0),(U,U),(N,N),(N,N)],
-            [(N,N),(U,U),(U,U),(U,U),(U,U),(N,N),(N,N)],
-            [(INF,N),(U,U),(INF,-0.0),(INF,0.0),(U,U),(INF,N),(INF,N)],
-            [(N,N),(N,N),(N,-0.0),(N,0.0),(N,N),(N,N),(N,N)],
+            [
+                (0.0, 0.0),
+                (U, U),
+                (0.0, -0.0),
+                (0.0, 0.0),
+                (U, U),
+                (0.0, 0.0),
+                (0.0, 0.0),
+            ],
+            [(N, N), (U, U), (U, U), (U, U), (U, U), (N, N), (N, N)],
+            [
+                (N, N),
+                (U, U),
+                (1.0, -0.0),
+                (1.0, 0.0),
+                (U, U),
+                (N, N),
+                (N, N),
+            ],
+            [
+                (N, N),
+                (U, U),
+                (1.0, -0.0),
+                (1.0, 0.0),
+                (U, U),
+                (N, N),
+                (N, N),
+            ],
+            [(N, N), (U, U), (U, U), (U, U), (U, U), (N, N), (N, N)],
+            [
+                (INF, N),
+                (U, U),
+                (INF, -0.0),
+                (INF, 0.0),
+                (U, U),
+                (INF, N),
+                (INF, N),
+            ],
+            [(N, N), (N, N), (N, -0.0), (N, 0.0), (N, N), (N, N), (N, N)],
         ];
         let r = special_value(&EXP_SPECIAL, x, y);
         // EDOM when imaginary part is +-inf and real part is finite or -inf.
@@ -484,13 +662,45 @@ fn ccosh(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
     let (x, y) = z;
     if !x.is_finite() || !y.is_finite() {
         const COSH_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(INF,N),(U,U),(INF,0.0),(INF,-0.0),(U,U),(INF,N),(INF,N)],
-            [(N,N),(U,U),(U,U),(U,U),(U,U),(N,N),(N,N)],
-            [(N,0.0),(U,U),(1.0,0.0),(1.0,-0.0),(U,U),(N,0.0),(N,0.0)],
-            [(N,0.0),(U,U),(1.0,-0.0),(1.0,0.0),(U,U),(N,0.0),(N,0.0)],
-            [(N,N),(U,U),(U,U),(U,U),(U,U),(N,N),(N,N)],
-            [(INF,N),(U,U),(INF,-0.0),(INF,0.0),(U,U),(INF,N),(INF,N)],
-            [(N,N),(N,N),(N,0.0),(N,0.0),(N,N),(N,N),(N,N)],
+            [
+                (INF, N),
+                (U, U),
+                (INF, 0.0),
+                (INF, -0.0),
+                (U, U),
+                (INF, N),
+                (INF, N),
+            ],
+            [(N, N), (U, U), (U, U), (U, U), (U, U), (N, N), (N, N)],
+            [
+                (N, 0.0),
+                (U, U),
+                (1.0, 0.0),
+                (1.0, -0.0),
+                (U, U),
+                (N, 0.0),
+                (N, 0.0),
+            ],
+            [
+                (N, 0.0),
+                (U, U),
+                (1.0, -0.0),
+                (1.0, 0.0),
+                (U, U),
+                (N, 0.0),
+                (N, 0.0),
+            ],
+            [(N, N), (U, U), (U, U), (U, U), (U, U), (N, N), (N, N)],
+            [
+                (INF, N),
+                (U, U),
+                (INF, -0.0),
+                (INF, 0.0),
+                (U, U),
+                (INF, N),
+                (INF, N),
+            ],
+            [(N, N), (N, N), (N, 0.0), (N, 0.0), (N, N), (N, N), (N, N)],
         ];
         let r = special_value(&COSH_SPECIAL, x, y);
         // EDOM when y is +-inf and x is not nan; ERANGE when x is +-inf and y finite.
@@ -506,12 +716,16 @@ fn ccosh(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
         let m = (x.abs() - M_LN2).exp();
         let rx = y.cos() * m;
         let ry = y.sin() * m * copysign(1.0, x);
-        if rx.is_infinite() || ry.is_infinite() { errno.erange = true; }
+        if rx.is_infinite() || ry.is_infinite() {
+            errno.erange = true;
+        }
         return (rx, ry);
     }
     let rx = y.cos() * x.cosh();
     let ry = y.sin() * x.sinh();
-    if rx.is_infinite() || ry.is_infinite() { errno.erange = true; }
+    if rx.is_infinite() || ry.is_infinite() {
+        errno.erange = true;
+    }
     (rx, ry)
 }
 
@@ -520,13 +734,45 @@ fn csinh(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
     let (x, y) = z;
     if !x.is_finite() || !y.is_finite() {
         const SINH_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(INF,N),(U,U),(-INF,-0.0),(-INF,0.0),(U,U),(INF,N),(INF,N)],
-            [(N,N),(U,U),(U,U),(U,U),(U,U),(N,N),(N,N)],
-            [(0.0,N),(U,U),(-0.0,-0.0),(-0.0,0.0),(U,U),(0.0,N),(0.0,N)],
-            [(0.0,N),(U,U),(0.0,-0.0),(0.0,0.0),(U,U),(0.0,N),(0.0,N)],
-            [(N,N),(U,U),(U,U),(U,U),(U,U),(N,N),(N,N)],
-            [(INF,N),(U,U),(INF,-0.0),(INF,0.0),(U,U),(INF,N),(INF,N)],
-            [(N,N),(N,N),(N,-0.0),(N,0.0),(N,N),(N,N),(N,N)],
+            [
+                (INF, N),
+                (U, U),
+                (-INF, -0.0),
+                (-INF, 0.0),
+                (U, U),
+                (INF, N),
+                (INF, N),
+            ],
+            [(N, N), (U, U), (U, U), (U, U), (U, U), (N, N), (N, N)],
+            [
+                (0.0, N),
+                (U, U),
+                (-0.0, -0.0),
+                (-0.0, 0.0),
+                (U, U),
+                (0.0, N),
+                (0.0, N),
+            ],
+            [
+                (0.0, N),
+                (U, U),
+                (0.0, -0.0),
+                (0.0, 0.0),
+                (U, U),
+                (0.0, N),
+                (0.0, N),
+            ],
+            [(N, N), (U, U), (U, U), (U, U), (U, U), (N, N), (N, N)],
+            [
+                (INF, N),
+                (U, U),
+                (INF, -0.0),
+                (INF, 0.0),
+                (U, U),
+                (INF, N),
+                (INF, N),
+            ],
+            [(N, N), (N, N), (N, -0.0), (N, 0.0), (N, N), (N, N), (N, N)],
         ];
         let r = special_value(&SINH_SPECIAL, x, y);
         if x.is_infinite() && y.is_finite() && y != 0.0 {
@@ -540,12 +786,16 @@ fn csinh(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
         let m = (x.abs() - M_LN2).exp();
         let rx = y.cos() * m * copysign(1.0, x);
         let ry = y.sin() * m;
-        if rx.is_infinite() || ry.is_infinite() { errno.erange = true; }
+        if rx.is_infinite() || ry.is_infinite() {
+            errno.erange = true;
+        }
         return (rx, ry);
     }
     let rx = y.cos() * x.sinh();
     let ry = y.sin() * x.cosh();
-    if rx.is_infinite() || ry.is_infinite() { errno.erange = true; }
+    if rx.is_infinite() || ry.is_infinite() {
+        errno.erange = true;
+    }
     (rx, ry)
 }
 
@@ -554,13 +804,45 @@ fn ctanh(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
     let (x, y) = z;
     if !x.is_finite() || !y.is_finite() {
         const TANH_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(-1.0,0.0),(U,U),(-1.0,-0.0),(-1.0,0.0),(U,U),(-1.0,0.0),(-1.0,0.0)],
-            [(N,N),(U,U),(U,U),(U,U),(U,U),(N,N),(N,N)],
-            [(N,N),(U,U),(-0.0,-0.0),(-0.0,0.0),(U,U),(N,N),(N,N)],
-            [(N,N),(U,U),(0.0,-0.0),(0.0,0.0),(U,U),(N,N),(N,N)],
-            [(N,N),(U,U),(U,U),(U,U),(U,U),(N,N),(N,N)],
-            [(1.0,0.0),(U,U),(1.0,-0.0),(1.0,0.0),(U,U),(1.0,0.0),(1.0,0.0)],
-            [(N,N),(N,N),(N,-0.0),(N,0.0),(N,N),(N,N),(N,N)],
+            [
+                (-1.0, 0.0),
+                (U, U),
+                (-1.0, -0.0),
+                (-1.0, 0.0),
+                (U, U),
+                (-1.0, 0.0),
+                (-1.0, 0.0),
+            ],
+            [(N, N), (U, U), (U, U), (U, U), (U, U), (N, N), (N, N)],
+            [
+                (N, N),
+                (U, U),
+                (-0.0, -0.0),
+                (-0.0, 0.0),
+                (U, U),
+                (N, N),
+                (N, N),
+            ],
+            [
+                (N, N),
+                (U, U),
+                (0.0, -0.0),
+                (0.0, 0.0),
+                (U, U),
+                (N, N),
+                (N, N),
+            ],
+            [(N, N), (U, U), (U, U), (U, U), (U, U), (N, N), (N, N)],
+            [
+                (1.0, 0.0),
+                (U, U),
+                (1.0, -0.0),
+                (1.0, 0.0),
+                (U, U),
+                (1.0, 0.0),
+                (1.0, 0.0),
+            ],
+            [(N, N), (N, N), (N, -0.0), (N, 0.0), (N, N), (N, N), (N, N)],
         ];
         let r = special_value(&TANH_SPECIAL, x, y);
         if y.is_infinite() && x.is_finite() {
@@ -585,22 +867,78 @@ fn ctanh(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
 }
 
 // Thresholds from CPython cmathmodule.c (computed at module init there).
-const CM_SQRT_LARGE_DOUBLE: f64 = 9.480751908109176e+153;     // sqrt(CM_LARGE_DOUBLE)
-const CM_SQRT_DBL_MIN: f64 = 1.4916681462400413e-154;          // sqrt(DBL_MIN)
-const CM_LOG_LARGE_DOUBLE: f64 = 709.0895657128241;            // log(CM_LARGE_DOUBLE)
+const CM_SQRT_LARGE_DOUBLE: f64 = 9.480751908109176e+153; // sqrt(CM_LARGE_DOUBLE)
+const CM_SQRT_DBL_MIN: f64 = 1.4916681462400413e-154; // sqrt(DBL_MIN)
+const CM_LOG_LARGE_DOUBLE: f64 = 709.0895657128241; // log(CM_LARGE_DOUBLE)
 
 // ── asinh ────────────────────────────────────────────────────────────────────
 fn casinh(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
     let (x, y) = z;
     if !x.is_finite() || !y.is_finite() {
         const ASINH_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(-INF,-P14),(-INF,-0.0),(-INF,-0.0),(-INF,0.0),(-INF,0.0),(-INF,P14),(-INF,N)],
-            [(-INF,-P12),(U,U),(U,U),(U,U),(U,U),(-INF,P12),(N,N)],
-            [(-INF,-P12),(U,U),(-0.0,-0.0),(-0.0,0.0),(U,U),(-INF,P12),(N,N)],
-            [(INF,-P12),(U,U),(0.0,-0.0),(0.0,0.0),(U,U),(INF,P12),(N,N)],
-            [(INF,-P12),(U,U),(U,U),(U,U),(U,U),(INF,P12),(N,N)],
-            [(INF,-P14),(INF,-0.0),(INF,-0.0),(INF,0.0),(INF,0.0),(INF,P14),(INF,N)],
-            [(INF,N),(N,N),(N,-0.0),(N,0.0),(N,N),(INF,N),(N,N)],
+            [
+                (-INF, -P14),
+                (-INF, -0.0),
+                (-INF, -0.0),
+                (-INF, 0.0),
+                (-INF, 0.0),
+                (-INF, P14),
+                (-INF, N),
+            ],
+            [
+                (-INF, -P12),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (-INF, P12),
+                (N, N),
+            ],
+            [
+                (-INF, -P12),
+                (U, U),
+                (-0.0, -0.0),
+                (-0.0, 0.0),
+                (U, U),
+                (-INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (0.0, -0.0),
+                (0.0, 0.0),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P14),
+                (INF, -0.0),
+                (INF, -0.0),
+                (INF, 0.0),
+                (INF, 0.0),
+                (INF, P14),
+                (INF, N),
+            ],
+            [
+                (INF, N),
+                (N, N),
+                (N, -0.0),
+                (N, 0.0),
+                (N, N),
+                (INF, N),
+                (N, N),
+            ],
         ];
         let _ = errno;
         return special_value(&ASINH_SPECIAL, x, y);
@@ -640,13 +978,61 @@ fn cacos(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
     let (x, y) = z;
     if !x.is_finite() || !y.is_finite() {
         const ACOS_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(P34,INF),(P,INF),(P,INF),(P,-INF),(P,-INF),(P34,-INF),(N,INF)],
-            [(P12,INF),(U,U),(U,U),(U,U),(U,U),(P12,-INF),(N,N)],
-            [(P12,INF),(U,U),(P12,0.0),(P12,-0.0),(U,U),(P12,-INF),(P12,N)],
-            [(P12,INF),(U,U),(P12,0.0),(P12,-0.0),(U,U),(P12,-INF),(P12,N)],
-            [(P12,INF),(U,U),(U,U),(U,U),(U,U),(P12,-INF),(N,N)],
-            [(P14,INF),(0.0,INF),(0.0,INF),(0.0,-INF),(0.0,-INF),(P14,-INF),(N,INF)],
-            [(N,INF),(N,N),(N,N),(N,N),(N,N),(N,-INF),(N,N)],
+            [
+                (P34, INF),
+                (P, INF),
+                (P, INF),
+                (P, -INF),
+                (P, -INF),
+                (P34, -INF),
+                (N, INF),
+            ],
+            [
+                (P12, INF),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (P12, -INF),
+                (N, N),
+            ],
+            [
+                (P12, INF),
+                (U, U),
+                (P12, 0.0),
+                (P12, -0.0),
+                (U, U),
+                (P12, -INF),
+                (P12, N),
+            ],
+            [
+                (P12, INF),
+                (U, U),
+                (P12, 0.0),
+                (P12, -0.0),
+                (U, U),
+                (P12, -INF),
+                (P12, N),
+            ],
+            [
+                (P12, INF),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (P12, -INF),
+                (N, N),
+            ],
+            [
+                (P14, INF),
+                (0.0, INF),
+                (0.0, INF),
+                (0.0, -INF),
+                (0.0, -INF),
+                (P14, -INF),
+                (N, INF),
+            ],
+            [(N, INF), (N, N), (N, N), (N, N), (N, N), (N, -INF), (N, N)],
         ];
         let _ = errno;
         return special_value(&ACOS_SPECIAL, x, y);
@@ -671,13 +1057,61 @@ fn cacosh(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
     let (x, y) = z;
     if !x.is_finite() || !y.is_finite() {
         const ACOSH_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(INF,-P34),(INF,-P),(INF,-P),(INF,P),(INF,P),(INF,P34),(INF,N)],
-            [(INF,-P12),(U,U),(U,U),(U,U),(U,U),(INF,P12),(N,N)],
-            [(INF,-P12),(U,U),(0.0,-P12),(0.0,P12),(U,U),(INF,P12),(N,N)],
-            [(INF,-P12),(U,U),(0.0,-P12),(0.0,P12),(U,U),(INF,P12),(N,N)],
-            [(INF,-P12),(U,U),(U,U),(U,U),(U,U),(INF,P12),(N,N)],
-            [(INF,-P14),(INF,-0.0),(INF,-0.0),(INF,0.0),(INF,0.0),(INF,P14),(INF,N)],
-            [(INF,N),(N,N),(N,N),(N,N),(N,N),(INF,N),(N,N)],
+            [
+                (INF, -P34),
+                (INF, -P),
+                (INF, -P),
+                (INF, P),
+                (INF, P),
+                (INF, P34),
+                (INF, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (0.0, -P12),
+                (0.0, P12),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (0.0, -P12),
+                (0.0, P12),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P12),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (INF, P12),
+                (N, N),
+            ],
+            [
+                (INF, -P14),
+                (INF, -0.0),
+                (INF, -0.0),
+                (INF, 0.0),
+                (INF, 0.0),
+                (INF, P14),
+                (INF, N),
+            ],
+            [(INF, N), (N, N), (N, N), (N, N), (N, N), (INF, N), (N, N)],
         ];
         let _ = errno;
         return special_value(&ACOSH_SPECIAL, x, y);
@@ -708,13 +1142,69 @@ fn catanh(z: (f64, f64), errno: &mut Errno) -> (f64, f64) {
     }
     if !x.is_finite() || !y.is_finite() {
         const ATANH_SPECIAL: [[(f64, f64); 7]; 7] = [
-            [(-0.0,-P12),(-0.0,-P12),(-0.0,-P12),(-0.0,P12),(-0.0,P12),(-0.0,P12),(-0.0,N)],
-            [(-0.0,-P12),(U,U),(U,U),(U,U),(U,U),(-0.0,P12),(N,N)],
-            [(-0.0,-P12),(U,U),(-0.0,-0.0),(-0.0,0.0),(U,U),(-0.0,P12),(-0.0,N)],
-            [(0.0,-P12),(U,U),(0.0,-0.0),(0.0,0.0),(U,U),(0.0,P12),(0.0,N)],
-            [(0.0,-P12),(U,U),(U,U),(U,U),(U,U),(0.0,P12),(N,N)],
-            [(0.0,-P12),(0.0,-P12),(0.0,-P12),(0.0,P12),(0.0,P12),(0.0,P12),(0.0,N)],
-            [(0.0,-P12),(N,N),(N,N),(N,N),(N,N),(0.0,P12),(N,N)],
+            [
+                (-0.0, -P12),
+                (-0.0, -P12),
+                (-0.0, -P12),
+                (-0.0, P12),
+                (-0.0, P12),
+                (-0.0, P12),
+                (-0.0, N),
+            ],
+            [
+                (-0.0, -P12),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (-0.0, P12),
+                (N, N),
+            ],
+            [
+                (-0.0, -P12),
+                (U, U),
+                (-0.0, -0.0),
+                (-0.0, 0.0),
+                (U, U),
+                (-0.0, P12),
+                (-0.0, N),
+            ],
+            [
+                (0.0, -P12),
+                (U, U),
+                (0.0, -0.0),
+                (0.0, 0.0),
+                (U, U),
+                (0.0, P12),
+                (0.0, N),
+            ],
+            [
+                (0.0, -P12),
+                (U, U),
+                (U, U),
+                (U, U),
+                (U, U),
+                (0.0, P12),
+                (N, N),
+            ],
+            [
+                (0.0, -P12),
+                (0.0, -P12),
+                (0.0, -P12),
+                (0.0, P12),
+                (0.0, P12),
+                (0.0, P12),
+                (0.0, N),
+            ],
+            [
+                (0.0, -P12),
+                (N, N),
+                (N, N),
+                (N, N),
+                (N, N),
+                (0.0, P12),
+                (N, N),
+            ],
         ];
         let _ = errno;
         return special_value(&ATANH_SPECIAL, x, y);
@@ -885,15 +1375,23 @@ pub fn mb_cmath_exp(z: MbValue) -> MbValue {
 pub fn mb_cmath_log(z: MbValue, base: MbValue) -> MbValue {
     let mut e = Errno::new();
     let zl = clog(extract_complex(z), &mut e);
-    if e.edom { return raise_value_error("math domain error"); }
-    if e.erange { return raise_overflow_error("math range error"); }
+    if e.edom {
+        return raise_value_error("math domain error");
+    }
+    if e.erange {
+        return raise_overflow_error("math range error");
+    }
     if base.is_none() {
         return make_complex(zl.0, zl.1);
     }
     let mut eb = Errno::new();
     let bl = clog(extract_complex(base), &mut eb);
-    if eb.edom { return raise_value_error("math domain error"); }
-    if eb.erange { return raise_overflow_error("math range error"); }
+    if eb.edom {
+        return raise_value_error("math domain error");
+    }
+    if eb.erange {
+        return raise_overflow_error("math range error");
+    }
     let result = cdiv(zl, bl);
     make_complex(result.0, result.1)
 }
@@ -906,15 +1404,13 @@ pub fn mb_cmath_log10(z: MbValue) -> MbValue {
 
 pub fn mb_cmath_sqrt(z: MbValue) -> MbValue {
     // Strings can never be complex: CPython raises before any math.
-    let is_str = z.as_ptr().is_some_and(|p| unsafe {
-        matches!((*p).data, ObjData::Str(_))
-    });
+    let is_str = z
+        .as_ptr()
+        .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) });
     if is_str {
         super::super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "must be a number, not str".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("must be a number, not str".to_string())),
         );
         return MbValue::none();
     }
@@ -998,11 +1494,15 @@ mod tests {
     use super::*;
 
     fn approx(a: f64, b: f64) -> bool {
-        if a.is_nan() && b.is_nan() { return true; }
+        if a.is_nan() && b.is_nan() {
+            return true;
+        }
         (a - b).abs() < 1e-9
     }
 
-    fn cz(z: MbValue) -> (f64, f64) { extract_complex(z) }
+    fn cz(z: MbValue) -> (f64, f64) {
+        extract_complex(z)
+    }
 
     #[test]
     fn test_sqrt_real_positive() {
@@ -1027,7 +1527,10 @@ mod tests {
 
     #[test]
     fn test_log_e_is_one() {
-        let (re, im) = cz(mb_cmath_log(MbValue::from_float(std::f64::consts::E), MbValue::none()));
+        let (re, im) = cz(mb_cmath_log(
+            MbValue::from_float(std::f64::consts::E),
+            MbValue::none(),
+        ));
         assert!(approx(re, 1.0));
         assert!(approx(im, 0.0));
     }
@@ -1109,19 +1612,30 @@ mod tests {
 
     #[test]
     fn test_isnan_detects_nan_imag() {
-        assert_eq!(mb_cmath_isnan(make_complex(0.0, f64::NAN)).as_bool().unwrap(), true);
+        assert_eq!(
+            mb_cmath_isnan(make_complex(0.0, f64::NAN))
+                .as_bool()
+                .unwrap(),
+            true
+        );
     }
 
     #[test]
     fn test_isinf_detects_inf() {
-        assert_eq!(mb_cmath_isinf(make_complex(f64::INFINITY, 0.0)).as_bool().unwrap(), true);
+        assert_eq!(
+            mb_cmath_isinf(make_complex(f64::INFINITY, 0.0))
+                .as_bool()
+                .unwrap(),
+            true
+        );
     }
 
     #[test]
     fn test_isclose_exact_equal() {
         assert_eq!(
             mb_cmath_isclose(make_complex(1.0, 2.0), make_complex(1.0, 2.0), 1e-9, 0.0)
-                .as_bool().unwrap(),
+                .as_bool()
+                .unwrap(),
             true,
         );
     }
@@ -1130,7 +1644,8 @@ mod tests {
     fn test_isclose_outside_tol() {
         assert_eq!(
             mb_cmath_isclose(make_complex(1.0, 0.0), make_complex(2.0, 0.0), 1e-9, 0.0)
-                .as_bool().unwrap(),
+                .as_bool()
+                .unwrap(),
             false,
         );
     }

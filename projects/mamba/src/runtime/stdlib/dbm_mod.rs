@@ -1,3 +1,7 @@
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 /// dbm module for Mamba — functional `dbm.dumb` backend (#1261 Gate 1).
 ///
 /// `dbm.open` / `dbm.dumb.open` return a real database handle (Instance
@@ -17,13 +21,8 @@
 /// `dbm.error` mirrors CPython's tuple-of-exception-classes shape with the
 /// lead element subclassing OSError; `dbm.dumb.error` is `class
 /// error(OSError)`.
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 fn new_str(s: &str) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(s.to_string()))
@@ -31,7 +30,11 @@ fn new_str(s: &str) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -100,7 +103,13 @@ thread_local! {
 fn handle_id(inst: MbValue) -> Option<u64> {
     inst.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            fields.read().ok()?.get("_id").copied().and_then(|v| v.as_int()).map(|i| i as u64)
+            fields
+                .read()
+                .ok()?
+                .get("_id")
+                .copied()
+                .and_then(|v| v.as_int())
+                .map(|i| i as u64)
         } else {
             None
         }
@@ -150,13 +159,15 @@ fn with_state<R>(inst: MbValue, f: impl FnOnce(&mut DbState) -> R) -> Option<R> 
 }
 
 fn args_of(args: MbValue) -> Vec<MbValue> {
-    args.as_ptr().and_then(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
-            ObjData::Tuple(items) => Some(items.clone()),
-            _ => None,
-        }
-    }).unwrap_or_default()
+    args.as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
+                ObjData::Tuple(items) => Some(items.clone()),
+                _ => None,
+            }
+        })
+        .unwrap_or_default()
 }
 
 // ── open / whichdb ────────────────────────────────────────────────────────────
@@ -170,7 +181,11 @@ fn db_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let Some(path) = a.first().copied().and_then(extract_path) else {
         return raise("TypeError", "open() requires a filename");
     };
-    let flag = a.get(1).copied().and_then(extract_str).unwrap_or_else(|| "r".to_string());
+    let flag = a
+        .get(1)
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_else(|| "r".to_string());
     if !matches!(flag.as_str(), "r" | "w" | "c" | "n") {
         return raise(
             "ValueError",
@@ -184,7 +199,11 @@ fn db_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
             &format!("need 'c' or 'n' flag to open new db: {path:?}"),
         );
     }
-    let entries = if flag == "n" { Vec::new() } else { load_entries(&path) };
+    let entries = if flag == "n" {
+        Vec::new()
+    } else {
+        load_entries(&path)
+    };
     let state = DbState {
         path: path.clone(),
         entries,
@@ -204,7 +223,10 @@ fn db_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("_id".to_string(), MbValue::from_int(id as i64));
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: "dbm.dumb._Database".to_string(),
             fields: RwLock::new(fields),
@@ -273,7 +295,10 @@ unsafe extern "C" fn db_getitem(self_v: MbValue, args: MbValue) -> MbValue {
         return raise("TypeError", "keys must be bytes or strings");
     };
     with_state(self_v, |st| {
-        st.entries.iter().find(|(ek, _)| *ek == k).map(|(_, v)| v.clone())
+        st.entries
+            .iter()
+            .find(|(ek, _)| *ek == k)
+            .map(|(_, v)| v.clone())
     })
     .map(|found| match found {
         Some(v) => MbValue::from_ptr(MbObject::new_bytes(v)),
@@ -321,7 +346,8 @@ unsafe extern "C" fn db_len(self_v: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn db_keys(self_v: MbValue, _args: MbValue) -> MbValue {
     with_state(self_v, |st| {
-        st.entries.iter()
+        st.entries
+            .iter()
             .map(|(k, _)| MbValue::from_ptr(MbObject::new_bytes(k.clone())))
             .collect::<Vec<_>>()
     })
@@ -331,7 +357,8 @@ unsafe extern "C" fn db_keys(self_v: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn db_values(self_v: MbValue, _args: MbValue) -> MbValue {
     with_state(self_v, |st| {
-        st.entries.iter()
+        st.entries
+            .iter()
             .map(|(_, v)| MbValue::from_ptr(MbObject::new_bytes(v.clone())))
             .collect::<Vec<_>>()
     })
@@ -341,7 +368,8 @@ unsafe extern "C" fn db_values(self_v: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn db_items(self_v: MbValue, _args: MbValue) -> MbValue {
     with_state(self_v, |st| {
-        st.entries.iter()
+        st.entries
+            .iter()
             .map(|(k, v)| {
                 MbValue::from_ptr(MbObject::new_tuple(vec![
                     MbValue::from_ptr(MbObject::new_bytes(k.clone())),
@@ -361,7 +389,10 @@ unsafe extern "C" fn db_get(self_v: MbValue, args: MbValue) -> MbValue {
     };
     let default = a.get(1).copied().unwrap_or_else(MbValue::none);
     with_state(self_v, |st| {
-        st.entries.iter().find(|(ek, _)| *ek == k).map(|(_, v)| v.clone())
+        st.entries
+            .iter()
+            .find(|(ek, _)| *ek == k)
+            .map(|(_, v)| v.clone())
     })
     .map(|found| match found {
         Some(v) => MbValue::from_ptr(MbObject::new_bytes(v)),

@@ -1,6 +1,19 @@
 ---
 id: relay-default-durable-throughput
 summary: Default-durable engine throughput — group-commit fsync (append_many issues one sync_all per batch), publish-batch endpoint, and a persisted committed-offset sidecar recovered on open. Durability is power-safe by default; batched produce/ack amortize the fsync so relay beats JetStream / RabbitMQ. Standalone.
+capability_refs:
+  - id: long-running-stability
+    role: primary
+    gap: durable-power-safe-recovery
+    claim: durable-power-safe-recovery
+    coverage: full
+    rationale: "Defines durable-by-default config, group commit, log recovery, and committed-offset crash recovery for long-running broker stability."
+  - id: competitor-performance
+    role: primary
+    gap: normalized-win-ratchet-decision-model
+    claim: normalized-win-ratchet-decision-model
+    coverage: partial
+    rationale: "Defines the group-commit batch path that underpins Relay's performance comparison cells."
 fill_sections: [logic, schema, rest-api, unit-test, changes]
 ---
 

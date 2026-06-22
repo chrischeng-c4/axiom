@@ -37,19 +37,18 @@ Public API manifest for `projects/agentic-workflow/src/cli/init.rs` generated fr
 // CODEGEN-BEGIN
 use crate::models::{SddConfig, SddInterface};
 use crate::Result;
+use clap::Args;
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, Select};
 use std::env;
 use std::io::{self, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 // Current version for tracking upgrades
 const SDD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Claude Code Skills
-const SKILL_RUN_CHANGE: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-run-change/SKILL.md");
 const SKILL_CODEX_REVIEW: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-codex-review/SKILL.md");
 const SKILL_GEMINI_EXPLORE_SPECS: &str =
@@ -57,8 +56,6 @@ const SKILL_GEMINI_EXPLORE_SPECS: &str =
 const SKILL_GEMINI_EXPLORE_CODEBASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-gemini-explore-codebase/SKILL.md");
 const SKILL_MERGE: &str = include_str!("../../templates/cli/mainthread/skills/aw-merge/SKILL.md");
-const SKILL_REVISE_ARTIFACT: &str =
-    include_str!("../../templates/cli/mainthread/skills/aw-revise-artifact/SKILL.md");
 const SKILL_CAPABILITY: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-capability/SKILL.md");
 const SKILL_WI: &str = include_str!("../../templates/cli/mainthread/skills/aw-wi/SKILL.md");
@@ -80,6 +77,7 @@ const SKILL_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/SKILL.md");
 const SKILL_CHAT_LISTEN: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-chat-listen/SKILL.md");
+const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
 const SCRIPT_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/scripts/release.sh");
 // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R15
@@ -90,15 +88,6 @@ const SCRIPT_RELEASE_PATCH: &str =
 const SCRIPT_MAMBA_TEST_COVERAGE: &str = include_str!(
     "../../templates/cli/mainthread/skills/aw-mamba-test-coverage/scripts/coverage.sh"
 );
-
-// Claude Code subagent definitions and per-agent hooks were retired by the
-// mainthread-only execution model. Only root-level mainthread hooks remain.
-const HOOK_MT_POST_APPLY_VALIDATE: &str =
-    include_str!("../../templates/cli/mainthread/hooks/hook1-post-apply-validate.sh");
-const HOOK_MT_PRE_APPLY_GUARD: &str =
-    include_str!("../../templates/cli/mainthread/hooks/hook2-pre-apply-guard.sh");
-const HOOK_MT_SESSION_START_IDLE: &str =
-    include_str!("../../templates/cli/mainthread/hooks/hook5-session-start-idle.sh");
 
 // Claude Code settings.json template
 // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R9
@@ -113,6 +102,134 @@ pub async fn run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> 
     // CLI invocations, but is ignored. Agentic Workflow uses a fixed executor mapping
     // (Claude Code subagent + mainthread hybrid) — there is no mode to select.
     let project_root = env::current_dir()?;
+    run_at_project_root(name, force, &project_root, true)
+}
+
+/// Arguments for `aw new`.
+///
+/// `aw new` creates the project directory first, then delegates to the same
+/// in-place installer used by `aw init`.
+// @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#CLI
+#[derive(Debug, Args)]
+pub struct NewArgs {
+    /// Project directory name when --path is not supplied
+    pub name: String,
+
+    /// Explicit target directory. When omitted, target is ./<name>.
+    #[arg(long, value_name = "PATH")]
+    pub path: Option<PathBuf>,
+
+    /// Allow reusing an existing non-empty directory and force-refresh init assets.
+    #[arg(short, long)]
+    pub force: bool,
+
+    /// Create the target directory without running aw init.
+    #[arg(long)]
+    pub no_init: bool,
+}
+
+// @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#Logic
+pub async fn run_new(args: NewArgs) -> Result<()> {
+    let current_dir = env::current_dir()?;
+    let outcome = run_new_with_current_dir(args, &current_dir)?;
+
+    println!();
+    println!(
+        "{}",
+        format!("✅ Project ready at {}", outcome.target.display())
+            .green()
+            .bold()
+    );
+    println!();
+    println!("{}", "⏭️  Next Steps:".yellow().bold());
+    println!("   {}", format!("cd {}", outcome.target.display()).cyan());
+    if !outcome.init_ran {
+        println!("   {}", "aw init".cyan());
+    }
+
+    Ok(())
+}
+
+struct NewProjectOutcome {
+    target: PathBuf,
+    init_ran: bool,
+}
+
+fn run_new_with_current_dir(args: NewArgs, current_dir: &Path) -> Result<NewProjectOutcome> {
+    let target = resolve_new_target(current_dir, &args.name, args.path.as_deref())?;
+    prepare_new_target(&target, args.force)?;
+
+    if args.no_init {
+        println!(
+            "{}",
+            format!("📁 Created project directory {}", target.display()).cyan()
+        );
+        println!("   ℹ Skipped aw init because --no-init was supplied");
+        return Ok(NewProjectOutcome {
+            target,
+            init_ran: false,
+        });
+    }
+
+    run_at_project_root(Some(&args.name), args.force, &target, false)?;
+
+    Ok(NewProjectOutcome {
+        target,
+        init_ran: true,
+    })
+}
+
+fn resolve_new_target(current_dir: &Path, name: &str, path: Option<&Path>) -> Result<PathBuf> {
+    if name.trim().is_empty() {
+        anyhow::bail!("project name must not be empty");
+    }
+
+    let raw_target = path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(name));
+
+    if raw_target.as_os_str().is_empty() {
+        anyhow::bail!("target path must not be empty");
+    }
+
+    if raw_target.is_absolute() {
+        Ok(raw_target)
+    } else {
+        Ok(current_dir.join(raw_target))
+    }
+}
+
+fn prepare_new_target(target: &Path, force: bool) -> Result<()> {
+    if target.exists() {
+        if !target.is_dir() {
+            anyhow::bail!(
+                "target path exists and is not a directory: {}",
+                target.display()
+            );
+        }
+        if !force && !is_directory_empty(target)? {
+            anyhow::bail!(
+                "target directory is not empty: {} (rerun with --force to run aw init there)",
+                target.display()
+            );
+        }
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(target)?;
+    Ok(())
+}
+
+fn is_directory_empty(path: &Path) -> Result<bool> {
+    Ok(std::fs::read_dir(path)?.next().is_none())
+}
+
+fn run_at_project_root(
+    name: Option<&str>,
+    force: bool,
+    project_root: &Path,
+    print_fresh_success: bool,
+) -> Result<()> {
     let legacy_score_dir = project_root.join(concat!(".", "score"));
     let legacy_cclab_dir = project_root.join("cclab");
     let sdd_dir = project_root.join(crate::shared::workspace::WORKSPACE_DIR);
@@ -211,6 +328,7 @@ pub async fn run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> 
             &claude_dir,
             interface,
             platform_toml,
+            print_fresh_success,
         )?;
     }
 
@@ -488,11 +606,32 @@ fn refresh_existing_config_content(
     (migrated, applied)
 }
 
-// Detect repo (owner/repo) from git remote URL
+// Detect repo (owner/repo) from git remote URL.
 ///
-// Delegates to the shared implementation in `platform` module.
 fn detect_repo_from_git(project_root: &Path) -> Option<String> {
-    crate::cli::platform::detect_repo_from_git(project_root)
+    let output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if let Some(rest) = url.strip_prefix("git@") {
+        let path = rest.split(':').nth(1)?;
+        return Some(path.trim_end_matches(".git").to_string());
+    }
+
+    let parts: Vec<&str> = url.trim_end_matches(".git").rsplitn(3, '/').collect();
+    if parts.len() >= 2 {
+        return Some(format!("{}/{}", parts[1], parts[0]));
+    }
+
+    None
 }
 
 // Ensure an entry exists in .gitignore
@@ -637,6 +776,7 @@ fn run_fresh_install(
     claude_dir: &Path,
     interface: SddInterface,
     platform_toml: Option<String>,
+    print_success_message: bool,
 ) -> Result<()> {
     // Create directory structure
     println!("{}", "📁 Creating directory structure...".cyan());
@@ -681,8 +821,9 @@ fn run_fresh_install(
     // Generate CLAUDE.md with project context
     generate_claude_md(project_root, sdd_dir)?;
 
-    // Print success message
-    print_init_success();
+    if print_success_message {
+        print_init_success();
+    }
 
     Ok(())
 }
@@ -796,9 +937,9 @@ fn install_system_files(_project_root: &Path, _sdd_dir: &Path, claude_dir: &Path
     println!("{}", "🧠 Retiring legacy Claude Code Agents...".cyan());
     install_agents(claude_dir)?;
 
-    // Install Claude Code Hook scripts
+    // Remove retired Claude Code hook scripts.
     println!();
-    println!("{}", "🪝 Installing Claude Code Hooks...".cyan());
+    println!("{}", "🪝 Retiring Claude Code Hooks...".cyan());
     install_hooks(claude_dir)?;
 
     // Install/merge settings.json
@@ -831,13 +972,13 @@ fn print_init_success() {
     println!();
     println!("{}", "🤖 Claude Code assets installed:".cyan());
     println!("   .claude/skills/          - Agentic Workflow skills");
-    println!("   .claude/hooks/           - Agentic Workflow mainthread hooks");
-    println!("   .claude/settings.json    - permissions + hook settings");
+    println!("   .claude/hooks/           - retired hook cleanup area");
+    println!("   .claude/settings.json    - permissions + status line settings");
     println!();
 
     println!("{}", "🎯 Primary Workflow (use skills):".cyan().bold());
     println!(
-        "   {} - Tech-design lifecycle",
+        "   {} - Tech-design and generated-code lifecycle",
         "/aw:td:create".green().bold()
     );
     println!(
@@ -1167,6 +1308,10 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
         "score-standardize-run",
         "score-standardize-managed-loop",
         "score-standardize-regenerable-loop",
+        "aw-run-change",
+        "aw-revise-artifact",
+        "aw-handoff",
+        "aw-takeoff",
         "aw-standardize-run",
         "aw-standardize-managed-loop",
         "aw-standardize-regenerable-loop",
@@ -1191,12 +1336,10 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
     // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R12
     // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R13
     let skills = vec![
-        ("aw-run-change", SKILL_RUN_CHANGE),
         ("aw-codex-review", SKILL_CODEX_REVIEW),
         ("aw-gemini-explore-specs", SKILL_GEMINI_EXPLORE_SPECS),
         ("aw-gemini-explore-codebase", SKILL_GEMINI_EXPLORE_CODEBASE),
         ("aw-merge", SKILL_MERGE),
-        ("aw-revise-artifact", SKILL_REVISE_ARTIFACT),
         ("aw-capability", SKILL_CAPABILITY),
         ("aw-wi", SKILL_WI),
         ("aw-build-debug", SKILL_BUILD_DEBUG),
@@ -1208,6 +1351,7 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
         ("aw-standardize", SKILL_STANDARDIZE),
         ("aw-build-release", SKILL_BUILD_RELEASE),
         ("aw-chat-listen", SKILL_CHAT_LISTEN),
+        ("aw-health", SKILL_HEALTH),
     ];
 
     for (name, content) in skills {
@@ -1287,10 +1431,10 @@ fn install_agents(claude_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-// Install hook scripts to `.claude/hooks/` with executable permissions.
-///
+// Delete legacy hook scripts from `.claude/hooks/`.
+//
 // Legacy flat-layout and subagent hook scripts from earlier score versions are
-// deleted to keep deployments in the mainthread-only shape.
+// removed so deployments do not register autonomous Claude hook callbacks.
 // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R8
 fn install_hooks(claude_dir: &Path) -> Result<()> {
     let hooks_dir = claude_dir.join("hooks");
@@ -1330,6 +1474,9 @@ fn install_hooks(claude_dir: &Path) -> Result<()> {
         "agents/issue-reviewer/subagentstop-apply.sh",
         "agents/issue-reviewer/subagentstart-brief.sh",
         "agents/issue-reviser/pretooluse-write-guard.sh",
+        "hook1-post-apply-validate.sh",
+        "hook2-pre-apply-guard.sh",
+        "hook5-session-start-idle.sh",
     ];
     for rel in retired_nested_hooks {
         let retired_path = hooks_dir.join(rel);
@@ -1337,33 +1484,6 @@ fn install_hooks(claude_dir: &Path) -> Result<()> {
             let _ = std::fs::remove_file(&retired_path);
             println!("   ✓ removed retired hook {}", rel);
         }
-    }
-
-    // (subdir_relative_name, content)
-    let hooks: &[(&str, &str)] = &[
-        // Mainthread-only-execution hooks (live only when registered in settings.json).
-        ("hook1-post-apply-validate.sh", HOOK_MT_POST_APPLY_VALIDATE),
-        ("hook2-pre-apply-guard.sh", HOOK_MT_PRE_APPLY_GUARD),
-        ("hook5-session-start-idle.sh", HOOK_MT_SESSION_START_IDLE),
-    ];
-
-    for (rel, content) in hooks {
-        let hook_path = hooks_dir.join(rel);
-        if let Some(parent) = hook_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&hook_path, content)?;
-
-        // Make executable (Unix only; no-op on Windows)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&hook_path)?.permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&hook_path, perms)?;
-        }
-
-        println!("   ✓ {} (chmod +x)", rel);
     }
 
     Ok(())
@@ -1421,45 +1541,49 @@ fn install_settings_json(claude_dir: &Path) -> Result<()> {
         }
     }
 
-    let hooks = existing_obj
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("hooks is not an object in existing settings.json"))?;
-    prune_retired_score_hooks(hooks);
+    if let Some(hooks_value) = existing_obj.get_mut("hooks") {
+        let hooks = hooks_value
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("hooks is not an object in existing settings.json"))?;
+        prune_retired_score_hooks(hooks);
+    }
 
-    let Some(tmpl_hooks) = template.get("hooks").and_then(|h| h.as_object()) else {
-        return Ok(());
-    };
+    if let Some(tmpl_hooks) = template.get("hooks").and_then(|h| h.as_object()) {
+        let hooks = existing_obj
+            .entry("hooks")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("hooks is not an object in existing settings.json"))?;
 
-    for (event, entries) in tmpl_hooks {
-        let Some(new_entries) = entries.as_array() else {
-            continue;
-        };
-        let event_arr = hooks
-            .entry(event.clone())
-            .or_insert_with(|| serde_json::json!([]))
-            .as_array_mut()
-            .ok_or_else(|| anyhow::anyhow!("hooks.{} is not an array", event))?;
+        for (event, entries) in tmpl_hooks {
+            let Some(new_entries) = entries.as_array() else {
+                continue;
+            };
+            let event_arr = hooks
+                .entry(event.clone())
+                .or_insert_with(|| serde_json::json!([]))
+                .as_array_mut()
+                .ok_or_else(|| anyhow::anyhow!("hooks.{} is not an array", event))?;
 
-        for new_entry in new_entries {
-            let new_matcher = new_entry
-                .get("matcher")
-                .and_then(|m| m.as_str())
-                .unwrap_or("");
-
-            if let Some(pos) = event_arr.iter().position(|e| {
-                e.get("matcher")
+            for new_entry in new_entries {
+                let new_matcher = new_entry
+                    .get("matcher")
                     .and_then(|m| m.as_str())
-                    .map(|m| m == new_matcher)
-                    .unwrap_or(false)
-            }) {
-                // Replace so existing deployments get the current hook paths
-                // (e.g. `global/subagentstop-validate.sh`) in place of older flat
-                // `score-*.sh` layouts.
-                event_arr[pos] = new_entry.clone();
-            } else {
-                event_arr.push(new_entry.clone());
+                    .unwrap_or("");
+
+                if let Some(pos) = event_arr.iter().position(|e| {
+                    e.get("matcher")
+                        .and_then(|m| m.as_str())
+                        .map(|m| m == new_matcher)
+                        .unwrap_or(false)
+                }) {
+                    // Replace so existing deployments get the current hook paths
+                    // (e.g. `global/subagentstop-validate.sh`) in place of older flat
+                    // `score-*.sh` layouts.
+                    event_arr[pos] = new_entry.clone();
+                } else {
+                    event_arr.push(new_entry.clone());
+                }
             }
         }
     }
@@ -1567,32 +1691,35 @@ mod tests {
         assert!(!legacy.exists(), "Legacy sdd-* agent should be removed");
     }
 
-    // REQ: R8 — install_hooks writes hook scripts with executable permissions
+    // REQ: R8 — install_hooks retires stale hook scripts
     #[test]
-    fn test_install_hooks_creates_files() {
+    fn test_install_hooks_removes_mainthread_hooks() {
         let tmp = TempDir::new().unwrap();
         let claude_dir = tmp.path().join(".claude");
-        install_hooks(&claude_dir).unwrap();
-
         let hooks_dir = claude_dir.join("hooks");
-        assert!(hooks_dir.exists(), ".claude/hooks/ should exist");
+        fs::create_dir_all(&hooks_dir).unwrap();
 
-        let expected = [
+        for rel in [
             "hook1-post-apply-validate.sh",
             "hook2-pre-apply-guard.sh",
             "hook5-session-start-idle.sh",
-        ];
-        for rel in &expected {
-            let hook_path = hooks_dir.join(rel);
-            assert!(hook_path.exists(), "Hook {} should be installed", rel);
+        ] {
+            fs::write(hooks_dir.join(rel), "# stale").unwrap();
+        }
 
-            // Check executable bit on Unix
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = fs::metadata(&hook_path).unwrap().permissions().mode();
-                assert!(mode & 0o111 != 0, "Hook {} should be executable", rel);
-            }
+        install_hooks(&claude_dir).unwrap();
+
+        assert!(hooks_dir.exists(), ".claude/hooks/ should exist");
+        for rel in [
+            "hook1-post-apply-validate.sh",
+            "hook2-pre-apply-guard.sh",
+            "hook5-session-start-idle.sh",
+        ] {
+            assert!(
+                !hooks_dir.join(rel).exists(),
+                "Hook {} should be retired",
+                rel
+            );
         }
     }
 
@@ -1630,22 +1757,14 @@ mod tests {
         }
     }
 
-    // REQ: R9 — settings.json template registers only WI workflow guard/apply hooks.
+    // REQ: R9 — settings.json template does not register Claude hooks.
     #[test]
-    fn test_settings_json_template_has_workflow_hooks() {
+    fn test_settings_json_template_has_no_hooks() {
         let template: serde_json::Value = serde_json::from_str(SETTINGS_JSON_TEMPLATE).unwrap();
-        let hooks = template["hooks"]
-            .as_object()
-            .expect("hooks should be object");
-        assert!(hooks.contains_key("PreToolUse"), "{hooks:?}");
-        assert!(hooks.contains_key("PostToolUse"), "{hooks:?}");
-        let rendered = serde_json::to_string(hooks).unwrap();
-        assert!(rendered.contains("hook2-pre-apply-guard.sh"), "{rendered}");
         assert!(
-            rendered.contains("hook1-post-apply-validate.sh"),
-            "{rendered}"
+            template.get("hooks").is_none(),
+            "settings template should not install Claude hooks: {template:?}"
         );
-        assert!(!rendered.contains("SubagentStop"), "{rendered}");
     }
 
     // REQ: R10 — install_settings_json creates fresh settings.json if not present
@@ -1662,12 +1781,6 @@ mod tests {
 
         let content: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
-        let hooks = content["hooks"]
-            .as_object()
-            .expect("hooks should be object");
-        assert!(hooks.contains_key("PreToolUse"), "{hooks:?}");
-        assert!(hooks.contains_key("PostToolUse"), "{hooks:?}");
-
         // R13: deny rules for `.aw/tech-design/**` are installed.
         let deny = content["permissions"]["deny"]
             .as_array()
@@ -1783,6 +1896,91 @@ mod tests {
         );
     }
 
+    // REQ: aw-greenfield-project-bootstrap UT1, UT2 — target resolution.
+    #[test]
+    fn test_new_resolves_default_and_explicit_targets() {
+        let tmp = TempDir::new().unwrap();
+
+        let default_target = resolve_new_target(tmp.path(), "ai-studio", None).unwrap();
+        assert_eq!(default_target, tmp.path().join("ai-studio"));
+
+        let relative_target =
+            resolve_new_target(tmp.path(), "ignored", Some(Path::new("custom/path"))).unwrap();
+        assert_eq!(relative_target, tmp.path().join("custom/path"));
+
+        let absolute = tmp.path().join("explicit");
+        let absolute_target = resolve_new_target(tmp.path(), "ignored", Some(&absolute)).unwrap();
+        assert_eq!(absolute_target, absolute);
+    }
+
+    // REQ: aw-greenfield-project-bootstrap UT3, UT4 — safe target preparation.
+    #[test]
+    fn test_new_prepares_targets_and_rejects_unsafe_paths() {
+        let tmp = TempDir::new().unwrap();
+
+        let missing = tmp.path().join("missing");
+        prepare_new_target(&missing, false).unwrap();
+        assert!(missing.is_dir());
+
+        let empty = tmp.path().join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        prepare_new_target(&empty, false).unwrap();
+
+        let non_empty = tmp.path().join("non-empty");
+        fs::create_dir_all(&non_empty).unwrap();
+        fs::write(non_empty.join("README.md"), "# existing").unwrap();
+        assert!(prepare_new_target(&non_empty, false).is_err());
+        prepare_new_target(&non_empty, true).unwrap();
+
+        let file_target = tmp.path().join("file");
+        fs::write(&file_target, "not a dir").unwrap();
+        assert!(prepare_new_target(&file_target, true).is_err());
+    }
+
+    // REQ: aw-greenfield-project-bootstrap UT3 — --no-init creates only the target directory.
+    #[test]
+    fn test_new_no_init_creates_target_directory_only() {
+        let tmp = TempDir::new().unwrap();
+        let args = NewArgs {
+            name: "ai-studio".to_string(),
+            path: None,
+            force: false,
+            no_init: true,
+        };
+
+        let outcome = run_new_with_current_dir(args, tmp.path()).unwrap();
+
+        assert_eq!(outcome.target, tmp.path().join("ai-studio"));
+        assert!(!outcome.init_ran);
+        assert!(outcome.target.is_dir());
+        assert!(!outcome.target.join(".aw").exists());
+    }
+
+    // REQ: aw-greenfield-project-bootstrap UT5 — aw new delegates to the shared init installer.
+    #[test]
+    fn test_new_runs_shared_init_installer() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("ai-studio");
+        let args = NewArgs {
+            name: "ai-studio".to_string(),
+            path: Some(target.clone()),
+            force: false,
+            no_init: false,
+        };
+
+        let outcome = run_new_with_current_dir(args, tmp.path()).unwrap();
+
+        assert_eq!(outcome.target, target);
+        assert!(outcome.init_ran);
+        assert!(target.join(".aw/config.toml").exists());
+        assert!(target.join(".aw/tech-design").is_dir());
+        assert!(target.join("CLAUDE.md").exists());
+        assert!(
+            target.join(".claude/skills/aw-health/SKILL.md").exists(),
+            "aw new should install the same current skills as aw init"
+        );
+    }
+
     #[test]
     fn test_refresh_existing_config_preserves_projects_on_force_refresh() {
         let existing = r#"
@@ -1856,16 +2054,15 @@ auth_method = "cli"
         install_claude_skills(&skills_dir).unwrap();
 
         let expected_skills = [
-            "aw-run-change",
             "aw-codex-review",
             "aw-gemini-explore-specs",
             "aw-gemini-explore-codebase",
             "aw-merge",
-            "aw-revise-artifact",
             "aw-capability",
             "aw-wi",
             "aw-standardize",
-            // REQ: R12 — current operational skills
+            "aw-health",
+            // REQ: R12 — active support skills
             "aw-build-debug",
             "aw-release-patch",
             "aw-mamba-test-coverage",
@@ -2047,16 +2244,21 @@ auth_method = "cli"
             content["hooks"]["PreToolUse"].is_array(),
             "PreToolUse should be preserved"
         );
-        // Existing user hook is preserved and workflow hooks are installed.
+        // Existing user hook is preserved and AW does not install its own hooks.
         let hooks = content["hooks"]
             .as_object()
             .expect("hooks should be object");
         assert!(hooks.contains_key("PreToolUse"));
-        assert!(hooks.contains_key("PostToolUse"));
         assert!(
             !hooks.contains_key("SubagentStop"),
             "SubagentStop should not be added: {hooks:?}"
         );
+        let rendered = serde_json::to_string(hooks).unwrap();
+        assert!(
+            !rendered.contains("hook1-post-apply-validate.sh"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("hook2-pre-apply-guard.sh"), "{rendered}");
         // permissions preserved
         assert!(content["permissions"]["allow"].is_array());
     }
@@ -2069,7 +2271,6 @@ fn install_shell_completions() -> Result<()> {
 }
 
 // CODEGEN-END
-
 ```
 
 ## Changes

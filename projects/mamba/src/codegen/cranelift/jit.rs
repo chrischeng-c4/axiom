@@ -3,18 +3,19 @@
 /// Uses cranelift-jit's JITModule to compile MIR directly into executable
 /// memory. Runtime mb_* functions are wired as symbols so JIT-compiled
 /// code can call them.
-
 use super::marshal;
 use super::perf_map;
-use super::{EMIT_REFCOUNT_CALLS, VarAlloc, emit_binop, emit_terminator};
+use super::{emit_binop, emit_terminator, VarAlloc, EMIT_REFCOUNT_CALLS};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::mir::{MirBinOp, MirBody, MirConst, MirExtern, MirInst, MirModule, MirType, VReg};
+use crate::runtime::rc::MbObject;
 use crate::runtime::symbols::{runtime_externs, runtime_symbols};
 use crate::runtime::value::MbValue;
-use crate::runtime::rc::MbObject;
 use crate::types::{Ty, TypeContext, TypeId};
 
-use cranelift_codegen::ir::{types as cl_types, AbiParam, Function, InstBuilder, MemFlags, Signature};
+use cranelift_codegen::ir::{
+    types as cl_types, AbiParam, Function, InstBuilder, MemFlags, Signature,
+};
 use cranelift_codegen::isa::{CallConv, OwnedTargetIsa};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -38,7 +39,9 @@ static CACHED_ISA: LazyLock<OwnedTargetIsa> = LazyLock::new(|| {
     let mut flags_builder = settings::builder();
     // JIT needs PIC disabled for direct calls; speed opt level matches the
     // previous per-backend configuration exactly.
-    flags_builder.set("use_colocated_libcalls", "false").unwrap();
+    flags_builder
+        .set("use_colocated_libcalls", "false")
+        .unwrap();
     flags_builder.set("is_pic", "false").unwrap();
     flags_builder.set("opt_level", "speed").unwrap();
     cranelift_native::builder()
@@ -73,7 +76,11 @@ pub fn warm_jit_caches() {
 
 /// Which native arithmetic op the raw-int overflow-check helper emits.
 #[derive(Copy, Clone)]
-enum RawIntOp { Add, Sub, Mul }
+enum RawIntOp {
+    Add,
+    Sub,
+    Mul,
+}
 
 pub struct CraneliftJitBackend {
     module: Option<JITModule>,
@@ -167,9 +174,7 @@ impl CraneliftJitBackend {
     /// that the compiled Mamba code calls via `MirExtern`.
     ///
     /// [`register_external_modules`]: crate::driver::register_external_modules
-    pub fn new_with_externals(
-        external_syms: &[(&str, *const u8)],
-    ) -> crate::error::Result<Self> {
+    pub fn new_with_externals(external_syms: &[(&str, *const u8)]) -> crate::error::Result<Self> {
         // Reuse the process-global ISA (Arc clone) instead of rebuilding it —
         // CPU feature detection + ISA construction is constant per machine and
         // was previously re-paid on every backend construction.
@@ -255,10 +260,12 @@ impl CraneliftJitBackend {
 
         let mut sig = Signature::new(CallConv::SystemV);
         for param_ty in &ext.params {
-            sig.params.push(AbiParam::new(marshal::mir_type_to_cl(param_ty)));
+            sig.params
+                .push(AbiParam::new(marshal::mir_type_to_cl(param_ty)));
         }
         if ext.return_type != MirType::Void {
-            sig.returns.push(AbiParam::new(marshal::mir_type_to_cl(&ext.return_type)));
+            sig.returns
+                .push(AbiParam::new(marshal::mir_type_to_cl(&ext.return_type)));
         }
 
         let addr = *self.extern_addrs.get(&ext.name).ok_or_else(|| {
@@ -269,11 +276,12 @@ impl CraneliftJitBackend {
         })?;
 
         let thunk_name = format!("__thunk_{}", ext.name);
-        let thunk_id = self.module()
+        let thunk_id = self
+            .module()
             .declare_function(&thunk_name, Linkage::Local, &sig)
-            .map_err(|e| crate::error::MambaError::codegen(format!(
-                "declare thunk '{thunk_name}': {e}"
-            )))?;
+            .map_err(|e| {
+                crate::error::MambaError::codegen(format!("declare thunk '{thunk_name}': {e}"))
+            })?;
 
         let mut func = Function::with_name_signature(
             cranelift_codegen::ir::UserFuncName::user(0, thunk_id.as_u32()),
@@ -300,13 +308,15 @@ impl CraneliftJitBackend {
         builder.finalize();
 
         let mut ctx = cranelift_codegen::Context::for_function(func);
-        self.module().define_function(thunk_id, &mut ctx)
-            .map_err(|e| crate::error::MambaError::codegen(format!(
-                "define thunk '{thunk_name}': {e}"
-            )))?;
+        self.module()
+            .define_function(thunk_id, &mut ctx)
+            .map_err(|e| {
+                crate::error::MambaError::codegen(format!("define thunk '{thunk_name}': {e}"))
+            })?;
 
         self.extern_funcs.insert(ext.name.clone(), thunk_id);
-        self.extern_param_counts.insert(ext.name.clone(), ext.params.len());
+        self.extern_param_counts
+            .insert(ext.name.clone(), ext.params.len());
         Ok(thunk_id)
     }
 
@@ -317,16 +327,21 @@ impl CraneliftJitBackend {
     ) -> crate::error::Result<FuncId> {
         let mut sig = Signature::new(CallConv::SystemV);
         for (_, ty_id) in &body.params {
-            sig.params.push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(*ty_id))));
+            sig.params
+                .push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(*ty_id))));
         }
-        sig.returns.push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(body.return_ty))));
+        sig.returns.push(AbiParam::new(Self::mamba_to_cl_type(
+            tcx.get(body.return_ty),
+        )));
         let func_name = format!("_mb_{}", body.name.0);
-        let func_id = self.module()
+        let func_id = self
+            .module()
             .declare_function(&func_name, Linkage::Export, &sig)
             .map_err(|e| crate::error::MambaError::codegen(format!("declare: {e}")))?;
         self.internal_funcs.insert(body.name.0, func_id);
         self.internal_return_tys.insert(body.name.0, body.return_ty);
-        self.internal_param_counts.insert(body.name.0, body.params.len());
+        self.internal_param_counts
+            .insert(body.name.0, body.params.len());
         Ok(func_id)
     }
 
@@ -339,7 +354,8 @@ impl CraneliftJitBackend {
         let func_id = self.internal_funcs[&body.name.0];
         let mut sig = Signature::new(CallConv::SystemV);
         for (_, ty_id) in &body.params {
-            sig.params.push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(*ty_id))));
+            sig.params
+                .push(AbiParam::new(Self::mamba_to_cl_type(tcx.get(*ty_id))));
         }
         let ret_ty = Self::mamba_to_cl_type(tcx.get(body.return_ty));
         sig.returns.push(AbiParam::new(ret_ty));
@@ -378,7 +394,10 @@ impl CraneliftJitBackend {
             // inside emit_raw_int_op_with_overflow_check rejects NaN-boxed bits
             // (inline int or BigInt pointer) and routes them to the runtime
             // slow path that handles boxed inputs via reg_to_mbvalue.
-            if matches!(tcx.get(*ty_id), crate::types::Ty::Int | crate::types::Ty::Bool) {
+            if matches!(
+                tcx.get(*ty_id),
+                crate::types::Ty::Int | crate::types::Ty::Bool
+            ) {
                 vars.raw_ints.insert(*vreg);
             }
         }
@@ -412,7 +431,16 @@ impl CraneliftJitBackend {
             for inst in &block.stmts {
                 self.emit_inst(inst, tcx, externs, &mut builder, &mut vars);
             }
-            emit_terminator(&block.terminator, &cl_blocks, ret_ty, &mut builder, &mut vars, release_func_ref, retain_func_ref, &param_vregs);
+            emit_terminator(
+                &block.terminator,
+                &cl_blocks,
+                ret_ty,
+                &mut builder,
+                &mut vars,
+                release_func_ref,
+                retain_func_ref,
+                &param_vregs,
+            );
         }
 
         // Seal all blocks after emission so that loop headers see
@@ -425,14 +453,30 @@ impl CraneliftJitBackend {
         // mb_release_value calls in __main__ to confirm H1 leak path).
         // Tag with the MIR body id so __main__ (u32::MAX = 4294967295) is greppable.
         if std::env::var("MAMBA_DUMP_CLIF").is_ok() {
-            let rel = self.extern_funcs.get("mb_release_value").map(|id| id.as_u32());
-            let ret = self.extern_funcs.get("mb_retain_value").map(|id| id.as_u32());
-            eprintln!("[clif-dump body.name.0={} mb_release_value=u0:{:?} mb_retain_value=u0:{:?}]:\n{}",
-                body.name.0, rel, ret, ctx.func.display());
+            let rel = self
+                .extern_funcs
+                .get("mb_release_value")
+                .map(|id| id.as_u32());
+            let ret = self
+                .extern_funcs
+                .get("mb_retain_value")
+                .map(|id| id.as_u32());
+            eprintln!(
+                "[clif-dump body.name.0={} mb_release_value=u0:{:?} mb_retain_value=u0:{:?}]:\n{}",
+                body.name.0,
+                rel,
+                ret,
+                ctx.func.display()
+            );
         }
-        self.module().define_function(func_id, &mut ctx)
+        self.module()
+            .define_function(func_id, &mut ctx)
             .map_err(|e| {
-                eprintln!("DEBUG: Verifier fail for func_id={} body_name={}: {e:#?}", func_id.as_u32(), body.name.0);
+                eprintln!(
+                    "DEBUG: Verifier fail for func_id={} body_name={}: {e:#?}",
+                    func_id.as_u32(),
+                    body.name.0
+                );
                 // Print the IR for debugging
                 eprintln!("IR:\n{}", ctx.func.display());
                 crate::error::MambaError::codegen(format!("define: {e}"))
@@ -498,8 +542,12 @@ impl CraneliftJitBackend {
                 | MirInst::CheckedSub { dest, .. }
                 | MirInst::CheckedMul { dest, .. } => Some(*dest),
                 // Call/CallExtern have Option<VReg> dest
-                MirInst::Call { dest: Some(dest), .. }
-                | MirInst::CallExtern { dest: Some(dest), .. } => Some(*dest),
+                MirInst::Call {
+                    dest: Some(dest), ..
+                }
+                | MirInst::CallExtern {
+                    dest: Some(dest), ..
+                } => Some(*dest),
                 _ => None,
             };
             if let Some(dest) = dest_vreg {
@@ -512,7 +560,8 @@ impl CraneliftJitBackend {
                 // bail out anyway.
                 if vars.is_declared_i64(dest) && !vars.raw_ints.contains(&dest) {
                     if let Some(&release_id) = self.extern_funcs.get("mb_release_value") {
-                        let release_ref = self.module().declare_func_in_func(release_id, builder.func);
+                        let release_ref =
+                            self.module().declare_func_in_func(release_id, builder.func);
                         let dv = vars.get(dest, builder, cl_types::I64);
                         let old_val = builder.use_var(dv);
                         builder.ins().call(release_ref, &[old_val]);
@@ -533,28 +582,40 @@ impl CraneliftJitBackend {
                     MirConst::Float(v) => {
                         // Store as I64 (NaN-boxed): raw IEEE 754 bits as u64.
                         // MbValue::from_float stores raw bits for normal floats.
-                        builder.ins().iconst(cl_types::I64, MbValue::from_float(*v).to_bits() as i64)
+                        builder
+                            .ins()
+                            .iconst(cl_types::I64, MbValue::from_float(*v).to_bits() as i64)
                     }
                     MirConst::Bool(v) => {
                         vars.raw_ints.insert(*dest);
                         builder.ins().iconst(cl_types::I64, *v as i64)
                     }
-                    MirConst::None => builder.ins().iconst(cl_types::I64, MbValue::none().to_bits() as i64),
-                    MirConst::NotImplemented => builder.ins().iconst(cl_types::I64, MbValue::not_implemented().to_bits() as i64),
-                    MirConst::Ellipsis => builder.ins().iconst(cl_types::I64, MbValue::ellipsis().to_bits() as i64),
+                    MirConst::None => builder
+                        .ins()
+                        .iconst(cl_types::I64, MbValue::none().to_bits() as i64),
+                    MirConst::NotImplemented => builder
+                        .ins()
+                        .iconst(cl_types::I64, MbValue::not_implemented().to_bits() as i64),
+                    MirConst::Ellipsis => builder
+                        .ins()
+                        .iconst(cl_types::I64, MbValue::ellipsis().to_bits() as i64),
                     MirConst::Str(s) => {
                         // Allocate immortal string at JIT compile time (#1129 R4).
                         let ptr = MbObject::new_str_immortal(s.clone());
                         self.compile_time_objects.push(ptr);
                         let str_val = MbValue::from_ptr(ptr);
-                        builder.ins().iconst(cl_types::I64, str_val.to_bits() as i64)
+                        builder
+                            .ins()
+                            .iconst(cl_types::I64, str_val.to_bits() as i64)
                     }
                     MirConst::Bytes(data) => {
                         // Allocate immortal bytes at JIT compile time (#1129 R4).
                         let ptr = MbObject::new_bytes_immortal(data.clone());
                         self.compile_time_objects.push(ptr);
                         let bytes_val = MbValue::from_ptr(ptr);
-                        builder.ins().iconst(cl_types::I64, bytes_val.to_bits() as i64)
+                        builder
+                            .ins()
+                            .iconst(cl_types::I64, bytes_val.to_bits() as i64)
                     }
                     MirConst::FuncRef(sym) => {
                         // Load function address for class method / lambda / async body (#313 R1).
@@ -563,7 +624,9 @@ impl CraneliftJitBackend {
                             let fref = self.module().declare_func_in_func(func_id, builder.func);
                             let raw_addr = builder.ins().func_addr(cl_types::I64, fref);
                             // NaN-box with TAG_FUNC=4: NAN_PREFIX | (4 << 48) | addr
-                            let tag_prefix = builder.ins().iconst(cl_types::I64, 0xFFFC_0000_0000_0000u64 as i64);
+                            let tag_prefix = builder
+                                .ins()
+                                .iconst(cl_types::I64, 0xFFFC_0000_0000_0000u64 as i64);
                             builder.ins().bor(raw_addr, tag_prefix)
                         } else {
                             builder.ins().iconst(cl_types::I64, 0)
@@ -576,7 +639,9 @@ impl CraneliftJitBackend {
                             let fref = self.module().declare_func_in_func(func_id, builder.func);
                             let raw_addr = builder.ins().func_addr(cl_types::I64, fref);
                             // NaN-box with TAG_FUNC=4: NAN_PREFIX | (4 << 48) | addr
-                            let tag_prefix = builder.ins().iconst(cl_types::I64, 0xFFFC_0000_0000_0000u64 as i64);
+                            let tag_prefix = builder
+                                .ins()
+                                .iconst(cl_types::I64, 0xFFFC_0000_0000_0000u64 as i64);
                             builder.ins().bor(raw_addr, tag_prefix)
                         } else {
                             builder.ins().iconst(cl_types::I64, 0)
@@ -585,7 +650,13 @@ impl CraneliftJitBackend {
                 };
                 builder.def_var(var, val);
             }
-            MirInst::BinOp { dest, op, lhs, rhs, ty } => {
+            MirInst::BinOp {
+                dest,
+                op,
+                lhs,
+                rhs,
+                ty,
+            } => {
                 let resolved_ty = tcx.get(*ty);
                 let use_primitive = match op {
                     MirBinOp::Is | MirBinOp::IsNot => true,
@@ -623,7 +694,9 @@ impl CraneliftJitBackend {
                             let lc = builder.ins().call(fref, &[l]);
                             let rc = builder.ins().call(fref, &[r]);
                             (builder.inst_results(lc)[0], builder.inst_results(rc)[0])
-                        } else { (l, r) };
+                        } else {
+                            (l, r)
+                        };
                         let call = builder.ins().call(func_ref, &[l_boxed, r_boxed]);
                         let result_bits = builder.inst_results(call)[0];
                         // For Int operands: mb_floordiv/mb_mod return NaN-boxed MbValue,
@@ -634,9 +707,13 @@ impl CraneliftJitBackend {
                             let tag = builder.ins().band_imm(tag_raw, 7);
                             let tag_int = builder.ins().iconst(cl_types::I64, 1);
                             let is_inline = builder.ins().icmp(
-                                cranelift_codegen::ir::condcodes::IntCC::Equal, tag, tag_int,
+                                cranelift_codegen::ir::condcodes::IntCC::Equal,
+                                tag,
+                                tag_int,
                             );
-                            let payload_mask = builder.ins().iconst(cl_types::I64, 0x0000_FFFF_FFFF_FFFFi64);
+                            let payload_mask = builder
+                                .ins()
+                                .iconst(cl_types::I64, 0x0000_FFFF_FFFF_FFFFi64);
                             let payload = builder.ins().band(result_bits, payload_mask);
                             let shifted = builder.ins().ishl_imm(payload, 16);
                             let unboxed = builder.ins().sshr_imm(shifted, 16);
@@ -751,21 +828,38 @@ impl CraneliftJitBackend {
                     // Skip raw_ints sources: mb_retain_value as_ptr-checks
                     // the NaN tag and is a no-op for raw i64s.
                     let i64_val = vars.use_as_i64(*source, builder);
-                    if src_type == cl_types::I64 || vars.declared_type(*dest) == Some(cl_types::I64) {
+                    if src_type == cl_types::I64 || vars.declared_type(*dest) == Some(cl_types::I64)
+                    {
                         if let Some(&retain_id) = self.extern_funcs.get("mb_retain_value") {
-                            let retain_ref = self.module().declare_func_in_func(retain_id, builder.func);
+                            let retain_ref =
+                                self.module().declare_func_in_func(retain_id, builder.func);
                             builder.ins().call(retain_ref, &[i64_val]);
                         }
                     }
                 }
             }
-            MirInst::Call { dest, func, args, ty } => {
+            MirInst::Call {
+                dest,
+                func,
+                args,
+                ty,
+            } => {
                 self.emit_internal_call(dest, func.0, args, ty, tcx, builder, vars);
             }
-            MirInst::CallExtern { dest, name, args, ty } => {
+            MirInst::CallExtern {
+                dest,
+                name,
+                args,
+                ty,
+            } => {
                 self.emit_extern_call(dest, name, args, ty, tcx, externs, builder, vars);
             }
-            MirInst::UnaryOp { dest, op, operand, ty } => {
+            MirInst::UnaryOp {
+                dest,
+                op,
+                operand,
+                ty,
+            } => {
                 let resolved_ty = tcx.get(*ty);
                 let is_primitive = matches!(resolved_ty, Ty::Int | Ty::Float | Ty::Bool);
                 if is_primitive {
@@ -777,7 +871,8 @@ impl CraneliftJitBackend {
                         crate::mir::MirUnaryOp::Neg => {
                             // Use fneg for floats (with I64↔F64 bitcast), ineg for integers/bools.
                             if matches!(resolved_ty, Ty::Float) {
-                                let fval = builder.ins().bitcast(cl_types::F64, MemFlags::new(), val);
+                                let fval =
+                                    builder.ins().bitcast(cl_types::F64, MemFlags::new(), val);
                                 let neg = builder.ins().fneg(fval);
                                 builder.ins().bitcast(cl_types::I64, MemFlags::new(), neg)
                             } else {
@@ -793,7 +888,8 @@ impl CraneliftJitBackend {
                                 let one = builder.ins().iconst(cl_types::I64, 1);
                                 builder.ins().bxor(val, one)
                             } else if let Some(&truthy_id) = self.extern_funcs.get("mb_is_truthy") {
-                                let truthy_ref = self.module().declare_func_in_func(truthy_id, builder.func);
+                                let truthy_ref =
+                                    self.module().declare_func_in_func(truthy_id, builder.func);
                                 let call = builder.ins().call(truthy_ref, &[val]);
                                 let truthy_val = builder.inst_results(call)[0];
                                 let one = builder.ins().iconst(cl_types::I64, 1);
@@ -826,7 +922,8 @@ impl CraneliftJitBackend {
                         crate::mir::MirUnaryOp::Pos => val,
                         crate::mir::MirUnaryOp::Neg => {
                             if matches!(resolved_ty, Ty::Float) {
-                                let fval = builder.ins().bitcast(cl_types::F64, MemFlags::new(), val);
+                                let fval =
+                                    builder.ins().bitcast(cl_types::F64, MemFlags::new(), val);
                                 let neg = builder.ins().fneg(fval);
                                 builder.ins().bitcast(cl_types::I64, MemFlags::new(), neg)
                             } else {
@@ -838,7 +935,8 @@ impl CraneliftJitBackend {
                                 let one = builder.ins().iconst(cl_types::I64, 1);
                                 builder.ins().bxor(val, one)
                             } else if let Some(&truthy_id) = self.extern_funcs.get("mb_is_truthy") {
-                                let truthy_ref = self.module().declare_func_in_func(truthy_id, builder.func);
+                                let truthy_ref =
+                                    self.module().declare_func_in_func(truthy_id, builder.func);
                                 let call = builder.ins().call(truthy_ref, &[val]);
                                 let truthy_val = builder.inst_results(call)[0];
                                 let one = builder.ins().iconst(cl_types::I64, 1);
@@ -858,25 +956,56 @@ impl CraneliftJitBackend {
                 }
             }
             // Object operations — emit real FFI calls to runtime
-            MirInst::GetAttr { dest, object, attr, ty: _ } => {
+            MirInst::GetAttr {
+                dest,
+                object,
+                attr,
+                ty: _,
+            } => {
                 self.emit_getattr(dest, object, attr, builder, vars, externs);
             }
-            MirInst::SetAttr { object, attr, value } => {
+            MirInst::SetAttr {
+                object,
+                attr,
+                value,
+            } => {
                 self.emit_setattr(object, attr, value, builder, vars, externs);
             }
-            MirInst::GetItem { dest, object, index, ty: _ } => {
+            MirInst::GetItem {
+                dest,
+                object,
+                index,
+                ty: _,
+            } => {
                 self.emit_getitem(dest, object, index, builder, vars, externs);
             }
-            MirInst::SetItem { object, index, value } => {
+            MirInst::SetItem {
+                object,
+                index,
+                value,
+            } => {
                 self.emit_setitem(object, index, value, builder, vars, externs);
             }
-            MirInst::MakeList { dest, elements, ty: _ } => {
+            MirInst::MakeList {
+                dest,
+                elements,
+                ty: _,
+            } => {
                 self.emit_make_list(dest, elements, builder, vars, externs);
             }
-            MirInst::MakeDict { dest, keys, values, ty: _ } => {
+            MirInst::MakeDict {
+                dest,
+                keys,
+                values,
+                ty: _,
+            } => {
                 self.emit_make_dict(dest, keys, values, builder, vars, externs);
             }
-            MirInst::MakeTuple { dest, elements, ty: _ } => {
+            MirInst::MakeTuple {
+                dest,
+                elements,
+                ty: _,
+            } => {
                 self.emit_make_tuple(dest, elements, builder, vars, externs);
             }
             MirInst::Raise { value } => {
@@ -884,7 +1013,9 @@ impl CraneliftJitBackend {
                     let v = vars.get(*vreg, builder, cl_types::I64);
                     let _val = builder.use_var(v);
                 }
-                builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                builder
+                    .ins()
+                    .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
                 // `trap` is a terminator; subsequent insts in this MIR block
                 // need somewhere to live. Open a fresh (unreachable) cranelift
                 // block so the verifier's "single terminator per block" rule
@@ -939,7 +1070,9 @@ impl CraneliftJitBackend {
                     vars.def_var_cast(*dest, builder, result, cl_types::I64);
                 }
             }
-            MirInst::LoadCapture { dest, capture_idx, .. } => {
+            MirInst::LoadCapture {
+                dest, capture_idx, ..
+            } => {
                 if let Some(&func_id) = self.extern_funcs.get("mb_closure_get_capture") {
                     let func_ref = self.module().declare_func_in_func(func_id, builder.func);
                     // closure_handle is passed as first hidden parameter (vreg 0 by convention)
@@ -951,26 +1084,62 @@ impl CraneliftJitBackend {
                     vars.def_var_cast(*dest, builder, result, cl_types::I64);
                 }
             }
-            MirInst::CheckedAdd { dest, lhs, rhs, ty: _ } => {
+            MirInst::CheckedAdd {
+                dest,
+                lhs,
+                rhs,
+                ty: _,
+            } => {
                 if vars.raw_ints.contains(lhs) && vars.raw_ints.contains(rhs) {
                     self.emit_raw_int_op_with_overflow_check(
-                        dest, lhs, rhs, RawIntOp::Add, "mb_bigint_add", builder, vars);
+                        dest,
+                        lhs,
+                        rhs,
+                        RawIntOp::Add,
+                        "mb_bigint_add",
+                        builder,
+                        vars,
+                    );
                 } else {
                     self.emit_checked_int_op(dest, lhs, rhs, "mb_bigint_add", builder, vars);
                 }
             }
-            MirInst::CheckedSub { dest, lhs, rhs, ty: _ } => {
+            MirInst::CheckedSub {
+                dest,
+                lhs,
+                rhs,
+                ty: _,
+            } => {
                 if vars.raw_ints.contains(lhs) && vars.raw_ints.contains(rhs) {
                     self.emit_raw_int_op_with_overflow_check(
-                        dest, lhs, rhs, RawIntOp::Sub, "mb_bigint_sub", builder, vars);
+                        dest,
+                        lhs,
+                        rhs,
+                        RawIntOp::Sub,
+                        "mb_bigint_sub",
+                        builder,
+                        vars,
+                    );
                 } else {
                     self.emit_checked_int_op(dest, lhs, rhs, "mb_bigint_sub", builder, vars);
                 }
             }
-            MirInst::CheckedMul { dest, lhs, rhs, ty: _ } => {
+            MirInst::CheckedMul {
+                dest,
+                lhs,
+                rhs,
+                ty: _,
+            } => {
                 if vars.raw_ints.contains(lhs) && vars.raw_ints.contains(rhs) {
                     self.emit_raw_int_op_with_overflow_check(
-                        dest, lhs, rhs, RawIntOp::Mul, "mb_bigint_mul", builder, vars);
+                        dest,
+                        lhs,
+                        rhs,
+                        RawIntOp::Mul,
+                        "mb_bigint_mul",
+                        builder,
+                        vars,
+                    );
                 } else {
                     self.emit_checked_int_op(dest, lhs, rhs, "mb_bigint_mul", builder, vars);
                 }
@@ -1068,8 +1237,8 @@ impl CraneliftJitBackend {
         builder: &mut cranelift_frontend::FunctionBuilder,
         vars: &mut VarAlloc,
     ) {
-        use cranelift_codegen::ir::InstBuilder;
         use cranelift_codegen::ir::condcodes::IntCC;
+        use cranelift_codegen::ir::InstBuilder;
 
         const PAYLOAD_MASK: i64 = 0x0000_FFFF_FFFF_FFFFi64;
         const TAG_INT_VAL: i64 = 1i64;
@@ -1108,7 +1277,9 @@ impl CraneliftJitBackend {
         let merge_block = builder.create_block();
         let merged_param = builder.append_block_param(merge_block, cl_types::I64);
 
-        builder.ins().brif(no_overflow, fast_block, &[], slow_block, &[]);
+        builder
+            .ins()
+            .brif(no_overflow, fast_block, &[], slow_block, &[]);
 
         // Fast block: pass native raw_result through.
         builder.switch_to_block(fast_block);
@@ -1177,7 +1348,9 @@ impl CraneliftJitBackend {
             let ptr = MbObject::new_str_immortal(attr.to_string());
             self.compile_time_objects.push(ptr);
             let attr_str = MbValue::from_ptr(ptr);
-            let attr_val = builder.ins().iconst(cl_types::I64, attr_str.to_bits() as i64);
+            let attr_val = builder
+                .ins()
+                .iconst(cl_types::I64, attr_str.to_bits() as i64);
             let call = builder.ins().call(func_ref, &[obj_val, attr_val]);
             let result = builder.inst_results(call)[0];
             vars.def_var_cast(*dest, builder, result, cl_types::I64);
@@ -1204,7 +1377,9 @@ impl CraneliftJitBackend {
             let ptr = MbObject::new_str_immortal(attr.to_string());
             self.compile_time_objects.push(ptr);
             let attr_str = MbValue::from_ptr(ptr);
-            let attr_val = builder.ins().iconst(cl_types::I64, attr_str.to_bits() as i64);
+            let attr_val = builder
+                .ins()
+                .iconst(cl_types::I64, attr_str.to_bits() as i64);
             let val = vars.use_as_i64(*value, builder);
             builder.ins().call(func_ref, &[obj_val, attr_val, val]);
         }
@@ -1294,7 +1469,8 @@ impl CraneliftJitBackend {
         if let Some(fn_name) = small_arity_fn {
             if let Some(&fn_id) = self.extern_funcs.get(fn_name) {
                 let fn_ref = self.module().declare_func_in_func(fn_id, builder.func);
-                let arg_vals: Vec<_> = elements.iter()
+                let arg_vals: Vec<_> = elements
+                    .iter()
                     .map(|e| vars.use_as_i64(*e, builder))
                     .collect();
                 let call = builder.ins().call(fn_ref, &arg_vals);
@@ -1305,7 +1481,9 @@ impl CraneliftJitBackend {
         }
 
         let new_id_opt = if n > 0 {
-            self.extern_funcs.get("mb_list_new_with_capacity").copied()
+            self.extern_funcs
+                .get("mb_list_new_with_capacity")
+                .copied()
                 .or_else(|| self.extern_funcs.get("mb_list_new").copied())
         } else {
             self.extern_funcs.get("mb_list_new").copied()
@@ -1315,15 +1493,17 @@ impl CraneliftJitBackend {
         // mb_list_append_unchecked uses unwrap_unchecked + skips retain
         // for inline scalars. Safe here because the list is private until
         // we publish it via def_var_cast below.
-        let append_id_opt = self.extern_funcs.get("mb_list_append_unchecked").copied()
+        let append_id_opt = self
+            .extern_funcs
+            .get("mb_list_append_unchecked")
+            .copied()
             .or_else(|| self.extern_funcs.get("mb_list_append").copied());
         if let (Some(new_id), Some(append_id)) = (new_id_opt, append_id_opt) {
             let new_ref = self.module().declare_func_in_func(new_id, builder.func);
             let list_val = if n > 0 {
-                let cap_val = builder.ins().iconst(
-                    cl_types::I64,
-                    (NAN_INT_PREFIX | (n as u64)) as i64,
-                );
+                let cap_val = builder
+                    .ins()
+                    .iconst(cl_types::I64, (NAN_INT_PREFIX | (n as u64)) as i64);
                 let call = builder.ins().call(new_ref, &[cap_val]);
                 builder.inst_results(call)[0]
             } else {
@@ -1412,7 +1592,8 @@ impl CraneliftJitBackend {
         if let Some(fn_name) = small_arity_fn {
             if let Some(&fn_id) = self.extern_funcs.get(fn_name) {
                 let fn_ref = self.module().declare_func_in_func(fn_id, builder.func);
-                let arg_vals: Vec<_> = elements.iter()
+                let arg_vals: Vec<_> = elements
+                    .iter()
                     .map(|e| vars.use_as_i64(*e, builder))
                     .collect();
                 let call = builder.ins().call(fn_ref, &arg_vals);
@@ -1436,23 +1617,27 @@ impl CraneliftJitBackend {
         }
 
         let new_id = if n > 0 {
-            self.extern_funcs.get("mb_list_new_with_capacity").copied()
+            self.extern_funcs
+                .get("mb_list_new_with_capacity")
+                .copied()
                 .or_else(|| self.extern_funcs.get("mb_list_new").copied())
         } else {
             self.extern_funcs.get("mb_list_new").copied()
         };
         // Same private-list rationale as emit_make_list — the intermediate
         // list never escapes to user code.
-        let append_id = self.extern_funcs.get("mb_list_append_unchecked").copied()
+        let append_id = self
+            .extern_funcs
+            .get("mb_list_append_unchecked")
+            .copied()
             .or_else(|| self.extern_funcs.get("mb_list_append").copied());
         let convert_id = self.extern_funcs.get("mb_list_to_tuple").copied();
         if let (Some(new_id), Some(append_id), Some(convert_id)) = (new_id, append_id, convert_id) {
             let new_ref = self.module().declare_func_in_func(new_id, builder.func);
             let list_val = if n > 0 {
-                let cap_val = builder.ins().iconst(
-                    cl_types::I64,
-                    (NAN_INT_PREFIX | (n as u64)) as i64,
-                );
+                let cap_val = builder
+                    .ins()
+                    .iconst(cl_types::I64, (NAN_INT_PREFIX | (n as u64)) as i64);
                 let call = builder.ins().call(new_ref, &[cap_val]);
                 builder.inst_results(call)[0]
             } else {
@@ -1487,9 +1672,7 @@ impl CraneliftJitBackend {
         if let Some(&callee_id) = self.internal_funcs.get(&sym_id) {
             let func_ref = self.module().declare_func_in_func(callee_id, builder.func);
             // Bitcast F64 args to I64 — internal functions use I64 ABI for all params.
-            let mut arg_vals: Vec<_> = args.iter().map(|a| {
-                vars.use_as_i64(*a, builder)
-            }).collect();
+            let mut arg_vals: Vec<_> = args.iter().map(|a| vars.use_as_i64(*a, builder)).collect();
             // #1696 arity guard: reshape `arg_vals` to match the declared
             // signature so a call site whose `MirInst::Call { args }` length
             // diverges from `body.params.len()` no longer trips the Cranelift
@@ -1519,7 +1702,8 @@ impl CraneliftJitBackend {
                     let callee_ty = tcx.get(callee_ty_id);
                     let callsite_ty = tcx.get(*ty);
                     let callee_is_primitive = matches!(callee_ty, Ty::Int | Ty::Bool | Ty::Float);
-                    let callsite_is_nonprimitive = !matches!(callsite_ty, Ty::Int | Ty::Bool | Ty::Float);
+                    let callsite_is_nonprimitive =
+                        !matches!(callsite_ty, Ty::Int | Ty::Bool | Ty::Float);
                     if callee_is_primitive && callsite_is_nonprimitive {
                         // Float: already NaN-boxed as I64 (= MbValue), no boxing needed.
                         // Int/Bool: raw value in I64, needs boxing to MbValue.
@@ -1531,7 +1715,9 @@ impl CraneliftJitBackend {
                                 _ => "mb_box_int",
                             };
                             if let Some(&box_func_id) = self.extern_funcs.get(box_fn_name) {
-                                let box_ref = self.module().declare_func_in_func(box_func_id, builder.func);
+                                let box_ref = self
+                                    .module()
+                                    .declare_func_in_func(box_func_id, builder.func);
                                 let box_call = builder.ins().call(box_ref, &[result]);
                                 builder.inst_results(box_call)[0]
                             } else {
@@ -1611,8 +1797,8 @@ impl CraneliftJitBackend {
         if name == "mb_box_int" && args.len() == 1 {
             if let Some(dest_vreg) = dest {
                 if vars.raw_ints.contains(&args[0]) {
-                    use cranelift_codegen::ir::InstBuilder;
                     use cranelift_codegen::ir::condcodes::IntCC;
+                    use cranelift_codegen::ir::InstBuilder;
                     const PAYLOAD_MASK: i64 = 0x0000_FFFF_FFFF_FFFFi64;
                     // NAN_PREFIX | (TAG_INT(=1) << TAG_SHIFT(=48))
                     const BOX_INT_TEMPLATE: i64 = 0xFFF9_0000_0000_0000_u64 as i64;
@@ -1631,18 +1817,16 @@ impl CraneliftJitBackend {
                     // emit_raw_int_op_with_overflow_check.
                     let shifted = builder.ins().ishl_imm(arg_val, 16);
                     let restored = builder.ins().sshr_imm(shifted, 16);
-                    let fits_48 = builder.ins().icmp(
-                        IntCC::Equal, arg_val, restored,
-                    );
+                    let fits_48 = builder.ins().icmp(IntCC::Equal, arg_val, restored);
 
                     let fast_block = builder.create_block();
                     let slow_block = builder.create_block();
                     let merge_block = builder.create_block();
-                    let merged_param = builder.append_block_param(
-                        merge_block, cl_types::I64,
-                    );
+                    let merged_param = builder.append_block_param(merge_block, cl_types::I64);
 
-                    builder.ins().brif(fits_48, fast_block, &[], slow_block, &[]);
+                    builder
+                        .ins()
+                        .brif(fits_48, fast_block, &[], slow_block, &[]);
 
                     // Fast: raw INT48 → format inline.
                     builder.switch_to_block(fast_block);
@@ -1686,7 +1870,8 @@ impl CraneliftJitBackend {
                 };
                 let is_eq = builder.ins().icmp_imm(
                     cranelift_codegen::ir::condcodes::IntCC::Equal,
-                    arg, SENTINEL_BITS,
+                    arg,
+                    SENTINEL_BITS,
                 );
                 let dv = vars.get(*dest_vreg, builder, cl_types::I8);
                 builder.def_var(dv, is_eq);
@@ -1698,24 +1883,28 @@ impl CraneliftJitBackend {
         let ext = externs.iter().find(|e| e.name == name);
         if let Some(&func_id) = self.extern_funcs.get(name) {
             let func_ref = self.module().declare_func_in_func(func_id, builder.func);
-            let mut arg_vals: Vec<_> = args.iter().enumerate().map(|(i, a)| {
-                // Load the variable with its actual declared type, then marshal
-                // to the extern's expected param type. This handles F64→I64 bitcast
-                // when a float VReg is passed to a runtime function expecting MbValue.
-                let actual_type = vars.declared_type(*a).unwrap_or(cl_types::I64);
-                let v = vars.get(*a, builder, actual_type);
-                let val = builder.use_var(v);
-                if let Some(ext) = ext {
-                    if i < ext.params.len() {
-                        return marshal::marshal_arg(builder, val, actual_type, &ext.params[i]);
+            let mut arg_vals: Vec<_> = args
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    // Load the variable with its actual declared type, then marshal
+                    // to the extern's expected param type. This handles F64→I64 bitcast
+                    // when a float VReg is passed to a runtime function expecting MbValue.
+                    let actual_type = vars.declared_type(*a).unwrap_or(cl_types::I64);
+                    let v = vars.get(*a, builder, actual_type);
+                    let val = builder.use_var(v);
+                    if let Some(ext) = ext {
+                        if i < ext.params.len() {
+                            return marshal::marshal_arg(builder, val, actual_type, &ext.params[i]);
+                        }
                     }
-                }
-                // No extern info — if F64, bitcast to I64 (safe default for MbValue)
-                if actual_type == cl_types::F64 {
-                    return builder.ins().bitcast(cl_types::I64, MemFlags::new(), val);
-                }
-                val
-            }).collect();
+                    // No extern info — if F64, bitcast to I64 (safe default for MbValue)
+                    if actual_type == cl_types::F64 {
+                        return builder.ins().bitcast(cl_types::I64, MemFlags::new(), val);
+                    }
+                    val
+                })
+                .collect();
             // #1696 / #2098 arity guard: the extern thunk's Cranelift
             // signature was registered with `ext.params.len()` AbiParams
             // in `declare_extern`. A MIR `CallExtern { args }` whose length
@@ -1738,7 +1927,8 @@ impl CraneliftJitBackend {
             // under-arity. Conservative — the call may produce a wrong
             // runtime value, but the JIT module is no longer aborted by
             // the verifier so downstream code continues compiling.
-            let declared = ext.map(|e| e.params.len())
+            let declared = ext
+                .map(|e| e.params.len())
                 .or_else(|| self.extern_param_counts.get(name).copied());
             if let Some(declared) = declared {
                 if arg_vals.len() > declared {
@@ -1759,21 +1949,35 @@ impl CraneliftJitBackend {
                 if let Some(ext) = ext {
                     if ext.return_type != MirType::Void {
                         let raw = builder.inst_results(call)[0];
-                        let val = marshal::unmarshal_return(builder, raw, &ext.return_type, actual_dest_type);
+                        let val = marshal::unmarshal_return(
+                            builder,
+                            raw,
+                            &ext.return_type,
+                            actual_dest_type,
+                        );
                         builder.def_var(var, val);
                     } else {
-                        let none_bits = builder.ins().iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+                        let none_bits = builder
+                            .ins()
+                            .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
                         if actual_dest_type == cl_types::F64 {
-                            let cast = builder.ins().bitcast(cl_types::F64, MemFlags::new(), none_bits);
+                            let cast =
+                                builder
+                                    .ins()
+                                    .bitcast(cl_types::F64, MemFlags::new(), none_bits);
                             builder.def_var(var, cast);
                         } else {
                             builder.def_var(var, none_bits);
                         }
                     }
                 } else {
-                    let none_bits = builder.ins().iconst(cl_types::I64, MbValue::none().to_bits() as i64);
+                    let none_bits = builder
+                        .ins()
+                        .iconst(cl_types::I64, MbValue::none().to_bits() as i64);
                     if actual_dest_type == cl_types::F64 {
-                        let cast = builder.ins().bitcast(cl_types::F64, MemFlags::new(), none_bits);
+                        let cast = builder
+                            .ins()
+                            .bitcast(cl_types::F64, MemFlags::new(), none_bits);
                         builder.def_var(var, cast);
                     } else {
                         builder.def_var(var, none_bits);
@@ -1803,7 +2007,9 @@ impl CodegenBackend for CraneliftJitBackend {
     ) -> crate::error::Result<CodegenOutput> {
         // Merge user externs with runtime externs
         let rt_externs = runtime_externs();
-        let all_externs: Vec<MirExtern> = module.externs.iter()
+        let all_externs: Vec<MirExtern> = module
+            .externs
+            .iter()
             .chain(rt_externs.iter())
             .cloned()
             .collect();
@@ -1823,7 +2029,8 @@ impl CodegenBackend for CraneliftJitBackend {
 
         // Finalize — commit code to executable memory
         let jit_module = self.module.as_mut().expect("module already consumed");
-        jit_module.finalize_definitions()
+        jit_module
+            .finalize_definitions()
             .map_err(|e| crate::error::MambaError::codegen(format!("finalize: {e}")))?;
 
         // Register variadic function addresses so mb_call_spread can detect them.
@@ -1876,7 +2083,9 @@ impl CodegenBackend for CraneliftJitBackend {
             let entry_ptr = jit_module.get_finalized_function(func_id);
             Ok(CodegenOutput::Jit { entry: entry_ptr })
         } else {
-            Err(crate::error::MambaError::codegen("no entry point found".to_string()))
+            Err(crate::error::MambaError::codegen(
+                "no entry point found".to_string(),
+            ))
         }
     }
 
@@ -1889,7 +2098,9 @@ impl CodegenBackend for CraneliftJitBackend {
 mod tests {
     use super::*;
     use crate::codegen::CodegenBackend;
-    use crate::mir::{BasicBlock, BlockId, MirBody, MirConst, MirInst, MirModule, Terminator, VReg};
+    use crate::mir::{
+        BasicBlock, BlockId, MirBody, MirConst, MirInst, MirModule, Terminator, VReg,
+    };
     use crate::resolve::SymbolId;
     use crate::types::TypeContext;
 
@@ -2068,7 +2279,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u32 & 0x7fff_ffff)
             .unwrap_or(123_456_789))
-            .max(1);
+        .max(1);
         let mir = MirModule {
             bodies: vec![MirBody {
                 name: SymbolId(sym),
@@ -2096,9 +2307,9 @@ mod tests {
         let line = body
             .lines()
             .find(|l| l.ends_with(&needle))
-            .unwrap_or_else(|| panic!(
-                "no perf-map line ending in {needle:?} found in {path}:\n{body}"
-            ));
+            .unwrap_or_else(|| {
+                panic!("no perf-map line ending in {needle:?} found in {path}:\n{body}")
+            });
         // Format must be: <addr-hex> <size-hex> <symbol>
         let mut parts = line.split_whitespace();
         let addr = parts.next().expect("addr");
@@ -2109,8 +2320,8 @@ mod tests {
             u64::from_str_radix(addr, 16).is_ok(),
             "addr {addr:?} not hex"
         );
-        let size_n = u64::from_str_radix(size, 16)
-            .unwrap_or_else(|_| panic!("size {size:?} not hex"));
+        let size_n =
+            u64::from_str_radix(size, 16).unwrap_or_else(|_| panic!("size {size:?} not hex"));
         assert!(size_n > 0, "expected non-zero compiled size");
         assert_eq!(name, needle);
     }

@@ -68,31 +68,71 @@ pub(crate) fn apply_escape_sequences(s: &str) -> String {
             continue;
         }
         match chars.peek().copied() {
-            Some('\\') => { chars.next(); result.push('\\'); }
+            Some('\\') => {
+                chars.next();
+                result.push('\\');
+            }
             // Line continuation: backslash before a literal newline collapses
             // to nothing (also swallowing a CR in CRLF sources).
-            Some('\n') => { chars.next(); }
+            Some('\n') => {
+                chars.next();
+            }
             Some('\r') => {
                 chars.next();
-                if chars.peek() == Some(&'\n') { chars.next(); }
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
             }
-            Some('\'') => { chars.next(); result.push('\''); }
-            Some('"') => { chars.next(); result.push('"'); }
-            Some('n') => { chars.next(); result.push('\n'); }
-            Some('t') => { chars.next(); result.push('\t'); }
-            Some('r') => { chars.next(); result.push('\r'); }
-            Some('a') => { chars.next(); result.push('\x07'); }
-            Some('b') => { chars.next(); result.push('\x08'); }
-            Some('f') => { chars.next(); result.push('\x0C'); }
-            Some('v') => { chars.next(); result.push('\x0B'); }
-            Some('0') => { chars.next(); result.push('\0'); }
+            Some('\'') => {
+                chars.next();
+                result.push('\'');
+            }
+            Some('"') => {
+                chars.next();
+                result.push('"');
+            }
+            Some('n') => {
+                chars.next();
+                result.push('\n');
+            }
+            Some('t') => {
+                chars.next();
+                result.push('\t');
+            }
+            Some('r') => {
+                chars.next();
+                result.push('\r');
+            }
+            Some('a') => {
+                chars.next();
+                result.push('\x07');
+            }
+            Some('b') => {
+                chars.next();
+                result.push('\x08');
+            }
+            Some('f') => {
+                chars.next();
+                result.push('\x0C');
+            }
+            Some('v') => {
+                chars.next();
+                result.push('\x0B');
+            }
+            Some('0') => {
+                chars.next();
+                result.push('\0');
+            }
             Some('N') => {
                 chars.next();
                 if chars.peek() == Some(&'{') {
                     chars.next();
                     let mut name = String::new();
                     while let Some(&nc) = chars.peek() {
-                        if nc == '}' { chars.next(); break; }
+                        if nc == '}' {
+                            chars.next();
+                            break;
+                        }
                         name.push(nc);
                         chars.next();
                     }
@@ -113,29 +153,56 @@ pub(crate) fn apply_escape_sequences(s: &str) -> String {
             Some('u') => {
                 chars.next();
                 let mut hex = String::with_capacity(4);
-                for _ in 0..4 { if let Some(h) = chars.next() { hex.push(h); } }
-                if let Ok(n) = u32::from_str_radix(&hex, 16) {
-                    if let Some(uc) = char::from_u32(n) { result.push(uc); continue; }
+                for _ in 0..4 {
+                    if let Some(h) = chars.next() {
+                        hex.push(h);
+                    }
                 }
-                result.push('\\'); result.push('u'); result.push_str(&hex);
+                if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                    if let Some(uc) = char::from_u32(n) {
+                        result.push(uc);
+                        continue;
+                    }
+                }
+                result.push('\\');
+                result.push('u');
+                result.push_str(&hex);
             }
             Some('U') => {
                 chars.next();
                 let mut hex = String::with_capacity(8);
-                for _ in 0..8 { if let Some(h) = chars.next() { hex.push(h); } }
-                if let Ok(n) = u32::from_str_radix(&hex, 16) {
-                    if let Some(uc) = char::from_u32(n) { result.push(uc); continue; }
+                for _ in 0..8 {
+                    if let Some(h) = chars.next() {
+                        hex.push(h);
+                    }
                 }
-                result.push('\\'); result.push('U'); result.push_str(&hex);
+                if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                    if let Some(uc) = char::from_u32(n) {
+                        result.push(uc);
+                        continue;
+                    }
+                }
+                result.push('\\');
+                result.push('U');
+                result.push_str(&hex);
             }
             Some('x') => {
                 chars.next();
                 let mut hex = String::with_capacity(2);
-                for _ in 0..2 { if let Some(h) = chars.next() { hex.push(h); } }
-                if let Ok(n) = u32::from_str_radix(&hex, 16) {
-                    if let Some(uc) = char::from_u32(n) { result.push(uc); continue; }
+                for _ in 0..2 {
+                    if let Some(h) = chars.next() {
+                        hex.push(h);
+                    }
                 }
-                result.push('\\'); result.push('x'); result.push_str(&hex);
+                if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                    if let Some(uc) = char::from_u32(n) {
+                        result.push(uc);
+                        continue;
+                    }
+                }
+                result.push('\\');
+                result.push('x');
+                result.push_str(&hex);
             }
             Some(d) if d.is_ascii_digit() && d != '8' && d != '9' => {
                 // Octal escape: \ooo (up to 3 octal digits)
@@ -153,9 +220,13 @@ pub(crate) fn apply_escape_sequences(s: &str) -> String {
                     }
                 }
                 if let Ok(n) = u32::from_str_radix(&oct, 8) {
-                    if let Some(uc) = char::from_u32(n) { result.push(uc); continue; }
+                    if let Some(uc) = char::from_u32(n) {
+                        result.push(uc);
+                        continue;
+                    }
                 }
-                result.push('\\'); result.push_str(&oct);
+                result.push('\\');
+                result.push_str(&oct);
             }
             _ => result.push(c),
         }
@@ -183,21 +254,58 @@ pub(crate) fn apply_bytes_escapes(s: &str) -> Vec<u8> {
             continue;
         }
         match chars.peek().copied() {
-            Some('\\') => { chars.next(); result.push(b'\\'); }
-            Some('\'') => { chars.next(); result.push(b'\''); }
-            Some('"') => { chars.next(); result.push(b'"'); }
-            Some('n') => { chars.next(); result.push(b'\n'); }
-            Some('t') => { chars.next(); result.push(b'\t'); }
-            Some('r') => { chars.next(); result.push(b'\r'); }
-            Some('a') => { chars.next(); result.push(0x07); }
-            Some('b') => { chars.next(); result.push(0x08); }
-            Some('f') => { chars.next(); result.push(0x0C); }
-            Some('v') => { chars.next(); result.push(0x0B); }
-            Some('0') => { chars.next(); result.push(0); }
+            Some('\\') => {
+                chars.next();
+                result.push(b'\\');
+            }
+            Some('\'') => {
+                chars.next();
+                result.push(b'\'');
+            }
+            Some('"') => {
+                chars.next();
+                result.push(b'"');
+            }
+            Some('n') => {
+                chars.next();
+                result.push(b'\n');
+            }
+            Some('t') => {
+                chars.next();
+                result.push(b'\t');
+            }
+            Some('r') => {
+                chars.next();
+                result.push(b'\r');
+            }
+            Some('a') => {
+                chars.next();
+                result.push(0x07);
+            }
+            Some('b') => {
+                chars.next();
+                result.push(0x08);
+            }
+            Some('f') => {
+                chars.next();
+                result.push(0x0C);
+            }
+            Some('v') => {
+                chars.next();
+                result.push(0x0B);
+            }
+            Some('0') => {
+                chars.next();
+                result.push(0);
+            }
             Some('x') => {
                 chars.next();
                 let mut hex = String::with_capacity(2);
-                for _ in 0..2 { if let Some(h) = chars.next() { hex.push(h); } }
+                for _ in 0..2 {
+                    if let Some(h) = chars.next() {
+                        hex.push(h);
+                    }
+                }
                 if let Ok(n) = u8::from_str_radix(&hex, 16) {
                     result.push(n);
                 } else {
@@ -230,7 +338,9 @@ pub(crate) fn apply_bytes_escapes(s: &str) -> Vec<u8> {
             _ => {
                 result.push(b'\\');
                 if let Some(nc) = chars.next() {
-                    if nc.is_ascii() { result.push(nc as u8); }
+                    if nc.is_ascii() {
+                        result.push(nc as u8);
+                    }
                 }
             }
         }
@@ -245,7 +355,11 @@ fn lex_triple_dquote(lex: &mut logos::Lexer<TokenKind>) -> Option<String> {
     let bytes = remainder.as_bytes();
     let mut i = 0;
     while i < remainder.len() {
-        if i + 2 < remainder.len() && bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
+        if i + 2 < remainder.len()
+            && bytes[i] == b'"'
+            && bytes[i + 1] == b'"'
+            && bytes[i + 2] == b'"'
+        {
             let content = remainder[..i].to_string();
             lex.bump(i + 3);
             return Some(content);
@@ -264,7 +378,11 @@ fn lex_triple_squote(lex: &mut logos::Lexer<TokenKind>) -> Option<String> {
     let bytes = remainder.as_bytes();
     let mut i = 0;
     while i < remainder.len() {
-        if i + 2 < remainder.len() && bytes[i] == b'\'' && bytes[i + 1] == b'\'' && bytes[i + 2] == b'\'' {
+        if i + 2 < remainder.len()
+            && bytes[i] == b'\''
+            && bytes[i + 1] == b'\''
+            && bytes[i + 2] == b'\''
+        {
             let content = remainder[..i].to_string();
             lex.bump(i + 3);
             return Some(content);
@@ -360,7 +478,11 @@ fn lex_fstr_inner_triple(lex: &mut logos::Lexer<TokenKind>, close_quote: u8) -> 
                     i += 1;
                 }
             } else if b == b'}' {
-                i += if bytes.get(i + 1) == Some(&b'}') { 2 } else { 1 };
+                i += if bytes.get(i + 1) == Some(&b'}') {
+                    2
+                } else {
+                    1
+                };
             } else if b == b'\\' {
                 i += if i + 1 < remainder.len() { 2 } else { 1 };
             } else {
@@ -482,61 +604,108 @@ fn lex_fstr_inner(lex: &mut logos::Lexer<TokenKind>, close_quote: u8) -> Option<
 #[logos(skip r"\\\r?\n[ \t]*")]
 pub enum TokenKind {
     // --- Keywords: Control Flow ---
-    #[token("def")] Def,
-    #[token("return")] Return,
-    #[token("if")] If,
-    #[token("elif")] Elif,
-    #[token("else")] Else,
-    #[token("while")] While,
-    #[token("for")] For,
-    #[token("in")] In,
-    #[token("class")] Class,
-    #[token("enum")] Enum,
-    #[token("match")] Match,
-    #[token("case")] Case,
-    #[token("import")] Import,
-    #[token("from")] From,
-    #[token("as")] As,
-    #[token("and")] And,
-    #[token("or")] Or,
-    #[token("not")] Not,
-    #[token("True")] True,
-    #[token("False")] False,
-    #[token("None")] None_,
-    #[token("pass")] Pass,
-    #[token("break")] Break,
-    #[token("continue")] Continue,
-    #[token("self")] Self_,
+    #[token("def")]
+    Def,
+    #[token("return")]
+    Return,
+    #[token("if")]
+    If,
+    #[token("elif")]
+    Elif,
+    #[token("else")]
+    Else,
+    #[token("while")]
+    While,
+    #[token("for")]
+    For,
+    #[token("in")]
+    In,
+    #[token("class")]
+    Class,
+    #[token("enum")]
+    Enum,
+    #[token("match")]
+    Match,
+    #[token("case")]
+    Case,
+    #[token("import")]
+    Import,
+    #[token("from")]
+    From,
+    #[token("as")]
+    As,
+    #[token("and")]
+    And,
+    #[token("or")]
+    Or,
+    #[token("not")]
+    Not,
+    #[token("True")]
+    True,
+    #[token("False")]
+    False,
+    #[token("None")]
+    None_,
+    #[token("pass")]
+    Pass,
+    #[token("break")]
+    Break,
+    #[token("continue")]
+    Continue,
+    #[token("self")]
+    Self_,
 
     // --- Keywords: Exception Handling (#206) ---
-    #[token("try")] Try,
-    #[token("except")] Except,
-    #[token("finally")] Finally,
-    #[token("raise")] Raise,
-    #[token("with")] With,
+    #[token("try")]
+    Try,
+    #[token("except")]
+    Except,
+    #[token("finally")]
+    Finally,
+    #[token("raise")]
+    Raise,
+    #[token("with")]
+    With,
 
     // --- Keywords: Async (#207) ---
-    #[token("async")] Async,
-    #[token("await")] Await,
-    #[token("yield")] Yield,
+    #[token("async")]
+    Async,
+    #[token("await")]
+    Await,
+    #[token("yield")]
+    Yield,
 
     // --- Keywords: Other (#208, #212) ---
-    #[token("lambda")] Lambda,
-    #[token("del")] Del,
-    #[token("assert")] Assert,
-    #[token("global")] Global,
-    #[token("nonlocal")] Nonlocal,
-    #[token("is")] Is,
-    #[token("type")] Type,
+    #[token("lambda")]
+    Lambda,
+    #[token("del")]
+    Del,
+    #[token("assert")]
+    Assert,
+    #[token("global")]
+    Global,
+    #[token("nonlocal")]
+    Nonlocal,
+    #[token("is")]
+    Is,
+    #[token("type")]
+    Type,
 
     // --- Type keywords ---
-    #[token("int")] IntType,
-    #[token("float")] FloatType,
-    #[token("bool")] BoolType,
-    #[token("str")] StrType,
-    #[token("list")] ListType,
-    #[token("dict")] DictType,
-    #[token("tuple")] TupleType,
+    #[token("int")]
+    IntType,
+    #[token("float")]
+    FloatType,
+    #[token("bool")]
+    BoolType,
+    #[token("str")]
+    StrType,
+    #[token("list")]
+    ListType,
+    #[token("dict")]
+    DictType,
+    #[token("tuple")]
+    TupleType,
 
     // --- Literals ---
     // Complex literals — the exponent form `([eE][+-]?[0-9]+)?` mirrors
@@ -685,61 +854,108 @@ pub enum TokenKind {
     Ident,
 
     // --- Operators ---
-    #[token("+")] Plus,
-    #[token("-")] Minus,
-    #[token("*")] Star,
-    #[token("/")] Slash,
-    #[token("//")] DoubleSlash,
-    #[token("%")] Percent,
-    #[token("**")] DoubleStar,
-    #[token("=")] Eq,
-    #[token("==")] EqEq,
-    #[token("!=")] NotEq,
-    #[token("<")] Lt,
-    #[token(">")] Gt,
-    #[token("<=")] LtEq,
-    #[token(">=")] GtEq,
-    #[token("->")] Arrow,
-    #[token("|")] Pipe,
-    #[token("?")] Question,
+    #[token("+")]
+    Plus,
+    #[token("-")]
+    Minus,
+    #[token("*")]
+    Star,
+    #[token("/")]
+    Slash,
+    #[token("//")]
+    DoubleSlash,
+    #[token("%")]
+    Percent,
+    #[token("**")]
+    DoubleStar,
+    #[token("=")]
+    Eq,
+    #[token("==")]
+    EqEq,
+    #[token("!=")]
+    NotEq,
+    #[token("<")]
+    Lt,
+    #[token(">")]
+    Gt,
+    #[token("<=")]
+    LtEq,
+    #[token(">=")]
+    GtEq,
+    #[token("->")]
+    Arrow,
+    #[token("|")]
+    Pipe,
+    #[token("?")]
+    Question,
 
     // Augmented assignment (#205)
-    #[token("+=")] PlusEq,
-    #[token("-=")] MinusEq,
-    #[token("*=")] StarEq,
-    #[token("/=")] SlashEq,
-    #[token("//=")] DoubleSlashEq,
-    #[token("%=")] PercentEq,
-    #[token("**=")] DoubleStarEq,
+    #[token("+=")]
+    PlusEq,
+    #[token("-=")]
+    MinusEq,
+    #[token("*=")]
+    StarEq,
+    #[token("/=")]
+    SlashEq,
+    #[token("//=")]
+    DoubleSlashEq,
+    #[token("%=")]
+    PercentEq,
+    #[token("**=")]
+    DoubleStarEq,
 
     // Bitwise operators (#209)
-    #[token("&")] Amp,
-    #[token("^")] Caret,
-    #[token("~")] Tilde,
-    #[token("<<")] LShift,
-    #[token(">>")] RShift,
-    #[token("&=")] AmpEq,
-    #[token("|=")] PipeEq,
-    #[token("^=")] CaretEq,
-    #[token("<<=")] LShiftEq,
-    #[token(">>=")] RShiftEq,
+    #[token("&")]
+    Amp,
+    #[token("^")]
+    Caret,
+    #[token("~")]
+    Tilde,
+    #[token("<<")]
+    LShift,
+    #[token(">>")]
+    RShift,
+    #[token("&=")]
+    AmpEq,
+    #[token("|=")]
+    PipeEq,
+    #[token("^=")]
+    CaretEq,
+    #[token("<<=")]
+    LShiftEq,
+    #[token(">>=")]
+    RShiftEq,
 
     // Walrus and @ operator (#210)
-    #[token(":=")] ColonEq,
-    #[token("@")] At,
-    #[token("@=")] AtEq,
+    #[token(":=")]
+    ColonEq,
+    #[token("@")]
+    At,
+    #[token("@=")]
+    AtEq,
 
     // --- Delimiters ---
-    #[token("(")] LParen,
-    #[token(")")] RParen,
-    #[token("[")] LBracket,
-    #[token("]")] RBracket,
-    #[token("{")] LBrace,
-    #[token("}")] RBrace,
-    #[token(":")] Colon,
-    #[token(",")] Comma,
-    #[token(".")] Dot,
-    #[token(";")] Semicolon,
+    #[token("(")]
+    LParen,
+    #[token(")")]
+    RParen,
+    #[token("[")]
+    LBracket,
+    #[token("]")]
+    RBracket,
+    #[token("{")]
+    LBrace,
+    #[token("}")]
+    RBrace,
+    #[token(":")]
+    Colon,
+    #[token(",")]
+    Comma,
+    #[token(".")]
+    Dot,
+    #[token(";")]
+    Semicolon,
 
     // --- Comments ---
     #[regex(r"#[^\n]*")]
@@ -759,15 +975,46 @@ impl TokenKind {
     pub fn is_keyword(&self) -> bool {
         matches!(
             self,
-            Self::Def | Self::Return | Self::If | Self::Elif | Self::Else
-            | Self::While | Self::For | Self::In | Self::Class | Self::Enum
-            | Self::Match | Self::Case | Self::Import | Self::From | Self::As
-            | Self::And | Self::Or | Self::Not | Self::True | Self::False
-            | Self::None_ | Self::Pass | Self::Break | Self::Continue | Self::Self_
-            | Self::Try | Self::Except | Self::Finally | Self::Raise | Self::With
-            | Self::Async | Self::Await | Self::Yield
-            | Self::Lambda | Self::Del | Self::Assert | Self::Global | Self::Nonlocal
-            | Self::Is | Self::Type
+            Self::Def
+                | Self::Return
+                | Self::If
+                | Self::Elif
+                | Self::Else
+                | Self::While
+                | Self::For
+                | Self::In
+                | Self::Class
+                | Self::Enum
+                | Self::Match
+                | Self::Case
+                | Self::Import
+                | Self::From
+                | Self::As
+                | Self::And
+                | Self::Or
+                | Self::Not
+                | Self::True
+                | Self::False
+                | Self::None_
+                | Self::Pass
+                | Self::Break
+                | Self::Continue
+                | Self::Self_
+                | Self::Try
+                | Self::Except
+                | Self::Finally
+                | Self::Raise
+                | Self::With
+                | Self::Async
+                | Self::Await
+                | Self::Yield
+                | Self::Lambda
+                | Self::Del
+                | Self::Assert
+                | Self::Global
+                | Self::Nonlocal
+                | Self::Is
+                | Self::Type
         )
     }
 }
@@ -914,9 +1161,7 @@ mod tests {
 
     /// Helper: lex source and collect token kinds (skipping errors).
     fn lex_kinds(source: &str) -> Vec<TokenKind> {
-        TokenKind::lexer(source)
-            .filter_map(|r| r.ok())
-            .collect()
+        TokenKind::lexer(source).filter_map(|r| r.ok()).collect()
     }
 
     // --- Token creation ---
@@ -948,80 +1193,112 @@ mod tests {
     #[test]
     fn test_lex_all_control_flow_keywords() {
         let kinds = lex_kinds("def return if elif else while for in");
-        assert_eq!(kinds, vec![
-            TokenKind::Def, TokenKind::Return, TokenKind::If,
-            TokenKind::Elif, TokenKind::Else, TokenKind::While,
-            TokenKind::For, TokenKind::In,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Def,
+                TokenKind::Return,
+                TokenKind::If,
+                TokenKind::Elif,
+                TokenKind::Else,
+                TokenKind::While,
+                TokenKind::For,
+                TokenKind::In,
+            ]
+        );
     }
 
     #[test]
     fn test_lex_class_enum_match() {
         let kinds = lex_kinds("class enum match case");
-        assert_eq!(kinds, vec![
-            TokenKind::Class, TokenKind::Enum,
-            TokenKind::Match, TokenKind::Case,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Class,
+                TokenKind::Enum,
+                TokenKind::Match,
+                TokenKind::Case,
+            ]
+        );
     }
 
     #[test]
     fn test_lex_import_keywords() {
         let kinds = lex_kinds("import from as");
-        assert_eq!(kinds, vec![
-            TokenKind::Import, TokenKind::From, TokenKind::As,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::Import, TokenKind::From, TokenKind::As,]
+        );
     }
 
     #[test]
     fn test_lex_logical_operators() {
         let kinds = lex_kinds("and or not");
-        assert_eq!(kinds, vec![
-            TokenKind::And, TokenKind::Or, TokenKind::Not,
-        ]);
+        assert_eq!(kinds, vec![TokenKind::And, TokenKind::Or, TokenKind::Not,]);
     }
 
     #[test]
     fn test_lex_bool_none_keywords() {
         let kinds = lex_kinds("True False None");
-        assert_eq!(kinds, vec![
-            TokenKind::True, TokenKind::False, TokenKind::None_,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::True, TokenKind::False, TokenKind::None_,]
+        );
     }
 
     #[test]
     fn test_lex_flow_keywords() {
         let kinds = lex_kinds("pass break continue self");
-        assert_eq!(kinds, vec![
-            TokenKind::Pass, TokenKind::Break,
-            TokenKind::Continue, TokenKind::Self_,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Pass,
+                TokenKind::Break,
+                TokenKind::Continue,
+                TokenKind::Self_,
+            ]
+        );
     }
 
     #[test]
     fn test_lex_exception_keywords() {
         let kinds = lex_kinds("try except finally raise with");
-        assert_eq!(kinds, vec![
-            TokenKind::Try, TokenKind::Except, TokenKind::Finally,
-            TokenKind::Raise, TokenKind::With,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Try,
+                TokenKind::Except,
+                TokenKind::Finally,
+                TokenKind::Raise,
+                TokenKind::With,
+            ]
+        );
     }
 
     #[test]
     fn test_lex_async_keywords() {
         let kinds = lex_kinds("async await yield");
-        assert_eq!(kinds, vec![
-            TokenKind::Async, TokenKind::Await, TokenKind::Yield,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::Async, TokenKind::Await, TokenKind::Yield,]
+        );
     }
 
     #[test]
     fn test_lex_other_keywords() {
         let kinds = lex_kinds("lambda del assert global nonlocal is type");
-        assert_eq!(kinds, vec![
-            TokenKind::Lambda, TokenKind::Del, TokenKind::Assert,
-            TokenKind::Global, TokenKind::Nonlocal,
-            TokenKind::Is, TokenKind::Type,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Lambda,
+                TokenKind::Del,
+                TokenKind::Assert,
+                TokenKind::Global,
+                TokenKind::Nonlocal,
+                TokenKind::Is,
+                TokenKind::Type,
+            ]
+        );
     }
 
     // --- is_keyword ---
@@ -1239,7 +1516,10 @@ mod tests {
     fn test_lex_fstring_dict_comprehension() {
         // f"{ {k: v for k, v in items} }" — nested braces in expression
         let kinds = lex_kinds("f\"{ {k: v for k, v in items} }\"");
-        assert_eq!(kinds, vec![TokenKind::FStr("{ {k: v for k, v in items} }".into())]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::FStr("{ {k: v for k, v in items} }".into())]
+        );
     }
 
     #[test]
@@ -1252,17 +1532,35 @@ mod tests {
     #[test]
     fn test_lex_raw_fstring_prefix_orders() {
         // Both prefix orders lex to a single RawFStr token, not Ident + string.
-        assert_eq!(lex_kinds("rf\"\\n{1}\""), vec![TokenKind::RawFStr("\\n{1}".into())]);
-        assert_eq!(lex_kinds("fr\"{1}\\t\""), vec![TokenKind::RawFStr("{1}\\t".into())]);
-        assert_eq!(lex_kinds("rf'\\n{1}'"), vec![TokenKind::RawFStr("\\n{1}".into())]);
-        assert_eq!(lex_kinds("fr'{1}\\t'"), vec![TokenKind::RawFStr("{1}\\t".into())]);
+        assert_eq!(
+            lex_kinds("rf\"\\n{1}\""),
+            vec![TokenKind::RawFStr("\\n{1}".into())]
+        );
+        assert_eq!(
+            lex_kinds("fr\"{1}\\t\""),
+            vec![TokenKind::RawFStr("{1}\\t".into())]
+        );
+        assert_eq!(
+            lex_kinds("rf'\\n{1}'"),
+            vec![TokenKind::RawFStr("\\n{1}".into())]
+        );
+        assert_eq!(
+            lex_kinds("fr'{1}\\t'"),
+            vec![TokenKind::RawFStr("{1}\\t".into())]
+        );
     }
 
     #[test]
     fn test_lex_raw_fstring_case_variants() {
         // Upper/mixed-case prefix letters are accepted (Rf/rF/RF/Fr/fR/FR).
-        for src in ["Rf\"x\"", "rF\"x\"", "RF\"x\"", "Fr\"x\"", "fR\"x\"", "FR\"x\""] {
-            assert_eq!(lex_kinds(src), vec![TokenKind::RawFStr("x".into())], "src={src}");
+        for src in [
+            "Rf\"x\"", "rF\"x\"", "RF\"x\"", "Fr\"x\"", "fR\"x\"", "FR\"x\"",
+        ] {
+            assert_eq!(
+                lex_kinds(src),
+                vec![TokenKind::RawFStr("x".into())],
+                "src={src}"
+            );
         }
     }
 
@@ -1390,21 +1688,34 @@ mod tests {
     #[test]
     fn test_lex_arithmetic_operators() {
         let kinds = lex_kinds("+ - * / // % **");
-        assert_eq!(kinds, vec![
-            TokenKind::Plus, TokenKind::Minus, TokenKind::Star,
-            TokenKind::Slash, TokenKind::DoubleSlash,
-            TokenKind::Percent, TokenKind::DoubleStar,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::DoubleSlash,
+                TokenKind::Percent,
+                TokenKind::DoubleStar,
+            ]
+        );
     }
 
     #[test]
     fn test_lex_comparison_operators() {
         let kinds = lex_kinds("== != < > <= >=");
-        assert_eq!(kinds, vec![
-            TokenKind::EqEq, TokenKind::NotEq,
-            TokenKind::Lt, TokenKind::Gt,
-            TokenKind::LtEq, TokenKind::GtEq,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::EqEq,
+                TokenKind::NotEq,
+                TokenKind::Lt,
+                TokenKind::Gt,
+                TokenKind::LtEq,
+                TokenKind::GtEq,
+            ]
+        );
     }
 
     #[test]
@@ -1416,39 +1727,57 @@ mod tests {
     #[test]
     fn test_lex_augmented_assignment() {
         let kinds = lex_kinds("+= -= *= /= //= %= **=");
-        assert_eq!(kinds, vec![
-            TokenKind::PlusEq, TokenKind::MinusEq,
-            TokenKind::StarEq, TokenKind::SlashEq,
-            TokenKind::DoubleSlashEq, TokenKind::PercentEq,
-            TokenKind::DoubleStarEq,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::PlusEq,
+                TokenKind::MinusEq,
+                TokenKind::StarEq,
+                TokenKind::SlashEq,
+                TokenKind::DoubleSlashEq,
+                TokenKind::PercentEq,
+                TokenKind::DoubleStarEq,
+            ]
+        );
     }
 
     #[test]
     fn test_lex_bitwise_operators() {
         let kinds = lex_kinds("& ^ ~ << >>");
-        assert_eq!(kinds, vec![
-            TokenKind::Amp, TokenKind::Caret, TokenKind::Tilde,
-            TokenKind::LShift, TokenKind::RShift,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Amp,
+                TokenKind::Caret,
+                TokenKind::Tilde,
+                TokenKind::LShift,
+                TokenKind::RShift,
+            ]
+        );
     }
 
     #[test]
     fn test_lex_bitwise_assign() {
         let kinds = lex_kinds("&= |= ^= <<= >>=");
-        assert_eq!(kinds, vec![
-            TokenKind::AmpEq, TokenKind::PipeEq,
-            TokenKind::CaretEq, TokenKind::LShiftEq,
-            TokenKind::RShiftEq,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::AmpEq,
+                TokenKind::PipeEq,
+                TokenKind::CaretEq,
+                TokenKind::LShiftEq,
+                TokenKind::RShiftEq,
+            ]
+        );
     }
 
     #[test]
     fn test_lex_walrus_and_at() {
         let kinds = lex_kinds(":= @ @=");
-        assert_eq!(kinds, vec![
-            TokenKind::ColonEq, TokenKind::At, TokenKind::AtEq,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::ColonEq, TokenKind::At, TokenKind::AtEq,]
+        );
     }
 
     #[test]
@@ -1462,13 +1791,21 @@ mod tests {
     #[test]
     fn test_lex_delimiters() {
         let kinds = lex_kinds("( ) [ ] { } : , . ;");
-        assert_eq!(kinds, vec![
-            TokenKind::LParen, TokenKind::RParen,
-            TokenKind::LBracket, TokenKind::RBracket,
-            TokenKind::LBrace, TokenKind::RBrace,
-            TokenKind::Colon, TokenKind::Comma,
-            TokenKind::Dot, TokenKind::Semicolon,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
+                TokenKind::LBrace,
+                TokenKind::RBrace,
+                TokenKind::Colon,
+                TokenKind::Comma,
+                TokenKind::Dot,
+                TokenKind::Semicolon,
+            ]
+        );
     }
 
     // --- Identifiers ---
@@ -1510,9 +1847,10 @@ mod tests {
     #[test]
     fn test_lex_newline() {
         let kinds = lex_kinds("a\nb");
-        assert_eq!(kinds, vec![
-            TokenKind::Ident, TokenKind::Newline, TokenKind::Ident,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::Ident, TokenKind::Newline, TokenKind::Ident,]
+        );
     }
 
     // --- Backslash line continuation (PEP 8 / Lib-style explicit join) ---
@@ -1538,12 +1876,18 @@ mod tests {
     #[test]
     fn test_lex_type_keywords() {
         let kinds = lex_kinds("int float bool str list dict tuple");
-        assert_eq!(kinds, vec![
-            TokenKind::IntType, TokenKind::FloatType,
-            TokenKind::BoolType, TokenKind::StrType,
-            TokenKind::ListType, TokenKind::DictType,
-            TokenKind::TupleType,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::IntType,
+                TokenKind::FloatType,
+                TokenKind::BoolType,
+                TokenKind::StrType,
+                TokenKind::ListType,
+                TokenKind::DictType,
+                TokenKind::TupleType,
+            ]
+        );
     }
 
     // --- Display ---
@@ -1584,18 +1928,9 @@ mod tests {
 
     #[test]
     fn test_display_string_variants() {
-        assert_eq!(
-            format!("{}", TokenKind::FStr("x".into())),
-            "f\"x\""
-        );
-        assert_eq!(
-            format!("{}", TokenKind::RawStr("r".into())),
-            "r\"r\""
-        );
-        assert_eq!(
-            format!("{}", TokenKind::ByteStr("b".into())),
-            "b\"b\""
-        );
+        assert_eq!(format!("{}", TokenKind::FStr("x".into())), "f\"x\"");
+        assert_eq!(format!("{}", TokenKind::RawStr("r".into())), "r\"r\"");
+        assert_eq!(format!("{}", TokenKind::ByteStr("b".into())), "b\"b\"");
         assert_eq!(
             format!("{}", TokenKind::TripleStr("t".into())),
             "\"\"\"t\"\"\""
@@ -1615,30 +1950,45 @@ mod tests {
     #[test]
     fn test_lex_function_def() {
         let kinds = lex_kinds("def add(a, b):");
-        assert_eq!(kinds, vec![
-            TokenKind::Def, TokenKind::Ident,
-            TokenKind::LParen, TokenKind::Ident,
-            TokenKind::Comma, TokenKind::Ident,
-            TokenKind::RParen, TokenKind::Colon,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Def,
+                TokenKind::Ident,
+                TokenKind::LParen,
+                TokenKind::Ident,
+                TokenKind::Comma,
+                TokenKind::Ident,
+                TokenKind::RParen,
+                TokenKind::Colon,
+            ]
+        );
     }
 
     #[test]
     fn test_lex_assignment() {
         let kinds = lex_kinds("x = 42");
-        assert_eq!(kinds, vec![
-            TokenKind::Ident, TokenKind::Eq, TokenKind::Int(42),
-        ]);
+        assert_eq!(
+            kinds,
+            vec![TokenKind::Ident, TokenKind::Eq, TokenKind::Int(42),]
+        );
     }
 
     #[test]
     fn test_lex_return_with_annotation() {
         let kinds = lex_kinds("def f() -> int:");
-        assert_eq!(kinds, vec![
-            TokenKind::Def, TokenKind::Ident,
-            TokenKind::LParen, TokenKind::RParen,
-            TokenKind::Arrow, TokenKind::IntType, TokenKind::Colon,
-        ]);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Def,
+                TokenKind::Ident,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Arrow,
+                TokenKind::IntType,
+                TokenKind::Colon,
+            ]
+        );
     }
 
     #[test]
@@ -1754,7 +2104,10 @@ mod tests {
 
     #[test]
     fn test_apply_escape_unicode_name_unknown_passthrough() {
-        assert_eq!(apply_escape_sequences("\\N{UNKNOWN_XYZ}"), "\\N{UNKNOWN_XYZ}");
+        assert_eq!(
+            apply_escape_sequences("\\N{UNKNOWN_XYZ}"),
+            "\\N{UNKNOWN_XYZ}"
+        );
     }
 
     #[test]

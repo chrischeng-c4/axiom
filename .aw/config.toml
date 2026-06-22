@@ -209,13 +209,13 @@ label = "project:lumen"
 # EC tool bindings (contract before implementation). `aw health --verify-ec`
 # dispatches each bound dimension to its external tool; unbound categories
 # (e.g. behavior, security) fall back to the manifest command.
-#   efficiency (效能) -> meter: wraps the ratcheted lumen-vs-pg/OpenSearch
-#                         cargo perf gate and records resource evidence.
-#   stability (穩定性) -> rig: resilience scenarios (partition recovery + 5%
-#                        packet-loss p99 budget) over toxiproxy.
+#   efficiency (效能) -> vat provisions PG/OpenSearch, then meter wraps the
+#                         ratcheted lumen-vs-pg/OpenSearch perf gate.
+#   stability (穩定性) -> vat provisions lumen/toxiproxy, then rig runs the
+#                        resilience scenarios and p99 budgets.
 # behavior (功能) and security (安全) stay cargo gates per the EC-gatekeeper map.
-ec.efficiency = { tool = "meter", meter = "projects/lumen", command = "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1" }
-ec.stability = { tool = "rig", dir = "projects/lumen/tests/rig/scenarios/resilience" }
+ec.efficiency = { tool = "meter", meter = "projects/lumen", command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter" }
+ec.stability = { tool = "rig", dir = "projects/lumen/tests/rig/cases/resilience", command = "cd projects/lumen && ../../target/debug/vat run rig-resilience" }
 
 [[projects.workspaces]]
 name = "lumen"
@@ -351,17 +351,37 @@ test_cmd = "true"
 [[projects]]
 name = "relay"
 path = "projects/relay"
+td_path = "projects/relay/tech-design"
+cap_path = "projects/relay/README.md"
 label = "project:relay"
-# Competitor perf-gate (#125): arena compare-N + ratchet vs NATS / RabbitMQ /
-# Redpanda. `aw health --verify-ec` drives the benchmark dimension through arena;
-# competitor adapters run in CI (their native protocols are not HTTP).
-ec.benchmark = { tool = "arena", spec = "projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml" }
+# Relay EC dispatch is vat-isolated; meter owns performance evidence and guard
+# owns security evidence. Legacy arena comparison remains advisory dogfood until
+# native broker adapters are promoted to required EC.
+ec.efficiency = { tool = "meter", meter = "projects/relay", command = "cd projects/relay && ../../target/debug/vat run meter-perf" }
+ec.security = { tool = "guard", dir = "projects/relay", command = "cd projects/relay && ../../target/debug/vat run guard-security" }
 
 [[projects.workspaces]]
 name = "relay"
 paths = ["projects/relay/**"]
 target = "rust"
 test_cmd = "cargo test -p relay"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+[[projects]]
+name = "keep"
+path = "projects/keep"
+td_path = "projects/keep/tech-design"
+cap_path = "projects/keep/README.md"
+label = "project:keep"
+ec.efficiency = { tool = "meter", meter = "projects/keep", command = "cd projects/keep && ../../target/debug/vat run meter-efficiency" }
+ec.security = { tool = "guard", dir = "projects/keep", command = "cd projects/keep && ../../target/debug/vat run guard-security" }
+
+[[projects.workspaces]]
+name = "keep"
+paths = ["projects/keep/**"]
+target = "rust"
+test_cmd = "cargo test -p keep"
 verify_cold = true
 codegen.profile = "rust/score-crate"
 

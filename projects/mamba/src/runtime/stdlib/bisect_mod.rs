@@ -20,10 +20,10 @@
 //! real `dispatch_*` extern "C" thunks through `NATIVE_FUNC_ADDRS` so
 //! mamba's callable-resolution can find them — same shape as
 //! `keyword_mod` and `struct_mod`.
-use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 use super::super::builtins::mb_lt;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use std::collections::HashMap;
 
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
@@ -52,7 +52,11 @@ fn instance_has_dunder(val: MbValue, class_name: &str, dunder: &str) -> bool {
     val.as_ptr()
         .map(|ptr| unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                fields.read().unwrap().get(dunder).is_some_and(|v| !v.is_none())
+                fields
+                    .read()
+                    .unwrap()
+                    .get(dunder)
+                    .is_some_and(|v| !v.is_none())
             } else {
                 false
             }
@@ -219,16 +223,28 @@ fn parse_args(a: &[MbValue], fname: &str) -> Result<BisectArgs, MbValue> {
     };
 
     if let Some(kw) = kwargs {
-        if let Some(v) = dict_get(kw, "a") { out.a = v; }
-        if let Some(v) = dict_get(kw, "x") { out.x = v; }
+        if let Some(v) = dict_get(kw, "a") {
+            out.a = v;
+        }
+        if let Some(v) = dict_get(kw, "x") {
+            out.x = v;
+        }
         if let Some(v) = dict_get(kw, "lo") {
-            if !v.is_none() { out.lo = coerce_index(v, fname)?; }
+            if !v.is_none() {
+                out.lo = coerce_index(v, fname)?;
+            }
         }
         if let Some(v) = dict_get(kw, "hi") {
-            out.hi = if v.is_none() { None } else { Some(coerce_index(v, fname)?) };
+            out.hi = if v.is_none() {
+                None
+            } else {
+                Some(coerce_index(v, fname)?)
+            };
         }
         if let Some(v) = dict_get(kw, "key") {
-            if !v.is_none() { out.key = v; }
+            if !v.is_none() {
+                out.key = v;
+            }
         }
     }
     Ok(out)
@@ -437,7 +453,10 @@ fn seq_len(a: MbValue) -> usize {
         }
     }
     // range/array handles and __len__ instances.
-    super::super::builtins::mb_len(a).as_int().unwrap_or(0).max(0) as usize
+    super::super::builtins::mb_len(a)
+        .as_int()
+        .unwrap_or(0)
+        .max(0) as usize
 }
 
 /// `a[idx]` for bisect's binary search. For native list/tuple this clones the
@@ -449,10 +468,17 @@ fn seq_get(a: MbValue, idx: usize) -> MbValue {
     if let Some(ptr) = a.as_ptr() {
         unsafe {
             match (*ptr).data {
-                ObjData::List(ref lock) =>
-                    return lock.read().unwrap().get(idx).copied().unwrap_or_else(MbValue::none),
-                ObjData::Tuple(ref items) =>
-                    return items.get(idx).copied().unwrap_or_else(MbValue::none),
+                ObjData::List(ref lock) => {
+                    return lock
+                        .read()
+                        .unwrap()
+                        .get(idx)
+                        .copied()
+                        .unwrap_or_else(MbValue::none)
+                }
+                ObjData::Tuple(ref items) => {
+                    return items.get(idx).copied().unwrap_or_else(MbValue::none)
+                }
                 _ => {}
             }
         }
@@ -497,9 +523,7 @@ fn value_type_name(v: MbValue) -> &'static str {
 /// `Err(none)` (after raising) when `key` is present but not callable; `Ok(())`
 /// when it is callable or absent.
 fn check_key_callable(key: MbValue) -> Result<(), MbValue> {
-    if key.is_none()
-        || super::super::builtins::mb_callable(key).as_bool() == Some(true)
-    {
+    if key.is_none() || super::super::builtins::mb_callable(key).as_bool() == Some(true) {
         Ok(())
     } else {
         Err(raise_type_error(&format!(
@@ -579,14 +603,7 @@ fn bisect_index(
 
 /// CPython `insort_*`: find the insertion point (using `key(x)` as the search
 /// value when a key is supplied), then insert the raw `x` into the list.
-fn insort(
-    a: MbValue,
-    x: MbValue,
-    lo: i64,
-    hi: Option<i64>,
-    key: MbValue,
-    right: bool,
-) -> MbValue {
+fn insort(a: MbValue, x: MbValue, lo: i64, hi: Option<i64>, key: MbValue, right: bool) -> MbValue {
     // CPython's insort eagerly computes key(x) as the search value, so a
     // non-callable key raises TypeError before any insertion happens (even
     // for an empty list).
@@ -694,9 +711,9 @@ pub fn mb_bisect_insort_right(a: MbValue, x: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::super::value::MbValue;
     use super::super::super::rc::{MbObject, ObjData};
+    use super::super::super::value::MbValue;
+    use super::*;
 
     fn make_int_list(items: &[i64]) -> MbValue {
         let vals: Vec<MbValue> = items.iter().map(|&i| MbValue::from_int(i)).collect();
@@ -728,29 +745,47 @@ mod tests {
     #[test]
     fn test_bisect_left_duplicates() {
         let a = make_int_list(&[1, 2, 2, 3]);
-        assert_eq!(mb_bisect_bisect_left(a, MbValue::from_int(2)).as_int(), Some(1));
+        assert_eq!(
+            mb_bisect_bisect_left(a, MbValue::from_int(2)).as_int(),
+            Some(1)
+        );
     }
 
     #[test]
     fn test_bisect_right_duplicates() {
         let a = make_int_list(&[1, 2, 2, 3]);
-        assert_eq!(mb_bisect_bisect_right(a, MbValue::from_int(2)).as_int(), Some(3));
+        assert_eq!(
+            mb_bisect_bisect_right(a, MbValue::from_int(2)).as_int(),
+            Some(3)
+        );
     }
 
     #[test]
     fn test_bisect_boundary_before() {
         let a = make_int_list(&[1, 2, 2, 3]);
-        assert_eq!(mb_bisect_bisect_left(a, MbValue::from_int(0)).as_int(), Some(0));
+        assert_eq!(
+            mb_bisect_bisect_left(a, MbValue::from_int(0)).as_int(),
+            Some(0)
+        );
         let a2 = make_int_list(&[1, 2, 2, 3]);
-        assert_eq!(mb_bisect_bisect_right(a2, MbValue::from_int(0)).as_int(), Some(0));
+        assert_eq!(
+            mb_bisect_bisect_right(a2, MbValue::from_int(0)).as_int(),
+            Some(0)
+        );
     }
 
     #[test]
     fn test_bisect_boundary_after() {
         let a = make_int_list(&[1, 2, 2, 3]);
-        assert_eq!(mb_bisect_bisect_left(a, MbValue::from_int(4)).as_int(), Some(4));
+        assert_eq!(
+            mb_bisect_bisect_left(a, MbValue::from_int(4)).as_int(),
+            Some(4)
+        );
         let a2 = make_int_list(&[1, 2, 2, 3]);
-        assert_eq!(mb_bisect_bisect_right(a2, MbValue::from_int(4)).as_int(), Some(4));
+        assert_eq!(
+            mb_bisect_bisect_right(a2, MbValue::from_int(4)).as_int(),
+            Some(4)
+        );
     }
 
     #[test]

@@ -1,3 +1,6 @@
+use super::super::output::write_captured;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// pprint module for Mamba (#446).
 ///
 /// Provides: pformat(obj, ...), pprint(obj, ...), saferepr(obj),
@@ -17,12 +20,8 @@
 /// Leaf reprs (and any object with a custom `__repr__`) are delegated to the
 /// shared `builtins::mb_repr`, which honors user `__repr__`, string/bytes
 /// quoting, etc.
-
 use std::collections::HashMap;
 use std::collections::HashSet;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::output::{write_captured};
 
 // ----- native dispatch glue ---------------------------------------------
 
@@ -119,22 +118,33 @@ pub fn register() {
     // surface). Registered in CLASS_REGISTRY so instance method dispatch
     // prepends `self` and routes to the m_* methods below.
     let mut methods: HashMap<String, MbValue> = HashMap::new();
-    methods.insert("pprint".to_string(), MbValue::from_func(m_pp_pprint as usize));
-    methods.insert("pformat".to_string(), MbValue::from_func(m_pp_pformat as usize));
-    methods.insert("isrecursive".to_string(), MbValue::from_func(m_pp_isrecursive as usize));
-    methods.insert("isreadable".to_string(), MbValue::from_func(m_pp_isreadable as usize));
-    super::super::class::mb_class_register(
-        "PrettyPrinter",
-        vec!["object".to_string()],
-        methods,
+    methods.insert(
+        "pprint".to_string(),
+        MbValue::from_func(m_pp_pprint as usize),
     );
+    methods.insert(
+        "pformat".to_string(),
+        MbValue::from_func(m_pp_pformat as usize),
+    );
+    methods.insert(
+        "isrecursive".to_string(),
+        MbValue::from_func(m_pp_isrecursive as usize),
+    );
+    methods.insert(
+        "isreadable".to_string(),
+        MbValue::from_func(m_pp_isreadable as usize),
+    );
+    super::super::class::mb_class_register("PrettyPrinter", vec!["object".to_string()], methods);
 
     // Constructor dispatcher: pprint.PrettyPrinter(...) -> instance.
     let ctor = dispatch_pretty_printer as usize;
     attrs.insert("PrettyPrinter".to_string(), MbValue::from_func(ctor));
-    super::super::module::NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(ctor as u64); });
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(ctor as u64);
+    });
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(ctor as u64, "PrettyPrinter".to_string());
+        m.borrow_mut()
+            .insert(ctor as u64, "PrettyPrinter".to_string());
     });
 
     super::register_module("pprint", attrs);
@@ -149,15 +159,27 @@ fn store_cfg(inst: MbValue, cfg: &Config) {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut f = fields.write().unwrap();
-                f.insert("_indent_per_level".to_string(), MbValue::from_int(cfg.indent as i64));
+                f.insert(
+                    "_indent_per_level".to_string(),
+                    MbValue::from_int(cfg.indent as i64),
+                );
                 f.insert("_width".to_string(), MbValue::from_int(cfg.width as i64));
-                f.insert("_depth".to_string(), match cfg.depth {
-                    Some(d) => MbValue::from_int(d as i64),
-                    None => MbValue::none(),
-                });
+                f.insert(
+                    "_depth".to_string(),
+                    match cfg.depth {
+                        Some(d) => MbValue::from_int(d as i64),
+                        None => MbValue::none(),
+                    },
+                );
                 f.insert("_compact".to_string(), MbValue::from_bool(cfg.compact));
-                f.insert("_sort_dicts".to_string(), MbValue::from_bool(cfg.sort_dicts));
-                f.insert("_underscore_numbers".to_string(), MbValue::from_bool(cfg.underscore_numbers));
+                f.insert(
+                    "_sort_dicts".to_string(),
+                    MbValue::from_bool(cfg.sort_dicts),
+                );
+                f.insert(
+                    "_underscore_numbers".to_string(),
+                    MbValue::from_bool(cfg.underscore_numbers),
+                );
             }
         }
     }
@@ -177,7 +199,11 @@ fn load_cfg(inst: MbValue) -> Config {
                     cfg.width = v.max(1) as usize;
                 }
                 if let Some(v) = f.get("_depth") {
-                    cfg.depth = if v.is_none() { None } else { v.as_int().map(|i| i.max(0) as usize) };
+                    cfg.depth = if v.is_none() {
+                        None
+                    } else {
+                        v.as_int().map(|i| i.max(0) as usize)
+                    };
                 }
                 if let Some(v) = f.get("_compact").and_then(|v| v.as_bool()) {
                     cfg.compact = v;
@@ -369,8 +395,14 @@ fn dict_as_kwargs(v: MbValue) -> Option<MbValue> {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let map = lock.read().unwrap();
             const KEYS: [&str; 8] = [
-                "indent", "width", "depth", "compact", "sort_dicts",
-                "underscore_numbers", "stream", "object",
+                "indent",
+                "width",
+                "depth",
+                "compact",
+                "sort_dicts",
+                "underscore_numbers",
+                "stream",
+                "object",
             ];
             // Keys are stored as DictKey; only string keys can be kwargs.
             for (k, _) in map.iter() {
@@ -432,7 +464,11 @@ fn parse_args(a: &[MbValue]) -> (MbValue, Config) {
         cfg.width = v.max(1) as usize;
     }
     if let Some(v) = positional.get(3) {
-        cfg.depth = if v.is_none() { None } else { v.as_int().map(|i| i.max(0) as usize) };
+        cfg.depth = if v.is_none() {
+            None
+        } else {
+            v.as_int().map(|i| i.max(0) as usize)
+        };
     }
 
     if let Some(kw) = kwargs {
@@ -443,7 +479,11 @@ fn parse_args(a: &[MbValue]) -> (MbValue, Config) {
             cfg.width = v.max(1) as usize;
         }
         if let Some(v) = kw_get(kw, "depth") {
-            cfg.depth = if v.is_none() { None } else { v.as_int().map(|i| i.max(0) as usize) };
+            cfg.depth = if v.is_none() {
+                None
+            } else {
+                v.as_int().map(|i| i.max(0) as usize)
+            };
         }
         if let Some(v) = kw_get(kw, "compact").and_then(|v| v.as_bool()) {
             cfg.compact = v;
@@ -511,17 +551,18 @@ struct SafeRepr {
 /// `readable`/`recursive` flags. Honors `depth` (maxlevels), `sort_dicts`,
 /// and `underscore_numbers`. Falls back to `builtins::mb_repr` for anything
 /// that isn't an exact builtin list/tuple/dict/int.
-fn safe_repr(
-    val: MbValue,
-    cfg: &Config,
-    context: &mut HashSet<usize>,
-    level: usize,
-) -> SafeRepr {
+fn safe_repr(val: MbValue, cfg: &Config, context: &mut HashSet<usize>, level: usize) -> SafeRepr {
     // Scalars (int handled specially below for underscore_numbers).
-    if val.is_none() || val.as_bool().is_some() || val.as_float().is_some()
+    if val.is_none()
+        || val.as_bool().is_some()
+        || val.as_float().is_some()
         || val.is_not_implemented()
     {
-        return SafeRepr { text: builtin_repr(val), readable: true, recursive: false };
+        return SafeRepr {
+            text: builtin_repr(val),
+            readable: true,
+            recursive: false,
+        };
     }
     if let Some(i) = val.as_int() {
         // bool already handled above; this is a plain int.
@@ -530,7 +571,11 @@ fn safe_repr(
         } else {
             format!("{i}")
         };
-        return SafeRepr { text, readable: true, recursive: false };
+        return SafeRepr {
+            text,
+            readable: true,
+            recursive: false,
+        };
     }
 
     if let Some(ptr) = val.as_ptr() {
@@ -539,15 +584,27 @@ fn safe_repr(
             match &(*ptr).data {
                 ObjData::Str(_) | ObjData::Bytes(_) | ObjData::ByteArray(_) => {
                     // Builtin scalars: repr is always readable.
-                    return SafeRepr { text: builtin_repr(val), readable: true, recursive: false };
+                    return SafeRepr {
+                        text: builtin_repr(val),
+                        readable: true,
+                        recursive: false,
+                    };
                 }
                 ObjData::Complex(_, _) => {
-                    return SafeRepr { text: builtin_repr(val), readable: true, recursive: false };
+                    return SafeRepr {
+                        text: builtin_repr(val),
+                        readable: true,
+                        recursive: false,
+                    };
                 }
                 ObjData::Dict(ref lock) => {
                     let map = lock.read().unwrap();
                     if map.is_empty() {
-                        return SafeRepr { text: "{}".to_string(), readable: true, recursive: false };
+                        return SafeRepr {
+                            text: "{}".to_string(),
+                            readable: true,
+                            recursive: false,
+                        };
                     }
                     if let Some(maxl) = cfg.depth {
                         if level > maxl {
@@ -566,7 +623,8 @@ fn safe_repr(
                         };
                     }
                     // Snapshot entries before recursing.
-                    let mut entries: Vec<(MbValue, MbValue)> = map.iter()
+                    let mut entries: Vec<(MbValue, MbValue)> = map
+                        .iter()
                         .map(|(k, v)| (super::super::dict_ops::dict_key_to_mbvalue(k), *v))
                         .collect();
                     drop(map);
@@ -581,7 +639,9 @@ fn safe_repr(
                         let kr = safe_repr(*k, cfg, context, level + 1);
                         let vr = safe_repr(*v, cfg, context, level + 1);
                         readable = readable && kr.readable && vr.readable;
-                        if kr.recursive || vr.recursive { recursive = true; }
+                        if kr.recursive || vr.recursive {
+                            recursive = true;
+                        }
                         parts.push(format!("{}: {}", kr.text, vr.text));
                     }
                     context.remove(&id);
@@ -594,13 +654,21 @@ fn safe_repr(
                 ObjData::List(ref lock) => {
                     let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
                     if items.is_empty() {
-                        return SafeRepr { text: "[]".to_string(), readable: true, recursive: false };
+                        return SafeRepr {
+                            text: "[]".to_string(),
+                            readable: true,
+                            recursive: false,
+                        };
                     }
                     return safe_repr_seq(&items, "[", "]", false, id, cfg, context, level);
                 }
                 ObjData::Tuple(items) => {
                     if items.is_empty() {
-                        return SafeRepr { text: "()".to_string(), readable: true, recursive: false };
+                        return SafeRepr {
+                            text: "()".to_string(),
+                            readable: true,
+                            recursive: false,
+                        };
                     }
                     let one = items.len() == 1;
                     let items = items.clone();
@@ -614,7 +682,11 @@ fn safe_repr(
     // Fallback: arbitrary object. readable iff repr doesn't start with '<'.
     let text = builtin_repr(val);
     let readable = !text.is_empty() && !text.starts_with('<');
-    SafeRepr { text, readable, recursive: false }
+    SafeRepr {
+        text,
+        readable,
+        recursive: false,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -630,7 +702,11 @@ fn safe_repr_seq(
 ) -> SafeRepr {
     if let Some(maxl) = cfg.depth {
         if level > maxl {
-            let body = if single_tuple { "...,".to_string() } else { "...".to_string() };
+            let body = if single_tuple {
+                "...,".to_string()
+            } else {
+                "...".to_string()
+            };
             return SafeRepr {
                 text: format!("{open}{body}{close}"),
                 readable: false,
@@ -639,7 +715,11 @@ fn safe_repr_seq(
         }
     }
     if context.contains(&id) {
-        return SafeRepr { text: "<Recursion>".to_string(), readable: false, recursive: true };
+        return SafeRepr {
+            text: "<Recursion>".to_string(),
+            readable: false,
+            recursive: true,
+        };
     }
     context.insert(id);
     let mut readable = true;
@@ -647,8 +727,12 @@ fn safe_repr_seq(
     let mut parts = Vec::with_capacity(items.len());
     for o in items {
         let r = safe_repr(*o, cfg, context, level + 1);
-        if !r.readable { readable = false; }
-        if r.recursive { recursive = true; }
+        if !r.readable {
+            readable = false;
+        }
+        if r.recursive {
+            recursive = true;
+        }
         parts.push(r.text);
     }
     context.remove(&id);
@@ -658,7 +742,11 @@ fn safe_repr_seq(
     } else {
         format!("{open}{joined}{close}")
     };
-    SafeRepr { text, readable, recursive }
+    SafeRepr {
+        text,
+        readable,
+        recursive,
+    }
 }
 
 /// CPython `<Recursion on typename with id=...>`.
@@ -751,9 +839,7 @@ fn safe_key_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
     let kb = key_class(b);
     // Same-class comparisons preserve CPython's "try normal comparison" rule.
     match (&ka, &kb) {
-        (KeyClass::Num(x), KeyClass::Num(y)) => {
-            x.partial_cmp(y).unwrap_or(Ordering::Equal)
-        }
+        (KeyClass::Num(x), KeyClass::Num(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
         (KeyClass::Str(x), KeyClass::Str(y)) => x.cmp(y),
         _ => {
             // Different classes / unorderable: fall back to (type-name, id),
@@ -831,7 +917,15 @@ fn format_obj(
                             let endchar = if items.len() == 1 { ",)" } else { ")" };
                             out.push('(');
                             context.insert(id);
-                            format_items(&items, out, indent, allowance + endchar.len(), context, level, cfg);
+                            format_items(
+                                &items,
+                                out,
+                                indent,
+                                allowance + endchar.len(),
+                                context,
+                                level,
+                                cfg,
+                            );
                             context.remove(&id);
                             out.push_str(endchar);
                             return;
@@ -840,7 +934,8 @@ fn format_obj(
                     ObjData::Dict(ref lock) => {
                         let map = lock.read().unwrap();
                         if !map.is_empty() {
-                            let mut entries: Vec<(MbValue, MbValue)> = map.iter()
+                            let mut entries: Vec<(MbValue, MbValue)> = map
+                                .iter()
                                 .map(|(k, v)| (super::super::dict_ops::dict_key_to_mbvalue(k), *v))
                                 .collect();
                             drop(map);
@@ -852,7 +947,15 @@ fn format_obj(
                                 out.push_str(&" ".repeat(cfg.indent - 1));
                             }
                             context.insert(id);
-                            format_dict_items(&entries, out, indent, allowance + 1, context, level, cfg);
+                            format_dict_items(
+                                &entries,
+                                out,
+                                indent,
+                                allowance + 1,
+                                context,
+                                level,
+                                cfg,
+                            );
                             context.remove(&id);
                             out.push('}');
                             return;
@@ -880,7 +983,15 @@ fn format_obj(
                             out.push_str(prefix);
                             let extra = "frozenset".len() + 1;
                             context.insert(id);
-                            format_items(&items, out, indent + extra, allowance + 2, context, level, cfg);
+                            format_items(
+                                &items,
+                                out,
+                                indent + extra,
+                                allowance + 2,
+                                context,
+                                level,
+                                cfg,
+                            );
                             context.remove(&id);
                             out.push_str("})");
                             return;
@@ -986,7 +1097,15 @@ fn format_dict_items(
         out.push_str(&rep);
         out.push_str(": ");
         let a = if last { allowance } else { 1 };
-        format_obj(*ent, out, indent + rep.len() + 2, a, context, level + 1, cfg);
+        format_obj(
+            *ent,
+            out,
+            indent + rep.len() + 2,
+            a,
+            context,
+            level + 1,
+            cfg,
+        );
         if !last {
             out.push_str(&delimnl);
         }
@@ -998,7 +1117,13 @@ fn format_dict_items(
 /// CPython `_pprint_str`. Returns None when the string would render on a
 /// single line (caller falls back to the plain repr). The string is split on
 /// whitespace runs into adjacent quoted literals.
-fn pprint_str(s: &str, mut indent: usize, mut allowance: usize, level: usize, cfg: &Config) -> Option<String> {
+fn pprint_str(
+    s: &str,
+    mut indent: usize,
+    mut allowance: usize,
+    level: usize,
+    cfg: &Config,
+) -> Option<String> {
     let lines: Vec<String> = split_keepends(s);
     if level == 1 {
         indent += 1;
@@ -1065,7 +1190,13 @@ fn pprint_str(s: &str, mut indent: usize, mut allowance: usize, level: usize, cf
 
 /// CPython `_pprint_bytes`: bytes of length > 4 are split into adjacent
 /// `b'...'` literals built four bytes at a time (`_wrap_bytes_repr`).
-fn pprint_bytes(data: &[u8], mut indent: usize, mut allowance: usize, level: usize, _cfg: &Config) -> Option<String> {
+fn pprint_bytes(
+    data: &[u8],
+    mut indent: usize,
+    mut allowance: usize,
+    level: usize,
+    _cfg: &Config,
+) -> Option<String> {
     if data.len() <= 4 {
         return None;
     }
@@ -1076,7 +1207,11 @@ fn pprint_bytes(data: &[u8], mut indent: usize, mut allowance: usize, level: usi
         allowance += 1;
         out.push('(');
     }
-    let parts = wrap_bytes_repr(data, (_cfg.width as isize) - (indent as isize), allowance as isize);
+    let parts = wrap_bytes_repr(
+        data,
+        (_cfg.width as isize) - (indent as isize),
+        allowance as isize,
+    );
     let mut delim = String::new();
     for rep in &parts {
         out.push_str(&delim);

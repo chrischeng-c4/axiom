@@ -58,26 +58,17 @@ impl LinkField {
     }
 
     /// Create a single forward link field.
-    pub fn link(
-        field_name: impl Into<String>,
-        target_collection: impl Into<String>,
-    ) -> Self {
+    pub fn link(field_name: impl Into<String>, target_collection: impl Into<String>) -> Self {
         Self::new(field_name, LinkType::Link, target_collection, false)
     }
 
     /// Create a list forward link field.
-    pub fn link_list(
-        field_name: impl Into<String>,
-        target_collection: impl Into<String>,
-    ) -> Self {
+    pub fn link_list(field_name: impl Into<String>, target_collection: impl Into<String>) -> Self {
         Self::new(field_name, LinkType::Link, target_collection, true)
     }
 
     /// Create a back link field.
-    pub fn back_link(
-        field_name: impl Into<String>,
-        target_collection: impl Into<String>,
-    ) -> Self {
+    pub fn back_link(field_name: impl Into<String>, target_collection: impl Into<String>) -> Self {
         Self::new(field_name, LinkType::BackLink, target_collection, true)
     }
 }
@@ -209,10 +200,7 @@ impl CollectedRefs {
 ///
 /// Note: BackLink fields are skipped by this function. BackLinks require
 /// reverse queries from target collections and must be handled separately.
-pub fn extract_refs_from_doc(
-    doc: &BsonDocument,
-    link_fields: &[LinkField],
-) -> CollectedRefs {
+pub fn extract_refs_from_doc(doc: &BsonDocument, link_fields: &[LinkField]) -> CollectedRefs {
     let mut refs = CollectedRefs::new();
 
     // Get source document ID
@@ -262,7 +250,8 @@ fn extract_object_id(value: &bson::Bson) -> Option<ObjectId> {
         bson::Bson::ObjectId(id) => Some(*id),
         bson::Bson::Document(doc) => {
             // Handle DBRef format: {"$ref": "collection", "$id": ObjectId}
-            doc.get_object_id("$id").ok()
+            doc.get_object_id("$id")
+                .ok()
                 .or_else(|| doc.get_object_id("_id").ok())
         }
         bson::Bson::String(s) => ObjectId::parse_str(s).ok(),
@@ -359,7 +348,9 @@ mod tests {
         assert_eq!(result.count(), 0);
 
         let id = ObjectId::new();
-        result.fetched_docs.insert(id, doc! { "_id": id, "name": "test" });
+        result
+            .fetched_docs
+            .insert(id, doc! { "_id": id, "name": "test" });
         assert_eq!(result.count(), 1);
 
         result.errors.push("error".to_string());

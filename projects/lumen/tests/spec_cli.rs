@@ -200,7 +200,7 @@ fn llm_integration_recommends_postgres_alloydb_adapter_boundary() {
         "Recommended Postgres / AlloyDB integration",
         "outbox",
         "ACK/retry/DLQ",
-        "Do not publish directly to lumen's NATS stream",
+        "Do not publish directly to lumen's broker stream",
         "Ownership boundary",
     ] {
         assert!(

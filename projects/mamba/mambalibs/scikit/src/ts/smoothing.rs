@@ -307,9 +307,7 @@ mod tests {
     fn test_holt_winters_additive() {
         let data: Vec<f64> = (0..48)
             .map(|i| {
-                100.0
-                    + i as f64 * 0.5
-                    + 10.0 * (2.0 * std::f64::consts::PI * i as f64 / 12.0).sin()
+                100.0 + i as f64 * 0.5 + 10.0 * (2.0 * std::f64::consts::PI * i as f64 / 12.0).sin()
             })
             .collect();
         let params = HoltWintersParams {
@@ -330,8 +328,7 @@ mod tests {
         let data: Vec<f64> = (0..48)
             .map(|i| {
                 let trend = 100.0 + i as f64;
-                let seasonal =
-                    1.0 + 0.2 * (2.0 * std::f64::consts::PI * i as f64 / 12.0).sin();
+                let seasonal = 1.0 + 0.2 * (2.0 * std::f64::consts::PI * i as f64 / 12.0).sin();
                 trend * seasonal
             })
             .collect();

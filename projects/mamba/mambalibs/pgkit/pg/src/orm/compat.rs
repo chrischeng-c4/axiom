@@ -389,9 +389,10 @@ impl UrlValidator {
 
     /// Validate a string value.
     pub fn validate_string(&self, value: &str) -> Result<String, ValidationError> {
-        let has_scheme = self.allowed_schemes.iter().any(|s| {
-            value.starts_with(&format!("{}://", s))
-        });
+        let has_scheme = self
+            .allowed_schemes
+            .iter()
+            .any(|s| value.starts_with(&format!("{}://", s)));
 
         if !has_scheme {
             return Err(ValidationError::field(
@@ -694,8 +695,8 @@ mod tests {
 
     #[test]
     fn test_url_validator_custom_schemes() {
-        let validator = UrlValidator::new("link")
-            .allowed_schemes(vec!["ftp".to_string(), "sftp".to_string()]);
+        let validator =
+            UrlValidator::new("link").allowed_schemes(vec!["ftp".to_string(), "sftp".to_string()]);
 
         assert!(validator.validate_string("ftp://example.com").is_ok());
         assert!(validator.validate_string("sftp://example.com").is_ok());
@@ -712,14 +713,13 @@ mod tests {
         assert_eq!(shield_error.error_type.to_string(), "value_error");
 
         // Test type_error mapping
-        let error = ValidationError::field("age", "Must be integer")
-            .with_type("type_error.integer");
+        let error =
+            ValidationError::field("age", "Must be integer").with_type("type_error.integer");
         let shield_error = error.to_shield();
         assert_eq!(shield_error.error_type.to_string(), "type_error");
 
         // Test missing mapping
-        let error = ValidationError::field("name", "Required")
-            .with_type("missing");
+        let error = ValidationError::field("name", "Required").with_type("missing");
         let shield_error = error.to_shield();
         assert_eq!(shield_error.error_type.to_string(), "missing");
     }
@@ -741,8 +741,8 @@ mod tests {
 
     #[test]
     fn test_validation_error_into_shield() {
-        let error = ValidationError::field("name", "Too short")
-            .with_type("value_error.string.min_length");
+        let error =
+            ValidationError::field("name", "Too short").with_type("value_error.string.min_length");
 
         // Test Into trait
         let shield_error: cclab_schema::ValidationError = error.into();

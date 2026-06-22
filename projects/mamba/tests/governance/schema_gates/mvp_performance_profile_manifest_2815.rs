@@ -256,8 +256,8 @@ fn performance_profile_baseline_exists_and_matches_summary_contract() {
         .and_then(|v| v.as_str())
         .expect("`[summary.source].name_key` must be set");
 
-    let raw = std::fs::read_to_string(&canonical)
-        .unwrap_or_else(|e| panic!("baseline read failed: {e}"));
+    let raw =
+        std::fs::read_to_string(&canonical).unwrap_or_else(|e| panic!("baseline read failed: {e}"));
     let parsed: serde_json::Value =
         serde_json::from_str(&raw).unwrap_or_else(|e| panic!("baseline parse failed: {e}"));
 

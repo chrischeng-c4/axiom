@@ -37,15 +37,9 @@ pub enum ParsedLine {
         text: String,
     },
     /// A `-c FILE` or `-r FILE` directive.
-    Include {
-        kind: IncludeKind,
-        path: String,
-    },
+    Include { kind: IncludeKind, path: String },
     /// A long-form pip option like `--index-url URL`. Verbatim.
-    Option {
-        name: String,
-        value: Option<String>,
-    },
+    Option { name: String, value: Option<String> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,25 +252,17 @@ mod tests {
 
     #[test]
     fn parse_preserves_hash_inside_quoted_marker() {
-        let out = parse_file(
-            "flask>=2.0; sys_platform == \"linux # not a comment\"\n",
-        )
-        .unwrap();
+        let out = parse_file("flask>=2.0; sys_platform == \"linux # not a comment\"\n").unwrap();
         assert_eq!(
             out,
-            vec![req(
-                "flask>=2.0; sys_platform == \"linux # not a comment\""
-            )]
+            vec![req("flask>=2.0; sys_platform == \"linux # not a comment\"")]
         );
     }
 
     #[test]
     fn parse_folds_backslash_continuations() {
         let out = parse_file("flask>=2.0; \\\n  python_version >= \"3.11\"\n").unwrap();
-        assert_eq!(
-            out,
-            vec![req("flask>=2.0;   python_version >= \"3.11\"")]
-        );
+        assert_eq!(out, vec![req("flask>=2.0;   python_version >= \"3.11\"")]);
     }
 
     #[test]
@@ -300,19 +286,13 @@ mod tests {
     #[test]
     fn parse_index_url_option_equals_form() {
         let out = parse_file("--index-url=https://pypi.org/simple\n").unwrap();
-        assert_eq!(
-            out,
-            vec![opt("index-url", Some("https://pypi.org/simple"))]
-        );
+        assert_eq!(out, vec![opt("index-url", Some("https://pypi.org/simple"))]);
     }
 
     #[test]
     fn parse_index_url_option_space_form() {
         let out = parse_file("--index-url https://pypi.org/simple\n").unwrap();
-        assert_eq!(
-            out,
-            vec![opt("index-url", Some("https://pypi.org/simple"))]
-        );
+        assert_eq!(out, vec![opt("index-url", Some("https://pypi.org/simple"))]);
     }
 
     #[test]

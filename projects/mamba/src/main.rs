@@ -298,7 +298,9 @@ fn cmd_test_batch(sub: &ArgMatches) -> Result<()> {
             std::fs::read_to_string(pf).with_context(|| format!("reading {pf}"))?
         } else {
             let mut s = String::new();
-            std::io::stdin().read_to_string(&mut s).context("reading stdin")?;
+            std::io::stdin()
+                .read_to_string(&mut s)
+                .context("reading stdin")?;
             s
         };
         text.lines()
@@ -376,7 +378,11 @@ fn cmd_test_batch(sub: &ArgMatches) -> Result<()> {
         if r > 0 {
             if let Some((idx, _)) = inflight.remove(&r) {
                 let exited = libc::WIFEXITED(status);
-                let code = if exited { libc::WEXITSTATUS(status) } else { -1 };
+                let code = if exited {
+                    libc::WEXITSTATUS(status)
+                } else {
+                    -1
+                };
                 match (exited, code) {
                     (true, 0) => {
                         results[idx] = 1;
@@ -656,7 +662,12 @@ fn cmd_bench(sub: &ArgMatches) -> Result<()> {
         let dir = sub
             .get_one::<String>("fixtures")
             .map(|s| std::path::PathBuf::from(s))
-            .unwrap_or_else(|| std::path::PathBuf::from(format!("{}/core/bench", mamba::conformance::FIXTURES_ROOT)));
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(format!(
+                    "{}/core/bench",
+                    mamba::conformance::FIXTURES_ROOT
+                ))
+            });
         let mamba_bin =
             std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("mamba"));
         let fixtures = mamba::bench::discover_fixtures(&dir);

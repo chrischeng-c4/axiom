@@ -1,3 +1,6 @@
+use super::super::dict_ops::dict_key_to_mbvalue;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// reprlib module for Mamba (#1261 long-tail).
 ///
 /// A faithful native port of CPython 3.12's `reprlib.Repr`: abbreviating
@@ -11,11 +14,7 @@
 /// bound `r.repr(x)` method that reads the per-instance limits. The
 /// module-level `aRepr` is one such instance and `reprlib.repr` is its bound
 /// `repr`. `recursive_repr` is a recursion-guarding decorator factory.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::dict_ops::dict_key_to_mbvalue;
 
 const REPR_CLASS: &str = "Repr";
 
@@ -40,12 +39,18 @@ fn new_str(s: &str) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
 fn is_dict(val: MbValue) -> bool {
-    val.as_ptr().map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) }).unwrap_or(false)
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
 }
 
 fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
@@ -114,12 +119,18 @@ fn builtin_repr(val: MbValue) -> String {
     let r = super::super::builtins::mb_repr(val);
     let out = unsafe {
         if let Some(p) = r.as_ptr() {
-            if let ObjData::Str(ref s) = (*p).data { s.clone() } else { String::new() }
+            if let ObjData::Str(ref s) = (*p).data {
+                s.clone()
+            } else {
+                String::new()
+            }
         } else {
             String::new()
         }
     };
-    unsafe { super::super::rc::release_if_ptr(r); }
+    unsafe {
+        super::super::rc::release_if_ptr(r);
+    }
     out
 }
 
@@ -145,7 +156,10 @@ struct Limits {
 
 fn field_int(inst: MbValue, key: &str, default: i64) -> i64 {
     match get_field(inst, key) {
-        Some(v) => v.as_int().or_else(|| v.as_bool().map(|b| b as i64)).unwrap_or(default),
+        Some(v) => v
+            .as_int()
+            .or_else(|| v.as_bool().map(|b| b as i64))
+            .unwrap_or(default),
         None => default,
     }
 }
@@ -203,10 +217,16 @@ fn possibly_sorted(items: &[MbValue]) -> Vec<MbValue> {
                 match gt.as_bool() {
                     Some(true) => std::cmp::Ordering::Greater,
                     Some(false) => std::cmp::Ordering::Equal,
-                    None => { orderable = false; std::cmp::Ordering::Equal }
+                    None => {
+                        orderable = false;
+                        std::cmp::Ordering::Equal
+                    }
                 }
             }
-            None => { orderable = false; std::cmp::Ordering::Equal }
+            None => {
+                orderable = false;
+                std::cmp::Ordering::Equal
+            }
         }
     });
     // Any pending comparison exception must be cleared and the original order
@@ -250,7 +270,10 @@ fn join(lim: &Limits, pieces: &[String], level: i64) -> Option<String> {
         let tn = type_repr_name(lim.indent);
         raise(
             "TypeError",
-            &format!("Repr.indent must be a str, int or None, not <class '{}'>", tn),
+            &format!(
+                "Repr.indent must be a str, int or None, not <class '{}'>",
+                tn
+            ),
         );
         return None;
     };
@@ -357,7 +380,8 @@ fn repr_dict(lim: &Limits, inst: MbValue, val: MbValue, level: i64) -> Option<St
     // the DictKey so they re-render through the normal repr path.
     let pairs: Vec<(MbValue, MbValue)> = unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap()
+            lock.read()
+                .unwrap()
                 .iter()
                 .map(|(k, v)| (dict_key_to_mbvalue(k), *v))
                 .collect()
@@ -384,9 +408,7 @@ fn repr_dict(lim: &Limits, inst: MbValue, val: MbValue, level: i64) -> Option<St
             // Find the value paired with this key (by identity/equality match).
             let v = pairs
                 .iter()
-                .find(|(k, _)| {
-                    super::super::builtins::mb_eq(*k, *key).as_bool() == Some(true)
-                })
+                .find(|(k, _)| super::super::builtins::mb_eq(*k, *key).as_bool() == Some(true))
                 .map(|(_, v)| *v)
                 .unwrap_or_else(MbValue::none);
             let keyrepr = match repr1(lim, inst, *key, newlevel) {
@@ -406,7 +428,9 @@ fn repr_dict(lim: &Limits, inst: MbValue, val: MbValue, level: i64) -> Option<St
     }
     // Release the temporary key values we materialized.
     for (k, _) in &pairs {
-        unsafe { super::super::rc::release_if_ptr(*k); }
+        unsafe {
+            super::super::rc::release_if_ptr(*k);
+        }
     }
     result
 }
@@ -461,7 +485,9 @@ fn value_typename(val: MbValue) -> String {
     let ty = super::super::builtins::mb_type(val);
     let name = super::super::class::mb_getattr_default(ty, new_str("__name__"), MbValue::none());
     let out = extract_str(name).unwrap_or_default();
-    unsafe { super::super::rc::release_if_ptr(ty); }
+    unsafe {
+        super::super::rc::release_if_ptr(ty);
+    }
     out
 }
 
@@ -472,8 +498,18 @@ fn value_typename(val: MbValue) -> String {
 fn is_builtin_typename(name: &str) -> bool {
     matches!(
         name,
-        "str" | "list" | "tuple" | "set" | "frozenset" | "dict" | "int"
-            | "bool" | "float" | "bytes" | "bytearray" | "NoneType"
+        "str"
+            | "list"
+            | "tuple"
+            | "set"
+            | "frozenset"
+            | "dict"
+            | "int"
+            | "bool"
+            | "float"
+            | "bytes"
+            | "bytearray"
+            | "NoneType"
     )
 }
 
@@ -499,7 +535,9 @@ fn try_custom_method(inst: MbValue, val: MbValue, level: i64) -> Option<String> 
     }
     let args = MbValue::from_ptr(MbObject::new_list(vec![val, MbValue::from_int(level)]));
     let result = super::super::class::mb_call_method(inst, new_str(&method_name), args);
-    unsafe { super::super::rc::release_if_ptr(args); }
+    unsafe {
+        super::super::rc::release_if_ptr(args);
+    }
     if exception_pending() {
         // Let the caller surface the exception; mirror repr_instance fallback.
         return None;
@@ -539,7 +577,14 @@ fn repr1(lim: &Limits, inst: MbValue, val: MbValue, level: i64) -> Option<String
                     }
                     let items = possibly_sorted(items);
                     return repr_iterable(
-                        lim, inst, &items, level, "frozenset({", "})", lim.maxfrozenset, "",
+                        lim,
+                        inst,
+                        &items,
+                        level,
+                        "frozenset({",
+                        "})",
+                        lim.maxfrozenset,
+                        "",
                     );
                 }
                 ObjData::Dict(_) => {
@@ -614,9 +659,19 @@ unsafe extern "C" fn dispatch_repr_class(args_ptr: *const MbValue, nargs: usize)
         if let Some(kw) = a.last().copied() {
             if is_dict(kw) {
                 for key in [
-                    "maxlevel", "maxtuple", "maxlist", "maxarray", "maxdict",
-                    "maxset", "maxfrozenset", "maxdeque", "maxstring", "maxlong",
-                    "maxother", "fillvalue", "indent",
+                    "maxlevel",
+                    "maxtuple",
+                    "maxlist",
+                    "maxarray",
+                    "maxdict",
+                    "maxset",
+                    "maxfrozenset",
+                    "maxdeque",
+                    "maxstring",
+                    "maxlong",
+                    "maxother",
+                    "fillvalue",
+                    "indent",
                 ] {
                     if let Some(v) = dict_get(kw, key) {
                         set_field(inst, key, v);
@@ -640,7 +695,9 @@ unsafe extern "C" fn dispatch_repr(a: *const MbValue, n: usize) -> MbValue {
         Some(s) => new_str(&s),
         None => MbValue::none(),
     };
-    unsafe { super::super::rc::release_if_ptr(inst); }
+    unsafe {
+        super::super::rc::release_if_ptr(inst);
+    }
     out
 }
 
@@ -694,9 +751,12 @@ pub fn register() {
 
     let mut attrs = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("repr",            dispatch_repr           as *const () as usize),
-        ("recursive_repr",  dispatch_recursive_repr as *const () as usize),
-        ("Repr",            dispatch_repr_class     as *const () as usize),
+        ("repr", dispatch_repr as *const () as usize),
+        (
+            "recursive_repr",
+            dispatch_recursive_repr as *const () as usize,
+        ),
+        ("Repr", dispatch_repr_class as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert((*name).into(), MbValue::from_func(*addr));
@@ -714,7 +774,9 @@ pub fn register() {
 
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
-        for (_, addr) in dispatchers { set.insert(*addr as u64); }
+        for (_, addr) in dispatchers {
+            set.insert(*addr as u64);
+        }
         set.insert(identity_decorator as *const () as u64);
     });
     super::register_module("reprlib", attrs);

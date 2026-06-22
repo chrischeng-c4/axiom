@@ -20,7 +20,9 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 fn checker_script() -> PathBuf {
-    crate::common::project_root().join("scripts").join("skip_policy_check.py")
+    crate::common::project_root()
+        .join("scripts")
+        .join("skip_policy_check.py")
 }
 
 fn unique_dir(tag: &str) -> PathBuf {
@@ -51,29 +53,29 @@ fn run_checker(args: &[&str]) -> (i32, String, String) {
 /// Build a release summary with explicit per-profile counts. `counts` is
 /// a list of (profile, passed, failed, missing, skipped, xfail, stub,
 /// import_pass) tuples for release-required profiles.
-fn build_summary(
-    release_id: &str,
-    counts: &[(&str, i64, i64, i64, i64, i64, i64, i64)],
-) -> Value {
+fn build_summary(release_id: &str, counts: &[(&str, i64, i64, i64, i64, i64, i64, i64)]) -> Value {
     let mut profiles = serde_json::Map::new();
     let mut required: Vec<&str> = Vec::new();
     for (pid, passed, failed, missing, skipped, xfail, stub, import_pass) in counts {
         required.push(pid);
-        profiles.insert(pid.to_string(), json!({
-            "profile": pid,
-            "command": "x",
-            "status": if *failed > 0 { "fail" } else { "pass" },
-            "blocking": true,
-            "counts": {
-                "passed": passed,
-                "failed": failed,
-                "missing": missing,
-                "skipped": skipped,
-                "xfail": xfail,
-                "stub": stub,
-                "import_pass": import_pass,
-            },
-        }));
+        profiles.insert(
+            pid.to_string(),
+            json!({
+                "profile": pid,
+                "command": "x",
+                "status": if *failed > 0 { "fail" } else { "pass" },
+                "blocking": true,
+                "counts": {
+                    "passed": passed,
+                    "failed": failed,
+                    "missing": missing,
+                    "skipped": skipped,
+                    "xfail": xfail,
+                    "stub": stub,
+                    "import_pass": import_pass,
+                },
+            }),
+        );
     }
     json!({
         "schema_version": 1,
@@ -97,18 +99,21 @@ fn build_summary(
 #[test]
 fn skipped_count_on_required_profile_fails() {
     let dir = unique_dir("skipped");
-    let summary = build_summary(
-        "rel-skip",
-        &[("smoke", 5, 0, 0, /*skipped*/ 3, 0, 0, 0)],
-    );
+    let summary = build_summary("rel-skip", &[("smoke", 5, 0, 0, /*skipped*/ 3, 0, 0, 0)]);
     let path = write_summary(&dir, "summary.json", &summary);
-    let (code, _, stderr) = run_checker(&[
-        "--summary", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
-    assert_eq!(code, 1, "skipped > 0 on required profile must fail (stderr={stderr})");
-    assert!(stderr.contains("skipped"), "stderr must name the skipped outcome");
-    assert!(stderr.contains("smoke"), "stderr must name the offending profile");
+    let (code, _, stderr) = run_checker(&["--summary", path.to_str().unwrap(), "--format", "text"]);
+    assert_eq!(
+        code, 1,
+        "skipped > 0 on required profile must fail (stderr={stderr})"
+    );
+    assert!(
+        stderr.contains("skipped"),
+        "stderr must name the skipped outcome"
+    );
+    assert!(
+        stderr.contains("smoke"),
+        "stderr must name the offending profile"
+    );
 }
 
 #[test]
@@ -119,10 +124,7 @@ fn xfail_count_on_required_profile_fails() {
         &[("correctness", 100, 0, 0, 0, /*xfail*/ 4, 0, 0)],
     );
     let path = write_summary(&dir, "summary.json", &summary);
-    let (code, _, stderr) = run_checker(&[
-        "--summary", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
+    let (code, _, stderr) = run_checker(&["--summary", path.to_str().unwrap(), "--format", "text"]);
     assert_eq!(code, 1, "xfail > 0 on required profile must fail");
     assert!(stderr.contains("xfail"));
     assert!(stderr.contains("correctness"));
@@ -136,10 +138,7 @@ fn stub_count_on_required_profile_fails() {
         &[("correctness", 100, 0, 0, 0, 0, /*stub*/ 2, 0)],
     );
     let path = write_summary(&dir, "summary.json", &summary);
-    let (code, _, stderr) = run_checker(&[
-        "--summary", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
+    let (code, _, stderr) = run_checker(&["--summary", path.to_str().unwrap(), "--format", "text"]);
     assert_eq!(code, 1, "stub > 0 on required profile must fail");
     assert!(stderr.contains("stub"));
 }
@@ -152,10 +151,7 @@ fn import_pass_count_on_required_profile_fails() {
         &[("correctness", 100, 0, 0, 0, 0, 0, /*import_pass*/ 8)],
     );
     let path = write_summary(&dir, "summary.json", &summary);
-    let (code, _, stderr) = run_checker(&[
-        "--summary", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
+    let (code, _, stderr) = run_checker(&["--summary", path.to_str().unwrap(), "--format", "text"]);
     assert_eq!(code, 1, "import_pass > 0 on required profile must fail");
     assert!(stderr.contains("import_pass"));
 }
@@ -177,10 +173,7 @@ fn clean_summary_with_only_passed_counts_exits_zero() {
         ],
     );
     let path = write_summary(&dir, "summary.json", &summary);
-    let (code, _, stderr) = run_checker(&[
-        "--summary", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
+    let (code, _, stderr) = run_checker(&["--summary", path.to_str().unwrap(), "--format", "text"]);
     assert_eq!(code, 0, "all-passed summary must exit 0 (stderr={stderr})");
     assert!(stderr.contains("clean"), "text mode must announce clean");
 }
@@ -194,21 +187,31 @@ fn json_format_emits_machine_readable_violations() {
         "rel-multi",
         &[
             ("smoke", 5, 0, 0, /*skipped*/ 1, 0, 0, 0),
-            ("correctness", 100, 0, 0, 0, /*xfail*/ 4, /*stub*/ 2, /*import_pass*/ 8),
+            (
+                "correctness",
+                100,
+                0,
+                0,
+                0,
+                /*xfail*/ 4,
+                /*stub*/ 2,
+                /*import_pass*/ 8,
+            ),
         ],
     );
     let path = write_summary(&dir, "summary.json", &summary);
-    let (code, stdout, _) = run_checker(&[
-        "--summary", path.to_str().unwrap(),
-        "--format", "json",
-    ]);
+    let (code, stdout, _) = run_checker(&["--summary", path.to_str().unwrap(), "--format", "json"]);
     assert_eq!(code, 1);
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
     assert_eq!(v["release_id"], json!("rel-multi"));
     let violations = v["violations"].as_array().expect("violations array");
 
     // Four buckets across two profiles → exactly 4 violations.
-    assert_eq!(violations.len(), 4, "expected 4 violations, got {violations:?}");
+    assert_eq!(
+        violations.len(),
+        4,
+        "expected 4 violations, got {violations:?}"
+    );
 
     // Every violation row must name profile + outcome + count + objective.
     for entry in violations {
@@ -224,11 +227,20 @@ fn json_format_emits_machine_readable_violations() {
     // diff-friendly worker output (acceptance #3 — "actionable").
     let labels: Vec<String> = violations
         .iter()
-        .map(|v| format!("{}/{}", v["profile"].as_str().unwrap(), v["outcome"].as_str().unwrap()))
+        .map(|v| {
+            format!(
+                "{}/{}",
+                v["profile"].as_str().unwrap(),
+                v["outcome"].as_str().unwrap()
+            )
+        })
         .collect();
     let mut sorted = labels.clone();
     sorted.sort();
-    assert_eq!(labels, sorted, "violations must be sorted by (profile, outcome)");
+    assert_eq!(
+        labels, sorted,
+        "violations must be sorted by (profile, outcome)"
+    );
 }
 
 #[test]
@@ -236,12 +248,16 @@ fn text_output_names_rule_and_issue() {
     let dir = unique_dir("rule-cite");
     let summary = build_summary("rel-x", &[("smoke", 5, 0, 0, 1, 0, 0, 0)]);
     let path = write_summary(&dir, "summary.json", &summary);
-    let (_code, _, stderr) = run_checker(&[
-        "--summary", path.to_str().unwrap(),
-        "--format", "text",
-    ]);
-    assert!(stderr.contains("#2825"), "text output must cite tracking issue for triage");
-    assert!(stderr.contains("rule:"), "text output must restate the rule");
+    let (_code, _, stderr) =
+        run_checker(&["--summary", path.to_str().unwrap(), "--format", "text"]);
+    assert!(
+        stderr.contains("#2825"),
+        "text output must cite tracking issue for triage"
+    );
+    assert!(
+        stderr.contains("rule:"),
+        "text output must restate the rule"
+    );
 }
 
 // ─── Missing-profile rendering ──────────────────────────────────────
@@ -273,18 +289,14 @@ fn release_required_profile_missing_from_summary_is_violation() {
         "artifacts": {"summary_path": "/tmp/x"},
     });
     let path = write_summary(&dir, "summary.json", &summary);
-    let (code, stdout, _) = run_checker(&[
-        "--summary", path.to_str().unwrap(),
-        "--format", "json",
-    ]);
+    let (code, stdout, _) = run_checker(&["--summary", path.to_str().unwrap(), "--format", "json"]);
     assert_eq!(code, 1, "missing required profile must be a violation");
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
     let violations = v["violations"].as_array().expect("violations");
     assert!(
-        violations.iter().any(|v|
-            v["profile"] == "performance"
-            && v["outcome"] == "missing"
-        ),
+        violations
+            .iter()
+            .any(|v| v["profile"] == "performance" && v["outcome"] == "missing"),
         "violation for missing required profile must be reported: {violations:?}",
     );
 }
@@ -303,8 +315,10 @@ fn checker_help_documents_summary_and_format_flags() {
 #[test]
 fn checker_exits_101_when_summary_missing() {
     let (code, _, _) = run_checker(&[
-        "--summary", "/nonexistent/path/missing.json",
-        "--format", "json",
+        "--summary",
+        "/nonexistent/path/missing.json",
+        "--format",
+        "json",
     ]);
     assert_eq!(code, 101, "missing summary must exit 101");
 }

@@ -33,6 +33,6 @@ RUN set -eux; \
 
 # ---- stage 2: distroless runtime — only the binary + CA certs, nonroot -------
 FROM gcr.io/distroless/cc-debian12:nonroot
-COPY --from=fetch /tmp/keep /usr/local/bin/keep
+COPY --chown=65532:65532 --from=fetch /tmp/keep /usr/local/bin/keep
 EXPOSE 7117
 ENTRYPOINT ["/usr/local/bin/keep"]

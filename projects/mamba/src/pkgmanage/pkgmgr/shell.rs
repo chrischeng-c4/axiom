@@ -255,7 +255,10 @@ mod tests {
     #[test]
     fn detect_from_shell_env_parses_basename() {
         assert_eq!(detect_from_shell_env("/bin/bash"), Some(Shell::Bash));
-        assert_eq!(detect_from_shell_env("/usr/local/bin/zsh"), Some(Shell::Zsh));
+        assert_eq!(
+            detect_from_shell_env("/usr/local/bin/zsh"),
+            Some(Shell::Zsh)
+        );
         assert_eq!(
             detect_from_shell_env("/opt/homebrew/bin/fish"),
             Some(Shell::Fish)
@@ -306,8 +309,14 @@ mod tests {
     fn markers_are_stable_across_shells() {
         // POSIX shells share the same markers; PS / cmd use their
         // visually-equivalent comment form.
-        assert_eq!(Shell::Bash.marker_begin_for(), Shell::Zsh.marker_begin_for());
-        assert_eq!(Shell::Bash.marker_begin_for(), Shell::Fish.marker_begin_for());
+        assert_eq!(
+            Shell::Bash.marker_begin_for(),
+            Shell::Zsh.marker_begin_for()
+        );
+        assert_eq!(
+            Shell::Bash.marker_begin_for(),
+            Shell::Fish.marker_begin_for()
+        );
         assert!(Shell::Cmd.marker_begin_for().starts_with('#'));
         assert!(Shell::PowerShell.marker_begin_for().starts_with('#'));
     }

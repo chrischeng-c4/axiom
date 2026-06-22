@@ -87,10 +87,7 @@ pub fn read_python_version_file(path: &Path) -> Result<PythonVersionFile, IndexE
 
 /// Write a `.python-version` to `path`, creating or overwriting it. Parent
 /// directories are NOT created.
-pub fn write_python_version_file(
-    path: &Path,
-    file: &PythonVersionFile,
-) -> Result<(), IndexError> {
+pub fn write_python_version_file(path: &Path, file: &PythonVersionFile) -> Result<(), IndexError> {
     let body = render_python_version_file(file);
     fs::write(path, body).map_err(|e| IndexError::CacheIo {
         path: path.display().to_string(),

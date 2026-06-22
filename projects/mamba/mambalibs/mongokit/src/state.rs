@@ -59,7 +59,8 @@ impl StateTracker {
 
         // COW: only store on first write
         if !self.changed_fields.contains(&top_level_field) {
-            self.original_values.insert(&top_level_field, original_value);
+            self.original_values
+                .insert(&top_level_field, original_value);
             self.changed_fields.insert(top_level_field);
         }
     }

@@ -59,7 +59,7 @@ aw init
 # Capability alignment
 /aw:capability "clarify this project's capabilities"
 
-# Work-item planning and CRRR
+# Work-item planning and validation
 /aw:wi "split this capability into a roadmap"
 
 # TD lifecycle
@@ -69,5 +69,5 @@ aw init
 /aw:cb-claim <path>
 
 # Existing-project takeover
-/aw:standardize <project>
+/aw:standardize --project <project>
 ```

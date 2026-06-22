@@ -8,7 +8,7 @@
 //! server and no network. This module is the single source for that surface;
 //! the CLI and the (legacy) `lumen-openapi-dump` binary both call into it.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// The full OpenAPI 3 document as pretty JSON (every route + schema).
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-spec-rs.md#source
@@ -132,7 +132,7 @@ Use the smallest topic that answers the task:
   flavor choices, connection, and non-goals.
 - `lumen llm integration` — recommended Postgres/AlloyDB adapter boundary:
   outbox or CDC, external Pub/Sub retry/DLQ ownership, HTTP writes into lumen,
-  and no direct external writes to lumen's NATS WAL.
+  and no direct external writes to lumen's internal broker WAL.
 - `lumen llm quickstart` — copy-paste local create → index → search flow.
 - `lumen llm recipes` — task → ready-to-POST query bodies.
 - `lumen spec --format openapi-yaml` — OpenAPI YAML for LLM/agent reading.
@@ -223,8 +223,8 @@ Use this boundary when Postgres or AlloyDB is the source of truth:
 4. If upstream delivery can arrive out of order, carry a monotonic
    `source_version` / commit LSN in the adapter and suppress stale writes before
    POSTing.
-5. Do not publish directly to lumen's NATS stream. NATS JetStream is lumen's
-   internal WAL and fan-out substrate; external producers use the HTTP API so
+5. Do not publish directly to lumen's broker stream. Relay is lumen's internal
+   WAL and fan-out substrate; external producers use the HTTP API so
    every write goes through validation, routing, and the same log/apply path.
 
 ## Ownership boundary

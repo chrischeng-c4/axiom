@@ -31,17 +31,11 @@ pub fn marshal_arg(
     }
     match (from_cl_type, to_mir_type) {
         // Int narrowing: i64 → i32
-        (t, MirType::I32) if t == cl_types::I64 => {
-            builder.ins().ireduce(cl_types::I32, value)
-        }
+        (t, MirType::I32) if t == cl_types::I64 => builder.ins().ireduce(cl_types::I32, value),
         // Bool truncation: mamba bool (i64) → C bool (i8)
-        (t, MirType::I8) if t == cl_types::I64 => {
-            builder.ins().ireduce(cl_types::I8, value)
-        }
+        (t, MirType::I8) if t == cl_types::I64 => builder.ins().ireduce(cl_types::I8, value),
         // Float demotion: f64 → f32
-        (t, MirType::F32) if t == cl_types::F64 => {
-            builder.ins().fdemote(cl_types::F32, value)
-        }
+        (t, MirType::F32) if t == cl_types::F64 => builder.ins().fdemote(cl_types::F32, value),
         // I64→F64 bitcast: all VRegs are I64 (NaN-boxed), extern wants raw F64.
         // Used when calling mb_box_float which expects F64 param.
         (t, MirType::F64) if t == cl_types::I64 => {
@@ -74,17 +68,11 @@ pub fn unmarshal_return(
     }
     match (from_mir_type, to_cl_type) {
         // Int widening: i32 → i64 (sign-extend)
-        (MirType::I32, t) if t == cl_types::I64 => {
-            builder.ins().sextend(cl_types::I64, value)
-        }
+        (MirType::I32, t) if t == cl_types::I64 => builder.ins().sextend(cl_types::I64, value),
         // Bool widening: i8 → i64 (zero-extend)
-        (MirType::I8, t) if t == cl_types::I64 => {
-            builder.ins().uextend(cl_types::I64, value)
-        }
+        (MirType::I8, t) if t == cl_types::I64 => builder.ins().uextend(cl_types::I64, value),
         // Float promotion: f32 → f64
-        (MirType::F32, t) if t == cl_types::F64 => {
-            builder.ins().fpromote(cl_types::F64, value)
-        }
+        (MirType::F32, t) if t == cl_types::F64 => builder.ins().fpromote(cl_types::F64, value),
         // I64→Float bitcast: runtime returns MbValue (I64), dest variable is F64.
         // Reinterpret the NaN-boxed bits back to IEEE 754 f64.
         (MirType::I64, t) if t == cl_types::F64 => {

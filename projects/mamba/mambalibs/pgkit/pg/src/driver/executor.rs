@@ -58,8 +58,8 @@ impl ExecutorConfig {
             return Duration::from_millis(self.initial_delay_ms);
         }
 
-        let delay_ms = (self.initial_delay_ms as f64)
-            * self.backoff_multiplier.powi(attempt as i32);
+        let delay_ms =
+            (self.initial_delay_ms as f64) * self.backoff_multiplier.powi(attempt as i32);
 
         Duration::from_millis((delay_ms as u64).min(self.max_delay_ms))
     }
@@ -90,7 +90,10 @@ impl<'a> QueryExecutor<'a> {
     pub async fn fetch_all<T, F>(&self, sql: &str, bind_fn: F) -> Result<Vec<T>>
     where
         T: for<'r> FromRow<'r, sqlx::postgres::PgRow> + Send + Unpin,
-        F: Fn(sqlx::query::Query<'_, Postgres, sqlx::postgres::PgArguments>) -> sqlx::query::Query<'_, Postgres, sqlx::postgres::PgArguments> + Clone,
+        F: Fn(
+                sqlx::query::Query<'_, Postgres, sqlx::postgres::PgArguments>,
+            ) -> sqlx::query::Query<'_, Postgres, sqlx::postgres::PgArguments>
+            + Clone,
     {
         let mut last_error = None;
 
@@ -132,15 +135,16 @@ impl<'a> QueryExecutor<'a> {
             }
         }
 
-        Err(last_error
-            .map(DataBridgeError::from)
-            .unwrap_or_else(|| DataBridgeError::Query("Query failed after all retries".to_string())))
+        Err(last_error.map(DataBridgeError::from).unwrap_or_else(|| {
+            DataBridgeError::Query("Query failed after all retries".to_string())
+        }))
     }
 
     /// Execute a query that affects rows (INSERT, UPDATE, DELETE) with retry support.
     #[instrument(skip(self), fields(sql_preview = %sql.chars().take(100).collect::<String>()))]
     pub async fn execute(&self, sql: &str) -> Result<u64> {
-        self.execute_with_args(sql, || Ok(PgArguments::default())).await
+        self.execute_with_args(sql, || Ok(PgArguments::default()))
+            .await
     }
 
     /// Execute a parameterized query with driver `ExtractedValue` bindings.
@@ -201,9 +205,9 @@ impl<'a> QueryExecutor<'a> {
             }
         }
 
-        Err(last_error
-            .map(DataBridgeError::from)
-            .unwrap_or_else(|| DataBridgeError::Query("Query failed after all retries".to_string())))
+        Err(last_error.map(DataBridgeError::from).unwrap_or_else(|| {
+            DataBridgeError::Query("Query failed after all retries".to_string())
+        }))
     }
 
     /// Fetch the first row, if present, with driver `ExtractedValue` parameter bindings.
@@ -227,7 +231,10 @@ impl<'a> QueryExecutor<'a> {
                     let elapsed = start.elapsed();
                     let row = row.as_ref().map(DriverRow::from_sqlx).transpose()?;
                     self.log_query_completion(sql, elapsed, attempt);
-                    debug!(found = row.is_some(), "Query fetched optional row successfully");
+                    debug!(
+                        found = row.is_some(),
+                        "Query fetched optional row successfully"
+                    );
                     return Ok(row);
                 }
                 Err(e) => {
@@ -256,9 +263,9 @@ impl<'a> QueryExecutor<'a> {
             }
         }
 
-        Err(last_error
-            .map(DataBridgeError::from)
-            .unwrap_or_else(|| DataBridgeError::Query("Query failed after all retries".to_string())))
+        Err(last_error.map(DataBridgeError::from).unwrap_or_else(|| {
+            DataBridgeError::Query("Query failed after all retries".to_string())
+        }))
     }
 
     async fn execute_with_args<F>(&self, sql: &str, make_args: F) -> Result<u64>
@@ -305,9 +312,9 @@ impl<'a> QueryExecutor<'a> {
             }
         }
 
-        Err(last_error
-            .map(DataBridgeError::from)
-            .unwrap_or_else(|| DataBridgeError::Query("Query failed after all retries".to_string())))
+        Err(last_error.map(DataBridgeError::from).unwrap_or_else(|| {
+            DataBridgeError::Query("Query failed after all retries".to_string())
+        }))
     }
 
     /// Check if an error is retryable (deadlock, serialization failure, etc.)
@@ -369,11 +376,7 @@ fn bind_params(params: &[ExtractedValue]) -> Result<PgArguments> {
 ///
 /// This is a convenience function for simple query execution without
 /// the full `QueryExecutor` setup.
-pub async fn execute_with_retry(
-    pool: &PgPool,
-    sql: &str,
-    max_retries: u32,
-) -> Result<u64> {
+pub async fn execute_with_retry(pool: &PgPool, sql: &str, max_retries: u32) -> Result<u64> {
     let config = ExecutorConfig {
         max_retries,
         ..Default::default()

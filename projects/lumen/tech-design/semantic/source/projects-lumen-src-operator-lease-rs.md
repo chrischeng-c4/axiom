@@ -1,7 +1,7 @@
 ---
 id: projects-lumen-src-operator-lease-rs
 capability_refs:
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     claim: "kustomize-base-overlays-hpa"
     coverage: partial

@@ -2,13 +2,13 @@
 // CODEGEN-BEGIN
 //! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]) plus a reconcile
 //! loop ([`reconcile`]) that renders ([`render`]) and applies the serving fleet
-//! and NATS broker. Behind the `operator` feature so the serving image never
+//! and Relay broker. Behind the `operator` feature so the serving image never
 //! links kube-rs.
 //!
 //! ```text
 //! Lumen (lumen.dev/v1alpha1)  --reconcile-->  ServiceAccount, ConfigMap,
 //!                                             Deployment, Service, HPA, PDB,
-//!                                             [NATS StatefulSet/Services/CM],
+//!                                             [Relay StatefulSet/Services/PDB],
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 

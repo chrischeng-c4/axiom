@@ -9,14 +9,13 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use walkdir::WalkDir;
 
 const EC_MANIFEST_VERSION: u8 = 1;
-const EC_MANIFEST_REL: &str = "tests/aw-ec.toml";
 const EC_DOC_REL: &str = "docs/aw-ec-manual.md";
 const EC_SOURCE_REL: &str = "external-contracts";
 const PROJECT_AW_REL: &str = "aw.toml";
+const LEGACY_EC_MANIFEST_FILE: &str = "aw-ec.toml";
 const EC_AW_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 const EC_AW_END_MARKER: &str = "AW-EC-END";
 const EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
@@ -52,9 +51,9 @@ pub enum EcCommand {
     Draft(EcDraftArgs),
     /// Fill one section in an EC markdown draft.
     Fill(EcFillArgs),
-    /// Generate manifest, tests, and tool configs from ec/ markdown.
+    /// Generate aw.toml EC inventory, tests, and tool configs from external-contracts/ markdown.
     Gen(EcGenArgs),
-    /// Check EC manifest/list drift and generated test-file presence.
+    /// Check aw.toml EC inventory/list drift and generated test-file presence.
     Check(EcCheckArgs),
     /// Run generated external-contract verification commands.
     Verify(EcVerifyArgs),
@@ -79,10 +78,10 @@ pub struct EcDraftArgs {
     /// Capability claim id protected by this contract.
     #[arg(long)]
     pub claim_id: Option<String>,
-    /// Contract id exposed in the generated EC manifest.
+    /// Contract id exposed in the generated EC inventory.
     #[arg(long)]
     pub contract_id: Option<String>,
-    /// Verification command for the generated manifest case.
+    /// Verification command for the generated EC inventory case.
     #[arg(long)]
     pub command: Option<String>,
     /// Also scaffold a tool-contract section for this native integration tool.
@@ -152,9 +151,9 @@ pub struct EcDocArgs {
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Subcommand)]
 pub enum EcDocCommand {
-    /// Generate docs/aw-ec-manual.md from the EC manifest and evidence metadata.
+    /// Generate docs/aw-ec-manual.md from the aw.toml EC inventory and evidence metadata.
     Gen(EcDocGenArgs),
-    /// Check generated EC documentation for manifest drift.
+    /// Check generated EC documentation for inventory drift.
     Check(EcDocCheckArgs),
     /// Print the generated EC documentation path for local preview.
     Preview(EcDocPreviewArgs),
@@ -283,9 +282,9 @@ pub struct EcCheckSummary {
     pub project: String,
     pub clean: bool,
     pub configured: bool,
-    pub manifest_path: String,
+    pub inventory_path: String,
     pub generated_from_td_digest: String,
-    pub manifest_td_digest: Option<String>,
+    pub inventory_td_digest: Option<String>,
     pub expected_case_count: usize,
     pub case_count: usize,
     pub expected_tool_manifest_count: usize,
@@ -304,8 +303,8 @@ pub struct EcDocCheckSummary {
     pub clean: bool,
     pub configured: bool,
     pub doc_path: String,
-    pub manifest_path: String,
-    pub manifest_digest: Option<String>,
+    pub inventory_path: String,
+    pub inventory_digest: Option<String>,
     pub case_count: usize,
     pub findings: Vec<String>,
 }
@@ -322,7 +321,7 @@ pub struct EcDocPreviewSummary {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct EcVerifySummary {
     pub project: String,
-    pub manifest_path: String,
+    pub inventory_path: String,
     pub clean: bool,
     pub command_count: usize,
     pub passed_count: usize,
@@ -353,12 +352,27 @@ pub struct EcProjectContext {
     pub ec_root: PathBuf,
     pub td_root: PathBuf,
     pub tests_root: PathBuf,
-    pub manifest_path: PathBuf,
+    pub inventory_path: PathBuf,
     pub legacy_manifest_path: PathBuf,
     pub project_aw_path: PathBuf,
     pub doc_path: PathBuf,
     pub target: String,
     pub package_name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AwEcGeneratedDocument<'a> {
+    aw: AwEcGeneratedRoot<'a>,
+}
+
+#[derive(Debug, Serialize)]
+struct AwEcGeneratedRoot<'a> {
+    ec: AwEcGeneratedTable<'a>,
+}
+
+#[derive(Debug, Serialize)]
+struct AwEcGeneratedTable<'a> {
+    generated: &'a EcManifest,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -806,7 +820,7 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
     if args.dry_run {
         let dry_run = serde_json::json!({
             "project": ctx.project,
-            "manifest_path": relative_to(&ctx.project_root, &ctx.manifest_path),
+            "inventory_path": relative_to(&ctx.project_root, &ctx.inventory_path),
             "case_count": manifest.cases.len(),
             "tool_manifest_count": manifest.tool_manifests.len(),
             "generated_from_td_digest": manifest.generated_from_td_digest,
@@ -817,10 +831,10 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&dry_run)?);
         } else {
             println!(
-                "ec gen {}: dry-run, {} case(s), manifest {}",
+                "ec gen {}: dry-run, {} case(s), inventory {}",
                 ctx.project,
                 manifest.cases.len(),
-                relative_to(&ctx.project_root, &ctx.manifest_path)
+                relative_to(&ctx.project_root, &ctx.inventory_path)
             );
             for case in &manifest.cases {
                 println!("  - {} -> {}", case.id, case.test_path);
@@ -841,7 +855,7 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "project": ctx.project,
-                    "manifest_path": relative_to(&ctx.project_root, &ctx.manifest_path),
+                    "inventory_path": relative_to(&ctx.project_root, &ctx.inventory_path),
                     "case_count": manifest.cases.len(),
                     "tool_manifest_count": manifest.tool_manifests.len(),
                     "generated_from_td_digest": manifest.generated_from_td_digest,
@@ -852,7 +866,7 @@ fn run_gen(project: &str, args: EcGenArgs) -> Result<()> {
                 "ec gen {}: wrote {} case(s) to {}",
                 ctx.project,
                 manifest.cases.len(),
-                relative_to(&ctx.project_root, &ctx.manifest_path)
+                relative_to(&ctx.project_root, &ctx.inventory_path)
             );
             if !manifest.tool_manifests.is_empty() {
                 println!(
@@ -955,10 +969,10 @@ fn run_doc(project: &str, args: EcDocArgs) -> Result<()> {
 fn run_doc_gen(project: &str, args: EcDocGenArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let ctx = resolve_ec_project_context(&project_root, project)?;
-    let Some((_manifest_path, manifest)) = load_ec_manifest(&ctx)? else {
+    let Some((_inventory_path, manifest)) = load_ec_manifest(&ctx)? else {
         bail!(
-            "EC manifest missing at {}; run `aw ec gen --project {}` first",
-            relative_to(&ctx.project_root, &ctx.manifest_path),
+            "EC inventory missing in {}; run `aw ec gen --project {}` first",
+            relative_to(&ctx.project_root, &ctx.inventory_path),
             ctx.project
         );
     };
@@ -971,7 +985,7 @@ fn run_doc_gen(project: &str, args: EcDocGenArgs) -> Result<()> {
                     "project": ctx.project,
                     "doc_path": relative_to(&ctx.project_root, &ctx.doc_path),
                     "case_count": manifest.cases.len(),
-                    "manifest_digest": manifest.generated_from_td_digest,
+                    "inventory_digest": manifest.generated_from_td_digest,
                     "content": content,
                 }))?
             );
@@ -987,7 +1001,7 @@ fn run_doc_gen(project: &str, args: EcDocGenArgs) -> Result<()> {
                     "project": ctx.project,
                     "doc_path": relative_to(&ctx.project_root, &ctx.doc_path),
                     "case_count": manifest.cases.len(),
-                    "manifest_digest": manifest.generated_from_td_digest,
+                    "inventory_digest": manifest.generated_from_td_digest,
                 }))?
             );
         } else {
@@ -1032,7 +1046,7 @@ fn run_doc_check(project: &str, args: EcDocCheckArgs) -> Result<()> {
             );
         } else {
             println!(
-                "ec doc check {}: clean, no EC manifest configured",
+                "ec doc check {}: clean, no EC inventory configured",
                 summary.project
             );
         }
@@ -1099,9 +1113,9 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
             .map(|resolved| PathBuf::from(resolved.root))
             .map_err(|err| anyhow::anyhow!("{}", err.message))?;
     let tests_root = source_root.join("tests");
-    let legacy_manifest_path = source_root.join(EC_MANIFEST_REL);
     let project_aw_path = source_root.join(PROJECT_AW_REL);
-    let manifest_path = legacy_manifest_path.clone();
+    let inventory_path = project_aw_path.clone();
+    let legacy_manifest_path = tests_root.join(LEGACY_EC_MANIFEST_FILE);
     let doc_path = source_root.join(EC_DOC_REL);
     let project_model = crate::services::project_registry::load_projects(project_root)?
         .into_iter()
@@ -1122,7 +1136,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         ec_root,
         td_root,
         tests_root,
-        manifest_path,
+        inventory_path,
         legacy_manifest_path,
         project_aw_path,
         doc_path,
@@ -1173,7 +1187,7 @@ fn build_expected_manifest(ctx: &EcProjectContext) -> Result<EcManifest> {
 /// Derive each declared case's `required_for_production` from its capability
 /// type ceiling.
 ///
-/// A manifest case is already dimension content; the capability type decides
+/// An EC inventory case is already dimension content; the capability type decides
 /// whether that declared category is production-required. When a case's
 /// capability has a type assigned in README or `.aw/capability-types.toml`, the
 /// derived value (`case.category` is in the type's required dimensions) wins.
@@ -1538,8 +1552,8 @@ fn default_tool_command(ctx: &EcProjectContext, tool: &str, path: &Path, id: &st
         "arena" => format!("arena run --spec {rel}"),
         "rig" => path
             .parent()
-            .map(|parent| format!("rig test --dir {}", relative_to(&ctx.project_root, parent)))
-            .unwrap_or_else(|| format!("rig test --dir {rel}")),
+            .map(|parent| format!("rig run --dir {}", relative_to(&ctx.project_root, parent)))
+            .unwrap_or_else(|| format!("rig run --dir {rel}")),
         "meter" => format!("meter run --target {rel}"),
         "guard" => format!(
             "guard scan {} --compact --no-persist",
@@ -1551,7 +1565,7 @@ fn default_tool_command(ctx: &EcProjectContext, tool: &str, path: &Path, id: &st
 }
 
 /// Which executable artifact `aw ec gen` should skeleton for a claim, dispatched
-/// on the gate command: `rig test` -> a lifecycle case TOML (mode-1, rig DSL);
+/// on the gate command: `rig run` -> a lifecycle case TOML (mode-1, rig DSL);
 /// `cargo test` -> a native Rust `#[test]` body (mode-2); anything else -> none.
 #[derive(Debug, PartialEq, Eq)]
 enum CaseGenMode {
@@ -1562,7 +1576,7 @@ enum CaseGenMode {
 
 fn case_gen_mode(case: &EcManifestCase) -> CaseGenMode {
     let cmd = case.command.trim_start();
-    if cmd.starts_with("rig test") {
+    if cmd.starts_with("rig run") || cmd.starts_with("target/debug/rig run") {
         CaseGenMode::Rig
     } else if cmd.starts_with("cargo test") {
         CaseGenMode::NativeRust
@@ -1595,9 +1609,9 @@ fn sanitize_ident(s: &str) -> String {
         .collect()
 }
 
-/// Mode-1: a lifecycle case-TOML skeleton from a rig-integrated claim. The
-/// `[exercise]` is a placeholder for the author; `source_contract` back-links to
-/// the EC claim (the bidirectional link).
+/// Mode-1: a rig scenario skeleton from a rig-integrated claim. The default
+/// step is intentionally red until an author replaces it with real exercise
+/// evidence, while still matching the current rig `[record]` schema.
 fn render_case_toml_skeleton(
     case: &EcManifestCase,
     suite: &str,
@@ -1610,29 +1624,21 @@ fn render_case_toml_skeleton(
         .map(|s| s.as_str())
         .unwrap_or("fill: the behavior under test");
     format!(
-        "# SPEC-MANAGED: generated by `aw ec gen` from EC claim `{contract}` — fill [exercise].\n\
-[case]\n\
-id = \"{stem}\"\n\
+        "# SPEC-MANAGED: generated by `aw ec gen` from EC claim `{contract}` - fill [[steps]].\n\
+[record]\n\
 suite = \"{suite}\"\n\
 dimension = \"{dimension}\"\n\
+case = \"{stem}\"\n\
 subject = \"{subject}\"\n\
+kind = \"e2e\"\n\
 expected = \"pass\"\n\
 required = {required}\n\
-source_contract = \"{contract}\"\n\
 \n\
-[prepare]\n\
-needs = []\n\
-\n\
-[exercise]\n\
-# n = 200   # uncomment + set for a load case\n\
-[exercise.request]\n\
-method = \"GET\"\n\
-url = \"http://{{{{upstream}}}}/REPLACE_ME\"\n\
-[exercise.request.expect]\n\
-status = 200\n\
-\n\
-[clean]\n\
-delegate = \"vat-cow\"\n",
+[[steps]]\n\
+type = \"exec\"\n\
+name = \"fill_contract_{stem}\"\n\
+cmd = [\"false\"]\n\
+timeout_secs = 1\n",
         contract = case.contract_id,
         stem = stem,
         suite = suite,
@@ -2089,14 +2095,28 @@ fn default_required_for_production() -> bool {
 }
 
 fn load_ec_manifest(ctx: &EcProjectContext) -> Result<Option<(PathBuf, EcManifest)>> {
-    if !ctx.legacy_manifest_path.is_file() {
+    if !ctx.project_aw_path.is_file() {
         return Ok(None);
     }
-    let content = fs::read_to_string(&ctx.legacy_manifest_path)
-        .with_context(|| format!("read {}", ctx.legacy_manifest_path.display()))?;
-    let manifest: EcManifest = toml::from_str(&content)
-        .with_context(|| format!("parse {}", ctx.legacy_manifest_path.display()))?;
-    Ok(Some((ctx.legacy_manifest_path.clone(), manifest)))
+    let content = fs::read_to_string(&ctx.project_aw_path)
+        .with_context(|| format!("read {}", ctx.project_aw_path.display()))?;
+    let value: toml::Value = toml::from_str(&content)
+        .with_context(|| format!("parse {}", ctx.project_aw_path.display()))?;
+    let Some(generated) = value
+        .get("aw")
+        .and_then(|value| value.get("ec"))
+        .and_then(|value| value.get("generated"))
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    let manifest: EcManifest = generated.try_into().with_context(|| {
+        format!(
+            "parse AW-EC generated inventory in {}",
+            ctx.project_aw_path.display()
+        )
+    })?;
+    Ok(Some((ctx.project_aw_path.clone(), manifest)))
 }
 
 fn check_ec_context(ctx: &EcProjectContext) -> Result<EcCheckSummary> {
@@ -2118,9 +2138,9 @@ fn check_manifest_against_expected(
     let mut missing_test_paths = Vec::new();
     let mut orphan_test_paths = Vec::new();
     let mut missing_tool_manifest_paths = Vec::new();
-    let manifest_path = relative_to(&ctx.project_root, &ctx.manifest_path);
+    let inventory_path = relative_to(&ctx.project_root, &ctx.inventory_path);
     let configured = actual.is_some();
-    let manifest_td_digest = actual.map(|manifest| manifest.generated_from_td_digest.clone());
+    let inventory_td_digest = actual.map(|manifest| manifest.generated_from_td_digest.clone());
 
     let actual_cases = actual
         .map(|manifest| manifest.cases.clone())
@@ -2130,25 +2150,27 @@ fn check_manifest_against_expected(
         if manifest.version != EC_MANIFEST_VERSION {
             findings.push(format!(
                 "{} has unsupported version {}; expected {}",
-                manifest_path, manifest.version, EC_MANIFEST_VERSION
+                inventory_path, manifest.version, EC_MANIFEST_VERSION
             ));
         }
         if manifest.project != ctx.project {
             findings.push(format!(
                 "{} project is `{}`; expected `{}`",
-                manifest_path, manifest.project, ctx.project
+                inventory_path, manifest.project, ctx.project
             ));
         }
         if manifest.generated_from_td_digest != expected.generated_from_td_digest {
             findings.push(format!(
-                "{} is stale: manifest digest {}, current TD digest {}",
-                manifest_path, manifest.generated_from_td_digest, expected.generated_from_td_digest
+                "{} is stale: inventory digest {}, current TD digest {}",
+                inventory_path,
+                manifest.generated_from_td_digest,
+                expected.generated_from_td_digest
             ));
         }
     } else if !expected.cases.is_empty() || !expected.tool_manifests.is_empty() {
         findings.push(format!(
-            "EC manifest missing at {}; run `aw ec gen --project {}`",
-            manifest_path, ctx.project
+            "EC inventory missing in {}; run `aw ec gen --project {}`",
+            inventory_path, ctx.project
         ));
     }
 
@@ -2166,7 +2188,7 @@ fn check_manifest_against_expected(
         let Some(actual_case) = actual_by_id.get(expected_case.id.as_str()) else {
             if actual.is_some() {
                 findings.push(format!(
-                    "manifest missing EC case `{}` from {}",
+                    "inventory missing EC case `{}` from {}",
                     expected_case.id, expected_case.td_ref
                 ));
             }
@@ -2223,25 +2245,25 @@ fn check_manifest_against_expected(
         );
         if expected_case.required_for_production != actual_case.required_for_production {
             findings.push(format!(
-                "manifest case `{}` required_for_production drifted",
+                "inventory case `{}` required_for_production drifted",
                 expected_case.id
             ));
         }
         if expected_case.assertions != actual_case.assertions {
             findings.push(format!(
-                "manifest case `{}` assertions drifted",
+                "inventory case `{}` assertions drifted",
                 expected_case.id
             ));
         }
         if expected_case.evidence != actual_case.evidence {
             findings.push(format!(
-                "manifest case `{}` evidence artifacts drifted",
+                "inventory case `{}` evidence artifacts drifted",
                 expected_case.id
             ));
         }
         if expected_case.evaluators != actual_case.evaluators {
             findings.push(format!(
-                "manifest case `{}` evaluators drifted",
+                "inventory case `{}` evaluators drifted",
                 expected_case.id
             ));
         }
@@ -2250,7 +2272,7 @@ fn check_manifest_against_expected(
     for actual_case in &actual_cases {
         if !expected_by_id.contains_key(actual_case.id.as_str()) {
             findings.push(format!(
-                "manifest has orphan EC case `{}` not present in ec/ markdown or legacy TD EC sections",
+                "inventory has orphan EC case `{}` not present in external-contracts/ markdown or legacy TD EC sections",
                 actual_case.id
             ));
         }
@@ -2298,7 +2320,7 @@ fn check_manifest_against_expected(
         let Some(actual_manifest) = actual_tool_by_id.get(expected_manifest.id.as_str()) else {
             if actual.is_some() {
                 findings.push(format!(
-                    "manifest missing tool contract `{}` from {}",
+                    "inventory missing tool contract `{}` from {}",
                     expected_manifest.id, expected_manifest.td_ref
                 ));
             }
@@ -2370,20 +2392,20 @@ fn check_manifest_against_expected(
     for actual_manifest in &actual_tool_manifests {
         if !expected_tool_by_id.contains_key(actual_manifest.id.as_str()) {
             findings.push(format!(
-                "manifest has orphan tool contract `{}` not present in ec/ markdown or legacy TD tool-contract sections",
+                "inventory has orphan tool contract `{}` not present in external-contracts/ markdown or legacy TD tool-contract sections",
                 actual_manifest.id
             ));
         }
     }
 
-    let manifest_paths = actual_cases
+    let inventory_case_paths = actual_cases
         .iter()
         .map(|case| case.test_path.as_str())
         .collect::<BTreeSet<_>>();
     for orphan_path in generated_ec_test_paths(ctx)? {
-        if !manifest_paths.contains(orphan_path.as_str()) {
+        if !inventory_case_paths.contains(orphan_path.as_str()) {
             findings.push(format!(
-                "generated EC test file is not listed in manifest: {orphan_path}"
+                "generated EC test file is not listed in inventory: {orphan_path}"
             ));
             orphan_test_paths.push(orphan_path);
         }
@@ -2405,9 +2427,9 @@ fn check_manifest_against_expected(
         project: ctx.project.clone(),
         clean: findings.is_empty(),
         configured,
-        manifest_path,
+        inventory_path,
         generated_from_td_digest: expected.generated_from_td_digest.clone(),
-        manifest_td_digest,
+        inventory_td_digest,
         expected_case_count: expected.cases.len(),
         case_count: actual_cases.len(),
         expected_tool_manifest_count: expected.tool_manifests.len(),
@@ -2423,7 +2445,7 @@ fn check_manifest_against_expected(
 fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
     let mut findings = Vec::new();
     let doc_path = relative_to(&ctx.project_root, &ctx.doc_path);
-    let manifest_path = relative_to(&ctx.project_root, &ctx.manifest_path);
+    let inventory_path = relative_to(&ctx.project_root, &ctx.inventory_path);
     let loaded = load_ec_manifest(ctx)?;
     let configured = loaded.is_some();
     let manifest = loaded.as_ref().map(|(_, manifest)| manifest);
@@ -2431,7 +2453,7 @@ fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
     if let Some(manifest) = manifest {
         let ec_summary = check_ec_context(ctx)?;
         for finding in ec_summary.findings {
-            findings.push(format!("EC manifest is not clean: {finding}"));
+            findings.push(format!("EC inventory is not clean: {finding}"));
         }
 
         let expected_content = render_ec_doc(ctx, manifest);
@@ -2459,8 +2481,8 @@ fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
         let expected = build_expected_manifest(ctx)?;
         if !expected.cases.is_empty() || !expected.tool_manifests.is_empty() {
             findings.push(format!(
-                "EC manifest missing at {}; run `aw ec gen --project {}` before `aw ec doc gen --project {}`",
-                manifest_path, ctx.project, ctx.project
+                "EC inventory missing in {}; run `aw ec gen --project {}` before `aw ec doc gen --project {}`",
+                inventory_path, ctx.project, ctx.project
             ));
         }
     }
@@ -2472,8 +2494,8 @@ fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
         clean: findings.is_empty(),
         configured,
         doc_path,
-        manifest_path,
-        manifest_digest: manifest.map(|manifest| manifest.generated_from_td_digest.clone()),
+        inventory_path,
+        inventory_digest: manifest.map(|manifest| manifest.generated_from_td_digest.clone()),
         case_count: manifest
             .map(|manifest| manifest.cases.len())
             .unwrap_or_default(),
@@ -2482,49 +2504,35 @@ fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
 }
 
 fn verify_ec_context(ctx: &EcProjectContext) -> Result<EcVerifySummary> {
-    let Some((manifest_path, manifest)) = load_ec_manifest(ctx)? else {
+    let Some((inventory_path, manifest)) = load_ec_manifest(ctx)? else {
         bail!(
-            "EC manifest missing at {}; run `aw ec gen --project {}` first",
-            relative_to(&ctx.project_root, &ctx.manifest_path),
+            "EC inventory missing in {}; run `aw ec gen --project {}` first",
+            relative_to(&ctx.project_root, &ctx.inventory_path),
             ctx.project
         );
     };
     let mut results = Vec::new();
+    let mut seen_commands = BTreeSet::new();
     for case in &manifest.cases {
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&case.command)
-            .current_dir(&ctx.project_root)
-            .output();
-        let result = match output {
-            Ok(output) => EcVerifyCommandResult {
-                case_id: case.id.clone(),
-                capability_id: case.capability_id.clone(),
-                claim_id: case.claim_id.clone(),
-                category: case.category.clone(),
-                command: case.command.clone(),
-                status: if output.status.success() {
-                    "passed".to_string()
-                } else {
-                    "failed".to_string()
-                },
-                exit_code: output.status.code(),
-                stdout_tail: tail_lossy(&output.stdout, 4000),
-                stderr_tail: tail_lossy(&output.stderr, 4000),
-            },
-            Err(err) => EcVerifyCommandResult {
-                case_id: case.id.clone(),
-                capability_id: case.capability_id.clone(),
-                claim_id: case.claim_id.clone(),
-                category: case.category.clone(),
-                command: case.command.clone(),
-                status: "failed".to_string(),
-                exit_code: None,
-                stdout_tail: String::new(),
-                stderr_tail: err.to_string(),
-            },
-        };
-        results.push(result);
+        if !case.command.trim().is_empty() && !seen_commands.insert(case.command.trim().to_string())
+        {
+            continue;
+        }
+        results.push(run_ec_verify_command(
+            case.id.clone(),
+            case.capability_id.clone(),
+            case.claim_id.clone(),
+            case.category.clone(),
+            case.command.clone(),
+            &ctx.project_root,
+        ));
+    }
+    for tool in &manifest.tool_manifests {
+        if !tool.command.trim().is_empty() && !seen_commands.insert(tool.command.trim().to_string())
+        {
+            continue;
+        }
+        results.push(run_ec_tool_manifest_command(tool, &ctx.project_root));
     }
     let command_count = results.len();
     let passed_count = results
@@ -2534,13 +2542,87 @@ fn verify_ec_context(ctx: &EcProjectContext) -> Result<EcVerifySummary> {
     let failed_count = command_count.saturating_sub(passed_count);
     Ok(EcVerifySummary {
         project: ctx.project.clone(),
-        manifest_path: relative_to(&ctx.project_root, &manifest_path),
+        inventory_path: relative_to(&ctx.project_root, &inventory_path),
         clean: failed_count == 0,
         command_count,
         passed_count,
         failed_count,
         results,
     })
+}
+
+fn run_ec_tool_manifest_command(
+    tool: &EcToolManifest,
+    project_root: &Path,
+) -> EcVerifyCommandResult {
+    let category = if tool.category.trim().is_empty() {
+        "tool".to_string()
+    } else {
+        tool.category.clone()
+    };
+    let case_id = format!("tool:{}", tool.id);
+    if tool.command.trim().is_empty() {
+        return EcVerifyCommandResult {
+            case_id,
+            capability_id: String::new(),
+            claim_id: String::new(),
+            category,
+            command: String::new(),
+            status: "failed".to_string(),
+            exit_code: None,
+            stdout_tail: String::new(),
+            stderr_tail: format!("tool-contract `{}` is missing command", tool.id),
+        };
+    }
+    run_ec_verify_command(
+        case_id,
+        String::new(),
+        String::new(),
+        category,
+        tool.command.clone(),
+        project_root,
+    )
+}
+
+fn run_ec_verify_command(
+    case_id: String,
+    capability_id: String,
+    claim_id: String,
+    category: String,
+    command: String,
+    project_root: &Path,
+) -> EcVerifyCommandResult {
+    let output = crate::cli::shell_env::protected_shell_command(project_root, &command)
+        .current_dir(project_root)
+        .output();
+    match output {
+        Ok(output) => EcVerifyCommandResult {
+            case_id,
+            capability_id,
+            claim_id,
+            category,
+            command,
+            status: if output.status.success() {
+                "passed".to_string()
+            } else {
+                "failed".to_string()
+            },
+            exit_code: output.status.code(),
+            stdout_tail: tail_lossy(&output.stdout, 4000),
+            stderr_tail: tail_lossy(&output.stderr, 4000),
+        },
+        Err(err) => EcVerifyCommandResult {
+            case_id,
+            capability_id,
+            claim_id,
+            category,
+            command,
+            status: "failed".to_string(),
+            exit_code: None,
+            stdout_tail: String::new(),
+            stderr_tail: err.to_string(),
+        },
+    }
 }
 
 fn compare_case_field(
@@ -2552,7 +2634,7 @@ fn compare_case_field(
 ) {
     if expected != actual {
         findings.push(format!(
-            "manifest case `{case_id}` field `{field}` drifted: expected `{expected}`, found `{actual}`"
+            "inventory case `{case_id}` field `{field}` drifted: expected `{expected}`, found `{actual}`"
         ));
     }
 }
@@ -2582,7 +2664,7 @@ fn generated_ec_test_paths(ctx: &EcProjectContext) -> Result<Vec<String>> {
         .filter(|entry| entry.file_type().is_file())
     {
         let path = entry.path();
-        if path == ctx.manifest_path {
+        if path == ctx.legacy_manifest_path {
             continue;
         }
         let content =
@@ -2596,34 +2678,69 @@ fn generated_ec_test_paths(ctx: &EcProjectContext) -> Result<Vec<String>> {
 }
 
 fn write_ec_manifest(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
-    write_ec_manifest_to_legacy_file(ctx, manifest)?;
-    remove_aw_ec_generated_block(ctx)
+    write_ec_inventory_to_project_aw(ctx, manifest)?;
+    remove_legacy_ec_manifest_file(ctx)
 }
 
-fn write_ec_manifest_to_legacy_file(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
-    if let Some(parent) = ctx.legacy_manifest_path.parent() {
+fn write_ec_inventory_to_project_aw(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()> {
+    let generated = AwEcGeneratedDocument {
+        aw: AwEcGeneratedRoot {
+            ec: AwEcGeneratedTable {
+                generated: manifest,
+            },
+        },
+    };
+    let body = format!(
+        "# {EC_AW_BEGIN_MARKER}\n{}# {EC_AW_END_MARKER}\n",
+        toml::to_string_pretty(&generated)?
+    );
+    let existing = if ctx.project_aw_path.is_file() {
+        fs::read_to_string(&ctx.project_aw_path)
+            .with_context(|| format!("read {}", ctx.project_aw_path.display()))?
+    } else {
+        format!("[project]\nname = {:?}\n", ctx.project)
+    };
+    let next = splice_aw_ec_generated_block(&existing, &body);
+    if let Some(parent) = ctx.project_aw_path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    let body = format!(
-        "# SPEC-MANAGED: generated by `aw ec gen --project {}` from ec/ markdown or legacy TD EC sections.\n# CODEGEN-BEGIN\n{}# CODEGEN-END\n",
-        ctx.project,
-        toml::to_string_pretty(manifest)?
-    );
-    fs::write(&ctx.legacy_manifest_path, body)
-        .with_context(|| format!("write {}", ctx.legacy_manifest_path.display()))
-}
-
-fn remove_aw_ec_generated_block(ctx: &EcProjectContext) -> Result<()> {
-    if !ctx.project_aw_path.is_file() {
-        return Ok(());
-    }
-    let existing = fs::read_to_string(&ctx.project_aw_path)
-        .with_context(|| format!("read {}", ctx.project_aw_path.display()))?;
-    let Some(next) = strip_aw_ec_generated_block(&existing) else {
-        return Ok(());
-    };
     fs::write(&ctx.project_aw_path, next)
         .with_context(|| format!("write {}", ctx.project_aw_path.display()))
+}
+
+fn remove_legacy_ec_manifest_file(ctx: &EcProjectContext) -> Result<()> {
+    if !ctx.legacy_manifest_path.is_file() {
+        return Ok(());
+    }
+    let existing = fs::read_to_string(&ctx.legacy_manifest_path)
+        .with_context(|| format!("read {}", ctx.legacy_manifest_path.display()))?;
+    if !existing.contains("SPEC-MANAGED") || !existing.contains("CODEGEN-BEGIN") {
+        bail!(
+            "refusing to delete non-generated legacy EC inventory {}; move it manually",
+            ctx.legacy_manifest_path.display()
+        );
+    }
+    fs::remove_file(&ctx.legacy_manifest_path)
+        .with_context(|| format!("delete {}", ctx.legacy_manifest_path.display()))
+}
+
+fn splice_aw_ec_generated_block(existing: &str, block: &str) -> String {
+    if let Some(stripped) = strip_aw_ec_generated_block(existing) {
+        let mut out = stripped.trim_end().to_string();
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(block.trim_end());
+        out.push('\n');
+        return out;
+    }
+    let mut out = existing.trim_end().to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(block.trim_end());
+    out.push('\n');
+    out
 }
 
 fn strip_aw_ec_generated_block(existing: &str) -> Option<String> {
@@ -2671,20 +2788,20 @@ fn render_ec_doc(ctx: &EcProjectContext, manifest: &EcManifest) -> String {
     let mut out = String::new();
     out.push_str(&format!("# {} EC Manual\n\n", title_case(&ctx.project)));
     out.push_str(&format!(
-        "<!-- {EC_DOC_BEGIN_MARKER} project={} manifest={} digest={} -->\n\n",
+        "<!-- {EC_DOC_BEGIN_MARKER} project={} inventory={} digest={} -->\n\n",
         ctx.project,
-        relative_to(&ctx.project_root, &ctx.manifest_path),
+        relative_to(&ctx.project_root, &ctx.inventory_path),
         manifest.generated_from_td_digest
     ));
-    out.push_str("This document is generated from AW external-contract definitions. Do not edit the generated block directly; update `ec/` or rerun `aw ec doc gen`.\n\n");
+    out.push_str("This document is generated from AW external-contract definitions. Do not edit the generated block directly; update `external-contracts/` or rerun `aw ec doc gen`.\n\n");
     out.push_str("## Verification Summary\n\n");
     out.push_str(&format!("- Project: `{}`\n", ctx.project));
     out.push_str(&format!(
-        "- Manifest: `{}`\n",
-        relative_to(&ctx.project_root, &ctx.manifest_path)
+        "- Inventory: `{}`\n",
+        relative_to(&ctx.project_root, &ctx.inventory_path)
     ));
     out.push_str(&format!(
-        "- Manifest digest: `{}`\n",
+        "- Inventory digest: `{}`\n",
         manifest.generated_from_td_digest
     ));
     out.push_str(&format!("- EC case count: `{}`\n\n", manifest.cases.len()));
@@ -2879,12 +2996,12 @@ fn write_generated_tool_manifests(ctx: &EcProjectContext, manifest: &EcManifest)
 // containing `.aw/`, where EC commands are defined to run) and asserts success.
 // `#[ignore]` keeps it out of the default `cargo test` (EC commands are heavy and
 // may themselves invoke cargo test); run via `cargo test -- --ignored` or
-// `aw health --verify-ec`. `__FN__`/`__CMD__`/`__ID__` are substituted, not
-// `format!`-interpolated, so the template's own `{...}` stay literal.
+// `aw health --verify-ec`. `__FN__`/`__CMD_BINDING__`/`__ID__` are substituted,
+// not `format!`-interpolated, so the template's own `{...}` stay literal.
 const EC_RUST_COMMAND_TEMPLATE: &str = r#"#[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn __FN__() {
-    let command = __CMD__;
+    __CMD_BINDING__
     let id = __ID__;
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {
@@ -2944,16 +3061,26 @@ fn render_rust_ec_test(case: &EcManifestCase) -> String {
     } else {
         EC_RUST_COMMAND_TEMPLATE
             .replace("__FN__", &fn_name)
-            .replace("__CMD__", &rust_string_literal(&case.command))
+            .replace("__CMD_BINDING__", &rust_command_binding(&case.command))
             .replace("__ID__", &rust_string_literal(&case.id))
     };
     format!("{header}{contract_doc}{body}// CODEGEN-END\n")
 }
 
+fn rust_command_binding(command: &str) -> String {
+    let literal = rust_string_literal(command);
+    let single_line = format!("let command = {literal};");
+    if 4 + single_line.len() <= 100 {
+        single_line
+    } else {
+        format!("let command =\n        {literal};")
+    }
+}
+
 fn render_python_ec_test(case: &EcManifestCase) -> String {
     let evaluator_markers = render_evaluator_marker_lines("#", case);
     format!(
-        "# SPEC-MANAGED: {}\n# CODEGEN-BEGIN\n# {EC_BEGIN_MARKER}\n# @ec {}\n# @capability {}\n# @claim {}\n# @contract {}\n# @category {}\n# @required_for_production {}\n# @command {}\n{}# {EC_END_MARKER}\n\nimport pytest\n\n\n@pytest.mark.skip(reason=\"AW EC placeholder: implement this external contract test or keep the manifest command authoritative\")\ndef test_{}():\n    raise AssertionError(\"AW EC placeholder for {}\")\n# CODEGEN-END\n",
+        "# SPEC-MANAGED: {}\n# CODEGEN-BEGIN\n# {EC_BEGIN_MARKER}\n# @ec {}\n# @capability {}\n# @claim {}\n# @contract {}\n# @category {}\n# @required_for_production {}\n# @command {}\n{}# {EC_END_MARKER}\n\nimport pytest\n\n\n@pytest.mark.skip(reason=\"AW EC placeholder: implement this external contract test or keep the aw.toml inventory command authoritative\")\ndef test_{}():\n    raise AssertionError(\"AW EC placeholder for {}\")\n# CODEGEN-END\n",
         case.td_ref,
         case.id,
         case.capability_id,
@@ -3189,7 +3316,7 @@ e2e_tests:
             ec_root: project_root.join("projects/demo/external-contracts"),
             td_root: project_root.join(".aw/tech-design/projects/demo"),
             tests_root: project_root.join("projects/demo/tests"),
-            manifest_path: project_root.join("projects/demo/tests/aw-ec.toml"),
+            inventory_path: project_root.join("projects/demo/aw.toml"),
             legacy_manifest_path: project_root.join("projects/demo/tests/aw-ec.toml"),
             project_aw_path: project_root.join("projects/demo/aw.toml"),
             doc_path: project_root.join("projects/demo/docs/aw-ec-manual.md"),
@@ -3219,7 +3346,7 @@ e2e_tests:
     #[test]
     fn case_gen_mode_dispatches_on_command() {
         let mut c = case("x", "search", "stability");
-        c.command = "rig test --dir cases/resilience".into();
+        c.command = "rig run --dir cases/resilience".into();
         assert_eq!(case_gen_mode(&c), CaseGenMode::Rig);
         c.command = "cargo test -p lumen --test api_e2e".into();
         assert_eq!(case_gen_mode(&c), CaseGenMode::NativeRust);
@@ -3228,7 +3355,7 @@ e2e_tests:
     }
 
     #[test]
-    fn rig_skeleton_has_case_and_source_contract() {
+    fn rig_skeleton_has_record_and_red_placeholder_step() {
         let mut c = case("search-stability-fault-resilience", "search", "stability");
         c.assertions = vec!["search p99 stays bounded".into()];
         let s = render_case_toml_skeleton(
@@ -3237,9 +3364,10 @@ e2e_tests:
             "resilience",
             "search_stability_fault_resilience",
         );
-        assert!(s.contains("[case]"));
-        assert!(s.contains("source_contract = \"search-stability-fault-resilience\""));
-        assert!(s.contains("[exercise.request]"));
+        assert!(s.contains("[record]"));
+        assert!(s.contains("case = \"search_stability_fault_resilience\""));
+        assert!(s.contains("kind = \"e2e\""));
+        assert!(s.contains("cmd = [\"false\"]"));
         assert!(s.contains("dimension = \"resilience\""));
         assert!(s.contains("subject = \"search p99 stays bounded\""));
     }
@@ -3256,7 +3384,7 @@ e2e_tests:
     #[test]
     fn command_parsers_extract_dir_and_target() {
         assert_eq!(
-            rig_dir_from_command("rig test --dir cases/load"),
+            rig_dir_from_command("rig run --dir cases/load"),
             Some("cases/load")
         );
         assert_eq!(
@@ -3366,10 +3494,7 @@ edition = "2021"
 
         assert_eq!(ctx.project, "demo");
         assert_eq!(ctx.td_root, tmp.path().join("projects/demo/tech-design"));
-        assert_eq!(
-            ctx.manifest_path,
-            tmp.path().join("projects/demo/tests/aw-ec.toml")
-        );
+        assert_eq!(ctx.inventory_path, tmp.path().join("projects/demo/aw.toml"));
     }
 
     #[test]
@@ -3484,7 +3609,7 @@ tool_contracts:
     }
 
     #[test]
-    fn ec_draft_fill_markdown_drives_manifest() {
+    fn ec_draft_fill_markdown_drives_inventory() {
         let (tmp, ctx) = write_demo_repo();
         let args = EcDraftArgs {
             id: "search-indexing".to_string(),
@@ -3682,7 +3807,7 @@ bad: value: nope
     }
 
     #[test]
-    fn ec_verify_runs_manifest_commands() {
+    fn ec_verify_runs_inventory_commands() {
         let (tmp, ctx) = write_demo_repo();
         fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/behavior")).unwrap();
         fs::write(
@@ -3717,7 +3842,139 @@ e2e_tests:
     }
 
     #[test]
-    fn check_reports_missing_manifest_when_td_has_cases() {
+    fn ec_verify_runs_tool_manifest_commands() {
+        let (tmp, ctx) = write_demo_repo();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/security")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("projects/demo/external-contracts/security/guard.md"),
+            r#"
+## Guard
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: guard smoke
+    capability_id: demo
+    claim_id: guarded
+    command: "true"
+```
+
+## Guard Tool
+<!-- type: tool-contract lang: yaml -->
+
+```yaml
+tool_contracts:
+  - id: demo guard
+    tool: guard
+    manifest: guard.toml
+    category: security
+    command: "echo guard"
+    native:
+      version: 1
+      id: demo-guard
+```
+"#,
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx).unwrap();
+
+        assert!(summary.clean, "{:?}", summary.results);
+        assert_eq!(summary.command_count, 2);
+        assert!(summary
+            .results
+            .iter()
+            .any(|result| result.case_id == "tool:demo-guard"));
+    }
+
+    #[test]
+    fn ec_verify_dedupes_case_and_tool_manifest_commands() {
+        let (tmp, ctx) = write_demo_repo();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/security")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("projects/demo/external-contracts/security/guard.md"),
+            r#"
+## Guard
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: guard smoke
+    capability_id: demo
+    claim_id: guarded
+    command: "true"
+```
+
+## Guard Tool
+<!-- type: tool-contract lang: yaml -->
+
+```yaml
+tool_contracts:
+  - id: demo guard
+    tool: guard
+    manifest: guard.toml
+    category: security
+    command: "true"
+    native:
+      version: 1
+      id: demo-guard
+```
+"#,
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx).unwrap();
+
+        assert!(summary.clean, "{:?}", summary.results);
+        assert_eq!(summary.command_count, 1);
+        assert_eq!(summary.passed_count, 1);
+        assert_eq!(summary.results[0].case_id, "guard-smoke");
+    }
+
+    #[test]
+    fn ec_verify_fails_tool_manifest_without_command() {
+        let (tmp, ctx) = write_demo_repo();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/security")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("projects/demo/external-contracts/security/guard.md"),
+            r#"
+## Guard
+<!-- type: tool-contract lang: yaml -->
+
+```yaml
+tool_contracts:
+  - id: demo guard
+    tool: guard
+    manifest: guard.toml
+    category: security
+    native:
+      version: 1
+      id: demo-guard
+```
+"#,
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx).unwrap();
+
+        assert!(!summary.clean);
+        assert_eq!(summary.command_count, 1);
+        assert_eq!(summary.failed_count, 1);
+        assert_eq!(summary.results[0].case_id, "tool:demo-guard");
+        assert!(summary.results[0].stderr_tail.contains("missing command"));
+    }
+
+    #[test]
+    fn check_reports_missing_aw_toml_inventory_when_td_has_cases() {
         let (_tmp, ctx) = write_demo_repo();
         let summary = check_ec_context(&ctx).unwrap();
 
@@ -3727,11 +3984,11 @@ e2e_tests:
         assert!(summary
             .findings
             .iter()
-            .any(|finding| finding.contains("EC manifest missing")));
+            .any(|finding| finding.contains("EC inventory missing in projects/demo/aw.toml")));
     }
 
     #[test]
-    fn generated_manifest_and_test_file_check_clean() {
+    fn generated_aw_toml_inventory_and_test_file_check_clean() {
         let (_tmp, ctx) = write_demo_repo();
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
@@ -3747,7 +4004,26 @@ e2e_tests:
     }
 
     #[test]
-    fn generated_manifest_lives_outside_project_aw_toml() {
+    fn rust_ec_test_generator_wraps_long_command_binding_like_rustfmt() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        let mut case = manifest.cases[0].clone();
+        case.command =
+            "cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture"
+                .to_string();
+
+        let content = render_rust_ec_test(&case);
+
+        assert!(content.contains(
+            "    let command =\n        \"cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture\";"
+        ));
+        assert!(!content.contains(
+            "    let command = \"cargo test -p lumen --test api_e2e --test vector_e2e --test planner_diff -- --nocapture\";"
+        ));
+    }
+
+    #[test]
+    fn generated_inventory_lives_in_project_aw_toml_and_removes_legacy_file() {
         let (tmp, _ctx) = write_demo_repo();
         fs::write(
             tmp.path().join("projects/demo/aw.toml"),
@@ -3773,6 +4049,12 @@ generated_from_td_digest = "stale"
         )
         .unwrap();
         let ctx = resolve_ec_project_context(tmp.path(), "d").unwrap();
+        fs::create_dir_all(ctx.legacy_manifest_path.parent().unwrap()).unwrap();
+        fs::write(
+            &ctx.legacy_manifest_path,
+            "# SPEC-MANAGED: legacy\n# CODEGEN-BEGIN\nversion = 1\n# CODEGEN-END\n",
+        )
+        .unwrap();
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();
         for (path, content) in generated_ec_test_files(&ctx, &manifest) {
@@ -3780,12 +4062,14 @@ generated_from_td_digest = "stale"
         }
 
         let aw_toml = fs::read_to_string(&ctx.project_aw_path).unwrap();
-        assert!(!aw_toml.contains(EC_AW_BEGIN_MARKER));
-        assert!(ctx.legacy_manifest_path.exists());
+        assert!(aw_toml.contains(EC_AW_BEGIN_MARKER));
+        assert!(aw_toml.contains("[aw.ec.generated]"));
+        assert!(!aw_toml.contains("generated_from_td_digest = \"stale\""));
+        assert!(!ctx.legacy_manifest_path.exists());
 
         let summary = check_ec_context(&ctx).unwrap();
         assert!(summary.clean, "{:?}", summary.findings);
-        assert_eq!(summary.manifest_path, "projects/demo/tests/aw-ec.toml");
+        assert_eq!(summary.inventory_path, "projects/demo/aw.toml");
     }
 
     #[test]
@@ -3886,7 +4170,7 @@ tool_contracts:
     }
 
     #[test]
-    fn ec_doc_gen_writes_manual_from_manifest() {
+    fn ec_doc_gen_writes_manual_from_inventory() {
         let (_tmp, ctx) = write_demo_repo();
         let manifest = build_expected_manifest(&ctx).unwrap();
         write_ec_manifest(&ctx, &manifest).unwrap();

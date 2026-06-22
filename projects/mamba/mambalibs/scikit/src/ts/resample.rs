@@ -164,9 +164,7 @@ fn upsample_nearest(data: &[f64], factor: usize) -> Result<Vec<f64>> {
 /// `target_len` specifies the desired output length. Uses linear interpolation.
 pub fn resample_to_len(data: &[f64], target_len: usize) -> Result<Vec<f64>> {
     if target_len == 0 {
-        return Err(TsError::InvalidParameter(
-            "target_len must be > 0".into(),
-        ));
+        return Err(TsError::InvalidParameter("target_len must be > 0".into()));
     }
     if data.is_empty() {
         return Ok(Vec::new());

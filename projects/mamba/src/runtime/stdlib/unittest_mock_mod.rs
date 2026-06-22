@@ -1,3 +1,7 @@
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 /// unittest.mock module for Mamba.
 ///
 /// Mock engine: mocks are Instances (class "MagicMock" / "Mock" /
@@ -16,13 +20,8 @@
 ///   rebinding a module attribute, plus `patch.dict` and `patch.object`,
 /// - `seal()` and `Mock(spec=...)` attribute restriction, and `PropertyMock`
 ///   as a recording descriptor.
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 // ── small helpers ─────────────────────────────────────────────────────────────
 
@@ -32,7 +31,11 @@ fn new_str(s: &str) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -42,7 +45,10 @@ fn make_instance(class_name: &str, fields_kv: Vec<(&str, MbValue)>) -> MbValue {
         fields.insert(k.to_string(), v);
     }
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: RwLock::new(fields),
@@ -87,23 +93,31 @@ fn instance_class(val: MbValue) -> Option<String> {
 
 /// Is this class name one of the mock instance classes?
 pub(crate) fn is_mock_class(name: &str) -> bool {
-    matches!(name, "Mock" | "MagicMock" | "AsyncMock" | "NonCallableMock" | "PropertyMock")
+    matches!(
+        name,
+        "Mock" | "MagicMock" | "AsyncMock" | "NonCallableMock" | "PropertyMock"
+    )
 }
 
 fn is_dict_value(v: MbValue) -> bool {
-    v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false)
+    v.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
 }
 
 /// Split a variadic args_list into (positional args, kwargs dict or None).
 /// mamba folds keyword args into one trailing dict positional.
 fn split_call_args(args_list: MbValue) -> (Vec<MbValue>, MbValue) {
-    let items: Vec<MbValue> = args_list.as_ptr().and_then(|ptr| unsafe {
-        match &(*ptr).data {
-            ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
-            ObjData::Tuple(items) => Some(items.clone()),
-            _ => None,
-        }
-    }).unwrap_or_default();
+    let items: Vec<MbValue> = args_list
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            match &(*ptr).data {
+                ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
+                ObjData::Tuple(items) => Some(items.clone()),
+                _ => None,
+            }
+        })
+        .unwrap_or_default();
     if let Some(last) = items.last().copied() {
         if is_dict_value(last) {
             return (items[..items.len() - 1].to_vec(), last);
@@ -118,7 +132,11 @@ fn kwarg_get(kwargs: MbValue, name: &str) -> Option<MbValue> {
     }
     let sentinel = MbValue::from_bits(u64::MAX);
     let v = super::super::dict_ops::mb_dict_get(kwargs, new_str(name), sentinel);
-    if v.to_bits() == u64::MAX { None } else { Some(v) }
+    if v.to_bits() == u64::MAX {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 /// Null-safe arg-slice view (zero-arg calls may pass a null pointer).
@@ -136,13 +154,15 @@ fn raise(exc: &str, msg: &str) -> MbValue {
 }
 
 fn list_items(v: MbValue) -> Vec<MbValue> {
-    v.as_ptr().and_then(|p| unsafe {
-        match &(*p).data {
-            ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
-            ObjData::Tuple(items) => Some(items.clone()),
-            _ => None,
-        }
-    }).unwrap_or_default()
+    v.as_ptr()
+        .and_then(|p| unsafe {
+            match &(*p).data {
+                ObjData::List(lock) => lock.read().ok().map(|g| g.to_vec()),
+                ObjData::Tuple(items) => Some(items.clone()),
+                _ => None,
+            }
+        })
+        .unwrap_or_default()
 }
 
 // ── call objects ──────────────────────────────────────────────────────────────
@@ -154,11 +174,14 @@ fn make_call(name: &str, pos: Vec<MbValue>, kwargs: MbValue) -> MbValue {
     } else {
         kwargs
     };
-    make_instance("call", vec![
-        ("_call_name", new_str(name)),
-        ("args", MbValue::from_ptr(MbObject::new_tuple(pos))),
-        ("kwargs", kw),
-    ])
+    make_instance(
+        "call",
+        vec![
+            ("_call_name", new_str(name)),
+            ("args", MbValue::from_ptr(MbObject::new_tuple(pos))),
+            ("kwargs", kw),
+        ],
+    )
 }
 
 fn call_parts(c: MbValue) -> Option<(String, MbValue, MbValue)> {
@@ -166,7 +189,9 @@ fn call_parts(c: MbValue) -> Option<(String, MbValue, MbValue)> {
         return None;
     }
     Some((
-        get_field(c, "_call_name").and_then(extract_str).unwrap_or_default(),
+        get_field(c, "_call_name")
+            .and_then(extract_str)
+            .unwrap_or_default(),
         get_field(c, "args").unwrap_or_else(MbValue::none),
         get_field(c, "kwargs").unwrap_or_else(MbValue::none),
     ))
@@ -195,7 +220,11 @@ fn calls_equal(expected: MbValue, actual: MbValue) -> bool {
     if ea.len() != ab_items.len() {
         return false;
     }
-    if !ea.iter().zip(ab_items.iter()).all(|(e, a)| values_equal(*e, *a)) {
+    if !ea
+        .iter()
+        .zip(ab_items.iter())
+        .all(|(e, a)| values_equal(*e, *a))
+    {
         return false;
     }
     // Kwargs: same key sets, expected value as lhs per key.
@@ -272,7 +301,9 @@ pub(crate) fn make_named_call(name: &str, args_list: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn call_namebuilder_call(self_v: MbValue, args_list: MbValue) -> MbValue {
-    let name = get_field(self_v, "_call_name").and_then(extract_str).unwrap_or_default();
+    let name = get_field(self_v, "_call_name")
+        .and_then(extract_str)
+        .unwrap_or_default();
     let (pos, kw) = split_call_args(args_list);
     make_call(&name, pos, kw)
 }
@@ -280,16 +311,25 @@ unsafe extern "C" fn call_namebuilder_call(self_v: MbValue, args_list: MbValue) 
 // ── mock construction ─────────────────────────────────────────────────────────
 
 fn build_mock(class_name: &str, name: &str) -> MbValue {
-    make_instance(class_name, vec![
-        ("_mock_name", new_str(name)),
-        ("call_count", MbValue::from_int(0)),
-        ("called", MbValue::from_bool(false)),
-        ("call_args", MbValue::none()),
-        ("call_args_list", MbValue::from_ptr(MbObject::new_list(Vec::new()))),
-        ("mock_calls", MbValue::from_ptr(MbObject::new_list(Vec::new()))),
-        ("side_effect", MbValue::none()),
-        ("await_count", MbValue::from_int(0)),
-    ])
+    make_instance(
+        class_name,
+        vec![
+            ("_mock_name", new_str(name)),
+            ("call_count", MbValue::from_int(0)),
+            ("called", MbValue::from_bool(false)),
+            ("call_args", MbValue::none()),
+            (
+                "call_args_list",
+                MbValue::from_ptr(MbObject::new_list(Vec::new())),
+            ),
+            (
+                "mock_calls",
+                MbValue::from_ptr(MbObject::new_list(Vec::new())),
+            ),
+            ("side_effect", MbValue::none()),
+            ("await_count", MbValue::from_int(0)),
+        ],
+    )
 }
 
 /// Apply constructor kwargs (return_value / side_effect / spec / name).
@@ -308,7 +348,11 @@ fn apply_mock_kwargs(mock: MbValue, kwargs: MbValue) {
             if let Some(cls) = super::super::class::resolve_class_name(spec) {
                 let names = super::super::class::mb_dir_mro_keys(&cls);
                 let items: Vec<MbValue> = names.iter().map(|n| new_str(n)).collect();
-                set_field(mock, "_mock_methods", MbValue::from_ptr(MbObject::new_list(items)));
+                set_field(
+                    mock,
+                    "_mock_methods",
+                    MbValue::from_ptr(MbObject::new_list(items)),
+                );
                 set_field(mock, "_spec_class", new_str(&cls));
                 if key == "spec_set" {
                     set_field(mock, "_spec_set", MbValue::from_bool(true));
@@ -358,10 +402,20 @@ unsafe extern "C" fn dispatch_property_mock(args_ptr: *const MbValue, nargs: usi
 
 /// Magic dunders MagicMock children may autovivify for.
 fn is_supported_magic(name: &str) -> bool {
-    matches!(name,
-        "__enter__" | "__exit__" | "__len__" | "__iter__" | "__next__"
-        | "__bool__" | "__contains__" | "__getitem__" | "__setitem__"
-        | "__aenter__" | "__aexit__")
+    matches!(
+        name,
+        "__enter__"
+            | "__exit__"
+            | "__len__"
+            | "__iter__"
+            | "__next__"
+            | "__bool__"
+            | "__contains__"
+            | "__getitem__"
+            | "__setitem__"
+            | "__aenter__"
+            | "__aexit__"
+    )
 }
 
 /// Fetch (autovivifying) the child mock for `name` on `parent`.
@@ -372,14 +426,17 @@ pub(crate) fn mock_attr_child(parent: MbValue, name: &str) -> MbValue {
     let parent_cls = instance_class(parent).unwrap_or_else(|| "MagicMock".to_string());
     // seal() blocks NEW children.
     if get_field(parent, "_sealed").and_then(|v| v.as_bool()) == Some(true) {
-        return raise("AttributeError", &format!("Mock object has no attribute '{name}'"));
+        return raise(
+            "AttributeError",
+            &format!("Mock object has no attribute '{name}'"),
+        );
     }
     // spec restriction: only declared names autovivify.
     if let Some(methods) = get_field(parent, "_mock_methods") {
         if !methods.is_none() && !name.starts_with("__") {
-            let allowed = list_items(methods).iter().any(|v| {
-                extract_str(*v).as_deref() == Some(name)
-            });
+            let allowed = list_items(methods)
+                .iter()
+                .any(|v| extract_str(*v).as_deref() == Some(name));
             if !allowed {
                 return raise(
                     "AttributeError",
@@ -393,7 +450,11 @@ pub(crate) fn mock_attr_child(parent: MbValue, name: &str) -> MbValue {
         // so internal dunder probes keep their default behavior.
         return MbValue::none();
     }
-    let child_cls = if parent_cls == "AsyncMock" { "MagicMock" } else { parent_cls.as_str() };
+    let child_cls = if parent_cls == "AsyncMock" {
+        "MagicMock"
+    } else {
+        parent_cls.as_str()
+    };
     let child = build_mock(child_cls, name);
     set_field(child, "_mock_parent", parent);
     set_field(parent, name, child);
@@ -410,12 +471,17 @@ pub(crate) fn mock_setattr_blocked(obj: MbValue, name: &str) -> bool {
     if get_field(obj, "_spec_set").and_then(|v| v.as_bool()) != Some(true) {
         return false;
     }
-    let Some(methods) = get_field(obj, "_mock_methods") else { return false };
-    let allowed = list_items(methods).iter().any(|v| {
-        extract_str(*v).as_deref() == Some(name)
-    });
+    let Some(methods) = get_field(obj, "_mock_methods") else {
+        return false;
+    };
+    let allowed = list_items(methods)
+        .iter()
+        .any(|v| extract_str(*v).as_deref() == Some(name));
     if !allowed {
-        raise("AttributeError", &format!("Mock object has no attribute '{name}'"));
+        raise(
+            "AttributeError",
+            &format!("Mock object has no attribute '{name}'"),
+        );
         return true;
     }
     false
@@ -474,7 +540,9 @@ fn dotted_name_to(mock: MbValue, stop_at: MbValue) -> String {
         if cur.to_bits() == stop_at.to_bits() {
             break;
         }
-        let n = get_field(cur, "_mock_name").and_then(extract_str).unwrap_or_default();
+        let n = get_field(cur, "_mock_name")
+            .and_then(extract_str)
+            .unwrap_or_default();
         parts.push(n);
         match get_field(cur, "_mock_parent") {
             Some(p) if !p.is_none() => cur = p,
@@ -488,7 +556,9 @@ fn dotted_name_to(mock: MbValue, stop_at: MbValue) -> String {
 /// Record a call on `mock` and produce the return value.
 pub(crate) fn mock_record_call(mock: MbValue, args_list: MbValue) -> MbValue {
     let (pos, kw) = split_call_args(args_list);
-    let n = get_field(mock, "call_count").and_then(|v| v.as_int()).unwrap_or(0);
+    let n = get_field(mock, "call_count")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     set_field(mock, "call_count", MbValue::from_int(n + 1));
     set_field(mock, "called", MbValue::from_bool(true));
     let c = make_call("", pos.clone(), kw);
@@ -496,7 +566,9 @@ pub(crate) fn mock_record_call(mock: MbValue, args_list: MbValue) -> MbValue {
     push_to_list_field(mock, "call_args_list", c);
     push_to_list_field(mock, "mock_calls", c);
     if instance_class(mock).as_deref() == Some("AsyncMock") {
-        let aw = get_field(mock, "await_count").and_then(|v| v.as_int()).unwrap_or(0);
+        let aw = get_field(mock, "await_count")
+            .and_then(|v| v.as_int())
+            .unwrap_or(0);
         set_field(mock, "await_count", MbValue::from_int(aw + 1));
     }
     // Propagate into each ancestor's mock_calls with the relative dotted name.
@@ -516,18 +588,22 @@ pub(crate) fn mock_record_call(mock: MbValue, args_list: MbValue) -> MbValue {
         if let Some(cls) = instance_class(se) {
             if super::super::exception::is_subclass_of(&cls, "BaseException")
                 || super::super::exception::is_subclass_of(&cls, "Exception")
-                || cls == "Exception" || cls == "BaseException"
+                || cls == "Exception"
+                || cls == "BaseException"
             {
                 let msg = extract_str(super::super::builtins::mb_str(se)).unwrap_or_default();
                 super::super::exception::mb_raise(new_str(&cls), new_str(&msg));
                 return MbValue::none();
             }
         }
-        let is_seq = se.as_ptr().map(|p| unsafe {
-            matches!((*p).data, ObjData::List(_) | ObjData::Tuple(_))
-        }).unwrap_or(false);
+        let is_seq = se
+            .as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::List(_) | ObjData::Tuple(_)) })
+            .unwrap_or(false);
         if is_seq {
-            let idx = get_field(mock, "_se_idx").and_then(|v| v.as_int()).unwrap_or(0);
+            let idx = get_field(mock, "_se_idx")
+                .and_then(|v| v.as_int())
+                .unwrap_or(0);
             set_field(mock, "_se_idx", MbValue::from_int(idx + 1));
             let items = list_items(se);
             return match items.get(idx as usize) {
@@ -559,24 +635,32 @@ unsafe extern "C" fn mock_dunder_call(self_v: MbValue, args_list: MbValue) -> Mb
 // ── assertion helpers ─────────────────────────────────────────────────────────
 
 fn mock_display_name(mock: MbValue) -> String {
-    get_field(mock, "_mock_name").and_then(extract_str).unwrap_or_else(|| "mock".to_string())
+    get_field(mock, "_mock_name")
+        .and_then(extract_str)
+        .unwrap_or_else(|| "mock".to_string())
 }
 
 unsafe extern "C" fn mock_assert_called(self_v: MbValue, _args: MbValue) -> MbValue {
     if get_field(self_v, "called").and_then(|v| v.as_bool()) != Some(true) {
         let n = mock_display_name(self_v);
-        return raise("AssertionError", &format!("Expected '{n}' to have been called."));
+        return raise(
+            "AssertionError",
+            &format!("Expected '{n}' to have been called."),
+        );
     }
     MbValue::none()
 }
 
 unsafe extern "C" fn mock_assert_called_once(self_v: MbValue, _args: MbValue) -> MbValue {
-    let n = get_field(self_v, "call_count").and_then(|v| v.as_int()).unwrap_or(0);
+    let n = get_field(self_v, "call_count")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     if n != 1 {
         let name = mock_display_name(self_v);
-        return raise("AssertionError", &format!(
-            "Expected '{name}' to have been called once. Called {n} times."
-        ));
+        return raise(
+            "AssertionError",
+            &format!("Expected '{name}' to have been called once. Called {n} times."),
+        );
     }
     MbValue::none()
 }
@@ -587,18 +671,24 @@ fn assert_called_with_inner(self_v: MbValue, args_list: MbValue) -> MbValue {
     let actual = get_field(self_v, "call_args").unwrap_or_else(MbValue::none);
     if actual.is_none() {
         let name = mock_display_name(self_v);
-        return raise("AssertionError", &format!(
-            "expected call not found.\nExpected: {}\n  Actual: not called.",
-            call_repr(expected).replacen("call", &name, 1)
-        ));
+        return raise(
+            "AssertionError",
+            &format!(
+                "expected call not found.\nExpected: {}\n  Actual: not called.",
+                call_repr(expected).replacen("call", &name, 1)
+            ),
+        );
     }
     if !calls_equal(expected, actual) {
         let name = mock_display_name(self_v);
-        return raise("AssertionError", &format!(
-            "expected call not found.\nExpected: {}\n  Actual: {}",
-            call_repr(expected).replacen("call", &name, 1),
-            call_repr(actual).replacen("call", &name, 1)
-        ));
+        return raise(
+            "AssertionError",
+            &format!(
+                "expected call not found.\nExpected: {}\n  Actual: {}",
+                call_repr(expected).replacen("call", &name, 1),
+                call_repr(actual).replacen("call", &name, 1)
+            ),
+        );
     }
     MbValue::none()
 }
@@ -608,23 +698,29 @@ unsafe extern "C" fn mock_assert_called_with(self_v: MbValue, args_list: MbValue
 }
 
 unsafe extern "C" fn mock_assert_called_once_with(self_v: MbValue, args_list: MbValue) -> MbValue {
-    let n = get_field(self_v, "call_count").and_then(|v| v.as_int()).unwrap_or(0);
+    let n = get_field(self_v, "call_count")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     if n != 1 {
         let name = mock_display_name(self_v);
-        return raise("AssertionError", &format!(
-            "Expected '{name}' to be called once. Called {n} times."
-        ));
+        return raise(
+            "AssertionError",
+            &format!("Expected '{name}' to be called once. Called {n} times."),
+        );
     }
     assert_called_with_inner(self_v, args_list)
 }
 
 unsafe extern "C" fn mock_assert_not_called(self_v: MbValue, _args: MbValue) -> MbValue {
-    let n = get_field(self_v, "call_count").and_then(|v| v.as_int()).unwrap_or(0);
+    let n = get_field(self_v, "call_count")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     if n != 0 {
         let name = mock_display_name(self_v);
-        return raise("AssertionError", &format!(
-            "Expected '{name}' to not have been called. Called {n} times."
-        ));
+        return raise(
+            "AssertionError",
+            &format!("Expected '{name}' to not have been called. Called {n} times."),
+        );
     }
     MbValue::none()
 }
@@ -635,19 +731,26 @@ unsafe extern "C" fn mock_assert_any_call(self_v: MbValue, args_list: MbValue) -
     let list = get_field(self_v, "call_args_list").unwrap_or_else(MbValue::none);
     if !list_items(list).iter().any(|c| calls_equal(expected, *c)) {
         let name = mock_display_name(self_v);
-        return raise("AssertionError", &format!(
-            "{} call not found", call_repr(expected).replacen("call", &name, 1)
-        ));
+        return raise(
+            "AssertionError",
+            &format!(
+                "{} call not found",
+                call_repr(expected).replacen("call", &name, 1)
+            ),
+        );
     }
     MbValue::none()
 }
 
 unsafe extern "C" fn mock_assert_awaited_once(self_v: MbValue, _args: MbValue) -> MbValue {
-    let n = get_field(self_v, "await_count").and_then(|v| v.as_int()).unwrap_or(0);
+    let n = get_field(self_v, "await_count")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     if n != 1 {
-        return raise("AssertionError", &format!(
-            "Expected mock to have been awaited once. Awaited {n} times."
-        ));
+        return raise(
+            "AssertionError",
+            &format!("Expected mock to have been awaited once. Awaited {n} times."),
+        );
     }
     MbValue::none()
 }
@@ -656,8 +759,16 @@ unsafe extern "C" fn mock_reset_mock(self_v: MbValue, _args: MbValue) -> MbValue
     set_field(self_v, "call_count", MbValue::from_int(0));
     set_field(self_v, "called", MbValue::from_bool(false));
     set_field(self_v, "call_args", MbValue::none());
-    set_field(self_v, "call_args_list", MbValue::from_ptr(MbObject::new_list(Vec::new())));
-    set_field(self_v, "mock_calls", MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    set_field(
+        self_v,
+        "call_args_list",
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
+    set_field(
+        self_v,
+        "mock_calls",
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
     set_field(self_v, "await_count", MbValue::from_int(0));
     MbValue::none()
 }
@@ -713,7 +824,11 @@ unsafe extern "C" fn any_ne(_self_v: MbValue, _other: MbValue) -> MbValue {
 // ── PropertyMock descriptor ───────────────────────────────────────────────────
 
 /// `__get__(desc, instance, objtype)` — fixed 3-arg descriptor ABI.
-unsafe extern "C" fn property_mock_get(desc: MbValue, _instance: MbValue, _objtype: MbValue) -> MbValue {
+unsafe extern "C" fn property_mock_get(
+    desc: MbValue,
+    _instance: MbValue,
+    _objtype: MbValue,
+) -> MbValue {
     mock_record_call(desc, MbValue::from_ptr(MbObject::new_list(Vec::new())))
 }
 
@@ -731,21 +846,30 @@ fn seal_recursive(mock: MbValue, depth: usize) {
     if depth > 16 {
         return;
     }
-    if !instance_class(mock).map(|c| is_mock_class(&c)).unwrap_or(false) {
+    if !instance_class(mock)
+        .map(|c| is_mock_class(&c))
+        .unwrap_or(false)
+    {
         return;
     }
     set_field(mock, "_sealed", MbValue::from_bool(true));
     // Seal existing children too (CPython seals recursively).
-    let children: Vec<MbValue> = mock.as_ptr().map(|ptr| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            fields.read().unwrap().iter()
-                .filter(|(k, _)| !k.starts_with('_') && *k != "return_value")
-                .map(|(_, v)| *v)
-                .collect()
-        } else {
-            Vec::new()
-        }
-    }).unwrap_or_default();
+    let children: Vec<MbValue> = mock
+        .as_ptr()
+        .map(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter(|(k, _)| !k.starts_with('_') && *k != "return_value")
+                    .map(|(_, v)| *v)
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
     for c in children {
         seal_recursive(c, depth + 1);
     }
@@ -757,29 +881,46 @@ fn seal_recursive(mock: MbValue, depth: usize) {
 unsafe extern "C" fn dispatch_patch(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let target = a.first().copied().unwrap_or_else(MbValue::none);
-    let kwargs = a.iter().copied().find(|v| is_dict_value(*v)).unwrap_or_else(MbValue::none);
-    let new = a.get(1).copied().filter(|v| !is_dict_value(*v)).unwrap_or_else(MbValue::none);
-    make_instance("_patch", vec![
-        ("_target", target),
-        ("_new", new),
-        ("_kwargs", kwargs),
-        ("_saved", MbValue::none()),
-        ("_had", MbValue::from_bool(false)),
-        ("_active_mock", MbValue::none()),
-    ])
+    let kwargs = a
+        .iter()
+        .copied()
+        .find(|v| is_dict_value(*v))
+        .unwrap_or_else(MbValue::none);
+    let new = a
+        .get(1)
+        .copied()
+        .filter(|v| !is_dict_value(*v))
+        .unwrap_or_else(MbValue::none);
+    make_instance(
+        "_patch",
+        vec![
+            ("_target", target),
+            ("_new", new),
+            ("_kwargs", kwargs),
+            ("_saved", MbValue::none()),
+            ("_had", MbValue::from_bool(false)),
+            ("_active_mock", MbValue::none()),
+        ],
+    )
 }
 
 /// Apply the patch: rebind the module attribute, remember the original.
 fn patch_apply(self_v: MbValue) -> MbValue {
-    let target = get_field(self_v, "_target").and_then(extract_str).unwrap_or_default();
+    let target = get_field(self_v, "_target")
+        .and_then(extract_str)
+        .unwrap_or_default();
     let Some((mod_path, attr)) = target.rsplit_once('.') else {
-        return raise("TypeError", &format!(
-            "Need a valid target to patch. You supplied: {target:?}"
-        ));
+        return raise(
+            "TypeError",
+            &format!("Need a valid target to patch. You supplied: {target:?}"),
+        );
     };
     let module_val = super::super::module::mb_import(new_str(mod_path));
     if module_val.is_none() {
-        return raise("ModuleNotFoundError", &format!("No module named '{mod_path}'"));
+        return raise(
+            "ModuleNotFoundError",
+            &format!("No module named '{mod_path}'"),
+        );
     }
     let sentinel = MbValue::from_bits(u64::MAX);
     let prev = super::super::dict_ops::mb_dict_get(module_val, new_str(attr), sentinel);
@@ -793,7 +934,10 @@ fn patch_apply(self_v: MbValue) -> MbValue {
     let new_v = get_field(self_v, "_new").unwrap_or_else(MbValue::none);
     let replacement = if new_v.is_none() {
         let m = build_mock("MagicMock", attr);
-        apply_mock_kwargs(m, get_field(self_v, "_kwargs").unwrap_or_else(MbValue::none));
+        apply_mock_kwargs(
+            m,
+            get_field(self_v, "_kwargs").unwrap_or_else(MbValue::none),
+        );
         m
     } else {
         new_v
@@ -805,11 +949,15 @@ fn patch_apply(self_v: MbValue) -> MbValue {
 
 fn patch_restore(self_v: MbValue) {
     let module_val = get_field(self_v, "_module").unwrap_or_else(MbValue::none);
-    let attr = get_field(self_v, "_attr").and_then(extract_str).unwrap_or_default();
+    let attr = get_field(self_v, "_attr")
+        .and_then(extract_str)
+        .unwrap_or_default();
     if module_val.is_none() || attr.is_empty() {
         return;
     }
-    let had = get_field(self_v, "_had").and_then(|v| v.as_bool()).unwrap_or(false);
+    let had = get_field(self_v, "_had")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if had {
         let saved = get_field(self_v, "_saved").unwrap_or_else(MbValue::none);
         super::super::dict_ops::mb_dict_setitem(module_val, new_str(&attr), saved);
@@ -831,10 +979,7 @@ unsafe extern "C" fn patch_exit(self_v: MbValue, _args: MbValue) -> MbValue {
 unsafe extern "C" fn patch_call(self_v: MbValue, args_list: MbValue) -> MbValue {
     let (pos, _kw) = split_call_args(args_list);
     let func = pos.first().copied().unwrap_or_else(MbValue::none);
-    make_instance("_patch_wrapper", vec![
-        ("_patch", self_v),
-        ("_func", func),
-    ])
+    make_instance("_patch_wrapper", vec![("_patch", self_v), ("_func", func)])
 }
 
 unsafe extern "C" fn patch_wrapper_call(self_v: MbValue, args_list: MbValue) -> MbValue {
@@ -854,11 +999,14 @@ unsafe extern "C" fn dispatch_patch_dict(args_ptr: *const MbValue, nargs: usize)
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let in_dict = a.first().copied().unwrap_or_else(MbValue::none);
     let values = a.get(1).copied().unwrap_or_else(MbValue::none);
-    make_instance("_patch_dict", vec![
-        ("_in_dict", in_dict),
-        ("_values", values),
-        ("_snapshot", MbValue::none()),
-    ])
+    make_instance(
+        "_patch_dict",
+        vec![
+            ("_in_dict", in_dict),
+            ("_values", values),
+            ("_snapshot", MbValue::none()),
+        ],
+    )
 }
 
 fn dict_overwrite_from(dst: MbValue, src: MbValue) {
@@ -898,19 +1046,28 @@ unsafe extern "C" fn dispatch_patch_object(args_ptr: *const MbValue, nargs: usiz
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let target = a.first().copied().unwrap_or_else(MbValue::none);
     let attr = a.get(1).copied().unwrap_or_else(MbValue::none);
-    let kwargs = a.iter().copied().find(|v| is_dict_value(*v)).unwrap_or_else(MbValue::none);
-    make_instance("_patch_object", vec![
-        ("_cls", target),
-        ("_attr_name", attr),
-        ("_kwargs", kwargs),
-        ("_saved", MbValue::none()),
-        ("_had", MbValue::from_bool(false)),
-    ])
+    let kwargs = a
+        .iter()
+        .copied()
+        .find(|v| is_dict_value(*v))
+        .unwrap_or_else(MbValue::none);
+    make_instance(
+        "_patch_object",
+        vec![
+            ("_cls", target),
+            ("_attr_name", attr),
+            ("_kwargs", kwargs),
+            ("_saved", MbValue::none()),
+            ("_had", MbValue::from_bool(false)),
+        ],
+    )
 }
 
 unsafe extern "C" fn patch_object_enter(self_v: MbValue, _args: MbValue) -> MbValue {
     let cls_v = get_field(self_v, "_cls").unwrap_or_else(MbValue::none);
-    let attr = get_field(self_v, "_attr_name").and_then(extract_str).unwrap_or_default();
+    let attr = get_field(self_v, "_attr_name")
+        .and_then(extract_str)
+        .unwrap_or_default();
     let Some(cls) = super::super::class::resolve_class_name(cls_v) else {
         return raise("TypeError", "patch.object target must be a class or object");
     };
@@ -925,14 +1082,21 @@ unsafe extern "C" fn patch_object_enter(self_v: MbValue, _args: MbValue) -> MbVa
     set_field(self_v, "_had", MbValue::from_bool(true));
     set_field(self_v, "_cls_name", new_str(&cls));
     let m = build_mock("MagicMock", &attr);
-    apply_mock_kwargs(m, get_field(self_v, "_kwargs").unwrap_or_else(MbValue::none));
+    apply_mock_kwargs(
+        m,
+        get_field(self_v, "_kwargs").unwrap_or_else(MbValue::none),
+    );
     super::super::class::class_replace_method(&cls, &attr, m);
     m
 }
 
 unsafe extern "C" fn patch_object_exit(self_v: MbValue, _args: MbValue) -> MbValue {
-    let cls = get_field(self_v, "_cls_name").and_then(extract_str).unwrap_or_default();
-    let attr = get_field(self_v, "_attr_name").and_then(extract_str).unwrap_or_default();
+    let cls = get_field(self_v, "_cls_name")
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let attr = get_field(self_v, "_attr_name")
+        .and_then(extract_str)
+        .unwrap_or_default();
     if !cls.is_empty() {
         let saved = get_field(self_v, "_saved").unwrap_or_else(MbValue::none);
         super::super::class::class_replace_method(&cls, &attr, saved);
@@ -956,7 +1120,10 @@ pub fn register() {
         ("MagicMock", dispatch_magic_mock as *const () as usize),
         ("Mock", dispatch_plain_mock as *const () as usize),
         ("NonCallableMock", dispatch_plain_mock as *const () as usize),
-        ("NonCallableMagicMock", dispatch_magic_mock as *const () as usize),
+        (
+            "NonCallableMagicMock",
+            dispatch_magic_mock as *const () as usize,
+        ),
         ("AsyncMock", dispatch_async_mock as *const () as usize),
         ("PropertyMock", dispatch_property_mock as *const () as usize),
         ("patch", dispatch_patch as *const () as usize),
@@ -975,10 +1142,27 @@ pub fn register() {
 
     // surface: missing CPython module constants (auto-added)
     attrs.insert("FILTER_DIR".into(), MbValue::from_int(1));
-    attrs.insert("inplace".into(), MbValue::from_ptr(MbObject::new_str("iadd isub imul imatmul itruediv ifloordiv imod ilshift irshift iand ixor ior ipow".to_string())));
+    attrs.insert(
+        "inplace".into(),
+        MbValue::from_ptr(MbObject::new_str(
+            "iadd isub imul imatmul itruediv ifloordiv imod ilshift irshift iand ixor ior ipow"
+                .to_string(),
+        )),
+    );
     attrs.insert("magic_methods".into(), MbValue::from_ptr(MbObject::new_str("lt le gt ge eq ne getitem setitem delitem len contains iter hash str sizeof enter exit divmod rdivmod neg pos abs invert complex int float index round trunc floor ceil bool next fspath aiter ".to_string())));
-    attrs.insert("numerics".into(), MbValue::from_ptr(MbObject::new_str("add sub mul matmul truediv floordiv mod lshift rshift and xor or pow".to_string())));
-    attrs.insert("right".into(), MbValue::from_ptr(MbObject::new_str("radd rsub rmul rmatmul rtruediv rfloordiv rmod rlshift rrshift rand rxor ror rpow".to_string())));
+    attrs.insert(
+        "numerics".into(),
+        MbValue::from_ptr(MbObject::new_str(
+            "add sub mul matmul truediv floordiv mod lshift rshift and xor or pow".to_string(),
+        )),
+    );
+    attrs.insert(
+        "right".into(),
+        MbValue::from_ptr(MbObject::new_str(
+            "radd rsub rmul rmatmul rtruediv rfloordiv rmod rlshift rrshift rand rxor ror rpow"
+                .to_string(),
+        )),
+    );
 
     // surface: remaining CPython callables kept as present+callable stubs.
     {
@@ -987,11 +1171,24 @@ pub fn register() {
             s.borrow_mut().insert(noop as u64);
         });
         let callables: &[&str] = &[
-            "AsyncMagicMixin", "AsyncMockMixin", "Base", "CallableMixin",
-            "CodeType", "FunctionTypes", "InvalidSpecError", "MagicMixin",
-            "MagicProxy", "MethodType", "ModuleType", "partial",
-            "RLock", "create_autospec", "iscoroutinefunction", "mock_open",
-            "safe_repr", "wraps",
+            "AsyncMagicMixin",
+            "AsyncMockMixin",
+            "Base",
+            "CallableMixin",
+            "CodeType",
+            "FunctionTypes",
+            "InvalidSpecError",
+            "MagicMixin",
+            "MagicProxy",
+            "MethodType",
+            "ModuleType",
+            "partial",
+            "RLock",
+            "create_autospec",
+            "iscoroutinefunction",
+            "mock_open",
+            "safe_repr",
+            "wraps",
         ];
         for name in callables {
             attrs.insert((*name).to_string(), MbValue::from_func(noop));
@@ -1000,14 +1197,26 @@ pub fn register() {
 
     // surface: sentinel / module attributes (hasattr-only markers).
     for name in &[
-        "DEFAULT", "sentinel", "file_spec", "open_spec",
-        "asyncio", "builtins", "contextlib", "inspect",
-        "io", "pkgutil", "pprint", "sys",
+        "DEFAULT",
+        "sentinel",
+        "file_spec",
+        "open_spec",
+        "asyncio",
+        "builtins",
+        "contextlib",
+        "inspect",
+        "io",
+        "pkgutil",
+        "pprint",
+        "sys",
     ] {
-        attrs.insert((*name).to_string(),
-            MbValue::from_ptr(MbObject::new_str(
-                format!("mb_mock_{}", name.to_lowercase())
-            )));
+        attrs.insert(
+            (*name).to_string(),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "mb_mock_{}",
+                name.to_lowercase()
+            ))),
+        );
     }
 
     super::register_module("unittest.mock", attrs);
@@ -1016,12 +1225,30 @@ pub fn register() {
     // bridge: map the constructor addrs to class names.
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
-        map.insert(dispatch_patch as *const () as usize as u64, "patch".to_string());
-        map.insert(dispatch_call_factory as *const () as usize as u64, "_mock_call_factory".to_string());
-        map.insert(dispatch_magic_mock as *const () as usize as u64, "MagicMock".to_string());
-        map.insert(dispatch_plain_mock as *const () as usize as u64, "Mock".to_string());
-        map.insert(dispatch_async_mock as *const () as usize as u64, "AsyncMock".to_string());
-        map.insert(dispatch_property_mock as *const () as usize as u64, "PropertyMock".to_string());
+        map.insert(
+            dispatch_patch as *const () as usize as u64,
+            "patch".to_string(),
+        );
+        map.insert(
+            dispatch_call_factory as *const () as usize as u64,
+            "_mock_call_factory".to_string(),
+        );
+        map.insert(
+            dispatch_magic_mock as *const () as usize as u64,
+            "MagicMock".to_string(),
+        );
+        map.insert(
+            dispatch_plain_mock as *const () as usize as u64,
+            "Mock".to_string(),
+        );
+        map.insert(
+            dispatch_async_mock as *const () as usize as u64,
+            "AsyncMock".to_string(),
+        );
+        map.insert(
+            dispatch_property_mock as *const () as usize as u64,
+            "PropertyMock".to_string(),
+        );
     });
     {
         let mut methods: HashMap<String, MbValue> = HashMap::new();
@@ -1050,17 +1277,47 @@ fn register_mock_classes() {
     // Shared call-recording + assertion surface.
     let base_methods: Vec<(&str, MbValue)> = vec![
         ("__call__", var(mock_dunder_call as *const () as usize)),
-        ("__getattr__", MbValue::from_func(mock_getattr as *const () as usize)),
-        ("assert_called", var(mock_assert_called as *const () as usize)),
-        ("assert_called_once", var(mock_assert_called_once as *const () as usize)),
-        ("assert_called_with", var(mock_assert_called_with as *const () as usize)),
-        ("assert_called_once_with", var(mock_assert_called_once_with as *const () as usize)),
-        ("assert_not_called", var(mock_assert_not_called as *const () as usize)),
-        ("assert_any_call", var(mock_assert_any_call as *const () as usize)),
-        ("assert_awaited", var(mock_assert_called as *const () as usize)),
-        ("assert_awaited_once", var(mock_assert_awaited_once as *const () as usize)),
+        (
+            "__getattr__",
+            MbValue::from_func(mock_getattr as *const () as usize),
+        ),
+        (
+            "assert_called",
+            var(mock_assert_called as *const () as usize),
+        ),
+        (
+            "assert_called_once",
+            var(mock_assert_called_once as *const () as usize),
+        ),
+        (
+            "assert_called_with",
+            var(mock_assert_called_with as *const () as usize),
+        ),
+        (
+            "assert_called_once_with",
+            var(mock_assert_called_once_with as *const () as usize),
+        ),
+        (
+            "assert_not_called",
+            var(mock_assert_not_called as *const () as usize),
+        ),
+        (
+            "assert_any_call",
+            var(mock_assert_any_call as *const () as usize),
+        ),
+        (
+            "assert_awaited",
+            var(mock_assert_called as *const () as usize),
+        ),
+        (
+            "assert_awaited_once",
+            var(mock_assert_awaited_once as *const () as usize),
+        ),
         ("reset_mock", var(mock_reset_mock as *const () as usize)),
-        ("configure_mock", var(mock_configure_mock as *const () as usize)),
+        (
+            "configure_mock",
+            var(mock_configure_mock as *const () as usize),
+        ),
     ];
 
     // Plain Mock / AsyncMock: no magic-method table (len(Mock()) is TypeError).
@@ -1091,23 +1348,38 @@ fn register_mock_classes() {
         for (k, v) in &base_methods {
             m.insert((*k).to_string(), *v);
         }
-        m.insert("__get__".into(), MbValue::from_func(property_mock_get as *const () as usize));
+        m.insert(
+            "__get__".into(),
+            MbValue::from_func(property_mock_get as *const () as usize),
+        );
         super::super::class::mb_class_register("PropertyMock", vec![], m);
     }
 
     // call objects + name builder + ANY.
     {
         let mut m: Map<String, MbValue> = Map::new();
-        m.insert("__eq__".into(), MbValue::from_func(call_eq as *const () as usize));
+        m.insert(
+            "__eq__".into(),
+            MbValue::from_func(call_eq as *const () as usize),
+        );
         super::super::class::mb_class_register("call", vec![], m);
 
         let mut nb: Map<String, MbValue> = Map::new();
-        nb.insert("__call__".into(), var(call_namebuilder_call as *const () as usize));
+        nb.insert(
+            "__call__".into(),
+            var(call_namebuilder_call as *const () as usize),
+        );
         super::super::class::mb_class_register("_call_namebuilder", vec![], nb);
 
         let mut any: Map<String, MbValue> = Map::new();
-        any.insert("__eq__".into(), MbValue::from_func(any_eq as *const () as usize));
-        any.insert("__ne__".into(), MbValue::from_func(any_ne as *const () as usize));
+        any.insert(
+            "__eq__".into(),
+            MbValue::from_func(any_eq as *const () as usize),
+        );
+        any.insert(
+            "__ne__".into(),
+            MbValue::from_func(any_ne as *const () as usize),
+        );
         super::super::class::mb_class_register("_mock_ANY", vec![], any);
     }
 
@@ -1122,18 +1394,36 @@ fn register_mock_classes() {
         super::super::class::mb_class_register("_patch", vec![], p);
 
         let mut w: Map<String, MbValue> = Map::new();
-        w.insert("__call__".into(), var(patch_wrapper_call as *const () as usize));
+        w.insert(
+            "__call__".into(),
+            var(patch_wrapper_call as *const () as usize),
+        );
         super::super::class::mb_class_register("_patch_wrapper", vec![], w);
 
         let mut pd: Map<String, MbValue> = Map::new();
-        pd.insert("__enter__".into(), var(patch_dict_enter as *const () as usize));
-        pd.insert("__exit__".into(), var(patch_dict_exit as *const () as usize));
+        pd.insert(
+            "__enter__".into(),
+            var(patch_dict_enter as *const () as usize),
+        );
+        pd.insert(
+            "__exit__".into(),
+            var(patch_dict_exit as *const () as usize),
+        );
         super::super::class::mb_class_register("_patch_dict", vec![], pd);
 
         let mut po: Map<String, MbValue> = Map::new();
-        po.insert("__enter__".into(), var(patch_object_enter as *const () as usize));
-        po.insert("__exit__".into(), var(patch_object_exit as *const () as usize));
-        po.insert("start".into(), var(patch_object_enter as *const () as usize));
+        po.insert(
+            "__enter__".into(),
+            var(patch_object_enter as *const () as usize),
+        );
+        po.insert(
+            "__exit__".into(),
+            var(patch_object_exit as *const () as usize),
+        );
+        po.insert(
+            "start".into(),
+            var(patch_object_enter as *const () as usize),
+        );
         po.insert("stop".into(), var(patch_object_exit as *const () as usize));
         super::super::class::mb_class_register("_patch_object", vec![], po);
     }
@@ -1148,7 +1438,10 @@ mod tests {
         register();
         let m = unsafe { dispatch_magic_mock(std::ptr::null(), 0) };
         assert_eq!(get_field(m, "call_count").and_then(|v| v.as_int()), Some(0));
-        assert_eq!(get_field(m, "called").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            get_field(m, "called").and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     #[test]

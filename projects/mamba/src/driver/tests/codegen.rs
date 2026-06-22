@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use crate::codegen::cranelift::CraneliftBackend;
+use crate::codegen::{CodegenBackend, CodegenOutput};
 /// AOT codegen integration tests for the Cranelift backend (#296 cranelift NaN-boxing fix).
 ///
 /// The NaN-boxing bug: `emit_internal_call` retrieved the call result directly
@@ -10,12 +12,9 @@
 ///
 /// These tests verify both that the fix compiles correctly (AOT path) and
 /// that it produces the right answer at runtime (JIT path, same code path).
-
 use crate::mir::*;
 use crate::resolve::SymbolId;
 use crate::types::TypeContext;
-use crate::codegen::cranelift::CraneliftBackend;
-use crate::codegen::{CodegenBackend, CodegenOutput};
 
 // ── MIR helper ────────────────────────────────────────────────────────────────
 
@@ -94,7 +93,8 @@ fn test_aot_recursive_fib_compiles() {
     let module = build_boxing_mir(&tcx);
 
     let mut backend = CraneliftBackend::new().expect("AOT init failed");
-    let output = backend.codegen(&module, &tcx)
+    let output = backend
+        .codegen(&module, &tcx)
         .expect("AOT codegen must not fail for primitive→Any call-site scenario");
 
     match output {
@@ -155,7 +155,10 @@ fn test_aot_recursive_fib() {
     }
 
     let link_status = cmd.status().expect("invoke cc linker");
-    assert!(link_status.success(), "cc failed to link recursive fib object");
+    assert!(
+        link_status.success(),
+        "cc failed to link recursive fib object"
+    );
 
     let run_output = std::process::Command::new(exe_path.to_str().unwrap())
         .output()

@@ -112,10 +112,13 @@ fn pkgmgr_editable_local_project_block_pins_distinct_sentinel_values() {
 #[test]
 fn pkgmgr_editable_local_project_summary_assertion_names_install_kind() {
     let doc = crate::common::load_toml(&manifest_path());
-    let summary = doc.get("summary_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[summary_assertion]` block \
+    let summary = doc
+        .get("summary_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[summary_assertion]` block \
          (acceptance: \"Editable behavior status is visible in the package-manager summary.\")",
-    );
+        );
 
     for flag in &[
         "must_name_install_kind",
@@ -131,7 +134,9 @@ fn pkgmgr_editable_local_project_summary_assertion_names_install_kind() {
     }
 
     assert_eq!(
-        summary.get("expected_install_kind").and_then(|v| v.as_str()),
+        summary
+            .get("expected_install_kind")
+            .and_then(|v| v.as_str()),
         Some("editable"),
         "`[summary_assertion].expected_install_kind` must be \"editable\""
     );
@@ -176,7 +181,9 @@ fn pkgmgr_editable_install_action_uses_editable_flag() {
         "`[editable_install_action].expected_outcome` must be \"pass\""
     );
     assert_eq!(
-        action.get("expected_exit_code").and_then(|v| v.as_integer()),
+        action
+            .get("expected_exit_code")
+            .and_then(|v| v.as_integer()),
         Some(0),
         "`[editable_install_action].expected_exit_code` must be 0"
     );
@@ -192,10 +199,13 @@ fn pkgmgr_editable_install_action_uses_editable_flag() {
 #[test]
 fn pkgmgr_editable_live_reload_case_pins_distinct_imports_without_reinstall() {
     let doc = crate::common::load_toml(&manifest_path());
-    let case = doc.get("live_reload_case").and_then(|v| v.as_table()).expect(
-        "missing `[live_reload_case]` block \
+    let case = doc
+        .get("live_reload_case")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[live_reload_case]` block \
          (acceptance: \"Passing path proves import reflects a source change without reinstall.\")",
-    );
+        );
 
     let attr = case
         .get("import_probe_attribute")
@@ -280,7 +290,8 @@ fn pkgmgr_editable_lockfile_records_editable_source_no_wheel_hash() {
         "`[lockfile_assertion].must_contain_dependency` must equal `[local_project].name`"
     );
     assert_eq!(
-        lock.get("must_record_install_kind").and_then(|v| v.as_str()),
+        lock.get("must_record_install_kind")
+            .and_then(|v| v.as_str()),
         Some("editable"),
         "`[lockfile_assertion].must_record_install_kind` must be \"editable\""
     );
@@ -306,17 +317,25 @@ fn pkgmgr_editable_lockfile_records_editable_source_no_wheel_hash() {
 #[test]
 fn pkgmgr_editable_unsupported_behavior_forbids_silent_pass() {
     let doc = crate::common::load_toml(&manifest_path());
-    let con = doc.get("unsupported_behavior_contract").and_then(|v| v.as_table()).expect(
-        "missing `[unsupported_behavior_contract]` block \
+    let con = doc
+        .get("unsupported_behavior_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[unsupported_behavior_contract]` block \
          (acceptance: \"Unsupported behavior is linked to a blocker and not counted as pass.\")",
-    );
+        );
 
     assert_eq!(
-        con.get("when_editable_unsupported_outcome").and_then(|v| v.as_str()),
+        con.get("when_editable_unsupported_outcome")
+            .and_then(|v| v.as_str()),
         Some("blocked"),
         "`[unsupported_behavior_contract].when_editable_unsupported_outcome` must be \"blocked\""
     );
-    for flag in &["must_emit_blocker_diagnostic", "must_link_tracking_issue", "forbid_silent_pass"] {
+    for flag in &[
+        "must_emit_blocker_diagnostic",
+        "must_link_tracking_issue",
+        "forbid_silent_pass",
+    ] {
         assert_eq!(
             con.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -417,7 +436,8 @@ fn pkgmgr_editable_pins_out_of_scope_per_issue_2853() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("publishing_editable_artifacts").and_then(|v| v.as_bool()),
+        oos.get("publishing_editable_artifacts")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].publishing_editable_artifacts` must be true \
          (issue text: \"Out of scope: publishing editable artifacts.\")"

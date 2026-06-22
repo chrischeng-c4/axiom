@@ -1,11 +1,18 @@
 ---
 id: projects-lumen-src-api-rs
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
+    gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "This source unit is captured as a per-file rust-source-unit during lumen td_ast standardization."
+  - id: "long-running-stability"
+    role: primary
+    gap: "meta-api-health-ready-metrics-version"
+    claim: "meta-api-health-ready-metrics-version"
+    coverage: full
+    rationale: "api.rs owns /healthz, /readyz, /metrics, and /version, which are the operability meta endpoints used by probes and scrapes."
 fill_sections: [overview, source, changes]
 ---
 
@@ -21,8 +28,6 @@ Public API manifest for `projects/lumen/src/api.rs` captured as a per-file rust-
 | Name | Target | Kind | Visibility |
 |------|--------|------|------------|
 | `AppState` | projects/lumen/src/api.rs | struct | pub |
-| `SearchBackend` | projects/lumen/src/api.rs | trait | pub |
-| `WriteBackend` | projects/lumen/src/api.rs | trait | pub |
 | `with_wal` | projects/lumen/src/api.rs | function | pub |
 | `with_components` | projects/lumen/src/api.rs | function | pub |
 | `new` | projects/lumen/src/api.rs | function | pub |
@@ -39,6 +44,8 @@ Public API manifest for `projects/lumen/src/api.rs` captured as a per-file rust-
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! HTTP/2 API surface.
 //!
 //! Reads (`/search`, `/duplicates`, `/stats`) can be served by any
@@ -83,6 +90,7 @@ use crate::types::{
 use crate::wal::{MemWal, SharedWal};
 
 #[derive(Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub struct AppState {
     pub engine: Arc<Engine>,
     pub auth: Arc<AuthConfig>,
@@ -100,11 +108,13 @@ pub struct AppState {
     pub write_backend: Arc<dyn WriteBackend>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub trait SearchBackend: Send + Sync {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse>;
 }
 
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub trait WriteBackend: Send + Sync {
     async fn create_collection(
         &self,
@@ -131,6 +141,7 @@ struct LocalEngineSearch {
     engine: Arc<Engine>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl SearchBackend for LocalEngineSearch {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> {
         self.engine.search(collection_id, req)
@@ -142,6 +153,7 @@ struct LocalWriteBackend {
     writer: Arc<WriteCoordinator>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl LocalWriteBackend {
     fn unexpected(outcome: ApplyOutcome) -> anyhow::Error {
         anyhow::anyhow!("unexpected apply outcome: {outcome:?}")
@@ -149,6 +161,7 @@ impl LocalWriteBackend {
 }
 
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl WriteBackend for LocalWriteBackend {
     async fn create_collection(
         &self,
@@ -225,8 +238,9 @@ impl WriteBackend for LocalWriteBackend {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl AppState {
-    /// Build state with an explicit write log (e.g. a NATS-backed one
+    /// Build state with an explicit write log (e.g. a broker-backed one
     /// for clustered deployments). Spawns the apply loop.
     pub fn with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self {
         let writer = WriteCoordinator::start(wal, engine.clone());
@@ -360,8 +374,10 @@ impl AppState {
         crate::raft::RaftRole,
     ))
 )]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub struct ApiDoc;
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub fn router(state: AppState) -> Router {
     // Apply auth middleware only to data-plane routes. Admin/Probe
     // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
@@ -395,7 +411,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/restore", post(restore))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
-        // guard); 8MiB also matches the NATS max_payload. Rejects oversized
+        // guard); 8MiB is the broker payload budget. Rejects oversized
         // bodies with 413 before they hit a handler.
         .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024));
 
@@ -711,10 +727,9 @@ async fn search(
 ) -> Result<Json<SearchResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Read)?;
     let _consistency = read_consistency_from(&headers);
-    // Single-pod build: every replica is the leader; consistency
-    // requirement is always satisfied. The header is parsed and
-    // recorded so callers may set the contract today without changing
-    // their code when Raft lands.
+    // Standalone and explicit-broker builds satisfy this locally. Primary-
+    // replica mode will enforce leader/bounded/any against the live cluster
+    // state once the raftcore-backed surface is wired.
     Ok(Json(
         state
             .search_backend
@@ -1062,6 +1077,7 @@ async fn restore(
 // OpenAPI
 // ---------------------------------------------------------------------------
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub fn openapi() -> utoipa::openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
     doc.info.version = env!("CARGO_PKG_VERSION").to_string();
@@ -1107,12 +1123,14 @@ async fn docs_swagger() -> Html<&'static str> {
 // ---------------------------------------------------------------------------
 
 /// HTTP-friendly wrapper that classifies storage errors to status codes.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 pub struct ApiErr {
     status: StatusCode,
     kind: &'static str,
     message: String,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl ApiErr {
     fn not_found(msg: impl Into<String>) -> Self {
         Self {
@@ -1123,6 +1141,7 @@ impl ApiErr {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
         if let Some(se) = e.downcast_ref::<StorageError>() {
@@ -1177,6 +1196,7 @@ impl From<anyhow::Error> for ApiErr {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl IntoResponse for ApiErr {
     fn into_response(self) -> axum::response::Response {
         (
@@ -1190,6 +1210,7 @@ impl IntoResponse for ApiErr {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl From<crate::auth::AuthErr> for ApiErr {
     fn from(e: crate::auth::AuthErr) -> Self {
         match e {
@@ -1210,6 +1231,8 @@ impl From<crate::auth::AuthErr> for ApiErr {
         }
     }
 }
+// CODEGEN-END
+
 ````
 
 ## Changes

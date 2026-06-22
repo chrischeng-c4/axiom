@@ -29,7 +29,10 @@ fn test_list_of_zip_tuples_and_strings() {
 print(list(zip("abc", "xyz")))
 "#,
     );
-    assert_output(&out, "[(1, 'a'), (2, 'b'), (3, 'c')]\n[('a', 'x'), ('b', 'y'), ('c', 'z')]\n");
+    assert_output(
+        &out,
+        "[(1, 'a'), (2, 'b'), (3, 'c')]\n[('a', 'x'), ('b', 'y'), ('c', 'z')]\n",
+    );
 }
 
 #[test]

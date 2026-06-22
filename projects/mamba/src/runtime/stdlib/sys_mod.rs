@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// sys module for Mamba (#310 R1).
 ///
 /// Provides: sys.argv, sys.path, sys.version, sys.platform,
@@ -5,10 +7,7 @@
 ///           sys.setrecursionlimit(), sys.getdefaultencoding(),
 ///           sys.float_info, sys.int_info, sys.stdin, sys.stdout,
 ///           sys.stderr, sys.modules
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Dispatch wrappers ──
 
@@ -47,7 +46,11 @@ fn dispatch_getdefaultencoding(args: MbValue) -> MbValue {
 // NATIVE_FUNC_ADDRS at register() time.
 
 unsafe extern "C" fn dispatch_intern(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs >= 1 { mb_sys_intern(*args_ptr) } else { MbValue::none() }
+    if nargs >= 1 {
+        mb_sys_intern(*args_ptr)
+    } else {
+        MbValue::none()
+    }
 }
 
 unsafe extern "C" fn dispatch_gettrace(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -55,12 +58,20 @@ unsafe extern "C" fn dispatch_gettrace(_args_ptr: *const MbValue, _nargs: usize)
 }
 
 unsafe extern "C" fn dispatch_settrace(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let v = if nargs >= 1 { *args_ptr } else { MbValue::none() };
+    let v = if nargs >= 1 {
+        *args_ptr
+    } else {
+        MbValue::none()
+    };
     mb_sys_settrace(v)
 }
 
 unsafe extern "C" fn dispatch_getrefcount(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let v = if nargs >= 1 { *args_ptr } else { MbValue::none() };
+    let v = if nargs >= 1 {
+        *args_ptr
+    } else {
+        MbValue::none()
+    };
     mb_sys_getrefcount(v)
 }
 
@@ -72,11 +83,17 @@ unsafe extern "C" fn dispatch_exc_info(_args_ptr: *const MbValue, _nargs: usize)
     mb_sys_exc_info()
 }
 
-unsafe extern "C" fn dispatch_getfilesystemencoding(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_getfilesystemencoding(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_sys_getfilesystemencoding()
 }
 
-unsafe extern "C" fn dispatch_getfilesystemencodeerrors(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_getfilesystemencodeerrors(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_sys_getfilesystemencodeerrors()
 }
 
@@ -87,17 +104,29 @@ unsafe extern "C" fn dispatch_getfilesystemencodeerrors(_args_ptr: *const MbValu
 // their argument to validate it. These flat-args dispatchers read the actual
 // first argument and are registered in NATIVE_FUNC_ADDRS at register() time.
 unsafe extern "C" fn dispatch_exit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let code = if nargs >= 1 { *args_ptr } else { MbValue::none() };
+    let code = if nargs >= 1 {
+        *args_ptr
+    } else {
+        MbValue::none()
+    };
     mb_sys_exit(code)
 }
 
 unsafe extern "C" fn dispatch_setrecursionlimit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let limit = if nargs >= 1 { *args_ptr } else { MbValue::none() };
+    let limit = if nargs >= 1 {
+        *args_ptr
+    } else {
+        MbValue::none()
+    };
     mb_sys_setrecursionlimit(limit)
 }
 
 unsafe extern "C" fn dispatch_setswitchinterval(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let interval = if nargs >= 1 { *args_ptr } else { MbValue::none() };
+    let interval = if nargs >= 1 {
+        *args_ptr
+    } else {
+        MbValue::none()
+    };
     mb_sys_setswitchinterval(interval)
 }
 
@@ -131,25 +160,30 @@ fn make_struct_seq(class_name: &str, fields: &[(&str, MbValue)]) -> MbValue {
                 map.insert((*k).to_string(), *v);
                 entries.push(*v);
             }
-            map.insert("_entries".to_string(),
-                MbValue::from_ptr(MbObject::new_list(entries)));
+            map.insert(
+                "_entries".to_string(),
+                MbValue::from_ptr(MbObject::new_list(entries)),
+            );
         }
     }
     MbValue::from_ptr(inst)
 }
 
 fn struct_seq_entries(self_v: MbValue) -> Vec<MbValue> {
-    self_v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            let e = fields.read().ok()?.get("_entries").copied()?;
-            if let Some(ep) = e.as_ptr() {
-                if let ObjData::List(ref lock) = (*ep).data {
-                    return lock.read().ok().map(|g| g.to_vec());
+    self_v
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let e = fields.read().ok()?.get("_entries").copied()?;
+                if let Some(ep) = e.as_ptr() {
+                    if let ObjData::List(ref lock) = (*ep).data {
+                        return lock.read().ok().map(|g| g.to_vec());
+                    }
                 }
             }
-        }
-        None
-    }).unwrap_or_default()
+            None
+        })
+        .unwrap_or_default()
 }
 
 fn struct_seq_tuple(v: MbValue) -> MbValue {
@@ -159,7 +193,11 @@ fn struct_seq_tuple(v: MbValue) -> MbValue {
 /// Comparison operand as a tuple: another struct-seq's entries, or the value
 /// itself (a tuple literal compares element-wise via the builtin paths).
 fn cmp_operand(v: MbValue) -> MbValue {
-    if struct_seq_entries(v).is_empty() { v } else { struct_seq_tuple(v) }
+    if struct_seq_entries(v).is_empty() {
+        v
+    } else {
+        struct_seq_tuple(v)
+    }
 }
 
 /// Dual-convention operand extraction: binop dunder dispatch passes the
@@ -248,11 +286,26 @@ pub(crate) fn register_struct_seq_class_with(
         super::super::module::register_variadic_func(addr as u64);
     }
     let mut m: Map<String, MbValue> = Map::new();
-    m.insert("__len__".into(), MbValue::from_func(structseq_len as *const () as usize));
-    m.insert("__getitem__".into(), MbValue::from_func(structseq_getitem as *const () as usize));
-    m.insert("__eq__".into(), MbValue::from_func(structseq_eq as *const () as usize));
-    m.insert("__lt__".into(), MbValue::from_func(structseq_lt as *const () as usize));
-    m.insert("__gt__".into(), MbValue::from_func(structseq_gt as *const () as usize));
+    m.insert(
+        "__len__".into(),
+        MbValue::from_func(structseq_len as *const () as usize),
+    );
+    m.insert(
+        "__getitem__".into(),
+        MbValue::from_func(structseq_getitem as *const () as usize),
+    );
+    m.insert(
+        "__eq__".into(),
+        MbValue::from_func(structseq_eq as *const () as usize),
+    );
+    m.insert(
+        "__lt__".into(),
+        MbValue::from_func(structseq_lt as *const () as usize),
+    );
+    m.insert(
+        "__gt__".into(),
+        MbValue::from_func(structseq_gt as *const () as usize),
+    );
     for (k, v) in extras {
         m.insert(k, v);
     }
@@ -262,8 +315,12 @@ pub(crate) fn register_struct_seq_class_with(
 /// Register the shared struct-seq method table under each sys class name.
 fn register_struct_seq_classes() {
     for cls in [
-        "sys.version_info", "sys.float_info", "sys.int_info", "sys.hash_info",
-        "sys.implementation.version", "sys.asyncgen_hooks",
+        "sys.version_info",
+        "sys.float_info",
+        "sys.int_info",
+        "sys.hash_info",
+        "sys.implementation.version",
+        "sys.asyncgen_hooks",
     ] {
         register_struct_seq_class(cls);
     }
@@ -274,7 +331,10 @@ fn version_info_fields() -> Vec<(&'static str, MbValue)> {
         ("major", MbValue::from_int(3)),
         ("minor", MbValue::from_int(12)),
         ("micro", MbValue::from_int(0)),
-        ("releaselevel", MbValue::from_ptr(MbObject::new_str("final".to_string()))),
+        (
+            "releaselevel",
+            MbValue::from_ptr(MbObject::new_str("final".to_string())),
+        ),
         ("serial", MbValue::from_int(0)),
     ]
 }
@@ -289,21 +349,30 @@ fn raise_type_error_msg(msg: &str) -> MbValue {
 
 // ── flat dispatchers for arg-count-sensitive entry points ──
 
-unsafe extern "C" fn dispatch_getrecursionlimit_flat(_args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_getrecursionlimit_flat(
+    _args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     if nargs > 0 {
         return raise_type_error_msg("getrecursionlimit() takes no arguments (1 given)");
     }
     MbValue::from_int(RECURSION_LIMIT.with(|c| c.get()))
 }
 
-unsafe extern "C" fn dispatch_getdefaultencoding_flat(_args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_getdefaultencoding_flat(
+    _args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     if nargs > 0 {
         return raise_type_error_msg("getdefaultencoding() takes no arguments (1 given)");
     }
     mb_sys_getdefaultencoding()
 }
 
-unsafe extern "C" fn dispatch_getswitchinterval_flat(_args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_getswitchinterval_flat(
+    _args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     if nargs > 0 {
         return raise_type_error_msg("getswitchinterval() takes no arguments (1 given)");
     }
@@ -331,7 +400,9 @@ unsafe extern "C" fn dispatch_intern_flat(args_ptr: *const MbValue, nargs: usize
             return MbValue::from_bits(*bits);
         }
         super::super::gc::gc_add_root(arg);
-        unsafe { super::super::rc::retain_if_ptr(arg); }
+        unsafe {
+            super::super::rc::retain_if_ptr(arg);
+        }
         t.insert(text, arg.to_bits());
         arg
     })
@@ -351,7 +422,9 @@ unsafe extern "C" fn dispatch_getsizeof_flat(args_ptr: *const MbValue, nargs: us
             let class_name = unsafe {
                 if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                     class_name.clone()
-                } else { String::new() }
+                } else {
+                    String::new()
+                }
             };
             let m = super::super::class::lookup_method(&class_name, "__sizeof__");
             if !m.is_none() {
@@ -383,9 +456,16 @@ unsafe extern "C" fn dispatch_displayhook_flat(args_ptr: *const MbValue, nargs: 
         return MbValue::none();
     }
     let r = super::super::builtins::mb_repr(value);
-    let text = r.as_ptr().and_then(|p| unsafe {
-        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
-    }).unwrap_or_default();
+    let text = r
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
     let line = format!("{text}\n");
     if !super::super::output::write_captured(&line) {
         print!("{line}");
@@ -394,10 +474,14 @@ unsafe extern "C" fn dispatch_displayhook_flat(args_ptr: *const MbValue, nargs: 
     // and in the already-cached module dict the program actually reads.
     super::super::module::MODULES.with(|mods| {
         if let Some(b) = mods.borrow_mut().get_mut("builtins") {
-            unsafe { super::super::rc::retain_if_ptr(value); }
+            unsafe {
+                super::super::rc::retain_if_ptr(value);
+            }
             b.attrs.insert("_".to_string(), value);
             if let Some(cached) = b.cached_value {
-                unsafe { super::super::rc::retain_if_ptr(value); }
+                unsafe {
+                    super::super::rc::retain_if_ptr(value);
+                }
                 super::super::dict_ops::mb_dict_setitem(
                     cached,
                     MbValue::from_ptr(MbObject::new_str("_".to_string())),
@@ -420,9 +504,15 @@ unsafe extern "C" fn dispatch_excepthook_flat(args_ptr: *const MbValue, nargs: u
     let tname = super::super::class::resolve_class_name(etype).unwrap_or_default();
     let vstr = {
         let r = super::super::builtins::mb_str(value);
-        r.as_ptr().and_then(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
-        }).unwrap_or_default()
+        r.as_ptr()
+            .and_then(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
     };
     let mut text = String::new();
     if !tb.is_none() {
@@ -444,37 +534,60 @@ unsafe extern "C" fn dispatch_exception_flat(_args_ptr: *const MbValue, _nargs: 
     super::super::class::last_caught_exception_value()
 }
 
-unsafe extern "C" fn dispatch_unraisablehook_flat(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_unraisablehook_flat(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let Some(arg) = a.first().copied() else {
         return raise_type_error_msg("unraisablehook() takes exactly one argument (0 given)");
     };
     // The argument must be an UnraisableHookArgs-shaped object (has exc_type).
-    let has_exc_type = arg.as_ptr().map(|ptr| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            fields.read().map(|f| f.contains_key("exc_type")).unwrap_or(false)
-        } else { false }
-    }).unwrap_or(false);
+    let has_exc_type = arg
+        .as_ptr()
+        .map(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .read()
+                    .map(|f| f.contains_key("exc_type"))
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
     if !has_exc_type {
         return raise_type_error_msg("unraisablehook argument type must be UnraisableHookArgs");
     }
     MbValue::none()
 }
 
-unsafe extern "C" fn dispatch_get_asyncgen_hooks(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_get_asyncgen_hooks(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     let (fi, fin) = ASYNCGEN_HOOKS.with(|c| c.get());
-    make_struct_seq("sys.asyncgen_hooks", &[
-        ("firstiter", MbValue::from_bits(fi)),
-        ("finalizer", MbValue::from_bits(fin)),
-    ])
+    make_struct_seq(
+        "sys.asyncgen_hooks",
+        &[
+            ("firstiter", MbValue::from_bits(fi)),
+            ("finalizer", MbValue::from_bits(fin)),
+        ],
+    )
 }
 
-unsafe extern "C" fn dispatch_set_asyncgen_hooks(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_set_asyncgen_hooks(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (mut fi, mut fin) = ASYNCGEN_HOOKS.with(|c| c.get());
     let mut pos: Vec<MbValue> = Vec::new();
     for v in a {
-        let is_dict = v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false);
+        let is_dict = v
+            .as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
         if is_dict {
             let get = |k: &str| {
                 let r = super::super::dict_ops::mb_dict_get(
@@ -482,45 +595,63 @@ unsafe extern "C" fn dispatch_set_asyncgen_hooks(args_ptr: *const MbValue, nargs
                     MbValue::from_ptr(MbObject::new_str(k.to_string())),
                     MbValue::from_bits(u64::MAX),
                 );
-                if r.to_bits() == u64::MAX { None } else { Some(r) }
+                if r.to_bits() == u64::MAX {
+                    None
+                } else {
+                    Some(r)
+                }
             };
-            if let Some(x) = get("firstiter") { fi = x.to_bits(); }
-            if let Some(x) = get("finalizer") { fin = x.to_bits(); }
+            if let Some(x) = get("firstiter") {
+                fi = x.to_bits();
+            }
+            if let Some(x) = get("finalizer") {
+                fin = x.to_bits();
+            }
         } else {
             pos.push(*v);
         }
     }
-    if let Some(x) = pos.first() { fi = x.to_bits(); }
-    if let Some(x) = pos.get(1) { fin = x.to_bits(); }
+    if let Some(x) = pos.first() {
+        fi = x.to_bits();
+    }
+    if let Some(x) = pos.get(1) {
+        fin = x.to_bits();
+    }
     ASYNCGEN_HOOKS.with(|c| c.set((fi, fin)));
     MbValue::none()
 }
 
 /// Build sys.float_info — the CPython 11-field struct sequence.
 fn build_float_info() -> MbValue {
-    make_struct_seq("sys.float_info", &[
-        ("max", MbValue::from_float(f64::MAX)),
-        ("max_exp", MbValue::from_int(1024)),
-        ("max_10_exp", MbValue::from_int(308)),
-        ("min", MbValue::from_float(f64::MIN_POSITIVE)),
-        ("min_exp", MbValue::from_int(-1021)),
-        ("min_10_exp", MbValue::from_int(-307)),
-        ("dig", MbValue::from_int(15)),
-        ("mant_dig", MbValue::from_int(53)),
-        ("epsilon", MbValue::from_float(f64::EPSILON)),
-        ("radix", MbValue::from_int(2)),
-        ("rounds", MbValue::from_int(1)),
-    ])
+    make_struct_seq(
+        "sys.float_info",
+        &[
+            ("max", MbValue::from_float(f64::MAX)),
+            ("max_exp", MbValue::from_int(1024)),
+            ("max_10_exp", MbValue::from_int(308)),
+            ("min", MbValue::from_float(f64::MIN_POSITIVE)),
+            ("min_exp", MbValue::from_int(-1021)),
+            ("min_10_exp", MbValue::from_int(-307)),
+            ("dig", MbValue::from_int(15)),
+            ("mant_dig", MbValue::from_int(53)),
+            ("epsilon", MbValue::from_float(f64::EPSILON)),
+            ("radix", MbValue::from_int(2)),
+            ("rounds", MbValue::from_int(1)),
+        ],
+    )
 }
 
 /// Build sys.int_info — the CPython 4-field struct sequence.
 fn build_int_info() -> MbValue {
-    make_struct_seq("sys.int_info", &[
-        ("bits_per_digit", MbValue::from_int(30)),
-        ("sizeof_digit", MbValue::from_int(4)),
-        ("default_max_str_digits", MbValue::from_int(4300)),
-        ("str_digits_check_threshold", MbValue::from_int(640)),
-    ])
+    make_struct_seq(
+        "sys.int_info",
+        &[
+            ("bits_per_digit", MbValue::from_int(30)),
+            ("sizeof_digit", MbValue::from_int(4)),
+            ("default_max_str_digits", MbValue::from_int(4300)),
+            ("str_digits_check_threshold", MbValue::from_int(640)),
+        ],
+    )
 }
 
 /// Build sys.flags as a dict with the common CPython flag fields.
@@ -554,30 +685,55 @@ fn build_flags() -> MbValue {
 /// Build sys.implementation — a namespace whose `version` is the same
 /// struct-sequence shape as sys.version_info.
 fn build_implementation() -> MbValue {
-    make_struct_seq("sys.implementation", &[
-        ("name", MbValue::from_ptr(MbObject::new_str("mamba".to_string()))),
-        ("cache_tag", MbValue::from_ptr(MbObject::new_str("mamba-312".to_string()))),
-        ("hexversion", MbValue::from_int(0x030c00f0)),
-        ("version", make_struct_seq("sys.implementation.version", &version_info_fields())),
-        ("_multiarch", MbValue::from_ptr(MbObject::new_str("darwin".to_string()))),
-    ])
+    make_struct_seq(
+        "sys.implementation",
+        &[
+            (
+                "name",
+                MbValue::from_ptr(MbObject::new_str("mamba".to_string())),
+            ),
+            (
+                "cache_tag",
+                MbValue::from_ptr(MbObject::new_str("mamba-312".to_string())),
+            ),
+            ("hexversion", MbValue::from_int(0x030c00f0)),
+            (
+                "version",
+                make_struct_seq("sys.implementation.version", &version_info_fields()),
+            ),
+            (
+                "_multiarch",
+                MbValue::from_ptr(MbObject::new_str("darwin".to_string())),
+            ),
+        ],
+    )
 }
 
 /// Build sys.hash_info — the CPython 9-field struct sequence. The modulus
 /// (2^61 - 1) exceeds the NaN-boxed int payload, so it is a BigInt.
 fn build_hash_info() -> MbValue {
-    make_struct_seq("sys.hash_info", &[
-        ("width", MbValue::from_int(64)),
-        ("modulus", MbValue::from_ptr(MbObject::new_bigint(
-            num_bigint::BigInt::from((1i64 << 61) - 1)))),
-        ("inf", MbValue::from_int(314159)),
-        ("nan", MbValue::from_int(0)),
-        ("imag", MbValue::from_int(1_000_003)),
-        ("algorithm", MbValue::from_ptr(MbObject::new_str("siphash13".to_string()))),
-        ("hash_bits", MbValue::from_int(64)),
-        ("seed_bits", MbValue::from_int(128)),
-        ("cutoff", MbValue::from_int(0)),
-    ])
+    make_struct_seq(
+        "sys.hash_info",
+        &[
+            ("width", MbValue::from_int(64)),
+            (
+                "modulus",
+                MbValue::from_ptr(MbObject::new_bigint(num_bigint::BigInt::from(
+                    (1i64 << 61) - 1,
+                ))),
+            ),
+            ("inf", MbValue::from_int(314159)),
+            ("nan", MbValue::from_int(0)),
+            ("imag", MbValue::from_int(1_000_003)),
+            (
+                "algorithm",
+                MbValue::from_ptr(MbObject::new_str("siphash13".to_string())),
+            ),
+            ("hash_bits", MbValue::from_int(64)),
+            ("seed_bits", MbValue::from_int(128)),
+            ("cutoff", MbValue::from_int(0)),
+        ],
+    )
 }
 
 // ── std stream objects ────────────────────────────────────────────
@@ -704,16 +860,21 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     // sys.version
-    attrs.insert("version".into(),
-        MbValue::from_ptr(MbObject::new_str("Mamba 0.1.0 (cclab)".to_string())));
+    attrs.insert(
+        "version".into(),
+        MbValue::from_ptr(MbObject::new_str("Mamba 0.1.0 (cclab)".to_string())),
+    );
 
     // sys._git — CPython exposes ('CPython', branch, revision); the platform
     // module's test helpers save/restore it.
-    attrs.insert("_git".into(), MbValue::from_ptr(MbObject::new_tuple(vec![
-        MbValue::from_ptr(MbObject::new_str("CPython".to_string())),
-        MbValue::from_ptr(MbObject::new_str(String::new())),
-        MbValue::from_ptr(MbObject::new_str(String::new())),
-    ])));
+    attrs.insert(
+        "_git".into(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("CPython".to_string())),
+            MbValue::from_ptr(MbObject::new_str(String::new())),
+            MbValue::from_ptr(MbObject::new_str(String::new())),
+        ])),
+    );
 
     // sys.version_info — a 5-field struct sequence (named + indexed + sliced
     // + tuple-compared).
@@ -724,36 +885,47 @@ pub fn register() {
     );
 
     // sys.platform
-    attrs.insert("platform".into(),
-        MbValue::from_ptr(MbObject::new_str(std::env::consts::OS.to_string())));
+    attrs.insert(
+        "platform".into(),
+        MbValue::from_ptr(MbObject::new_str(std::env::consts::OS.to_string())),
+    );
 
     // sys.maxsize — the platform 64-bit signed max. Exceeds the NaN-boxed
     // 48-bit int payload, so it is a BigInt value.
-    attrs.insert("maxsize".into(), MbValue::from_ptr(MbObject::new_bigint(
-        num_bigint::BigInt::from(i64::MAX))));
+    attrs.insert(
+        "maxsize".into(),
+        MbValue::from_ptr(MbObject::new_bigint(num_bigint::BigInt::from(i64::MAX))),
+    );
 
     // sys.argv (populated at runtime, empty by default)
-    attrs.insert("argv".into(),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    attrs.insert(
+        "argv".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
 
     // sys.path (search paths for imports)
-    let paths: Vec<MbValue> = vec![
-        MbValue::from_ptr(MbObject::new_str(".".to_string())),
-    ];
-    attrs.insert("path".into(),
-        MbValue::from_ptr(MbObject::new_list(paths)));
+    let paths: Vec<MbValue> = vec![MbValue::from_ptr(MbObject::new_str(".".to_string()))];
+    attrs.insert("path".into(), MbValue::from_ptr(MbObject::new_list(paths)));
 
     // sys.executable
     let exe = std::env::current_exe()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    attrs.insert("executable".into(),
-        MbValue::from_ptr(MbObject::new_str(exe)));
+    attrs.insert(
+        "executable".into(),
+        MbValue::from_ptr(MbObject::new_str(exe)),
+    );
 
     // sys.byteorder
-    let order = if cfg!(target_endian = "little") { "little" } else { "big" };
-    attrs.insert("byteorder".into(),
-        MbValue::from_ptr(MbObject::new_str(order.to_string())));
+    let order = if cfg!(target_endian = "little") {
+        "little"
+    } else {
+        "big"
+    };
+    attrs.insert(
+        "byteorder".into(),
+        MbValue::from_ptr(MbObject::new_str(order.to_string())),
+    );
 
     // sys.float_info
     attrs.insert("float_info".into(), build_float_info());
@@ -792,12 +964,16 @@ pub fn register() {
         .iter()
         .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
         .collect();
-    attrs.insert("builtin_module_names".into(),
-        MbValue::from_ptr(MbObject::new_tuple(builtins)));
+    attrs.insert(
+        "builtin_module_names".into(),
+        MbValue::from_ptr(MbObject::new_tuple(builtins)),
+    );
 
     // sys.warnoptions — empty by default
-    attrs.insert("warnoptions".into(),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    attrs.insert(
+        "warnoptions".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
 
     // sys.flags / sys.implementation / sys.hash_info
     attrs.insert("flags".into(), build_flags());
@@ -807,41 +983,92 @@ pub fn register() {
     // sys.prefix / exec_prefix / base_prefix / base_exec_prefix
     let prefix_val = MbValue::from_ptr(MbObject::new_str("".to_string()));
     attrs.insert("prefix".into(), prefix_val);
-    attrs.insert("exec_prefix".into(),
-        MbValue::from_ptr(MbObject::new_str("".to_string())));
-    attrs.insert("base_prefix".into(),
-        MbValue::from_ptr(MbObject::new_str("".to_string())));
-    attrs.insert("base_exec_prefix".into(),
-        MbValue::from_ptr(MbObject::new_str("".to_string())));
+    attrs.insert(
+        "exec_prefix".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())),
+    );
+    attrs.insert(
+        "base_prefix".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())),
+    );
+    attrs.insert(
+        "base_exec_prefix".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())),
+    );
 
     // Callable functions via function pointers
     // New-ABI dispatchers (extern "C" fn(args_ptr, nargs)) — must register
     // in NATIVE_FUNC_ADDRS so class.rs dispatch picks the flat-args path.
     let new_dispatchers: Vec<(&str, usize)> = vec![
-        ("exit",                      dispatch_exit                      as *const () as usize),
-        ("setrecursionlimit",         dispatch_setrecursionlimit         as *const () as usize),
-        ("setswitchinterval",         dispatch_setswitchinterval         as *const () as usize),
-        ("intern",                    dispatch_intern_flat               as *const () as usize),
-        ("getrecursionlimit",         dispatch_getrecursionlimit_flat    as *const () as usize),
-        ("getdefaultencoding",        dispatch_getdefaultencoding_flat   as *const () as usize),
-        ("getswitchinterval",         dispatch_getswitchinterval_flat    as *const () as usize),
-        ("getsizeof",                 dispatch_getsizeof_flat            as *const () as usize),
-        ("displayhook",               dispatch_displayhook_flat          as *const () as usize),
-        ("__displayhook__",           dispatch_displayhook_flat          as *const () as usize),
-        ("excepthook",                dispatch_excepthook_flat           as *const () as usize),
-        ("__excepthook__",            dispatch_excepthook_flat           as *const () as usize),
-        ("exception",                 dispatch_exception_flat            as *const () as usize),
-        ("unraisablehook",            dispatch_unraisablehook_flat       as *const () as usize),
-        ("__unraisablehook__",        dispatch_unraisablehook_flat       as *const () as usize),
-        ("get_asyncgen_hooks",        dispatch_get_asyncgen_hooks        as *const () as usize),
-        ("set_asyncgen_hooks",        dispatch_set_asyncgen_hooks        as *const () as usize),
-        ("gettrace",                  dispatch_gettrace                  as *const () as usize),
-        ("settrace",                  dispatch_settrace                  as *const () as usize),
-        ("getrefcount",               dispatch_getrefcount               as *const () as usize),
-        ("is_finalizing",             dispatch_is_finalizing             as *const () as usize),
-        ("exc_info",                  dispatch_exc_info                  as *const () as usize),
-        ("getfilesystemencoding",     dispatch_getfilesystemencoding     as *const () as usize),
-        ("getfilesystemencodeerrors", dispatch_getfilesystemencodeerrors as *const () as usize),
+        ("exit", dispatch_exit as *const () as usize),
+        (
+            "setrecursionlimit",
+            dispatch_setrecursionlimit as *const () as usize,
+        ),
+        (
+            "setswitchinterval",
+            dispatch_setswitchinterval as *const () as usize,
+        ),
+        ("intern", dispatch_intern_flat as *const () as usize),
+        (
+            "getrecursionlimit",
+            dispatch_getrecursionlimit_flat as *const () as usize,
+        ),
+        (
+            "getdefaultencoding",
+            dispatch_getdefaultencoding_flat as *const () as usize,
+        ),
+        (
+            "getswitchinterval",
+            dispatch_getswitchinterval_flat as *const () as usize,
+        ),
+        ("getsizeof", dispatch_getsizeof_flat as *const () as usize),
+        (
+            "displayhook",
+            dispatch_displayhook_flat as *const () as usize,
+        ),
+        (
+            "__displayhook__",
+            dispatch_displayhook_flat as *const () as usize,
+        ),
+        ("excepthook", dispatch_excepthook_flat as *const () as usize),
+        (
+            "__excepthook__",
+            dispatch_excepthook_flat as *const () as usize,
+        ),
+        ("exception", dispatch_exception_flat as *const () as usize),
+        (
+            "unraisablehook",
+            dispatch_unraisablehook_flat as *const () as usize,
+        ),
+        (
+            "__unraisablehook__",
+            dispatch_unraisablehook_flat as *const () as usize,
+        ),
+        (
+            "get_asyncgen_hooks",
+            dispatch_get_asyncgen_hooks as *const () as usize,
+        ),
+        (
+            "set_asyncgen_hooks",
+            dispatch_set_asyncgen_hooks as *const () as usize,
+        ),
+        ("gettrace", dispatch_gettrace as *const () as usize),
+        ("settrace", dispatch_settrace as *const () as usize),
+        ("getrefcount", dispatch_getrefcount as *const () as usize),
+        (
+            "is_finalizing",
+            dispatch_is_finalizing as *const () as usize,
+        ),
+        ("exc_info", dispatch_exc_info as *const () as usize),
+        (
+            "getfilesystemencoding",
+            dispatch_getfilesystemencoding as *const () as usize,
+        ),
+        (
+            "getfilesystemencodeerrors",
+            dispatch_getfilesystemencodeerrors as *const () as usize,
+        ),
     ];
     for (name, addr) in &new_dispatchers {
         attrs.insert((*name).into(), MbValue::from_func(*addr));
@@ -853,59 +1080,147 @@ pub fn register() {
         }
     });
 
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("abiflags".into(), MbValue::from_ptr(MbObject::new_str("".to_string())));
-    attrs.insert("float_repr_style".into(), MbValue::from_ptr(MbObject::new_str("short".to_string())));
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "abiflags".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())),
+    );
+    attrs.insert(
+        "float_repr_style".into(),
+        MbValue::from_ptr(MbObject::new_str("short".to_string())),
+    );
     attrs.insert("maxunicode".into(), MbValue::from_int(1114111));
-    attrs.insert("platlibdir".into(), MbValue::from_ptr(MbObject::new_str("lib".to_string())));
+    attrs.insert(
+        "platlibdir".into(),
+        MbValue::from_ptr(MbObject::new_str("lib".to_string())),
+    );
 
     // surface: missing CPython sys data/constants (auto-added, batch 2)
     // copyright — CPython license banner string.
-    attrs.insert("copyright".into(),
+    attrs.insert(
+        "copyright".into(),
         MbValue::from_ptr(MbObject::new_str(
-            "Copyright (c) 2001-2023 Python Software Foundation.\nAll Rights Reserved.".to_string())));
+            "Copyright (c) 2001-2023 Python Software Foundation.\nAll Rights Reserved.".to_string(),
+        )),
+    );
     // pycache_prefix — None by default in CPython.
     attrs.insert("pycache_prefix".into(), MbValue::none());
     // orig_argv — original interpreter argv (empty until populated).
-    attrs.insert("orig_argv".into(),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    attrs.insert(
+        "orig_argv".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
     // meta_path / path_hooks — import system hook lists (empty stubs).
-    attrs.insert("meta_path".into(),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())));
-    attrs.insert("path_hooks".into(),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    attrs.insert(
+        "meta_path".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
+    attrs.insert(
+        "path_hooks".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
     // path_importer_cache — import cache dict (empty stub).
-    attrs.insert("path_importer_cache".into(),
-        MbValue::from_ptr(MbObject::new_dict()));
+    attrs.insert(
+        "path_importer_cache".into(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
     // monitoring — submodule; register as a stub namespace dict.
-    attrs.insert("monitoring".into(),
-        MbValue::from_ptr(MbObject::new_dict()));
+    attrs.insert("monitoring".into(), MbValue::from_ptr(MbObject::new_dict()));
     // stdlib_module_names — frozenset in CPython. A representative subset
     // of the stdlib.
     let stdlib_names: Vec<MbValue> = [
-        "abc", "argparse", "array", "ast", "base64", "bisect", "calendar",
-        "cmath", "collections", "configparser", "contextlib", "copy", "csv",
-        "datetime", "decimal", "difflib", "enum", "fnmatch", "fractions",
-        "functools", "gc", "getopt", "glob", "gzip", "hashlib", "heapq",
-        "hmac", "html", "http", "io", "itertools", "json", "keyword",
-        "logging", "math", "operator", "os", "pathlib", "pickle", "platform",
-        "pprint", "queue", "random", "re", "secrets", "shutil", "signal",
-        "socket", "stat", "statistics", "string", "struct", "subprocess",
-        "sys", "tempfile", "textwrap", "threading", "time", "timeit",
-        "tomllib", "traceback", "types", "typing", "unicodedata", "unittest",
-        "urllib", "uuid", "warnings", "weakref", "zipfile", "zlib",
-    ].iter().map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string()))).collect();
-    attrs.insert("stdlib_module_names".into(),
-        MbValue::from_ptr(MbObject::new_frozenset(stdlib_names)));
+        "abc",
+        "argparse",
+        "array",
+        "ast",
+        "base64",
+        "bisect",
+        "calendar",
+        "cmath",
+        "collections",
+        "configparser",
+        "contextlib",
+        "copy",
+        "csv",
+        "datetime",
+        "decimal",
+        "difflib",
+        "enum",
+        "fnmatch",
+        "fractions",
+        "functools",
+        "gc",
+        "getopt",
+        "glob",
+        "gzip",
+        "hashlib",
+        "heapq",
+        "hmac",
+        "html",
+        "http",
+        "io",
+        "itertools",
+        "json",
+        "keyword",
+        "logging",
+        "math",
+        "operator",
+        "os",
+        "pathlib",
+        "pickle",
+        "platform",
+        "pprint",
+        "queue",
+        "random",
+        "re",
+        "secrets",
+        "shutil",
+        "signal",
+        "socket",
+        "stat",
+        "statistics",
+        "string",
+        "struct",
+        "subprocess",
+        "sys",
+        "tempfile",
+        "textwrap",
+        "threading",
+        "time",
+        "timeit",
+        "tomllib",
+        "traceback",
+        "types",
+        "typing",
+        "unicodedata",
+        "unittest",
+        "urllib",
+        "uuid",
+        "warnings",
+        "weakref",
+        "zipfile",
+        "zlib",
+    ]
+    .iter()
+    .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
+    .collect();
+    attrs.insert(
+        "stdlib_module_names".into(),
+        MbValue::from_ptr(MbObject::new_frozenset(stdlib_names)),
+    );
     // thread_info — namespace-like dict (name/lock/version).
     let thread_info = MbObject::new_dict();
     unsafe {
         if let ObjData::Dict(ref lock) = (*thread_info).data {
             let mut map = lock.write().unwrap();
-            map.insert("name".into(),
-                MbValue::from_ptr(MbObject::new_str("pthread".to_string())));
-            map.insert("lock".into(),
-                MbValue::from_ptr(MbObject::new_str("mutex+cond".to_string())));
+            map.insert(
+                "name".into(),
+                MbValue::from_ptr(MbObject::new_str("pthread".to_string())),
+            );
+            map.insert(
+                "lock".into(),
+                MbValue::from_ptr(MbObject::new_str("mutex+cond".to_string())),
+            );
             map.insert("version".into(), MbValue::none());
         }
     }
@@ -915,14 +1230,23 @@ pub fn register() {
     // Present+callable stubs returning None. Registered in NATIVE_FUNC_ADDRS.
     let stub_fn_addr = dispatch_sys_stub_none as *const () as usize;
     for name in [
-        "activate_stack_trampoline", "addaudithook", "audit",
-        "breakpointhook", "call_tracing", "deactivate_stack_trampoline",
+        "activate_stack_trampoline",
+        "addaudithook",
+        "audit",
+        "breakpointhook",
+        "call_tracing",
+        "deactivate_stack_trampoline",
         "get_coroutine_origin_tracking_depth",
-        "get_int_max_str_digits", "getallocatedblocks", "getdlopenflags",
-        "getprofile", "getunicodeinternedsize",
+        "get_int_max_str_digits",
+        "getallocatedblocks",
+        "getdlopenflags",
+        "getprofile",
+        "getunicodeinternedsize",
         "is_stack_trampoline_active",
-        "set_coroutine_origin_tracking_depth", "set_int_max_str_digits",
-        "setdlopenflags", "setprofile",
+        "set_coroutine_origin_tracking_depth",
+        "set_int_max_str_digits",
+        "setdlopenflags",
+        "setprofile",
     ] {
         attrs.insert(name.into(), MbValue::from_func(stub_fn_addr));
     }
@@ -981,7 +1305,8 @@ pub fn mb_sys_setrecursionlimit(limit: MbValue) -> MbValue {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(
-                    "recursion limit must be greater or equal than 1".to_string())),
+                    "recursion limit must be greater or equal than 1".to_string(),
+                )),
             );
             return MbValue::none();
         }
@@ -1000,13 +1325,16 @@ pub fn mb_sys_setswitchinterval(interval: MbValue) -> MbValue {
     // Accept both float (the documented type) and int args. Only raise when a
     // numeric value <= 0 is supplied; a missing / non-numeric arg falls through
     // as a no-op (a real TypeError is a separate concern not exercised here).
-    let numeric = interval.as_float().or_else(|| interval.as_int_pyint().map(|i| i as f64));
+    let numeric = interval
+        .as_float()
+        .or_else(|| interval.as_int_pyint().map(|i| i as f64));
     match numeric {
         Some(v) if v <= 0.0 => {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(
-                    "switch interval must be strictly positive".to_string())),
+                    "switch interval must be strictly positive".to_string(),
+                )),
             );
             return MbValue::none();
         }
@@ -1095,7 +1423,8 @@ pub fn mb_sys_getfilesystemencodeerrors() -> MbValue {
 
 /// Populate sys.argv from command-line arguments.
 pub fn populate_argv(args: &[String]) {
-    let argv: Vec<MbValue> = args.iter()
+    let argv: Vec<MbValue> = args
+        .iter()
         .map(|a| MbValue::from_ptr(MbObject::new_str(a.clone())))
         .collect();
     let argv_list = MbValue::from_ptr(MbObject::new_list(argv));
@@ -1165,5 +1494,4 @@ mod tests {
         register();
         populate_argv(&[]);
     }
-
 }

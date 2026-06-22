@@ -28,7 +28,7 @@ fn validate_identifier(identifier: &str, _identifier_type: &str) -> Result<()> {
     if identifier.is_empty() {
         warn!(reason = "empty_identifier", "Identifier validation failed");
         return Err(crate::DataBridgeError::Query(
-            "Identifier cannot be empty".to_string()
+            "Identifier cannot be empty".to_string(),
         ));
     }
 
@@ -40,24 +40,24 @@ fn validate_identifier(identifier: &str, _identifier_type: &str) -> Result<()> {
     let identifier = identifier.nfkc().collect::<String>();
 
     // Check first character
-    let first_char = identifier.chars().next()
-        .ok_or_else(|| {
-            warn!(reason = "invalid_format", "Identifier validation failed");
-            crate::DataBridgeError::Query(
-                "Invalid identifier format".to_string()
-            )
-        })?;
+    let first_char = identifier.chars().next().ok_or_else(|| {
+        warn!(reason = "invalid_format", "Identifier validation failed");
+        crate::DataBridgeError::Query("Invalid identifier format".to_string())
+    })?;
     if first_char.is_ascii_digit() {
         warn!(reason = "starts_with_digit", "Identifier validation failed");
         return Err(crate::DataBridgeError::Query(
-            "Identifier cannot start with a digit".to_string()
+            "Identifier cannot start with a digit".to_string(),
         ));
     }
 
     // Check all characters are valid
     for c in identifier.chars() {
         if !c.is_alphanumeric() && c != '_' && c != '$' {
-            warn!(reason = "invalid_characters", "Identifier validation failed");
+            warn!(
+                reason = "invalid_characters",
+                "Identifier validation failed"
+            );
             return Err(crate::DataBridgeError::Query(
                 "Identifier contains invalid characters. Only alphanumeric, underscore, and dollar sign allowed".to_string()
             ));
@@ -69,9 +69,13 @@ fn validate_identifier(identifier: &str, _identifier_type: &str) -> Result<()> {
     let dangerous_patterns = ["--", "/*", "*/", ";", "drop", "delete", "truncate"];
     for pattern in &dangerous_patterns {
         if lower.contains(pattern) {
-            warn!(reason = "sql_injection_attempt", pattern = pattern, "Identifier validation failed");
+            warn!(
+                reason = "sql_injection_attempt",
+                pattern = pattern,
+                "Identifier validation failed"
+            );
             return Err(crate::DataBridgeError::Query(
-                "Identifier contains potentially dangerous pattern".to_string()
+                "Identifier contains potentially dangerous pattern".to_string(),
             ));
         }
     }
@@ -130,7 +134,7 @@ pub fn validate_foreign_key_reference(reference: &str) -> Result<(String, String
             Ok((table.to_string(), column.to_string()))
         }
         _ => Err(crate::DataBridgeError::Query(
-            "Invalid foreign key reference format. Expected 'table' or 'table.column'".to_string()
+            "Invalid foreign key reference format. Expected 'table' or 'table.column'".to_string(),
         )),
     }
 }
@@ -202,10 +206,7 @@ mod tests {
     fn test_validate_foreign_key_reference_empty() {
         let result = validate_foreign_key_reference("");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot be empty"));
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
     }
 
     #[test]

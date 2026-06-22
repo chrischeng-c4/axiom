@@ -1,3 +1,7 @@
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 /// enum module for Mamba (#410, #1448).
 ///
 /// 8-entry surface (#1265 Task #74, Wave-7 ship #1):
@@ -18,13 +22,8 @@
 ///     the class unchanged. If a duplicate is found, returns
 ///     `MbValue::none()` (the runtime call site interprets None as a
 ///     ValueError equivalent on the dispatch path).
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
@@ -108,7 +107,9 @@ fn push_item_spec(specs: &mut Vec<(String, MbValue)>, item: MbValue, counter: &m
 fn parse_member_specs(members: MbValue, start: i64) -> Vec<(String, MbValue)> {
     let mut specs = Vec::new();
     let mut counter = start;
-    let Some(ptr) = members.as_ptr() else { return specs };
+    let Some(ptr) = members.as_ptr() else {
+        return specs;
+    };
     unsafe {
         match &(*ptr).data {
             ObjData::Dict(lock) => {
@@ -142,12 +143,7 @@ fn parse_member_specs(members: MbValue, start: i64) -> Vec<(String, MbValue)> {
 }
 
 /// Build a functional-API enum class object from parsed inputs.
-fn enum_create_with_opts(
-    name: MbValue,
-    members: MbValue,
-    mixin: MixinKind,
-    start: i64,
-) -> MbValue {
+fn enum_create_with_opts(name: MbValue, members: MbValue, mixin: MixinKind, start: i64) -> MbValue {
     let enum_name = extract_str(name).unwrap_or_else(|| "Enum".to_string());
     let mut enum_fields = FxHashMap::default();
     let mut member_list = Vec::new();
@@ -175,14 +171,21 @@ fn enum_create_with_opts(
             MixinKind::None => {
                 // Create enum member instance
                 let mut fields = FxHashMap::default();
-                fields.insert("name".to_string(),
-                    MbValue::from_ptr(MbObject::new_str(member_name.clone())));
+                fields.insert(
+                    "name".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(member_name.clone())),
+                );
                 fields.insert("value".to_string(), actual_val);
-                fields.insert("__class__".to_string(),
-                    MbValue::from_ptr(MbObject::new_str(enum_name.clone())));
+                fields.insert(
+                    "__class__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(enum_name.clone())),
+                );
 
                 let member_obj = Box::new(MbObject {
-                    header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+                    header: MbObjectHeader {
+                        rc: AtomicU32::new(1),
+                        kind: ObjKind::Instance,
+                    },
                     data: ObjData::Instance {
                         class_name: "EnumMember".to_string(),
                         fields: RwLock::new(fields),
@@ -196,17 +199,24 @@ fn enum_create_with_opts(
     }
 
     // Store __members__ as a list of member values (insertion order)
-    enum_fields.insert("__members__".to_string(),
-        MbValue::from_ptr(MbObject::new_list(member_list)));
-    enum_fields.insert("__name__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(enum_name.clone())));
+    enum_fields.insert(
+        "__members__".to_string(),
+        MbValue::from_ptr(MbObject::new_list(member_list)),
+    );
+    enum_fields.insert(
+        "__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(enum_name.clone())),
+    );
 
     // The returned enum *class* object uses the fixed, immutable runtime class
     // `ENUM_CLASS_OBJ` (registered with empty `__slots__` in `register`) so that
     // member reassignment on it raises AttributeError. Members were written
     // into `enum_fields` directly above, bypassing the slots gate.
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: ENUM_CLASS_OBJ.to_string(),
             fields: RwLock::new(enum_fields),
@@ -237,7 +247,9 @@ pub fn mb_enum_auto() -> MbValue {
 fn parse_functional_kwargs(d: MbValue) -> Option<(MixinKind, i64)> {
     let ptr = d.as_ptr()?;
     unsafe {
-        let ObjData::Dict(ref lock) = (*ptr).data else { return None };
+        let ObjData::Dict(ref lock) = (*ptr).data else {
+            return None;
+        };
         let map = lock.read().unwrap();
         let mut mixin = MixinKind::None;
         let mut start = 1i64;
@@ -249,12 +261,11 @@ fn parse_functional_kwargs(d: MbValue) -> Option<(MixinKind, i64)> {
                     let tn = if let Some(vp) = v.as_ptr() {
                         match &(*vp).data {
                             ObjData::Str(s) => Some(s.clone()),
-                            ObjData::Instance { class_name, fields }
-                                if class_name == "type" =>
-                            {
-                                fields.read().ok().and_then(|f| {
-                                    f.get("__name__").and_then(|n| extract_str(*n))
-                                })
+                            ObjData::Instance { class_name, fields } if class_name == "type" => {
+                                fields
+                                    .read()
+                                    .ok()
+                                    .and_then(|f| f.get("__name__").and_then(|n| extract_str(*n)))
                             }
                             _ => None,
                         }
@@ -391,7 +402,9 @@ unsafe extern "C" fn dispatch_enum_verify_apply(args: *const MbValue, n: usize) 
     };
     let cls = a.first().copied().unwrap_or_else(MbValue::none);
     let checks = PENDING_VERIFY_CHECKS.with(|c| c.borrow().clone());
-    let Some(name) = extract_str_local(cls) else { return cls };
+    let Some(name) = extract_str_local(cls) else {
+        return cls;
+    };
     for check in checks {
         match check.as_str() {
             "UNIQUE" => {
@@ -470,7 +483,11 @@ unsafe extern "C" fn dispatch_enum_none(_args: *const MbValue, _n: usize) -> MbV
 pub fn functional_enum_members(obj: MbValue) -> Option<Vec<MbValue>> {
     let ptr = obj.as_ptr()?;
     unsafe {
-        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+        if let ObjData::Instance {
+            ref class_name,
+            ref fields,
+        } = (*ptr).data
+        {
             if class_name != ENUM_CLASS_OBJ {
                 return None;
             }
@@ -504,21 +521,29 @@ pub fn mb_functional_enum_call(cls: MbValue, value: MbValue) -> MbValue {
         for m in members {
             let mval = {
                 let v = mb_enum_member_value(m);
-                if v.is_none() { m } else { v }
+                if v.is_none() {
+                    m
+                } else {
+                    v
+                }
             };
             if m.to_bits() == value.to_bits()
-                || super::super::builtins::mb_eq(mval, value).as_bool().unwrap_or(false)
+                || super::super::builtins::mb_eq(mval, value)
+                    .as_bool()
+                    .unwrap_or(false)
             {
                 unsafe { super::super::rc::retain_if_ptr(m) };
                 return m;
             }
         }
-        let name = cls.as_ptr()
+        let name = cls
+            .as_ptr()
             .and_then(|p| unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*p).data {
-                    fields.read().ok().and_then(|f| {
-                        f.get("__name__").and_then(|n| extract_str(*n))
-                    })
+                    fields
+                        .read()
+                        .ok()
+                        .and_then(|f| f.get("__name__").and_then(|n| extract_str(*n)))
                 } else {
                     None
                 }
@@ -685,8 +710,17 @@ pub fn register() {
     // calling `IntEnum(...)` is a no-op here; the *functional* construction
     // case is handled separately for `Enum` (below), which is the only base a
     // baseline-green error fixture builds-then-mutates.
-    let str_classes = ["IntEnum", "StrEnum", "Flag", "IntFlag", "ReprEnum",
-                       "EnumType", "EnumMeta", "EnumCheck", "FlagBoundary"];
+    let str_classes = [
+        "IntEnum",
+        "StrEnum",
+        "Flag",
+        "IntFlag",
+        "ReprEnum",
+        "EnumType",
+        "EnumMeta",
+        "EnumCheck",
+        "FlagBoundary",
+    ];
     for cn in str_classes {
         super::super::class::mb_class_register(cn, Vec::new(), HashMap::new());
     }
@@ -729,36 +763,64 @@ pub fn register() {
     // The class-body form `class Color(Enum): RED = 1` still needs the
     // metaclass / class-definition transform in class.rs (Lane-B) and is
     // unaffected by this module.
-    attrs.insert("Enum".to_string(),
-        callable_func(dispatch_enum_create as *const () as usize));
-    attrs.insert("IntEnum".to_string(),
-        callable_func(dispatch_intenum_create as *const () as usize));
+    attrs.insert(
+        "Enum".to_string(),
+        callable_func(dispatch_enum_create as *const () as usize),
+    );
+    attrs.insert(
+        "IntEnum".to_string(),
+        callable_func(dispatch_intenum_create as *const () as usize),
+    );
 
     // ── Functions / decorators (callable) ────────────────────────────────
-    attrs.insert("auto".to_string(),
-        callable_func(dispatch_enum_auto as *const () as usize));
-    attrs.insert("unique".to_string(),
-        callable_func(dispatch_enum_unique as *const () as usize));
-    attrs.insert("verify".to_string(),
-        callable_func(dispatch_enum_verify as *const () as usize));
-    attrs.insert("member".to_string(),
-        callable_func(dispatch_enum_identity as *const () as usize));
-    attrs.insert("nonmember".to_string(),
-        callable_func(dispatch_enum_identity as *const () as usize));
-    attrs.insert("property".to_string(),
-        callable_func(dispatch_enum_identity as *const () as usize));
-    attrs.insert("global_enum".to_string(),
-        callable_func(dispatch_enum_identity as *const () as usize));
-    attrs.insert("global_enum_repr".to_string(),
-        callable_func(dispatch_enum_empty_str as *const () as usize));
-    attrs.insert("global_flag_repr".to_string(),
-        callable_func(dispatch_enum_empty_str as *const () as usize));
-    attrs.insert("global_str".to_string(),
-        callable_func(dispatch_enum_empty_str as *const () as usize));
-    attrs.insert("pickle_by_enum_name".to_string(),
-        callable_func(dispatch_enum_none as *const () as usize));
-    attrs.insert("pickle_by_global_name".to_string(),
-        callable_func(dispatch_enum_none as *const () as usize));
+    attrs.insert(
+        "auto".to_string(),
+        callable_func(dispatch_enum_auto as *const () as usize),
+    );
+    attrs.insert(
+        "unique".to_string(),
+        callable_func(dispatch_enum_unique as *const () as usize),
+    );
+    attrs.insert(
+        "verify".to_string(),
+        callable_func(dispatch_enum_verify as *const () as usize),
+    );
+    attrs.insert(
+        "member".to_string(),
+        callable_func(dispatch_enum_identity as *const () as usize),
+    );
+    attrs.insert(
+        "nonmember".to_string(),
+        callable_func(dispatch_enum_identity as *const () as usize),
+    );
+    attrs.insert(
+        "property".to_string(),
+        callable_func(dispatch_enum_identity as *const () as usize),
+    );
+    attrs.insert(
+        "global_enum".to_string(),
+        callable_func(dispatch_enum_identity as *const () as usize),
+    );
+    attrs.insert(
+        "global_enum_repr".to_string(),
+        callable_func(dispatch_enum_empty_str as *const () as usize),
+    );
+    attrs.insert(
+        "global_flag_repr".to_string(),
+        callable_func(dispatch_enum_empty_str as *const () as usize),
+    );
+    attrs.insert(
+        "global_str".to_string(),
+        callable_func(dispatch_enum_empty_str as *const () as usize),
+    );
+    attrs.insert(
+        "pickle_by_enum_name".to_string(),
+        callable_func(dispatch_enum_none as *const () as usize),
+    );
+    attrs.insert(
+        "pickle_by_global_name".to_string(),
+        callable_func(dispatch_enum_none as *const () as usize),
+    );
 
     // ── Constants ────────────────────────────────────────────────────────
     // FlagBoundary members (CPython 3.12): STRICT/CONFORM/EJECT/KEEP.
@@ -773,25 +835,52 @@ pub fn register() {
 
     // ── __all__ (CPython 3.12 enum public surface) ───────────────────────
     let all_names = [
-        "EnumType", "EnumMeta", "Enum", "IntEnum", "StrEnum", "Flag",
-        "IntFlag", "ReprEnum", "auto", "unique", "property", "verify",
-        "member", "nonmember", "Member", "NonMember", "global_enum",
-        "global_enum_repr", "global_flag_repr", "global_str", "EnumCheck",
-        "CONTINUOUS", "NAMED_FLAGS", "UNIQUE", "FlagBoundary", "STRICT",
-        "CONFORM", "EJECT", "KEEP", "pickle_by_global_name",
+        "EnumType",
+        "EnumMeta",
+        "Enum",
+        "IntEnum",
+        "StrEnum",
+        "Flag",
+        "IntFlag",
+        "ReprEnum",
+        "auto",
+        "unique",
+        "property",
+        "verify",
+        "member",
+        "nonmember",
+        "Member",
+        "NonMember",
+        "global_enum",
+        "global_enum_repr",
+        "global_flag_repr",
+        "global_str",
+        "EnumCheck",
+        "CONTINUOUS",
+        "NAMED_FLAGS",
+        "UNIQUE",
+        "FlagBoundary",
+        "STRICT",
+        "CONFORM",
+        "EJECT",
+        "KEEP",
+        "pickle_by_global_name",
         "pickle_by_enum_name",
     ];
-    attrs.insert("__all__".to_string(),
+    attrs.insert(
+        "__all__".to_string(),
         MbValue::from_ptr(MbObject::new_list(
-            all_names.iter().map(|s| new_str(s)).collect())));
+            all_names.iter().map(|s| new_str(s)).collect(),
+        )),
+    );
 
     super::register_module("enum", attrs);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::rc::MbObject;
+    use super::*;
 
     fn s(val: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(val.to_string()))
@@ -819,7 +908,9 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     let f = fields.read().unwrap();
-                    if let Some(v) = f.get(field) { return *v; }
+                    if let Some(v) = f.get(field) {
+                        return *v;
+                    }
                 }
             }
         }
@@ -864,7 +955,9 @@ mod tests {
         unsafe {
             if let ObjData::List(ref lock) = (*mlist.as_ptr().unwrap()).data {
                 assert_eq!(lock.read().unwrap().len(), 2);
-            } else { panic!("expected list"); }
+            } else {
+                panic!("expected list");
+            }
         }
     }
 
@@ -945,8 +1038,11 @@ mod tests {
         let members = make_members(&[("A", 1), ("B", 2), ("C", 3)]);
         let e = mb_enum_create(s("Distinct"), members);
         let r = mb_enum_unique(e);
-        assert_eq!(r.as_ptr(), e.as_ptr(),
-            "unique should return the class unchanged when all values distinct");
+        assert_eq!(
+            r.as_ptr(),
+            e.as_ptr(),
+            "unique should return the class unchanged when all values distinct"
+        );
     }
 
     #[test]
@@ -958,8 +1054,10 @@ mod tests {
         let members = make_members(&[("A", 1), ("B", 1)]);
         let e = mb_enum_create(s("DupValues"), members);
         let r = mb_enum_unique(e);
-        assert!(r.is_none(),
-            "unique should return None when two members share a value");
+        assert!(
+            r.is_none(),
+            "unique should return None when two members share a value"
+        );
     }
 
     #[test]

@@ -180,16 +180,11 @@ fn subscript(obj: MbValue, key: MbValue) -> MbValue {
         None => {
             // range objects are bare iterator handles (ints), not heap ptrs.
             // Support integer indexing into them (CPython: range[i]).
-            if let Some((current, stop, step)) =
-                super::super::iter::mb_iter_range_params(obj)
-            {
+            if let Some((current, stop, step)) = super::super::iter::mb_iter_range_params(obj) {
                 let len = super::super::iter::mb_iter_range_len(obj).unwrap_or(0);
                 // Reject non-integer keys (None, str, float) with TypeError.
                 if key.is_float() || is_str(key) || key.is_none() {
-                    raise(
-                        "TypeError",
-                        "range indices must be integers or slices",
-                    );
+                    raise("TypeError", "range indices must be integers or slices");
                     return MbValue::none();
                 }
                 match key.as_int() {
@@ -203,10 +198,7 @@ fn subscript(obj: MbValue, key: MbValue) -> MbValue {
                         return MbValue::none();
                     }
                     None => {
-                        raise(
-                            "TypeError",
-                            "range indices must be integers or slices",
-                        );
+                        raise("TypeError", "range indices must be integers or slices");
                         return MbValue::none();
                     }
                 }
@@ -226,10 +218,7 @@ fn subscript(obj: MbValue, key: MbValue) -> MbValue {
                 // Index a str by integer code-point position; reject non-int keys.
                 let chars: Vec<char> = s.chars().collect();
                 if key.is_float() || is_str(key) {
-                    raise(
-                        "TypeError",
-                        "string indices must be integers",
-                    );
+                    raise("TypeError", "string indices must be integers");
                     return MbValue::none();
                 }
                 let n = chars.len() as i64;
@@ -265,10 +254,7 @@ fn subscript(obj: MbValue, key: MbValue) -> MbValue {
                         args,
                     );
                 }
-                raise(
-                    "TypeError",
-                    &format!("'{cls}' object is not subscriptable"),
-                );
+                raise("TypeError", &format!("'{cls}' object is not subscriptable"));
                 MbValue::none()
             }
             _ => {
@@ -302,10 +288,18 @@ fn seq_index(items: &[MbValue], key: MbValue, kind: &str) -> MbValue {
         }
         let (mut lo, mut hi) = if st > 0 { (0i64, n) } else { (n - 1, -1i64) };
         if let Some(s) = start.as_int() {
-            lo = if s < 0 { (s + n).max(if st > 0 { 0 } else { -1 }) } else { s.min(if st > 0 { n } else { n - 1 }) };
+            lo = if s < 0 {
+                (s + n).max(if st > 0 { 0 } else { -1 })
+            } else {
+                s.min(if st > 0 { n } else { n - 1 })
+            };
         }
         if let Some(s) = stop.as_int() {
-            hi = if s < 0 { (s + n).max(if st > 0 { 0 } else { -1 }) } else { s.min(if st > 0 { n } else { n - 1 }) };
+            hi = if s < 0 {
+                (s + n).max(if st > 0 { 0 } else { -1 })
+            } else {
+                s.min(if st > 0 { n } else { n - 1 })
+            };
         }
         let mut out = Vec::new();
         let mut i = lo;
@@ -410,10 +404,7 @@ disp_unary!(dispatch_index, "index", mb_operator_index);
 // length_hint(obj, default=0) — two-arg form needs its own dispatcher.
 unsafe extern "C" fn dispatch_length_hint(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     if nargs == 0 || nargs > 2 {
-        raise(
-            "TypeError",
-            "length_hint expected at most 2 arguments",
-        );
+        raise("TypeError", "length_hint expected at most 2 arguments");
         return MbValue::none();
     }
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
@@ -499,16 +490,41 @@ fn inplace_dispatch(
 disp_inplace!(dispatch_iadd, "iadd", "__iadd__", mb_operator_add);
 disp_inplace!(dispatch_isub, "isub", "__isub__", mb_operator_sub);
 disp_inplace!(dispatch_imul, "imul", "__imul__", mb_operator_mul);
-disp_inplace!(dispatch_itruediv, "itruediv", "__itruediv__", mb_operator_truediv);
-disp_inplace!(dispatch_ifloordiv, "ifloordiv", "__ifloordiv__", mb_operator_floordiv);
+disp_inplace!(
+    dispatch_itruediv,
+    "itruediv",
+    "__itruediv__",
+    mb_operator_truediv
+);
+disp_inplace!(
+    dispatch_ifloordiv,
+    "ifloordiv",
+    "__ifloordiv__",
+    mb_operator_floordiv
+);
 disp_inplace!(dispatch_imod, "imod", "__imod__", mb_operator_mod);
 disp_inplace!(dispatch_ipow, "ipow", "__ipow__", mb_operator_pow);
-disp_inplace!(dispatch_imatmul, "imatmul", "__imatmul__", mb_operator_matmul);
+disp_inplace!(
+    dispatch_imatmul,
+    "imatmul",
+    "__imatmul__",
+    mb_operator_matmul
+);
 disp_inplace!(dispatch_iand, "iand", "__iand__", mb_operator_and);
 disp_inplace!(dispatch_ior, "ior", "__ior__", mb_operator_or);
 disp_inplace!(dispatch_ixor, "ixor", "__ixor__", mb_operator_xor);
-disp_inplace!(dispatch_ilshift, "ilshift", "__ilshift__", mb_operator_lshift);
-disp_inplace!(dispatch_irshift, "irshift", "__irshift__", mb_operator_rshift);
+disp_inplace!(
+    dispatch_ilshift,
+    "ilshift",
+    "__ilshift__",
+    mb_operator_lshift
+);
+disp_inplace!(
+    dispatch_irshift,
+    "irshift",
+    "__irshift__",
+    mb_operator_rshift
+);
 
 // iconcat(a, b) == `a += b` for sequences. The first arg MUST be a sequence
 // (CPython raises TypeError otherwise); iconcat falls back to __iadd__ when no
@@ -674,10 +690,7 @@ unsafe extern "C" fn dispatch_methodcaller(args_ptr: *const MbValue, nargs: usiz
 extern "C" fn op_itemgetter_call(self_inst: MbValue, args_list: MbValue) -> MbValue {
     let items = seq_items(args_list).unwrap_or_default();
     if items.len() != 1 {
-        raise(
-            "TypeError",
-            "itemgetter expects exactly one call argument",
-        );
+        raise("TypeError", "itemgetter expects exactly one call argument");
         return MbValue::none();
     }
     let target = items[0];
@@ -700,10 +713,7 @@ extern "C" fn op_itemgetter_call(self_inst: MbValue, args_list: MbValue) -> MbVa
 extern "C" fn op_attrgetter_call(self_inst: MbValue, args_list: MbValue) -> MbValue {
     let items = seq_items(args_list).unwrap_or_default();
     if items.len() != 1 {
-        raise(
-            "TypeError",
-            "attrgetter expects exactly one call argument",
-        );
+        raise("TypeError", "attrgetter expects exactly one call argument");
         return MbValue::none();
     }
     let target = items[0];
@@ -847,12 +857,51 @@ pub fn register() {
     // `operator.add is operator.__add__`, etc. The twin must be the *same*
     // object (identical func addr) so `is`-identity holds.
     const DUNDER_TWINS: &[&str] = &[
-        "abs", "add", "and_", "concat", "contains", "delitem", "eq", "floordiv",
-        "ge", "getitem", "gt", "iadd", "iand", "iconcat", "ifloordiv", "ilshift",
-        "imatmul", "imod", "imul", "index", "inv", "invert", "ior", "ipow",
-        "irshift", "isub", "itruediv", "ixor", "le", "lshift", "lt", "matmul",
-        "mod", "mul", "ne", "neg", "not_", "or_", "pos", "pow", "rshift",
-        "setitem", "sub", "truediv", "xor",
+        "abs",
+        "add",
+        "and_",
+        "concat",
+        "contains",
+        "delitem",
+        "eq",
+        "floordiv",
+        "ge",
+        "getitem",
+        "gt",
+        "iadd",
+        "iand",
+        "iconcat",
+        "ifloordiv",
+        "ilshift",
+        "imatmul",
+        "imod",
+        "imul",
+        "index",
+        "inv",
+        "invert",
+        "ior",
+        "ipow",
+        "irshift",
+        "isub",
+        "itruediv",
+        "ixor",
+        "le",
+        "lshift",
+        "lt",
+        "matmul",
+        "mod",
+        "mul",
+        "ne",
+        "neg",
+        "not_",
+        "or_",
+        "pos",
+        "pow",
+        "rshift",
+        "setitem",
+        "sub",
+        "truediv",
+        "xor",
     ];
 
     let mut aliases: Vec<(String, usize)> = Vec::new();
@@ -877,8 +926,14 @@ pub fn register() {
     // variadic (self, args_list) — register them as variadic so the dispatcher
     // delivers any call arity as a single list (mirrors mb_call_method's
     // is_variadic branch) and avoids per-call-arity ABI mismatch.
-    register_callable_class("operator.itemgetter", op_itemgetter_call as *const () as usize);
-    register_callable_class("operator.attrgetter", op_attrgetter_call as *const () as usize);
+    register_callable_class(
+        "operator.itemgetter",
+        op_itemgetter_call as *const () as usize,
+    );
+    register_callable_class(
+        "operator.attrgetter",
+        op_attrgetter_call as *const () as usize,
+    );
     register_callable_class(
         "operator.methodcaller",
         op_methodcaller_call as *const () as usize,
@@ -1296,10 +1351,7 @@ fn operator_length_hint(obj: MbValue, default: MbValue) -> MbValue {
                 None => {
                     raise(
                         "TypeError",
-                        &format!(
-                            "__length_hint__ must be an integer, not {}",
-                            type_name(r)
-                        ),
+                        &format!("__length_hint__ must be an integer, not {}", type_name(r)),
                     );
                     return MbValue::none();
                 }
@@ -1468,8 +1520,12 @@ pub fn mb_operator_contains(container: MbValue, item: MbValue) -> MbValue {
     if let Some(ptr) = container.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::Str(_) => return super::super::string_ops::mb_str_contains(container, item),
-                ObjData::Dict(_) => return super::super::dict_ops::mb_dict_contains(container, item),
+                ObjData::Str(_) => {
+                    return super::super::string_ops::mb_str_contains(container, item)
+                }
+                ObjData::Dict(_) => {
+                    return super::super::dict_ops::mb_dict_contains(container, item)
+                }
                 ObjData::Set(_) | ObjData::FrozenSet(_) => {
                     return super::super::set_ops::mb_set_contains(container, item)
                 }
@@ -1559,7 +1615,10 @@ fn operator_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
     let ptr = match obj.as_ptr() {
         Some(p) => p,
         None => {
-            raise("TypeError", "'NoneType' object does not support item assignment");
+            raise(
+                "TypeError",
+                "'NoneType' object does not support item assignment",
+            );
             return MbValue::none();
         }
     };
@@ -1596,7 +1655,10 @@ fn operator_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
             _ => {
                 raise(
                     "TypeError",
-                    &format!("'{}' object does not support item assignment", type_name(obj)),
+                    &format!(
+                        "'{}' object does not support item assignment",
+                        type_name(obj)
+                    ),
                 );
             }
         }
@@ -1609,7 +1671,10 @@ fn operator_delitem(obj: MbValue, key: MbValue) -> MbValue {
     let ptr = match obj.as_ptr() {
         Some(p) => p,
         None => {
-            raise("TypeError", "'NoneType' object doesn't support item deletion");
+            raise(
+                "TypeError",
+                "'NoneType' object doesn't support item deletion",
+            );
             return MbValue::none();
         }
     };
@@ -1694,7 +1759,11 @@ pub fn mb_operator_concat(a: MbValue, b: MbValue) -> MbValue {
     let is_seq = a.as_ptr().is_some_and(|p| unsafe {
         matches!(
             (*p).data,
-            ObjData::List(_) | ObjData::Tuple(_) | ObjData::Str(_) | ObjData::Bytes(_) | ObjData::ByteArray(_)
+            ObjData::List(_)
+                | ObjData::Tuple(_)
+                | ObjData::Str(_)
+                | ObjData::Bytes(_)
+                | ObjData::ByteArray(_)
         )
     });
     if !is_seq {
@@ -1729,7 +1798,10 @@ mod tests {
         assert_eq!(mb_operator_mul(a, b).as_int(), Some(30));
         assert_eq!(mb_operator_floordiv(a, b).as_int(), Some(3));
         assert_eq!(mb_operator_mod(a, b).as_int(), Some(1));
-        assert_eq!(mb_operator_pow(MbValue::from_int(2), MbValue::from_int(10)).as_int(), Some(1024));
+        assert_eq!(
+            mb_operator_pow(MbValue::from_int(2), MbValue::from_int(10)).as_int(),
+            Some(1024)
+        );
     }
 
     #[test]
@@ -1739,8 +1811,14 @@ mod tests {
         assert_eq!(mb_operator_and(a, b).as_int(), Some(0b1000));
         assert_eq!(mb_operator_or(a, b).as_int(), Some(0b1110));
         assert_eq!(mb_operator_xor(a, b).as_int(), Some(0b0110));
-        assert_eq!(mb_operator_lshift(MbValue::from_int(1), MbValue::from_int(4)).as_int(), Some(16));
-        assert_eq!(mb_operator_rshift(MbValue::from_int(16), MbValue::from_int(2)).as_int(), Some(4));
+        assert_eq!(
+            mb_operator_lshift(MbValue::from_int(1), MbValue::from_int(4)).as_int(),
+            Some(16)
+        );
+        assert_eq!(
+            mb_operator_rshift(MbValue::from_int(16), MbValue::from_int(2)).as_int(),
+            Some(4)
+        );
         assert_eq!(mb_operator_invert(MbValue::from_int(0)).as_int(), Some(-1));
     }
 
@@ -1750,8 +1828,14 @@ mod tests {
         assert_eq!(mb_operator_pos(MbValue::from_int(7)).as_int(), Some(7));
         assert_eq!(mb_operator_abs(MbValue::from_int(-5)).as_int(), Some(5));
         assert_eq!(mb_operator_not(MbValue::from_int(0)).as_bool(), Some(true));
-        assert_eq!(mb_operator_truth(MbValue::from_int(0)).as_bool(), Some(false));
-        assert_eq!(mb_operator_truth(MbValue::from_int(42)).as_bool(), Some(true));
+        assert_eq!(
+            mb_operator_truth(MbValue::from_int(0)).as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            mb_operator_truth(MbValue::from_int(42)).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]

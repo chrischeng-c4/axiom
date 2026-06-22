@@ -3,7 +3,9 @@
 //! These tests require a PostgreSQL database to be running.
 //! Set DATABASE_URL environment variable or skip with SKIP_INTEGRATION=true
 
-use cclab_pg::{Connection, ExtractedValue, PoolConfig, QueryBuilder, Row, Operator, OrderDirection};
+use cclab_pg::{
+    Connection, ExtractedValue, Operator, OrderDirection, PoolConfig, QueryBuilder, Row,
+};
 use qc::{expect, AssertionError};
 
 #[tokio::test]
@@ -28,7 +30,7 @@ async fn test_insert_and_find_by_id() -> Result<(), Box<dyn std::error::Error>> 
             name TEXT NOT NULL,
             age INTEGER NOT NULL,
             active BOOLEAN DEFAULT true
-        )"
+        )",
     )
     .execute(pool)
     .await
@@ -36,7 +38,10 @@ async fn test_insert_and_find_by_id() -> Result<(), Box<dyn std::error::Error>> 
 
     // Insert a row
     let values = vec![
-        ("name".to_string(), ExtractedValue::String("Alice".to_string())),
+        (
+            "name".to_string(),
+            ExtractedValue::String("Alice".to_string()),
+        ),
         ("age".to_string(), ExtractedValue::Int(30)),
         ("active".to_string(), ExtractedValue::Bool(true)),
     ];
@@ -59,9 +64,18 @@ async fn test_insert_and_find_by_id() -> Result<(), Box<dyn std::error::Error>> 
         .expect("Row should exist");
 
     // Verify values
-    expect(matches!(found_row.get("name").unwrap(), ExtractedValue::String(s) if s == "Alice")).to_be_true()?;
-    expect(matches!(found_row.get("age").unwrap(), ExtractedValue::Int(30))).to_be_true()?;
-    expect(matches!(found_row.get("active").unwrap(), ExtractedValue::Bool(true))).to_be_true()?;
+    expect(matches!(found_row.get("name").unwrap(), ExtractedValue::String(s) if s == "Alice"))
+        .to_be_true()?;
+    expect(matches!(
+        found_row.get("age").unwrap(),
+        ExtractedValue::Int(30)
+    ))
+    .to_be_true()?;
+    expect(matches!(
+        found_row.get("active").unwrap(),
+        ExtractedValue::Bool(true)
+    ))
+    .to_be_true()?;
 
     // Clean up
     sqlx::query("DROP TABLE test_users CASCADE")
@@ -92,7 +106,7 @@ async fn test_find_many_with_filters() -> Result<(), Box<dyn std::error::Error>>
             id BIGSERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             price INTEGER NOT NULL
-        )"
+        )",
     )
     .execute(pool)
     .await
@@ -132,7 +146,8 @@ async fn test_find_many_with_filters() -> Result<(), Box<dyn std::error::Error>>
     expect(matches!(
         results[0].get("name").unwrap(),
         ExtractedValue::String(s) if s == "Product C"
-    )).to_be_true()?;
+    ))
+    .to_be_true()?;
 
     // Clean up
     sqlx::query("DROP TABLE test_products CASCADE")
@@ -163,7 +178,7 @@ async fn test_update_and_delete() -> Result<(), Box<dyn std::error::Error>> {
             id BIGSERIAL PRIMARY KEY,
             title TEXT NOT NULL,
             quantity INTEGER NOT NULL
-        )"
+        )",
     )
     .execute(pool)
     .await
@@ -171,7 +186,10 @@ async fn test_update_and_delete() -> Result<(), Box<dyn std::error::Error>> {
 
     // Insert item
     let values = vec![
-        ("title".to_string(), ExtractedValue::String("Item 1".to_string())),
+        (
+            "title".to_string(),
+            ExtractedValue::String("Item 1".to_string()),
+        ),
         ("quantity".to_string(), ExtractedValue::Int(10)),
     ];
     let row = Row::insert(pool, "test_items", &values).await.unwrap();
@@ -182,12 +200,13 @@ async fn test_update_and_delete() -> Result<(), Box<dyn std::error::Error>> {
 
     // Update item
     let updates = vec![
-        ("title".to_string(), ExtractedValue::String("Updated Item".to_string())),
+        (
+            "title".to_string(),
+            ExtractedValue::String("Updated Item".to_string()),
+        ),
         ("quantity".to_string(), ExtractedValue::Int(20)),
     ];
-    let updated = Row::update(pool, "test_items", id, &updates)
-        .await
-        .unwrap();
+    let updated = Row::update(pool, "test_items", id, &updates).await.unwrap();
     expect(updated).to_be_true()?;
 
     // Verify update
@@ -198,8 +217,13 @@ async fn test_update_and_delete() -> Result<(), Box<dyn std::error::Error>> {
     expect(matches!(
         found.get("title").unwrap(),
         ExtractedValue::String(s) if s == "Updated Item"
-    )).to_be_true()?;
-    expect(matches!(found.get("quantity").unwrap(), ExtractedValue::Int(20))).to_be_true()?;
+    ))
+    .to_be_true()?;
+    expect(matches!(
+        found.get("quantity").unwrap(),
+        ExtractedValue::Int(20)
+    ))
+    .to_be_true()?;
 
     // Delete item
     let deleted = Row::delete(pool, "test_items", id).await.unwrap();
@@ -237,7 +261,7 @@ async fn test_count() -> Result<(), Box<dyn std::error::Error>> {
         "CREATE TABLE test_counts (
             id BIGSERIAL PRIMARY KEY,
             status TEXT NOT NULL
-        )"
+        )",
     )
     .execute(pool)
     .await
@@ -245,9 +269,10 @@ async fn test_count() -> Result<(), Box<dyn std::error::Error>> {
 
     // Insert test data
     for status in &["active", "active", "inactive", "active", "pending"] {
-        let values = vec![
-            ("status".to_string(), ExtractedValue::String(status.to_string())),
-        ];
+        let values = vec![(
+            "status".to_string(),
+            ExtractedValue::String(status.to_string()),
+        )];
         Row::insert(pool, "test_counts", &values).await.unwrap();
     }
 
@@ -258,7 +283,11 @@ async fn test_count() -> Result<(), Box<dyn std::error::Error>> {
     // Count active rows
     let query = QueryBuilder::new("test_counts")
         .unwrap()
-        .where_clause("status", Operator::Eq, ExtractedValue::String("active".to_string()))
+        .where_clause(
+            "status",
+            Operator::Eq,
+            ExtractedValue::String("active".to_string()),
+        )
         .unwrap();
     let active_count = Row::count(pool, "test_counts", Some(&query)).await.unwrap();
     expect(active_count).to_equal(&3)?;
@@ -278,7 +307,10 @@ fn test_row_to_json() -> Result<(), AssertionError> {
 
     let mut columns = HashMap::new();
     columns.insert("id".to_string(), ExtractedValue::BigInt(42));
-    columns.insert("name".to_string(), ExtractedValue::String("Test".to_string()));
+    columns.insert(
+        "name".to_string(),
+        ExtractedValue::String("Test".to_string()),
+    );
     columns.insert("active".to_string(), ExtractedValue::Bool(true));
     columns.insert("price".to_string(), ExtractedValue::Double(99.99));
 
@@ -318,7 +350,7 @@ async fn test_insert_many() -> Result<(), Box<dyn std::error::Error>> {
             name TEXT NOT NULL,
             age INTEGER NOT NULL,
             score DOUBLE PRECISION NOT NULL
-        )"
+        )",
     )
     .execute(pool)
     .await
@@ -326,17 +358,26 @@ async fn test_insert_many() -> Result<(), Box<dyn std::error::Error>> {
 
     // Prepare multiple rows to insert
     let mut row1 = HashMap::new();
-    row1.insert("name".to_string(), ExtractedValue::String("Alice".to_string()));
+    row1.insert(
+        "name".to_string(),
+        ExtractedValue::String("Alice".to_string()),
+    );
     row1.insert("age".to_string(), ExtractedValue::Int(30));
     row1.insert("score".to_string(), ExtractedValue::Double(95.5));
 
     let mut row2 = HashMap::new();
-    row2.insert("name".to_string(), ExtractedValue::String("Bob".to_string()));
+    row2.insert(
+        "name".to_string(),
+        ExtractedValue::String("Bob".to_string()),
+    );
     row2.insert("age".to_string(), ExtractedValue::Int(25));
     row2.insert("score".to_string(), ExtractedValue::Double(87.3));
 
     let mut row3 = HashMap::new();
-    row3.insert("name".to_string(), ExtractedValue::String("Charlie".to_string()));
+    row3.insert(
+        "name".to_string(),
+        ExtractedValue::String("Charlie".to_string()),
+    );
     row3.insert("age".to_string(), ExtractedValue::Int(35));
     row3.insert("score".to_string(), ExtractedValue::Double(92.1));
 
@@ -360,17 +401,24 @@ async fn test_insert_many() -> Result<(), Box<dyn std::error::Error>> {
         // Verify other fields
         match idx {
             0 => {
-                expect(matches!(row.get("name").unwrap(), ExtractedValue::String(s) if s == "Alice")).to_be_true()?;
+                expect(
+                    matches!(row.get("name").unwrap(), ExtractedValue::String(s) if s == "Alice"),
+                )
+                .to_be_true()?;
                 expect(matches!(row.get("age").unwrap(), ExtractedValue::Int(30))).to_be_true()?;
                 expect(matches!(row.get("score").unwrap(), ExtractedValue::Double(s) if (*s - 95.5).abs() < 0.01)).to_be_true()?;
             }
             1 => {
-                expect(matches!(row.get("name").unwrap(), ExtractedValue::String(s) if s == "Bob")).to_be_true()?;
+                expect(matches!(row.get("name").unwrap(), ExtractedValue::String(s) if s == "Bob"))
+                    .to_be_true()?;
                 expect(matches!(row.get("age").unwrap(), ExtractedValue::Int(25))).to_be_true()?;
                 expect(matches!(row.get("score").unwrap(), ExtractedValue::Double(s) if (*s - 87.3).abs() < 0.01)).to_be_true()?;
             }
             2 => {
-                expect(matches!(row.get("name").unwrap(), ExtractedValue::String(s) if s == "Charlie")).to_be_true()?;
+                expect(
+                    matches!(row.get("name").unwrap(), ExtractedValue::String(s) if s == "Charlie"),
+                )
+                .to_be_true()?;
                 expect(matches!(row.get("age").unwrap(), ExtractedValue::Int(35))).to_be_true()?;
                 expect(matches!(row.get("score").unwrap(), ExtractedValue::Double(s) if (*s - 92.1).abs() < 0.01)).to_be_true()?;
             }
@@ -432,7 +480,7 @@ async fn test_insert_many_mismatched_columns() -> Result<(), Box<dyn std::error:
             id BIGSERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             age INTEGER
-        )"
+        )",
     )
     .execute(pool)
     .await
@@ -440,12 +488,18 @@ async fn test_insert_many_mismatched_columns() -> Result<(), Box<dyn std::error:
 
     // First row has name and age
     let mut row1 = HashMap::new();
-    row1.insert("name".to_string(), ExtractedValue::String("Alice".to_string()));
+    row1.insert(
+        "name".to_string(),
+        ExtractedValue::String("Alice".to_string()),
+    );
     row1.insert("age".to_string(), ExtractedValue::Int(30));
 
     // Second row only has name (missing age)
     let mut row2 = HashMap::new();
-    row2.insert("name".to_string(), ExtractedValue::String("Bob".to_string()));
+    row2.insert(
+        "name".to_string(),
+        ExtractedValue::String("Bob".to_string()),
+    );
 
     // Should fail due to mismatched columns
     let result = Row::insert_many(pool, "test_mismatch", &[row1, row2]).await;

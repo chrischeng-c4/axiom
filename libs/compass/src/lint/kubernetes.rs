@@ -138,10 +138,7 @@ impl KubernetesChecker {
     fn check_resource_limits(&self, lines: &[&str]) -> Vec<Diagnostic> {
         let has_resources = lines.iter().any(|l| l.trim().starts_with("resources:"));
         let has_limits = lines.iter().any(|l| l.trim().starts_with("limits:"));
-        let has_containers = lines.iter().any(|l| {
-            let t = l.trim();
-            t.starts_with("containers:") || t.starts_with("- name:")
-        });
+        let has_containers = Self::has_pod_containers(lines);
 
         if has_containers && (!has_resources || !has_limits) {
             vec![Diagnostic::warning(
@@ -157,11 +154,7 @@ impl KubernetesChecker {
 
     /// K8006: Running as root (missing securityContext.runAsNonRoot)
     fn check_run_as_root(&self, lines: &[&str]) -> Vec<Diagnostic> {
-        let has_containers = lines.iter().any(|l| {
-            let t = l.trim();
-            t.starts_with("containers:") || t.starts_with("- name:")
-        });
-        if !has_containers {
+        if !Self::has_pod_containers(lines) {
             return Vec::new();
         }
 
@@ -236,6 +229,28 @@ impl KubernetesChecker {
         Some(stripped.trim())
     }
 
+    fn has_pod_containers(lines: &[&str]) -> bool {
+        let pod_workload = lines.iter().any(|line| {
+            matches!(
+                Self::strip_yaml_key(line.trim(), "kind")
+                    .map(|kind| kind.trim_matches('"').trim_matches('\'')),
+                Some(
+                    "Pod"
+                        | "Deployment"
+                        | "StatefulSet"
+                        | "DaemonSet"
+                        | "ReplicaSet"
+                        | "Job"
+                        | "CronJob"
+                )
+            )
+        });
+        pod_workload
+            && lines
+                .iter()
+                .any(|line| line.trim().starts_with("containers:"))
+    }
+
     /// Quick check: does this look like a Kubernetes manifest?
     pub(super) fn is_k8s_manifest(lines: &[&str]) -> bool {
         let has_api = lines.iter().any(|l| l.trim().starts_with("apiVersion:"));
@@ -292,5 +307,39 @@ impl super::Checker for KubernetesChecker {
             "K8009", // Duplicate resource names
             "K8010", // Missing labels
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KubernetesChecker;
+
+    #[test]
+    fn pod_workload_with_containers_needs_runtime_security_checks() {
+        let lines = [
+            "apiVersion: apps/v1",
+            "kind: StatefulSet",
+            "spec:",
+            "  template:",
+            "    spec:",
+            "      containers:",
+            "        - name: relay",
+        ];
+
+        assert!(KubernetesChecker::has_pod_containers(&lines));
+    }
+
+    #[test]
+    fn service_port_name_is_not_a_container() {
+        let lines = [
+            "apiVersion: v1",
+            "kind: Service",
+            "spec:",
+            "  ports:",
+            "    - name: http",
+            "      port: 8080",
+        ];
+
+        assert!(!KubernetesChecker::has_pod_containers(&lines));
     }
 }

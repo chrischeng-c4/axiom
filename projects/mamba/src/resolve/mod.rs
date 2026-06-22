@@ -1,5 +1,5 @@
-pub mod scope;
 pub mod pass;
+pub mod scope;
 
-pub use scope::{SymbolId, SymbolInfo, SymbolKind, SymbolTable, VariableClass};
 pub use pass::{resolve_module, ResolveResult};
+pub use scope::{SymbolId, SymbolInfo, SymbolKind, SymbolTable, VariableClass};

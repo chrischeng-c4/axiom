@@ -243,16 +243,13 @@ impl<'a> Session<'a> {
     pub async fn get<M: SessionModel>(&mut self, pk: i64) -> Result<Option<Arc<M>>> {
         let key = (M::table().to_string(), pk);
         if let Some(existing) = self.identity_map.get(&key) {
-            return Arc::clone(existing)
-                .downcast::<M>()
-                .map(Some)
-                .map_err(|_| {
-                    DataBridgeError::Internal(format!(
-                        "identity-map type mismatch for ({}, {})",
-                        M::table(),
-                        pk
-                    ))
-                });
+            return Arc::clone(existing).downcast::<M>().map(Some).map_err(|_| {
+                DataBridgeError::Internal(format!(
+                    "identity-map type mismatch for ({}, {})",
+                    M::table(),
+                    pk
+                ))
+            });
         }
         let row = Row::find_by_id(self.conn.pool(), M::table(), pk).await?;
         let row = match row {
@@ -320,12 +317,7 @@ impl<'a> Session<'a> {
     }
 
     /// Stage an UPDATE of `(table, pk)` with the given values.
-    pub fn touch_dyn(
-        &mut self,
-        table: &str,
-        pk: i64,
-        values: Vec<(String, ExtractedValue)>,
-    ) {
+    pub fn touch_dyn(&mut self, table: &str, pk: i64, values: Vec<(String, ExtractedValue)>) {
         self.staging.push(UowEntry::Update {
             table: table.to_string(),
             pk,
@@ -412,12 +404,7 @@ pub struct SessionQuery<'a, 'sess, M: SessionModel> {
 
 impl<'a, 'sess, M: SessionModel> SessionQuery<'a, 'sess, M> {
     /// Append a `WHERE` predicate.
-    pub fn filter(
-        mut self,
-        field: &str,
-        op: Operator,
-        value: ExtractedValue,
-    ) -> Result<Self> {
+    pub fn filter(mut self, field: &str, op: Operator, value: ExtractedValue) -> Result<Self> {
         self.builder = self.builder.where_clause(field, op, value)?;
         Ok(self)
     }
@@ -446,10 +433,9 @@ impl<'a, 'sess, M: SessionModel> SessionQuery<'a, 'sess, M> {
                 })?,
                 None => {
                     let arc = Arc::new(model);
-                    self.session.identity_map.insert(
-                        key,
-                        Arc::clone(&arc) as Arc<dyn Any + Send + Sync>,
-                    );
+                    self.session
+                        .identity_map
+                        .insert(key, Arc::clone(&arc) as Arc<dyn Any + Send + Sync>);
                     arc
                 }
             };
@@ -474,7 +460,12 @@ async fn drain_all(
     deletes: Vec<UowEntry>,
 ) -> Result<()> {
     for entry in inserts {
-        if let UowEntry::Insert { table, values, slot_pk } = entry {
+        if let UowEntry::Insert {
+            table,
+            values,
+            slot_pk,
+        } = entry
+        {
             if values.is_empty() {
                 return Err(DataBridgeError::Query(
                     "Session: cannot INSERT empty row".into(),
@@ -496,11 +487,7 @@ async fn drain_all(
                 continue;
             }
             let mut qb = QueryBuilder::new(&table)?;
-            qb = qb.where_clause(
-                DEFAULT_PK_COLUMN,
-                Operator::Eq,
-                ExtractedValue::BigInt(pk),
-            )?;
+            qb = qb.where_clause(DEFAULT_PK_COLUMN, Operator::Eq, ExtractedValue::BigInt(pk))?;
             let (sql, params) = qb.build_update(&values)?;
             let mut args = PgArguments::default();
             for p in &params {
@@ -515,11 +502,7 @@ async fn drain_all(
     for entry in deletes {
         if let UowEntry::Delete { table, pk } = entry {
             let mut qb = QueryBuilder::new(&table)?;
-            qb = qb.where_clause(
-                DEFAULT_PK_COLUMN,
-                Operator::Eq,
-                ExtractedValue::BigInt(pk),
-            )?;
+            qb = qb.where_clause(DEFAULT_PK_COLUMN, Operator::Eq, ExtractedValue::BigInt(pk))?;
             let (sql, params) = qb.build_delete();
             let mut args = PgArguments::default();
             for p in &params {

@@ -3,14 +3,14 @@
 //! axum HTTP/2 (h2c) application over the relay core.
 //!
 //! `publish` / `lease` / `ack` / `lease-batch` / `ack-batch` are
-//! request/response (JSON, plus an `application/cbor` fast path); `subscribe`
-//! opens a long-lived HTTP/2 stream of length-prefixed CBOR [`crate::LogEntry`]
-//! frames from a seq. The core is internally synchronized (per-shard locking,
-//! #128), so the server holds it as a plain `Arc<Relay>` — no global lock.
+//! request/response (JSON, plus an `application/cbor` fast path for hot calls);
+//! `subscribe` opens a long-lived HTTP/2 stream of length-prefixed CBOR
+//! [`crate::LogEntry`] frames from a seq. The core is internally synchronized
+//! (per-shard locking, #128), so the server holds it as a plain `Arc<Relay>` —
+//! no global lock.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::{
     body::{Body, Bytes},
@@ -73,6 +73,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/{subject}/ack-batch", post(ack_batch))
         .route("/v1/{subject}/heartbeat", post(heartbeat))
         .route("/v1/{subject}/subscribe", get(subscribe))
+        .route("/v1/{subject}/len", get(log_len))
         .route("/healthz", get(healthz))
         .route("/openapi.json", get(openapi_json))
         .with_state(state)
@@ -125,9 +126,11 @@ fn encode_body<T: serde::Serialize>(cbor: bool, status: StatusCode, value: &T) -
 pub async fn publish(
     State(st): State<AppState>,
     Path(subject): Path<String>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let req: PublishRequest = match decode_body(false, &body) {
+    let cbor = wants_cbor(&headers);
+    let req: PublishRequest = match decode_body(cbor, &body) {
         Ok(r) => r,
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
@@ -136,7 +139,7 @@ pub async fn publish(
         .relay
         .publish(&subject, &req.message_id, req.payload, req.headers, now);
     match result {
-        Ok(outcome) => encode_body(false, StatusCode::OK, &outcome),
+        Ok(outcome) => encode_body(cbor, StatusCode::OK, &outcome),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -352,9 +355,10 @@ pub async fn subscribe(
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
 
+    let wake = st.relay.subscribe_wake(&subject);
     let stream = futures::stream::unfold(
-        (st, subject, subscriber_id),
-        |(st, subject, subscriber_id)| async move {
+        (st, subject, subscriber_id, wake),
+        |(st, subject, subscriber_id, mut wake)| async move {
             loop {
                 let frames = st.relay.poll(&subject, &subscriber_id).unwrap_or_default();
                 if !frames.is_empty() {
@@ -363,9 +367,11 @@ pub async fn subscribe(
                         buf.extend(wire::encode_frame(entry));
                     }
                     let item: Result<Bytes, std::convert::Infallible> = Ok(Bytes::from(buf));
-                    return Some((item, (st, subject, subscriber_id)));
+                    return Some((item, (st, subject, subscriber_id, wake)));
                 }
-                tokio::time::sleep(Duration::from_millis(25)).await;
+                if wake.changed().await.is_err() {
+                    return None;
+                }
             }
         },
     );
@@ -376,6 +382,26 @@ pub async fn subscribe(
         Body::from_stream(stream),
     )
         .into_response()
+}
+
+/// `GET /v1/{subject}/len` — current append count for the subject log.
+#[utoipa::path(
+    get,
+    path = "/v1/{subject}/len",
+    params(("subject" = String, Path, description = "Target subject")),
+    responses((status = 200, description = "Current log length { latest_seq }"))
+)]
+pub async fn log_len(State(st): State<AppState>, Path(subject): Path<String>) -> Response {
+    match st.relay.log_len(&subject) {
+        Ok(latest_seq) => encode_body(
+            false,
+            StatusCode::OK,
+            &serde_json::json!({
+                "latest_seq": latest_seq,
+            }),
+        ),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 async fn healthz() -> StatusCode {

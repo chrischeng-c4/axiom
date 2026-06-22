@@ -117,7 +117,10 @@ mod tests {
     #[test]
     fn parses_multiple_paths() {
         let src = "/opt/site\n../local/lib\n";
-        assert_eq!(parse_pth(src).unwrap(), vec![p("/opt/site"), p("../local/lib")]);
+        assert_eq!(
+            parse_pth(src).unwrap(),
+            vec![p("/opt/site"), p("../local/lib")]
+        );
     }
 
     #[test]

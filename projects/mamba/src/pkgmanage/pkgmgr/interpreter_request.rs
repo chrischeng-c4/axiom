@@ -460,19 +460,17 @@ mod tests {
 
     #[test]
     fn parses_pypy_v_output_uses_python_level() {
-        let i = parse_python_version_output("PyPy 7.3.13 (Python 3.10.13)", pb("/u/bin/pypy"))
-            .unwrap();
+        let i =
+            parse_python_version_output("PyPy 7.3.13 (Python 3.10.13)", pb("/u/bin/pypy")).unwrap();
         assert_eq!(i.implementation, Implementation::PyPy);
         assert_eq!(i.version, (3, 10, 13));
     }
 
     #[test]
     fn parses_graalpy_v_output() {
-        let i = parse_python_version_output(
-            "GraalPy 24.0.0 (Python 3.10.13)",
-            pb("/u/bin/graalpy"),
-        )
-        .unwrap();
+        let i =
+            parse_python_version_output("GraalPy 24.0.0 (Python 3.10.13)", pb("/u/bin/graalpy"))
+                .unwrap();
         assert_eq!(i.implementation, Implementation::GraalPy);
         assert_eq!(i.version, (3, 10, 13));
     }

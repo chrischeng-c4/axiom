@@ -77,7 +77,8 @@ fn split_name_and_url(line: &str) -> Result<(String, &str), IndexError> {
         });
     };
     for c in line[..at].chars() {
-        if !(c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == ' ' || c == '\t') {
+        if !(c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == ' ' || c == '\t')
+        {
             return Err(IndexError::ParseError {
                 url: "<direct requirement>".into(),
                 detail: format!(
@@ -174,8 +175,8 @@ fn split_subdirectory_fragment(raw: &str) -> (&str, Option<String>) {
     if let Some(hash) = raw.find('#') {
         let (head, frag) = raw.split_at(hash);
         let frag = &frag[1..]; // drop '#'
-        // Fragment is `key=value[&key=value]…`. We only care about
-        // `subdirectory=…`. uv ignores unknown keys.
+                               // Fragment is `key=value[&key=value]…`. We only care about
+                               // `subdirectory=…`. uv ignores unknown keys.
         for pair in frag.split('&') {
             if let Some(value) = pair.strip_prefix("subdirectory=") {
                 if !value.is_empty() {
@@ -194,10 +195,7 @@ mod tests {
 
     #[test]
     fn parse_archive_https() {
-        let r = parse_direct_requirement(
-            "foo @ https://example.test/foo-1.0.tar.gz",
-        )
-        .unwrap();
+        let r = parse_direct_requirement("foo @ https://example.test/foo-1.0.tar.gz").unwrap();
         assert_eq!(r.name, "foo");
         assert_eq!(
             r.url,
@@ -210,10 +208,9 @@ mod tests {
 
     #[test]
     fn parse_archive_with_subdirectory() {
-        let r = parse_direct_requirement(
-            "foo @ https://example.test/foo.tar.gz#subdirectory=src/foo",
-        )
-        .unwrap();
+        let r =
+            parse_direct_requirement("foo @ https://example.test/foo.tar.gz#subdirectory=src/foo")
+                .unwrap();
         match r.url {
             DirectUrl::Archive { url, subdirectory } => {
                 assert_eq!(url, "https://example.test/foo.tar.gz");
@@ -225,10 +222,8 @@ mod tests {
 
     #[test]
     fn parse_git_https_with_tag() {
-        let r = parse_direct_requirement(
-            "foo @ git+https://github.com/example/foo.git@v1.2.3",
-        )
-        .unwrap();
+        let r = parse_direct_requirement("foo @ git+https://github.com/example/foo.git@v1.2.3")
+            .unwrap();
         assert_eq!(
             r.url,
             DirectUrl::Git {
@@ -241,8 +236,7 @@ mod tests {
 
     #[test]
     fn parse_git_https_without_rev() {
-        let r = parse_direct_requirement("foo @ git+https://github.com/example/foo.git")
-            .unwrap();
+        let r = parse_direct_requirement("foo @ git+https://github.com/example/foo.git").unwrap();
         assert_eq!(
             r.url,
             DirectUrl::Git {
@@ -277,10 +271,7 @@ mod tests {
     fn parse_git_ssh_userinfo_is_not_rev() {
         // `git@example.test/org/foo.git` — the `git@` here is SSH
         // userinfo. With no `@rev` after, rev should be None.
-        let r = parse_direct_requirement(
-            "foo @ git+ssh://git@example.test/org/foo.git",
-        )
-        .unwrap();
+        let r = parse_direct_requirement("foo @ git+ssh://git@example.test/org/foo.git").unwrap();
         match r.url {
             DirectUrl::Git { url, rev, .. } => {
                 assert_eq!(url, "ssh://git@example.test/org/foo.git");
@@ -362,10 +353,7 @@ mod tests {
 
     #[test]
     fn fragment_without_subdirectory_yields_none() {
-        let r = parse_direct_requirement(
-            "foo @ https://example.test/foo.tar.gz#egg=foo",
-        )
-        .unwrap();
+        let r = parse_direct_requirement("foo @ https://example.test/foo.tar.gz#egg=foo").unwrap();
         match r.url {
             DirectUrl::Archive { subdirectory, .. } => {
                 assert_eq!(subdirectory, None);

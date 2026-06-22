@@ -55,14 +55,23 @@ pub trait Dialect: Send + Sync + fmt::Debug {
 
     /// Get the syntax for boolean literal
     fn boolean_literal(&self, value: bool) -> &'static str {
-        if value { "TRUE" } else { "FALSE" }
+        if value {
+            "TRUE"
+        } else {
+            "FALSE"
+        }
     }
 
     /// Get current timestamp expression
     fn current_timestamp(&self) -> &'static str;
 
     /// Get the syntax for inserting with RETURNING (if supported)
-    fn insert_returning(&self, table: &str, columns: &[&str], returning: &[&str]) -> Option<String> {
+    fn insert_returning(
+        &self,
+        table: &str,
+        columns: &[&str],
+        returning: &[&str],
+    ) -> Option<String> {
         if !self.supports_returning() {
             return None;
         }
@@ -129,7 +138,11 @@ impl Dialect for PostgresDialect {
             .iter()
             .map(|c| format!("{} = EXCLUDED.{}", c, c))
             .collect();
-        format!("ON CONFLICT ({}) DO UPDATE SET {}", conflict, updates.join(", "))
+        format!(
+            "ON CONFLICT ({}) DO UPDATE SET {}",
+            conflict,
+            updates.join(", ")
+        )
     }
 }
 
@@ -172,7 +185,11 @@ impl Dialect for SqliteDialect {
             .iter()
             .map(|c| format!("{} = excluded.{}", c, c))
             .collect();
-        format!("ON CONFLICT({}) DO UPDATE SET {}", conflict, updates.join(", "))
+        format!(
+            "ON CONFLICT({}) DO UPDATE SET {}",
+            conflict,
+            updates.join(", ")
+        )
     }
 }
 
@@ -206,7 +223,11 @@ impl Dialect for MysqlDialect {
     }
 
     fn boolean_literal(&self, value: bool) -> &'static str {
-        if value { "1" } else { "0" }
+        if value {
+            "1"
+        } else {
+            "0"
+        }
     }
 
     fn supports_on_conflict(&self) -> bool {

@@ -1,3 +1,6 @@
+use super::super::dict_ops::DictKey;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// html.parser module for Mamba (#449, #1480).
 ///
 /// Provides:
@@ -24,11 +27,7 @@
 /// `commentclose`, marked-section closers) are hand-ported as char-level
 /// matchers with the same tolerant/backtracking behaviour, operating on a
 /// `Vec<char>` so indices match Python string (code point) indices.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::dict_ops::DictKey;
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -61,21 +60,21 @@ macro_rules! dispatch_variadic_stub {
     };
 }
 
-dispatch_variadic_stub!(dispatch_feed,              "HTMLParser.feed");
-dispatch_variadic_stub!(dispatch_close,             "HTMLParser.close");
-dispatch_variadic_stub!(dispatch_reset,             "HTMLParser.reset");
-dispatch_variadic_stub!(dispatch_getpos,            "HTMLParser.getpos");
+dispatch_variadic_stub!(dispatch_feed, "HTMLParser.feed");
+dispatch_variadic_stub!(dispatch_close, "HTMLParser.close");
+dispatch_variadic_stub!(dispatch_reset, "HTMLParser.reset");
+dispatch_variadic_stub!(dispatch_getpos, "HTMLParser.getpos");
 dispatch_variadic_stub!(dispatch_get_starttag_text, "HTMLParser.get_starttag_text");
-dispatch_variadic_stub!(dispatch_handle_starttag,   "HTMLParser.handle_starttag");
-dispatch_variadic_stub!(dispatch_handle_endtag,     "HTMLParser.handle_endtag");
-dispatch_variadic_stub!(dispatch_handle_startendtag,"HTMLParser.handle_startendtag");
-dispatch_variadic_stub!(dispatch_handle_data,       "HTMLParser.handle_data");
-dispatch_variadic_stub!(dispatch_handle_entityref,  "HTMLParser.handle_entityref");
-dispatch_variadic_stub!(dispatch_handle_charref,    "HTMLParser.handle_charref");
-dispatch_variadic_stub!(dispatch_handle_comment,    "HTMLParser.handle_comment");
-dispatch_variadic_stub!(dispatch_handle_decl,       "HTMLParser.handle_decl");
-dispatch_variadic_stub!(dispatch_handle_pi,         "HTMLParser.handle_pi");
-dispatch_variadic_stub!(dispatch_unknown_decl,      "HTMLParser.unknown_decl");
+dispatch_variadic_stub!(dispatch_handle_starttag, "HTMLParser.handle_starttag");
+dispatch_variadic_stub!(dispatch_handle_endtag, "HTMLParser.handle_endtag");
+dispatch_variadic_stub!(dispatch_handle_startendtag, "HTMLParser.handle_startendtag");
+dispatch_variadic_stub!(dispatch_handle_data, "HTMLParser.handle_data");
+dispatch_variadic_stub!(dispatch_handle_entityref, "HTMLParser.handle_entityref");
+dispatch_variadic_stub!(dispatch_handle_charref, "HTMLParser.handle_charref");
+dispatch_variadic_stub!(dispatch_handle_comment, "HTMLParser.handle_comment");
+dispatch_variadic_stub!(dispatch_handle_decl, "HTMLParser.handle_decl");
+dispatch_variadic_stub!(dispatch_handle_pi, "HTMLParser.handle_pi");
+dispatch_variadic_stub!(dispatch_unknown_decl, "HTMLParser.unknown_decl");
 
 dispatch_unary!(dispatch_escape, mb_html_escape);
 dispatch_unary!(dispatch_unescape, mb_html_unescape);
@@ -143,31 +142,35 @@ pub fn register() {
 
     // ── html.parser (typeshed submodule surface) ──
     let mut parser_attrs = HashMap::new();
-    parser_attrs.insert("__name__".to_string(),
-        MbValue::from_ptr(MbObject::new_str("html.parser".to_string())));
-    parser_attrs.insert("__package__".to_string(),
-        MbValue::from_ptr(MbObject::new_str("html".to_string())));
+    parser_attrs.insert(
+        "__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("html.parser".to_string())),
+    );
+    parser_attrs.insert(
+        "__package__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("html".to_string())),
+    );
 
     let parser_dispatchers: Vec<(&str, usize)> = vec![
-        ("HTMLParser",            dispatch_HTMLParser as usize),
-        ("feed",                  dispatch_feed as usize),
-        ("close",                 dispatch_close as usize),
-        ("reset",                 dispatch_reset as usize),
-        ("getpos",                dispatch_getpos as usize),
-        ("get_starttag_text",     dispatch_get_starttag_text as usize),
-        ("handle_starttag",       dispatch_handle_starttag as usize),
-        ("handle_endtag",         dispatch_handle_endtag as usize),
-        ("handle_startendtag",    dispatch_handle_startendtag as usize),
-        ("handle_data",           dispatch_handle_data as usize),
-        ("handle_entityref",      dispatch_handle_entityref as usize),
-        ("handle_charref",        dispatch_handle_charref as usize),
-        ("handle_comment",        dispatch_handle_comment as usize),
-        ("handle_decl",           dispatch_handle_decl as usize),
-        ("handle_pi",             dispatch_handle_pi as usize),
-        ("unknown_decl",          dispatch_unknown_decl as usize),
+        ("HTMLParser", dispatch_HTMLParser as usize),
+        ("feed", dispatch_feed as usize),
+        ("close", dispatch_close as usize),
+        ("reset", dispatch_reset as usize),
+        ("getpos", dispatch_getpos as usize),
+        ("get_starttag_text", dispatch_get_starttag_text as usize),
+        ("handle_starttag", dispatch_handle_starttag as usize),
+        ("handle_endtag", dispatch_handle_endtag as usize),
+        ("handle_startendtag", dispatch_handle_startendtag as usize),
+        ("handle_data", dispatch_handle_data as usize),
+        ("handle_entityref", dispatch_handle_entityref as usize),
+        ("handle_charref", dispatch_handle_charref as usize),
+        ("handle_comment", dispatch_handle_comment as usize),
+        ("handle_decl", dispatch_handle_decl as usize),
+        ("handle_pi", dispatch_handle_pi as usize),
+        ("unknown_decl", dispatch_unknown_decl as usize),
         // `unescape` is deprecated on HTMLParser (since 3.5) but still
         // present in the public surface — point it at the real impl.
-        ("unescape",              dispatch_unescape as usize),
+        ("unescape", dispatch_unescape as usize),
     ];
     for (name, addr) in &parser_dispatchers {
         parser_attrs.insert(name.to_string(), MbValue::from_func(*addr));
@@ -187,7 +190,10 @@ pub fn register() {
     // isinstance(x, HTMLParser) resolves the constructor func through
     // NATIVE_TYPE_NAMES into the registered class (MRO-aware).
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(dispatch_HTMLParser as usize as u64, "HTMLParser".to_string());
+        m.borrow_mut().insert(
+            dispatch_HTMLParser as usize as u64,
+            "HTMLParser".to_string(),
+        );
     });
 
     // Re-wire the `parser` attribute on the parent `html` namespace so
@@ -202,10 +208,7 @@ pub fn register() {
             r.get("html.parser")
                 .map(|m| super::super::module::module_to_value(m))
         };
-        if let (Some(v), Some(html_mod)) = (
-            parser_val,
-            mods.borrow_mut().get_mut("html"),
-        ) {
+        if let (Some(v), Some(html_mod)) = (parser_val, mods.borrow_mut().get_mut("html")) {
             html_mod.attrs.insert("parser".to_string(), v);
         }
     });
@@ -213,7 +216,11 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -222,9 +229,9 @@ fn extract_str(val: MbValue) -> Option<String> {
 fn raise_not_implemented(name: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("NotImplementedError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(
-            format!("html.parser.{name} is not implemented in Mamba (#1480)"),
-        )),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "html.parser.{name} is not implemented in Mamba (#1480)"
+        ))),
     );
     MbValue::none()
 }
@@ -265,15 +272,40 @@ pub fn mb_html_unescape(val: MbValue) -> MbValue {
 /// Windows-1252 remapping for numeric charrefs (html._invalid_charrefs).
 fn invalid_charref_char(num: u32) -> Option<&'static str> {
     Some(match num {
-        0x00 => "\u{fffd}", 0x0d => "\r",       0x80 => "\u{20ac}", 0x81 => "\u{81}",
-        0x82 => "\u{201a}", 0x83 => "\u{192}",  0x84 => "\u{201e}", 0x85 => "\u{2026}",
-        0x86 => "\u{2020}", 0x87 => "\u{2021}", 0x88 => "\u{2c6}",  0x89 => "\u{2030}",
-        0x8a => "\u{160}",  0x8b => "\u{2039}", 0x8c => "\u{152}",  0x8d => "\u{8d}",
-        0x8e => "\u{17d}",  0x8f => "\u{8f}",   0x90 => "\u{90}",   0x91 => "\u{2018}",
-        0x92 => "\u{2019}", 0x93 => "\u{201c}", 0x94 => "\u{201d}", 0x95 => "\u{2022}",
-        0x96 => "\u{2013}", 0x97 => "\u{2014}", 0x98 => "\u{2dc}",  0x99 => "\u{2122}",
-        0x9a => "\u{161}",  0x9b => "\u{203a}", 0x9c => "\u{153}",  0x9d => "\u{9d}",
-        0x9e => "\u{17e}",  0x9f => "\u{178}",
+        0x00 => "\u{fffd}",
+        0x0d => "\r",
+        0x80 => "\u{20ac}",
+        0x81 => "\u{81}",
+        0x82 => "\u{201a}",
+        0x83 => "\u{192}",
+        0x84 => "\u{201e}",
+        0x85 => "\u{2026}",
+        0x86 => "\u{2020}",
+        0x87 => "\u{2021}",
+        0x88 => "\u{2c6}",
+        0x89 => "\u{2030}",
+        0x8a => "\u{160}",
+        0x8b => "\u{2039}",
+        0x8c => "\u{152}",
+        0x8d => "\u{8d}",
+        0x8e => "\u{17d}",
+        0x8f => "\u{8f}",
+        0x90 => "\u{90}",
+        0x91 => "\u{2018}",
+        0x92 => "\u{2019}",
+        0x93 => "\u{201c}",
+        0x94 => "\u{201d}",
+        0x95 => "\u{2022}",
+        0x96 => "\u{2013}",
+        0x97 => "\u{2014}",
+        0x98 => "\u{2dc}",
+        0x99 => "\u{2122}",
+        0x9a => "\u{161}",
+        0x9b => "\u{203a}",
+        0x9c => "\u{153}",
+        0x9d => "\u{9d}",
+        0x9e => "\u{17e}",
+        0x9f => "\u{178}",
         _ => return None,
     })
 }
@@ -288,8 +320,7 @@ fn is_invalid_codepoint(num: u32) -> bool {
 }
 
 fn numeric_charref_string(num_str: &str, hex: bool) -> String {
-    let num = u32::from_str_radix(num_str, if hex { 16 } else { 10 })
-        .unwrap_or(0x0011_0000); // overflow → out of range → U+FFFD
+    let num = u32::from_str_radix(num_str, if hex { 16 } else { 10 }).unwrap_or(0x0011_0000); // overflow → out of range → U+FFFD
     if let Some(s) = invalid_charref_char(num) {
         return s.to_string();
     }
@@ -479,16 +510,24 @@ pub fn unescape_str(s: &str) -> String {
         if i + 1 < n && chars[i + 1] == '#' {
             let mut p = i + 2;
             let hex = p < n && matches!(chars[p], 'x' | 'X');
-            if hex { p += 1; }
+            if hex {
+                p += 1;
+            }
             let dstart = p;
             if hex {
-                while p < n && chars[p].is_ascii_hexdigit() { p += 1; }
+                while p < n && chars[p].is_ascii_hexdigit() {
+                    p += 1;
+                }
             } else {
-                while p < n && chars[p].is_ascii_digit() { p += 1; }
+                while p < n && chars[p].is_ascii_digit() {
+                    p += 1;
+                }
             }
             if p > dstart {
                 let num_str: String = chars[dstart..p].iter().collect();
-                if p < n && chars[p] == ';' { p += 1; }
+                if p < n && chars[p] == ';' {
+                    p += 1;
+                }
                 out.push_str(&numeric_charref_string(&num_str, hex));
                 i = p;
                 continue;
@@ -572,17 +611,19 @@ fn inst_get(inst: MbValue, name: &str) -> Option<MbValue> {
 }
 
 fn str_field(inst: MbValue, name: &str) -> String {
-    inst_get(inst, name).and_then(extract_str).unwrap_or_default()
+    inst_get(inst, name)
+        .and_then(extract_str)
+        .unwrap_or_default()
 }
 
 fn opt_str_field(inst: MbValue, name: &str) -> Option<String> {
-    inst_get(inst, name).and_then(|v| {
-        if v.is_none() { None } else { extract_str(v) }
-    })
+    inst_get(inst, name).and_then(|v| if v.is_none() { None } else { extract_str(v) })
 }
 
 fn int_field(inst: MbValue, name: &str, default: i64) -> i64 {
-    inst_get(inst, name).and_then(|v| v.as_int()).unwrap_or(default)
+    inst_get(inst, name)
+        .and_then(|v| v.as_int())
+        .unwrap_or(default)
 }
 
 fn bool_field(inst: MbValue, name: &str, default: bool) -> bool {
@@ -802,7 +843,11 @@ fn match_attrfind(chars: &[char], pos: usize) -> Option<AttrMatch> {
             break;
         }
     }
-    Some(AttrMatch { name, value, end: p })
+    Some(AttrMatch {
+        name,
+        value,
+        end: p,
+    })
 }
 
 /// `locatestarttagend_tolerant` (the verbose whole-start-tag matcher).
@@ -1233,7 +1278,11 @@ fn check_for_whole_start_tag(chars: &[char], i: usize) -> i64 {
         // end of input in or before attribute value
         return -1;
     }
-    if j > i { j as i64 } else { (i + 1) as i64 }
+    if j > i {
+        j as i64
+    } else {
+        (i + 1) as i64
+    }
 }
 
 /// `parse_starttag`: returns end position or -1 if not terminated.
@@ -1244,7 +1293,11 @@ fn parse_starttag(inst: MbValue, chars: &[char], i: usize) -> i64 {
         return endpos_i;
     }
     let endpos = endpos_i as usize;
-    inst_set(inst, "_HTMLParser__starttag_text", name_val(&cs(chars, i, endpos)));
+    inst_set(
+        inst,
+        "_HTMLParser__starttag_text",
+        name_val(&cs(chars, i, endpos)),
+    );
 
     let mut attrs: Vec<MbValue> = Vec::new();
     let (tag_raw, mut k) = match match_tagfind(chars, i + 1) {
@@ -1364,7 +1417,11 @@ fn parse_comment(inst: MbValue, chars: &[char], i: usize, report: bool) -> i64 {
         None => -1,
         Some((start, endm)) => {
             if report {
-                dispatch_handler(inst, "handle_comment", vec![name_val(&cs(chars, i + 4, start))]);
+                dispatch_handler(
+                    inst,
+                    "handle_comment",
+                    vec![name_val(&cs(chars, i + 4, start))],
+                );
             }
             endm as i64
         }
@@ -1376,7 +1433,11 @@ fn parse_bogus_comment(inst: MbValue, chars: &[char], i: usize) -> i64 {
     match find_ch(chars, '>', i + 2) {
         None => -1,
         Some(pos) => {
-            dispatch_handler(inst, "handle_comment", vec![name_val(&cs(chars, i + 2, pos))]);
+            dispatch_handler(
+                inst,
+                "handle_comment",
+                vec![name_val(&cs(chars, i + 2, pos))],
+            );
             (pos + 1) as i64
         }
     }
@@ -1408,7 +1469,11 @@ fn parse_html_declaration(inst: MbValue, chars: &[char], i: usize) -> i64 {
             return match find_ch(chars, '>', i + 9) {
                 None => -1,
                 Some(gtpos) => {
-                    dispatch_handler(inst, "handle_decl", vec![name_val(&cs(chars, i + 2, gtpos))]);
+                    dispatch_handler(
+                        inst,
+                        "handle_decl",
+                        vec![name_val(&cs(chars, i + 2, gtpos))],
+                    );
                     (gtpos + 1) as i64
                 }
             };
@@ -1444,7 +1509,11 @@ fn parse_marked_section(inst: MbValue, chars: &[char], i: usize, report: bool) -
         None => -1,
         Some((start, endm)) => {
             if report {
-                dispatch_handler(inst, "unknown_decl", vec![name_val(&cs(chars, i + 3, start))]);
+                dispatch_handler(
+                    inst,
+                    "unknown_decl",
+                    vec![name_val(&cs(chars, i + 3, start))],
+                );
             }
             endm as i64
         }
@@ -1567,23 +1636,29 @@ extern "C" fn hp_def_unary(_self_obj: MbValue, _arg: MbValue) -> MbValue {
 fn register_parser_class() {
     let mut methods: HashMap<String, MbValue> = HashMap::new();
     let m: &[(&str, usize)] = &[
-        ("__init__",           hp_init as *const () as usize),
-        ("feed",               hp_feed as *const () as usize),
-        ("close",              hp_close as *const () as usize),
-        ("reset",              hp_reset as *const () as usize),
-        ("getpos",             hp_getpos as *const () as usize),
-        ("get_starttag_text",  hp_get_starttag_text as *const () as usize),
-        ("handle_starttag",    hp_def_starttag as *const () as usize),
-        ("handle_startendtag", hp_def_startendtag as *const () as usize),
-        ("handle_endtag",      hp_def_endtag as *const () as usize),
-        ("handle_charref",     hp_def_unary as *const () as usize),
-        ("handle_entityref",   hp_def_unary as *const () as usize),
-        ("handle_data",        hp_def_unary as *const () as usize),
-        ("handle_comment",     hp_def_unary as *const () as usize),
-        ("handle_decl",        hp_def_unary as *const () as usize),
-        ("handle_pi",          hp_def_unary as *const () as usize),
-        ("unknown_decl",       hp_def_unary as *const () as usize),
-        ("unescape",           hp_unescape_method as *const () as usize),
+        ("__init__", hp_init as *const () as usize),
+        ("feed", hp_feed as *const () as usize),
+        ("close", hp_close as *const () as usize),
+        ("reset", hp_reset as *const () as usize),
+        ("getpos", hp_getpos as *const () as usize),
+        (
+            "get_starttag_text",
+            hp_get_starttag_text as *const () as usize,
+        ),
+        ("handle_starttag", hp_def_starttag as *const () as usize),
+        (
+            "handle_startendtag",
+            hp_def_startendtag as *const () as usize,
+        ),
+        ("handle_endtag", hp_def_endtag as *const () as usize),
+        ("handle_charref", hp_def_unary as *const () as usize),
+        ("handle_entityref", hp_def_unary as *const () as usize),
+        ("handle_data", hp_def_unary as *const () as usize),
+        ("handle_comment", hp_def_unary as *const () as usize),
+        ("handle_decl", hp_def_unary as *const () as usize),
+        ("handle_pi", hp_def_unary as *const () as usize),
+        ("unknown_decl", hp_def_unary as *const () as usize),
+        ("unescape", hp_unescape_method as *const () as usize),
     ];
     for (name, addr) in m {
         methods.insert(name.to_string(), MbValue::from_func(*addr));
@@ -1662,11 +1737,23 @@ mod tests {
         // html.parser must carry every typeshed-declared HTMLParser method
         // as a callable.
         for name in &[
-            "HTMLParser", "feed", "close", "reset", "getpos",
-            "get_starttag_text", "handle_starttag", "handle_endtag",
-            "handle_startendtag", "handle_data", "handle_entityref",
-            "handle_charref", "handle_comment", "handle_decl",
-            "handle_pi", "unknown_decl", "unescape",
+            "HTMLParser",
+            "feed",
+            "close",
+            "reset",
+            "getpos",
+            "get_starttag_text",
+            "handle_starttag",
+            "handle_endtag",
+            "handle_startendtag",
+            "handle_data",
+            "handle_entityref",
+            "handle_charref",
+            "handle_comment",
+            "handle_decl",
+            "handle_pi",
+            "unknown_decl",
+            "unescape",
         ] {
             let v = crate::runtime::module::mb_module_getattr(
                 MbValue::from_ptr(MbObject::new_str("html.parser".to_string())),
@@ -1674,8 +1761,7 @@ mod tests {
             );
             // Either a callable (func tag, no ptr) or an object ptr; both are
             // legitimate "registered" outcomes. None-tag means missing.
-            assert!(!v.is_none(),
-                "html.parser.{} not registered", name);
+            assert!(!v.is_none(), "html.parser.{} not registered", name);
         }
     }
 }
