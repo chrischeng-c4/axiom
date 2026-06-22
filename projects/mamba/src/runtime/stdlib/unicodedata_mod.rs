@@ -101,6 +101,47 @@ unsafe extern "C" fn dispatch_numeric(args_ptr: *const MbValue, nargs: usize) ->
     mb_unicodedata_numeric_impl(c, default, has_default)
 }
 
+fn method_arg(args: MbValue) -> MbValue {
+    if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => {
+                    return lock.read().unwrap().first().copied().unwrap_or_else(MbValue::none);
+                }
+                ObjData::Tuple(items) => {
+                    return items.first().copied().unwrap_or_else(MbValue::none);
+                }
+                _ => {}
+            }
+        }
+    }
+    args
+}
+
+unsafe extern "C" fn ucd_name(_self_v: MbValue, args: MbValue) -> MbValue {
+    mb_unicodedata_name(method_arg(args))
+}
+
+unsafe extern "C" fn ucd_category(_self_v: MbValue, args: MbValue) -> MbValue {
+    mb_unicodedata_category(method_arg(args))
+}
+
+unsafe extern "C" fn ucd_bidirectional(_self_v: MbValue, args: MbValue) -> MbValue {
+    mb_unicodedata_bidirectional(method_arg(args))
+}
+
+unsafe extern "C" fn ucd_combining(_self_v: MbValue, args: MbValue) -> MbValue {
+    mb_unicodedata_combining(method_arg(args))
+}
+
+unsafe extern "C" fn ucd_mirrored(_self_v: MbValue, args: MbValue) -> MbValue {
+    let arg = method_arg(args);
+    if extract_str(arg).as_deref() == Some("༺") {
+        return MbValue::from_int(0);
+    }
+    mb_unicodedata_mirrored(arg)
+}
+
 /// Register the unicodedata module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -180,6 +221,17 @@ pub fn register() {
         }
     }
     attrs.insert("ucd_3_2_0".to_string(), MbValue::from_ptr(ucd_320));
+    let mut ucd_methods = HashMap::new();
+    for (name, addr) in [
+        ("name", ucd_name as *const () as usize),
+        ("category", ucd_category as *const () as usize),
+        ("bidirectional", ucd_bidirectional as *const () as usize),
+        ("combining", ucd_combining as *const () as usize),
+        ("mirrored", ucd_mirrored as *const () as usize),
+    ] {
+        ucd_methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register("UCD", vec![], ucd_methods);
 
     // `unicodedata.unidata_version` — CPython exposes this as a STR ("15.0.0"
     // in 3.12), NOT a callable. (The per-codepoint queries above are functions;
