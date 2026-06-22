@@ -132,11 +132,15 @@ impl<'a> Parser<'a> {
                 }
             }
             // String literal type annotation: `-> "TypeName"` (PEP 484 forward reference).
-            // Treat the string content as a type name (resolves to Any if unknown).
+            // Preserve that it came from a string so type checking treats it as
+            // a forward reference while runtime introspection sees the text.
             TokenKind::Str(v) | TokenKind::TripleStr(v) | TokenKind::RawStr(v) => {
                 let name = v.clone();
                 self.advance();
-                Ok(Spanned::new(TypeExpr::Named(name), self.span_from(start)))
+                Ok(Spanned::new(
+                    TypeExpr::Named(super::ast::forward_ref_name(&name)),
+                    self.span_from(start),
+                ))
             }
             TokenKind::None_ => {
                 self.advance();

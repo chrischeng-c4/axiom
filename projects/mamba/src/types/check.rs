@@ -588,6 +588,7 @@ impl TypeChecker {
                 // `type` as a type expression (e.g. `type[BaseModel]` bare name):
                 // the class-object type is represented as Any for now.
                 "type" | "object" => self.tcx.any(),
+                n if crate::parser::ast::strip_forward_ref_name(n).is_some() => self.tcx.any(),
                 "Self" => {
                     // #243: resolve Self to current class type
                     if self.current_class.is_some() {
@@ -1107,7 +1108,7 @@ pub(crate) fn expr_to_type_expr(expr: &Spanned<Expr>) -> Option<Spanned<TypeExpr
     let node = match &expr.node {
         Expr::Ident(n) => TypeExpr::Named(n.clone()),
         Expr::NoneLit => TypeExpr::Named("None".to_string()),
-        Expr::StrLit(s) => TypeExpr::Named(s.clone()),
+        Expr::StrLit(s) => TypeExpr::Named(crate::parser::ast::forward_ref_name(s)),
         Expr::Attr { .. } => TypeExpr::Named(dotted_name(&expr.node)?),
         Expr::BinOp {
             op: BinOp::BitOr,
