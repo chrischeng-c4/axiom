@@ -49,6 +49,20 @@ fn raise(kind: &str, msg: impl Into<String>) -> MbValue {
     MbValue::none()
 }
 
+pub fn static_no_self_error(type_name: &str, method_name: &str) -> Option<MbValue> {
+    match (type_name, method_name) {
+        ("Formatter", "format") => Some(raise(
+            "TypeError",
+            "Formatter.format() missing 2 required positional arguments: 'self' and 'format_string'",
+        )),
+        ("Template", "substitute") => Some(raise(
+            "TypeError",
+            "Template.substitute() missing 1 required positional argument: 'self'",
+        )),
+        _ => None,
+    }
+}
+
 fn raise_value_error(msg: &str) {
     raise("ValueError", msg.to_string());
 }
