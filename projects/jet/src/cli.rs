@@ -448,6 +448,49 @@ pub fn command() -> Command {
                 ),
         )
         .subcommand(
+            Command::new("codegen")
+                .about("Generate frontend code from API specs")
+                .subcommand(
+                    Command::new("openapi")
+                        .about(
+                            "Generate TypeScript types, a typed fetch client, \
+                             and TanStack Query hooks from an OpenAPI 3.0/3.1 \
+                             spec.",
+                        )
+                        .arg(
+                            Arg::new("spec")
+                                .required(true)
+                                .help("Path to the OpenAPI document (openapi.json)."),
+                        )
+                        .arg(
+                            Arg::new("out")
+                                .long("out")
+                                .short('o')
+                                .default_value("src/api")
+                                .help("Output directory for generated .ts files."),
+                        )
+                        .arg(
+                            Arg::new("types-only")
+                                .long("types-only")
+                                .action(ArgAction::SetTrue)
+                                .help("Emit only types.ts (no client, no hooks)."),
+                        )
+                        .arg(
+                            Arg::new("no-hooks")
+                                .long("no-hooks")
+                                .action(ArgAction::SetTrue)
+                                .conflicts_with("types-only")
+                                .help("Skip React Query hooks (still emit types + client)."),
+                        )
+                        .arg(
+                            Arg::new("client-name")
+                                .long("client-name")
+                                .default_value("createClient")
+                                .help("Name of the generated client factory function."),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("run")
                 .about("Run a script, file, or task (no args = list scripts)")
                 .arg(
@@ -1548,6 +1591,32 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             }
             _ => {
                 anyhow::bail!("Unknown config subcommand. Try one of: lint, schema.")
+            }
+        },
+
+        Some(("codegen", cm)) => match cm.subcommand() {
+            Some(("openapi", om)) => {
+                let spec_path = PathBuf::from(om.get_one::<String>("spec").unwrap());
+                let out_arg = PathBuf::from(om.get_one::<String>("out").unwrap());
+                let out_dir = if out_arg.is_absolute() {
+                    out_arg
+                } else {
+                    root_dir.join(out_arg)
+                };
+                let types_only = om.get_flag("types-only");
+                let opts = crate::codegen::GenOptions {
+                    spec_path,
+                    out_dir,
+                    client_name: om.get_one::<String>("client-name").cloned().unwrap(),
+                    emit_types: true,
+                    emit_client: !types_only,
+                    emit_hooks: !types_only && !om.get_flag("no-hooks"),
+                };
+                let exit = crate::codegen::run(&opts);
+                std::process::exit(exit);
+            }
+            _ => {
+                anyhow::bail!("Unknown codegen subcommand. Try: openapi.")
             }
         },
 
