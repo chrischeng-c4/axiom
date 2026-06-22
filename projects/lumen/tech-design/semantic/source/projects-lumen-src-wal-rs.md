@@ -35,14 +35,14 @@ Public API manifest for `projects/lumen/src/wal.rs` captured as a per-file rust-
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Write-ahead log abstraction — the data-plane backbone.
 //!
-//! lumen's write path is "turn the database inside out": a write is not
-//! applied to the receiving node's index. It is **published** to an
-//! ordered, durable log; every serving node **subscribes** to that log
-//! and folds it into its own materialized index. All nodes converge by
-//! applying the same totally-ordered stream — there is no primary among
-//! the serving nodes, only the log decides order.
+//! lumen's write path is "turn the database inside out": a write is published
+//! to an ordered log and then folded into each serving node's materialized
+//! index. The log may be in-process (`MemWal`), externally owned (`RelayWal` /
+//! legacy `NatsWal`), or Lumen-owned primary/replica replication.
 //!
 //! This mirrors Redis's AOF (the op log) + replication stream, with the
 //! "master" role dissolved into "the log owner":
@@ -52,14 +52,15 @@ Public API manifest for `projects/lumen/src/wal.rs` captured as a per-file rust-
 //!   with the log sequence they correspond to, so a fresh node loads a
 //!   baseline then tails the log from there.
 //!
-//! Two backends implement [`WalLog`]:
+//! Three backends implement [`WalLog`]:
 //!
 //! - [`MemWal`] — in-process, in-memory. Unit tests + the simplest
 //!   single-node dev runs. Publish applies synchronously from the
 //!   caller's perspective (the subscriber sees it immediately).
-//! - `NatsWal` (in `wal_nats`) — NATS JetStream. Clustered deployments:
-//!   the broker owns durability, ordering, replication and fan-out. Each
-//!   serving node is an independent consumer reading the full stream.
+//! - `RelayWal` (in `wal_relay`) — explicit Relay broadcast broker mode. Each
+//!   serving node has an independent subscriber id reading the full stream.
+//! - `NatsWal` (in `wal_nats`) — legacy NATS JetStream backend retained for
+//!   compatibility/tests.
 //!
 //! The record payload reuses [`crate::log_entry::RaftLogEntry`] — it
 //! already enumerates every mutation 1:1 with an `Engine` method and is
@@ -88,14 +89,16 @@ const WAL_VALUE_STRING_LIST: u8 = 4;
 
 /// One durable, ordered mutation in the log. The sequence number is
 /// **not** part of the record — it is assigned by the log on publish
-/// and delivered alongside the record on subscribe (NATS owns it in the
-/// clustered case; `MemWal` uses the append index).
+/// and delivered alongside the record on subscribe (`MemWal` uses the append
+/// index; broker or primary/replica backends own sequence assignment).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 pub struct WalRecord {
     pub version: u8,
     pub entry: RaftLogEntry,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 impl WalRecord {
     pub fn new(entry: RaftLogEntry) -> Self {
         Self {
@@ -349,12 +352,14 @@ impl<'a> FastCursor<'a> {
 /// A live, ordered subscription: `(seq, record)` pairs with strictly
 /// increasing `seq`, delivered as they become available. Never
 /// completes on its own (it tails the log) unless the backend closes.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 pub type WalStream = Pin<Box<dyn Stream<Item = Result<(u64, WalRecord)>> + Send>>;
 
 /// The log seam. `publish` appends and returns the assigned global
 /// sequence; `subscribe` tails from a sequence; `latest_seq` reports the
 /// head. Object-safe so it can live behind `Arc<dyn WalLog>`.
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 pub trait WalLog: Send + Sync {
     /// Append `record`, returning the global sequence assigned to it.
     async fn publish(&self, record: WalRecord) -> Result<u64>;
@@ -367,6 +372,7 @@ pub trait WalLog: Send + Sync {
     async fn latest_seq(&self) -> Result<u64>;
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 pub type SharedWal = Arc<dyn WalLog>;
 
 // ---------------------------------------------------------------------------
@@ -387,6 +393,7 @@ pub type SharedWal = Arc<dyn WalLog>;
 /// definition ≤ what each one has already consumed. With no subscribers,
 /// nothing is dropped (a future `subscribe(0)` can still replay).
 #[derive(Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 pub struct MemWal {
     shared: Arc<Mutex<MemWalInner>>,
     len_tx: Arc<watch::Sender<u64>>,
@@ -399,6 +406,7 @@ struct MemWalInner {
     next_sub_id: u64,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 impl MemWalInner {
     fn latest(&self) -> u64 {
         self.base + self.records.len() as u64
@@ -423,6 +431,7 @@ struct SubGuard {
     id: u64,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 impl Drop for SubGuard {
     fn drop(&mut self) {
         if let Ok(mut s) = self.shared.lock() {
@@ -431,12 +440,14 @@ impl Drop for SubGuard {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 impl Default for MemWal {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 impl MemWal {
     pub fn new() -> Self {
         let (len_tx, _rx) = watch::channel(0u64);
@@ -453,6 +464,7 @@ impl MemWal {
 }
 
 #[async_trait]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 impl WalLog for MemWal {
     async fn publish(&self, record: WalRecord) -> Result<u64> {
         let seq = {
@@ -745,6 +757,8 @@ mod tests {
         assert_eq!(first, 1, "late subscriber must still replay from seq 1");
     }
 }
+// CODEGEN-END
+
 ````
 
 ## Changes

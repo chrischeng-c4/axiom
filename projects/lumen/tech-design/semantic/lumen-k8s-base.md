@@ -41,12 +41,14 @@ deployment:
     - path: "projects/lumen/k8s/base/kustomization.yaml"
       kind: "kustomization"
       content: |
+        # SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-base.md#deployment
+        # CODEGEN-BEGIN
         apiVersion: kustomize.config.k8s.io/v1beta1
         kind: Kustomization
         
         namespace: lumen
         
-        # Base spans two components (serving Deployment + NATS broker), so the
+        # Base spans two components (serving Deployment + Relay broker), so the
         # shared label is the app name only; per-component identity comes from the
         # `role:` label already on each resource. includeSelectors:false keeps these
         # common labels out of the immutable workload/Service selectors (which are
@@ -62,9 +64,8 @@ deployment:
           - serviceaccount.yaml
           - configmap.yaml
           # Write log / broker (the only stateful component).
-          - nats-config.yaml
-          - nats-statefulset.yaml
-          - nats-service.yaml
+          - relay-statefulset.yaml
+          - relay-service.yaml
           # Serving nodes (stateless, autoscaled cattle).
           - deployment.yaml
           - service.yaml
@@ -75,6 +76,8 @@ deployment:
           # overlays pull it in via components/observability; dev (kind/laptop, no
           # operator) omits it so `kubectl apply -k overlays/dev` works on a vanilla
           # cluster.
+        # CODEGEN-END
+
 ```
 
 ## Changes

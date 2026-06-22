@@ -1,0 +1,63 @@
+version = 1
+name = "relay-ec"
+default_runner = "meter-perf"
+
+[workspace]
+base = "../.."
+workdir = "projects/relay"
+keep = "always"
+
+[env]
+PATH = "/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/chrischeng/.cargo/bin"
+
+[[setup]]
+id = "build-aw-tools"
+cmd = ["cargo", "build", "-p", "meter-cli", "-p", "guard-cli"]
+
+[[setup]]
+id = "build-relay-ec-tests"
+cmd = [
+  "cargo",
+  "test",
+  "-p",
+  "relay",
+  "--test",
+  "perf_gate",
+  "--test",
+  "work_queue_throughput",
+  "--test",
+  "relay_core",
+  "--no-run",
+]
+
+[[runners]]
+id = "meter-perf"
+cmd = [
+  "../../target/debug/meter",
+  "test",
+  "--",
+  "-p",
+  "relay",
+  "--test",
+  "perf_gate",
+  "--test",
+  "work_queue_throughput",
+  "--",
+  "--nocapture",
+]
+timeout_s = 600
+
+[[runners]]
+id = "guard-security"
+cmd = [
+  "../../target/debug/guard",
+  "scan",
+  ".",
+  "--profile",
+  "security-lint",
+  "--compact",
+  "--no-persist",
+  "--meter-command",
+  "../../target/debug/meter test -- -p relay --test relay_core -- --nocapture",
+]
+timeout_s = 600

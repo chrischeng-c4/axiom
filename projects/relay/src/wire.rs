@@ -2,9 +2,10 @@
 // HANDWRITE-BEGIN gap="missing-generator:schema:a9efe379" tracker="pending-tracker" reason="Transport DTOs and length-prefixed CBOR framing."
 //! HTTP/2 transport wire types and framing.
 //!
-//! JSON shapes are the OpenAPI contract; the hot lease/ack path and the
-//! broadcast stream use the same shapes as length-prefixed CBOR. A frame is a
-//! big-endian `u32` byte length followed by that many CBOR bytes.
+//! JSON shapes are the OpenAPI contract; hot request/response calls can use the
+//! same shapes as `application/cbor`, and the broadcast stream uses
+//! length-prefixed CBOR frames. A frame is a big-endian `u32` byte length
+//! followed by that many CBOR bytes.
 
 use std::collections::BTreeMap;
 

@@ -769,6 +769,21 @@ fn apply_scoped_production_readiness(
         Ok(cap_path) => match std::fs::read_to_string(&cap_path) {
             Ok(body) => match crate::cli::capability::parse_capability_document(&body, &cap_path) {
                 Ok(document) => {
+                    let mut capability_blockers = document.findings.clone();
+                    capability_blockers.extend(
+                        crate::cli::capability::capability_profile_blockers_for_document(
+                            &project_root,
+                            &report.project,
+                            &document,
+                        ),
+                    );
+                    capability_blockers.sort();
+                    capability_blockers.dedup();
+                    for blocker in &capability_blockers {
+                        if !report.blockers.contains(blocker) {
+                            report.blockers.push(blocker.clone());
+                        }
+                    }
                     let capability_count = if document.is_legacy_only() {
                         document.legacy_rows.len()
                     } else {
@@ -792,7 +807,7 @@ fn apply_scoped_production_readiness(
                     let root_runner_ready = matches!(
                         document.format,
                         crate::cli::capability::CapabilityDocumentFormat::MarkdownTables
-                    ) && document.findings.is_empty()
+                    ) && capability_blockers.is_empty()
                         && !document.capabilities.is_empty();
                     capability_health = CapabilityHealthReport {
                         evaluated: true,
@@ -814,8 +829,8 @@ fn apply_scoped_production_readiness(
                         production_ready_count: 0,
                         production_scope_count: 0,
                         production_percent: 0.0,
-                        blocker_count: document.findings.len(),
-                        blockers: document.findings.clone(),
+                        blocker_count: capability_blockers.len(),
+                        blockers: capability_blockers,
                     };
                     let verified_by_id = capability_verified_by_id.clone().unwrap_or_else(|| {
                         crate::cli::capability::runtime_verified_by_id_from_sections(
@@ -1561,12 +1576,9 @@ fn run_project_test_command_with_timeout(
         .reopen()
         .with_context(|| format!("open stderr capture for test command `{command}`"))?;
 
-    let mut command_process = Command::new("sh");
-    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let mut command_process = crate::cli::shell_env::protected_shell_command(project_root, command);
     configure_test_gate_process_group(&mut command_process);
     let mut child = command_process
-        .arg("-c")
-        .arg(command)
         .current_dir(project_root)
         .stdout(stdout)
         .stderr(stderr)
@@ -2770,16 +2782,37 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                 .into_iter()
                 .find(|project| project.name == report.project);
             let mut commands = Vec::new();
+            let mut seen_commands = BTreeSet::new();
             for case in manifest
                 .cases
                 .iter()
                 .filter(|case| case.required_for_production)
             {
-                commands.push(run_project_ec_command(
-                    case,
-                    project_model.as_ref(),
+                let started = Instant::now();
+                let command = match resolve_project_ec_command(case, project_model.as_ref()) {
+                    Ok(command) => command,
+                    Err(err) => {
+                        commands.push(project_ec_resolution_error_report(case, err, started));
+                        continue;
+                    }
+                };
+                if !command.trim().is_empty() && !seen_commands.insert(command.trim().to_string()) {
+                    continue;
+                }
+                commands.push(run_project_ec_shell_command(
+                    case.id.clone(),
+                    command,
                     &project_root,
+                    started,
                 )?);
+            }
+            for tool in &manifest.tool_manifests {
+                if !tool.command.trim().is_empty()
+                    && !seen_commands.insert(tool.command.trim().to_string())
+                {
+                    continue;
+                }
+                commands.push(run_project_ec_tool_manifest_command(tool, &project_root)?);
             }
             let passed_count = commands
                 .iter()
@@ -2812,11 +2845,16 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                     .iter()
                     .filter(|command| command.status == ProjectTestCommandStatus::Failed)
                 {
+                    let failed_command = if command.command.trim().is_empty() {
+                        command.case_id.as_str()
+                    } else {
+                        command.command.as_str()
+                    };
                     block_health_report(
                         report,
                         format!(
                             "ec `{}` failed with exit {:?}",
-                            command.command, command.exit_code
+                            failed_command, command.exit_code
                         ),
                     );
                 }
@@ -3191,32 +3229,55 @@ fn project_ec_binding_for_category<'a>(
     })
 }
 
-/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
-fn run_project_ec_command(
+fn project_ec_resolution_error_report(
     case: &crate::cli::ec::EcManifestCase,
-    project: Option<&crate::models::project::Project>,
+    err: anyhow::Error,
+    started: Instant,
+) -> ProjectEcCommandReport {
+    ProjectEcCommandReport {
+        case_id: case.id.clone(),
+        command: case.command.clone(),
+        status: ProjectTestCommandStatus::Failed,
+        exit_code: None,
+        duration_ms: started.elapsed().as_millis(),
+        stdout_tail: String::new(),
+        stderr_tail: format!(
+            "invalid ec binding for category `{}`: {err:#}",
+            case.category
+        ),
+    }
+}
+
+fn run_project_ec_tool_manifest_command(
+    tool: &crate::cli::ec::EcToolManifest,
     project_root: &std::path::Path,
 ) -> Result<ProjectEcCommandReport> {
     let started = Instant::now();
-    let command = match resolve_project_ec_command(case, project) {
-        Ok(command) => command,
-        Err(err) => {
-            // Logic terminal `bad_tool`: an unbuildable binding fails the
-            // case with the reason in stderr_tail and no spawn.
-            return Ok(ProjectEcCommandReport {
-                case_id: case.id.clone(),
-                command: case.command.clone(),
-                status: ProjectTestCommandStatus::Failed,
-                exit_code: None,
-                duration_ms: started.elapsed().as_millis(),
-                stdout_tail: String::new(),
-                stderr_tail: format!(
-                    "invalid ec binding for category `{}`: {err:#}",
-                    case.category
-                ),
-            });
-        }
-    };
+    if tool.command.trim().is_empty() {
+        return Ok(ProjectEcCommandReport {
+            case_id: format!("tool:{}", tool.id),
+            command: String::new(),
+            status: ProjectTestCommandStatus::Failed,
+            exit_code: None,
+            duration_ms: started.elapsed().as_millis(),
+            stdout_tail: String::new(),
+            stderr_tail: format!("tool-contract `{}` is missing command", tool.id),
+        });
+    }
+    run_project_ec_shell_command(
+        format!("tool:{}", tool.id),
+        tool.command.clone(),
+        project_root,
+        started,
+    )
+}
+
+fn run_project_ec_shell_command(
+    case_id: String,
+    command: String,
+    project_root: &std::path::Path,
+    started: Instant,
+) -> Result<ProjectEcCommandReport> {
     let command = &command;
     let stdout_file = tempfile::NamedTempFile::new()
         .with_context(|| format!("create stdout capture for EC command `{command}`"))?;
@@ -3229,11 +3290,7 @@ fn run_project_ec_command(
         .reopen()
         .with_context(|| format!("open stderr capture for EC command `{command}`"))?;
 
-    let mut command_process = Command::new("sh");
-    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
-    let status = command_process
-        .arg("-c")
-        .arg(command)
+    let status = crate::cli::shell_env::protected_shell_command(project_root, command)
         .current_dir(project_root)
         .stdout(stdout)
         .stderr(stderr)
@@ -3244,7 +3301,7 @@ fn run_project_ec_command(
     let stderr = fs::read(stderr_file.path())
         .with_context(|| format!("read stderr capture for EC command `{command}`"))?;
     Ok(ProjectEcCommandReport {
-        case_id: case.id.clone(),
+        case_id,
         command: command.clone(),
         status: if status.success() {
             ProjectTestCommandStatus::Passed
@@ -4317,6 +4374,48 @@ mod tests {
             resolve_project_ec_command(&ec_case("benchmark"), None).unwrap(),
             "cargo test -p demo"
         );
+    }
+
+    #[test]
+    fn health_ec_tool_manifest_command_reports_as_ec_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = crate::cli::ec::EcToolManifest {
+            id: "demo-guard".to_string(),
+            tool: "guard".to_string(),
+            path: "projects/demo/guard.toml".to_string(),
+            td_ref: "projects/demo/external-contracts/security/guard.md#demo guard".to_string(),
+            content_digest: "sha256:demo".to_string(),
+            command: "true".to_string(),
+            category: "security".to_string(),
+            generated_toml: String::new(),
+        };
+
+        let report = run_project_ec_tool_manifest_command(&tool, tmp.path()).unwrap();
+
+        assert_eq!(report.case_id, "tool:demo-guard");
+        assert_eq!(report.status, ProjectTestCommandStatus::Passed);
+        assert_eq!(report.command, "true");
+    }
+
+    #[test]
+    fn health_ec_tool_manifest_missing_command_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = crate::cli::ec::EcToolManifest {
+            id: "demo-guard".to_string(),
+            tool: "guard".to_string(),
+            path: "projects/demo/guard.toml".to_string(),
+            td_ref: "projects/demo/external-contracts/security/guard.md#demo guard".to_string(),
+            content_digest: "sha256:demo".to_string(),
+            command: String::new(),
+            category: "security".to_string(),
+            generated_toml: String::new(),
+        };
+
+        let report = run_project_ec_tool_manifest_command(&tool, tmp.path()).unwrap();
+
+        assert_eq!(report.case_id, "tool:demo-guard");
+        assert_eq!(report.status, ProjectTestCommandStatus::Failed);
+        assert!(report.stderr_tail.contains("missing command"));
     }
 
     /// wi-13 AC1: `[[projects]] ... ec.<category>` round-trips through the

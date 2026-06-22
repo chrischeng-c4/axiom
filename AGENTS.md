@@ -182,6 +182,16 @@ rather than README rows. YAML `## Capability:` sections and legacy capability
 tables are migration input only. Verified progress requires closed/non-deferred
 work roots, passing declared verification gates or linked validation
 inventories, and resolving WI/TD refs. Do not use the old capability shorthand.
+Project-local `aw.toml` may declare `[capability.profile].traits`; agents must
+let those traits derive required baseline capabilities before adding
+domain-specific capability roots. Trait-derived baseline capabilities are a
+mandatory minimum, not the complete capability set, and traits are not README
+capabilities. `CapabilityType` classifies one capability's EC-dimension ceiling;
+it is not the project archetype. `http2_api` means the project owes a public API
+list baseline, not OpenAPI completeness. `kubernetes_native` derives a
+Kubernetes-native deployment baseline. `primary_replicas` derives a primary /
+replica topology baseline and should only be selected for projects that actually
+support that topology.
 
 Fix Agentic Workflow first when the pipeline breaks; do not work around a
 broken lifecycle.

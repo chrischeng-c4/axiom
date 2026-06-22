@@ -7,15 +7,14 @@
 // @contract search-stability-backpressure
 // @category stability
 // @required_for_production true
-// @command rig run --dir projects/lumen/tests/rig/cases/load --pins projects/lumen/tests/rig/config/pins
+// @command cd projects/lumen && ../../target/debug/vat run rig-load
 // AW-EC-END
 
 // Contract: (d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen).
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_long_running_stability_overload_backpressure() {
-    let command =
-        "rig run --dir projects/lumen/tests/rig/cases/load --pins projects/lumen/tests/rig/config/pins";
+    let command = "cd projects/lumen && ../../target/debug/vat run rig-load";
     let id = "lumen-long-running-stability-overload-backpressure";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

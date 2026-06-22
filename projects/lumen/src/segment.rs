@@ -695,7 +695,7 @@ pub fn write_vector_segment(
 // / `decompress_size_prepended`), a sparse skip-index (`BlockMeta` +
 // binary-search `locate`), and a prefix-delta string encoder
 // (`delta_encode` / `shared_prefix`). No WAL/fsync/per-record-crc and no
-// memtable — a segment is NATS-durable and discard-on-torn, so the only
+// memtable — a segment is broker-durable and discard-on-torn, so the only
 // integrity gate is the directory footer crc32.
 
 /// Per-column skip-index over a var-width column's LZ4 blocks. CBOR-encoded

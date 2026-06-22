@@ -37,10 +37,10 @@ concept, only the caller's `external_id` is.
 
 ## Capabilities
 
-The five RuntimeTool baseline capabilities are mandatory for this long-running
-service class. They do not replace Lumen's product capabilities; search,
-schema/ops, scale, deployment, observability, backup, and agent integration
-remain first-class domain roots.
+The RuntimeTool baseline capabilities selected by `aw.toml` are mandatory for
+this long-running service class. They do not replace Lumen's product
+capabilities; search, schema/ops, scale, deployment, observability, backup, and
+agent integration remain first-class domain roots.
 
 ### Capability Index
 
@@ -51,6 +51,7 @@ remain first-class domain roots.
 | Competitive Search Performance | - | implemented | auditing | conformance | not_ready | mandatory baseline: pg/OpenSearch comparisons and ratchets exist; isolated-host repeatability remains open |
 | Long-Running Stability | - | implemented | auditing | dogfood | not_ready | mandatory baseline: log rebuild, k8s/operator, backup/restore, observability, and soak gates |
 | Security Hardening | - | implemented | auditing | negative | not_ready | mandatory baseline: bearer/RBAC/TLS/query safety gates exist |
+| HTTP/2 API List | 4143 | implemented | passing | conformance | not_ready | mandatory baseline: concise HTTP/2 route list plus offline spec/OpenAPI commands |
 | Search Core | - | implemented | auditing | conformance | not_ready | domain: pure search index returning ranked external_ids only |
 | Lexical Search | - | implemented | passing | conformance | not_ready | domain: BM25 and analyzer-backed text search |
 | Exact & Filter Search | - | implemented | passing | conformance | not_ready | domain: keyword, number, set, boolean, range, and sorted filters |
@@ -134,7 +135,7 @@ Gate Inventory:
 
 ID: long-running-stability
 Type: RuntimeTool
-Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `projects/lumen/k8s` and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: NATS/relay WAL - rebuildable derived-index mutation stream.
+Surfaces: CLI: `lumen serve` - long-running search service process.; K8s: `projects/lumen/k8s` and `Lumen` operator - declarative deployment and reconcile surface.; HTTP: `/healthz`, `/readyz`, `/metrics` - probes and observability surface.; Log: Relay WAL - rebuildable derived-index mutation stream.
 EC Dimensions: stability: `rig` - resilience, endurance, load, and recovery scenarios; behavior: `projects/lumen/scripts/kind-e2e.sh` - k8s/operator dogfood gate
 Root WI: -
 Status: auditing
@@ -181,6 +182,28 @@ Gate Inventory:
 | adversarial-query-safety | epic | - | implemented | passing | negative | projects/lumen/tests/coverage_gaps_e2e.rs |
 | score-confidentiality | epic | - | implemented | passing | negative | projects/lumen/tests/coverage_gaps_e2e.rs |
 | tls-rustls | epic | - | implemented | passing | smoke | cargo test -p lumen tls; projects/lumen/src/tls.rs |
+
+### HTTP/2 API List
+
+ID: http2-api-list
+Type: Service
+Surfaces: HTTP: `POST /index`, `POST /search`, collection/schema/stats/reindex/replay routes, `/openapi.json`, `/healthz`, `/readyz`, `/metrics` - concise HTTP/2 API list for clients and operators.; CLI: `lumen spec` and `lumen spec --format openapi-yaml` - offline API/schema inventory.
+EC Dimensions: behavior: `cargo test -p lumen --test spec_cli` - offline API/schema inventory; behavior: named `api_e2e` subtests - served OpenAPI, health, readiness, and metrics smoke
+Root WI: 4143
+Status: auditing
+Required Verification: conformance
+Promise:
+Publish Lumen's supported HTTP/2 API surface as a compact endpoint inventory
+and offline spec commands, without making OpenAPI completeness the capability
+definition.
+Gate Inventory:
+- projects/lumen/README.md#api-surface; projects/lumen/tests/spec_cli.rs; projects/lumen/tests/api_e2e.rs (health_and_ready, openapi_spec_served, metrics_exposes_prometheus_text)
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| client-search-and-index-route-list | epic | - | implemented | passing | conformance | projects/lumen/README.md#api-surface; projects/lumen/tests/api_e2e.rs |
+| ops-metadata-probe-and-metrics-route-list | epic | - | implemented | passing | conformance | projects/lumen/tests/api_e2e.rs (health_and_ready, metrics_exposes_prometheus_text) |
+| offline-spec-openapi-list | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 
 ### Search Core
 
@@ -480,9 +503,9 @@ path — `kw_term` 6.2×, `range` 2.9×, `bool_filter` 39.6× vs pg prepared Uni
 Every OpenSearch cell holds a 3.0× WIN baseline (2.4× floor after the ratchet);
 paced qps tiers stay ahead of OpenSearch on every WIN cell.
 
-**Write path** — `tests/write_qps.rs` drives the real HTTP `POST /index`; treat
-**JetStream as the standard write comparison** (embedded/local-sharded rows are
-developer-loop trend checks). Latest 100-worker strict JetStream run: **8.5× vs
+**Write path** — `tests/write_qps.rs` drives the real HTTP `POST /index`; the
+legacy NATS/JetStream row remains the historical write-path comparison while
+the serving/operator broker uses Relay. Latest historical 100-worker JetStream run: **8.5× vs
 Postgres**, **3.4× vs OpenSearch**, 0 errors. `LUMEN_PERF_STRICT=1` strict-gates
 the write margins when peer services are present; per-mode numbers and tuning
 history live in `benchmarks-scale.md`.

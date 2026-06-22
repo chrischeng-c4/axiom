@@ -2,12 +2,12 @@
 # lumen — kind-based end-to-end happy-path test.
 #
 # Implements the README §9 happy-path on the log-replicated architecture:
-# spin up a single-node kind cluster, apply the `dev` overlay (NATS
-# JetStream broker + lumen serving Deployment), drive the public HTTP API
+# spin up a single-node kind cluster, apply the `dev` overlay (Relay broker +
+# lumen serving Deployment), drive the public HTTP API
 # (:7373) through schema → index 10k → search → duplicates, then KILL ALL
 # SERVING PODS and verify search results are identical after the new pods
-# rebuild their index by tailing the NATS log. (The broker is NOT killed;
-# durability lives in NATS, not in the ephemeral serving pods.)
+# rebuild their index by tailing the Relay log. (The broker is NOT killed;
+# durability lives in Relay, not in the ephemeral serving pods.)
 #
 # Usage:  scripts/kind-e2e.sh
 #         LUMEN_E2E_MODE=operator scripts/kind-e2e.sh   # deploy via the CRD
@@ -41,18 +41,18 @@ NAMESPACE="lumen"
 # Deploy path: `overlay` (default) or `operator`. The operator renders the
 # recommended app.kubernetes.io/* labels; the hand-written manifests use
 # app/role. Resource NAMES are identical in both (CR named `lumen` in ns
-# `lumen` → Deployment `lumen`, StatefulSet `lumen-nats`), so only the label
+# `lumen` → Deployment `lumen`, StatefulSet `lumen-relay`), so only the label
 # selectors and Service handling differ between modes.
 E2E_MODE="${LUMEN_E2E_MODE:-overlay}"
 OPERATOR_NS="lumen-system"
 LUMEN_CR_NAME="lumen"
 if [[ "$E2E_MODE" == "operator" ]]; then
   APP_LABEL="app.kubernetes.io/name=lumen,app.kubernetes.io/component=server"
-  NATS_LABEL="app.kubernetes.io/name=lumen,app.kubernetes.io/component=nats"
+  BROKER_LABEL="app.kubernetes.io/name=lumen,app.kubernetes.io/component=broker"
 else
-  # Serving pods only — NOT the NATS broker, which also carries app=lumen.
+  # Serving pods only — NOT the Relay broker, which also carries app=lumen.
   APP_LABEL="app=lumen,role=server"
-  NATS_LABEL="app=lumen,role=nats"
+  BROKER_LABEL="app=lumen,role=broker"
 fi
 # Host port (extraPortMappings) → node NodePort → Service :7373.
 PORT_LOCAL="${LUMEN_PORT_LOCAL:-17373}"
@@ -114,11 +114,11 @@ wait_pods_exist() {
   done
 }
 
-wait_nats_ready() {
+wait_broker_ready() {
   local timeout="${1:-120}"
-  echo "   waiting up to ${timeout}s for NATS broker ($NATS_LABEL) Ready"
-  wait_pods_exist "$NATS_LABEL" "$timeout"
-  kubectl -n "$NAMESPACE" wait --for=condition=Ready pod -l "$NATS_LABEL" \
+  echo "   waiting up to ${timeout}s for Relay broker ($BROKER_LABEL) Ready"
+  wait_pods_exist "$BROKER_LABEL" "$timeout"
+  kubectl -n "$NAMESPACE" wait --for=condition=Ready pod -l "$BROKER_LABEL" \
     --timeout="${timeout}s"
 }
 
@@ -133,28 +133,28 @@ wait_lumen_ready() {
 # Wait for the broker pod to be RECREATED (new UID) and Ready after a kill.
 # A plain `kubectl wait --for=Ready` is racy here: it can match the
 # still-terminating old pod (briefly still Ready → false positive) or error
-# before the StatefulSet recreates lumen-nats-0. Poll on a UID change instead.
-wait_nats_recovered() {
+# before the StatefulSet recreates lumen-relay-0. Poll on a UID change instead.
+wait_broker_recovered() {
   local old_uid="$1" timeout="${2:-180}" deadline
   deadline=$(( $(date +%s) + timeout ))
-  echo "   waiting up to ${timeout}s for NATS broker to recreate (old uid ${old_uid:0:8}…) + Ready"
+  echo "   waiting up to ${timeout}s for Relay broker to recreate (old uid ${old_uid:0:8}…) + Ready"
   while [[ $(date +%s) -lt $deadline ]]; do
     local uid ready
-    uid="$(kubectl -n "$NAMESPACE" get pod lumen-nats-0 -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
-    ready="$(kubectl -n "$NAMESPACE" get pod lumen-nats-0 \
+    uid="$(kubectl -n "$NAMESPACE" get pod lumen-relay-0 -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
+    ready="$(kubectl -n "$NAMESPACE" get pod lumen-relay-0 \
       -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || true)"
     if [[ -n "$uid" && "$uid" != "$old_uid" && "$ready" == "True" ]]; then
-      echo "   NATS broker recovered (new uid ${uid:0:8}…)"
+      echo "   Relay broker recovered (new uid ${uid:0:8}…)"
       return 0
     fi
     sleep 3
   done
-  echo "!! NATS broker did not recover within ${timeout}s" >&2
-  kubectl -n "$NAMESPACE" get pods -l "$NATS_LABEL" >&2 || true
+  echo "!! Relay broker did not recover within ${timeout}s" >&2
+  kubectl -n "$NAMESPACE" get pods -l "$BROKER_LABEL" >&2 || true
   return 1
 }
 
-# Build the lumen image and load it into the kind node.
+# Build the lumen and relay images and load them into the kind node.
 #
 # Built from the WORKSPACE ROOT as context (the same pattern as
 # projects/lumen/compose.yaml and conductor's CI): cargo resolves the whole
@@ -166,6 +166,8 @@ wait_nats_recovered() {
 build_and_load_image() {
   docker build -f "$LUMEN_DIR/Dockerfile" -t "$IMAGE_TAG" "$REPO_ROOT"
   kind load docker-image "$IMAGE_TAG" --name "$CLUSTER_NAME"
+  docker build -f "$REPO_ROOT/projects/relay/Dockerfile" -t relay:latest "$REPO_ROOT"
+  kind load docker-image relay:latest --name "$CLUSTER_NAME"
 }
 
 # Deploy lumen by the selected mode.
@@ -179,7 +181,7 @@ deploy_lumen() {
 
 # Operator path: install the CRD + RBAC + operator (same image as serving),
 # then apply a dev-shaped Lumen CR and let the reconcile loop materialize the
-# serving Deployment + NATS StatefulSet. Resource names match the overlay path,
+# serving Deployment + Relay StatefulSet. Resource names match the overlay path,
 # so the rest of the test is mode-agnostic.
 deploy_via_operator() {
   kubectl apply -k "${LUMEN_DIR}/k8s/operator"
@@ -209,8 +211,8 @@ spec:
       minReplicas: 1
       maxReplicas: 3
       targetCpuUtilization: 70
-  nats:
-    replicas: 1
+  broker:
+    image: relay:latest
     storage: 1Gi
 EOF
 
@@ -218,8 +220,8 @@ EOF
   local deadline=$(( $(date +%s) + 60 ))
   while [[ $(date +%s) -lt $deadline ]]; do
     if kubectl -n "$NAMESPACE" get deploy/"${LUMEN_CR_NAME}" >/dev/null 2>&1 \
-       && kubectl -n "$NAMESPACE" get statefulset/"${LUMEN_CR_NAME}-nats" >/dev/null 2>&1; then
-      echo "   operator reconciled Deployment/${LUMEN_CR_NAME} + StatefulSet/${LUMEN_CR_NAME}-nats"
+       && kubectl -n "$NAMESPACE" get statefulset/"${LUMEN_CR_NAME}-relay" >/dev/null 2>&1; then
+      echo "   operator reconciled Deployment/${LUMEN_CR_NAME} + StatefulSet/${LUMEN_CR_NAME}-relay"
       return 0
     fi
     sleep 2
@@ -360,7 +362,7 @@ step "2. deploy lumen (mode=${E2E_MODE})" deploy_lumen
 # 3. Wait for pod Ready
 # ---------------------------------------------------------------------------
 
-step "3a. wait for NATS broker Ready" wait_nats_ready 180
+step "3a. wait for Relay broker Ready" wait_broker_ready 180
 step "3b. wait for serving pods Ready" wait_lumen_ready 240
 
 # ---------------------------------------------------------------------------
@@ -425,7 +427,7 @@ SEARCH_BEFORE="$(echo "$SEARCH_RESP" | jq -S '{hits: .hits, total: .total}')"
 
 # ---------------------------------------------------------------------------
 # 5. Kill all SERVING pods (not the broker). New pods must rebuild their
-#    index by tailing the NATS log — proving the data lives in the log,
+#    index by tailing the Relay log — proving the data lives in the log,
 #    not in any serving pod.
 # ---------------------------------------------------------------------------
 
@@ -443,7 +445,7 @@ step "6. wait for serving pods Ready (post kill, rebuilt from log)" wait_lumen_r
 step "6b. re-confirm API reachable post-recovery" expose_nodeport
 
 # ---------------------------------------------------------------------------
-# 7. Re-run search and assert identical (index rebuilt from the NATS log)
+# 7. Re-run search and assert identical (index rebuilt from the Relay log)
 # ---------------------------------------------------------------------------
 
 SEARCH_AFTER_RAW="$(api_search)"
@@ -459,19 +461,19 @@ fi
 echo ">> 7. search identical after rebuild-from-log — PASS"
 
 # ---------------------------------------------------------------------------
-# 8. Broker-kill chaos. Delete the NATS pod: serving nodes must NOT crash
+# 8. Broker-kill chaos. Delete the Relay pod: serving nodes must NOT crash
 #    (they reconnect + the apply loop re-subscribes from its applied seq),
-#    writes must resume once the broker is back (durable JetStream on the PVC),
+#    writes must resume once the broker is back (durable Relay log on the PVC),
 #    and the pre-kill data must be intact.
 # ---------------------------------------------------------------------------
 
 RESTARTS_BEFORE="$(server_restarts)"
-NATS_UID_BEFORE="$(kubectl -n "$NAMESPACE" get pod lumen-nats-0 -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
-step "8. kubectl delete pod -l $NATS_LABEL (broker kill)" \
-  kubectl -n "$NAMESPACE" delete pod -l "$NATS_LABEL" --wait=false
+BROKER_UID_BEFORE="$(kubectl -n "$NAMESPACE" get pod lumen-relay-0 -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
+step "8. kubectl delete pod -l $BROKER_LABEL (broker kill)" \
+  kubectl -n "$NAMESPACE" delete pod -l "$BROKER_LABEL" --wait=false
 
-step "9. wait for NATS broker recreated + Ready (durable PVC)" \
-  wait_nats_recovered "$NATS_UID_BEFORE" 180
+step "9. wait for Relay broker recreated + Ready (durable PVC)" \
+  wait_broker_recovered "$BROKER_UID_BEFORE" 180
 
 RESTARTS_AFTER="$(server_restarts)"
 if [[ "${RESTARTS_AFTER:-0}" -gt "${RESTARTS_BEFORE:-0}" ]]; then

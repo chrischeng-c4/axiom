@@ -212,7 +212,8 @@ pub struct SearchRequest {
     pub cursor: Option<String>,
     /// Sort results by one or more fields instead of by relevance score.
     /// When absent, results are ranked by score (BM25 / constant) then
-    /// external_id. Currently only number fields are sortable.
+    /// external_id. Single number-field sorts use the keyset planner; keyword
+    /// and composite sorts use the materialized fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<Vec<SortSpec>>,
     /// Whether to compute the exact total match count. Defaults to `true`

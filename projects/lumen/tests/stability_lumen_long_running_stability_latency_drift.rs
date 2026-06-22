@@ -7,14 +7,14 @@
 // @contract search-stability-latency-drift
 // @category stability
 // @required_for_production true
-// @command rig run --dir projects/lumen/tests/rig/cases/endurance
+// @command cd projects/lumen && ../../target/debug/vat run rig-endurance
 // AW-EC-END
 
 // Contract: (f) search p99 per window over the soak drifts <= 1.10x + 6ms (rig endurance/soak_p99_drift.toml). Env-dependent (vat-provisioned lumen).
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_long_running_stability_latency_drift() {
-    let command = "rig run --dir projects/lumen/tests/rig/cases/endurance";
+    let command = "cd projects/lumen && ../../target/debug/vat run rig-endurance";
     let id = "lumen-long-running-stability-latency-drift";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

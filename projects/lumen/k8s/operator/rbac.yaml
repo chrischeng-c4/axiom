@@ -29,11 +29,11 @@ rules:
   - apiGroups: ["lumen.dev"]
     resources: ["lumens", "lumens/status", "lumens/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Serving + NATS workloads.
+  # Serving + broker workloads.
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Serving Service/ConfigMap/ServiceAccount + NATS Services/ConfigMap.
+  # Serving Service/ConfigMap/ServiceAccount + broker Services/ConfigMap.
   - apiGroups: [""]
     resources: ["services", "configmaps", "serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

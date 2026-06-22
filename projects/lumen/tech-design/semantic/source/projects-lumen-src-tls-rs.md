@@ -35,7 +35,7 @@ Public API manifest for `projects/lumen/src/tls.rs` captured as a per-file rust-
 //!
 //! v1 ships the configuration surface — paths to cert / key / CA bundle
 //! and an `is_required` flag — so deployments can declare their TLS
-//! posture today. The rustls binding is wired in alongside the openraft
+//! posture today. The rustls binding is wired in alongside the raftcore-backed
 //! peer transport.
 //!
 //! ## Env contract

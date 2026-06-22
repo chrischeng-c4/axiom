@@ -9,7 +9,6 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use walkdir::WalkDir;
 
 const EC_MANIFEST_VERSION: u8 = 1;
@@ -2513,41 +2512,27 @@ fn verify_ec_context(ctx: &EcProjectContext) -> Result<EcVerifySummary> {
         );
     };
     let mut results = Vec::new();
+    let mut seen_commands = BTreeSet::new();
     for case in &manifest.cases {
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&case.command)
-            .current_dir(&ctx.project_root)
-            .output();
-        let result = match output {
-            Ok(output) => EcVerifyCommandResult {
-                case_id: case.id.clone(),
-                capability_id: case.capability_id.clone(),
-                claim_id: case.claim_id.clone(),
-                category: case.category.clone(),
-                command: case.command.clone(),
-                status: if output.status.success() {
-                    "passed".to_string()
-                } else {
-                    "failed".to_string()
-                },
-                exit_code: output.status.code(),
-                stdout_tail: tail_lossy(&output.stdout, 4000),
-                stderr_tail: tail_lossy(&output.stderr, 4000),
-            },
-            Err(err) => EcVerifyCommandResult {
-                case_id: case.id.clone(),
-                capability_id: case.capability_id.clone(),
-                claim_id: case.claim_id.clone(),
-                category: case.category.clone(),
-                command: case.command.clone(),
-                status: "failed".to_string(),
-                exit_code: None,
-                stdout_tail: String::new(),
-                stderr_tail: err.to_string(),
-            },
-        };
-        results.push(result);
+        if !case.command.trim().is_empty() && !seen_commands.insert(case.command.trim().to_string())
+        {
+            continue;
+        }
+        results.push(run_ec_verify_command(
+            case.id.clone(),
+            case.capability_id.clone(),
+            case.claim_id.clone(),
+            case.category.clone(),
+            case.command.clone(),
+            &ctx.project_root,
+        ));
+    }
+    for tool in &manifest.tool_manifests {
+        if !tool.command.trim().is_empty() && !seen_commands.insert(tool.command.trim().to_string())
+        {
+            continue;
+        }
+        results.push(run_ec_tool_manifest_command(tool, &ctx.project_root));
     }
     let command_count = results.len();
     let passed_count = results
@@ -2564,6 +2549,80 @@ fn verify_ec_context(ctx: &EcProjectContext) -> Result<EcVerifySummary> {
         failed_count,
         results,
     })
+}
+
+fn run_ec_tool_manifest_command(
+    tool: &EcToolManifest,
+    project_root: &Path,
+) -> EcVerifyCommandResult {
+    let category = if tool.category.trim().is_empty() {
+        "tool".to_string()
+    } else {
+        tool.category.clone()
+    };
+    let case_id = format!("tool:{}", tool.id);
+    if tool.command.trim().is_empty() {
+        return EcVerifyCommandResult {
+            case_id,
+            capability_id: String::new(),
+            claim_id: String::new(),
+            category,
+            command: String::new(),
+            status: "failed".to_string(),
+            exit_code: None,
+            stdout_tail: String::new(),
+            stderr_tail: format!("tool-contract `{}` is missing command", tool.id),
+        };
+    }
+    run_ec_verify_command(
+        case_id,
+        String::new(),
+        String::new(),
+        category,
+        tool.command.clone(),
+        project_root,
+    )
+}
+
+fn run_ec_verify_command(
+    case_id: String,
+    capability_id: String,
+    claim_id: String,
+    category: String,
+    command: String,
+    project_root: &Path,
+) -> EcVerifyCommandResult {
+    let output = crate::cli::shell_env::protected_shell_command(project_root, &command)
+        .current_dir(project_root)
+        .output();
+    match output {
+        Ok(output) => EcVerifyCommandResult {
+            case_id,
+            capability_id,
+            claim_id,
+            category,
+            command,
+            status: if output.status.success() {
+                "passed".to_string()
+            } else {
+                "failed".to_string()
+            },
+            exit_code: output.status.code(),
+            stdout_tail: tail_lossy(&output.stdout, 4000),
+            stderr_tail: tail_lossy(&output.stderr, 4000),
+        },
+        Err(err) => EcVerifyCommandResult {
+            case_id,
+            capability_id,
+            claim_id,
+            category,
+            command,
+            status: "failed".to_string(),
+            exit_code: None,
+            stdout_tail: String::new(),
+            stderr_tail: err.to_string(),
+        },
+    }
 }
 
 fn compare_case_field(
@@ -3780,6 +3839,138 @@ e2e_tests:
         assert_eq!(summary.command_count, 1);
         assert_eq!(summary.passed_count, 1);
         assert_eq!(summary.results[0].claim_id, "demo-smoke");
+    }
+
+    #[test]
+    fn ec_verify_runs_tool_manifest_commands() {
+        let (tmp, ctx) = write_demo_repo();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/security")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("projects/demo/external-contracts/security/guard.md"),
+            r#"
+## Guard
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: guard smoke
+    capability_id: demo
+    claim_id: guarded
+    command: "true"
+```
+
+## Guard Tool
+<!-- type: tool-contract lang: yaml -->
+
+```yaml
+tool_contracts:
+  - id: demo guard
+    tool: guard
+    manifest: guard.toml
+    category: security
+    command: "echo guard"
+    native:
+      version: 1
+      id: demo-guard
+```
+"#,
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx).unwrap();
+
+        assert!(summary.clean, "{:?}", summary.results);
+        assert_eq!(summary.command_count, 2);
+        assert!(summary
+            .results
+            .iter()
+            .any(|result| result.case_id == "tool:demo-guard"));
+    }
+
+    #[test]
+    fn ec_verify_dedupes_case_and_tool_manifest_commands() {
+        let (tmp, ctx) = write_demo_repo();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/security")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("projects/demo/external-contracts/security/guard.md"),
+            r#"
+## Guard
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: guard smoke
+    capability_id: demo
+    claim_id: guarded
+    command: "true"
+```
+
+## Guard Tool
+<!-- type: tool-contract lang: yaml -->
+
+```yaml
+tool_contracts:
+  - id: demo guard
+    tool: guard
+    manifest: guard.toml
+    category: security
+    command: "true"
+    native:
+      version: 1
+      id: demo-guard
+```
+"#,
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx).unwrap();
+
+        assert!(summary.clean, "{:?}", summary.results);
+        assert_eq!(summary.command_count, 1);
+        assert_eq!(summary.passed_count, 1);
+        assert_eq!(summary.results[0].case_id, "guard-smoke");
+    }
+
+    #[test]
+    fn ec_verify_fails_tool_manifest_without_command() {
+        let (tmp, ctx) = write_demo_repo();
+        fs::create_dir_all(tmp.path().join("projects/demo/external-contracts/security")).unwrap();
+        fs::write(
+            tmp.path()
+                .join("projects/demo/external-contracts/security/guard.md"),
+            r#"
+## Guard
+<!-- type: tool-contract lang: yaml -->
+
+```yaml
+tool_contracts:
+  - id: demo guard
+    tool: guard
+    manifest: guard.toml
+    category: security
+    native:
+      version: 1
+      id: demo-guard
+```
+"#,
+        )
+        .unwrap();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+
+        let summary = verify_ec_context(&ctx).unwrap();
+
+        assert!(!summary.clean);
+        assert_eq!(summary.command_count, 1);
+        assert_eq!(summary.failed_count, 1);
+        assert_eq!(summary.results[0].case_id, "tool:demo-guard");
+        assert!(summary.results[0].stderr_tail.contains("missing command"));
     }
 
     #[test]

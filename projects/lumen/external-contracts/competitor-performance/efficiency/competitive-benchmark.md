@@ -24,7 +24,7 @@ e2e_tests:
     contract_id: search-efficiency-filtering-ranking-pagination
     category: efficiency
     test_path: projects/lumen/tests/benchmark_lumen_competitor_performance_competitive.rs
-    command: "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
+    command: "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
     assertions:
       - "FILTERING: filtered_search (AND[BM25+term+range]) beats pg >= 3.73x and OpenSearch(disk) >= 2.4x; filtered_knn beats pg >= 2.4x (OS exempt, no kNN plugin)."
       - "RANKING: text_bm25 single-term beats pg >= 14.56x; text_and multi-term beats pg >= 1.47x (OS >= 2.4x each)."
@@ -41,10 +41,10 @@ tool_contracts:
     tool: meter
     manifest: meter-search-efficiency.toml
     category: efficiency
-    command: "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
+    command: "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
     native:
       version: 1
       project: lumen
       source_contract: lumen-competitor-performance-competitive
-      delegate_command: "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
+      delegate_command: "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
 ```

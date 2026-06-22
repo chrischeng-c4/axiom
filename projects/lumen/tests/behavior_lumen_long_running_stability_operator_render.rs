@@ -10,8 +10,8 @@
 // @command cargo test -p lumen --features operator --test operator_render -- --nocapture
 // AW-EC-END
 
-// Contract: render(Lumen) emits the managed serving Deployment/Service/HPA/PDB plus the NATS JetStream ConfigMap/StatefulSet/Service when NATS is managed.
-// Contract: BYO-NATS (nats.externalUrl) omits the managed NATS objects and wires the external URL into the serving env.
+// Contract: render(Lumen) emits the managed serving Deployment/Service/HPA/PDB plus the Relay StatefulSet/Service/PDB when the broker is managed.
+// Contract: BYO-Relay (broker.externalUrl) omits the managed Relay objects and wires the external URL into the serving env.
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_long_running_stability_operator_render() {

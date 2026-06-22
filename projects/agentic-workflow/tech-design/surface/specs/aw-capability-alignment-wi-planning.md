@@ -139,6 +139,9 @@ scenarios:
       - "draft emits a Review Decisions worksheet with one row per candidate root so HITL review can record confirm, rename, split, merge, defer, type, surface, EC dimension, WI, and gate decisions before README mutation"
       - "draft treats non-contract Markdown tables with a Capability column, such as Required Platform Capabilities, as pending-review candidate roots instead of emitting only a blank worksheet"
       - "draft treats Markdown bullets under explicit Features or Modules sections as pending-review candidate roots, and falls back to Implemented sections only when no clearer candidate list exists"
+      - "draft reads project-local aw.toml [capability.profile].traits, renders selected traits plus derived required baseline capabilities, and treats missing baseline capabilities as pending-review candidate roots"
+      - "trait-derived baseline capabilities are mandatory minimums for the project profile, not the complete capability set, and domain-specific capabilities remain human-reviewed capability roots"
+      - "http2_api derives a lightweight HTTP/2 API-list baseline without requiring OpenAPI completeness, kubernetes_native derives a Kubernetes deployment baseline, and primary_replicas derives a primary/replica topology baseline only for projects that select the trait"
       - "draft keeps candidate review order aligned with README source line order across heading, table, and list inputs"
       - "draft extracts trailing issue references such as (#3331) into Root WI without baking the issue number into the capability title or proposed ID"
       - "sweep --write-drafts emits a draft review index that separates inferred candidate review from human definition-needed worksheets"
@@ -154,6 +157,7 @@ scenarios:
       - "aw wi plan resolves README active WI refs that are absent from the open issue inventory through backend get lookups and emits Tracker WI Ref Lookups with closed, not_found, or lookup_error status for HITL reconciliation"
       - "run executes at most one bounded tick unless --max-ticks raises the bound"
       - "check validates README capability format and TD capability refs without lifecycle execution"
+      - "check validates project-local capability profile required baseline capabilities against README capability IDs"
       - "sweep emits grouped project rows by report status and next_action kind without mutating capability maps"
       - "sweep --write-rollout emits one AW-owned rollout handoff plus check, draft, WI-plan, action-queue, and HITL review packet artifacts"
       - "sweep groups skipped-inventory README WI-ref work as reconcile_wi_refs:issue_inventory_skipped so agents do not treat tracker reconciliation as new WI backlog"
@@ -164,6 +168,7 @@ scenarios:
     when: ["aw capability check validates cap_path"]
     then:
       - "capability type is one of AgentFirst, Service, Devops, DeveloperTool, RuntimeTool, or SecurityTool"
+      - "CapabilityType classifies one capability's EC-dimension ceiling and is not the project archetype; project archetype-like planning belongs to project-local capability profile traits"
       - "surfaces list public interfaces such as CLI, HTTP, UI, file/config, generated artifacts, or agent hook entrypoints with short purposes"
       - "EC Dimensions list declared proof dimensions and runners; behavior is required for production when the capability is non-candidate"
       - "Service may require behavior, efficiency, security, and stability; Devops behavior and stability; DeveloperTool/RuntimeTool behavior, efficiency, and stability; SecurityTool behavior, security, and stability; AgentFirst behavior"

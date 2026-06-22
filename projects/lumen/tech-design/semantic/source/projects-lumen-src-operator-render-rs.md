@@ -27,13 +27,15 @@ Public API manifest for `projects/lumen/src/operator/render.rs` captured as a pe
 
 | Name | Target | Kind | Visibility |
 |------|--------|------|------------|
-| `nats_url` | projects/lumen/src/operator/render.rs | function | pub |
+| `broker_url` | projects/lumen/src/operator/render.rs | function | pub |
 | `render` | projects/lumen/src/operator/render.rs | function | pub |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Pure rendering: a [`Lumen`] spec → the set of child Kubernetes objects that
 //! realize it. No cluster, no I/O — every object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels +
@@ -42,7 +44,7 @@ Public API manifest for `projects/lumen/src/operator/render.rs` captured as a pe
 //!
 //! The objects mirror `k8s/base` + the staging/prod overlays exactly: serving
 //! Deployment/Service/ConfigMap/HPA/PDB/ServiceAccount and (when the broker is
-//! managed) NATS StatefulSet/Services/ConfigMap. The reconcile loop in
+//! managed) Relay StatefulSet/Services/PDB. The reconcile loop in
 //! [`super::reconcile`] server-side-applies whatever this returns.
 
 use serde_json::{json, Value};
@@ -53,6 +55,7 @@ const APP: &str = "lumen";
 const API_VERSION: &str = "lumen.dev/v1alpha1";
 const KIND: &str = "Lumen";
 const CLIENT_PORT: i32 = 7373;
+const BROKER_PORT: i32 = 7000;
 
 /// Resolve the instance name (defaults to `lumen` only when metadata is absent,
 /// which never happens for a real CR).
@@ -73,12 +76,13 @@ fn namespace(lumen: &Lumen) -> String {
         .unwrap_or_else(|| "default".to_string())
 }
 
-/// The NATS client URL serving pods connect to: the managed broker's ClusterIP
+/// The Relay client URL serving pods connect to: the managed broker's ClusterIP
 /// service, or the caller-supplied external URL.
-pub fn nats_url(lumen: &Lumen) -> String {
-    match &lumen.spec.nats.external_url {
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
+pub fn broker_url(lumen: &Lumen) -> String {
+    match &lumen.spec.broker.external_url {
         Some(url) => url.clone(),
-        None => format!("nats://{}-nats:4222", instance(lumen)),
+        None => format!("http://{}-relay:{BROKER_PORT}", instance(lumen)),
     }
 }
 
@@ -131,14 +135,14 @@ fn meta(name: &str, ns: &str, labels: Value, owner: &Option<Value>) -> Value {
 
 /// Render every child object for `lumen`, in dependency order (namespace-scoped
 /// config first, then workloads).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-render-rs.md#source
 pub fn render(lumen: &Lumen) -> Vec<Value> {
     let mut out = vec![service_account(lumen), serving_configmap(lumen)];
-    if lumen.spec.nats.is_managed() {
-        out.push(nats_configmap(lumen));
-        out.push(nats_statefulset(lumen));
-        out.push(nats_service(lumen));
-        out.push(nats_headless_service(lumen));
-        out.push(nats_pdb(lumen));
+    if lumen.spec.broker.is_managed() {
+        out.push(broker_statefulset(lumen));
+        out.push(broker_service(lumen));
+        out.push(broker_headless_service(lumen));
+        out.push(broker_pdb(lumen));
     }
     out.push(serving_deployment(lumen));
     out.push(serving_service(lumen));
@@ -164,7 +168,8 @@ fn serving_configmap(lumen: &Lumen) -> Value {
     let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
     let mut data = json!({
         "SHARD_COUNT": lumen.spec.shard_count.to_string(),
-        "LUMEN_NATS_URL": nats_url(lumen),
+        "LUMEN_RELAY_URL": broker_url(lumen),
+        "LUMEN_RELAY_SUBJECT": lumen.spec.broker.subject.clone(),
         "LUMEN_LOG_FORMAT": lumen.spec.log_format.as_env(),
         "LUMEN_PORT": CLIENT_PORT.to_string(),
         "LUMEN_AUTH": lumen.spec.auth.as_env(),
@@ -189,10 +194,12 @@ fn serving_env(lumen: &Lumen) -> Vec<Value> {
         json!({ "name": "POD_NAME", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
         json!({ "name": "POD_NAMESPACE", "valueFrom": { "fieldRef": { "fieldPath": "metadata.namespace" } } }),
         json!({ "name": "LUMEN_HOST", "value": "0.0.0.0" }),
-        json!({ "name": "LUMEN_WAL", "value": "nats" }),
+        json!({ "name": "LUMEN_WAL", "value": "relay" }),
+        json!({ "name": "LUMEN_RELAY_SUBSCRIBER_ID", "valueFrom": { "fieldRef": { "fieldPath": "metadata.name" } } }),
         json!({ "name": "LUMEN_GRACE_SECS", "value": lumen.spec.serving.grace_secs.to_string() }),
         from_cfg("LUMEN_PORT"),
-        from_cfg("LUMEN_NATS_URL"),
+        from_cfg("LUMEN_RELAY_URL"),
+        from_cfg("LUMEN_RELAY_SUBJECT"),
         from_cfg("LUMEN_LOG_FORMAT"),
         from_cfg("LUMEN_AUTH"),
         from_cfg("SHARD_COUNT"),
@@ -272,7 +279,7 @@ fn serving_deployment(lumen: &Lumen) -> Value {
                         "env": serving_env(lumen),
                         "resources": res,
                         // 503 until the log tail catches up; generous threshold
-                        // lets a cold pod rebuild from the NATS log.
+                        // lets a cold pod rebuild from the broker log.
                         "readinessProbe": {
                             "httpGet": { "path": "/readyz", "port": "http" },
                             "initialDelaySeconds": 5, "periodSeconds": 10,
@@ -359,181 +366,125 @@ fn serving_pdb(lumen: &Lumen) -> Value {
     })
 }
 
-// ---- NATS broker (managed only) -------------------------------------------
+// ---- Relay broker (managed only) ------------------------------------------
 
-fn nats_configmap(lumen: &Lumen) -> Value {
+fn broker_statefulset(lumen: &Lumen) -> Value {
     let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    json!({
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": meta(&format!("{name}-nats-config"), &ns, labels(&name, "nats"), &owner),
-        // A write (incl. a bulk index batch) is one JetStream message; lift the
-        // 1MB default. The async-nats client learns the ceiling from INFO.
-        "data": { "nats.conf": "max_payload: 8MB\n" },
-    })
-}
-
-fn nats_args(lumen: &Lumen) -> Vec<Value> {
-    let name = instance(lumen);
-    let replicas = lumen.spec.nats.replicas.max(1);
-    let mut args: Vec<Value> = [
-        "-c",
-        "/etc/nats/nats.conf",
-        "-js",
-        "-sd",
-        "/data",
-        "-m",
-        "8222",
-    ]
-    .iter()
-    .map(|s| json!(s))
-    .collect();
-    // Clustered JetStream: wire routes so the brokers form one RAFT meta-group.
-    if replicas > 1 {
-        let routes = (0..replicas)
-            .map(|i| format!("nats://{name}-nats-{i}.{name}-nats-headless:6222"))
-            .collect::<Vec<_>>()
-            .join(",");
-        for a in [
-            "--cluster_name",
-            APP,
-            "--cluster",
-            "nats://0.0.0.0:6222",
-            "--routes",
-            &routes,
-        ] {
-            args.push(json!(a));
-        }
-    }
-    args
-}
-
-fn nats_statefulset(lumen: &Lumen) -> Value {
-    let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
-    let n = &lumen.spec.nats;
+    let b = &lumen.spec.broker;
     let mut pvc_spec = json!({
         "accessModes": ["ReadWriteOnce"],
-        "resources": { "requests": { "storage": n.storage } },
+        "resources": { "requests": { "storage": b.storage.clone() } },
     });
-    if let Some(sc) = &n.storage_class {
+    if let Some(sc) = &b.storage_class {
         pvc_spec["storageClassName"] = json!(sc);
     }
     json!({
         "apiVersion": "apps/v1",
         "kind": "StatefulSet",
-        "metadata": meta(&format!("{name}-nats"), &ns, labels(&name, "nats"), &owner),
+        "metadata": meta(&format!("{name}-relay"), &ns, labels(&name, "broker"), &owner),
         "spec": {
-            "replicas": n.replicas,
-            "serviceName": format!("{name}-nats-headless"),
+            // relay-server is a single durable log. Use externalUrl for HA
+            // Relay until relay-raft exposes subscribe/len, otherwise multiple
+            // pods would be independent logs behind one Service.
+            "replicas": 1,
+            "serviceName": format!("{name}-relay-headless"),
             "podManagementPolicy": "Parallel",
-            "selector": { "matchLabels": selector(&name, "nats") },
+            "selector": { "matchLabels": selector(&name, "broker") },
             "template": {
                 "metadata": {
-                    "labels": labels(&name, "nats"),
+                    "labels": labels(&name, "broker"),
                     "annotations": {
                         "prometheus.io/scrape": "true",
-                        "prometheus.io/port": "8222",
-                        "prometheus.io/path": "/metrics",
+                        "prometheus.io/port": BROKER_PORT.to_string(),
+                        "prometheus.io/path": "/healthz",
                     },
                 },
                 "spec": {
                     "serviceAccountName": name,
-                    "terminationGracePeriodSeconds": 60,
+                    "terminationGracePeriodSeconds": 30,
                     "securityContext": {
-                        "runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000,
+                        "runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001,
                         "seccompProfile": { "type": "RuntimeDefault" },
                     },
                     "containers": [{
-                        "name": "nats",
-                        "image": "nats:2.10-alpine",
+                        "name": "relay",
+                        "image": b.image.clone(),
                         "imagePullPolicy": "IfNotPresent",
-                        "args": nats_args(lumen),
-                        "ports": [
-                            { "name": "client", "containerPort": 4222, "protocol": "TCP" },
-                            { "name": "cluster", "containerPort": 6222, "protocol": "TCP" },
-                            { "name": "monitor", "containerPort": 8222, "protocol": "TCP" },
+                        "command": ["relay-server"],
+                        "ports": [{ "name": "http", "containerPort": BROKER_PORT, "protocol": "TCP" }],
+                        "env": [
+                            { "name": "RELAY_BIND", "value": format!("0.0.0.0:{BROKER_PORT}") },
+                            { "name": "RELAY_DATA_DIR", "value": "/data" },
                         ],
                         "resources": {
-                            "requests": { "cpu": n.cpu, "memory": n.memory },
-                            "limits": { "cpu": n.cpu, "memory": n.memory },
+                            "requests": { "cpu": b.cpu.clone(), "memory": b.memory.clone() },
+                            "limits": { "cpu": b.cpu.clone(), "memory": b.memory.clone() },
                         },
                         "readinessProbe": {
-                            "httpGet": { "path": "/healthz", "port": "monitor" },
+                            "httpGet": { "path": "/healthz", "port": "http" },
                             "initialDelaySeconds": 5, "periodSeconds": 10, "timeoutSeconds": 3, "failureThreshold": 6,
                         },
                         "livenessProbe": {
-                            "httpGet": { "path": "/healthz", "port": "monitor" },
+                            "httpGet": { "path": "/healthz", "port": "http" },
                             "initialDelaySeconds": 15, "periodSeconds": 30, "timeoutSeconds": 5, "failureThreshold": 3,
                         },
                         "startupProbe": {
-                            "httpGet": { "path": "/healthz", "port": "monitor" },
+                            "httpGet": { "path": "/healthz", "port": "http" },
                             "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 30,
                         },
                         "securityContext": {
-                            "runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000,
+                            "runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001,
                             "allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true,
                             "capabilities": { "drop": ["ALL"] },
                         },
-                        "volumeMounts": [
-                            { "name": "data", "mountPath": "/data" },
-                            { "name": "nats-config", "mountPath": "/etc/nats", "readOnly": true },
-                        ],
+                        "volumeMounts": [{ "name": "data", "mountPath": "/data" }],
                     }],
-                    "volumes": [{ "name": "nats-config", "configMap": { "name": format!("{name}-nats-config") } }],
                 },
             },
             "volumeClaimTemplates": [{
-                "metadata": { "name": "data", "labels": labels(&name, "nats") },
+                "metadata": { "name": "data", "labels": labels(&name, "broker") },
                 "spec": pvc_spec,
             }],
         },
     })
 }
 
-fn nats_service(lumen: &Lumen) -> Value {
+fn broker_service(lumen: &Lumen) -> Value {
     let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
     json!({
         "apiVersion": "v1",
         "kind": "Service",
-        "metadata": meta(&format!("{name}-nats"), &ns, labels(&name, "nats"), &owner),
+        "metadata": meta(&format!("{name}-relay"), &ns, labels(&name, "broker"), &owner),
         "spec": {
             "type": "ClusterIP",
-            "selector": selector(&name, "nats"),
-            "ports": [
-                { "name": "client", "port": 4222, "targetPort": "client", "protocol": "TCP" },
-                { "name": "monitor", "port": 8222, "targetPort": "monitor", "protocol": "TCP" },
-            ],
+            "selector": selector(&name, "broker"),
+            "ports": [{ "name": "http", "port": BROKER_PORT, "targetPort": "http", "protocol": "TCP" }],
         },
     })
 }
 
-fn nats_headless_service(lumen: &Lumen) -> Value {
+fn broker_headless_service(lumen: &Lumen) -> Value {
     let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
     json!({
         "apiVersion": "v1",
         "kind": "Service",
-        "metadata": meta(&format!("{name}-nats-headless"), &ns, labels(&name, "nats"), &owner),
+        "metadata": meta(&format!("{name}-relay-headless"), &ns, labels(&name, "broker"), &owner),
         "spec": {
             "clusterIP": "None",
             "publishNotReadyAddresses": true,
-            "selector": selector(&name, "nats"),
-            "ports": [
-                { "name": "client", "port": 4222, "targetPort": "client", "protocol": "TCP" },
-                { "name": "cluster", "port": 6222, "targetPort": "cluster", "protocol": "TCP" },
-                { "name": "monitor", "port": 8222, "targetPort": "monitor", "protocol": "TCP" },
-            ],
+            "selector": selector(&name, "broker"),
+            "ports": [{ "name": "http", "port": BROKER_PORT, "targetPort": "http", "protocol": "TCP" }],
         },
     })
 }
 
-fn nats_pdb(lumen: &Lumen) -> Value {
+fn broker_pdb(lumen: &Lumen) -> Value {
     let (name, ns, owner) = (instance(lumen), namespace(lumen), owner_ref(lumen));
     json!({
         "apiVersion": "policy/v1",
         "kind": "PodDisruptionBudget",
-        "metadata": meta(&format!("{name}-nats"), &ns, labels(&name, "nats"), &owner),
-        // Never let a voluntary disruption drop the JetStream quorum.
-        "spec": { "maxUnavailable": 1, "selector": { "matchLabels": selector(&name, "nats") } },
+        "metadata": meta(&format!("{name}-relay"), &ns, labels(&name, "broker"), &owner),
+        "spec": { "maxUnavailable": 1, "selector": { "matchLabels": selector(&name, "broker") } },
     })
 }
 
@@ -572,6 +523,8 @@ fn prometheus_rule(lumen: &Lumen) -> Value {
         },
     })
 }
+// CODEGEN-END
+
 ````
 
 ## Changes

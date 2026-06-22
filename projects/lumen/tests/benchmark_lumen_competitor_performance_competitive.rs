@@ -7,7 +7,7 @@
 // @contract search-efficiency-filtering-ranking-pagination
 // @category efficiency
 // @required_for_production true
-// @command target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1
+// @command cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter
 // AW-EC-END
 
 // Contract: FILTERING: filtered_search (AND[BM25+term+range]) beats pg >= 3.73x and OpenSearch(disk) >= 2.4x; filtered_knn beats pg >= 2.4x (OS exempt, no kNN plugin).
@@ -17,8 +17,7 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn lumen_competitor_performance_competitive() {
-    let command =
-        "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1";
+    let command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter";
     let id = "lumen-competitor-performance-competitive";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

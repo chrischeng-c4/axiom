@@ -67,7 +67,10 @@ cli:
       args:
         - {name: "--host", env: "LUMEN_HOST", default: "127.0.0.1"}
         - {name: "--port", env: "LUMEN_PORT", default: "7373"}
-        - {name: "--wal", env: "LUMEN_WAL", default: "embedded", choices: ["embedded", "nats"]}
+        - {name: "--wal", env: "LUMEN_WAL", default: "embedded", choices: ["embedded", "nats", "relay"]}
+        - {name: "--relay-url", env: "LUMEN_RELAY_URL", default: "http://localhost:7000"}
+        - {name: "--relay-subject", env: "LUMEN_RELAY_SUBJECT", default: "lumen-wal"}
+        - {name: "--relay-subscriber-id", env: "LUMEN_RELAY_SUBSCRIBER_ID", default: "POD_NAME/HOSTNAME"}
         - {name: "--persistence", env: "LUMEN_PERSISTENCE", default: "cbor", choices: ["cbor", "segment"]}
     - name: spec
       about: "Print the machine-readable integration contract (offline, no server)."

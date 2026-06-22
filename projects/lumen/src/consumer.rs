@@ -13,10 +13,11 @@
 //! Concrete adapter examples live under `examples/` (e.g.
 //! `consumer_pg_logical.py` — Postgres logical replication → `POST /index`).
 //!
-//! A write is published to the log and folded in by every serving node;
-//! there is no write leader to forward to (openraft was retired — NATS
-//! JetStream is the replication substrate), so any replica of the target
-//! shard accepts the `POST /index`.
+//! A write is published to the configured log and folded in by serving nodes.
+//! In primary-replica mode, clients should target the shard leader (or follow
+//! the serving API's leader redirect/retry contract); in standalone mode the
+//! single pod is the leader; in explicit broker mode any broker-connected pod
+//! can accept the write.
 
 use crate::routing::shard_index;
 
@@ -30,9 +31,9 @@ pub struct ShardRouter {
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-consumer-rs.md#source
 impl ShardRouter {
     /// URL of the `POST /index` endpoint for `collection_id` on the
-    /// correct shard. Any replica of that shard is fine — a write is
-    /// published to the log, not applied at the receiving node, so there
-    /// is no leader to forward to.
+    /// correct shard. In primary-replica mode this resolves the shard service;
+    /// callers may need to follow the serving API's leader redirect/retry
+    /// contract when the chosen pod is not currently leader.
     pub fn index_url(&self, collection_id: &str) -> String {
         let shard = shard_index(collection_id, self.shard_count);
         format!(

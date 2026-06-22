@@ -1173,16 +1173,16 @@ semantic_domain:
           - name: "deployment_wires_serving_contract"
             kind: "function"
             public: false
-          - name: "configmap_and_nats_url_track_spec"
+          - name: "configmap_and_broker_url_track_spec"
             kind: "function"
             public: false
-          - name: "hpa_and_single_replica_nats_have_no_routes"
+          - name: "hpa_and_single_replica_relay_are_rendered"
             kind: "function"
             public: false
-          - name: "prod_clusters_nats_and_wires_auth"
+          - name: "prod_wires_managed_relay_and_auth"
             kind: "function"
             public: false
-          - name: "external_nats_skips_broker_objects"
+          - name: "external_broker_skips_managed_relay_objects"
             kind: "function"
             public: false
           - name: "crd_yaml_emits_lumen_definition"

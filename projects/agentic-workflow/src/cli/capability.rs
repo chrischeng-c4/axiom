@@ -770,6 +770,14 @@ pub struct CapabilityProseCandidate {
     pub promise: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct CapabilityProfileReport {
+    pub traits: Vec<String>,
+    pub unknown_traits: Vec<String>,
+    pub required_baseline_caps: Vec<String>,
+    pub missing_baseline_caps: Vec<String>,
+}
+
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CapabilityDocument {
@@ -1259,6 +1267,24 @@ struct CapabilityProjectRow {
     td_path: Option<String>,
     #[serde(default)]
     cap_path: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct ProjectCapabilityProfileDocument {
+    #[serde(default)]
+    capability: ProjectCapabilitySection,
+}
+
+#[derive(Deserialize, Default)]
+struct ProjectCapabilitySection {
+    #[serde(default)]
+    profile: ProjectCapabilityProfileConfig,
+}
+
+#[derive(Deserialize, Default)]
+struct ProjectCapabilityProfileConfig {
+    #[serde(default)]
+    traits: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2363,26 +2389,46 @@ fn build_capability_draft_report(
     output: Option<&Path>,
     cap_path_override: Option<&Path>,
 ) -> Result<CapabilityDraftReport> {
+    let project_root = crate::find_project_root()?;
     let cap_body = std::fs::read_to_string(cap_path)
         .with_context(|| format!("failed to read capability map {}", cap_path.display()))?;
     let document = parse_capability_document(&cap_body, cap_path)
         .with_context(|| format!("failed to parse capability map {}", cap_path.display()))?;
+    let profile = complete_capability_profile_for_document(
+        load_capability_profile_report(&project_root, project)?,
+        &document,
+    );
     if document.requires_format_migration() || !document.legacy_rows.is_empty() {
         anyhow::bail!(
             "legacy capability content found in {}; use `aw capability migrate` before drafting new roots",
             cap_path.display()
         );
     }
-    if !document.capabilities.is_empty() {
+    if !document.capabilities.is_empty() && profile.missing_baseline_caps.is_empty() {
         anyhow::bail!(
             "canonical capability contracts already found in {}; use `aw capability report/check` instead",
             cap_path.display()
         );
     }
 
-    let body = render_capability_map_draft(project, cap_path, &document.prose_candidates);
+    let draft_candidates =
+        draft_candidates_with_profile_baseline(&document.prose_candidates, &profile);
+    let existing_capability_count = document.capabilities.len();
+    let manual_merge_required =
+        existing_capability_count > 0 && !profile.missing_baseline_caps.is_empty();
+    let body = render_capability_map_draft(
+        project,
+        cap_path,
+        &draft_candidates,
+        &profile,
+        existing_capability_count,
+    );
     let path = write_capability_draft_artifact(project, output, &body)?;
-    let apply_command = capability_apply_draft_command(project, &path, cap_path_override);
+    let apply_command = if manual_merge_required {
+        String::new()
+    } else {
+        capability_apply_draft_command(project, &path, cap_path_override)
+    };
     let check_command = capability_check_command(project, cap_path_override);
     Ok(CapabilityDraftReport {
         schema_version: "aw.cli.v1",
@@ -2391,10 +2437,14 @@ fn build_capability_draft_report(
         cap_path: cap_path.to_path_buf(),
         path,
         status: "pending_review".to_string(),
-        source: capability_draft_source(&document.prose_candidates),
-        candidate_count: document.prose_candidates.len(),
+        source: capability_draft_source(&document.prose_candidates, &profile),
+        candidate_count: draft_candidates.len(),
         agent_review_required: true,
-        review_status: "pending",
+        review_status: if manual_merge_required {
+            "pending_manual_merge"
+        } else {
+            "pending"
+        },
         apply_command,
         check_command,
     })
@@ -2426,11 +2476,73 @@ fn capability_apply_draft_command(
     command
 }
 
-fn capability_draft_source(candidates: &[CapabilityProseCandidate]) -> &'static str {
-    if candidates.is_empty() {
-        "empty_capability_map"
+fn capability_draft_source(
+    candidates: &[CapabilityProseCandidate],
+    profile: &CapabilityProfileReport,
+) -> &'static str {
+    let has_prose_candidates = candidates.iter().any(|candidate| candidate.line != 0);
+    match (
+        !has_prose_candidates,
+        profile.missing_baseline_caps.is_empty(),
+    ) {
+        (false, false) => "prose_candidates_and_profile_required_baseline",
+        (false, true) => "prose_candidates",
+        (true, false) => "profile_required_baseline",
+        (true, true) => "empty_capability_map",
+    }
+}
+
+fn draft_candidates_with_profile_baseline(
+    candidates: &[CapabilityProseCandidate],
+    profile: &CapabilityProfileReport,
+) -> Vec<CapabilityProseCandidate> {
+    let mut out = candidates.to_vec();
+    let mut seen = out
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect::<BTreeSet<_>>();
+    for capability_id in &profile.missing_baseline_caps {
+        if seen.insert(capability_id.clone()) {
+            out.push(profile_baseline_candidate(capability_id, profile));
+        }
+    }
+    out
+}
+
+fn profile_baseline_candidate(
+    capability_id: &str,
+    profile: &CapabilityProfileReport,
+) -> CapabilityProseCandidate {
+    let trait_list = if profile.traits.is_empty() {
+        "project capability profile".to_string()
     } else {
-        "prose_candidates"
+        profile.traits.join(", ")
+    };
+    CapabilityProseCandidate {
+        id: capability_id.to_string(),
+        title: baseline_capability_title(capability_id).to_string(),
+        line: 0,
+        root_wi: None,
+        summary: Some(format!(
+            "Required baseline capability derived from capability.profile traits: {trait_list}"
+        )),
+        promise: Some(format!(
+            "(confirm product promise for trait-derived baseline capability `{capability_id}`)"
+        )),
+    }
+}
+
+fn baseline_capability_title(capability_id: &str) -> &'static str {
+    match capability_id {
+        "cli-interface" => "CLI Interface",
+        "competitor-feature-parity" => "Competitor Feature Parity",
+        "competitor-performance" => "Competitor Performance",
+        "http2-api-list" => "HTTP/2 API List",
+        "kubernetes-native-deployment" => "Kubernetes-Native Deployment",
+        "long-running-stability" => "Long-Running Stability",
+        "primary-replicas" => "Primary Replicas",
+        "security-hardening" => "Security Hardening",
+        _ => "Trait-Derived Baseline Capability",
     }
 }
 
@@ -2467,6 +2579,8 @@ fn render_capability_map_draft(
     project: &str,
     cap_path: &Path,
     candidates: &[CapabilityProseCandidate],
+    profile: &CapabilityProfileReport,
+    existing_capability_count: usize,
 ) -> String {
     let mut out = String::new();
     out.push_str("---\n");
@@ -2479,7 +2593,7 @@ fn render_capability_map_draft(
     out.push_str("status: pending_review\n");
     out.push_str(&format!(
         "source: {}\n",
-        capability_draft_source(candidates)
+        capability_draft_source(candidates, profile)
     ));
     out.push_str(&format!("candidate_count: {}\n", candidates.len()));
     out.push_str("---\n\n");
@@ -2490,6 +2604,13 @@ fn render_capability_map_draft(
     out.push_str(
         "This artifact is inference only. Review, revise, or defer these roots before copying any canonical contract into README.\n\n",
     );
+    out.push_str(&render_project_traits_draft_section(profile));
+    if existing_capability_count > 0 && !profile.missing_baseline_caps.is_empty() {
+        out.push_str("## Existing Capability Merge\n\n");
+        out.push_str(&format!(
+            "The current README already has {existing_capability_count} canonical capability roots. This draft is an additive baseline worksheet. Do not run `apply-draft` unless the reviewed draft section preserves the existing roots.\n\n"
+        ));
+    }
     out.push_str("## Candidate Roots\n\n");
     out.push_str("| Candidate | Proposed ID | Root WI | Source Line | Summary |\n");
     out.push_str("|---|---|---:|---:|---|\n");
@@ -2579,6 +2700,90 @@ fn render_candidate_capability_registry(
         }
     }
     out
+}
+
+fn render_project_traits_draft_section(profile: &CapabilityProfileReport) -> String {
+    let mut out = String::new();
+    out.push_str("## Project Traits\n\n");
+    if profile.traits.is_empty() {
+        out.push_str("No project-local `[capability.profile].traits` were found in `aw.toml`.\n\n");
+        out.push_str("Select applicable traits from the supported list below, then keep the derived baseline capabilities plus any domain-specific capabilities in README.\n\n");
+        out.push_str("| Trait | Derived Required Baseline Capabilities |\n");
+        out.push_str("|---|---|\n");
+        for trait_id in known_capability_profile_traits() {
+            out.push_str(&format!(
+                "| `{}` | {} |\n",
+                markdown_cell(trait_id),
+                render_trait_baseline_caps_cell(trait_id)
+            ));
+        }
+        out.push_str("\n");
+        return out;
+    }
+
+    out.push_str("Traits are planning/profile metadata. They derive mandatory baseline capabilities, but they are not themselves README capabilities.\n\n");
+    out.push_str("| Trait | Derived Required Baseline Capabilities |\n");
+    out.push_str("|---|---|\n");
+    for trait_id in &profile.traits {
+        out.push_str(&format!(
+            "| `{}` | {} |\n",
+            markdown_cell(trait_id),
+            render_trait_baseline_caps_cell(trait_id)
+        ));
+    }
+    out.push_str("\nBaseline capabilities are mandatory minimums for this profile; they do not replace domain-specific capabilities.\n\n");
+    if !profile.required_baseline_caps.is_empty() {
+        out.push_str("Required baseline caps: ");
+        out.push_str(
+            &profile
+                .required_baseline_caps
+                .iter()
+                .map(|cap| format!("`{cap}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        out.push_str(".\n\n");
+    }
+    if !profile.missing_baseline_caps.is_empty() {
+        out.push_str("Missing baseline caps in current README: ");
+        out.push_str(
+            &profile
+                .missing_baseline_caps
+                .iter()
+                .map(|cap| format!("`{cap}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        out.push_str(".\n\n");
+    }
+    if !profile.unknown_traits.is_empty() {
+        out.push_str("Unknown traits that need correction in `aw.toml`: ");
+        out.push_str(
+            &profile
+                .unknown_traits
+                .iter()
+                .map(|trait_id| format!("`{trait_id}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        out.push_str(".\n\n");
+    }
+    out
+}
+
+fn render_trait_baseline_caps_cell(trait_id: &str) -> String {
+    if !capability_profile_trait_known(trait_id) {
+        return "(unknown trait; no baseline caps derived)".to_string();
+    }
+    let caps = baseline_caps_for_trait(trait_id);
+    if caps.is_empty() {
+        "(prompt only; no enforced baseline cap)".to_string()
+    } else {
+        caps.iter()
+            .map(|cap| format!("`{cap}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn render_empty_candidate_capability_section(project: &str) -> String {
@@ -4840,6 +5045,197 @@ pub(crate) async fn build_capability_report_for_capability(
     .await
 }
 
+fn load_capability_profile_report(
+    project_root: &Path,
+    project: &str,
+) -> Result<CapabilityProfileReport> {
+    let project_aw = project_capability_profile_path(project_root, project)?;
+    if !project_aw.is_file() {
+        return Ok(CapabilityProfileReport::default());
+    }
+    let content = std::fs::read_to_string(&project_aw)
+        .with_context(|| format!("reading {}", project_aw.display()))?;
+    let parsed: ProjectCapabilityProfileDocument =
+        toml::from_str(&content).with_context(|| format!("parsing {}", project_aw.display()))?;
+    let traits = normalize_capability_profile_traits(parsed.capability.profile.traits);
+    let unknown_traits = traits
+        .iter()
+        .filter(|trait_id| !capability_profile_trait_known(trait_id))
+        .cloned()
+        .collect();
+    let required_baseline_caps = required_baseline_caps_for_traits(&traits);
+    Ok(CapabilityProfileReport {
+        traits,
+        unknown_traits,
+        required_baseline_caps,
+        missing_baseline_caps: Vec::new(),
+    })
+}
+
+fn project_capability_profile_path(project_root: &Path, project: &str) -> Result<PathBuf> {
+    let row = resolve_project_row(project_root, project)?;
+    let project_path = row
+        .path
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("project `{project}` has no configured source path"))?;
+    let path = PathBuf::from(project_path).join("aw.toml");
+    Ok(if path.is_absolute() {
+        path
+    } else {
+        project_root.join(path)
+    })
+}
+
+fn normalize_capability_profile_traits(raw_traits: Vec<String>) -> Vec<String> {
+    let mut out = raw_traits
+        .into_iter()
+        .map(|value| value.trim().to_ascii_lowercase().replace(['-', ' '], "_"))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn required_baseline_caps_for_traits(traits: &[String]) -> Vec<String> {
+    let mut required = BTreeSet::new();
+    for trait_id in traits {
+        for capability_id in baseline_caps_for_trait(trait_id) {
+            required.insert((*capability_id).to_string());
+        }
+    }
+    required.into_iter().collect()
+}
+
+fn baseline_caps_for_trait(trait_id: &str) -> &'static [&'static str] {
+    match trait_id {
+        "cli_facing" => &["cli-interface"],
+        "competitive_replacement" => &["competitor-feature-parity", "competitor-performance"],
+        "http2_api" => &["http2-api-list"],
+        "kubernetes_native" => &["kubernetes-native-deployment"],
+        "long_running" => &["long-running-stability"],
+        "network_exposed" => &["security-hardening"],
+        "primary_replicas" => &["primary-replicas"],
+        "agent_facing" | "stateful_storage" => &[],
+        _ => &[],
+    }
+}
+
+fn known_capability_profile_traits() -> &'static [&'static str] {
+    &[
+        "agent_facing",
+        "cli_facing",
+        "competitive_replacement",
+        "http2_api",
+        "kubernetes_native",
+        "long_running",
+        "network_exposed",
+        "primary_replicas",
+        "stateful_storage",
+    ]
+}
+
+fn capability_profile_trait_known(trait_id: &str) -> bool {
+    known_capability_profile_traits().contains(&trait_id)
+}
+
+fn complete_capability_profile_for_document(
+    mut profile: CapabilityProfileReport,
+    document: &CapabilityDocument,
+) -> CapabilityProfileReport {
+    let declared = document
+        .capabilities
+        .iter()
+        .filter(|capability| capability.status != CapabilityStatus::Retired)
+        .map(|capability| capability.id.clone())
+        .collect::<BTreeSet<_>>();
+    profile.missing_baseline_caps = missing_baseline_caps(&profile, &declared);
+    profile
+}
+
+fn complete_capability_profile_for_report(
+    mut profile: CapabilityProfileReport,
+    report: &CapabilityReport,
+) -> CapabilityProfileReport {
+    let declared = report
+        .capabilities
+        .iter()
+        .filter(|capability| capability.status != CapabilityStatus::Retired)
+        .map(|capability| capability.id.clone())
+        .collect::<BTreeSet<_>>();
+    profile.missing_baseline_caps = missing_baseline_caps(&profile, &declared);
+    profile
+}
+
+fn missing_baseline_caps(
+    profile: &CapabilityProfileReport,
+    declared: &BTreeSet<String>,
+) -> Vec<String> {
+    profile
+        .required_baseline_caps
+        .iter()
+        .filter(|capability_id| !declared.contains(*capability_id))
+        .cloned()
+        .collect()
+}
+
+fn capability_profile_for_summary(report: &CapabilityReport) -> CapabilityProfileReport {
+    let project_root = match crate::find_project_root() {
+        Ok(root) => root,
+        Err(_) => return CapabilityProfileReport::default(),
+    };
+    let profile = match load_capability_profile_report(&project_root, &report.project) {
+        Ok(profile) => profile,
+        Err(_) => CapabilityProfileReport::default(),
+    };
+    complete_capability_profile_for_report(profile, report)
+}
+
+fn capability_profile_missing_baseline_blocker(
+    profile: &CapabilityProfileReport,
+) -> Option<String> {
+    if profile.missing_baseline_caps.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "capability profile requires missing baseline capabilities: {}",
+            profile.missing_baseline_caps.join(", ")
+        ))
+    }
+}
+
+fn capability_profile_unknown_traits_blocker(profile: &CapabilityProfileReport) -> Option<String> {
+    if profile.unknown_traits.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "capability profile declares unknown traits: {}; supported traits: {}",
+            profile.unknown_traits.join(", "),
+            known_capability_profile_traits().join(", ")
+        ))
+    }
+}
+
+pub(crate) fn capability_profile_blockers_for_document(
+    project_root: &Path,
+    project: &str,
+    document: &CapabilityDocument,
+) -> Vec<String> {
+    let profile = match load_capability_profile_report(project_root, project) {
+        Ok(profile) => complete_capability_profile_for_document(profile, document),
+        Err(err) => return vec![format!("capability profile unavailable: {err}")],
+    };
+    let mut blockers = Vec::new();
+    if let Some(blocker) = capability_profile_unknown_traits_blocker(&profile) {
+        blockers.push(blocker);
+    }
+    if let Some(blocker) = capability_profile_missing_baseline_blocker(&profile) {
+        blockers.push(blocker);
+    }
+    blockers
+}
+
 async fn build_capability_report_inner(
     project: &str,
     cap_path_override: Option<&Path>,
@@ -4868,6 +5264,19 @@ async fn build_capability_report_inner(
         .with_context(|| format!("failed to parse capability map from {}", cap_path.display()))?;
     let mut blockers = document.findings.clone();
     let mut warnings = Vec::new();
+    let profile = match load_capability_profile_report(&project_root, project) {
+        Ok(profile) => complete_capability_profile_for_document(profile, &document),
+        Err(err) => {
+            warnings.push(format!("capability profile unavailable: {err}"));
+            CapabilityProfileReport::default()
+        }
+    };
+    if let Some(blocker) = capability_profile_unknown_traits_blocker(&profile) {
+        blockers.push(blocker);
+    }
+    if let Some(blocker) = capability_profile_missing_baseline_blocker(&profile) {
+        blockers.push(blocker);
+    }
     let capability_types = {
         // README pillar grouping / explicit Type fields are primary. The
         // sidecar exists only as migration fallback and must not override
@@ -5059,6 +5468,7 @@ async fn build_capability_report_inner(
     report.next_action = choose_next_action(
         &report,
         &document,
+        &profile,
         &capability_types,
         include_issue_inventory,
     );
@@ -5651,6 +6061,7 @@ fn verification_contract_has_content(contract: &CapabilityVerificationContract) 
 fn choose_next_action(
     report: &CapabilityReport,
     document: &CapabilityDocument,
+    profile: &CapabilityProfileReport,
     capability_types: &BTreeMap<String, crate::cli::capability_type::CapabilityType>,
     include_issue_inventory: bool,
 ) -> CapabilityAction {
@@ -5675,6 +6086,7 @@ fn choose_next_action(
                 report,
                 &reason,
                 &document.prose_candidates,
+                profile,
             )),
         };
     }
@@ -5690,6 +6102,29 @@ fn choose_next_action(
             reason: "README capability map needs canonical Markdown migration".to_string(),
             requires_hitl: false,
             hitl_question: None,
+        };
+    }
+
+    if !profile.missing_baseline_caps.is_empty() {
+        let reason = format!(
+            "project capability profile traits require missing baseline capabilities: {}",
+            profile.missing_baseline_caps.join(", ")
+        );
+        return CapabilityAction {
+            kind: CapabilityActionKind::DefineCapabilityMap,
+            capability_id: None,
+            gap_id: None,
+            claim_id: None,
+            target: report.cap_path.display().to_string(),
+            command: format!("aw capability draft --project {}", report.project),
+            reason: reason.clone(),
+            requires_hitl: true,
+            hitl_question: Some(capability_map_hitl_question(
+                report,
+                &reason,
+                &document.prose_candidates,
+                profile,
+            )),
         };
     }
 
@@ -6168,8 +6603,9 @@ fn capability_map_hitl_question(
     report: &CapabilityReport,
     reason: &str,
     candidates: &[CapabilityProseCandidate],
+    profile: &CapabilityProfileReport,
 ) -> HitlQuestion {
-    let freeform_prompt = capability_map_freeform_prompt(reason, candidates);
+    let freeform_prompt = capability_map_freeform_prompt(reason, candidates, profile);
     capability_hitl_question(
         "capability_map:define_roots".to_string(),
         format!(
@@ -6208,30 +6644,58 @@ impl HitlQuestion {
     }
 }
 
-fn capability_map_freeform_prompt(reason: &str, candidates: &[CapabilityProseCandidate]) -> String {
-    if candidates.is_empty() {
-        return reason.to_string();
-    }
+fn capability_map_freeform_prompt(
+    reason: &str,
+    candidates: &[CapabilityProseCandidate],
+    profile: &CapabilityProfileReport,
+) -> String {
     let mut prompt = String::from(reason);
-    prompt.push_str("\n\nCandidate README capability roots detected for human confirmation:");
-    for candidate in candidates.iter().take(8) {
-        prompt.push_str("\n- ");
-        prompt.push_str(&candidate.title);
-        prompt.push_str(&format!(" (id: {}, line: {}", candidate.id, candidate.line));
-        if let Some(root_wi) = candidate.root_wi.as_deref() {
-            prompt.push_str(&format!(", WI: {}", root_wi));
+    if !profile.traits.is_empty() {
+        prompt.push_str("\n\nProject capability profile traits:");
+        prompt.push_str(&format!("\n- traits: {}", profile.traits.join(", ")));
+        if !profile.required_baseline_caps.is_empty() {
+            prompt.push_str(&format!(
+                "\n- required baseline caps: {}",
+                profile.required_baseline_caps.join(", ")
+            ));
         }
-        prompt.push(')');
-        if let Some(summary) = candidate.summary.as_deref() {
-            prompt.push_str(": ");
-            prompt.push_str(summary);
+        if !profile.missing_baseline_caps.is_empty() {
+            prompt.push_str(&format!(
+                "\n- missing baseline caps: {}",
+                profile.missing_baseline_caps.join(", ")
+            ));
         }
+        if !profile.unknown_traits.is_empty() {
+            prompt.push_str(&format!(
+                "\n- unknown traits: {}",
+                profile.unknown_traits.join(", ")
+            ));
+        }
+        prompt.push_str(
+            "\nBaseline capabilities are mandatory minimums; they do not replace domain-specific capabilities.",
+        );
     }
-    if candidates.len() > 8 {
-        prompt.push_str(&format!(
-            "\n- ... {} additional candidate roots omitted",
-            candidates.len() - 8
-        ));
+    if !candidates.is_empty() {
+        prompt.push_str("\n\nCandidate README capability roots detected for human confirmation:");
+        for candidate in candidates.iter().take(8) {
+            prompt.push_str("\n- ");
+            prompt.push_str(&candidate.title);
+            prompt.push_str(&format!(" (id: {}, line: {}", candidate.id, candidate.line));
+            if let Some(root_wi) = candidate.root_wi.as_deref() {
+                prompt.push_str(&format!(", WI: {}", root_wi));
+            }
+            prompt.push(')');
+            if let Some(summary) = candidate.summary.as_deref() {
+                prompt.push_str(": ");
+                prompt.push_str(summary);
+            }
+        }
+        if candidates.len() > 8 {
+            prompt.push_str(&format!(
+                "\n- ... {} additional candidate roots omitted",
+                candidates.len() - 8
+            ));
+        }
     }
     prompt.push_str(
         "\nThese candidates are inference only; confirm/revise/defer before writing canonical contracts.",
@@ -10713,6 +11177,7 @@ fn print_report(report: &CapabilityReport, human: bool, pretty: bool) -> Result<
         "test gates: {:?} [{}/{} passed]",
         report.test_gates.status, report.test_gates.passed_count, report.test_gates.command_count
     );
+    print_capability_profile(report);
     print_contract_facets(report);
     print_next_action(&report.next_action);
     Ok(())
@@ -10754,6 +11219,7 @@ fn capability_summary(report: &CapabilityReport, include_run_results: bool) -> s
         "next": capability_next(report),
         "coverage": capability_coverage_summary(report),
         "contract_facets": capability_contract_facets_summary(report),
+        "profile": capability_profile_summary(report),
         "next_action": &report.next_action,
     });
     if include_run_results && !report.run_results.is_empty() {
@@ -10878,6 +11344,7 @@ fn capability_next_kind(report: &CapabilityReport, has_command: bool) -> &'stati
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 fn capability_coverage_summary(report: &CapabilityReport) -> serde_json::Value {
+    let profile = capability_profile_for_summary(report);
     serde_json::json!({
         "format_version": report.format_version,
         "capability_count": report.capability_count,
@@ -10891,6 +11358,17 @@ fn capability_coverage_summary(report: &CapabilityReport) -> serde_json::Value {
         "production_ready": report.production_ready,
         "production_status": &report.production_status,
         "test_gate_status": &report.test_gates.status,
+        "missing_baseline_cap_count": profile.missing_baseline_caps.len(),
+    })
+}
+
+fn capability_profile_summary(report: &CapabilityReport) -> serde_json::Value {
+    let profile = capability_profile_for_summary(report);
+    serde_json::json!({
+        "traits": profile.traits,
+        "unknown_traits": profile.unknown_traits,
+        "required_baseline_caps": profile.required_baseline_caps,
+        "missing_baseline_caps": profile.missing_baseline_caps,
     })
 }
 
@@ -10941,6 +11419,29 @@ fn capability_contract_facets_summary(report: &CapabilityReport) -> serde_json::
         "surface_kinds": surface_kinds.into_iter().collect::<Vec<_>>(),
         "ec_dimensions": ec_dimensions.into_iter().collect::<Vec<_>>(),
     })
+}
+
+fn print_capability_profile(report: &CapabilityReport) {
+    let profile = capability_profile_for_summary(report);
+    if profile.traits.is_empty() {
+        return;
+    }
+    println!("traits: {}", profile.traits.join(", "));
+    if !profile.required_baseline_caps.is_empty() {
+        println!(
+            "baseline caps: {}",
+            profile.required_baseline_caps.join(", ")
+        );
+    }
+    if !profile.unknown_traits.is_empty() {
+        println!("unknown traits: {}", profile.unknown_traits.join(", "));
+    }
+    if !profile.missing_baseline_caps.is_empty() {
+        println!(
+            "missing baseline caps: {}",
+            profile.missing_baseline_caps.join(", ")
+        );
+    }
 }
 
 fn print_contract_facets(report: &CapabilityReport) {
@@ -11647,7 +12148,13 @@ Native PostgreSQL toolkit core.
         report.format_version = document.format_version();
         report.blockers = document.findings.clone();
 
-        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &BTreeMap::new(),
+            true,
+        );
 
         assert_eq!(action.kind, CapabilityActionKind::DefineCapabilityMap);
         assert_eq!(action.command, "aw capability draft --project jet");
@@ -11681,7 +12188,13 @@ Mamba can execute the Python 3.12 language and standard library surface.
         report.format_version = document.format_version();
         report.blockers = document.findings.clone();
 
-        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &BTreeMap::new(),
+            true,
+        );
         let prompt = action
             .hitl_question
             .as_ref()
@@ -11711,6 +12224,8 @@ Mamba can execute the Python 3.12 language and standard library surface.
             "mamba",
             Path::new("projects/mamba/README.md"),
             &candidates,
+            &CapabilityProfileReport::default(),
+            0,
         );
 
         assert!(artifact.contains("kind: capability_map_draft"));
@@ -11738,6 +12253,158 @@ Mamba can execute the Python 3.12 language and standard library surface.
     }
 
     #[test]
+    fn project_aw_traits_derive_required_baseline_caps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("aw.toml"),
+            r#"[project]
+name = "demo"
+cap_path = "README.md"
+
+[capability.profile]
+traits = ["long-running", "cli_facing", "competitive_replacement", "network_exposed", "http2_api", "kubernetes_native", "primary_replicas"]
+"#,
+        )
+        .unwrap();
+
+        let profile = load_capability_profile_report(tmp.path(), "demo").unwrap();
+
+        assert_eq!(
+            profile.traits,
+            vec![
+                "cli_facing",
+                "competitive_replacement",
+                "http2_api",
+                "kubernetes_native",
+                "long_running",
+                "network_exposed",
+                "primary_replicas"
+            ]
+        );
+        assert!(profile.unknown_traits.is_empty());
+        assert_eq!(
+            profile.required_baseline_caps,
+            vec![
+                "cli-interface",
+                "competitor-feature-parity",
+                "competitor-performance",
+                "http2-api-list",
+                "kubernetes-native-deployment",
+                "long-running-stability",
+                "primary-replicas",
+                "security-hardening"
+            ]
+        );
+    }
+
+    #[test]
+    fn project_aw_unknown_traits_are_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("projects/demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("aw.toml"),
+            r#"[project]
+name = "demo"
+cap_path = "README.md"
+
+[capability.profile]
+traits = ["cli_facing", "forever_service"]
+"#,
+        )
+        .unwrap();
+
+        let profile = load_capability_profile_report(tmp.path(), "demo").unwrap();
+
+        assert_eq!(profile.traits, vec!["cli_facing", "forever_service"]);
+        assert_eq!(profile.unknown_traits, vec!["forever_service"]);
+        assert_eq!(profile.required_baseline_caps, vec!["cli-interface"]);
+        assert!(capability_profile_unknown_traits_blocker(&profile)
+            .unwrap()
+            .contains("forever_service"));
+    }
+
+    #[test]
+    fn capability_map_draft_renders_trait_derived_baseline_candidates() {
+        let profile = CapabilityProfileReport {
+            traits: vec![
+                "cli_facing".to_string(),
+                "competitive_replacement".to_string(),
+                "http2_api".to_string(),
+                "kubernetes_native".to_string(),
+                "primary_replicas".to_string(),
+            ],
+            unknown_traits: Vec::new(),
+            required_baseline_caps: vec![
+                "cli-interface".to_string(),
+                "competitor-feature-parity".to_string(),
+                "competitor-performance".to_string(),
+                "http2-api-list".to_string(),
+                "kubernetes-native-deployment".to_string(),
+                "primary-replicas".to_string(),
+            ],
+            missing_baseline_caps: vec![
+                "cli-interface".to_string(),
+                "competitor-feature-parity".to_string(),
+                "http2-api-list".to_string(),
+                "kubernetes-native-deployment".to_string(),
+                "primary-replicas".to_string(),
+            ],
+        };
+        let candidates = draft_candidates_with_profile_baseline(&[], &profile);
+
+        let artifact = render_capability_map_draft(
+            "relay",
+            Path::new("projects/relay/README.md"),
+            &candidates,
+            &profile,
+            1,
+        );
+
+        assert!(artifact.contains("## Project Traits"));
+        assert!(artifact.contains("## Existing Capability Merge"));
+        assert!(artifact.contains(
+            "already has 1 canonical capability roots. This draft is an additive baseline worksheet"
+        ));
+        assert!(artifact.contains("| `cli_facing` | `cli-interface` |"));
+        assert!(artifact.contains("| `http2_api` | `http2-api-list` |"));
+        assert!(artifact.contains("| `kubernetes_native` | `kubernetes-native-deployment` |"));
+        assert!(artifact.contains("| `primary_replicas` | `primary-replicas` |"));
+        assert!(artifact.contains("Baseline capabilities are mandatory minimums"));
+        assert!(artifact.contains("| CLI Interface | `cli-interface` | - | 0 | Required baseline capability derived from capability.profile traits"));
+        assert!(artifact.contains("ID: cli-interface"));
+        assert!(artifact.contains("ID: competitor-feature-parity"));
+        assert!(artifact.contains("ID: http2-api-list"));
+        assert!(artifact.contains("ID: kubernetes-native-deployment"));
+        assert!(artifact.contains("ID: primary-replicas"));
+        assert!(!artifact.contains("ID: competitor-performance"));
+    }
+
+    #[test]
+    fn missing_profile_baseline_caps_define_capability_map() {
+        let document = canonical_doc(one_markdown_capability());
+        let mut report = sample_report(sample_action(CapabilityActionKind::None, "", false));
+        report.capabilities = vec![sample_report_item_with_gap(None)];
+        let profile = CapabilityProfileReport {
+            traits: vec!["cli_facing".to_string()],
+            unknown_traits: Vec::new(),
+            required_baseline_caps: vec!["cli-interface".to_string()],
+            missing_baseline_caps: vec!["cli-interface".to_string()],
+        };
+        let types = all_typed(&report, &document);
+
+        let action = choose_next_action(&report, &document, &profile, &types, true);
+
+        assert_eq!(action.kind, CapabilityActionKind::DefineCapabilityMap);
+        assert_eq!(action.command, "aw capability draft --project jet");
+        assert!(action
+            .reason
+            .contains("missing baseline capabilities: cli-interface"));
+    }
+
+    #[test]
     fn capability_map_draft_preserves_full_promise_for_prose_candidates() {
         let long_promise = "This capability keeps CPython-compatible import, runtime, exception, and package semantics available through the mamba command surface while preserving agent-readable evidence for corpus parity, negative behavior, and ecosystem fixtures across repeated standardization passes."
             .repeat(2);
@@ -11762,17 +12429,32 @@ Mamba can execute the Python 3.12 language and standard library surface.
             "mamba",
             Path::new("projects/mamba/README.md"),
             &candidates,
+            &CapabilityProfileReport::default(),
+            0,
         );
         assert!(artifact.contains(&format!("Promise:\n{}\nGate Inventory:", long_promise)));
     }
 
     #[test]
     fn empty_capability_map_draft_artifact_is_definition_worksheet() {
-        let artifact = render_capability_map_draft("cue", Path::new("projects/cue/README.md"), &[]);
+        let artifact = render_capability_map_draft(
+            "cue",
+            Path::new("projects/cue/README.md"),
+            &[],
+            &CapabilityProfileReport::default(),
+            0,
+        );
 
         assert!(artifact.contains("kind: capability_map_draft"));
         assert!(artifact.contains("source: empty_capability_map"));
         assert!(artifact.contains("candidate_count: 0"));
+        assert!(artifact.contains("| `cli_facing` | `cli-interface` |"));
+        assert!(artifact.contains("| `http2_api` | `http2-api-list` |"));
+        assert!(artifact.contains("| `kubernetes_native` | `kubernetes-native-deployment` |"));
+        assert!(artifact.contains("| `primary_replicas` | `primary-replicas` |"));
+        assert!(artifact.contains(
+            "| `competitive_replacement` | `competitor-feature-parity`, `competitor-performance` |"
+        ));
         assert!(artifact.contains("README has no candidate capability roots"));
         assert!(artifact.contains("## Review Decisions"));
         assert!(artifact.contains(
@@ -11793,7 +12475,13 @@ Mamba can execute the Python 3.12 language and standard library surface.
 
     #[test]
     fn apply_draft_rejects_unreviewed_placeholders() {
-        let artifact = render_capability_map_draft("cue", Path::new("projects/cue/README.md"), &[]);
+        let artifact = render_capability_map_draft(
+            "cue",
+            Path::new("projects/cue/README.md"),
+            &[],
+            &CapabilityProfileReport::default(),
+            0,
+        );
 
         let err = extract_reviewed_draft_registry(&artifact).unwrap_err();
 
@@ -12110,7 +12798,13 @@ old tail placeholder
         report.capability_count = document.legacy_rows.len();
         report.blockers = document.findings.clone();
 
-        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &BTreeMap::new(),
+            true,
+        );
 
         assert_eq!(action.kind, CapabilityActionKind::FormatMigrationRequired);
         assert!(!action.requires_hitl);
@@ -12128,7 +12822,13 @@ old tail placeholder
             .push("issue inventory unavailable: gh auth missing".to_string());
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
 
         assert_eq!(action.kind, CapabilityActionKind::CreateWi);
         assert_eq!(action.command, "aw wi plan --project jet");
@@ -12144,7 +12844,13 @@ old tail placeholder
         report.format_version = document.format_version();
         report.capability_count = document.capabilities.len();
 
-        let action = choose_next_action(&report, &document, &BTreeMap::new(), true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &BTreeMap::new(),
+            true,
+        );
 
         assert_eq!(document.format, CapabilityDocumentFormat::MarkdownTables);
         assert!(document.requires_format_migration());
@@ -15234,7 +15940,13 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
 
         assert_eq!(
             action.kind,
@@ -15340,7 +16052,13 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
 
         assert_eq!(action.kind, CapabilityActionKind::RunVerify);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -15350,7 +16068,13 @@ capability_refs:
         );
         assert!(action.reason.contains("runtime verification"));
 
-        let action_without_issue_inventory = choose_next_action(&report, &document, &types, false);
+        let action_without_issue_inventory = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            false,
+        );
         assert_eq!(
             action_without_issue_inventory.kind,
             CapabilityActionKind::RunVerify
@@ -15450,7 +16174,13 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
 
         assert_eq!(action.kind, CapabilityActionKind::RunVerify);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -15540,7 +16270,13 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
 
         assert_eq!(action.kind, CapabilityActionKind::RunVerify);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -15621,7 +16357,13 @@ capability_refs:
 
         // No type assigned -> assign-capability-type HITL.
         let empty = BTreeMap::new();
-        let action = choose_next_action(&report, &document, &empty, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &empty,
+            true,
+        );
         assert_eq!(action.kind, CapabilityActionKind::AssignCapabilityType);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
         assert!(action.requires_hitl);
@@ -15643,7 +16385,13 @@ capability_refs:
 
         // Type assigned -> the verified, gapless capability yields no action.
         let typed = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &typed, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &typed,
+            true,
+        );
         assert_ne!(action.kind, CapabilityActionKind::AssignCapabilityType);
         assert_eq!(action.kind, CapabilityActionKind::None);
     }
@@ -15751,7 +16499,13 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
 
         assert_eq!(action.kind, CapabilityActionKind::None);
     }
@@ -15874,7 +16628,13 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
 
         assert_eq!(action.kind, CapabilityActionKind::RunTd);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
@@ -16000,7 +16760,13 @@ capability_refs:
         };
 
         let types = all_typed(&report, &document);
-        let action = choose_next_action(&report, &document, &types, true);
+        let action = choose_next_action(
+            &report,
+            &document,
+            &CapabilityProfileReport::default(),
+            &types,
+            true,
+        );
 
         assert_eq!(action.kind, CapabilityActionKind::HumanConfirmRequired);
         assert_eq!(

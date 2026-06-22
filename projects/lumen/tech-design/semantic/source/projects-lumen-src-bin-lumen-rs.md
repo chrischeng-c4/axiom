@@ -26,20 +26,22 @@ Public API manifest for `projects/lumen/src/bin/lumen.rs` captured as a per-file
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-bin-lumen-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `lumen` — the single agent-first CLI: `serve` (serving node), `spec` /
 //! `llm` (offline integration contract + agent topics), and `k8s` (operator
 //! + CRD generation). Agents start here: `lumen llm outline`.
 //!
 //! A serving node is symmetric: it answers reads from its local
 //! materialized index and accepts writes by publishing them to the
-//! write log (the broker). Apply happens in the background subscribe
-//! loop — see `coordinator` / `wal`. Cluster topology lives in the
-//! broker, not here; this binary only needs to know its bind address,
-//! its log backend, and (for sharded routing) the shard count.
+//! configured write log. In single-node mode that log is local; in explicit
+//! broker mode it is Relay/NATS; in primary-replica mode Lumen owns ordering
+//! and replication via raftcore. Apply happens in the background subscribe
+//! loop — see `coordinator` / `wal`.
 //!
 //! ```text
 //! lumen serve                          # single node, in-process log, :7373
-//! lumen serve --wal nats --nats-url nats://nats:4222
+//! lumen serve --wal relay --relay-url http://relay:7000
 //! lumen serve --host 0.0.0.0 --port 7373 --log-format json
 //! ```
 
@@ -142,9 +144,9 @@ struct LlmArgs {
 enum WalBackend {
     /// In-process log. Single-node / dev. No external dependency.
     Embedded,
-    /// NATS JetStream. Clustered: the broker owns the log + fan-out.
+    /// NATS JetStream legacy backend.
     Nats,
-    /// relay broadcast (#124). Clustered: relay owns the log (HA via raftcore).
+    /// relay broadcast (#124). Explicit external broker mode.
     #[cfg(feature = "relay-wal")]
     Relay,
 }
@@ -219,12 +221,17 @@ struct ServeArgs {
     nats_connect_timeout_secs: u64,
     /// relay base URL (used when `--wal relay`).
     #[cfg(feature = "relay-wal")]
-    #[arg(long, env = "LUMEN_RELAY_URL", default_value = "http://localhost:8080")]
+    #[arg(long, env = "LUMEN_RELAY_URL", default_value = "http://localhost:7000")]
     relay_url: String,
     /// relay subject carrying the lumen WAL (used when `--wal relay`).
     #[cfg(feature = "relay-wal")]
     #[arg(long, env = "LUMEN_RELAY_SUBJECT", default_value = "lumen-wal")]
     relay_subject: String,
+    /// relay broadcast subscriber id for this serving node. Defaults to POD_NAME
+    /// or HOSTNAME when unset, so every pod keeps an independent replay cursor.
+    #[cfg(feature = "relay-wal")]
+    #[arg(long, env = "LUMEN_RELAY_SUBSCRIBER_ID")]
+    relay_subscriber_id: Option<String>,
     /// Shard count for client-side routing (`crc32(collection) % N`).
     /// Install-time topology constant.
     #[arg(long, env = "SHARD_COUNT", default_value_t = 1)]
@@ -348,7 +355,11 @@ async fn k8s(_args: K8sArgs) -> Result<()> {
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
-    init_tracing(&args.log_level, args.log_format, args.otlp_endpoint.as_deref());
+    init_tracing(
+        &args.log_level,
+        args.log_format,
+        args.otlp_endpoint.as_deref(),
+    );
 
     let engine = Arc::new(Engine::new());
 
@@ -358,7 +369,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
     if let Some(endpoint) = args.otlp_endpoint.as_deref() {
         match init_otel_meter(endpoint, engine.clone()) {
             Ok(()) => tracing::info!(otlp_endpoint = endpoint, "OTLP metrics push enabled"),
-            Err(e) => tracing::error!(error = %e, "OTLP metrics init failed; /metrics pull still works"),
+            Err(e) => {
+                tracing::error!(error = %e, "OTLP metrics init failed; /metrics pull still works")
+            }
         }
     }
 
@@ -378,11 +391,22 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
         #[cfg(feature = "relay-wal")]
         WalBackend::Relay => {
-            tracing::info!(url = %args.relay_url, subject = %args.relay_subject, "wal=relay (broadcast)");
-            Arc::new(
-                lumen::wal_relay::RelayWal::new(&args.relay_url, &args.relay_subject)
-                    .context("connect relay write log")?,
-            )
+            tracing::info!(
+                url = %args.relay_url,
+                subject = %args.relay_subject,
+                subscriber_id = ?args.relay_subscriber_id,
+                "wal=relay (broadcast)"
+            );
+            let relay = match &args.relay_subscriber_id {
+                Some(id) => lumen::wal_relay::RelayWal::new_with_subscriber_id(
+                    &args.relay_url,
+                    &args.relay_subject,
+                    id,
+                ),
+                None => lumen::wal_relay::RelayWal::new(&args.relay_url, &args.relay_subject),
+            }
+            .context("connect relay write log")?;
+            Arc::new(relay)
         }
     };
 
@@ -440,7 +464,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
     };
 
     // Local AOF (segment mode only): RDB (segment checkpoint, up to `start_seq`)
-    // → AOF replay (`start_seq+1 .. A`) → NATS tail (`A+1 ..`). After replay the
+    // → AOF replay (`start_seq+1 .. A`) → broker tail (`A+1 ..`). After replay the
     // apply loop keeps appending to this same writer, and the checkpoint
     // snapshotter trims it. The default CBOR path never builds one.
     let aof_writer: Option<lumen::coordinator::SharedAof> = if segment_mode {
@@ -448,7 +472,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             Some(dir) => {
                 let aof_path = std::path::Path::new(dir).join("aof.log");
                 // (b) Replay the AOF over the RDB baseline, advancing the cold-start
-                // sequence to the AOF head `A` so the loop tails NATS from `A+1`.
+                // sequence to the AOF head `A` so the loop tails the broker from `A+1`.
                 let replayed = lumen::aof::replay_aof_into(&engine, &aof_path, start_seq)
                     .context("replay AOF over segment baseline")?;
                 if replayed > start_seq {
@@ -759,17 +783,15 @@ fn build_otel_tracer(
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(exporter)
-        .with_trace_config(
-            opentelemetry_sdk::trace::Config::default().with_resource(
-                opentelemetry_sdk::Resource::new(vec![
-                    opentelemetry::KeyValue::new("service.name", "lumen"),
-                    opentelemetry::KeyValue::new(
-                        "service.version",
-                        env!("CARGO_PKG_VERSION").to_string(),
-                    ),
-                ]),
-            ),
-        )
+        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
+            opentelemetry_sdk::Resource::new(vec![
+                opentelemetry::KeyValue::new("service.name", "lumen"),
+                opentelemetry::KeyValue::new(
+                    "service.version",
+                    env!("CARGO_PKG_VERSION").to_string(),
+                ),
+            ]),
+        ))
         .install_batch(opentelemetry_sdk::runtime::Tokio)?;
     Ok(tracer)
 }
@@ -813,20 +835,62 @@ fn init_otel_meter(
             let _ = meter
                 .u64_observable_counter($name)
                 .with_description($desc)
-                .with_callback(move |o| o.observe(eng.metrics().$field.load(Ordering::Relaxed), &[]))
+                .with_callback(move |o| {
+                    o.observe(eng.metrics().$field.load(Ordering::Relaxed), &[])
+                })
                 .init();
         }};
     }
-    obs_counter!("lumen_index_writes_total", index_writes_total, "Total index writes");
-    obs_counter!("lumen_index_bytes_total", index_bytes_total, "Total bytes indexed");
-    obs_counter!("lumen_search_requests_total", search_requests_total, "Total search requests");
-    obs_counter!("lumen_search_latency_ms_sum", search_latency_ms_sum, "Search latency ms sum");
-    obs_counter!("lumen_search_latency_ms_count", search_latency_ms_count, "Search latency count");
-    obs_counter!("lumen_duplicates_requests_total", duplicates_requests_total, "Total duplicates requests");
-    obs_counter!("lumen_collections_created_total", collections_created_total, "Total collections created");
-    obs_counter!("lumen_schema_fields_total", schema_fields_total, "Total schema fields");
-    obs_counter!("lumen_posting_cache_hits_total", posting_cache_hits_total, "Posting cache hits");
-    obs_counter!("lumen_posting_cache_misses_total", posting_cache_misses_total, "Posting cache misses");
+    obs_counter!(
+        "lumen_index_writes_total",
+        index_writes_total,
+        "Total index writes"
+    );
+    obs_counter!(
+        "lumen_index_bytes_total",
+        index_bytes_total,
+        "Total bytes indexed"
+    );
+    obs_counter!(
+        "lumen_search_requests_total",
+        search_requests_total,
+        "Total search requests"
+    );
+    obs_counter!(
+        "lumen_search_latency_ms_sum",
+        search_latency_ms_sum,
+        "Search latency ms sum"
+    );
+    obs_counter!(
+        "lumen_search_latency_ms_count",
+        search_latency_ms_count,
+        "Search latency count"
+    );
+    obs_counter!(
+        "lumen_duplicates_requests_total",
+        duplicates_requests_total,
+        "Total duplicates requests"
+    );
+    obs_counter!(
+        "lumen_collections_created_total",
+        collections_created_total,
+        "Total collections created"
+    );
+    obs_counter!(
+        "lumen_schema_fields_total",
+        schema_fields_total,
+        "Total schema fields"
+    );
+    obs_counter!(
+        "lumen_posting_cache_hits_total",
+        posting_cache_hits_total,
+        "Posting cache hits"
+    );
+    obs_counter!(
+        "lumen_posting_cache_misses_total",
+        posting_cache_misses_total,
+        "Posting cache misses"
+    );
 
     // storage_bytes is a gauge (can decrease).
     {
@@ -834,13 +898,17 @@ fn init_otel_meter(
         let _ = meter
             .u64_observable_gauge("lumen_storage_bytes")
             .with_description("Current storage bytes")
-            .with_callback(move |o| o.observe(eng.metrics().storage_bytes.load(Ordering::Relaxed), &[]))
+            .with_callback(move |o| {
+                o.observe(eng.metrics().storage_bytes.load(Ordering::Relaxed), &[])
+            })
             .init();
     }
 
     opentelemetry::global::set_meter_provider(provider);
     Ok(())
 }
+// CODEGEN-END
+
 ````
 
 ## Changes
