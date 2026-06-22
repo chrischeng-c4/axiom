@@ -843,9 +843,11 @@ pub fn mb_collections_abc_register(parent_name: &str, child: MbValue) -> MbValue
         return MbValue::none();
     }
     let Some(child_name) = resolve_class_name(child) else {
+        super::builtins::raise_type_error("Can only register classes".to_string());
         return MbValue::none();
     };
     if child_name.is_empty() {
+        super::builtins::raise_type_error("Can only register classes".to_string());
         return MbValue::none();
     }
     ABC_VIRTUAL_SUBCLASSES.with(|reg| {
@@ -1712,6 +1714,9 @@ pub fn mb_instance_new(class_name: MbValue, _args: MbValue) -> MbValue {
     if let Some(result) = mb_user_abc_reject_abstract_instantiation(&name) {
         return result;
     }
+    if let Some(result) = mb_contextlib_abc_reject_abstract_instantiation(&name) {
+        return result;
+    }
     if let Some(result) = mb_reject_protocol_instantiation(&name) {
         return result;
     }
@@ -1843,6 +1848,9 @@ fn instance_new_with_init_impl(
         return result;
     }
     if let Some(result) = mb_user_abc_reject_abstract_instantiation(&name) {
+        return result;
+    }
+    if let Some(result) = mb_contextlib_abc_reject_abstract_instantiation(&name) {
         return result;
     }
     if let Some(result) = mb_reject_protocol_instantiation(&name) {
@@ -2507,14 +2515,17 @@ fn make_user_abc_register_method(parent_name: &str) -> MbValue {
 /// abc: register `child` as a virtual subclass of user ABC `parent_name`.
 pub fn mb_user_abc_register(parent_name: &str, child: MbValue) -> MbValue {
     let Some(child_name) = resolve_class_name(child) else {
-        return child;
+        super::builtins::raise_type_error("Can only register classes".to_string());
+        return MbValue::none();
     };
-    if !child_name.is_empty() {
-        ABC_VIRTUAL_SUBCLASSES.with(|reg| {
-            reg.borrow_mut()
-                .insert((child_name, parent_name.to_string()));
-        });
+    if child_name.is_empty() {
+        super::builtins::raise_type_error("Can only register classes".to_string());
+        return MbValue::none();
     }
+    ABC_VIRTUAL_SUBCLASSES.with(|reg| {
+        reg.borrow_mut()
+            .insert((child_name, parent_name.to_string()));
+    });
     unsafe { super::rc::retain_if_ptr(child) };
     child
 }
@@ -3067,6 +3078,29 @@ fn missing_collections_abc_abstract_method(class_name: &str) -> Option<&'static 
 
 pub fn mb_collections_abc_reject_abstract_instantiation(class_name: &str) -> Option<MbValue> {
     let missing = missing_collections_abc_abstract_method(class_name)?;
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "Can't instantiate abstract class {class_name} with abstract method {missing}",
+        ))),
+    );
+    Some(MbValue::none())
+}
+
+pub fn mb_contextlib_abc_reject_abstract_instantiation(class_name: &str) -> Option<MbValue> {
+    let mro = class_mro_list(class_name);
+    let has_base = |base: &str| class_name == base || mro.iter().any(|entry| entry == base);
+    let missing = if has_base("AbstractAsyncContextManager")
+        && !class_defines_non_none(class_name, "__aexit__")
+    {
+        Some("__aexit__")
+    } else if has_base("AbstractContextManager")
+        && !class_defines_non_none(class_name, "__exit__")
+    {
+        Some("__exit__")
+    } else {
+        None
+    }?;
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
         MbValue::from_ptr(MbObject::new_str(format!(
@@ -8127,7 +8161,16 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
     // structural __subclasshook__: a class is a virtual subclass iff it defines
     // both __enter__ and __exit__ (sync) / __aenter__ and __aexit__ (async),
     // and neither is shadowed by a class attribute set to None.
-    if parent_name == "AbstractContextManager" || parent_name == "AbstractAsyncContextManager" {
+    if parent_name == "AbstractContextManager"
+        || parent_name == "AbstractAsyncContextManager"
+    {
+        let nominal = child_name == parent_name
+            || class_mro_list(&child_name)
+                .iter()
+                .any(|base| base == &parent_name);
+        if nominal {
+            return MbValue::from_bool(true);
+        }
         let (m1, m2) = if parent_name == "AbstractAsyncContextManager" {
             ("__aenter__", "__aexit__")
         } else {
@@ -8180,11 +8223,9 @@ fn class_defines_non_none(class_name: &str, member: &str) -> bool {
         let reg = reg.borrow();
         let mro: Vec<String> = match reg.get(class_name) {
             Some(cls) => {
-                if cls.mro.is_empty() {
-                    vec![class_name.to_string()]
-                } else {
-                    cls.mro.clone()
-                }
+                let mut chain = vec![class_name.to_string()];
+                chain.extend(cls.mro.iter().filter(|name| *name != class_name).cloned());
+                chain
             }
             None => return false,
         };
