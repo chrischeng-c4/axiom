@@ -1857,7 +1857,17 @@ pub fn mb_next_or_stop(iter_handle: MbValue) -> MbValue {
     }
     // Slow path: emulate has_next + next. Correct for callable / userdefined /
     // ptr-based iterators. Same FFI cost as the legacy pair, so no regression.
-    if mb_has_next(iter_handle).as_bool() == Some(false) {
+    let has_next = mb_has_next(iter_handle);
+    if let Some(t) = super::exception::current_exception_type() {
+        if t == "StopIteration" {
+            super::exception::mb_clear_exception();
+        }
+        // For-loop lowering branches only on the stop sentinel.  A pending
+        // non-StopIteration exception must still suppress the loop body; the
+        // exception state remains set for the surrounding try/except machinery.
+        return MbValue::stop_iter_sentinel();
+    }
+    if has_next.as_bool() == Some(false) {
         return MbValue::stop_iter_sentinel();
     }
     mb_next(iter_handle)
@@ -1879,11 +1889,13 @@ pub fn mb_next_raise(iter_handle: MbValue) -> MbValue {
         if is_iter {
             // Out-of-line: callable and generator iterators
             if let Some(val) = advance_callable_if_applicable(id as u64) {
-                if val.is_none() {
-                    super::exception::set_current_exception(super::exception::MbException::new(
-                        "StopIteration",
-                        "",
-                    ));
+                let exhausted = ITERATORS.with(|iters| {
+                    iters.borrow().get(&(id as u64)).map(|i| i.exhausted).unwrap_or(true)
+                });
+                if exhausted && val.is_none() {
+                    super::exception::set_current_exception(
+                        super::exception::MbException::new("StopIteration", ""),
+                    );
                 }
                 unsafe {
                     super::rc::retain_if_ptr(val);
@@ -2186,7 +2198,19 @@ pub fn mb_has_next(iter_handle: MbValue) -> MbValue {
                     return v;
                 }
                 // Otherwise advance once and cache as peeked.
-                let val = advance_callable_if_applicable(id as u64).unwrap_or_else(MbValue::none);
+                let val = advance_callable_if_applicable(id as u64)
+                    .unwrap_or_else(MbValue::none);
+                if let Some(t) = super::exception::current_exception_type() {
+                    if t == "StopIteration" {
+                        super::exception::mb_clear_exception();
+                        ITERATORS.with(|iters| {
+                            if let Some(iter) = iters.borrow_mut().get_mut(&(id as u64)) {
+                                iter.exhausted = true;
+                            }
+                        });
+                    }
+                    return MbValue::from_bool(false);
+                }
                 return ITERATORS.with(|iters| {
                     if let Some(iter) = iters.borrow_mut().get_mut(&(id as u64)) {
                         if iter.exhausted {
@@ -2518,6 +2542,17 @@ fn advance_callable_if_applicable(id: u64) -> Option<MbValue> {
     let (func, sentinel) = info.0.expect("checked by info.1 branch above");
     // Invoke the callable with the borrow released.
     let result = class::mb_call0(func);
+    if super::exception::current_exception_type().is_some() {
+        return Some(MbValue::none());
+    }
+    // The callable may re-enter and drain this same iterator. CPython conceals
+    // that inner exhaustion from the outer next() and reports StopIteration.
+    let exhausted_during_call = ITERATORS.with(|iters| {
+        iters.borrow().get(&id).map(|iter| iter.exhausted).unwrap_or(true)
+    });
+    if exhausted_during_call {
+        return Some(MbValue::none());
+    }
     let eq = super::builtins::mb_eq(result, sentinel);
     if eq.as_bool().unwrap_or(false) {
         ITERATORS.with(|iters| {
