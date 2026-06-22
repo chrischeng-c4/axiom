@@ -881,23 +881,19 @@ impl CraneliftJitBackend {
                         }
                         crate::mir::MirUnaryOp::Not => {
                             // Python `not x` evaluates truthiness then inverts.
-                            // If operand is raw 0/1 (raw_int), XOR works directly.
-                            // If operand is NaN-boxed (instance ptr, float, etc.),
-                            // must call mb_is_truthy first to get raw 0/1.
-                            if vars.raw_ints.contains(operand) {
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(val, one)
+                            // Raw ints are not necessarily 0/1 (`not 5` is
+                            // False), so compare the truth value to zero.
+                            let truth_value = if vars.raw_ints.contains(operand) {
+                                val
                             } else if let Some(&truthy_id) = self.extern_funcs.get("mb_is_truthy") {
                                 let truthy_ref =
                                     self.module().declare_func_in_func(truthy_id, builder.func);
                                 let call = builder.ins().call(truthy_ref, &[val]);
-                                let truthy_val = builder.inst_results(call)[0];
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(truthy_val, one)
+                                builder.inst_results(call)[0]
                             } else {
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(val, one)
-                            }
+                                val
+                            };
+                            super::emit_logical_not(builder, truth_value)
                         }
                         crate::mir::MirUnaryOp::BitNot => builder.ins().bnot(val),
                     };
@@ -931,20 +927,17 @@ impl CraneliftJitBackend {
                             }
                         }
                         crate::mir::MirUnaryOp::Not => {
-                            if vars.raw_ints.contains(operand) {
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(val, one)
+                            let truth_value = if vars.raw_ints.contains(operand) {
+                                val
                             } else if let Some(&truthy_id) = self.extern_funcs.get("mb_is_truthy") {
                                 let truthy_ref =
                                     self.module().declare_func_in_func(truthy_id, builder.func);
                                 let call = builder.ins().call(truthy_ref, &[val]);
-                                let truthy_val = builder.inst_results(call)[0];
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(truthy_val, one)
+                                builder.inst_results(call)[0]
                             } else {
-                                let one = builder.ins().iconst(cl_types::I64, 1);
-                                builder.ins().bxor(val, one)
-                            }
+                                val
+                            };
+                            super::emit_logical_not(builder, truth_value)
                         }
                         crate::mir::MirUnaryOp::BitNot => builder.ins().bnot(val),
                     };

@@ -598,6 +598,7 @@ pub fn mb_weakref_proxy(obj: MbValue, _callback: MbValue) -> MbValue {
     if reject_non_weakreferenceable(obj) {
         return MbValue::none();
     }
+    unsafe { super::super::rc::retain_if_ptr(obj); }
     obj
 }
 
