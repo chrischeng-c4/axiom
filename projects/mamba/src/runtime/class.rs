@@ -9818,13 +9818,30 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
             return super::stdlib::array_mod::mb_array_setitem(obj, key, value);
         }
     }
-    // Check if key is a slice tuple (3-element tuple from Slice lowering)
+    // Check if key is a normalized slice tuple (3-element tuple from Slice
+    // lowering). Only sequence-like builtins consume that internal form here;
+    // mapping/user objects must still be able to use ordinary 3-tuple keys
+    // such as `d[1, 2, 3]`.
     if let Some(kp) = key.as_ptr() {
         unsafe {
             if let super::rc::ObjData::Tuple(ref items) = (*kp).data {
                 if items.len() == 3 {
-                    super::list_ops::mb_list_setslice(obj, items[0], items[1], items[2], value);
-                    return MbValue::none();
+                    let sequence_target = obj.as_ptr().map(|op| {
+                        matches!(
+                            &(*op).data,
+                            super::rc::ObjData::List(_)
+                                | super::rc::ObjData::ByteArray(_)
+                                | super::rc::ObjData::Tuple(_)
+                                | super::rc::ObjData::Bytes(_)
+                                | super::rc::ObjData::Str(_)
+                        )
+                    }).unwrap_or(false);
+                    if sequence_target {
+                        super::list_ops::mb_list_setslice(
+                            obj, items[0], items[1], items[2], value,
+                        );
+                        return MbValue::none();
+                    }
                 }
             }
         }
