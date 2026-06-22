@@ -72,7 +72,7 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
     if opts.emit_types {
         files.push(GeneratedFile {
             rel_path: "types.ts".to_string(),
-            contents: types_emit::emit(&spec, &tm),
+            contents: types_emit::emit(&spec, &tm, &plans),
         });
     }
     if opts.emit_client {
@@ -82,13 +82,13 @@ pub fn generate(spec_json: &str, opts: &GenOptions) -> Result<GeneratedOutput> {
         });
         files.push(GeneratedFile {
             rel_path: "client.ts".to_string(),
-            contents: client_emit::emit_client(&plans, &tm, opts),
+            contents: client_emit::emit_client(&plans, opts),
         });
     }
     if opts.emit_hooks {
         files.push(GeneratedFile {
             rel_path: "hooks.ts".to_string(),
-            contents: hooks_emit::emit(&plans, &tm),
+            contents: hooks_emit::emit(&plans),
         });
     }
     files.push(GeneratedFile {

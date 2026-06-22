@@ -3,18 +3,18 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { UseMutationOptions, UseQueryOptions } from "@tanstack/react-query";
 import type { ApiClient } from "./client";
-import type { NewPet, Pet } from "./types";
+import type { CreatePetData, CreatePetResponse, GetPetByIdData, GetPetByIdResponse, ListPetsData, ListPetsResponse } from "./types";
 
 export function createHooks(client: ApiClient) {
   return {
-    useListPetsQuery(params: { limit?: number }, options?: Omit<UseQueryOptions<Pet[]>, "queryKey" | "queryFn">) {
-      return useQuery<Pet[]>({ queryKey: ["listPets", params], queryFn: () => client.listPets(params), ...options });
+    useListPetsQuery(data: ListPetsData, options?: Omit<UseQueryOptions<ListPetsResponse>, "queryKey" | "queryFn">) {
+      return useQuery<ListPetsResponse>({ queryKey: ["listPets", data], queryFn: () => client.listPets(data), ...options });
     },
-    useCreatePetMutation(options?: UseMutationOptions<Pet, Error, { body: NewPet }>) {
-      return useMutation<Pet, Error, { body: NewPet }>({ mutationFn: (variables) => client.createPet(variables), ...options });
+    useCreatePetMutation(options?: UseMutationOptions<CreatePetResponse, Error, CreatePetData>) {
+      return useMutation<CreatePetResponse, Error, CreatePetData>({ mutationFn: (data) => client.createPet(data), ...options });
     },
-    useGetPetByIdQuery(params: { petId: number }, options?: Omit<UseQueryOptions<Pet>, "queryKey" | "queryFn">) {
-      return useQuery<Pet>({ queryKey: ["getPetById", params], queryFn: () => client.getPetById(params), ...options });
+    useGetPetByIdQuery(data: GetPetByIdData, options?: Omit<UseQueryOptions<GetPetByIdResponse>, "queryKey" | "queryFn">) {
+      return useQuery<GetPetByIdResponse>({ queryKey: ["getPetById", data], queryFn: () => client.getPetById(data), ...options });
     },
   };
 }

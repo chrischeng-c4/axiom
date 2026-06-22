@@ -123,11 +123,15 @@ fn openapi_31_nullable_and_compositions() {
         "allOf intersection: {types}"
     );
 
-    // 204 No Content delete becomes a void mutation.
+    // 204 No Content delete: named void response + grouped data argument.
+    assert!(
+        types.contains("export type DeleteItemResponse = void;"),
+        "void response alias: {types}"
+    );
     let client = file(&out, "client.ts");
     assert!(
-        client.contains("deleteItem(params: { id: string }): Promise<void>"),
-        "void return: {client}"
+        client.contains("deleteItem(data: DeleteItemData): Promise<DeleteItemResponse>"),
+        "grouped data + named response: {client}"
     );
 }
 
@@ -146,22 +150,34 @@ fn openapi_30_petstore_shapes() {
         "$ref property: {types}"
     );
 
-    let client = file(&out, "client.ts");
+    // Grouped query in the named data type; named response aliasing a component.
     assert!(
-        client.contains("listPets(params: { limit?: number; tags?: string[] })"),
-        "array query param: {client}"
+        types.contains(
+            "export type ListPetsData = { query?: { limit?: number; tags?: string[] } };"
+        ),
+        "array query param grouped in data: {types}"
     );
     assert!(
-        client.contains("showPetById(params: { petId: number }): Promise<Pet>"),
-        "path param + ref return: {client}"
+        types.contains("export type ShowPetByIdResponse = Pet;"),
+        "named response aliases component: {types}"
+    );
+
+    let client = file(&out, "client.ts");
+    assert!(
+        client.contains("listPets(data: ListPetsData): Promise<ListPetsResponse>"),
+        "grouped data signature: {client}"
+    );
+    assert!(
+        client.contains("showPetById(data: ShowPetByIdData): Promise<ShowPetByIdResponse>"),
+        "path param via named data: {client}"
     );
 
     let hooks = file(&out, "hooks.ts");
     assert!(
         hooks.contains(
-            "useCreatePetMutation(options?: UseMutationOptions<Pet, Error, { body: NewPet }>)"
+            "useCreatePetMutation(options?: UseMutationOptions<CreatePetResponse, Error, CreatePetData>)"
         ),
-        "mutation hook: {hooks}"
+        "mutation hook uses named types: {hooks}"
     );
 }
 

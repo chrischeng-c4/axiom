@@ -1,53 +1,77 @@
-// SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+// SPEC-MANAGED: .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
 // HANDWRITE-BEGIN
-//! Per-operation generation plan, shared by the client and hooks emitters so
-//! function names, parameter types, and return types stay consistent.
+//! Per-operation generation plan, shared by the type, client, and hooks
+//! emitters so function names, the grouped `XxxData` request type, and the
+//! `XxxResponse` type stay consistent (hey-api style).
 
-use crate::codegen::names::{self, to_camel, to_pascal, NameRegistry};
+use crate::codegen::names::{to_camel, to_pascal, NameRegistry};
 use crate::codegen::openapi::{Operation, Parameter, RefOr, Spec};
 use crate::codegen::tsmap::{type_expr, TypeMap};
 
+/// One named field inside a grouped request sub-object (`path`/`query`/`headers`).
+#[derive(Debug)]
+pub struct ParamField {
+    pub name: String,
+    pub ts_type: String,
+    pub required: bool,
+}
+
+/// The JSON request body, if any.
+#[derive(Debug)]
+pub struct BodyField {
+    pub ts_type: String,
+    pub required: bool,
+}
+
 /// Fully-resolved plan for one HTTP operation.
 ///
-/// @spec .aw/tech-design/projects/jet/interfaces/cli/openapi-client-codegen-types-fetch-client-react-query-hooks.md#logic
+/// @spec .aw/tech-design/projects/jet/interfaces/cli/named-per-operation-request-response-types-xxxdata-xxxresponse-f.md#logic
 #[derive(Debug)]
 pub struct OperationPlan {
-    /// camelCase client function name (also the hook stem).
+    /// camelCase client function name (also the hook stem source).
     pub fn_name: String,
     /// Uppercase HTTP verb for the request, e.g. `GET`.
     pub http_method: String,
     /// True for read operations (`GET`) → query hooks; else mutation hooks.
     pub is_query: bool,
-    /// Path with `{x}` replaced by `${params.x}`, wrapped in backticks.
-    pub path_template: String,
-    /// Fields of the `params` object type (`petId: number`, `limit?: number`, ...).
-    pub param_fields: Vec<String>,
-    /// `(jsonKey, accessor)` pairs for query parameters.
-    pub query_pairs: Vec<(String, String)>,
-    /// `(headerName, accessor)` pairs for header parameters.
-    pub header_pairs: Vec<(String, String)>,
-    /// True when a JSON request body is sent.
-    pub has_body: bool,
-    /// TypeScript return type of the operation.
-    pub return_type: String,
+    /// Raw path template, e.g. `/pets/{petId}`.
+    pub path_raw: String,
+    pub path_params: Vec<ParamField>,
+    pub query_params: Vec<ParamField>,
+    pub header_params: Vec<ParamField>,
+    pub body: Option<BodyField>,
+    /// TypeScript expression for the operation response (or `void`).
+    pub response_type: String,
+    /// Name of the grouped request type, e.g. `GetPetByIdData`. `None` when the
+    /// operation has no inputs (the client function then takes no argument).
+    pub data_type_name: Option<String>,
+    /// Name of the response type alias, e.g. `GetPetByIdResponse`.
+    pub response_type_name: String,
 }
 
 impl OperationPlan {
-    /// `{ ... }` params object type, or `None` when the operation takes no input.
-    pub fn params_type(&self) -> Option<String> {
-        if self.param_fields.is_empty() {
-            None
-        } else {
-            Some(format!("{{ {} }}", self.param_fields.join("; ")))
-        }
+    pub fn has_inputs(&self) -> bool {
+        self.data_type_name.is_some()
+    }
+    pub fn query_required(&self) -> bool {
+        self.query_params.iter().any(|p| p.required)
+    }
+    pub fn headers_required(&self) -> bool {
+        self.header_params.iter().any(|p| p.required)
     }
 }
 
 const METHODS: &[&str] = &["get", "post", "put", "patch", "delete"];
 
-/// Build a deterministic plan for every operation in the spec.
+/// Build a deterministic plan for every operation in the spec. Per-operation
+/// type names are collision-safe against component type names.
 pub fn build(spec: &Spec, tm: &TypeMap) -> Vec<OperationPlan> {
-    let mut reg = NameRegistry::new();
+    let mut fn_reg = NameRegistry::new();
+    let mut type_reg = NameRegistry::new();
+    // Reserve component type names so `XxxData`/`XxxResponse` never collide.
+    for name in tm.names.values() {
+        let _ = type_reg.unique(name);
+    }
     let mut plans = Vec::new();
     for (path, item) in &spec.paths {
         let path_level = &item.parameters;
@@ -61,7 +85,15 @@ pub fn build(spec: &Spec, tm: &TypeMap) -> Vec<OperationPlan> {
                 _ => &None,
             };
             if let Some(op) = op {
-                plans.push(build_one(method, path, op, path_level, tm, &mut reg));
+                plans.push(build_one(
+                    method,
+                    path,
+                    op,
+                    path_level,
+                    tm,
+                    &mut fn_reg,
+                    &mut type_reg,
+                ));
             }
         }
     }
@@ -74,70 +106,79 @@ fn build_one(
     op: &Operation,
     path_level: &[RefOr<Parameter>],
     tm: &TypeMap,
-    reg: &mut NameRegistry,
+    fn_reg: &mut NameRegistry,
+    type_reg: &mut NameRegistry,
 ) -> OperationPlan {
-    let fn_name = reg.unique(&op_base_name(method, path, op));
+    let fn_name = fn_reg.unique(&op_base_name(method, path, op));
 
-    let mut param_fields = Vec::new();
-    let mut query_pairs = Vec::new();
-    let mut header_pairs = Vec::new();
+    let mut path_params = Vec::new();
+    let mut query_params = Vec::new();
+    let mut header_params = Vec::new();
 
     for p in inline_params(path_level).chain(inline_params(&op.parameters)) {
-        let ty = p
+        let ts_type = p
             .schema
             .as_ref()
             .map(|s| type_expr(s, tm))
             .unwrap_or_else(|| "string".to_string());
         match p.location.as_str() {
-            "path" => {
-                param_fields.push(format!("{}: {}", names::prop_key(&p.name), ty));
-            }
-            "query" => {
-                param_fields.push(format!(
-                    "{}{}: {}",
-                    names::prop_key(&p.name),
-                    if p.required { "" } else { "?" },
-                    ty
-                ));
-                query_pairs.push((p.name.clone(), names::param_access(&p.name)));
-            }
-            "header" => {
-                param_fields.push(format!(
-                    "{}{}: {}",
-                    names::prop_key(&p.name),
-                    if p.required { "" } else { "?" },
-                    ty
-                ));
-                header_pairs.push((p.name.clone(), names::param_access(&p.name)));
-            }
+            // Path parameters are always required.
+            "path" => path_params.push(ParamField {
+                name: p.name.clone(),
+                ts_type,
+                required: true,
+            }),
+            "query" => query_params.push(ParamField {
+                name: p.name.clone(),
+                ts_type,
+                required: p.required,
+            }),
+            "header" => header_params.push(ParamField {
+                name: p.name.clone(),
+                ts_type,
+                required: p.required,
+            }),
             _ => {} // cookie and unknown locations are out of subset
         }
     }
 
-    let mut has_body = false;
-    if let Some(RefOr::Item(rb)) = &op.request_body {
-        if let Some(mt) = rb.content.get("application/json") {
-            if let Some(schema) = &mt.schema {
-                has_body = true;
-                param_fields.push(format!(
-                    "body{}: {}",
-                    if rb.required { "" } else { "?" },
-                    type_expr(schema, tm)
-                ));
-            }
-        }
-    }
+    let body = op.request_body.as_ref().and_then(|rb| match rb {
+        RefOr::Item(rb) => rb
+            .content
+            .get("application/json")
+            .and_then(|mt| mt.schema.as_ref())
+            .map(|schema| BodyField {
+                ts_type: type_expr(schema, tm),
+                required: rb.required,
+            }),
+        RefOr::Ref(_) => None,
+    });
+
+    let response_type = return_type(op, tm);
+    let pascal = to_pascal(&fn_name);
+    let has_inputs = !path_params.is_empty()
+        || !query_params.is_empty()
+        || !header_params.is_empty()
+        || body.is_some();
+    let data_type_name = if has_inputs {
+        Some(type_reg.unique(&format!("{pascal}Data")))
+    } else {
+        None
+    };
+    let response_type_name = type_reg.unique(&format!("{pascal}Response"));
 
     OperationPlan {
         fn_name,
         http_method: method.to_uppercase(),
         is_query: method == "get",
-        path_template: template_path(path),
-        param_fields,
-        query_pairs,
-        header_pairs,
-        has_body,
-        return_type: return_type(op, tm),
+        path_raw: path.to_string(),
+        path_params,
+        query_params,
+        header_params,
+        body,
+        response_type,
+        data_type_name,
+        response_type_name,
     }
 }
 
@@ -171,32 +212,8 @@ fn fallback_name(method: &str, path: &str) -> String {
     to_camel(&s)
 }
 
-fn template_path(path: &str) -> String {
-    let mut out = String::from("`");
-    let mut chars = path.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '{' {
-            let mut name = String::new();
-            for c in chars.by_ref() {
-                if c == '}' {
-                    break;
-                }
-                name.push(c);
-            }
-            out.push_str("${params.");
-            out.push_str(&name);
-            out.push('}');
-        } else {
-            out.push(c);
-        }
-    }
-    out.push('`');
-    out
-}
-
 fn return_type(op: &Operation, tm: &TypeMap) -> String {
-    let resp = pick_response(op);
-    match resp {
+    match pick_response(op) {
         Some(RefOr::Item(resp)) => match resp.content.get("application/json") {
             Some(mt) => match &mt.schema {
                 Some(schema) => type_expr(schema, tm),
@@ -231,13 +248,7 @@ fn pick_response(op: &Operation) -> Option<&RefOr<crate::codegen::openapi::Respo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
-
-    fn tm() -> TypeMap {
-        TypeMap {
-            names: BTreeMap::new(),
-        }
-    }
+    use crate::codegen::build_type_map;
 
     fn spec(json: &str) -> Spec {
         serde_json::from_str(json).unwrap()
@@ -250,35 +261,55 @@ mod tests {
     }
 
     #[test]
-    fn template_path_substitutes_params() {
-        assert_eq!(template_path("/pets/{petId}"), "`/pets/${params.petId}`");
-        assert_eq!(template_path("/pets"), "`/pets`");
-    }
-
-    #[test]
-    fn plan_uses_operation_id_and_picks_2xx_json() {
+    fn plan_groups_inputs_and_names_types() {
         let s = spec(
             r##"{"paths":{"/pets/{petId}":{"get":{"operationId":"getPetById",
-            "parameters":[{"name":"petId","in":"path","required":true,"schema":{"type":"integer"}}],
+            "parameters":[
+              {"name":"petId","in":"path","required":true,"schema":{"type":"integer"}},
+              {"name":"expand","in":"query","required":false,"schema":{"type":"boolean"}}],
             "responses":{"200":{"content":{"application/json":{"schema":{"type":"string"}}}}}}}}}"##,
         );
-        let plans = build(&s, &tm());
-        assert_eq!(plans.len(), 1);
+        let tm = build_type_map(&s);
+        let plans = build(&s, &tm);
         let p = &plans[0];
         assert_eq!(p.fn_name, "getPetById");
         assert!(p.is_query);
-        assert_eq!(p.return_type, "string");
-        assert_eq!(p.params_type().unwrap(), "{ petId: number }");
-        assert_eq!(p.path_template, "`/pets/${params.petId}`");
+        assert_eq!(p.path_params.len(), 1);
+        assert_eq!(p.query_params.len(), 1);
+        assert!(!p.query_required());
+        assert_eq!(p.data_type_name.as_deref(), Some("GetPetByIdData"));
+        assert_eq!(p.response_type_name, "GetPetByIdResponse");
+        assert_eq!(p.response_type, "string");
     }
 
     #[test]
-    fn missing_operation_id_falls_back() {
-        let s = spec(r##"{"paths":{"/pets":{"post":{"responses":{"204":{}}}}}}"##);
-        let plans = build(&s, &tm());
-        assert_eq!(plans[0].fn_name, "postPets");
-        assert!(!plans[0].is_query);
-        assert_eq!(plans[0].return_type, "void");
+    fn no_input_operation_has_no_data_type() {
+        let s = spec(
+            r##"{"paths":{"/health":{"get":{"operationId":"health","responses":{"200":{"content":{"application/json":{"schema":{"type":"boolean"}}}}}}}}}"##,
+        );
+        let plans = build(&s, &build_type_map(&s));
+        assert!(plans[0].data_type_name.is_none());
+        assert!(!plans[0].has_inputs());
+        assert_eq!(plans[0].response_type_name, "HealthResponse");
+    }
+
+    #[test]
+    fn per_op_type_names_avoid_component_collision() {
+        // A component literally named "GetThingData" must not clash with the
+        // synthesized data type for operationId "getThing".
+        let s = spec(
+            r##"{"paths":{"/thing":{"post":{"operationId":"getThing",
+              "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},
+              "responses":{"200":{"content":{"application/json":{"schema":{"type":"string"}}}}}}}},
+            "components":{"schemas":{"GetThingData":{"type":"object"}}}}"##,
+        );
+        let tm = build_type_map(&s);
+        let plans = build(&s, &tm);
+        assert_eq!(
+            tm.names.get("GetThingData").map(String::as_str),
+            Some("GetThingData")
+        );
+        assert_eq!(plans[0].data_type_name.as_deref(), Some("GetThingData_2"));
     }
 }
 // HANDWRITE-END

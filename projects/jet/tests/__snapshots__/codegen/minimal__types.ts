@@ -12,3 +12,15 @@ export interface Pet {
   tag?: string;
 }
 
+export type ListPetsData = { query?: { limit?: number } };
+
+export type ListPetsResponse = Pet[];
+
+export type CreatePetData = { body: NewPet };
+
+export type CreatePetResponse = Pet;
+
+export type GetPetByIdData = { path: { petId: number } };
+
+export type GetPetByIdResponse = Pet;
+
