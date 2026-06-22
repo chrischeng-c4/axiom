@@ -980,6 +980,17 @@ pub fn class_is_registered(name: &str) -> bool {
     CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(name))
 }
 
+fn registered_class_name_for_func(value: MbValue, addr: usize) -> Option<String> {
+    let native_name = super::module::NATIVE_TYPE_NAMES.with(|map| {
+        map.borrow().get(&(addr as u64)).cloned()
+    });
+    if native_name.is_some() {
+        return native_name;
+    }
+    extract_str(super::closure::mb_func_get_name(value))
+        .filter(|name| class_is_registered(name))
+}
+
 /// Ordered MRO (ancestors only, most-derived first) of a registered class.
 /// Empty when the class is unknown. Used by the dataclasses runtime to merge
 /// inherited dataclass fields (PEP 557).
@@ -7571,12 +7582,7 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
         // Native-dispatcher function pointers used as types — e.g.
         // `threading.Thread` is a constructor dispatcher rather than a real
         // class. Look up the recorded class name for the pointer.
-        super::module::NATIVE_TYPE_NAMES.with(|map| {
-            map.borrow()
-                .get(&(addr as u64))
-                .cloned()
-                .unwrap_or_default()
-        })
+        registered_class_name_for_func(class_name, addr).unwrap_or_default()
     } else {
         extract_str(class_name).unwrap_or_default()
     };
