@@ -1513,14 +1513,9 @@ pub fn mb_float(val: MbValue) -> MbValue {
                 );
                 return MbValue::none();
             }
-            // float(b"2.3") / float(bytearray(b"2.3")) — CPython parses ASCII
-            // bytes-like the same as a string (memoryview slices materialize as
-            // bytes in mamba, so this also covers `float(memoryview(...)[a:b])`).
-            let bytes_text: Option<Vec<u8>> = match (*ptr).data {
-                ObjData::Bytes(ref b) => Some(b.clone()),
-                ObjData::ByteArray(ref lock) => Some(lock.read().unwrap().clone()),
-                _ => None,
-            };
+            // float(b"2.3") / float(bytearray(...)) / float(memoryview(...))
+            // — CPython parses bytes-like ASCII the same as a string.
+            let bytes_text = try_bytes_like(val);
             if let Some(raw) = bytes_text {
                 let text = String::from_utf8_lossy(&raw);
                 if let Some(f) = parse_pyfloat_text(&text) {
@@ -2030,10 +2025,11 @@ pub fn mb_dunder_import(name: MbValue) -> MbValue {
 }
 
 /// memoryview(obj) — minimal view over a bytes-like source.
-/// Stored as Instance(class_name="memoryview") with a single
-/// `_buffer` field holding the underlying bytes/bytearray. Real
-/// CPython memoryviews carry shape/strides/format metadata; we
-/// support only the byte-flat case (format='B', ndim=1, readonly).
+/// Stored as Instance(class_name="memoryview") with `_buffer`
+/// holding the readable bytes-like payload plus byte-flat metadata.
+/// Real CPython memoryviews carry richer shape/format metadata; we
+/// support the 1-D byte-flat case and preserve contiguity for sliced
+/// views so buffer consumers can reject non-contiguous exports.
 pub fn mb_memoryview(obj: MbValue) -> MbValue {
     if try_bytes_like(obj).is_none() {
         super::exception::mb_raise(
@@ -2044,12 +2040,43 @@ pub fn mb_memoryview(obj: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
+    let inherited = obj.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { class_name, fields } = &(*ptr).data {
+            if class_name == "memoryview" {
+                let f = fields.read().unwrap();
+                return Some((
+                    f.get("_obj").copied(),
+                    f.get("_contiguous").copied(),
+                    f.get("_stride").copied(),
+                    f.get("_readonly").copied(),
+                ));
+            }
+        }
+        None
+    });
     let inst = MbObject::new_instance("memoryview".to_string());
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {
             let mut f = fields.write().unwrap();
             super::rc::retain_if_ptr(obj);
             f.insert("_buffer".to_string(), obj);
+            let obj_field = inherited.and_then(|m| m.0).unwrap_or(obj);
+            super::rc::retain_if_ptr(obj_field);
+            f.insert("_obj".to_string(), obj_field);
+            if let Some((_, contiguous, stride, readonly)) = inherited {
+                if let Some(v) = contiguous {
+                    f.insert("_contiguous".to_string(), v);
+                }
+                if let Some(v) = stride {
+                    f.insert("_stride".to_string(), v);
+                }
+                if let Some(v) = readonly {
+                    f.insert("_readonly".to_string(), v);
+                }
+            } else {
+                f.insert("_contiguous".to_string(), MbValue::from_bool(true));
+                f.insert("_stride".to_string(), MbValue::from_int(1));
+            }
         }
     }
     MbValue::from_ptr(inst)
