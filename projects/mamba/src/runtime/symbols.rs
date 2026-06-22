@@ -1909,6 +1909,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             [I64, I64],
             Void
         ),
+        rt_sym!(
+            "mb_global_del_id",
+            closure::mb_global_del_id as fn(super::MbValue),
+            [I64],
+            Void
+        ),
         // ── Cell variables (nonlocal) ──
         rt_sym!(
             "mb_cell_new",

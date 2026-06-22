@@ -537,7 +537,7 @@ impl TypeChecker {
                     // Mirrors the statement-`for` handling in check_stmt; shape
                     // mismatch / non-tuple element → Any, deferring to runtime
                     // unpacking.
-                    let target_elem_tys: Option<Vec<TypeId>> = if gen.targets.len() > 1 {
+                    let target_elem_tys: Option<Vec<TypeId>> = if gen.unpack_target {
                         match self.tcx.get(elem_ty) {
                             Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts.clone()),
                             _ => None,
@@ -546,7 +546,7 @@ impl TypeChecker {
                         None
                     };
                     for (i, name) in gen.targets.iter().enumerate() {
-                        let t = if gen.targets.len() > 1 {
+                        let t = if gen.unpack_target {
                             target_elem_tys
                                 .as_ref()
                                 .map(|ts| ts[i])
@@ -586,7 +586,7 @@ impl TypeChecker {
                     // Mirrors the statement-`for` handling in check_stmt; shape
                     // mismatch / non-tuple element → Any, deferring to runtime
                     // unpacking.
-                    let target_elem_tys: Option<Vec<TypeId>> = if gen.targets.len() > 1 {
+                    let target_elem_tys: Option<Vec<TypeId>> = if gen.unpack_target {
                         match self.tcx.get(elem_ty) {
                             Ty::Tuple(ts) if ts.len() == gen.targets.len() => Some(ts.clone()),
                             _ => None,
@@ -595,7 +595,7 @@ impl TypeChecker {
                         None
                     };
                     for (i, name) in gen.targets.iter().enumerate() {
-                        let t = if gen.targets.len() > 1 {
+                        let t = if gen.unpack_target {
                             target_elem_tys
                                 .as_ref()
                                 .map(|ts| ts[i])

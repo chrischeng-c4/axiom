@@ -1043,6 +1043,13 @@ impl CraneliftJitBackend {
                     builder.ins().call(func_ref, &[id_val, val]);
                 }
             }
+            MirInst::DeleteGlobal { name } => {
+                if let Some(&func_id) = self.extern_funcs.get("mb_global_del_id") {
+                    let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+                    let id_val = builder.ins().iconst(cl_types::I64, name.0 as i64);
+                    builder.ins().call(func_ref, &[id_val]);
+                }
+            }
             MirInst::LoadCell { dest, cell_idx, .. } => {
                 if let Some(&func_id) = self.extern_funcs.get("mb_cell_get") {
                     let func_ref = self.module().declare_func_in_func(func_id, builder.func);

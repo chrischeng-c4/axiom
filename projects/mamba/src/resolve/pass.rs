@@ -2056,6 +2056,7 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("x".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2333,6 +2334,7 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("x".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2365,6 +2367,7 @@ mod tests {
                     value: Box::new(sp(Expr::Ident("k".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["k".into()],
+                        unpack_target: false,
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2395,6 +2398,7 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("v".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["v".into()],
+                        unpack_target: false,
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2425,6 +2429,7 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("n".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["n".into()],
+                        unpack_target: false,
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2452,6 +2457,7 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("fresh_var".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["fresh_var".into()],
+                        unpack_target: false,
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2507,6 +2513,7 @@ mod tests {
                     })),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,
@@ -2541,6 +2548,7 @@ mod tests {
                     element: Box::new(sp(Expr::Ident("x".into()))),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![sp(Expr::BinOp {
                             op: BinOp::Gt,
@@ -2586,6 +2594,7 @@ mod tests {
                     })),
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
+                        unpack_target: false,
                         iter: sp(Expr::Ident("items".into())),
                         conditions: vec![],
                         is_async: false,

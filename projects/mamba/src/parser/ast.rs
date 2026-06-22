@@ -448,6 +448,7 @@ pub enum CallArg {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Comprehension {
     pub targets: Vec<Name>,
+    pub unpack_target: bool,
     pub iter: Spanned<Expr>,
     pub conditions: Vec<Spanned<Expr>>,
     pub is_async: bool,
