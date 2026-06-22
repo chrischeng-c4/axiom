@@ -3662,6 +3662,15 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 return make_unbound_method(&nt, &attr_name);
             }
         }
+        if attr_name == "_convert" {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "'function' object has no attribute '_convert'".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
     }
 
     // Random handles are int-tagged values registered by random_mod.
@@ -11155,6 +11164,15 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     }
 
     let name = extract_str(method_name).unwrap_or_default();
+    if receiver.as_func().is_some() && name == "_convert" {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "'function' object has no attribute '_convert'".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
 
     // Native-class constructor func as receiver (`datetime.datetime.fromordinal(1)`,
     // `datetime.date.today()`): the chained call lowers to a CallMethod whose
