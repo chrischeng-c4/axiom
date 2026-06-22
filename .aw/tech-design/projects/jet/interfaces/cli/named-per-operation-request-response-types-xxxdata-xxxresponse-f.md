@@ -98,11 +98,3 @@ requirement R4 {
   verifymethod: Test
 }
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicable: the change adds per-operation named-type emission (group inputs into XxxData, alias the response as XxxResponse) before client/hooks emission, correctly modeled with the has-inputs branch.
-- [unit-test] Applicable: R1-R4 cover grouped XxxData, named XxxResponse, the client `data` argument signature, and hooks using the named types with no runtime class.
