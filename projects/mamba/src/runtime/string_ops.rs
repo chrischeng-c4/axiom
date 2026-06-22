@@ -21,6 +21,35 @@ fn new_str(s: String) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(s))
 }
 
+fn int_digits_for_percent(v: MbValue, radix: u32) -> Option<(bool, String)> {
+    if let Some(i) = v.as_int() {
+        let abs = i.unsigned_abs();
+        let digits = match radix {
+            2 => format!("{:b}", abs),
+            8 => format!("{:o}", abs),
+            16 => format!("{:x}", abs),
+            _ => abs.to_string(),
+        };
+        return Some((i < 0, digits));
+    }
+    if let Some(b) = v.as_bool() {
+        return Some((false, if b { "1" } else { "0" }.to_string()));
+    }
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::BigInt(ref big) = (*ptr).data {
+            let s = big.to_str_radix(radix);
+            if let Some(rest) = s.strip_prefix('-') {
+                Some((true, rest.to_string()))
+            } else {
+                Some((false, s))
+            }
+        } else {
+            None
+        }
+    }
+}
+
 // ── Concatenation and Repeat ──
 
 /// str + str → new string
@@ -2251,20 +2280,32 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
 
         let (mut sign_prefix, body) = match conv {
             'd' | 'i' => {
-                let v = val
-                    .and_then(|a| a.as_int())
-                    .or_else(|| val.and_then(|a| a.as_float()).map(|f| f as i64))
-                    .unwrap_or(0);
-                let prefix = if v < 0 {
-                    "-".to_string()
-                } else if sign_plus {
-                    "+".to_string()
-                } else if sign_space {
-                    " ".to_string()
+                if let Some((negative, digits)) =
+                    val.and_then(|a| int_digits_for_percent(a, 10))
+                {
+                    let prefix = if negative {
+                        "-".to_string()
+                    } else if sign_plus {
+                        "+".to_string()
+                    } else if sign_space {
+                        " ".to_string()
+                    } else {
+                        String::new()
+                    };
+                    (prefix, digits)
                 } else {
-                    String::new()
-                };
-                (prefix, v.unsigned_abs().to_string())
+                    let v = val.and_then(|a| a.as_float()).map(|f| f as i64).unwrap_or(0);
+                    let prefix = if v < 0 {
+                        "-".to_string()
+                    } else if sign_plus {
+                        "+".to_string()
+                    } else if sign_space {
+                        " ".to_string()
+                    } else {
+                        String::new()
+                    };
+                    (prefix, v.unsigned_abs().to_string())
+                }
             }
             'f' | 'F' => {
                 let v = val
@@ -2311,16 +2352,18 @@ pub fn mb_str_percent_format(tmpl: String, args: MbValue) -> MbValue {
                 (String::new(), s)
             }
             'x' | 'X' | 'o' | 'b' => {
-                let v = val.and_then(|a| a.as_int()).unwrap_or(0);
-                let abs = v.unsigned_abs();
-                let body = match conv {
-                    'x' => format!("{:x}", abs),
-                    'X' => format!("{:X}", abs),
-                    'o' => format!("{:o}", abs),
-                    'b' => format!("{:b}", abs),
-                    _ => unreachable!(),
+                let radix = match conv {
+                    'o' => 8,
+                    'b' => 2,
+                    _ => 16,
                 };
-                let sign_part = if v < 0 {
+                let (negative, mut body) = val
+                    .and_then(|a| int_digits_for_percent(a, radix))
+                    .unwrap_or_else(|| (false, "0".to_string()));
+                if conv == 'X' {
+                    body = body.to_ascii_uppercase();
+                }
+                let sign_part = if negative {
                     "-".to_string()
                 } else if sign_plus {
                     "+".to_string()
