@@ -362,6 +362,41 @@ fn apply_mock_kwargs(mock: MbValue, kwargs: MbValue) {
     }
 }
 
+fn str_list(names: Vec<String>) -> MbValue {
+    MbValue::from_ptr(MbObject::new_list(
+        names.into_iter().map(|n| new_str(&n)).collect(),
+    ))
+}
+
+unsafe extern "C" fn dispatch_create_autospec(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { arg_slice(args_ptr, nargs) };
+    let spec = a.first().copied().unwrap_or_else(MbValue::none);
+    let m = build_mock("MagicMock", "mock");
+    set_field(m, "_spec_target", spec);
+
+    if let Some(params) = super::super::closure::func_params(spec) {
+        let positional: Vec<String> = params
+            .iter()
+            .filter(|p| p.kind <= 1)
+            .map(|p| p.name.clone())
+            .collect();
+        let required: Vec<String> = params
+            .iter()
+            .filter(|p| p.kind <= 1 && !p.has_default)
+            .map(|p| p.name.clone())
+            .collect();
+        let has_varargs = params.iter().any(|p| p.kind == 2);
+        set_field(m, "_autospec_positional", str_list(positional.clone()));
+        set_field(m, "_autospec_required", str_list(required));
+        set_field(
+            m,
+            "_autospec_max_pos",
+            MbValue::from_int(if has_varargs { -1 } else { positional.len() as i64 }),
+        );
+    }
+    m
+}
+
 unsafe extern "C" fn dispatch_magic_mock(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { arg_slice(args_ptr, nargs) };
     let m = build_mock("MagicMock", "mock");
@@ -532,6 +567,56 @@ fn push_to_list_field(inst: MbValue, field: &str, val: MbValue) {
     }
 }
 
+fn validate_autospec_call(mock: MbValue, args_list: MbValue) -> Option<MbValue> {
+    let positional_names: Vec<String> = get_field(mock, "_autospec_positional")
+        .map(list_items)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(extract_str)
+        .collect();
+    if positional_names.is_empty() && get_field(mock, "_autospec_required").is_none() {
+        return None;
+    }
+
+    let (pos, kwargs) = split_call_args(args_list);
+    if let Some(max_pos) = get_field(mock, "_autospec_max_pos").and_then(|v| v.as_int()) {
+        if max_pos >= 0 && pos.len() > max_pos as usize {
+            return Some(raise("TypeError", "too many positional arguments"));
+        }
+    }
+
+    for (idx, name) in positional_names.iter().enumerate() {
+        if idx < pos.len() && kwarg_get(kwargs, name).is_some() {
+            return Some(raise(
+                "TypeError",
+                &format!("multiple values for argument '{name}'"),
+            ));
+        }
+    }
+
+    let required: Vec<String> = get_field(mock, "_autospec_required")
+        .map(list_items)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(extract_str)
+        .collect();
+    for name in required {
+        let filled_by_pos = positional_names
+            .iter()
+            .position(|n| n == &name)
+            .map(|idx| idx < pos.len())
+            .unwrap_or(false);
+        let filled_by_kw = kwarg_get(kwargs, &name).is_some();
+        if !filled_by_pos && !filled_by_kw {
+            return Some(raise(
+                "TypeError",
+                &format!("missing a required argument: '{name}'"),
+            ));
+        }
+    }
+    None
+}
+
 /// Dotted name of `mock` relative to `stop_at` ancestor, e.g. "a" or "a.b".
 fn dotted_name_to(mock: MbValue, stop_at: MbValue) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -555,6 +640,9 @@ fn dotted_name_to(mock: MbValue, stop_at: MbValue) -> String {
 
 /// Record a call on `mock` and produce the return value.
 pub(crate) fn mock_record_call(mock: MbValue, args_list: MbValue) -> MbValue {
+    if let Some(err) = validate_autospec_call(mock, args_list) {
+        return err;
+    }
     let (pos, kw) = split_call_args(args_list);
     let n = get_field(mock, "call_count")
         .and_then(|v| v.as_int())
@@ -1126,6 +1214,7 @@ pub fn register() {
         ),
         ("AsyncMock", dispatch_async_mock as *const () as usize),
         ("PropertyMock", dispatch_property_mock as *const () as usize),
+        ("create_autospec", dispatch_create_autospec as *const () as usize),
         ("patch", dispatch_patch as *const () as usize),
         ("call", dispatch_call_factory as *const () as usize),
         ("seal", dispatch_seal as *const () as usize),
@@ -1184,7 +1273,6 @@ pub fn register() {
             "ModuleType",
             "partial",
             "RLock",
-            "create_autospec",
             "iscoroutinefunction",
             "mock_open",
             "safe_repr",
