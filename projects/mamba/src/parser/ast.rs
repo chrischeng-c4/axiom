@@ -530,3 +530,13 @@ pub enum TypeExpr {
     /// Tuple type: `tuple[int, str]`
     Tuple(Vec<Spanned<TypeExpr>>),
 }
+
+pub const FORWARD_REF_PREFIX: &str = "__mamba_forward_ref__:";
+
+pub fn forward_ref_name(name: &str) -> String {
+    format!("{FORWARD_REF_PREFIX}{name}")
+}
+
+pub fn strip_forward_ref_name(name: &str) -> Option<&str> {
+    name.strip_prefix(FORWARD_REF_PREFIX)
+}
