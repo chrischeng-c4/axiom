@@ -655,11 +655,12 @@ pub fn mb_mimetypes_MimeTypes() -> MbValue {
     MbValue::from_ptr(dict)
 }
 
-/// init(files=None) -> None  — no-op; the static table is always live.
+/// init(files=None) -> None — reset the module-level registry maps.
 pub fn mb_mimetypes_init(_files: MbValue) -> MbValue {
     // CPython's init() rebuilds the registry from the system mime files; mamba
     // has no system files, so reset to the static defaults by clearing the
-    // user-added types (so an add_type() before init() is forgotten).
+    // user-added types (so an add_type() before init() is forgotten) and by
+    // replacing the public maps with fresh dict objects.
     USER_TYPES.with(|t| {
         let mut v = t.borrow_mut();
         for (_, ty, _) in v.iter() {
@@ -667,6 +668,10 @@ pub fn mb_mimetypes_init(_files: MbValue) -> MbValue {
         }
         v.clear();
     });
+    set_module_map("types_map", build_static_dict(TYPES_MAP));
+    set_module_map("encodings_map", build_static_dict(ENCODINGS_MAP));
+    set_module_map("suffix_map", build_static_dict(SUFFIX_MAP));
+    set_module_map("common_types", build_static_dict(COMMON_TYPES));
     MbValue::none()
 }
 
@@ -816,6 +821,20 @@ fn build_static_dict(entries: &[(&str, &str)]) -> MbValue {
         }
     }
     MbValue::from_ptr(dict)
+}
+
+fn str_value(s: &str) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s.to_string()))
+}
+
+fn set_module_map(attr: &str, value: MbValue) {
+    super::super::module::mb_module_setattr(str_value("mimetypes"), str_value(attr), value);
+    let cached = super::super::module::MODULES.with(|mods| {
+        mods.borrow().get("mimetypes").and_then(|module| module.cached_value)
+    });
+    if let Some(module_value) = cached {
+        super::super::dict_ops::mb_dict_setitem(module_value, str_value(attr), value);
+    }
 }
 
 /// Register the mimetypes module.
