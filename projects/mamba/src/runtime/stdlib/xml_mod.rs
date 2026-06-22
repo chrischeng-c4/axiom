@@ -150,10 +150,16 @@ unsafe extern "C" fn d_tostring(args_ptr: *const MbValue, nargs: usize) -> MbVal
     tostring_impl(elem, encoding.as_deref(), xml_decl, short_empty)
 }
 
-/// ElementTree(root?) — Mamba models the tree wrapper as the root element
-/// itself (getroot() is dispatched on the Element stub and returns self).
+/// ElementTree(root?) — for a concrete root, Mamba models the tree wrapper as
+/// the root element itself. The zero-arg form needs a wrapper so getroot()
+/// returns None and write() raises on the missing root.
 unsafe extern "C" fn d_elementtree(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if nargs == 0 {
+        let tree = new_stub_dict("ElementTree");
+        dict_set_key(tree, "_root", MbValue::none());
+        return tree;
+    }
     let arg = a.get(0).copied().unwrap_or_else(MbValue::none);
     if is_element(arg) {
         unsafe { super::super::rc::retain_if_ptr(arg) };
@@ -1676,6 +1682,25 @@ pub fn dispatch_xml_stub_method(
                 );
                 Some(MbValue::none())
             }
+        },
+        "ElementTree" => match name {
+            "getroot" => Some(retained(
+                dict_get_key(receiver, "_root").unwrap_or_else(MbValue::none),
+            )),
+            "write" => {
+                let root = dict_get_key(receiver, "_root").unwrap_or_else(MbValue::none);
+                if root.is_none() {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "'NoneType' object has no attribute 'tag'".to_string(),
+                        )),
+                    );
+                    return Some(MbValue::none());
+                }
+                dispatch_xml_stub_method("Element", "write", root, args)
+            }
+            _ => None,
         },
         "XMLParser" => match name {
             "feed" => {
