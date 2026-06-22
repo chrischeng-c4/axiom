@@ -8247,6 +8247,10 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 if class_name == "collections.namedtuple_factory" {
                     return super::stdlib::collections_mod::mb_namedtuple_create(func, &items);
                 }
+                if class_name == "HTTPStatus" {
+                    let arg = items.first().copied().unwrap_or_else(MbValue::none);
+                    return super::stdlib::http_mod::mb_httpstatus_call(arg);
+                }
                 // functools.lru_cache wrapper: look up cache or invoke inner.
                 if class_name == "functools.lru_cache_wrapper" {
                     let _ = fields;

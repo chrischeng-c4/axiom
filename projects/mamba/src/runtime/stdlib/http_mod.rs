@@ -994,6 +994,21 @@ fn make_status_members_dict() -> MbValue {
     MbValue::from_ptr(dict)
 }
 
+pub fn mb_httpstatus_call(arg: MbValue) -> MbValue {
+    let Some(code) = arg.as_int() else {
+        raise("ValueError", "None is not a valid HTTPStatus".to_string());
+        return MbValue::none();
+    };
+    if cclab_mamba_registry::http::canonical_codes()
+        .iter()
+        .any(|(known, _, _)| i64::from(*known) == code)
+    {
+        return MbValue::from_int(code);
+    }
+    raise("ValueError", format!("{code} is not a valid HTTPStatus"));
+    MbValue::none()
+}
+
 /// Build a type-object shell: an Instance with `class_name == "type"` and a
 /// `__name__` str field. `callable(x)` is True (mb_callable treats a "type"
 /// instance as callable) and `type(x).__name__ == "type"` (mb_type returns the
