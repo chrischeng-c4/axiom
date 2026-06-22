@@ -7775,6 +7775,16 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     if type_name == "collections.Counter" && method_str == "fromkeys" {
                         return super::class::mb_counter_fromkeys_not_implemented();
                     }
+                    if items.is_empty() {
+                        if let Some(result) =
+                            super::stdlib::string_constants_mod::static_no_self_error(
+                                &type_name,
+                                &method_str,
+                            )
+                        {
+                            return result;
+                        }
+                    }
                     // complex comparison dunders accessed unbound
                     // (`complex.__eq__(a, b)` etc.). __eq__/__ne__ return a bool
                     // when the other operand is numeric and NotImplemented

@@ -11077,6 +11077,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             if nt == "collections.Counter" && name == "fromkeys" {
                 return mb_counter_fromkeys_not_implemented();
             }
+            {
+                let items = super::builtins::extract_items(args);
+                if items.is_empty() {
+                    if let Some(result) =
+                        super::stdlib::string_constants_mod::static_no_self_error(&nt, &name)
+                    {
+                        return result;
+                    }
+                }
+            }
             // `datetime.timezone.utc.dst(x)` arrives here with the CONSTRUCTOR
             // func as receiver and "utc" consumed by getattr — but chained
             // `datetime.timezone.utc` may also lower as CallMethod("utc") with
