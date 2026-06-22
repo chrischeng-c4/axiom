@@ -76,11 +76,15 @@ unsafe extern "C" fn d_noop(_args_ptr: *const MbValue, _nargs: usize) -> MbValue
 /// `AbstractContextManager` used as a type object. Registered in
 /// NATIVE_TYPE_NAMES so `resolve_class_name` maps the pointer back to the
 /// class name, enabling the structural `__subclasshook__` in `mb_issubclass`.
+#[inline(never)]
 unsafe extern "C" fn d_abstract_cm(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    let _ = std::hint::black_box("AbstractContextManager");
     MbValue::none()
 }
 
+#[inline(never)]
 unsafe extern "C" fn d_abstract_async_cm(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    let _ = std::hint::black_box("AbstractAsyncContextManager");
     MbValue::none()
 }
 
@@ -775,6 +779,12 @@ fn register_cm_class(name: &str, enter: usize, exit: usize) {
     super::super::class::mb_class_register(name, vec!["object".to_string()], methods);
 }
 
+fn register_abstract_context_manager_class(name: &str, enter_name: &str, enter: usize) {
+    let mut methods: HashMap<String, MbValue> = HashMap::new();
+    methods.insert(enter_name.to_string(), MbValue::from_func(enter));
+    super::super::class::mb_class_register(name, vec!["object".to_string()], methods);
+}
+
 /// Register the contextlib module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -810,6 +820,16 @@ pub fn register() {
         "contextlib.redirect_stderr",
         redirect_stderr_enter as usize,
         redirect_stderr_exit as usize,
+    );
+    register_abstract_context_manager_class(
+        "AbstractContextManager",
+        "__enter__",
+        exit_stack_enter as usize,
+    );
+    register_abstract_context_manager_class(
+        "AbstractAsyncContextManager",
+        "__aenter__",
+        exit_stack_enter as usize,
     );
 
     // ContextDecorator base class: subclasses inherit `__call__`, making an
