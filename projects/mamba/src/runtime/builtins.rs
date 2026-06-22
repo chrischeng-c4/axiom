@@ -7765,6 +7765,16 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         })
                         .unwrap_or_default();
                     drop(guard);
+                    let method_str = method_name
+                        .as_ptr()
+                        .and_then(|p| match &(*p).data {
+                            ObjData::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    if type_name == "collections.Counter" && method_str == "fromkeys" {
+                        return super::class::mb_counter_fromkeys_not_implemented();
+                    }
                     // complex comparison dunders accessed unbound
                     // (`complex.__eq__(a, b)` etc.). __eq__/__ne__ return a bool
                     // when the other operand is numeric and NotImplemented

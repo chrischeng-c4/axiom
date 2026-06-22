@@ -2423,6 +2423,16 @@ fn make_bound_native_method(recv: MbValue, method_name: &str) -> MbValue {
     MbValue::from_ptr(inst)
 }
 
+pub fn mb_counter_fromkeys_not_implemented() -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("NotImplementedError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "Counter.fromkeys() is undefined.  Use Counter(iterable) instead.".to_string(),
+        )),
+    );
+    MbValue::none()
+}
+
 fn make_abc_register_method(parent_name: &str) -> MbValue {
     let inst = MbObject::new_instance("collections.abc._register_bound".to_string());
     if let ObjData::Instance { fields, .. } = unsafe { &(*inst).data } {
@@ -3520,6 +3530,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         let native_type =
             super::module::NATIVE_TYPE_NAMES.with(|map| map.borrow().get(&(addr as u64)).cloned());
         if let Some(nt) = native_type {
+            if nt == "collections.Counter" && attr_name == "fromkeys" {
+                return make_unbound_method(&nt, &attr_name);
+            }
             if nt == "array" && is_array_unbound_method(&attr_name) {
                 return make_unbound_method("array", &attr_name);
             }
@@ -11061,6 +11074,9 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         let native_type =
             super::module::NATIVE_TYPE_NAMES.with(|map| map.borrow().get(&(addr as u64)).cloned());
         if let Some(nt) = native_type {
+            if nt == "collections.Counter" && name == "fromkeys" {
+                return mb_counter_fromkeys_not_implemented();
+            }
             // `datetime.timezone.utc.dst(x)` arrives here with the CONSTRUCTOR
             // func as receiver and "utc" consumed by getattr — but chained
             // `datetime.timezone.utc` may also lower as CallMethod("utc") with
