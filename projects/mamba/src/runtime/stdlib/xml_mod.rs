@@ -810,6 +810,54 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool) -> String {
     String::new()
 }
 
+fn has_unqualified_tag(elem: MbValue) -> bool {
+    let tag = dict_get_key(elem, "tag")
+        .and_then(extract_str)
+        .unwrap_or_default();
+    if !tag.is_empty() && !tag.starts_with('{') {
+        return true;
+    }
+    if let Some(children) = dict_get_key(elem, "_children") {
+        for child in seq_items(children) {
+            if has_unqualified_tag(child) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn default_namespace_arg(args: MbValue) -> Option<String> {
+    let items = seq_items(args);
+    for item in items.iter().copied().rev() {
+        if is_dict(item) {
+            if let Some(ns) = kwarg_get(item, "default_namespace") {
+                return extract_str(ns);
+            }
+        }
+    }
+    items.get(3).copied().and_then(extract_str)
+}
+
+fn validate_default_namespace(elem: MbValue, args: MbValue) -> Option<MbValue> {
+    let Some(ns) = default_namespace_arg(args) else {
+        return None;
+    };
+    if ns.is_empty() {
+        return None;
+    }
+    if has_unqualified_tag(elem) {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "cannot use non-qualified names with default_namespace option".to_string(),
+            )),
+        );
+        return Some(MbValue::none());
+    }
+    None
+}
+
 // ── Parsing ──
 
 /// fromstring(xml_str) -> Element (recursive descent parser).
@@ -1594,6 +1642,9 @@ pub fn dispatch_xml_stub_method(
             }
             "getroot" => Some(retained(receiver)),
             "write" => {
+                if let Some(err) = validate_default_namespace(receiver, args) {
+                    return Some(err);
+                }
                 let payload = element_to_string(receiver, 0, true);
                 let dest = arg(0);
                 if let Some(ptr) = dest.as_ptr() {
