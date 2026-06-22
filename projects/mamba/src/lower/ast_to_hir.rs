@@ -909,6 +909,21 @@ fn infer_return_float_hint(
     }
 }
 
+fn add_expr_contains_string_literal(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::StrLit(_) => true,
+        ast::Expr::BinOp { op: ast::BinOp::Add, lhs, rhs } => {
+            add_expr_contains_string_literal(&lhs.node)
+                || add_expr_contains_string_literal(&rhs.node)
+        }
+        ast::Expr::IfExpr { body, else_body, .. } => {
+            add_expr_contains_string_literal(&body.node)
+                || add_expr_contains_string_literal(&else_body.node)
+        }
+        _ => false,
+    }
+}
+
 /// Infer a function's return type from its `return` statements.
 ///
 /// Recognizes literal returns (Float, Bool, Str, None) and, using the supplied
@@ -949,6 +964,16 @@ fn infer_return_type_from_ast(
                             )
                         ) =>
                     {
+                        Some(tc.tcx.any())
+                    }
+                    ast::Expr::BinOp { op: ast::BinOp::Add, lhs, rhs }
+                        if add_expr_contains_string_literal(&lhs.node)
+                            || add_expr_contains_string_literal(&rhs.node) =>
+                    {
+                        // A string-concat-shaped return is a boxed runtime
+                        // value even when part of the expression is Any. Do
+                        // not let the raw-int fallback make callers compile
+                        // `f() + g()` as primitive iadd over string pointers.
                         Some(tc.tcx.any())
                     }
                     _ => {
