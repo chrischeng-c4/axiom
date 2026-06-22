@@ -57,6 +57,113 @@ fn py_pattern_to_rust(pat: &str) -> String {
     out
 }
 
+enum RePreflightError {
+    Re(String),
+    Overflow(String),
+}
+
+fn validate_python_repeat_syntax(pat: &str) -> Result<(), RePreflightError> {
+    let chars: Vec<char> = pat.chars().collect();
+    let mut i = 0usize;
+    let mut in_class = false;
+    let mut escaped = false;
+    let mut last_quantifier = false;
+    let mut repeat_suffix_used = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if escaped {
+            escaped = false;
+            last_quantifier = false;
+            repeat_suffix_used = false;
+            i += 1;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if c == '[' {
+            in_class = true;
+            last_quantifier = false;
+            repeat_suffix_used = false;
+            i += 1;
+            continue;
+        }
+        if c == ']' && in_class {
+            in_class = false;
+            last_quantifier = false;
+            repeat_suffix_used = false;
+            i += 1;
+            continue;
+        }
+        if in_class {
+            i += 1;
+            continue;
+        }
+        if matches!(c, '*' | '+' | '?') {
+            if last_quantifier {
+                if matches!(c, '?' | '+') && !repeat_suffix_used {
+                    repeat_suffix_used = true;
+                    i += 1;
+                    continue;
+                }
+                return Err(RePreflightError::Re("multiple repeat".to_string()));
+            }
+            last_quantifier = true;
+            repeat_suffix_used = false;
+            i += 1;
+            continue;
+        }
+        if c == '{' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+            let mut j = i + 1;
+            let mut first_num = String::new();
+            let mut second_num = String::new();
+            let mut after_comma = false;
+            while j < chars.len() && chars[j] != '}' {
+                let ch = chars[j];
+                if ch == ',' && !after_comma {
+                    after_comma = true;
+                } else if ch.is_ascii_digit() {
+                    if after_comma {
+                        second_num.push(ch);
+                    } else {
+                        first_num.push(ch);
+                    }
+                } else {
+                    break;
+                }
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '}' {
+                let too_large = [&first_num, &second_num].iter().any(|n| {
+                    !n.is_empty()
+                        && (n.len() > 18
+                            || n.parse::<u64>()
+                                .map(|v| v > u32::MAX as u64)
+                                .unwrap_or(true))
+                });
+                if too_large {
+                    return Err(RePreflightError::Overflow(
+                        "the repetition number is too large".to_string(),
+                    ));
+                }
+                if last_quantifier {
+                    return Err(RePreflightError::Re("multiple repeat".to_string()));
+                }
+                last_quantifier = true;
+                repeat_suffix_used = false;
+                i = j + 1;
+                continue;
+            }
+        }
+        last_quantifier = false;
+        repeat_suffix_used = false;
+        i += 1;
+    }
+    Ok(())
+}
+
 fn compile_cached(pat: &str) -> Result<Rc<regex::Regex>, String> {
     // Fast path: lookup. Move the hit to the back (MRU end) so the
     // cold-eviction policy is true LRU-by-recency rather than FIFO.
@@ -1555,7 +1662,22 @@ pub fn mb_re_compile(pattern: MbValue, flags: MbValue) -> MbValue {
     // before the user threads it through any matcher. Validate the same
     // flag-prefixed form method dispatch will execute (a VERBOSE pattern
     // is only valid once `(?x)` is applied).
-    let validate_src = extract_str(with_flags(pattern, flags)).unwrap_or_else(|| pat_str.clone());
+    let validate_src = extract_str(with_flags(pattern, flags))
+        .unwrap_or_else(|| pat_str.clone());
+    match validate_python_repeat_syntax(&validate_src) {
+        Ok(()) => {}
+        Err(RePreflightError::Re(msg)) => {
+            raise_re_error(&msg);
+            return MbValue::none();
+        }
+        Err(RePreflightError::Overflow(msg)) => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(msg)),
+            );
+            return MbValue::none();
+        }
+    }
     let re = match regex::Regex::new(&py_pattern_to_rust(&validate_src)) {
         Ok(r) => r,
         Err(e) => {
