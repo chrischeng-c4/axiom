@@ -151,7 +151,11 @@ impl<'a> Parser<'a> {
                 "invalid syntax",
             ));
         }
-        let body = self.parse_expr()?;
+        let was_in_class_body = self.in_class_body;
+        self.in_class_body = false;
+        let body = self.parse_expr();
+        self.in_class_body = was_in_class_body;
+        let body = body?;
         let span = Span::new(self.file_id, start, body.span.end);
         Ok(Spanned::new(
             Expr::Lambda {
@@ -207,6 +211,7 @@ impl<'a> Parser<'a> {
         if self.peek_kind() == Some(TokenKind::For) {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RParen)?;
+            self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
             return Ok(Spanned::new(
                 Expr::GeneratorExpr {
                     element: Box::new(first),
@@ -250,6 +255,7 @@ impl<'a> Parser<'a> {
         if self.peek_kind() == Some(TokenKind::For) {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RBracket)?;
+            self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
             return Ok(Spanned::new(
                 Expr::ListComp {
                     element: Box::new(first),
@@ -319,6 +325,7 @@ impl<'a> Parser<'a> {
             if self.peek_kind() == Some(TokenKind::For) {
                 let generators = self.parse_comprehension_clauses()?;
                 self.expect(TokenKind::RBrace)?;
+                self.validate_comprehension_assignment_exprs(&[&first, &value], &generators, self.span_from(start))?;
                 return Ok(Spanned::new(
                     Expr::DictComp {
                         key: Box::new(first),
@@ -355,6 +362,7 @@ impl<'a> Parser<'a> {
         if self.peek_kind() == Some(TokenKind::For) {
             let generators = self.parse_comprehension_clauses()?;
             self.expect(TokenKind::RBrace)?;
+            self.validate_comprehension_assignment_exprs(&[&first], &generators, self.span_from(start))?;
             return Ok(Spanned::new(
                 Expr::SetComp {
                     element: Box::new(first),
@@ -426,6 +434,184 @@ impl<'a> Parser<'a> {
         }
         Ok(generators)
     }
+
+    fn validate_comprehension_assignment_exprs(
+        &self,
+        body_exprs: &[&Spanned<Expr>],
+        generators: &[Comprehension],
+        span: Span,
+    ) -> crate::error::Result<()> {
+        for generator in generators {
+            if Self::expr_contains_walrus(&generator.iter) {
+                return Err(crate::error::MambaError::syntax(
+                    generator.iter.span,
+                    "assignment expression cannot be used in a comprehension iterable expression",
+                ));
+            }
+        }
+
+        let mut walrus_targets = Vec::new();
+        for expr in body_exprs {
+            Self::collect_walrus_targets(expr, &mut walrus_targets);
+        }
+        for generator in generators {
+            for condition in &generator.conditions {
+                Self::collect_walrus_targets(condition, &mut walrus_targets);
+            }
+        }
+
+        let iteration_targets: Vec<&str> = generators
+            .iter()
+            .flat_map(|generator| generator.targets.iter().map(String::as_str))
+            .collect();
+        for target in &walrus_targets {
+            if iteration_targets.iter().any(|iteration| *iteration == target.as_str()) {
+                return Err(crate::error::MambaError::syntax(
+                    span,
+                    format!(
+                        "assignment expression cannot rebind comprehension iteration variable '{target}'",
+                    ),
+                ));
+            }
+        }
+
+        if self.in_class_body && !walrus_targets.is_empty() {
+            return Err(crate::error::MambaError::syntax(
+                span,
+                "assignment expression within a comprehension cannot be used in a class body",
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn expr_contains_walrus(expr: &Spanned<Expr>) -> bool {
+        let mut targets = Vec::new();
+        Self::collect_walrus_targets(expr, &mut targets);
+        !targets.is_empty()
+    }
+
+    fn collect_walrus_targets(expr: &Spanned<Expr>, out: &mut Vec<String>) {
+        match &expr.node {
+            Expr::Walrus { target, value } => {
+                out.push(target.clone());
+                Self::collect_walrus_targets(value, out);
+            }
+            Expr::BinOp { lhs, rhs, .. } => {
+                Self::collect_walrus_targets(lhs, out);
+                Self::collect_walrus_targets(rhs, out);
+            }
+            Expr::UnaryOp { operand, .. } | Expr::Attr { object: operand, .. } => {
+                Self::collect_walrus_targets(operand, out);
+            }
+            Expr::Call { func, args } => {
+                Self::collect_walrus_targets(func, out);
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value)
+                        | CallArg::Keyword { value, .. }
+                        | CallArg::StarArg(value)
+                        | CallArg::DoubleStarArg(value) => Self::collect_walrus_targets(value, out),
+                    }
+                }
+            }
+            Expr::Index { object, index } => {
+                Self::collect_walrus_targets(object, out);
+                Self::collect_walrus_targets(index, out);
+            }
+            Expr::Slice { start, stop, step } => {
+                if let Some(value) = start {
+                    Self::collect_walrus_targets(value, out);
+                }
+                if let Some(value) = stop {
+                    Self::collect_walrus_targets(value, out);
+                }
+                if let Some(value) = step {
+                    Self::collect_walrus_targets(value, out);
+                }
+            }
+            Expr::ListLit(values) | Expr::SetLit(values) | Expr::TupleLit(values) | Expr::UnpackTarget(values) => {
+                for value in values {
+                    Self::collect_walrus_targets(value, out);
+                }
+            }
+            Expr::DictLit(entries) => {
+                for (key, value) in entries {
+                    if let Some(key) = key {
+                        Self::collect_walrus_targets(key, out);
+                    }
+                    Self::collect_walrus_targets(value, out);
+                }
+            }
+            Expr::IfExpr { body, condition, else_body } => {
+                Self::collect_walrus_targets(body, out);
+                Self::collect_walrus_targets(condition, out);
+                Self::collect_walrus_targets(else_body, out);
+            }
+            Expr::Lambda { .. } => {}
+            Expr::ListComp { element, generators }
+            | Expr::SetComp { element, generators }
+            | Expr::GeneratorExpr { element, generators } => {
+                Self::collect_walrus_targets(element, out);
+                for generator in generators {
+                    for condition in &generator.conditions {
+                        Self::collect_walrus_targets(condition, out);
+                    }
+                }
+            }
+            Expr::DictComp { key, value, generators } => {
+                Self::collect_walrus_targets(key, out);
+                Self::collect_walrus_targets(value, out);
+                for generator in generators {
+                    for condition in &generator.conditions {
+                        Self::collect_walrus_targets(condition, out);
+                    }
+                }
+            }
+            Expr::FString(parts) => {
+                for part in parts {
+                    Self::collect_walrus_targets_in_fstring_part(part, out);
+                }
+            }
+            Expr::Yield(value) => {
+                if let Some(value) = value {
+                    Self::collect_walrus_targets(value, out);
+                }
+            }
+            Expr::YieldFrom(value) | Expr::Await(value) | Expr::Starred(value) => {
+                Self::collect_walrus_targets(value, out);
+            }
+            Expr::ChainedCompare { operands, .. } => {
+                for operand in operands {
+                    Self::collect_walrus_targets(operand, out);
+                }
+            }
+            Expr::IntLit(_)
+            | Expr::FloatLit(_)
+            | Expr::ComplexLit(_)
+            | Expr::StrLit(_)
+            | Expr::BytesLit(_)
+            | Expr::BoolLit(_)
+            | Expr::NoneLit
+            | Expr::Ellipsis
+            | Expr::Ident(_) => {}
+        }
+    }
+
+    fn collect_walrus_targets_in_fstring_part(part: &FStringPart, out: &mut Vec<String>) {
+        match part {
+            FStringPart::Literal(_) => {}
+            FStringPart::Expr(expr, spec) => {
+                Self::collect_walrus_targets(expr, out);
+                if let Some(spec) = spec {
+                    for part in spec {
+                        Self::collect_walrus_targets_in_fstring_part(part, out);
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 #[cfg(test)]
