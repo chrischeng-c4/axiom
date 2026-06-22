@@ -1951,6 +1951,18 @@ fn decorator_is_dataclass(expr: &ast::Expr) -> bool {
     }
 }
 
+fn decorator_preserves_call_signature(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(n) => matches!(n.as_str(), "contextmanager" | "asynccontextmanager"),
+        ast::Expr::Attr { attr, .. } => matches!(
+            attr.as_str(),
+            "contextmanager" | "asynccontextmanager"
+        ),
+        ast::Expr::Call { func, .. } => decorator_preserves_call_signature(&func.node),
+        _ => false,
+    }
+}
+
 /// Is this class-body default value a `field(...)` / `dataclasses.field(...)`
 /// call carrying `init=False`? Such fields are excluded from the synthesized
 /// `__init__` parameter list (PEP 557).
@@ -2459,9 +2471,15 @@ impl<'a> AstLowerer<'a> {
                             .collect(),
                     );
                     // Param shape for static call-site arg-binding validation.
-                    // Only undecorated defs: a decorator can replace the callable
-                    // with an arbitrary wrapper whose signature differs.
-                    if decorators.is_empty() {
+                    // Most decorators can replace the callable with an arbitrary
+                    // wrapper whose signature differs. A small allowlist preserves
+                    // the original call signature, so static CPython-style
+                    // argument binding can still reject malformed calls.
+                    let preserves_declared_signature = decorators.is_empty()
+                        || decorators
+                            .iter()
+                            .all(|d| decorator_preserves_call_signature(&d.node));
+                    if preserves_declared_signature {
                         self.arg_bind_sigs.insert(
                             name.clone(),
                             params
