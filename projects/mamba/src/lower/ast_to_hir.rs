@@ -6455,6 +6455,7 @@ impl<'a> AstLowerer<'a> {
                 Some(HirComprehension {
                     var,
                     extra_vars,
+                    unpack_target: g.unpack_target,
                     iter,
                     conditions,
                     is_async: g.is_async,
@@ -8293,6 +8294,7 @@ mod tests {
     fn test_lower_list_comp() {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
+            unpack_target: false,
             iter: sp(Expr::ListLit(vec![sp(Expr::IntLit(1))])),
             conditions: vec![],
             is_async: false,
@@ -8312,6 +8314,7 @@ mod tests {
     fn test_lower_dict_comp() {
         let gen = Comprehension {
             targets: vec!["k".to_string()],
+            unpack_target: false,
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: false,
@@ -8334,6 +8337,7 @@ mod tests {
     fn test_lower_set_comp() {
         let gen = Comprehension {
             targets: vec!["s".to_string()],
+            unpack_target: false,
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: false,
@@ -8358,6 +8362,7 @@ mod tests {
         // single-use iterator identity (next() works, no len()/indexing).
         let gen = Comprehension {
             targets: vec!["g".to_string()],
+            unpack_target: false,
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: false,
@@ -8385,6 +8390,7 @@ mod tests {
     fn test_lower_list_comp_with_filter() {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
+            unpack_target: false,
             iter: sp(Expr::ListLit(vec![
                 sp(Expr::IntLit(1)),
                 sp(Expr::IntLit(2)),
@@ -8411,6 +8417,7 @@ mod tests {
     fn test_lower_list_comp_async() {
         let gen = Comprehension {
             targets: vec!["x".to_string()],
+            unpack_target: false,
             iter: sp(Expr::ListLit(vec![])),
             conditions: vec![],
             is_async: true,

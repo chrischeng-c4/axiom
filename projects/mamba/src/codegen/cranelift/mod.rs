@@ -65,6 +65,9 @@ fn collect_used_externs(module: &MirModule) -> HashSet<String> {
                         used.insert("mb_list_setitem".into());
                         used.insert("mb_obj_setitem".into());
                     }
+                    MirInst::LoadGlobal { .. } => { used.insert("mb_global_get_id".into()); }
+                    MirInst::StoreGlobal { .. } => { used.insert("mb_global_set_id".into()); }
+                    MirInst::DeleteGlobal { .. } => { used.insert("mb_global_del_id".into()); }
                     MirInst::MakeTuple { .. } => {
                         used.insert("mb_list_new".into());
                         used.insert("mb_list_append".into());
@@ -895,6 +898,13 @@ impl CraneliftBackend {
                     let vv = vars.get(*value, builder, cl_types::I64);
                     let val = builder.use_var(vv);
                     builder.ins().call(func_ref, &[id_val, val]);
+                }
+            }
+            MirInst::DeleteGlobal { name } => {
+                if let Some(&func_id) = self.extern_funcs.get("mb_global_del_id") {
+                    let func_ref = self.module().declare_func_in_func(func_id, builder.func);
+                    let id_val = builder.ins().iconst(cl_types::I64, name.0 as i64);
+                    builder.ins().call(func_ref, &[id_val]);
                 }
             }
             MirInst::LoadCell { dest, cell_idx, .. } => {

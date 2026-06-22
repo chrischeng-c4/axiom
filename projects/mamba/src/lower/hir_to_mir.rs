@@ -2583,6 +2583,51 @@ impl<'a> HirToMir<'a> {
         (body, new_globals, has_echo)
     }
 
+    fn lower_delete_lvalue(&mut self, target: &HirLValue) {
+        match target {
+            HirLValue::Attr { object, attr } => {
+                let obj = self.lower_expr(object);
+                let attr_vreg = self.emit_str_const(attr);
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_delattr".to_string(),
+                    args: vec![obj, attr_vreg],
+                    ty: self.tcx.none(),
+                });
+            }
+            HirLValue::Index { object, index } => {
+                let obj = self.lower_expr(object);
+                let idx_raw = self.lower_expr(index);
+                let idx = self.box_operand(idx_raw, index.ty());
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_obj_delitem".to_string(),
+                    args: vec![obj, idx],
+                    ty: self.tcx.none(),
+                });
+            }
+            HirLValue::Var(sym_id) => {
+                if let Some(&vreg) = self.sym_to_vreg.get(sym_id) {
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: None,
+                        name: "mb_del_var".to_string(),
+                        args: vec![vreg],
+                        ty: self.tcx.none(),
+                    });
+                }
+                if self.in_module_scope {
+                    self.current_stmts.push(MirInst::DeleteGlobal { name: *sym_id });
+                }
+                self.sym_to_vreg.remove(sym_id);
+            }
+            HirLValue::Unpack { targets, .. } => {
+                for target in targets {
+                    self.lower_delete_lvalue(target);
+                }
+            }
+        }
+    }
+
     fn lower_stmt(&mut self, stmt: &HirStmt) {
         match stmt {
             HirStmt::Let { target, value, .. } => {
@@ -3914,44 +3959,7 @@ impl<'a> HirToMir<'a> {
                 }
                 self.start_block(pass_block);
             }
-            HirStmt::Del { target, .. } => {
-                match target {
-                    HirLValue::Attr { object, attr } => {
-                        let obj = self.lower_expr(object);
-                        let attr_vreg = self.emit_str_const(attr);
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: None,
-                            name: "mb_delattr".to_string(),
-                            args: vec![obj, attr_vreg],
-                            ty: self.tcx.none(),
-                        });
-                    }
-                    HirLValue::Index { object, index } => {
-                        let obj = self.lower_expr(object);
-                        let idx_raw = self.lower_expr(index);
-                        let idx = self.box_operand(idx_raw, index.ty());
-                        self.current_stmts.push(MirInst::CallExtern {
-                            dest: None,
-                            name: "mb_obj_delitem".to_string(),
-                            args: vec![obj, idx],
-                            ty: self.tcx.none(),
-                        });
-                    }
-                    HirLValue::Var(sym_id) => {
-                        if let Some(&vreg) = self.sym_to_vreg.get(sym_id) {
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: None,
-                                name: "mb_del_var".to_string(),
-                                args: vec![vreg],
-                                ty: self.tcx.none(),
-                            });
-                        }
-                    }
-                    HirLValue::Unpack { .. } => {
-                        // del on unpacked targets — no direct MIR (scope-level only)
-                    }
-                }
-            }
+            HirStmt::Del { target, .. } => self.lower_delete_lvalue(target),
             HirStmt::Global { .. } | HirStmt::Nonlocal { .. } => {
                 // Scope declarations — no MIR instructions needed
             }
@@ -5796,9 +5804,8 @@ impl<'a> HirToMir<'a> {
         });
 
         self.start_block(body_block);
-        // Unpack tuple/sequence targets: `for k, v in pairs` — next_val is a
-        // (k, v) tuple; bind var=next_val[0], extra_vars[i]=next_val[i+1].
-        if extra_vars.is_empty() {
+        // Unpack tuple/sequence targets: `for k, v in pairs` or `for (v,) in pairs`.
+        if !gen.unpack_target {
             self.sym_to_vreg.insert(gen_var, next_val);
         } else {
             let any_ty = self.tcx.any();
@@ -5841,19 +5848,20 @@ impl<'a> HirToMir<'a> {
             // No conditions — recurse directly
             self.lower_comprehension_loops(rest, emit_body);
         } else {
-            // Evaluate conditions; skip if any is false
-            let cond_vreg = self.lower_expr(&gen.conditions[0]);
-            let inner_block = self.fresh_block();
-            let skip_block = self.fresh_block();
-            self.finish_block(Terminator::Branch {
-                cond: cond_vreg,
-                then_block: inner_block,
-                else_block: skip_block,
-            });
-            self.start_block(inner_block);
+            for condition in &gen.conditions {
+                let cond_vreg = self.lower_cond_as_bool(condition);
+                let next_condition = self.fresh_block();
+                let skip_block = self.fresh_block();
+                self.finish_block(Terminator::Branch {
+                    cond: cond_vreg,
+                    then_block: next_condition,
+                    else_block: skip_block,
+                });
+                self.start_block(skip_block);
+                self.finish_block(Terminator::Goto(header));
+                self.start_block(next_condition);
+            }
             self.lower_comprehension_loops(rest, emit_body);
-            self.finish_block(Terminator::Goto(header));
-            self.start_block(skip_block);
             self.finish_block(Terminator::Goto(header));
             // Exit block
             self.start_block(exit_block);

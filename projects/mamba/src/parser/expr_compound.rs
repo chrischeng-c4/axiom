@@ -403,20 +403,7 @@ impl<'a> Parser<'a> {
             };
             self.expect(TokenKind::For)?;
 
-            // Parse one or more comma-separated target names (tuple target).
-            let mut targets = Vec::new();
-            let (ts, te) = self.expect_name()?;
-            targets.push(self.text_at(ts, te).to_string());
-            while self.peek_kind() == Some(TokenKind::Comma) {
-                self.advance(); // consume ','
-                                // Break if we've reached `in` (trailing comma not valid here,
-                                // but be lenient to avoid a confusing error).
-                if self.peek_kind() == Some(TokenKind::In) {
-                    break;
-                }
-                let (ts, te) = self.expect_name()?;
-                targets.push(self.text_at(ts, te).to_string());
-            }
+            let (targets, unpack_target) = self.parse_comprehension_targets()?;
 
             self.expect(TokenKind::In)?;
             let iter = self.parse_expr_bp(0)?;
@@ -427,12 +414,45 @@ impl<'a> Parser<'a> {
             }
             generators.push(Comprehension {
                 targets,
+                unpack_target,
                 iter,
                 conditions,
                 is_async,
             });
         }
         Ok(generators)
+    }
+
+    fn parse_comprehension_targets(&mut self) -> crate::error::Result<(Vec<String>, bool)> {
+        if self.peek_kind() == Some(TokenKind::LParen) {
+            self.advance();
+            let (targets, had_comma) =
+                self.parse_comprehension_target_names_until(TokenKind::RParen)?;
+            self.expect(TokenKind::RParen)?;
+            return Ok((targets, had_comma));
+        }
+
+        self.parse_comprehension_target_names_until(TokenKind::In)
+    }
+
+    fn parse_comprehension_target_names_until(
+        &mut self,
+        stop: TokenKind,
+    ) -> crate::error::Result<(Vec<String>, bool)> {
+        let mut targets = Vec::new();
+        let mut had_comma = false;
+        let (ts, te) = self.expect_name()?;
+        targets.push(self.text_at(ts, te).to_string());
+        while self.peek_kind() == Some(TokenKind::Comma) {
+            had_comma = true;
+            self.advance();
+            if self.peek_kind() == Some(stop.clone()) {
+                break;
+            }
+            let (ts, te) = self.expect_name()?;
+            targets.push(self.text_at(ts, te).to_string());
+        }
+        Ok((targets, had_comma))
     }
 
     fn validate_comprehension_assignment_exprs(
@@ -841,6 +861,29 @@ mod tests {
         match parse_expr("[k for k, v in items]") {
             Expr::ListComp { generators, .. } => {
                 assert_eq!(generators[0].targets, vec!["k", "v"]);
+                assert!(generators[0].unpack_target);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_list_comp_singleton_tuple_target() {
+        match parse_expr("[v for v, in items]") {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators[0].targets, vec!["v"]);
+                assert!(generators[0].unpack_target);
+            }
+            other => panic!("expected ListComp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_list_comp_parenthesized_singleton_tuple_target() {
+        match parse_expr("[v for (v,) in items]") {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators[0].targets, vec!["v"]);
+                assert!(generators[0].unpack_target);
             }
             other => panic!("expected ListComp, got {other:?}"),
         }
