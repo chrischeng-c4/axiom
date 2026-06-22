@@ -3097,7 +3097,27 @@ fn register_httpconnection_class(attrs: &mut HashMap<String, MbValue>) {
 
 /// OpenerDirector() / build_opener(*handlers) -> an OpenerDirector instance.
 /// Handlers are accepted and ignored; the surface only checks the type.
-unsafe extern "C" fn d_opener_director_new(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn d_opener_director_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    for arg in args {
+        let primitive_or_none = arg.is_none()
+            || arg.as_int().is_some()
+            || arg.as_float().is_some()
+            || arg.is_bool()
+            || extract_str(*arg).is_some();
+        if primitive_or_none {
+            let type_name = extract_str(super::super::builtins::mb_type(*arg))
+                .unwrap_or_else(|| "object".to_string());
+            return raise_type_error(&format!(
+                "expected BaseHandler instance, got {}",
+                type_name
+            ));
+        }
+    }
     MbValue::from_ptr(MbObject::new_instance("OpenerDirector".to_string()))
 }
 
