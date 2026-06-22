@@ -138,6 +138,19 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(TokenKind::Colon)?;
+        if self
+            .peek_kind()
+            .as_ref()
+            .map_or(false, Self::is_name_token)
+            && self.peek_at(1).is_some_and(|k| *k == TokenKind::ColonEq)
+        {
+            return Err(crate::error::MambaError::syntax(
+                self.peek()
+                    .map(|t| Span::new(self.file_id, t.start, t.end))
+                    .unwrap_or_else(|| self.span_from(start)),
+                "invalid syntax",
+            ));
+        }
         let body = self.parse_expr()?;
         let span = Span::new(self.file_id, start, body.span.end);
         Ok(Spanned::new(
