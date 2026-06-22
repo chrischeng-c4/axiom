@@ -942,6 +942,54 @@ fn serialize_json_cpython(val: &serde_json::Value, ensure_ascii: bool) -> String
     }
 }
 
+fn nesting_exceeds_recursion_limit(s: &str) -> bool {
+    let limit = super::sys_mod::mb_sys_getrecursionlimit()
+        .as_int()
+        .unwrap_or(1000)
+        .max(1);
+    let mut depth = 0i64;
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in s.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '[' | '{' => {
+                depth += 1;
+                if depth >= limit {
+                    return true;
+                }
+            }
+            ']' | '}' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn raise_recursion_error() -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("RecursionError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "maximum recursion depth exceeded while decoding a JSON document".to_string(),
+        )),
+    );
+    MbValue::none()
+}
+
 /// json.dumps(obj, indent=N) → pretty-printed JSON string
 pub fn mb_json_dumps_pretty(val: MbValue, indent: MbValue) -> MbValue {
     let json_val = mbvalue_to_json(val);
@@ -1000,50 +1048,57 @@ pub fn mb_json_loads(val: MbValue) -> MbValue {
     });
 
     match json_str {
-        Some(s) => match serde_json::from_str::<serde_json::Value>(&s) {
-            Ok(parsed) => json_to_mbvalue(&parsed),
-            Err(e) => {
-                // Raise a JSONDecodeError instance carrying CPython's
-                // positional attributes: msg / pos / lineno / colno.
-                let lineno = e.line() as i64;
-                let colno = e.column() as i64;
-                let mut pos: i64 = 0;
-                for (i, l) in s.split('\n').enumerate() {
-                    if (i as i64) + 1 == lineno {
-                        pos += (colno - 1).max(0);
-                        break;
-                    }
-                    pos += l.chars().count() as i64 + 1;
-                }
-                let full = e.to_string();
-                let msg = full.split(" at line ").next().unwrap_or(&full).to_string();
-                let inst_ptr = MbObject::new_instance("JSONDecodeError".to_string());
-                unsafe {
-                    if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
-                        let mut m = fields.write().unwrap();
-                        m.insert(
-                            "msg".to_string(),
-                            MbValue::from_ptr(MbObject::new_str(msg.clone())),
-                        );
-                        m.insert("pos".to_string(), MbValue::from_int(pos));
-                        m.insert("lineno".to_string(), MbValue::from_int(lineno));
-                        m.insert("colno".to_string(), MbValue::from_int(colno));
-                        m.insert(
-                            "args".to_string(),
-                            MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
-                                MbObject::new_str(msg),
-                            )])),
-                        );
-                        m.insert(
-                            "__class__".to_string(),
-                            MbValue::from_ptr(MbObject::new_str("JSONDecodeError".to_string())),
-                        );
-                    }
-                }
-                super::super::class::mb_raise_instance(MbValue::from_ptr(inst_ptr));
-                MbValue::none()
+        Some(s) => {
+            if nesting_exceeds_recursion_limit(&s) {
+                return raise_recursion_error();
             }
-        },
+            match serde_json::from_str::<serde_json::Value>(&s) {
+                Ok(parsed) => json_to_mbvalue(&parsed),
+                Err(e) => {
+                    // Raise a JSONDecodeError instance carrying CPython's
+                    // positional attributes: msg / pos / lineno / colno.
+                    let lineno = e.line() as i64;
+                    let colno = e.column() as i64;
+                    let mut pos: i64 = 0;
+                    for (i, l) in s.split('\n').enumerate() {
+                        if (i as i64) + 1 == lineno {
+                            pos += (colno - 1).max(0);
+                            break;
+                        }
+                        pos += l.chars().count() as i64 + 1;
+                    }
+                    let full = e.to_string();
+                    let msg = full.split(" at line ").next().unwrap_or(&full).to_string();
+                    let inst_ptr = MbObject::new_instance("JSONDecodeError".to_string());
+                    unsafe {
+                        if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+                            let mut m = fields.write().unwrap();
+                            m.insert(
+                                "msg".to_string(),
+                                MbValue::from_ptr(MbObject::new_str(msg.clone())),
+                            );
+                            m.insert("pos".to_string(), MbValue::from_int(pos));
+                            m.insert("lineno".to_string(), MbValue::from_int(lineno));
+                            m.insert("colno".to_string(), MbValue::from_int(colno));
+                            m.insert(
+                                "args".to_string(),
+                                MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+                                    MbObject::new_str(msg),
+                                )])),
+                            );
+                            m.insert(
+                                "__class__".to_string(),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "JSONDecodeError".to_string(),
+                                )),
+                            );
+                        }
+                    }
+                    super::super::class::mb_raise_instance(MbValue::from_ptr(inst_ptr));
+                    MbValue::none()
+                }
+            }
+        }
         None => MbValue::none(),
     }
 }
