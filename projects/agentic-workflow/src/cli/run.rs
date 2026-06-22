@@ -2602,12 +2602,9 @@ mod tests {
             optional_quality_warnings: Vec::new(),
             managed_percent: 100.0,
             semantic_percent: 100.0,
-            regenerable_percent: 100.0,
             codegen_percent: 100.0,
-            full_codegen_percent: 100.0,
             codegen_eligible_files: 1,
             codegen_files: 1,
-            fully_codegen_files: 1,
             cb_ownership: crate::cli::project::CbOwnershipSummary {
                 eligible_files: 1,
                 codegen_files: 1,
@@ -3709,7 +3706,7 @@ review_status: pending
     #[test]
     fn artifact_quality_gate_injects_frontend_profile_and_prompt() {
         let mut envelope = test_envelope(
-            "aw cb gen --project cue frontend/src/App.tsx",
+            "aw td gen --project cue frontend/src/App.tsx",
             "generate frontend page component under frontend/src/App.tsx",
         );
 

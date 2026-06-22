@@ -13,10 +13,12 @@ use super::LockfileError;
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/lockfile.md#logic (lockfile-input-hash)
 pub(super) fn compute(pyproject_path: &Path) -> Result<String, LockfileError> {
-    let text = std::fs::read_to_string(pyproject_path)
-        .map_err(|e| LockfileError::Io { detail: e.to_string() })?;
-    let value: toml::Value = toml::from_str(&text)
-        .map_err(|e| LockfileError::TomlDecode { detail: e.to_string() })?;
+    let text = std::fs::read_to_string(pyproject_path).map_err(|e| LockfileError::Io {
+        detail: e.to_string(),
+    })?;
+    let value: toml::Value = toml::from_str(&text).map_err(|e| LockfileError::TomlDecode {
+        detail: e.to_string(),
+    })?;
 
     let project = value.get("project").and_then(|v| v.as_table());
 

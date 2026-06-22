@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// secrets module for Mamba (mamba-stdlib).
 ///
 /// CPython 3.12 `Lib/secrets.py` is a thin wrapper over
@@ -12,11 +14,9 @@
 /// (CPython module constant, 32) is exposed so `token_*` with `None`
 /// matches CPython.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
-use rand::RngCore;
 use rand::rngs::OsRng;
+use rand::RngCore;
 
 /// CPython 3.12 `secrets.DEFAULT_ENTROPY`.
 pub const DEFAULT_ENTROPY: usize = 32;
@@ -75,10 +75,7 @@ dispatch_unary!(dispatch_choice, mb_secrets_choice);
 dispatch_unary!(dispatch_randbits, mb_secrets_randbits);
 dispatch_unary!(dispatch_randbelow, mb_secrets_randbelow);
 
-unsafe extern "C" fn dispatch_compare_digest(
-    args_ptr: *const MbValue,
-    nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_compare_digest(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     mb_secrets_compare_digest(
         a.first().copied().unwrap_or_else(MbValue::none),
@@ -93,10 +90,7 @@ unsafe extern "C" fn dispatch_compare_digest(
 /// free functions. A future change can wire per-instance state if
 /// needed, but the thin shim mirrors CPython's behaviour: every call
 /// hits `os.urandom` regardless of which instance is used.
-unsafe extern "C" fn dispatch_system_random(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_system_random(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     // Handle space: stay clear of hashlib (0x1000…), hmac (0x2000…),
     // random (0x4000…); use 0x6000 as the SystemRandom sentinel.
     MbValue::from_int(0x6000_0001)
@@ -137,7 +131,11 @@ fn resolve_nbytes(n: MbValue) -> usize {
         return DEFAULT_ENTROPY;
     }
     let raw = n.as_int().unwrap_or(DEFAULT_ENTROPY as i64);
-    if raw < 0 { 0 } else { raw as usize }
+    if raw < 0 {
+        0
+    } else {
+        raw as usize
+    }
 }
 
 /// Like `resolve_nbytes` but raises `ValueError` (returning `None`) for a
@@ -161,7 +159,9 @@ fn resolve_nbytes_checked(n: MbValue) -> Option<usize> {
 }
 
 pub fn mb_secrets_token_bytes(n: MbValue) -> MbValue {
-    let Some(count) = resolve_nbytes_checked(n) else { return MbValue::none(); };
+    let Some(count) = resolve_nbytes_checked(n) else {
+        return MbValue::none();
+    };
     let mut buf = vec![0u8; count];
     OsRng.fill_bytes(&mut buf);
     MbValue::from_ptr(MbObject::new_bytes(buf))
@@ -175,7 +175,9 @@ pub fn mb_secrets_token_bytes(n: MbValue) -> MbValue {
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 
 pub fn mb_secrets_token_hex(n: MbValue) -> MbValue {
-    let Some(count) = resolve_nbytes_checked(n) else { return MbValue::none(); };
+    let Some(count) = resolve_nbytes_checked(n) else {
+        return MbValue::none();
+    };
     let mut buf = vec![0u8; count];
     OsRng.fill_bytes(&mut buf);
     let mut hex = Vec::with_capacity(count * 2);
@@ -193,8 +195,7 @@ pub fn mb_secrets_token_hex(n: MbValue) -> MbValue {
 /// `base64.urlsafe_b64encode(token_bytes(nbytes)).rstrip(b'=').decode('ascii')`.
 /// URL-safe alphabet uses `-` for `+` and `_` for `/`; trailing `=`
 /// padding is stripped.
-const B64_URL_CHARS: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const B64_URL_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 fn urlsafe_b64encode_no_pad(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -225,7 +226,9 @@ fn urlsafe_b64encode_no_pad(data: &[u8]) -> String {
 }
 
 pub fn mb_secrets_token_urlsafe(n: MbValue) -> MbValue {
-    let Some(count) = resolve_nbytes_checked(n) else { return MbValue::none(); };
+    let Some(count) = resolve_nbytes_checked(n) else {
+        return MbValue::none();
+    };
     let mut buf = vec![0u8; count];
     OsRng.fill_bytes(&mut buf);
     MbValue::from_ptr(MbObject::new_str(urlsafe_b64encode_no_pad(&buf)))
@@ -244,7 +247,11 @@ pub fn mb_secrets_randbelow(n: MbValue) -> MbValue {
     // Unbiased range sampling via rejection. Mask down to the smallest
     // power-of-two ≥ upper, redraw until the candidate falls in range.
     let bits = 64 - upper.leading_zeros();
-    let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+    let mask = if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
     let mut buf = [0u8; 8];
     loop {
         OsRng.fill_bytes(&mut buf);
@@ -297,9 +304,7 @@ pub fn mb_secrets_compare_digest(a: MbValue, b: MbValue) -> MbValue {
         with_operand(b, |kb, bb_opt| {
             // Reject unsupported operand types first.
             if ka == CmpKind::Other || kb == CmpKind::Other {
-                return raise_type_error(
-                    "unsupported operand types(s) or combination of types",
-                );
+                return raise_type_error("unsupported operand types(s) or combination of types");
             }
             // Mixing a str with a bytes-like object is a TypeError; the
             // str is the offending operand in CPython's message.
@@ -330,25 +335,29 @@ pub fn mb_secrets_compare_digest(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_secrets_choice(seq: MbValue) -> MbValue {
-    seq.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::List(ref lock) = (*ptr).data {
-            let items = lock.read().unwrap();
-            if items.is_empty() {
-                // CPython: secrets.choice([]) -> IndexError, not None.
-                super::super::exception::mb_raise(
-                    MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        "Cannot choose from an empty sequence".to_string(),
-                    )),
-                );
-                return None;
+    seq.as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap();
+                if items.is_empty() {
+                    // CPython: secrets.choice([]) -> IndexError, not None.
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "Cannot choose from an empty sequence".to_string(),
+                        )),
+                    );
+                    return None;
+                }
+                let mut b = [0u8; 8];
+                OsRng.fill_bytes(&mut b);
+                let idx = u64::from_le_bytes(b) as usize % items.len();
+                Some(items[idx])
+            } else {
+                None
             }
-            let mut b = [0u8; 8];
-            OsRng.fill_bytes(&mut b);
-            let idx = u64::from_le_bytes(b) as usize % items.len();
-            Some(items[idx])
-        } else { None }
-    }).unwrap_or_else(MbValue::none)
+        })
+        .unwrap_or_else(MbValue::none)
 }
 
 pub fn mb_secrets_randbits(k: MbValue) -> MbValue {
@@ -377,19 +386,27 @@ pub fn mb_secrets_randbits(k: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::super::value::MbValue;
     use super::super::super::rc::{MbObject, ObjData};
+    use super::super::super::value::MbValue;
+    use super::*;
 
     fn get_bytes_len(val: MbValue) -> Option<usize> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.len()) } else { None }
+            if let ObjData::Bytes(ref b) = (*ptr).data {
+                Some(b.len())
+            } else {
+                None
+            }
         })
     }
 
     fn get_str_val(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
     }
 
@@ -420,7 +437,9 @@ mod tests {
         let result = mb_secrets_token_urlsafe(MbValue::from_int(4));
         let s = get_str_val(result).unwrap();
         assert_eq!(s.len(), 6);
-        assert!(s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
         // n=3 bytes → exact 4-char base64, no padding stripped.
         let r3 = mb_secrets_token_urlsafe(MbValue::from_int(3));
         assert_eq!(get_str_val(r3).unwrap().len(), 4);

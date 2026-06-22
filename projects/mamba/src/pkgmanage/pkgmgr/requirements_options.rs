@@ -154,9 +154,7 @@ fn require_value(name: &str, value: Option<String>, line_no: usize) -> Result<St
 
 fn reject_value(name: &str, value: Option<String>, line_no: usize) -> Result<(), IndexError> {
     if value.is_some() {
-        return Err(pe(&format!(
-            "line {line_no}: option {name} takes no value"
-        )));
+        return Err(pe(&format!("line {line_no}: option {name} takes no value")));
     }
     Ok(())
 }
@@ -270,10 +268,9 @@ mod tests {
 
     #[test]
     fn unknown_options_passed_through_to_rest() {
-        let (opts, rest) = extract_global_options(
-            "--index-url https://idx/\n--brand-new-flag\nrequests==2.31\n",
-        )
-        .unwrap();
+        let (opts, rest) =
+            extract_global_options("--index-url https://idx/\n--brand-new-flag\nrequests==2.31\n")
+                .unwrap();
         assert_eq!(opts.index_url.as_deref(), Some("https://idx/"));
         assert_eq!(rest, vec!["--brand-new-flag", "requests==2.31"]);
     }
@@ -330,7 +327,10 @@ requests==2.31.0 \\
 ";
         let (opts, rest) = extract_global_options(src).unwrap();
         assert_eq!(opts.index_url.as_deref(), Some("https://pypi.org/simple/"));
-        assert_eq!(opts.extra_index_urls, vec!["https://internal.example.com/simple/"]);
+        assert_eq!(
+            opts.extra_index_urls,
+            vec!["https://internal.example.com/simple/"]
+        );
         assert_eq!(opts.trusted_hosts, vec!["internal.example.com"]);
         assert!(opts.require_hashes);
         assert!(!opts.pre);

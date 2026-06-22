@@ -1,7 +1,7 @@
 ---
 id: projects-lumen-src-operator-reconcile-rs
 capability_refs:
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     claim: "kustomize-base-overlays-hpa"
     coverage: partial
@@ -21,11 +21,14 @@ Public API manifest for `projects/lumen/src/operator/reconcile.rs` captured as a
 | Name | Target | Kind | Visibility |
 |------|--------|------|------------|
 | `Error` | projects/lumen/src/operator/reconcile.rs | enum | pub |
+| `run` | projects/lumen/src/operator/reconcile.rs | function | pub |
 
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The reconcile loop. Watches `Lumen` objects cluster-wide; for each, renders
 //! the child objects ([`render::render`]) and server-side-applies them as the
 //! field manager `lumen-operator`, then writes back a status subresource
@@ -58,6 +61,7 @@ const MANAGER: &str = "lumen-operator";
 /// Reconcile errors. `kube` + serde failures plus a guard for malformed
 /// rendered objects (which would be an operator bug, not a cluster condition).
 #[derive(thiserror::Error, Debug)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
 pub enum Error {
     #[error("kube api error: {0}")]
     Kube(#[from] kube::Error),
@@ -88,6 +92,7 @@ fn lease_namespace() -> String {
 /// Run the operator until the process is terminated. Every replica watches and
 /// runs the reconcile loop, but only the Lease holder applies changes (HA-safe
 /// at `replicas > 1` — see [`super::lease`]).
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-reconcile-rs.md#source
 pub async fn run() -> anyhow::Result<()> {
     let client = Client::try_default().await?;
     let election = Election::new(identity());
@@ -198,13 +203,13 @@ async fn reconcile(lumen: Arc<Lumen>, ctx: Arc<Ctx>) -> Result<Action, Error> {
 
     // 2. Observe readiness.
     let ready = ready_replicas(client, &ns, "Deployment", &name).await? as i32;
-    let nats_ready = if lumen.spec.nats.is_managed() {
-        ready_replicas(client, &ns, "StatefulSet", &format!("{name}-nats")).await? >= 1
+    let broker_ready = if lumen.spec.broker.is_managed() {
+        ready_replicas(client, &ns, "StatefulSet", &format!("{name}-relay")).await? >= 1
     } else {
         true // external broker: assumed up; serving pods' connect-retry covers blips.
     };
     let desired = lumen.spec.serving.autoscaling.min_replicas;
-    let phase = if ready >= desired && nats_ready {
+    let phase = if ready >= desired && broker_ready {
         "Ready"
     } else if ready > 0 {
         "Reconciling"
@@ -219,8 +224,8 @@ async fn reconcile(lumen: Arc<Lumen>, ctx: Arc<Ctx>) -> Result<Action, Error> {
         "servingReadyReplicas": ready,
         "desiredReplicas": desired,
         "shardCount": lumen.spec.shard_count,
-        "natsReady": nats_ready,
-        "message": format!("{ready}/{desired} serving pods ready; natsReady={nats_ready}"),
+        "brokerReady": broker_ready,
+        "message": format!("{ready}/{desired} serving pods ready; brokerReady={broker_ready}"),
     }});
     let lum_api: Api<Lumen> = Api::namespaced(client.clone(), &ns);
     lum_api
@@ -234,6 +239,8 @@ async fn reconcile(lumen: Arc<Lumen>, ctx: Arc<Ctx>) -> Result<Action, Error> {
 fn error_policy(_lumen: Arc<Lumen>, _err: &Error, _ctx: Arc<Ctx>) -> Action {
     Action::requeue(Duration::from_secs(15))
 }
+// CODEGEN-END
+
 ````
 
 ## Changes

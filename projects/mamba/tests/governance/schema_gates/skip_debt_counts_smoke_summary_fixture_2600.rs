@@ -34,11 +34,23 @@ fn manifest_path() -> PathBuf {
 #[test]
 fn header_is_well_formed() {
     let doc = crate::common::load_toml(&manifest_path());
-    assert_eq!(doc.get("fixture").and_then(|v| v.as_str()), Some("skip_debt_counts_in_smoke_summary"));
+    assert_eq!(
+        doc.get("fixture").and_then(|v| v.as_str()),
+        Some("skip_debt_counts_in_smoke_summary")
+    );
     assert_eq!(doc.get("issue").and_then(|v| v.as_integer()), Some(2600));
-    assert_eq!(doc.get("parent_issue").and_then(|v| v.as_integer()), Some(2533));
-    assert_eq!(doc.get("profile").and_then(|v| v.as_str()), Some("skip_debt"));
-    assert_eq!(doc.get("family").and_then(|v| v.as_str()), Some("skip_debt_counts_in_smoke_summary"));
+    assert_eq!(
+        doc.get("parent_issue").and_then(|v| v.as_integer()),
+        Some(2533)
+    );
+    assert_eq!(
+        doc.get("profile").and_then(|v| v.as_str()),
+        Some("skip_debt")
+    );
+    assert_eq!(
+        doc.get("family").and_then(|v| v.as_str()),
+        Some("skip_debt_counts_in_smoke_summary")
+    );
     assert_eq!(doc.get("network").and_then(|v| v.as_str()), Some("offline"));
 }
 
@@ -59,19 +71,45 @@ fn isolation_pins_no_global_state() {
 #[test]
 fn smoke_gate_and_inventory_cross_references_are_pinned() {
     let doc = crate::common::load_toml(&manifest_path());
-    let s = doc.get("smoke_gate_cross_reference").and_then(|v| v.as_table())
+    let s = doc
+        .get("smoke_gate_cross_reference")
+        .and_then(|v| v.as_table())
         .expect("[smoke_gate_cross_reference] missing");
-    assert_eq!(s.get("fixture_issue").and_then(|v| v.as_integer()), Some(2527),
-        "must extend the smoke gate fixture #2527");
-    assert_eq!(s.get("must_extend_existing_smoke_summary").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(s.get("must_not_break_existing_summary_consumers").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        s.get("fixture_issue").and_then(|v| v.as_integer()),
+        Some(2527),
+        "must extend the smoke gate fixture #2527"
+    );
+    assert_eq!(
+        s.get("must_extend_existing_smoke_summary")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        s.get("must_not_break_existing_summary_consumers")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
 
-    let inv = doc.get("inventory_cross_reference").and_then(|v| v.as_table())
+    let inv = doc
+        .get("inventory_cross_reference")
+        .and_then(|v| v.as_table())
         .expect("[inventory_cross_reference] missing");
-    assert_eq!(inv.get("categorization_fixture_issue").and_then(|v| v.as_integer()), Some(2598));
-    assert_eq!(inv.get("mvp_required_guard_fixture_issue").and_then(|v| v.as_integer()), Some(2599));
-    let kinds: Vec<&str> = inv.get("shared_marker_kinds").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    assert_eq!(
+        inv.get("categorization_fixture_issue")
+            .and_then(|v| v.as_integer()),
+        Some(2598)
+    );
+    assert_eq!(
+        inv.get("mvp_required_guard_fixture_issue")
+            .and_then(|v| v.as_integer()),
+        Some(2599)
+    );
+    let kinds: Vec<&str> = inv
+        .get("shared_marker_kinds")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for k in &["ignore", "xfail", "skip"] {
         assert!(kinds.contains(k), "shared_marker_kinds must include {k}");
     }
@@ -81,10 +119,13 @@ fn smoke_gate_and_inventory_cross_references_are_pinned() {
 #[test]
 fn smoke_summary_includes_ignore_xfail_skip_totals() {
     let doc = crate::common::load_toml(&manifest_path());
-    let t = doc.get("totals_in_summary_contract").and_then(|v| v.as_table()).expect(
-        "[totals_in_summary_contract] missing — acceptance: \
+    let t = doc
+        .get("totals_in_summary_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "[totals_in_summary_contract] missing — acceptance: \
          \"Smoke summary includes ignore, xfail, and skip totals.\"",
-    );
+        );
     for f in &[
         "must_emit_ignore_total",
         "must_emit_xfail_total",
@@ -93,18 +134,37 @@ fn smoke_summary_includes_ignore_xfail_skip_totals() {
         "must_emit_counts_by_mvp_objective_when_available",
         "nonzero_count_must_not_be_omitted",
     ] {
-        assert_eq!(t.get(*f).and_then(|v| v.as_bool()), Some(true), "{f} must be true");
+        assert_eq!(
+            t.get(*f).and_then(|v| v.as_bool()),
+            Some(true),
+            "{f} must be true"
+        );
     }
-    assert_eq!(t.get("summary_record_format").and_then(|v| v.as_str()), Some("json"));
-    let required: Vec<&str> = t.get("totals_required_fields").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    assert_eq!(
+        t.get("summary_record_format").and_then(|v| v.as_str()),
+        Some("json")
+    );
+    let required: Vec<&str> = t
+        .get("totals_required_fields")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for f in &[
-        "ignore_total", "xfail_total", "skip_total",
-        "skip_debt_total", "counts_by_mvp_objective",
+        "ignore_total",
+        "xfail_total",
+        "skip_total",
+        "skip_debt_total",
+        "counts_by_mvp_objective",
     ] {
-        assert!(required.contains(f), "totals_required_fields must include {f}");
+        assert!(
+            required.contains(f),
+            "totals_required_fields must include {f}"
+        );
     }
-    let exit = t.get("missing_total_exit_code").and_then(|v| v.as_integer()).unwrap();
+    let exit = t
+        .get("missing_total_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(exit, 45);
 }
 
@@ -112,22 +172,51 @@ fn smoke_summary_includes_ignore_xfail_skip_totals() {
 #[test]
 fn counts_link_back_to_inventory() {
     let doc = crate::common::load_toml(&manifest_path());
-    let i = doc.get("inventory_link_contract").and_then(|v| v.as_table()).expect(
-        "[inventory_link_contract] missing — acceptance: \
+    let i = doc
+        .get("inventory_link_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "[inventory_link_contract] missing — acceptance: \
          \"Counts link back to the inventory command or output file.\"",
+        );
+    assert_eq!(
+        i.get("must_link_back_to_inventory")
+            .and_then(|v| v.as_bool()),
+        Some(true)
     );
-    assert_eq!(i.get("must_link_back_to_inventory").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(i.get("inventory_link_field_name").and_then(|v| v.as_str()), Some("inventory_link"));
-    let kinds: Vec<&str> = i.get("allowed_inventory_link_kinds").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    assert_eq!(
+        i.get("inventory_link_field_name").and_then(|v| v.as_str()),
+        Some("inventory_link")
+    );
+    let kinds: Vec<&str> = i
+        .get("allowed_inventory_link_kinds")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for k in &["command", "output_file"] {
-        assert!(kinds.contains(k), "allowed_inventory_link_kinds must include {k}");
+        assert!(
+            kinds.contains(k),
+            "allowed_inventory_link_kinds must include {k}"
+        );
     }
-    assert_eq!(i.get("must_state_inventory_link_kind").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(i.get("link_field_name_for_kind").and_then(|v| v.as_str()), Some("inventory_link_kind"));
-    let missing = i.get("missing_inventory_link_exit_code").and_then(|v| v.as_integer()).unwrap();
+    assert_eq!(
+        i.get("must_state_inventory_link_kind")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        i.get("link_field_name_for_kind").and_then(|v| v.as_str()),
+        Some("inventory_link_kind")
+    );
+    let missing = i
+        .get("missing_inventory_link_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(missing, 46);
-    let unknown = i.get("unknown_inventory_link_kind_exit_code").and_then(|v| v.as_integer()).unwrap();
+    let unknown = i
+        .get("unknown_inventory_link_kind_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(unknown, 47);
     assert_ne!(missing, unknown);
 }
@@ -136,43 +225,93 @@ fn counts_link_back_to_inventory() {
 #[test]
 fn summary_fields_are_tested() {
     let doc = crate::common::load_toml(&manifest_path());
-    let s = doc.get("summary_fields_coverage_contract").and_then(|v| v.as_table()).expect(
-        "[summary_fields_coverage_contract] missing — acceptance: \
+    let s = doc
+        .get("summary_fields_coverage_contract")
+        .and_then(|v| v.as_table())
+        .expect(
+            "[summary_fields_coverage_contract] missing — acceptance: \
          \"A test covers the summary fields.\"",
+        );
+    assert_eq!(
+        s.get("must_have_test_covering_summary_fields")
+            .and_then(|v| v.as_bool()),
+        Some(true)
     );
-    assert_eq!(s.get("must_have_test_covering_summary_fields").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(s.get("must_assert_every_required_field_present").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(s.get("must_assert_field_types_are_integers_for_counts").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(s.get("must_keep_summary_compact").and_then(|v| v.as_bool()), Some(true));
-    let budget = s.get("summary_max_bytes").and_then(|v| v.as_integer()).unwrap();
+    assert_eq!(
+        s.get("must_assert_every_required_field_present")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        s.get("must_assert_field_types_are_integers_for_counts")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        s.get("must_keep_summary_compact").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    let budget = s
+        .get("summary_max_bytes")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert!(budget > 0);
-    assert!(budget <= 65536, "summary_max_bytes must be a compact budget (≤ 64KiB), got {budget}");
-    let exit = s.get("oversize_summary_exit_code").and_then(|v| v.as_integer()).unwrap();
+    assert!(
+        budget <= 65536,
+        "summary_max_bytes must be a compact budget (≤ 64KiB), got {budget}"
+    );
+    let exit = s
+        .get("oversize_summary_exit_code")
+        .and_then(|v| v.as_integer())
+        .unwrap();
     assert_eq!(exit, 48);
 }
 
 #[test]
 fn runner_contract_declares_keys_and_cases() {
     let doc = crate::common::load_toml(&manifest_path());
-    let c = doc.get("runner_contract").and_then(|v| v.as_table()).unwrap();
-    let keys: Vec<&str> = c.get("keys").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let c = doc
+        .get("runner_contract")
+        .and_then(|v| v.as_table())
+        .unwrap();
+    let keys: Vec<&str> = c
+        .get("keys")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for required in &[
-        "outcome", "case",
-        "ignore_total", "xfail_total", "skip_total", "skip_debt_total",
-        "counts_by_mvp_objective", "inventory_link", "inventory_link_kind",
-        "summary_size_bytes", "failure_kind", "exit_code",
+        "outcome",
+        "case",
+        "ignore_total",
+        "xfail_total",
+        "skip_total",
+        "skip_debt_total",
+        "counts_by_mvp_objective",
+        "inventory_link",
+        "inventory_link_kind",
+        "summary_size_bytes",
+        "failure_kind",
+        "exit_code",
     ] {
-        assert!(keys.contains(required), "runner_contract.keys must include {required}");
+        assert!(
+            keys.contains(required),
+            "runner_contract.keys must include {required}"
+        );
     }
-    let cases: Vec<&str> = c.get("case_values").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    let cases: Vec<&str> = c
+        .get("case_values")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
     for required in &[
         "smoke_summary_includes_ignore_xfail_skip_totals",
         "counts_link_back_to_inventory",
         "summary_fields_are_tested",
     ] {
-        assert!(cases.contains(required), "runner_contract.case_values must include {required}");
+        assert!(
+            cases.contains(required),
+            "runner_contract.case_values must include {required}"
+        );
     }
 }
 
@@ -180,5 +319,9 @@ fn runner_contract_declares_keys_and_cases() {
 fn pins_out_of_scope_per_issue() {
     let doc = crate::common::load_toml(&manifest_path());
     let o = doc.get("out_of_scope").and_then(|v| v.as_table()).unwrap();
-    assert_eq!(o.get("changing_individual_skip_behavior").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        o.get("changing_individual_skip_behavior")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
 }

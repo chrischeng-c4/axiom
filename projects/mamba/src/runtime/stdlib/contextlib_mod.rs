@@ -1,19 +1,22 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// contextlib module for Mamba (#413).
 ///
 /// Provides: contextlib.suppress(*exceptions), contextlib.nullcontext(value),
 ///           contextlib.contextmanager (stub marker).
 /// Suppress creates a dict describing which exception types to suppress;
 /// actual suppression is handled at runtime by with-statement codegen.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 /// Helper: extract a string from an MbValue.
 #[allow(dead_code)]
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -236,8 +239,7 @@ fn exit_stack_unwind(self_v: MbValue, mut pending: MbValue) -> bool {
                 // After a "cm" exit, mb_context_exit already re-raised the
                 // exception if not suppressed; capture the resulting state.
                 if kind == "cm" {
-                    let still = super::super::exception::mb_has_exception().as_bool()
-                        == Some(true);
+                    let still = super::super::exception::mb_has_exception().as_bool() == Some(true);
                     if has_exc && !still {
                         // suppressed
                         pending = MbValue::none();
@@ -272,7 +274,9 @@ fn exit_stack_unwind(self_v: MbValue, mut pending: MbValue) -> bool {
 
 /// `ExitStack.__enter__(self)` → self.
 extern "C" fn exit_stack_enter(self_v: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(self_v); }
+    unsafe {
+        super::super::rc::retain_if_ptr(self_v);
+    }
     self_v
 }
 
@@ -306,14 +310,18 @@ pub fn mb_exitstack_method(self_v: MbValue, name: &str, args: MbValue) -> MbValu
             let rest = items.get(1..).map(|s| s.to_vec()).unwrap_or_default();
             let entry = make_entry("cb", cb, rest);
             super::super::list_ops::mb_list_append(exit_stack_callbacks(self_v), entry);
-            unsafe { super::super::rc::retain_if_ptr(cb); }
+            unsafe {
+                super::super::rc::retain_if_ptr(cb);
+            }
             cb // callback() returns the function unchanged
         }
         "push" => {
             let exitfn = items.first().copied().unwrap_or_else(MbValue::none);
             let entry = make_entry("exit", exitfn, vec![]);
             super::super::list_ops::mb_list_append(exit_stack_callbacks(self_v), entry);
-            unsafe { super::super::rc::retain_if_ptr(exitfn); }
+            unsafe {
+                super::super::rc::retain_if_ptr(exitfn);
+            }
             exitfn // push() returns the callable unchanged
         }
         "pop_all" => {
@@ -349,7 +357,9 @@ pub fn mb_exitstack_method(self_v: MbValue, name: &str, args: MbValue) -> MbValu
             MbValue::none()
         }
         "__enter__" | "__aenter__" => {
-            unsafe { super::super::rc::retain_if_ptr(self_v); }
+            unsafe {
+                super::super::rc::retain_if_ptr(self_v);
+            }
             self_v
         }
         "__exit__" | "__aexit__" => {
@@ -376,7 +386,9 @@ pub fn mb_exitstack_method(self_v: MbValue, name: &str, args: MbValue) -> MbValu
 /// binds `y is r`).
 extern "C" fn closing_enter(self_v: MbValue) -> MbValue {
     let wrapped = inst_field(self_v, "_thing").unwrap_or_else(MbValue::none);
-    unsafe { super::super::rc::retain_if_ptr(wrapped); }
+    unsafe {
+        super::super::rc::retain_if_ptr(wrapped);
+    }
     wrapped
 }
 
@@ -402,7 +414,9 @@ unsafe extern "C" fn d_closing_ctor(args_ptr: *const MbValue, nargs: usize) -> M
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let thing = a.first().copied().unwrap_or_else(MbValue::none);
     let inst = MbValue::from_ptr(MbObject::new_instance("contextlib.closing".to_string()));
-    unsafe { super::super::rc::retain_if_ptr(thing); }
+    unsafe {
+        super::super::rc::retain_if_ptr(thing);
+    }
     set_inst_field(inst, "_thing", thing);
     inst
 }
@@ -456,7 +470,9 @@ unsafe extern "C" fn d_suppress_ctor(args_ptr: *const MbValue, nargs: usize) -> 
     let inst = MbValue::from_ptr(MbObject::new_instance("contextlib.suppress".to_string()));
     let mut excs: Vec<MbValue> = Vec::with_capacity(nargs);
     for &e in a {
-        unsafe { super::super::rc::retain_if_ptr(e); }
+        unsafe {
+            super::super::rc::retain_if_ptr(e);
+        }
         excs.push(e);
     }
     let list = MbValue::from_ptr(MbObject::new_list(excs));
@@ -505,9 +521,8 @@ pub fn cm_gen_enter(gen_handle: MbValue) -> MbValue {
     // If advancing completed the generator, mb_generator_next leaves a pending
     // StopIteration (or a PEP-479 RuntimeError). A contextmanager body that
     // does not yield must surface RuntimeError("generator didn't yield").
-    let exhausted = super::super::generator::mb_generator_is_exhausted(gen_handle)
-        .as_bool()
-        == Some(true);
+    let exhausted =
+        super::super::generator::mb_generator_is_exhausted(gen_handle).as_bool() == Some(true);
     if exhausted {
         // Clear whatever the completion raised and substitute the canonical
         // "didn't yield" RuntimeError.
@@ -536,9 +551,8 @@ pub fn cm_gen_exit(
     if !has_exc {
         // Clean exit: resume the generator; it must run to completion.
         let _ = super::super::generator::mb_generator_next(gen_handle);
-        let exhausted = super::super::generator::mb_generator_is_exhausted(gen_handle)
-            .as_bool()
-            == Some(true);
+        let exhausted =
+            super::super::generator::mb_generator_is_exhausted(gen_handle).as_bool() == Some(true);
         if !exhausted {
             // Yielded a second time → RuntimeError("generator didn't stop").
             super::super::generator::mb_generator_close(gen_handle);
@@ -561,9 +575,8 @@ pub fn cm_gen_exit(
     let msg_v = MbValue::from_ptr(MbObject::new_str(msg.clone()));
     let yielded = super::super::generator::mb_generator_throw(gen_handle, type_v, msg_v);
 
-    let exhausted = super::super::generator::mb_generator_is_exhausted(gen_handle)
-        .as_bool()
-        == Some(true);
+    let exhausted =
+        super::super::generator::mb_generator_is_exhausted(gen_handle).as_bool() == Some(true);
 
     if !exhausted {
         // The generator caught the exception and yielded again → RuntimeError
@@ -631,7 +644,9 @@ pub fn cm_gen_exit(
 extern "C" fn redirect_stdout_enter(self_v: MbValue) -> MbValue {
     let target = inst_field(self_v, "_new_target").unwrap_or_else(MbValue::none);
     super::super::output::push_stdout_redirect(target);
-    unsafe { super::super::rc::retain_if_ptr(target); }
+    unsafe {
+        super::super::rc::retain_if_ptr(target);
+    }
     target
 }
 
@@ -650,8 +665,12 @@ extern "C" fn redirect_stdout_exit(
 unsafe extern "C" fn d_redirect_stdout_ctor(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let target = a.first().copied().unwrap_or_else(MbValue::none);
-    let inst = MbValue::from_ptr(MbObject::new_instance("contextlib.redirect_stdout".to_string()));
-    unsafe { super::super::rc::retain_if_ptr(target); }
+    let inst = MbValue::from_ptr(MbObject::new_instance(
+        "contextlib.redirect_stdout".to_string(),
+    ));
+    unsafe {
+        super::super::rc::retain_if_ptr(target);
+    }
     set_inst_field(inst, "_new_target", target);
     inst
 }
@@ -663,7 +682,9 @@ unsafe extern "C" fn d_redirect_stdout_ctor(args_ptr: *const MbValue, nargs: usi
 extern "C" fn redirect_stderr_enter(self_v: MbValue) -> MbValue {
     let target = inst_field(self_v, "_new_target").unwrap_or_else(MbValue::none);
     super::super::output::push_stderr_redirect(target);
-    unsafe { super::super::rc::retain_if_ptr(target); }
+    unsafe {
+        super::super::rc::retain_if_ptr(target);
+    }
     target
 }
 
@@ -682,8 +703,12 @@ extern "C" fn redirect_stderr_exit(
 unsafe extern "C" fn d_redirect_stderr_ctor(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let target = a.first().copied().unwrap_or_else(MbValue::none);
-    let inst = MbValue::from_ptr(MbObject::new_instance("contextlib.redirect_stderr".to_string()));
-    unsafe { super::super::rc::retain_if_ptr(target); }
+    let inst = MbValue::from_ptr(MbObject::new_instance(
+        "contextlib.redirect_stderr".to_string(),
+    ));
+    unsafe {
+        super::super::rc::retain_if_ptr(target);
+    }
     set_inst_field(inst, "_new_target", target);
     inst
 }
@@ -699,8 +724,7 @@ unsafe extern "C" fn d_redirect_stderr_ctor(args_ptr: *const MbValue, nargs: usi
 
 /// `ContextDecorator.__call__(self, func)` → a callable wrapper instance.
 extern "C" fn context_decorator_call(self_v: MbValue, func: MbValue) -> MbValue {
-    let wrapper =
-        MbValue::from_ptr(MbObject::new_instance("contextlib._cd_wrapper".to_string()));
+    let wrapper = MbValue::from_ptr(MbObject::new_instance("contextlib._cd_wrapper".to_string()));
     unsafe {
         super::super::rc::retain_if_ptr(self_v);
         super::super::rc::retain_if_ptr(func);
@@ -744,8 +768,16 @@ pub fn register() {
 
     // Native context-manager classes whose __enter__/__exit__ drive the
     // `with` lowering directly.
-    register_cm_class("contextlib.closing", closing_enter as usize, closing_exit as usize);
-    register_cm_class("contextlib.suppress", suppress_enter as usize, suppress_exit as usize);
+    register_cm_class(
+        "contextlib.closing",
+        closing_enter as usize,
+        closing_exit as usize,
+    );
+    register_cm_class(
+        "contextlib.suppress",
+        suppress_enter as usize,
+        suppress_exit as usize,
+    );
     register_cm_class(
         "contextlib.ExitStack",
         exit_stack_enter as usize,
@@ -775,11 +807,7 @@ pub fn register() {
             "__call__".to_string(),
             MbValue::from_func(context_decorator_call as usize),
         );
-        super::super::class::mb_class_register(
-            "ContextDecorator",
-            vec!["object".to_string()],
-            m,
-        );
+        super::super::class::mb_class_register("ContextDecorator", vec!["object".to_string()], m);
         super::super::class::mb_class_register(
             "AsyncContextDecorator",
             vec!["object".to_string()],
@@ -831,7 +859,10 @@ pub fn register() {
     // so `resolve_class_name` (and thus `issubclass`) recognizes them.
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
-        map.insert(d_abstract_cm as usize as u64, "AbstractContextManager".into());
+        map.insert(
+            d_abstract_cm as usize as u64,
+            "AbstractContextManager".into(),
+        );
         map.insert(
             d_abstract_async_cm as usize as u64,
             "AbstractAsyncContextManager".into(),

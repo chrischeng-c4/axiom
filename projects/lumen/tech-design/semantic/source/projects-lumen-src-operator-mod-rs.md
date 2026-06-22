@@ -1,7 +1,7 @@
 ---
 id: projects-lumen-src-operator-mod-rs
 capability_refs:
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     claim: "kustomize-base-overlays-hpa"
     coverage: partial
@@ -30,15 +30,17 @@ Public API manifest for `projects/lumen/src/operator/mod.rs` captured as a per-f
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]) plus a reconcile
 //! loop ([`reconcile`]) that renders ([`render`]) and applies the serving fleet
-//! and NATS broker. Behind the `operator` feature so the serving image never
+//! and Relay broker. Behind the `operator` feature so the serving image never
 //! links kube-rs.
 //!
 //! ```text
 //! Lumen (lumen.dev/v1alpha1)  --reconcile-->  ServiceAccount, ConfigMap,
 //!                                             Deployment, Service, HPA, PDB,
-//!                                             [NATS StatefulSet/Services/CM],
+//!                                             [Relay StatefulSet/Services/PDB],
 //!                                             [ServiceMonitor, PrometheusRule]
 //! ```
 
@@ -51,10 +53,13 @@ pub use crd::{Lumen, LumenSpec, LumenStatus};
 pub use reconcile::run;
 
 /// The `Lumen` CustomResourceDefinition as YAML, for `kubectl apply`.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-mod-rs.md#source
 pub fn crd_yaml() -> String {
     use kube::CustomResourceExt;
     serde_yaml::to_string(&crd::Lumen::crd()).expect("CRD serializes")
 }
+// CODEGEN-END
+
 ````
 
 ## Changes

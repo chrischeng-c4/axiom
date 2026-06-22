@@ -14,7 +14,6 @@
 /// T10: Generator-based context manager (R10)
 /// T11: Generator lifecycle (R11)
 /// Regression: Existing generator fixtures
-
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -96,7 +95,12 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
+                diff.push_str(&format!(
+                    "  line {}: expected {:?}, got {:?}\n",
+                    i + 1,
+                    e,
+                    a
+                ));
             }
         }
         panic!(
@@ -133,8 +137,7 @@ fn test_t1_3_genexpr_sum() {
 /// T1.4: Nested generator expression.
 #[test]
 fn test_t1_4_genexpr_nested() {
-    let output =
-        jit_capture("print(list((x, y) for x in range(3) for y in range(2)))\n");
+    let output = jit_capture("print(list((x, y) for x in range(3) for y in range(2)))\n");
     assert_output(
         &output,
         "[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]\n",
@@ -393,10 +396,7 @@ except RuntimeError:
     print('RuntimeError: generator ignored GeneratorExit')
 "#,
     );
-    assert_output(
-        &output,
-        "RuntimeError: generator ignored GeneratorExit\n",
-    );
+    assert_output(&output, "RuntimeError: generator ignored GeneratorExit\n");
 }
 
 /// T4.5: close() triggers finally block.

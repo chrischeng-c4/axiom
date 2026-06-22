@@ -43,13 +43,13 @@
 //!     The runtime does not yet model weak references.
 //!   - `TIMEOUT_MAX`: exposed as the f64-encoded CPython value.
 
-use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
-use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
-use std::cell::Cell;
-use super::super::value::MbValue;
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
+use std::cell::Cell;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 
 // -- Variadic dispatchers --
 
@@ -101,18 +101,28 @@ unsafe extern "C" fn d_thread(args_ptr: *const MbValue, nargs: usize) -> MbValue
     let trailing_kwargs = a.last().and_then(|v| v.as_ptr()).and_then(|p| unsafe {
         if let ObjData::Dict(ref lock) = (*p).data {
             Some(lock.read().unwrap().clone())
-        } else { None }
+        } else {
+            None
+        }
     });
-    let positional_end = if trailing_kwargs.is_some() { a.len().saturating_sub(1) } else { a.len() };
-    if positional_end >= 1 { target = a[0]; }
-    if positional_end >= 2 { name = a[1]; }
+    let positional_end = if trailing_kwargs.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
+    if positional_end >= 1 {
+        target = a[0];
+    }
+    if positional_end >= 2 {
+        name = a[1];
+    }
     if let Some(kw) = trailing_kwargs {
         for (k, v) in kw.iter() {
             if let super::super::dict_ops::DictKey::Str(ref ks) = k {
                 match ks.as_str() {
                     "target" => target = *v,
-                    "name"   => name = *v,
-                    "args"   => args_v = *v,
+                    "name" => name = *v,
+                    "args" => args_v = *v,
                     "kwargs" => kwargs_v = *v,
                     "daemon" => daemon_v = Some(*v),
                     _ => {}
@@ -135,8 +145,10 @@ unsafe extern "C" fn d_thread(args_ptr: *const MbValue, nargs: usize) -> MbValue
                 f.insert("args".into(), args_v);
                 f.insert("kwargs".into(), kwargs_v);
                 if let Some(d) = daemon_v {
-                    f.insert("daemon".into(),
-                        MbValue::from_bool(d.as_bool().unwrap_or(false)));
+                    f.insert(
+                        "daemon".into(),
+                        MbValue::from_bool(d.as_bool().unwrap_or(false)),
+                    );
                 }
             }
         }
@@ -165,7 +177,10 @@ disp_nullary!(d_get_native_id, mb_threading_get_native_id);
 // Profile / trace
 disp_unary!(d_setprofile, mb_threading_setprofile);
 disp_unary!(d_settrace, mb_threading_settrace);
-disp_unary!(d_setprofile_all_threads, mb_threading_setprofile_all_threads);
+disp_unary!(
+    d_setprofile_all_threads,
+    mb_threading_setprofile_all_threads
+);
 disp_unary!(d_settrace_all_threads, mb_threading_settrace_all_threads);
 disp_nullary!(d_getprofile, mb_threading_getprofile);
 disp_nullary!(d_gettrace, mb_threading_gettrace);
@@ -188,36 +203,36 @@ pub fn register() {
 
     let dispatchers: Vec<(&str, usize)> = vec![
         // Classes / constructors
-        ("Thread",                 d_thread                 as usize),
-        ("Lock",                   d_lock                   as usize),
-        ("RLock",                  d_rlock                  as usize),
-        ("Event",                  d_event                  as usize),
-        ("Condition",              d_condition              as usize),
-        ("Semaphore",              d_semaphore              as usize),
-        ("BoundedSemaphore",       d_bounded_semaphore      as usize),
-        ("Barrier",                d_barrier                as usize),
-        ("Timer",                  d_timer                  as usize),
-        ("local",                  d_local                  as usize),
-        ("WeakSet",                d_weak_set               as usize),
+        ("Thread", d_thread as usize),
+        ("Lock", d_lock as usize),
+        ("RLock", d_rlock as usize),
+        ("Event", d_event as usize),
+        ("Condition", d_condition as usize),
+        ("Semaphore", d_semaphore as usize),
+        ("BoundedSemaphore", d_bounded_semaphore as usize),
+        ("Barrier", d_barrier as usize),
+        ("Timer", d_timer as usize),
+        ("local", d_local as usize),
+        ("WeakSet", d_weak_set as usize),
         // Introspection
-        ("current_thread",         d_current_thread         as usize),
-        ("currentThread",          d_current_thread         as usize),
-        ("active_count",           d_active_count           as usize),
-        ("activeCount",            d_active_count           as usize),
-        ("enumerate",              d_enumerate              as usize),
-        ("main_thread",            d_main_thread            as usize),
-        ("get_ident",              d_get_ident              as usize),
-        ("get_native_id",          d_get_native_id          as usize),
+        ("current_thread", d_current_thread as usize),
+        ("currentThread", d_current_thread as usize),
+        ("active_count", d_active_count as usize),
+        ("activeCount", d_active_count as usize),
+        ("enumerate", d_enumerate as usize),
+        ("main_thread", d_main_thread as usize),
+        ("get_ident", d_get_ident as usize),
+        ("get_native_id", d_get_native_id as usize),
         // Profile / trace
-        ("setprofile",             d_setprofile             as usize),
-        ("settrace",               d_settrace               as usize),
+        ("setprofile", d_setprofile as usize),
+        ("settrace", d_settrace as usize),
         ("setprofile_all_threads", d_setprofile_all_threads as usize),
-        ("settrace_all_threads",   d_settrace_all_threads   as usize),
-        ("getprofile",             d_getprofile             as usize),
-        ("gettrace",               d_gettrace               as usize),
-        ("stack_size",             d_stack_size             as usize),
-        ("excepthook",             d_excepthook             as usize),
-        ("__excepthook__",         d_excepthook             as usize),
+        ("settrace_all_threads", d_settrace_all_threads as usize),
+        ("getprofile", d_getprofile as usize),
+        ("gettrace", d_gettrace as usize),
+        ("stack_size", d_stack_size as usize),
+        ("excepthook", d_excepthook as usize),
+        ("__excepthook__", d_excepthook as usize),
     ];
     for (name, addr) in &dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(*addr));
@@ -230,16 +245,16 @@ pub fn register() {
     // `isinstance(x, threading.Thread)` etc. can resolve the dispatcher
     // pointer back to a class name.
     let class_dispatchers: &[(&str, usize)] = &[
-        ("Thread",            d_thread            as usize),
-        ("Lock",              d_lock              as usize),
-        ("RLock",             d_rlock             as usize),
-        ("Event",             d_event             as usize),
-        ("Condition",         d_condition         as usize),
-        ("Semaphore",         d_semaphore         as usize),
-        ("BoundedSemaphore",  d_bounded_semaphore as usize),
-        ("Barrier",           d_barrier           as usize),
-        ("Timer",             d_timer             as usize),
-        ("local",             d_local             as usize),
+        ("Thread", d_thread as usize),
+        ("Lock", d_lock as usize),
+        ("RLock", d_rlock as usize),
+        ("Event", d_event as usize),
+        ("Condition", d_condition as usize),
+        ("Semaphore", d_semaphore as usize),
+        ("BoundedSemaphore", d_bounded_semaphore as usize),
+        ("Barrier", d_barrier as usize),
+        ("Timer", d_timer as usize),
+        ("local", d_local as usize),
     ];
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
@@ -256,10 +271,14 @@ pub fn register() {
         use super::super::class::mb_class_register;
         for cls in ["Lock", "RLock"] {
             let mut methods: HashMap<String, MbValue> = HashMap::new();
-            methods.insert("__enter__".to_string(),
-                MbValue::from_func(lock_cm_enter as *const () as usize));
-            methods.insert("__exit__".to_string(),
-                MbValue::from_func(lock_cm_exit as *const () as usize));
+            methods.insert(
+                "__enter__".to_string(),
+                MbValue::from_func(lock_cm_enter as *const () as usize),
+            );
+            methods.insert(
+                "__exit__".to_string(),
+                MbValue::from_func(lock_cm_exit as *const () as usize),
+            );
             mb_class_register(cls, vec!["object".to_string()], methods);
         }
     }
@@ -299,7 +318,10 @@ fn make_exception_sentinel(name: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str("threading".to_string())),
     );
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: name.to_string(),
             fields: RwLock::new(f),
@@ -310,13 +332,20 @@ fn make_exception_sentinel(name: &str) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
 fn make_instance(class_name: &str, fields: FxHashMap<String, MbValue>) -> MbValue {
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: RwLock::new(fields),
@@ -372,7 +401,9 @@ thread_local! {
 }
 
 fn live_threads_add(t: MbValue) {
-    unsafe { super::super::rc::retain_if_ptr(t); }
+    unsafe {
+        super::super::rc::retain_if_ptr(t);
+    }
     LIVE_THREADS.with(|l| l.borrow_mut().push(t.to_bits()));
 }
 
@@ -388,13 +419,16 @@ fn deliver_to_excepthook(thread: MbValue) {
         return;
     }
     let value = super::super::class::mb_catch_exception_instance();
-    let type_name = value.as_ptr().map(|p| unsafe {
-        if let ObjData::Instance { ref class_name, .. } = (*p).data {
-            class_name.clone()
-        } else {
-            "Exception".to_string()
-        }
-    }).unwrap_or_else(|| "Exception".to_string());
+    let type_name = value
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*p).data {
+                class_name.clone()
+            } else {
+                "Exception".to_string()
+            }
+        })
+        .unwrap_or_else(|| "Exception".to_string());
     // exc_type as a type object (has __name__).
     let type_obj = {
         let inst = MbObject::new_instance("type".to_string());
@@ -423,15 +457,20 @@ fn deliver_to_excepthook(thread: MbValue) {
     };
     // The hook is whatever threading.excepthook currently is (assignable).
     let hook = {
-        let module = super::super::module::mb_import(
-            MbValue::from_ptr(MbObject::new_str("threading".to_string())));
+        let module = super::super::module::mb_import(MbValue::from_ptr(MbObject::new_str(
+            "threading".to_string(),
+        )));
         let sentinel = MbValue::from_bits(u64::MAX);
         let h = super::super::dict_ops::mb_dict_get(
             module,
             MbValue::from_ptr(MbObject::new_str("excepthook".to_string())),
             sentinel,
         );
-        if h.to_bits() == u64::MAX { MbValue::none() } else { h }
+        if h.to_bits() == u64::MAX {
+            MbValue::none()
+        } else {
+            h
+        }
     };
     if !hook.is_none() {
         let call_args = MbValue::from_ptr(MbObject::new_list(vec![args_inst]));
@@ -449,24 +488,40 @@ fn deliver_to_excepthook(thread: MbValue) {
 
 /// CPython-style Thread repr with lifecycle marker.
 pub fn thread_repr(t: MbValue) -> String {
-    let (name, started, alive, ident) = t.as_ptr().map(|p| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*p).data {
-            let g = fields.read().unwrap();
-            (
-                g.get("name").copied().and_then(extract_str).unwrap_or_else(|| "Thread".to_string()),
-                g.get("started").and_then(|v| v.as_bool()).unwrap_or(false),
-                g.get("alive").and_then(|v| v.as_bool()).unwrap_or(false),
-                g.get("ident").and_then(|v| v.as_int()),
-            )
-        } else {
-            ("Thread".to_string(), false, false, None)
-        }
-    }).unwrap_or(("Thread".to_string(), false, false, None));
-    let daemon = t.as_ptr().map(|p| unsafe {
-        if let ObjData::Instance { ref fields, .. } = (*p).data {
-            fields.read().unwrap().get("daemon").and_then(|v| v.as_bool()).unwrap_or(false)
-        } else { false }
-    }).unwrap_or(false);
+    let (name, started, alive, ident) = t
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                let g = fields.read().unwrap();
+                (
+                    g.get("name")
+                        .copied()
+                        .and_then(extract_str)
+                        .unwrap_or_else(|| "Thread".to_string()),
+                    g.get("started").and_then(|v| v.as_bool()).unwrap_or(false),
+                    g.get("alive").and_then(|v| v.as_bool()).unwrap_or(false),
+                    g.get("ident").and_then(|v| v.as_int()),
+                )
+            } else {
+                ("Thread".to_string(), false, false, None)
+            }
+        })
+        .unwrap_or(("Thread".to_string(), false, false, None));
+    let daemon = t
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*p).data {
+                fields
+                    .read()
+                    .unwrap()
+                    .get("daemon")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
     let mut state = if !started {
         "initial".to_string()
     } else if alive {
@@ -517,7 +572,8 @@ pub fn mb_threading_thread(target: MbValue, name: MbValue) -> MbValue {
         }
     } else {
         extract_str(name).unwrap_or_else(|| {
-            extract_str(super::super::builtins::mb_str(name)).unwrap_or_else(|| "Thread".to_string())
+            extract_str(super::super::builtins::mb_str(name))
+                .unwrap_or_else(|| "Thread".to_string())
         })
     };
     let mut f = FxHashMap::default();
@@ -567,8 +623,12 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                 // BEFORE running the target so a restart neither re-runs it nor
                 // flips state. A fresh Thread has started=false, so the single
                 // legitimate start() proceeds.
-                let already_started = fields.read().unwrap()
-                    .get("started").and_then(|v| v.as_bool()).unwrap_or(false);
+                let already_started = fields
+                    .read()
+                    .unwrap()
+                    .get("started")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if already_started {
                     return raise_runtime_error("threads can only be started once");
                 }
@@ -584,9 +644,13 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                 let ident = {
                     let g = fields.read().unwrap();
                     g.get("ident").and_then(|v| v.as_int())
-                }.unwrap_or_else(|| {
+                }
+                .unwrap_or_else(|| {
                     let id = next_thread_ident();
-                    fields.write().unwrap().insert("ident".into(), MbValue::from_int(id));
+                    fields
+                        .write()
+                        .unwrap()
+                        .insert("ident".into(), MbValue::from_int(id));
                     id
                 });
                 let snapshot = snapshot_locals();
@@ -600,7 +664,10 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                 if !target.is_none() {
                     // Deliver target(*args, **kwargs) — NOT mb_call0, which left
                     // declared parameters reading uninitialized arg slots.
-                    let _ = super::super::builtins::mb_call_spread(target, build_call_args(args, kwargs));
+                    let _ = super::super::builtins::mb_call_spread(
+                        target,
+                        build_call_args(args, kwargs),
+                    );
                 }
                 CURRENT_THREAD_OBJ.with(|c| c.set(prev_obj));
                 CURRENT_IDENT.with(|c| c.set(prev_ident));
@@ -632,7 +699,10 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                     CURRENT_IDENT.with(|c| c.set(id));
                 }
                 if !target.is_none() {
-                    let _ = super::super::builtins::mb_call_spread(target, build_call_args(args, kwargs));
+                    let _ = super::super::builtins::mb_call_spread(
+                        target,
+                        build_call_args(args, kwargs),
+                    );
                 }
                 CURRENT_IDENT.with(|c| c.set(prev_ident));
                 restore_locals(snapshot);
@@ -655,8 +725,12 @@ pub fn mb_threading_thread_join(thread: MbValue) -> MbValue {
                 // singleton and a fresh Thread() have no started=true field, so
                 // this guard covers both the unstarted-join and join-self cases
                 // while leaving every valid post-start join untouched.
-                let started = fields.read().unwrap()
-                    .get("started").and_then(|v| v.as_bool()).unwrap_or(false);
+                let started = fields
+                    .read()
+                    .unwrap()
+                    .get("started")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if !started {
                     return raise_runtime_error("cannot join thread before it is started");
                 }
@@ -716,8 +790,12 @@ pub fn mb_threading_lock_release(lock: MbValue) -> MbValue {
                 // Condition.release() also routes here and is acquired first, so
                 // valid acquire/release roundtrips (incl. `with lock:`) never hit
                 // this guard.
-                let held = fields.read().unwrap()
-                    .get("locked").and_then(|v| v.as_bool()).unwrap_or(false);
+                let held = fields
+                    .read()
+                    .unwrap()
+                    .get("locked")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if !held {
                     return raise_runtime_error("release unlocked lock");
                 }
@@ -795,7 +873,10 @@ pub fn mb_threading_event_is_set(event: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                return f.get("is_set").copied().unwrap_or(MbValue::from_bool(false));
+                return f
+                    .get("is_set")
+                    .copied()
+                    .unwrap_or(MbValue::from_bool(false));
             }
         }
     }
@@ -851,7 +932,11 @@ pub fn mb_threading_barrier_wait(barrier: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut f = fields.write().unwrap();
-                let parties = f.get("parties").and_then(|v| v.as_int()).unwrap_or(1).max(1);
+                let parties = f
+                    .get("parties")
+                    .and_then(|v| v.as_int())
+                    .unwrap_or(1)
+                    .max(1);
                 let n_waiting = f.get("n_waiting").and_then(|v| v.as_int()).unwrap_or(0);
                 let index = n_waiting % parties;
                 // Advance and wrap so successive callers cycle 0..parties-1,
@@ -893,7 +978,8 @@ pub fn mb_threading_barrier_abort(barrier: MbValue) -> MbValue {
 
 /// threading.Timer(interval, function) -> Thread-shaped Instance stub
 pub fn mb_threading_timer(interval: MbValue, function: MbValue) -> MbValue {
-    let secs = interval.as_float()
+    let secs = interval
+        .as_float()
         .or_else(|| interval.as_int().map(|i| i as f64))
         .unwrap_or(0.0);
     let mut f = FxHashMap::default();
@@ -928,13 +1014,18 @@ pub fn mb_threading_local() -> MbValue {
 /// by Thread.start() to restore state after running a target synchronously.
 fn snapshot_locals() -> Vec<(MbValue, FxHashMap<String, MbValue>)> {
     LOCAL_INSTANCES.with(|v| {
-        v.borrow().iter().filter_map(|val| {
-            val.as_ptr().and_then(|ptr| unsafe {
-                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                    Some((*val, fields.read().unwrap().clone()))
-                } else { None }
+        v.borrow()
+            .iter()
+            .filter_map(|val| {
+                val.as_ptr().and_then(|ptr| unsafe {
+                    if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                        Some((*val, fields.read().unwrap().clone()))
+                    } else {
+                        None
+                    }
+                })
             })
-        }).collect()
+            .collect()
     })
 }
 
@@ -969,17 +1060,24 @@ thread_local! {
 fn main_thread_singleton() -> MbValue {
     MAIN_THREAD.with(|cell| {
         if let Some(val) = *cell.borrow() {
-            unsafe { super::super::rc::retain_if_ptr(val); }
+            unsafe {
+                super::super::rc::retain_if_ptr(val);
+            }
             return val;
         }
         let mut f = FxHashMap::default();
-        f.insert("name".into(), MbValue::from_ptr(MbObject::new_str("MainThread".to_string())));
+        f.insert(
+            "name".into(),
+            MbValue::from_ptr(MbObject::new_str("MainThread".to_string())),
+        );
         f.insert("ident".into(), MbValue::from_int(1));
         f.insert("daemon".into(), MbValue::from_bool(false));
         f.insert("alive".into(), MbValue::from_bool(true));
         let val = make_instance("Thread", f);
         *cell.borrow_mut() = Some(val);
-        unsafe { super::super::rc::retain_if_ptr(val); }
+        unsafe {
+            super::super::rc::retain_if_ptr(val);
+        }
         val
     })
 }
@@ -1115,7 +1213,9 @@ mod tests {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 fields.read().unwrap().get(key).copied()
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
@@ -1123,16 +1223,19 @@ mod tests {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 Some(class_name.clone())
-            } else { None }
+            } else {
+                None
+            }
         })
     }
-
 
     fn list_len(val: MbValue) -> Option<usize> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 Some(lock.read().unwrap().len())
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
@@ -1159,14 +1262,20 @@ mod tests {
         // threading.Thread is an attribute-based object (Instance), not a dict —
         // `t.name` is an instance field, matching CPython's Thread.name attribute.
         let t = mb_threading_thread(MbValue::none(), s("worker"));
-        assert_eq!(get_str(instance_field(t, "name").unwrap()), Some("worker".to_string()));
+        assert_eq!(
+            get_str(instance_field(t, "name").unwrap()),
+            Some("worker".to_string())
+        );
     }
 
     #[test]
     fn test_thread_with_non_str_name_defaults() {
         // CPython str()-coerces a non-string name: Thread(name=0) → "0".
         let t = mb_threading_thread(MbValue::none(), MbValue::from_int(0));
-        assert_eq!(get_str(instance_field(t, "name").unwrap()), Some("0".to_string()));
+        assert_eq!(
+            get_str(instance_field(t, "name").unwrap()),
+            Some("0".to_string())
+        );
     }
 
     #[test]
@@ -1195,12 +1304,21 @@ mod tests {
     fn test_lock_acquire_release() {
         let lock = mb_threading_lock();
         assert_eq!(instance_class(lock).as_deref(), Some("Lock"));
-        assert_eq!(instance_field(lock, "locked").unwrap().as_bool(), Some(false));
+        assert_eq!(
+            instance_field(lock, "locked").unwrap().as_bool(),
+            Some(false)
+        );
         let acq = mb_threading_lock_acquire(lock);
         assert_eq!(acq.as_bool(), Some(true));
-        assert_eq!(instance_field(lock, "locked").unwrap().as_bool(), Some(true));
+        assert_eq!(
+            instance_field(lock, "locked").unwrap().as_bool(),
+            Some(true)
+        );
         mb_threading_lock_release(lock);
-        assert_eq!(instance_field(lock, "locked").unwrap().as_bool(), Some(false));
+        assert_eq!(
+            instance_field(lock, "locked").unwrap().as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1249,7 +1367,10 @@ mod tests {
 
     #[test]
     fn test_event_is_set_null_returns_false() {
-        assert_eq!(mb_threading_event_is_set(MbValue::none()).as_bool(), Some(false));
+        assert_eq!(
+            mb_threading_event_is_set(MbValue::none()).as_bool(),
+            Some(false)
+        );
     }
 
     // -- Condition --
@@ -1355,7 +1476,9 @@ mod tests {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*l.as_ptr().unwrap()).data {
                 assert!(fields.read().unwrap().is_empty());
-            } else { panic!("expected Instance"); }
+            } else {
+                panic!("expected Instance");
+            }
         }
     }
 
@@ -1375,8 +1498,10 @@ mod tests {
         THREAD_NAME.with(|n| n.set(None));
         let t = mb_threading_current_thread();
         assert_eq!(instance_class(t).as_deref(), Some("Thread"));
-        assert_eq!(get_str(instance_field(t, "name").unwrap()),
-                   Some("MainThread".to_string()));
+        assert_eq!(
+            get_str(instance_field(t, "name").unwrap()),
+            Some("MainThread".to_string())
+        );
     }
 
     #[test]
@@ -1384,15 +1509,19 @@ mod tests {
         THREAD_NAME.with(|n| n.set(Some("worker_test".to_string())));
         let t = mb_threading_current_thread();
         THREAD_NAME.with(|n| n.set(None));
-        assert_eq!(get_str(instance_field(t, "name").unwrap()),
-                   Some("worker_test".to_string()));
+        assert_eq!(
+            get_str(instance_field(t, "name").unwrap()),
+            Some("worker_test".to_string())
+        );
     }
 
     #[test]
     fn test_main_thread_is_named_mainthread() {
         let t = mb_threading_main_thread();
-        assert_eq!(get_str(instance_field(t, "name").unwrap()),
-                   Some("MainThread".to_string()));
+        assert_eq!(
+            get_str(instance_field(t, "name").unwrap()),
+            Some("MainThread".to_string())
+        );
         assert_eq!(instance_field(t, "ident").unwrap().as_int(), Some(1));
     }
 
@@ -1418,7 +1547,10 @@ mod tests {
         // CPython: ident is None before start() and distinct after.
         let a = mb_threading_thread(MbValue::none(), MbValue::none());
         let b = mb_threading_thread(MbValue::none(), MbValue::none());
-        assert!(instance_field(a, "ident").unwrap().is_none(), "unstarted ident is None");
+        assert!(
+            instance_field(a, "ident").unwrap().is_none(),
+            "unstarted ident is None"
+        );
         mb_threading_thread_start(a);
         mb_threading_thread_start(b);
         let ia = instance_field(a, "ident").unwrap().as_int().unwrap();
@@ -1462,7 +1594,10 @@ mod tests {
     fn test_setprofile_all_threads_routes_through_same_slot() {
         let marker = s("global_profile");
         mb_threading_setprofile_all_threads(marker);
-        assert_eq!(get_str(mb_threading_getprofile()), Some("global_profile".to_string()));
+        assert_eq!(
+            get_str(mb_threading_getprofile()),
+            Some("global_profile".to_string())
+        );
         mb_threading_setprofile(MbValue::none());
     }
 
@@ -1470,7 +1605,10 @@ mod tests {
     fn test_settrace_all_threads_routes_through_same_slot() {
         let marker = s("global_trace");
         mb_threading_settrace_all_threads(marker);
-        assert_eq!(get_str(mb_threading_gettrace()), Some("global_trace".to_string()));
+        assert_eq!(
+            get_str(mb_threading_gettrace()),
+            Some("global_trace".to_string())
+        );
         mb_threading_settrace(MbValue::none());
     }
 
@@ -1503,24 +1641,29 @@ mod tests {
     fn test_make_exception_sentinel_shape() {
         let e = make_exception_sentinel("BrokenBarrierError");
         assert_eq!(instance_class(e).as_deref(), Some("BrokenBarrierError"));
-        assert_eq!(get_str(instance_field(e, "__name__").unwrap()),
-                   Some("BrokenBarrierError".to_string()));
-        assert_eq!(get_str(instance_field(e, "__module__").unwrap()),
-                   Some("threading".to_string()));
+        assert_eq!(
+            get_str(instance_field(e, "__name__").unwrap()),
+            Some("BrokenBarrierError".to_string())
+        );
+        assert_eq!(
+            get_str(instance_field(e, "__module__").unwrap()),
+            Some("threading".to_string())
+        );
     }
 
     // -- register() surface --
 
     #[test]
     fn test_register_wires_full_surface() {
-        let before = super::super::super::module::NATIVE_FUNC_ADDRS
-            .with(|s| s.borrow().len());
+        let before = super::super::super::module::NATIVE_FUNC_ADDRS.with(|s| s.borrow().len());
         register();
-        let after = super::super::super::module::NATIVE_FUNC_ADDRS
-            .with(|s| s.borrow().len());
+        let after = super::super::super::module::NATIVE_FUNC_ADDRS.with(|s| s.borrow().len());
         // 27 unique dispatcher addresses (currentThread/activeCount alias
         // collapse, so HashSet insertion may not always grow). Just assert
         // non-zero monotonicity.
-        assert!(after >= before, "registry should be monotonic across register()");
+        assert!(
+            after >= before,
+            "registry should be monotonic across register()"
+        );
     }
 }

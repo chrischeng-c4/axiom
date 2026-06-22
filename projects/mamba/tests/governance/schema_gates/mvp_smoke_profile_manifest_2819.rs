@@ -20,11 +20,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-const REQUIRED_COMMANDS: &[&str] = &[
-    "compile_list",
-    "inventory_summary",
-    "skip_debt_summary",
-];
+const REQUIRED_COMMANDS: &[&str] = &["compile_list", "inventory_summary", "skip_debt_summary"];
 
 const ALLOWED_KINDS: &[&str] = &["compile_list", "inventory", "skip_debt"];
 
@@ -54,9 +50,7 @@ fn require_str<'a>(table: &'a toml::value::Table, key: &str, id: &str) -> &'a st
         .get(key)
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            panic!("smoke command {id}: missing or empty required string `{key}`")
-        })
+        .unwrap_or_else(|| panic!("smoke command {id}: missing or empty required string `{key}`"))
 }
 
 fn require_int(table: &toml::value::Table, key: &str, id: &str) -> i64 {

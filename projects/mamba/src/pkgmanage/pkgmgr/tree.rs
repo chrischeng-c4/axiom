@@ -85,15 +85,7 @@ pub fn build_tree(lockfile: &Lockfile, opts: &TreeOptions) -> Vec<TreeNode> {
             return Vec::new();
         }
         let mut seen = BTreeSet::new();
-        return vec![walk(
-            &key,
-            0,
-            &adjacency,
-            &by_name,
-            &prune,
-            opts,
-            &mut seen,
-        )];
+        return vec![walk(&key, 0, &adjacency, &by_name, &prune, opts, &mut seen)];
     }
 
     let roots = pick_roots(lockfile, &adjacency, opts.invert);
@@ -186,10 +178,7 @@ fn walk(
         seen.insert(name.to_string());
     }
 
-    let at_depth_limit = opts
-        .max_depth
-        .map(|d| depth >= d)
-        .unwrap_or(false);
+    let at_depth_limit = opts.max_depth.map(|d| depth >= d).unwrap_or(false);
     if deduped || at_depth_limit {
         return node;
     }
@@ -200,8 +189,15 @@ fn walk(
         if prune.contains(child) {
             continue;
         }
-        node.children
-            .push(walk(child, depth + 1, adjacency, by_name, prune, opts, seen));
+        node.children.push(walk(
+            child,
+            depth + 1,
+            adjacency,
+            by_name,
+            prune,
+            opts,
+            seen,
+        ));
     }
     node
 }
@@ -215,9 +211,7 @@ fn build_adjacency(lockfile: &Lockfile, invert: bool) -> BTreeMap<String, Vec<St
             if invert {
                 adj.entry(child_key).or_default().push(parent_key.clone());
             } else {
-                adj.entry(parent_key.clone())
-                    .or_default()
-                    .push(child_key);
+                adj.entry(parent_key.clone()).or_default().push(child_key);
             }
         }
         // Ensure every package shows up as a key so leaves render correctly.
@@ -370,7 +364,10 @@ app v1.0
         ]);
         let body = render_lockfile_tree(
             &l,
-            &TreeOptions { max_depth: Some(1), ..Default::default() },
+            &TreeOptions {
+                max_depth: Some(1),
+                ..Default::default()
+            },
         );
         assert!(body.contains("requests v2"));
         assert!(!body.contains("idna v3"));
@@ -384,7 +381,10 @@ app v1.0
         ]);
         let body = render_lockfile_tree(
             &l,
-            &TreeOptions { max_depth: Some(0), ..Default::default() },
+            &TreeOptions {
+                max_depth: Some(0),
+                ..Default::default()
+            },
         );
         assert_eq!(body, "app v1\n");
     }
@@ -400,7 +400,10 @@ app v1.0
         ]);
         let body = render_lockfile_tree(
             &l,
-            &TreeOptions { focus: Some("requests".into()), ..Default::default() },
+            &TreeOptions {
+                focus: Some("requests".into()),
+                ..Default::default()
+            },
         );
         assert!(body.starts_with("requests v2"));
         assert!(body.contains("idna v4"));
@@ -413,7 +416,10 @@ app v1.0
         let l = lock(vec![pkg("a", "1", &[])]);
         let body = render_lockfile_tree(
             &l,
-            &TreeOptions { focus: Some("missing".into()), ..Default::default() },
+            &TreeOptions {
+                focus: Some("missing".into()),
+                ..Default::default()
+            },
         );
         assert_eq!(body, "");
     }
@@ -427,7 +433,10 @@ app v1.0
         ]);
         let body = render_lockfile_tree(
             &l,
-            &TreeOptions { invert: true, ..Default::default() },
+            &TreeOptions {
+                invert: true,
+                ..Default::default()
+            },
         );
         // Inverted root is `common`; it shows `a` and `b` as consumers.
         assert!(body.starts_with("common v2"));
@@ -487,7 +496,10 @@ app v1.0
         ]);
         let body = render_lockfile_tree(
             &l,
-            &TreeOptions { no_dedupe: true, ..Default::default() },
+            &TreeOptions {
+                no_dedupe: true,
+                ..Default::default()
+            },
         );
         assert_eq!(body.matches("common v2").count(), 2);
         assert!(!body.contains("(*)"));
@@ -496,10 +508,7 @@ app v1.0
     #[test]
     fn cycles_dont_loop_forever() {
         // a <-> b cycle; pick_roots fallback ensures we still render.
-        let l = lock(vec![
-            pkg("a", "1", &["b"]),
-            pkg("b", "1", &["a"]),
-        ]);
+        let l = lock(vec![pkg("a", "1", &["b"]), pkg("b", "1", &["a"])]);
         let body = render_lockfile_tree(&l, &TreeOptions::default());
         assert!(body.contains("a v1"));
         assert!(body.contains("b v1"));
@@ -546,13 +555,13 @@ app v1.0
 
     #[test]
     fn focus_works_with_normalized_name() {
-        let l = lock(vec![
-            pkg("My-Pkg", "1", &["dep"]),
-            pkg("dep", "2", &[]),
-        ]);
+        let l = lock(vec![pkg("My-Pkg", "1", &["dep"]), pkg("dep", "2", &[])]);
         let body = render_lockfile_tree(
             &l,
-            &TreeOptions { focus: Some("my_pkg".into()), ..Default::default() },
+            &TreeOptions {
+                focus: Some("my_pkg".into()),
+                ..Default::default()
+            },
         );
         assert!(body.starts_with("My-Pkg v1"));
         assert!(body.contains("dep v2"));

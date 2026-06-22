@@ -92,11 +92,15 @@ impl SchedulerBackend for IonSchedulerBackend {
                         ))
                     }
                 };
-                serde_json::from_slice(bytes)
-                    .map_err(|e| TaskError::Backend(format!("Failed to deserialize task state: {}", e)))
+                serde_json::from_slice(bytes).map_err(|e| {
+                    TaskError::Backend(format!("Failed to deserialize task state: {}", e))
+                })
             }
             Ok(None) => Ok(TaskScheduleState::default()),
-            Err(e) => Err(TaskError::Backend(format!("Failed to get task state: {}", e))),
+            Err(e) => Err(TaskError::Backend(format!(
+                "Failed to get task state: {}",
+                e
+            ))),
         }
     }
 

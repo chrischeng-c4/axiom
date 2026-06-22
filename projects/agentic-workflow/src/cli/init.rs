@@ -943,7 +943,7 @@ fn print_init_success() {
 
     println!("{}", "🎯 Primary Workflow (use skills):".cyan().bold());
     println!(
-        "   {} - Tech-design lifecycle",
+        "   {} - Tech-design and generated-code lifecycle",
         "/aw:td:create".green().bold()
     );
     println!(

@@ -1,8 +1,12 @@
 version = 1
 project = "agentic-workflow"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-06-07T22:48:04.994841+00:00"
-digest = "sha256:9ea5ed88ff470943d930db4ce21bedf46f388b9b39c8ebd262e22f94390f3705"
+generated_at = "2026-06-20T13:06:09.335920+00:00"
+digest = "sha256:a328eef9b095ba900bd250b94bc115c7beab4078eba3b33aa228b92fb635a067"
+
+[[files]]
+path = "config/ec-tool-binding-config-ec-category-verify-ec-dispatch-with-manif.md"
+digest = "sha256:05cb16b0e638be78eb0d7dcf49cd1e66e52a07434e44e143e37ec5bf2e8aae11"
 
 [[files]]
 path = "core/README.md"
@@ -1274,7 +1278,7 @@ digest = "sha256:9c049676b5a7094938d346433d951ee7f06feac2a32db8ba37968f3934ed431
 
 [[files]]
 path = "core/interfaces/models/project.md"
-digest = "sha256:13b002c3fab5ee8977817a030682d83f49f046632fd81aca87b7753d464f4428"
+digest = "sha256:b1a74243748126654d811efd9c16a3aa222243e1abee82b3819fc03051897f07"
 
 [[files]]
 path = "core/interfaces/models/reference_context_sections.md"
@@ -1714,11 +1718,11 @@ digest = "sha256:3e2e47e0daf1384e754013b52c003515862841a881329ade87886d679e386a6
 
 [[files]]
 path = "core/interfaces/services/project_discovery.md"
-digest = "sha256:efe4ae2a25b2579954e18b361b198b41bd4244159f4032d9a91f3bc44ba5d01d"
+digest = "sha256:e9b90fcfbf888acfe534a8381f79718acccb1c4e51457d6408345be5cd8059b5"
 
 [[files]]
 path = "core/interfaces/services/project_registry.md"
-digest = "sha256:ad573cfe3ad1031812698206ff005b807e2f550143e4aae92c222bfdd0ba604f"
+digest = "sha256:6118f1b09dc590a76589a273690498ddcc6914a00f38b3510cd4b18c46064f19"
 
 [[files]]
 path = "core/interfaces/services/reference_context_service.md"
@@ -2126,7 +2130,7 @@ digest = "sha256:e63d0af617839bdc27f2f281e3f21e43ebab4ec3d60b9cb0dbbc527c2383909
 
 [[files]]
 path = "core/logic/lib.md"
-digest = "sha256:e24794189cc955556b37877759ca5d0a5829317e0566c11cfd1c4e566f7c0975"
+digest = "sha256:740578c25fea8ad9e1f24a4485b56433e631f45a38e0f00e0e67f3d538a5b9f7"
 
 [[files]]
 path = "core/logic/merge-gaps-fix.md"
@@ -2414,7 +2418,7 @@ digest = "sha256:3a2d5e5544950fde1757a0df90014b32e49eb315a3624e902ae5af004aa491d
 
 [[files]]
 path = "core/tools/common_change_spec/preamble.md"
-digest = "sha256:f69be801816aacc59478294fa1dea166444ad95003bb2585e9e124993994133e"
+digest = "sha256:74ca20246317eb6801f533688d87ce86fba51db69b13787df1f6e30e1c6d587d"
 
 [[files]]
 path = "core/tools/common_change_spec/tests.md"
@@ -2506,7 +2510,7 @@ digest = "sha256:ca1b3e31e51511d7667bef1a1872c2f36cae196c65105bd4666e9a1203d6313
 
 [[files]]
 path = "core/tools/create_change_spec/prompts.md"
-digest = "sha256:351374d5b5b306be26afffdd778fe9db5ab039f4c74fd346d763ac9a8bf6c904"
+digest = "sha256:df5b6a93ac54c287a598e3a7a702adefeb29568a1c2d44053538d95fca3482c7"
 
 [[files]]
 path = "core/tools/create_change_spec/resolve-spec-path.md"
@@ -3066,7 +3070,7 @@ digest = "sha256:812348c32373831fb4a9740b54b7d23afe2c452af5fdbb545e026285fad43e1
 
 [[files]]
 path = "core/validate/lens_dissolution_test.md"
-digest = "sha256:1fef432fa38b3b95ca010254743ec2fb2cea40d39977f3c411e0e823aee2bac7"
+digest = "sha256:8586bbdad883540b5f2f2fe30d8a9e6bfd28b91a5ed250bb000265d1526464d6"
 
 [[files]]
 path = "core/validate/mod.md"
@@ -3186,7 +3190,7 @@ digest = "sha256:ee1c585bb167d975c75853af0359ef3675c4764d5747d349d8e179c3f309119
 
 [[files]]
 path = "core/validate/source/projects-sdd-src-validate-rules-r7b_format_priority_violation-rs.md"
-digest = "sha256:ba013ca63cc446a0694743eed1de3515ec8982307d2efecfe8b01bb7f14d1c61"
+digest = "sha256:e5a05cb25f2c49c6c966d07858728010555a67f913ee1ce6500290a2ee9b9fd3"
 
 [[files]]
 path = "core/validate/source/projects-sdd-src-validate-rules-r7c_duplicate_section-rs.md"
@@ -3269,8 +3273,20 @@ path = "core/validate/validator/semantic.md"
 digest = "sha256:f9aaeaf61b7b69a4da259bc475b19f5c269aced5e4e88871d664ad8c51eac11b"
 
 [[files]]
+path = "logic/aw-ec-add-vat-binding-command-support.md"
+digest = "sha256:fea318747a38ab43563280c5bb36c4c17eef06ff5cd24749cb81fa14f542b700"
+
+[[files]]
+path = "logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md"
+digest = "sha256:d619d2fc80b7d9e2c4d471da9a4e3538caf230609d6fb4df112256def8660fd1"
+
+[[files]]
+path = "logic/promote-generated-manuals-to-first-class-aw-evidence-artifacts.md"
+digest = "sha256:a53d0a3729aa6223c9cb3835ce6e27cc114c60e30e9a4170cb44bf377ea73b57"
+
+[[files]]
 path = "semantic/agentic-workflow-cli.md"
-digest = "sha256:a3b50ca377fb13e73f72c493ddb9dd99d570f5267af36b325240ed8837e88bbe"
+digest = "sha256:e759de0a7b6aeff16eff267550fe3e111fecf97a7a605d8cffe6eb6ee7598028"
 
 [[files]]
 path = "semantic/agentic-workflow-context-builder.md"
@@ -3378,7 +3394,7 @@ digest = "sha256:c740c246fe220080cf84bfc49eb3ca189fa054cf2855f33a385245f4c2b8792
 
 [[files]]
 path = "semantic/agentic-workflow-tests-cli-tests.md"
-digest = "sha256:406193f2c1255c72a174b5a761487f2d7ef66847b50f1d4cb8e4a2a35abcee8e"
+digest = "sha256:fd99f4a0087873803d4bb20f35ff64193384c31802366e59789df446ae19cf63"
 
 [[files]]
 path = "semantic/agentic-workflow-tests.md"
@@ -3442,11 +3458,11 @@ digest = "sha256:55e4ef2c2482f612b7cf203e71f712520973d4c3da9e8597eebdad73faee98f
 
 [[files]]
 path = "surface/generate/project-health-source.md"
-digest = "sha256:f0d1ef945c57a6d8491e14626ddd09e38a4cdb552bfaab6343f3b67943051df9"
+digest = "sha256:cd6486d072b95ae2c23c58a102919819499c8549bfb1237402928cc50d9959ef"
 
 [[files]]
 path = "surface/generate/project-health-test-source.md"
-digest = "sha256:f4b0667f1687930dec5b259e32fd805425aadc00bb1dc5b5d0d16e485ca8ad64"
+digest = "sha256:b9bb99b427df872ff678c790c06ef9cc5b7c931cc59467c59f7bf58b51da0621"
 
 [[files]]
 path = "surface/interfaces/src/cb.md"
@@ -3458,7 +3474,7 @@ digest = "sha256:afcc19a9458140d941ad6a9349d6082b67648aaa130df8beb50fab46c108215
 
 [[files]]
 path = "surface/interfaces/src/cb_fill.md"
-digest = "sha256:912aab51a7ed843b2589568ce89654c01836482828835a147e3839d9ee840af8"
+digest = "sha256:821f33ddf3c131dd2b6431d0a7ac57b862443275340cf0561993c12888a9ad37"
 
 [[files]]
 path = "surface/interfaces/src/cb_review.md"
@@ -3490,7 +3506,7 @@ digest = "sha256:06ff1413745ba524a36a2d185fe59b56576cc279c1ad18932bb1b811816e415
 
 [[files]]
 path = "surface/interfaces/src/commands.md"
-digest = "sha256:2182cd7678b22483b1cbfe5b54549fd57529bfcb044525d883fb1d4bbc708297"
+digest = "sha256:1b9dde4dc222d2bc6cf19b3018687e04de2a78f76bd1d6c5c9c69d92d578e8c7"
 
 [[files]]
 path = "surface/interfaces/src/fillback.md"
@@ -3498,7 +3514,7 @@ digest = "sha256:b8d53f7d7f2e0a4abe00834b73c0aa98a1464b8911b02c4e4b3a98dfb616f1b
 
 [[files]]
 path = "surface/interfaces/src/generator.md"
-digest = "sha256:7eb8495393c0ab0c97db49e843d4c8b61cc39b609bc717df5480db4830ca8402"
+digest = "sha256:16835b8b89ee0842c5517c498c2b0ba09eb215fba5b162f2712b1bfe5599adde"
 
 [[files]]
 path = "surface/interfaces/src/hook.md"
@@ -3506,7 +3522,7 @@ digest = "sha256:bbebbd00bd97524f7aa0ca07c5e6969037783100e969d31da42565893a41ee2
 
 [[files]]
 path = "surface/interfaces/src/init.md"
-digest = "sha256:cc800278f9ef9e5bf4561a82259689e391b62dcdb9420edb1cea7a6b9c3f448c"
+digest = "sha256:eadc6be4e1d1fd1843c095367c2e16898ea2b5be1e2a3247dd5b635b3daeb1e5"
 
 [[files]]
 path = "surface/interfaces/src/issues.md"
@@ -3534,7 +3550,7 @@ digest = "sha256:65a58daae22b5d851b5c03d5bd34976b9dca2ff7248cbcba758f30629c15930
 
 [[files]]
 path = "surface/interfaces/src/remote_push.md"
-digest = "sha256:d04b305ce9ccd31fd46d6ecaacd57dfd4f4cdb1640b9c2d127c5fd2402bda8b4"
+digest = "sha256:616c12985928b1cee59a98e7f07a6d20db52c316c18c745167aeda16cba330b8"
 
 [[files]]
 path = "surface/interfaces/src/slug_workspace.md"
@@ -3542,7 +3558,7 @@ digest = "sha256:f74d9878a3b1f231707b021cfaa6b3cb9ceac24c945258f6cd285f3ca55cc1a
 
 [[files]]
 path = "surface/interfaces/src/standardize.md"
-digest = "sha256:2f74e2e11c2e3dab200a8ace765241ee688895dea0a95d968ab79b54e21acffc"
+digest = "sha256:f8d344ffb93bdeb0550836cf167d117b72899c8e1a5178800c878570203e6700"
 
 [[files]]
 path = "surface/interfaces/src/standardize_audit.md"
@@ -3554,7 +3570,7 @@ digest = "sha256:2cdc9d93a110b8bf3503d7e70219c883a4a0666e77a9e9b9ab7a5b62fcabb71
 
 [[files]]
 path = "surface/interfaces/src/td.md"
-digest = "sha256:0caaea44edbb226a23e8ecd1cf4046f5f1b2b46643378d6d696e3f1dea951ec1"
+digest = "sha256:3284643831288ccba5b3a06ede6a908c54bc10692fa217806ec98575416c9172"
 
 [[files]]
 path = "surface/interfaces/src/td_check_section_type.md"
@@ -3594,7 +3610,7 @@ digest = "sha256:97a3e38815f7343ef07520c1a66eb5cb96b869cd96a8c25829b0f22c53abc50
 
 [[files]]
 path = "surface/specs/aw-capability-alignment-wi-planning.md"
-digest = "sha256:18426932e597a781f0e8eca5e98808c7189b7b70010b51acd870ab3fec05a844"
+digest = "sha256:6f9c95907bc132f2fd447ba1fc126294024354b355e6a0c6b529b78a58b8893f"
 
 [[files]]
 path = "surface/specs/aw-cb-fill-crrr.md"
@@ -3754,7 +3770,7 @@ digest = "sha256:f6560d1590e07ad4b1fb4424d84ddabeeb8c290d892be990e54b576830e2acb
 
 [[files]]
 path = "surface/specs/score-section-type-registry.md"
-digest = "sha256:0cb384fb67ab8d5a0dbea980f9f6d550ce598c8d534d793346b49c62506336c3"
+digest = "sha256:bbc48991a3fe56a4b248beb54cff3aab1415241065e98b6acbd16fe876837c2e"
 
 [[files]]
 path = "surface/specs/score-standardization.md"
@@ -3814,15 +3830,15 @@ digest = "sha256:9113acef09243cdf5447d83b718f0e52eaae17281f56039bee140ab04ad7c0f
 
 [[files]]
 path = "surface/validate/tests/cb_claim_test.md"
-digest = "sha256:7e9a4d83403c68dcdc9cd186410ae71becd6e00f33d1e7fdf000dc8afc021bf7"
+digest = "sha256:c49ae628618e5c92d40dac85f2b43878576c6f611c86b0dfce11977ace580d39"
 
 [[files]]
 path = "surface/validate/tests/cb_fill_test.md"
-digest = "sha256:f94896e29cfa19b6eb273f99578b024aa69f7b3bc0bce050a3cf9affdc4a112b"
+digest = "sha256:bbf0542ef16ef7acba34ca0a4b05f451f177a5cd4cded9a16c24a513d51b8334"
 
 [[files]]
 path = "surface/validate/tests/cb_namespace_test.md"
-digest = "sha256:9f351cc239f6bf71d547ccfc84e345fd84b704250152cf2eee3a4eceec634027"
+digest = "sha256:51e932e6cf8387e01a7dd1aae47a2df2dd3b99911b8c7a815070427dac0af61a"
 
 [[files]]
 path = "surface/validate/tests/cb_review_revise_test.md"
@@ -3842,7 +3858,7 @@ digest = "sha256:ec5a8976bc251c45703200a2f5c28b39d0faf9460403a30b05e68469710f90f
 
 [[files]]
 path = "surface/validate/tests/legacy_cli_removal_test.md"
-digest = "sha256:2c24adbab59003d80674722a44357e11ff07dc6298e8efb6e794ee68924f0819"
+digest = "sha256:74a7565dbeb2bc419dc3a1bdbcc3f11298cc28ed544268265fcc27038a4aa11f"
 
 [[files]]
 path = "surface/validate/tests/merge_target_branch.md"
@@ -3854,11 +3870,11 @@ digest = "sha256:6bdfea277dd18883ec7e2e757d544022bed06bfc02c84fd51963d170ab9cb26
 
 [[files]]
 path = "surface/validate/tests/recovery_flow_test.md"
-digest = "sha256:0750236df1e9b0ccc71237a605cf771b85f814c01353519c5fb237f59416d7f3"
+digest = "sha256:721cca11fb57f5b3feb94e47d9dd3084a5f9e0760883c8cdf9dc5d4f465e1267"
 
 [[files]]
 path = "surface/validate/tests/standardize_test.md"
-digest = "sha256:f17ec771f356726c4e60c705ff220a5f77fb20b67764641550a6cb3efaa753af"
+digest = "sha256:194e47cc74df3f631f119251916bcabe6700144211cf5d28ab15ae4a5f3619cc"
 
 [[files]]
 path = "surface/validate/tests/td_check_test.md"
@@ -3871,3 +3887,7 @@ digest = "sha256:ab5b0528f17a359adb30092b095378a24830f42f01bd0834f2f992a008ba93a
 [[files]]
 path = "surface/validate/tests/td_merge_atomic_test.md"
 digest = "sha256:b8893bf629ba2fbdba774cc8c11932914646342bad832065db0ed40f239f257a"
+
+[[files]]
+path = "validate/rust-source-unit-ir-lossless-cst-parse-to-structured-item-tree-b.md"
+digest = "sha256:bfe285ddcb7b2de26ed0f659ed978145471c90765a82f603e37c24ddbf7616eb"

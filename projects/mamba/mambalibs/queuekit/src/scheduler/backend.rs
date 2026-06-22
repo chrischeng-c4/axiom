@@ -2,11 +2,11 @@
 //!
 //! Provides leader election and task state persistence.
 
-use std::time::Duration;
+use crate::TaskError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::TaskError;
+use std::time::Duration;
 
 use super::periodic::PeriodicTask;
 
@@ -463,7 +463,10 @@ mod tests {
 
         backend.record_task_run("prc").await.unwrap();
         backend.record_task_run("prc").await.unwrap();
-        assert_eq!(backend.get_task_state("prc").await.unwrap().total_run_count, 2);
+        assert_eq!(
+            backend.get_task_state("prc").await.unwrap().total_run_count,
+            2
+        );
 
         // Pausing should not reset the run count
         backend.pause_task("prc").await.unwrap();

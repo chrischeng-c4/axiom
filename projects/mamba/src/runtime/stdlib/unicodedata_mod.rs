@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// unicodedata module for Mamba (mamba-stdlib, #1261 long-tail wire).
 ///
 /// Provides: name, category, bidirectional, decimal, normalize,
@@ -13,10 +15,7 @@
 /// user call site -- this wire makes `unicodedata.name("A")` etc.
 /// actually reachable from Python while also closing the #1261
 /// Gate 2 module-attr-read perf surface.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Variadic dispatchers (callable from module-attr context) ──
 // NOTE: dispatcher fn names must start with `dispatch_` so the surface
@@ -109,14 +108,26 @@ pub fn register() {
     let dispatchers: Vec<(&str, usize)> = vec![
         ("name", dispatch_name as *const () as usize),
         ("category", dispatch_category as *const () as usize),
-        ("bidirectional", dispatch_bidirectional as *const () as usize),
+        (
+            "bidirectional",
+            dispatch_bidirectional as *const () as usize,
+        ),
         ("decimal", dispatch_decimal as *const () as usize),
         ("normalize", dispatch_normalize as *const () as usize),
         ("combining", dispatch_combining as *const () as usize),
-        ("decomposition", dispatch_decomposition as *const () as usize),
+        (
+            "decomposition",
+            dispatch_decomposition as *const () as usize,
+        ),
         ("digit", dispatch_digit as *const () as usize),
-        ("east_asian_width", dispatch_east_asian_width as *const () as usize),
-        ("is_normalized", dispatch_is_normalized as *const () as usize),
+        (
+            "east_asian_width",
+            dispatch_east_asian_width as *const () as usize,
+        ),
+        (
+            "is_normalized",
+            dispatch_is_normalized as *const () as usize,
+        ),
         ("lookup", dispatch_lookup as *const () as usize),
         ("mirrored", dispatch_mirrored as *const () as usize),
         ("numeric", dispatch_numeric as *const () as usize),
@@ -140,12 +151,18 @@ pub fn register() {
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ucd_class).data {
             let mut f = fields.write().unwrap();
-            f.insert("__name__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("UCD".to_string())));
-            f.insert("__qualname__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("UCD".to_string())));
-            f.insert("__module__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("unicodedata".to_string())));
+            f.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("UCD".to_string())),
+            );
+            f.insert(
+                "__qualname__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("UCD".to_string())),
+            );
+            f.insert(
+                "__module__".to_string(),
+                MbValue::from_ptr(MbObject::new_str("unicodedata".to_string())),
+            );
         }
     }
     attrs.insert("UCD".to_string(), MbValue::from_ptr(ucd_class));
@@ -156,8 +173,10 @@ pub fn register() {
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ucd_320).data {
             let mut f = fields.write().unwrap();
-            f.insert("unidata_version".to_string(),
-                MbValue::from_ptr(MbObject::new_str("3.2.0".to_string())));
+            f.insert(
+                "unidata_version".to_string(),
+                MbValue::from_ptr(MbObject::new_str("3.2.0".to_string())),
+            );
         }
     }
     attrs.insert("ucd_3_2_0".to_string(), MbValue::from_ptr(ucd_320));
@@ -175,7 +194,11 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -191,8 +214,12 @@ fn raise_exc(exc_type: &str, msg: &str) -> MbValue {
     );
     MbValue::none()
 }
-fn raise_value_error(msg: &str) -> MbValue { raise_exc("ValueError", msg) }
-fn raise_key_error(msg: &str) -> MbValue { raise_exc("KeyError", msg) }
+fn raise_value_error(msg: &str) -> MbValue {
+    raise_exc("ValueError", msg)
+}
+fn raise_key_error(msg: &str) -> MbValue {
+    raise_exc("KeyError", msg)
+}
 
 /// CPython unicodedata accessors require a single unicode character: a
 /// non-string (`name(123)`) or a multi-character string (`category("xx")`)
@@ -233,7 +260,9 @@ fn mb_unicodedata_name_impl(c: MbValue, default: MbValue, has_default: bool) -> 
         return MbValue::none();
     };
     if ch.is_control() {
-        if has_default { return default; }
+        if has_default {
+            return default;
+        }
         return raise_value_error("no such name");
     }
     mb_unicodedata_name(c)
@@ -289,7 +318,11 @@ pub fn mb_unicodedata_bidirectional(c: MbValue) -> MbValue {
 pub fn mb_unicodedata_decimal(c: MbValue, default: MbValue) -> MbValue {
     let s = extract_str(c).unwrap_or_default();
     let ch = s.chars().next().unwrap_or(' ');
-    if let Some(d) = ch.to_digit(10) { MbValue::from_int(d as i64) } else { default }
+    if let Some(d) = ch.to_digit(10) {
+        MbValue::from_int(d as i64)
+    } else {
+        default
+    }
 }
 
 /// decimal(chr[, default]) -> int. CPython raises ValueError when the
@@ -338,9 +371,7 @@ pub fn mb_unicodedata_unidata_version() -> MbValue {
 /// combining(chr) -> int: canonical combining class (0 for base chars).
 pub fn mb_unicodedata_combining(c: MbValue) -> MbValue {
     let ch = extract_str(c).and_then(|s| s.chars().next()).unwrap_or(' ');
-    MbValue::from_int(
-        unicode_normalization::char::canonical_combining_class(ch) as i64,
-    )
+    MbValue::from_int(unicode_normalization::char::canonical_combining_class(ch) as i64)
 }
 
 /// decomposition(chr) -> str: decomposition mapping ("" when none).
@@ -353,7 +384,11 @@ pub fn mb_unicodedata_decomposition(c: MbValue) -> MbValue {
 pub fn mb_unicodedata_digit(c: MbValue, default: MbValue) -> MbValue {
     let s = extract_str(c).unwrap_or_default();
     let ch = s.chars().next().unwrap_or(' ');
-    if let Some(d) = ch.to_digit(10) { MbValue::from_int(d as i64) } else { default }
+    if let Some(d) = ch.to_digit(10) {
+        MbValue::from_int(d as i64)
+    } else {
+        default
+    }
 }
 
 /// digit(chr[, default]) -> int. CPython raises ValueError when the character
@@ -402,7 +437,8 @@ pub fn mb_unicodedata_is_normalized(form: MbValue, s: MbValue) -> MbValue {
 pub fn mb_unicodedata_lookup(name: MbValue) -> MbValue {
     let n = extract_str(name).unwrap_or_default();
     let well_formed = !n.is_empty()
-        && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ' ' || c == '-');
+        && n.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ' ' || c == '-');
     if !well_formed {
         return raise_key_error(&format!("undefined character name '{n}'"));
     }
@@ -430,7 +466,11 @@ pub fn mb_unicodedata_mirrored(c: MbValue) -> MbValue {
 pub fn mb_unicodedata_numeric(c: MbValue, default: MbValue) -> MbValue {
     let s = extract_str(c).unwrap_or_default();
     let ch = s.chars().next().unwrap_or(' ');
-    if let Some(d) = ch.to_digit(10) { MbValue::from_float(d as f64) } else { default }
+    if let Some(d) = ch.to_digit(10) {
+        MbValue::from_float(d as f64)
+    } else {
+        default
+    }
 }
 
 /// numeric(chr[, default]) -> float. CPython raises ValueError when the
@@ -452,18 +492,47 @@ fn mb_unicodedata_numeric_impl(c: MbValue, default: MbValue, has_default: bool) 
 mod tests {
     use super::*;
 
-    fn s(v: &str) -> MbValue { MbValue::from_ptr(MbObject::new_str(v.to_string())) }
+    fn s(v: &str) -> MbValue {
+        MbValue::from_ptr(MbObject::new_str(v.to_string()))
+    }
 
     #[test]
     fn test_unicodedata_public_fns() {
-        assert_eq!(extract_str(mb_unicodedata_name(s("A"))).as_deref(), Some("UNICODE CHAR 0041"));
-        assert_eq!(extract_str(mb_unicodedata_category(s("A"))).as_deref(), Some("Lu"));
-        assert_eq!(extract_str(mb_unicodedata_category(s("a"))).as_deref(), Some("Ll"));
-        assert_eq!(extract_str(mb_unicodedata_category(s("7"))).as_deref(), Some("Nd"));
-        assert_eq!(extract_str(mb_unicodedata_bidirectional(s("A"))).as_deref(), Some("L"));
-        assert_eq!(mb_unicodedata_decimal(s("5"), MbValue::from_int(-1)).as_int(), Some(5));
-        assert_eq!(mb_unicodedata_decimal(s("x"), MbValue::from_int(-1)).as_int(), Some(-1));
-        assert_eq!(extract_str(mb_unicodedata_normalize(s("NFC"), s("hi"))).as_deref(), Some("hi"));
-        assert_eq!(extract_str(mb_unicodedata_unidata_version()).as_deref(), Some("15.0.0"));
+        assert_eq!(
+            extract_str(mb_unicodedata_name(s("A"))).as_deref(),
+            Some("UNICODE CHAR 0041")
+        );
+        assert_eq!(
+            extract_str(mb_unicodedata_category(s("A"))).as_deref(),
+            Some("Lu")
+        );
+        assert_eq!(
+            extract_str(mb_unicodedata_category(s("a"))).as_deref(),
+            Some("Ll")
+        );
+        assert_eq!(
+            extract_str(mb_unicodedata_category(s("7"))).as_deref(),
+            Some("Nd")
+        );
+        assert_eq!(
+            extract_str(mb_unicodedata_bidirectional(s("A"))).as_deref(),
+            Some("L")
+        );
+        assert_eq!(
+            mb_unicodedata_decimal(s("5"), MbValue::from_int(-1)).as_int(),
+            Some(5)
+        );
+        assert_eq!(
+            mb_unicodedata_decimal(s("x"), MbValue::from_int(-1)).as_int(),
+            Some(-1)
+        );
+        assert_eq!(
+            extract_str(mb_unicodedata_normalize(s("NFC"), s("hi"))).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(
+            extract_str(mb_unicodedata_unidata_version()).as_deref(),
+            Some("15.0.0")
+        );
     }
 }

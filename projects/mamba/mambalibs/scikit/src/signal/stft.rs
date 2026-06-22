@@ -53,7 +53,9 @@ pub fn stft(x: &[f64], window_size: usize, hop_size: usize, fs: f64) -> StftResu
     let n_freqs = window_size / 2 + 1;
     let window = hann_window(window_size);
 
-    let frequencies: Vec<f64> = (0..n_freqs).map(|i| i as f64 * fs / window_size as f64).collect();
+    let frequencies: Vec<f64> = (0..n_freqs)
+        .map(|i| i as f64 * fs / window_size as f64)
+        .collect();
 
     let mut times = Vec::new();
     let mut spectrogram = Vec::new();

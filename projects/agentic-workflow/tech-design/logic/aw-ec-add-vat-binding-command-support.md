@@ -77,7 +77,7 @@ requirements:
     verify: test
   fallback_unchanged:
     id: R4
-    text: "resolve_project_ec_command still uses manifest command for unbound EC categories."
+    text: "resolve_project_ec_command still uses generated EC case commands for unbound EC categories."
     kind: regression
     risk: medium
     verify: test
@@ -118,7 +118,7 @@ requirementDiagram
     }
     requirement R4 {
       id: R4
-      text: "unbound category falls back to manifest command"
+      text: "unbound category falls back to generated EC case command"
       risk: medium
       verifymethod: test
     }

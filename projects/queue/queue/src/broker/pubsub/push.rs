@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::{TaskError, TaskMessage};
 use crate::broker::{Broker, BrokerCapabilities, BrokerMessage, DeliveryModel, PushBroker};
+use crate::{TaskError, TaskMessage};
 
 /// Configuration for Pub/Sub push broker
 #[derive(Debug, Clone)]
@@ -49,8 +49,8 @@ impl PubSubPushConfig {
             .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
             .map_err(|_| TaskError::Configuration("GCP_PROJECT_ID not set".into()))?;
 
-        let topic_name = std::env::var("PUBSUB_TOPIC")
-            .unwrap_or_else(|_| "meteor-tasks".to_string());
+        let topic_name =
+            std::env::var("PUBSUB_TOPIC").unwrap_or_else(|_| "meteor-tasks".to_string());
 
         let subscription_name = std::env::var("PUBSUB_SUBSCRIPTION")
             .unwrap_or_else(|_| "meteor-worker-push".to_string());
@@ -143,8 +143,8 @@ impl Broker for PubSubPushBroker {
     }
 
     async fn publish(&self, queue: &str, message: TaskMessage) -> Result<(), TaskError> {
-        let payload = serde_json::to_vec(&message)
-            .map_err(|e| TaskError::Serialization(e.to_string()))?;
+        let payload =
+            serde_json::to_vec(&message).map_err(|e| TaskError::Serialization(e.to_string()))?;
 
         tracing::debug!(
             topic = %self.config.topic_name,
@@ -196,11 +196,14 @@ impl PushBroker for PubSubPushBroker {
     ) -> Result<BrokerMessage, TaskError> {
         // Validate OIDC token if configured
         if self.config.service_account_email.is_some() {
-            let auth_header = headers.get("authorization")
+            let auth_header = headers
+                .get("authorization")
                 .ok_or_else(|| TaskError::Authentication("Missing Authorization header".into()))?;
 
             if !auth_header.starts_with("Bearer ") {
-                return Err(TaskError::Authentication("Invalid Authorization header format".into()));
+                return Err(TaskError::Authentication(
+                    "Invalid Authorization header format".into(),
+                ));
             }
 
             // In production, validate the OIDC token
@@ -208,8 +211,9 @@ impl PushBroker for PubSubPushBroker {
         }
 
         // Parse Pub/Sub push envelope
-        let envelope: PubSubPushMessage = serde_json::from_slice(body)
-            .map_err(|e| TaskError::Deserialization(format!("Invalid Pub/Sub push message: {}", e)))?;
+        let envelope: PubSubPushMessage = serde_json::from_slice(body).map_err(|e| {
+            TaskError::Deserialization(format!("Invalid Pub/Sub push message: {}", e))
+        })?;
 
         // Decode base64 message data
         use base64::Engine;
@@ -222,7 +226,9 @@ impl PushBroker for PubSubPushBroker {
             .map_err(|e| TaskError::Deserialization(e.to_string()))?;
 
         // Check for redelivery
-        let delivery_count = envelope.message.attributes
+        let delivery_count = envelope
+            .message
+            .attributes
             .get("googclient_deliveryattempt")
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(1);

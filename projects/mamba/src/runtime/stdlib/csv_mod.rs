@@ -1,3 +1,7 @@
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 /// csv module for Mamba (#398).
 ///
 /// CPython-parity csv: stateful reader / writer / DictReader / DictWriter
@@ -13,14 +17,9 @@
 ///
 /// The reader is a true stateful iterator: it parses one record per
 /// `__next__`, advances `line_num`, and raises StopIteration at EOF.
-
 use std::cell::RefCell;
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData, MbObjectHeader, ObjKind};
 use std::sync::atomic::AtomicU32;
-use crate::runtime::rc::MbRwLock as RwLock;
 
 thread_local! {
     static DIALECTS: RefCell<HashMap<String, MbValue>> = RefCell::new(HashMap::new());
@@ -51,7 +50,11 @@ unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -60,11 +63,15 @@ fn new_str(s: impl Into<String>) -> MbValue {
 }
 
 fn is_str(val: MbValue) -> bool {
-    val.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) }).unwrap_or(false)
+    val.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+        .unwrap_or(false)
 }
 
 fn is_bytes(val: MbValue) -> bool {
-    val.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) }).unwrap_or(false)
+    val.as_ptr()
+        .map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+        .unwrap_or(false)
 }
 
 /// Read a named field off an `ObjData::Instance`.
@@ -97,15 +104,27 @@ fn raise(kind: &str, msg: impl Into<String>) -> MbValue {
     MbValue::none()
 }
 
-fn raise_type_error(msg: &str) -> MbValue { raise("TypeError", msg) }
-fn raise_csv_error(msg: &str) -> MbValue { raise("csv.Error", msg) }
+fn raise_type_error(msg: &str) -> MbValue {
+    raise("TypeError", msg)
+}
+fn raise_csv_error(msg: &str) -> MbValue {
+    raise("csv.Error", msg)
+}
 
 /// Python type name used in error messages.
 fn type_name_of(val: MbValue) -> &'static str {
-    if val.is_bool() { return "bool"; }
-    if val.is_int() { return "int"; }
-    if val.is_float() { return "float"; }
-    if val.is_none() { return "NoneType"; }
+    if val.is_bool() {
+        return "bool";
+    }
+    if val.is_int() {
+        return "int";
+    }
+    if val.is_float() {
+        return "float";
+    }
+    if val.is_none() {
+        return "NoneType";
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             return match (*ptr).data {
@@ -124,7 +143,10 @@ fn type_name_of(val: MbValue) -> &'static str {
 
 fn make_instance(class_name: &str, fields: FxHashMap<String, MbValue>) -> MbValue {
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: RwLock::new(fields),
@@ -233,23 +255,36 @@ fn getattr_opt(obj: MbValue, key: &str) -> Option<MbValue> {
 
 fn class_attr_opt(class_name: &str, key: &str) -> Option<MbValue> {
     let v = super::super::class::lookup_method(class_name, key);
-    if v.is_none() { None } else { Some(v) }
+    if v.is_none() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 #[derive(PartialEq)]
-enum FmtSource { Dialect, Kwarg }
+enum FmtSource {
+    Dialect,
+    Kwarg,
+}
 
 /// Apply one set of overrides to `fmt`. Validates per CPython for the
 /// kwarg source; the dialect-class source validates on instantiation
 /// elsewhere. Returns false if validation raised.
-fn apply_overrides(fmt: &mut CsvFmt, src: FmtSource,
-                   get: &dyn Fn(&str) -> Option<MbValue>) -> bool {
+fn apply_overrides(
+    fmt: &mut CsvFmt,
+    src: FmtSource,
+    get: &dyn Fn(&str) -> Option<MbValue>,
+) -> bool {
     let strict = src == FmtSource::Kwarg;
 
     if let Some(v) = get("delimiter") {
         if strict {
             if v.is_none() || !is_str(v) {
-                raise_type_error(&format!("\"delimiter\" must be string, not {}", type_name_of(v)));
+                raise_type_error(&format!(
+                    "\"delimiter\" must be string, not {}",
+                    type_name_of(v)
+                ));
                 return false;
             }
             let s = extract_str(v).unwrap_or_default();
@@ -258,14 +293,19 @@ fn apply_overrides(fmt: &mut CsvFmt, src: FmtSource,
                 return false;
             }
         }
-        if let Some(c) = first_char(v) { fmt.delimiter = c; }
+        if let Some(c) = first_char(v) {
+            fmt.delimiter = c;
+        }
     }
     if let Some(v) = get("quotechar") {
         if v.is_none() {
             fmt.quotechar = None;
         } else {
             if strict && !is_str(v) {
-                raise_type_error(&format!("\"quotechar\" must be string or None, not {}", type_name_of(v)));
+                raise_type_error(&format!(
+                    "\"quotechar\" must be string or None, not {}",
+                    type_name_of(v)
+                ));
                 return false;
             }
             if strict {
@@ -283,7 +323,10 @@ fn apply_overrides(fmt: &mut CsvFmt, src: FmtSource,
             fmt.escapechar = None;
         } else {
             if strict && !is_str(v) {
-                raise_type_error(&format!("\"escapechar\" must be string or None, not {}", type_name_of(v)));
+                raise_type_error(&format!(
+                    "\"escapechar\" must be string or None, not {}",
+                    type_name_of(v)
+                ));
                 return false;
             }
             fmt.escapechar = first_char(v);
@@ -300,12 +343,16 @@ fn apply_overrides(fmt: &mut CsvFmt, src: FmtSource,
             raise_type_error("\"lineterminator\" must be a string");
             return false;
         }
-        if let Some(s) = extract_str(v) { fmt.lineterminator = s; }
+        if let Some(s) = extract_str(v) {
+            fmt.lineterminator = s;
+        }
     }
     if let Some(v) = get("quoting") {
         if strict {
             match v.as_int() {
-                Some(q) if (0..=5).contains(&q) && !v.is_bool() => { fmt.quoting = q; }
+                Some(q) if (0..=5).contains(&q) && !v.is_bool() => {
+                    fmt.quoting = q;
+                }
                 _ => {
                     raise_type_error("bad \"quoting\" value");
                     return false;
@@ -322,8 +369,12 @@ fn apply_overrides(fmt: &mut CsvFmt, src: FmtSource,
 }
 
 fn truthy(v: MbValue) -> bool {
-    if let Some(b) = v.as_bool() { return b; }
-    if let Some(i) = v.as_int() { return i != 0; }
+    if let Some(b) = v.as_bool() {
+        return b;
+    }
+    if let Some(i) = v.as_int() {
+        return i != 0;
+    }
     !v.is_none()
 }
 
@@ -335,7 +386,9 @@ fn resolve_fmt(dialect: MbValue, kw: &Option<KwMap>) -> Option<CsvFmt> {
     // A `dialect=` kwarg overrides/supplies the dialect when no positional
     // dialect was given (CPython lets either form name the base dialect).
     let dialect = if dialect.is_none() {
-        kw.as_ref().and_then(|m| kwarg_get(m, "dialect")).unwrap_or_else(MbValue::none)
+        kw.as_ref()
+            .and_then(|m| kwarg_get(m, "dialect"))
+            .unwrap_or_else(MbValue::none)
     } else {
         dialect
     };
@@ -359,11 +412,21 @@ fn resolve_fmt(dialect: MbValue, kw: &Option<KwMap>) -> Option<CsvFmt> {
         // Reject unknown kwargs (bad_attr) — CPython TypeErrors.
         for (k, _v) in m.iter() {
             if let super::super::dict_ops::DictKey::Str(ref ks) = k {
-                if !matches!(ks.as_str(),
-                    "delimiter" | "quotechar" | "escapechar" | "doublequote"
-                    | "skipinitialspace" | "lineterminator" | "quoting" | "strict"
-                    | "dialect") {
-                    raise_type_error(&format!("'{ks}' is an invalid keyword argument for this function"));
+                if !matches!(
+                    ks.as_str(),
+                    "delimiter"
+                        | "quotechar"
+                        | "escapechar"
+                        | "doublequote"
+                        | "skipinitialspace"
+                        | "lineterminator"
+                        | "quoting"
+                        | "strict"
+                        | "dialect"
+                ) {
+                    raise_type_error(&format!(
+                        "'{ks}' is an invalid keyword argument for this function"
+                    ));
                     return None;
                 }
             }
@@ -376,8 +439,10 @@ fn resolve_fmt(dialect: MbValue, kw: &Option<KwMap>) -> Option<CsvFmt> {
     // Cross-field consistency: a quoting mode that emits quotes (ALL /
     // NONNUMERIC / STRINGS / NOTNULL) requires a quotechar. QUOTE_MINIMAL
     // and QUOTE_NONE work with quotechar=None.
-    let needs_quotechar = matches!(fmt.quoting,
-        QUOTE_ALL | QUOTE_NONNUMERIC | QUOTE_STRINGS | QUOTE_NOTNULL);
+    let needs_quotechar = matches!(
+        fmt.quoting,
+        QUOTE_ALL | QUOTE_NONNUMERIC | QUOTE_STRINGS | QUOTE_NOTNULL
+    );
     if fmt.quotechar.is_none() && needs_quotechar {
         raise_type_error("quotechar must be set if quoting enabled");
         return None;
@@ -390,16 +455,25 @@ fn resolve_fmt(dialect: MbValue, kw: &Option<KwMap>) -> Option<CsvFmt> {
 fn fmt_to_dialect(fmt: &CsvFmt) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("delimiter".into(), new_str(fmt.delimiter.to_string()));
-    fields.insert("quotechar".into(), match fmt.quotechar {
-        Some(c) => new_str(c.to_string()),
-        None => MbValue::none(),
-    });
-    fields.insert("escapechar".into(), match fmt.escapechar {
-        Some(c) => new_str(c.to_string()),
-        None => MbValue::none(),
-    });
+    fields.insert(
+        "quotechar".into(),
+        match fmt.quotechar {
+            Some(c) => new_str(c.to_string()),
+            None => MbValue::none(),
+        },
+    );
+    fields.insert(
+        "escapechar".into(),
+        match fmt.escapechar {
+            Some(c) => new_str(c.to_string()),
+            None => MbValue::none(),
+        },
+    );
     fields.insert("doublequote".into(), MbValue::from_bool(fmt.doublequote));
-    fields.insert("skipinitialspace".into(), MbValue::from_bool(fmt.skipinitialspace));
+    fields.insert(
+        "skipinitialspace".into(),
+        MbValue::from_bool(fmt.skipinitialspace),
+    );
     fields.insert("lineterminator".into(), new_str(fmt.lineterminator.clone()));
     fields.insert("quoting".into(), MbValue::from_int(fmt.quoting));
     fields.insert("strict".into(), MbValue::from_bool(fmt.strict));
@@ -427,7 +501,9 @@ fn split_records(text: &str, quotechar: Option<char>) -> Vec<String> {
         }
         match c {
             '\r' if !in_quotes => {
-                if chars.peek() == Some(&'\n') { chars.next(); }
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
                 records.push(std::mem::take(&mut current));
             }
             '\n' if !in_quotes => {
@@ -507,7 +583,9 @@ fn source_records(csvfile: MbValue, quotechar: Option<char>) -> Option<Vec<Strin
     if !handle.is_none() && handle.as_int().is_some() {
         let mut out = Vec::new();
         loop {
-            if super::super::iter::mb_has_next(handle).as_bool() != Some(true) { break; }
+            if super::super::iter::mb_has_next(handle).as_bool() != Some(true) {
+                break;
+            }
             let v = super::super::iter::mb_next(handle);
             if let Some(s) = extract_str(v) {
                 out.extend(line_to_records(&s, quotechar));
@@ -537,7 +615,10 @@ fn read_filelike(fileobj: MbValue) -> String {
 // ──────────────────────────────────────────────────────────────────────
 
 /// Field value, tracking whether it was quoted (for QUOTE_NONNUMERIC).
-struct ParsedField { text: String, quoted: bool }
+struct ParsedField {
+    text: String,
+    quoted: bool,
+}
 
 /// Strict-mode parse error description (CPython csv.Error messages).
 enum ParseError {
@@ -594,7 +675,10 @@ fn parse_record_values(record: &str, fmt: &CsvFmt) -> Option<Vec<MbValue>> {
                 Ok(v) => out.push(MbValue::from_float(v)),
                 Err(_) => {
                     // CPython raises ValueError (from float()), not csv.Error.
-                    raise("ValueError", format!("could not convert string to float: {:?}", f.text));
+                    raise(
+                        "ValueError",
+                        format!("could not convert string to float: {:?}", f.text),
+                    );
                     return None;
                 }
             }
@@ -625,7 +709,9 @@ fn parse_record(record: &str, fmt: &CsvFmt) -> (Vec<ParsedField>, Option<ParseEr
     while let Some(c) = chars.next() {
         if in_quotes {
             if fmt.escapechar == Some(c) {
-                if let Some(n) = chars.next() { current.push(n); }
+                if let Some(n) = chars.next() {
+                    current.push(n);
+                }
                 continue;
             }
             if Some(c) == quotechar {
@@ -648,7 +734,9 @@ fn parse_record(record: &str, fmt: &CsvFmt) -> (Vec<ParsedField>, Option<ParseEr
         // csv.reader(['a,"b,c"\\'], escapechar='\\') → [['a', 'b,c\\']].
         // In strict mode this is an error.
         if after_quote && c != fmt.delimiter {
-            if err.is_none() { err = Some(ParseError::UnexpectedAfterQuote); }
+            if err.is_none() {
+                err = Some(ParseError::UnexpectedAfterQuote);
+            }
             current.push(c);
             field_has_content = true;
             continue;
@@ -662,7 +750,9 @@ fn parse_record(record: &str, fmt: &CsvFmt) -> (Vec<ParsedField>, Option<ParseEr
                 Some(n) => current.push(n),
                 None => {
                     current.push('\n');
-                    if err.is_none() { err = Some(ParseError::NewlineInQuoted); }
+                    if err.is_none() {
+                        err = Some(ParseError::NewlineInQuoted);
+                    }
                 }
             }
             field_has_content = true;
@@ -678,14 +768,22 @@ fn parse_record(record: &str, fmt: &CsvFmt) -> (Vec<ParsedField>, Option<ParseEr
             continue;
         }
         if c == fmt.delimiter {
-            fields.push(ParsedField { text: std::mem::take(&mut current), quoted: field_quoted });
+            fields.push(ParsedField {
+                text: std::mem::take(&mut current),
+                quoted: field_quoted,
+            });
             field_quoted = false;
             field_has_content = false;
             at_field_start = true;
             after_quote = false;
             continue;
         }
-        if !quoting_none && Some(c) == quotechar && at_field_start && current.is_empty() && !after_quote {
+        if !quoting_none
+            && Some(c) == quotechar
+            && at_field_start
+            && current.is_empty()
+            && !after_quote
+        {
             in_quotes = true;
             field_quoted = true;
             at_field_start = false;
@@ -703,7 +801,10 @@ fn parse_record(record: &str, fmt: &CsvFmt) -> (Vec<ParsedField>, Option<ParseEr
     if in_quotes && err.is_none() {
         err = Some(ParseError::NewlineInQuoted);
     }
-    fields.push(ParsedField { text: current, quoted: field_quoted });
+    fields.push(ParsedField {
+        text: current,
+        quoted: field_quoted,
+    });
     (fields, err)
 }
 
@@ -713,7 +814,9 @@ fn parse_record(record: &str, fmt: &CsvFmt) -> (Vec<ParsedField>, Option<ParseEr
 
 /// Is this value numeric for QUOTE_NONNUMERIC purposes (int/float, not bool/None/str).
 fn is_numeric(v: MbValue) -> bool {
-    if v.is_bool() { return false; }
+    if v.is_bool() {
+        return false;
+    }
     v.is_int() || v.is_float()
 }
 
@@ -750,11 +853,15 @@ fn format_field(v: MbValue, fmt: &CsvFmt, single_none_field: bool) -> Option<Str
         for ch in s.chars() {
             if ch == fmt.delimiter
                 || Some(ch) == qc
-                || ch == '\r' || ch == '\n'
+                || ch == '\r'
+                || ch == '\n'
                 || Some(ch) == fmt.escapechar
             {
                 match fmt.escapechar {
-                    Some(e) => { out.push(e); out.push(ch); }
+                    Some(e) => {
+                        out.push(e);
+                        out.push(ch);
+                    }
                     None => {
                         raise_csv_error("need to escape, but no escapechar set");
                         return None;
@@ -774,9 +881,11 @@ fn format_field(v: MbValue, fmt: &CsvFmt, single_none_field: bool) -> Option<Str
         for ch in s.chars() {
             if ch == qc {
                 if fmt.doublequote {
-                    out.push(qc); out.push(qc);
+                    out.push(qc);
+                    out.push(qc);
                 } else if let Some(e) = fmt.escapechar {
-                    out.push(e); out.push(ch);
+                    out.push(e);
+                    out.push(ch);
                 } else {
                     out.push(ch);
                 }
@@ -793,8 +902,12 @@ fn format_field(v: MbValue, fmt: &CsvFmt, single_none_field: bool) -> Option<Str
             if let Some(e) = fmt.escapechar {
                 let mut out = String::new();
                 for ch in s.chars() {
-                    if ch == fmt.delimiter || ch == '\r' || ch == '\n'
-                        || Some(ch) == qc || Some(ch) == fmt.escapechar {
+                    if ch == fmt.delimiter
+                        || ch == '\r'
+                        || ch == '\n'
+                        || Some(ch) == qc
+                        || Some(ch) == fmt.escapechar
+                    {
                         out.push(e);
                     }
                     out.push(ch);
@@ -808,7 +921,8 @@ fn format_field(v: MbValue, fmt: &CsvFmt, single_none_field: bool) -> Option<Str
 
 fn needs_minimal_quote(s: &str, fmt: &CsvFmt) -> bool {
     let qc = fmt.quotechar;
-    s.chars().any(|ch| ch == fmt.delimiter || ch == '\r' || ch == '\n' || Some(ch) == qc)
+    s.chars()
+        .any(|ch| ch == fmt.delimiter || ch == '\r' || ch == '\n' || Some(ch) == qc)
 }
 
 /// Build the formatted record string for one row of values.
@@ -848,7 +962,9 @@ fn collect_row(row: MbValue) -> Option<Vec<MbValue>> {
     }
     let mut out = Vec::new();
     loop {
-        if super::super::iter::mb_has_next(handle).as_bool() != Some(true) { break; }
+        if super::super::iter::mb_has_next(handle).as_bool() != Some(true) {
+            break;
+        }
         out.push(super::super::iter::mb_next(handle));
     }
     Some(out)
@@ -860,10 +976,28 @@ fn collect_row(row: MbValue) -> Option<Vec<MbValue>> {
 
 fn store_fmt(obj: MbValue, fmt: &CsvFmt) {
     field_set(obj, "_delimiter", new_str(fmt.delimiter.to_string()));
-    field_set(obj, "_quotechar", match fmt.quotechar { Some(c) => new_str(c.to_string()), None => MbValue::none() });
-    field_set(obj, "_escapechar", match fmt.escapechar { Some(c) => new_str(c.to_string()), None => MbValue::none() });
+    field_set(
+        obj,
+        "_quotechar",
+        match fmt.quotechar {
+            Some(c) => new_str(c.to_string()),
+            None => MbValue::none(),
+        },
+    );
+    field_set(
+        obj,
+        "_escapechar",
+        match fmt.escapechar {
+            Some(c) => new_str(c.to_string()),
+            None => MbValue::none(),
+        },
+    );
     field_set(obj, "_doublequote", MbValue::from_bool(fmt.doublequote));
-    field_set(obj, "_skipinitialspace", MbValue::from_bool(fmt.skipinitialspace));
+    field_set(
+        obj,
+        "_skipinitialspace",
+        MbValue::from_bool(fmt.skipinitialspace),
+    );
     field_set(obj, "_lineterminator", new_str(fmt.lineterminator.clone()));
     field_set(obj, "_quoting", MbValue::from_int(fmt.quoting));
     field_set(obj, "_strict", MbValue::from_bool(fmt.strict));
@@ -871,14 +1005,36 @@ fn store_fmt(obj: MbValue, fmt: &CsvFmt) {
 
 fn load_fmt(obj: MbValue) -> CsvFmt {
     let mut fmt = CsvFmt::default();
-    if let Some(v) = instance_field(obj, "_delimiter") { if let Some(c) = first_char(v) { fmt.delimiter = c; } }
-    if let Some(v) = instance_field(obj, "_quotechar") { fmt.quotechar = if v.is_none() { None } else { first_char(v) }; }
-    if let Some(v) = instance_field(obj, "_escapechar") { fmt.escapechar = if v.is_none() { None } else { first_char(v) }; }
-    if let Some(v) = instance_field(obj, "_doublequote") { fmt.doublequote = truthy(v); }
-    if let Some(v) = instance_field(obj, "_skipinitialspace") { fmt.skipinitialspace = truthy(v); }
-    if let Some(v) = instance_field(obj, "_lineterminator") { if let Some(s) = extract_str(v) { fmt.lineterminator = s; } }
-    if let Some(v) = instance_field(obj, "_quoting") { if let Some(q) = v.as_int() { fmt.quoting = q; } }
-    if let Some(v) = instance_field(obj, "_strict") { fmt.strict = truthy(v); }
+    if let Some(v) = instance_field(obj, "_delimiter") {
+        if let Some(c) = first_char(v) {
+            fmt.delimiter = c;
+        }
+    }
+    if let Some(v) = instance_field(obj, "_quotechar") {
+        fmt.quotechar = if v.is_none() { None } else { first_char(v) };
+    }
+    if let Some(v) = instance_field(obj, "_escapechar") {
+        fmt.escapechar = if v.is_none() { None } else { first_char(v) };
+    }
+    if let Some(v) = instance_field(obj, "_doublequote") {
+        fmt.doublequote = truthy(v);
+    }
+    if let Some(v) = instance_field(obj, "_skipinitialspace") {
+        fmt.skipinitialspace = truthy(v);
+    }
+    if let Some(v) = instance_field(obj, "_lineterminator") {
+        if let Some(s) = extract_str(v) {
+            fmt.lineterminator = s;
+        }
+    }
+    if let Some(v) = instance_field(obj, "_quoting") {
+        if let Some(q) = v.as_int() {
+            fmt.quoting = q;
+        }
+    }
+    if let Some(v) = instance_field(obj, "_strict") {
+        fmt.strict = truthy(v);
+    }
     fmt
 }
 
@@ -891,7 +1047,12 @@ fn embedded_newline_error_index(csvfile: MbValue, quotechar: Option<char>) -> Op
     let elements: Vec<String> = if let Some(ptr) = csvfile.as_ptr() {
         unsafe {
             match &(*ptr).data {
-                ObjData::List(lock) => lock.read().unwrap().iter().filter_map(|x| extract_str(*x)).collect(),
+                ObjData::List(lock) => lock
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|x| extract_str(*x))
+                    .collect(),
                 ObjData::Tuple(t) => t.iter().filter_map(|x| extract_str(*x)).collect(),
                 _ => return None, // str / file: real multi-line content is fine
             }
@@ -924,11 +1085,12 @@ fn build_reader(csvfile: MbValue, fmt: CsvFmt) -> MbValue {
     // form, validate eagerly here so the error surfaces at construction
     // (still inside the caller's try/except). Plain readers stay lazy.
     let limit = FIELD_SIZE_LIMIT.with(|f| *f.borrow());
-    let may_exceed_limit = limit >= 0
-        && records.iter().any(|r| r.chars().count() as i64 > limit);
+    let may_exceed_limit = limit >= 0 && records.iter().any(|r| r.chars().count() as i64 > limit);
     if fmt.strict || fmt.quoting == QUOTE_NONNUMERIC || may_exceed_limit {
         for rec in &records {
-            if rec.is_empty() { continue; }
+            if rec.is_empty() {
+                continue;
+            }
             if parse_record_values(rec, &fmt).is_none() {
                 // Error already raised; return None so the caller propagates it.
                 return MbValue::none();
@@ -938,7 +1100,10 @@ fn build_reader(csvfile: MbValue, fmt: CsvFmt) -> MbValue {
 
     let rec_vals: Vec<MbValue> = records.into_iter().map(new_str).collect();
     let mut fields = FxHashMap::default();
-    fields.insert("_records".into(), MbValue::from_ptr(MbObject::new_list(rec_vals)));
+    fields.insert(
+        "_records".into(),
+        MbValue::from_ptr(MbObject::new_list(rec_vals)),
+    );
     fields.insert("_idx".into(), MbValue::from_int(0));
     fields.insert("line_num".into(), MbValue::from_int(0));
     fields.insert("dialect".into(), fmt_to_dialect(&fmt));
@@ -952,19 +1117,35 @@ fn build_reader(csvfile: MbValue, fmt: CsvFmt) -> MbValue {
 
 /// reader.__iter__(self) → self.
 pub extern "C" fn reader_iter(slf: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(slf); }
+    unsafe {
+        super::super::rc::retain_if_ptr(slf);
+    }
     slf
 }
 
 /// reader.__next__(self) → next row (list) or StopIteration.
 pub extern "C" fn reader_next(slf: MbValue) -> MbValue {
-    let records = match instance_field(slf, "_records") { Some(v) => v, None => MbValue::none() };
-    let idx = instance_field(slf, "_idx").and_then(|v| v.as_int()).unwrap_or(0);
-    let line_num = instance_field(slf, "line_num").and_then(|v| v.as_int()).unwrap_or(0);
+    let records = match instance_field(slf, "_records") {
+        Some(v) => v,
+        None => MbValue::none(),
+    };
+    let idx = instance_field(slf, "_idx")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    let line_num = instance_field(slf, "line_num")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
 
-    let len = records.as_ptr().map(|p| unsafe {
-        if let ObjData::List(ref lock) = (*p).data { lock.read().unwrap().len() as i64 } else { 0 }
-    }).unwrap_or(0);
+    let len = records
+        .as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                lock.read().unwrap().len() as i64
+            } else {
+                0
+            }
+        })
+        .unwrap_or(0);
 
     if idx >= len {
         super::super::exception::mb_raise(new_str("StopIteration"), new_str(""));
@@ -978,11 +1159,16 @@ pub extern "C" fn reader_next(slf: MbValue) -> MbValue {
             "new-line character seen in unquoted field - do you need to open the file with newline=''?");
     }
 
-    let record = records.as_ptr().and_then(|p| unsafe {
-        if let ObjData::List(ref lock) = (*p).data {
-            lock.read().unwrap().get(idx as usize).copied()
-        } else { None }
-    }).unwrap_or_else(MbValue::none);
+    let record = records
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                lock.read().unwrap().get(idx as usize).copied()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none);
 
     field_set(slf, "_idx", MbValue::from_int(idx + 1));
     field_set(slf, "line_num", MbValue::from_int(line_num + 1));
@@ -1004,7 +1190,9 @@ pub extern "C" fn reader_next(slf: MbValue) -> MbValue {
 // ──────────────────────────────────────────────────────────────────────
 
 fn build_writer(fileobj: MbValue, fmt: CsvFmt) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(fileobj); }
+    unsafe {
+        super::super::rc::retain_if_ptr(fileobj);
+    }
     let mut fields = FxHashMap::default();
     fields.insert("_file".into(), fileobj);
     fields.insert("dialect".into(), fmt_to_dialect(&fmt));
@@ -1049,7 +1237,9 @@ pub extern "C" fn writer_writerows(slf: MbValue, rows: MbValue) -> MbValue {
             None => return raise_type_error("writerows() argument must be iterable of iterables"),
         };
         match format_row(&items, &fmt) {
-            Some(line) => { writer_emit(slf, &line); }
+            Some(line) => {
+                writer_emit(slf, &line);
+            }
             None => return MbValue::none(),
         }
     }
@@ -1062,12 +1252,20 @@ pub extern "C" fn writer_writerows(slf: MbValue, rows: MbValue) -> MbValue {
 
 /// Materialize a fieldnames argument (list / tuple / iterator / str) to Vec<String>.
 fn materialize_names(v: MbValue) -> Option<Vec<String>> {
-    if v.is_none() { return None; }
+    if v.is_none() {
+        return None;
+    }
     if let Some(ptr) = v.as_ptr() {
         unsafe {
             match &(*ptr).data {
                 ObjData::List(lock) => {
-                    return Some(lock.read().unwrap().iter().filter_map(|x| extract_str(*x)).collect());
+                    return Some(
+                        lock.read()
+                            .unwrap()
+                            .iter()
+                            .filter_map(|x| extract_str(*x))
+                            .collect(),
+                    );
                 }
                 ObjData::Tuple(items) => {
                     return Some(items.iter().filter_map(|x| extract_str(*x)).collect());
@@ -1081,9 +1279,13 @@ fn materialize_names(v: MbValue) -> Option<Vec<String>> {
     if !handle.is_none() && handle.as_int().is_some() {
         let mut out = Vec::new();
         loop {
-            if super::super::iter::mb_has_next(handle).as_bool() != Some(true) { break; }
+            if super::super::iter::mb_has_next(handle).as_bool() != Some(true) {
+                break;
+            }
             let x = super::super::iter::mb_next(handle);
-            if let Some(s) = extract_str(x) { out.push(s); }
+            if let Some(s) = extract_str(x) {
+                out.push(s);
+            }
         }
         return Some(out);
     }
@@ -1091,11 +1293,19 @@ fn materialize_names(v: MbValue) -> Option<Vec<String>> {
 }
 
 fn names_to_list(names: &[String]) -> MbValue {
-    MbValue::from_ptr(MbObject::new_list(names.iter().map(|n| new_str(n.clone())).collect()))
+    MbValue::from_ptr(MbObject::new_list(
+        names.iter().map(|n| new_str(n.clone())).collect(),
+    ))
 }
 
-fn build_dictreader(f: MbValue, fieldnames: MbValue, restkey: MbValue,
-                    restval: MbValue, dialect: MbValue, kw: Option<KwMap>) -> MbValue {
+fn build_dictreader(
+    f: MbValue,
+    fieldnames: MbValue,
+    restkey: MbValue,
+    restval: MbValue,
+    dialect: MbValue,
+    kw: Option<KwMap>,
+) -> MbValue {
     let fmt = match resolve_fmt(dialect, &kw) {
         Some(f) => f,
         None => return MbValue::none(),
@@ -1124,11 +1334,19 @@ fn infer_fieldnames(reader: MbValue) -> Vec<String> {
         super::super::exception::mb_clear_exception();
         return Vec::new();
     }
-    row.as_ptr().map(|p| unsafe {
-        if let ObjData::List(ref lock) = (*p).data {
-            lock.read().unwrap().iter().filter_map(|x| extract_str(*x)).collect()
-        } else { Vec::new() }
-    }).unwrap_or_default()
+    row.as_ptr()
+        .map(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                lock.read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|x| extract_str(*x))
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// Resolve fieldnames (already materialized at construction).
@@ -1140,7 +1358,9 @@ fn dictreader_fieldnames(slf: MbValue) -> Vec<String> {
 
 /// DictReader.__iter__(self) → self.
 pub extern "C" fn dictreader_iter(slf: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(slf); }
+    unsafe {
+        super::super::rc::retain_if_ptr(slf);
+    }
     slf
 }
 
@@ -1156,12 +1376,19 @@ pub extern "C" fn dictreader_next(slf: MbValue) -> MbValue {
         if super::super::exception::current_exception_type().as_deref() == Some("StopIteration") {
             return MbValue::none();
         }
-        row_vals = row.as_ptr().map(|p| unsafe {
-            if let ObjData::List(ref lock) = (*p).data {
-                lock.read().unwrap().to_vec()
-            } else { Vec::new() }
-        }).unwrap_or_default();
-        if !row_vals.is_empty() { break; }
+        row_vals = row
+            .as_ptr()
+            .map(|p| unsafe {
+                if let ObjData::List(ref lock) = (*p).data {
+                    lock.read().unwrap().to_vec()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
+        if !row_vals.is_empty() {
+            break;
+        }
     }
 
     // line_num mirrors the reader's.
@@ -1177,7 +1404,9 @@ pub extern "C" fn dictreader_next(slf: MbValue) -> MbValue {
     let dict = MbValue::from_ptr(MbObject::new_dict());
     for (i, name) in names.iter().enumerate() {
         let val = row_vals.get(i).copied().unwrap_or_else(|| {
-            unsafe { super::super::rc::retain_if_ptr(restval); }
+            unsafe {
+                super::super::rc::retain_if_ptr(restval);
+            }
             restval
         });
         super::super::dict_ops::mb_dict_setitem(dict, new_str(name.clone()), val);
@@ -1186,7 +1415,10 @@ pub extern "C" fn dictreader_next(slf: MbValue) -> MbValue {
     if row_vals.len() > names.len() {
         let extras: Vec<MbValue> = row_vals[names.len()..].to_vec();
         super::super::dict_ops::mb_dict_setitem(
-            dict, restkey, MbValue::from_ptr(MbObject::new_list(extras)));
+            dict,
+            restkey,
+            MbValue::from_ptr(MbObject::new_list(extras)),
+        );
     }
     dict
 }
@@ -1195,19 +1427,35 @@ pub extern "C" fn dictreader_next(slf: MbValue) -> MbValue {
 // DictWriter
 // ──────────────────────────────────────────────────────────────────────
 
-fn build_dictwriter(f: MbValue, fieldnames: MbValue, restval: MbValue,
-                    extrasaction: MbValue, dialect: MbValue, kw: Option<KwMap>) -> MbValue {
+fn build_dictwriter(
+    f: MbValue,
+    fieldnames: MbValue,
+    restval: MbValue,
+    extrasaction: MbValue,
+    dialect: MbValue,
+    kw: Option<KwMap>,
+) -> MbValue {
     // fieldnames is required.
     let names = match materialize_names(fieldnames) {
         Some(n) => n,
-        None => return raise_type_error(
-            "__init__() missing 1 required positional argument: 'fieldnames'"),
+        None => {
+            return raise_type_error(
+                "__init__() missing 1 required positional argument: 'fieldnames'",
+            )
+        }
     };
-    let ea = if extrasaction.is_none() { "raise".to_string() } else { extract_str(extrasaction).unwrap_or_else(|| "raise".into()) };
+    let ea = if extrasaction.is_none() {
+        "raise".to_string()
+    } else {
+        extract_str(extrasaction).unwrap_or_else(|| "raise".into())
+    };
     // CPython validates case-insensitively (extrasaction.lower()).
     let ea_l = ea.to_ascii_lowercase();
     if ea_l != "raise" && ea_l != "ignore" {
-        return raise("ValueError", format!("extrasaction ({ea}) must be 'raise' or 'ignore'"));
+        return raise(
+            "ValueError",
+            format!("extrasaction ({ea}) must be 'raise' or 'ignore'"),
+        );
     }
     let fmt = match resolve_fmt(dialect, &kw) {
         Some(f) => f,
@@ -1218,7 +1466,14 @@ fn build_dictwriter(f: MbValue, fieldnames: MbValue, restval: MbValue,
     let mut fields = FxHashMap::default();
     fields.insert("_writer".into(), writer);
     fields.insert("fieldnames".into(), names_to_list(&names));
-    fields.insert("restval".into(), if restval.is_none() { new_str(String::new()) } else { restval });
+    fields.insert(
+        "restval".into(),
+        if restval.is_none() {
+            new_str(String::new())
+        } else {
+            restval
+        },
+    );
     fields.insert("extrasaction".into(), new_str(ea));
     make_instance("csv.DictWriter", fields)
 }
@@ -1233,7 +1488,9 @@ fn dictwriter_names(slf: MbValue) -> Vec<String> {
 pub extern "C" fn dictwriter_writeheader(slf: MbValue) -> MbValue {
     let names = dictwriter_names(slf);
     let writer = instance_field(slf, "_writer").unwrap_or_else(MbValue::none);
-    let row = MbValue::from_ptr(MbObject::new_list(names.iter().map(|n| new_str(n.clone())).collect()));
+    let row = MbValue::from_ptr(MbObject::new_list(
+        names.iter().map(|n| new_str(n.clone())).collect(),
+    ));
     writer_writerow(writer, row)
 }
 
@@ -1241,26 +1498,39 @@ pub extern "C" fn dictwriter_writeheader(slf: MbValue) -> MbValue {
 fn dict_to_row(slf: MbValue, rowdict: MbValue) -> Option<Vec<MbValue>> {
     let names = dictwriter_names(slf);
     let restval = instance_field(slf, "restval").unwrap_or_else(|| new_str(String::new()));
-    let extrasaction = instance_field(slf, "extrasaction").and_then(extract_str).unwrap_or_else(|| "raise".into());
+    let extrasaction = instance_field(slf, "extrasaction")
+        .and_then(extract_str)
+        .unwrap_or_else(|| "raise".into());
 
     if extrasaction.eq_ignore_ascii_case("raise") {
         // Collect ALL dict keys (any type) and report those not in fieldnames,
         // preserving insertion order and Python repr (str → 'x', int → 1).
-        let extras: Vec<String> = rowdict.as_ptr().map(|p| unsafe {
-            if let ObjData::Dict(ref lock) = (*p).data {
-                lock.read().unwrap().keys().filter_map(|k| {
-                    match k {
-                        super::super::dict_ops::DictKey::Str(s)
-                            if !names.contains(s) => Some(format!("'{s}'")),
-                        super::super::dict_ops::DictKey::Int(i) => Some(format!("{i}")),
-                        _ => None,
-                    }
-                }).collect()
-            } else { Vec::new() }
-        }).unwrap_or_default();
+        let extras: Vec<String> = rowdict
+            .as_ptr()
+            .map(|p| unsafe {
+                if let ObjData::Dict(ref lock) = (*p).data {
+                    lock.read()
+                        .unwrap()
+                        .keys()
+                        .filter_map(|k| match k {
+                            super::super::dict_ops::DictKey::Str(s) if !names.contains(s) => {
+                                Some(format!("'{s}'"))
+                            }
+                            super::super::dict_ops::DictKey::Int(i) => Some(format!("{i}")),
+                            _ => None,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
         if !extras.is_empty() {
             let joined = extras.join(", ");
-            raise("ValueError", format!("dict contains fields not in fieldnames: {joined}"));
+            raise(
+                "ValueError",
+                format!("dict contains fields not in fieldnames: {joined}"),
+            );
             return None;
         }
     }
@@ -1269,13 +1539,20 @@ fn dict_to_row(slf: MbValue, rowdict: MbValue) -> Option<Vec<MbValue>> {
     for name in &names {
         let v = rowdict.as_ptr().and_then(|p| unsafe {
             if let ObjData::Dict(ref lock) = (*p).data {
-                lock.read().unwrap().get(&super::super::dict_ops::DictKey::Str(name.clone())).copied()
-            } else { None }
+                lock.read()
+                    .unwrap()
+                    .get(&super::super::dict_ops::DictKey::Str(name.clone()))
+                    .copied()
+            } else {
+                None
+            }
         });
         match v {
             Some(val) => row.push(val),
             None => {
-                unsafe { super::super::rc::retain_if_ptr(restval); }
+                unsafe {
+                    super::super::rc::retain_if_ptr(restval);
+                }
                 row.push(restval);
             }
         }
@@ -1323,24 +1600,35 @@ fn build_sniffer() -> MbValue {
 /// `delimiters=`.
 pub extern "C" fn sniffer_sniff(slf: MbValue, args_list: MbValue) -> MbValue {
     let _ = slf;
-    let items: Vec<MbValue> = args_list.as_ptr().map(|p| unsafe {
-        match &(*p).data {
-            ObjData::List(lock) => lock.read().unwrap().to_vec(),
-            ObjData::Tuple(t) => t.clone(),
-            _ => vec![args_list],
-        }
-    }).unwrap_or_else(|| vec![args_list]);
+    let items: Vec<MbValue> = args_list
+        .as_ptr()
+        .map(|p| unsafe {
+            match &(*p).data {
+                ObjData::List(lock) => lock.read().unwrap().to_vec(),
+                ObjData::Tuple(t) => t.clone(),
+                _ => vec![args_list],
+            }
+        })
+        .unwrap_or_else(|| vec![args_list]);
 
     let kw = trailing_kwargs(&items);
-    let positional_end = if kw.is_some() { items.len().saturating_sub(1) } else { items.len() };
+    let positional_end = if kw.is_some() {
+        items.len().saturating_sub(1)
+    } else {
+        items.len()
+    };
     let sample = items.first().copied().unwrap_or_else(MbValue::none);
     let mut delim_set: Option<Vec<char>> = None;
     if positional_end >= 2 {
-        if let Some(s) = extract_str(items[1]) { delim_set = Some(s.chars().collect()); }
+        if let Some(s) = extract_str(items[1]) {
+            delim_set = Some(s.chars().collect());
+        }
     }
     if let Some(ref m) = kw {
         if let Some(v) = kwarg_get(m, "delimiters") {
-            if let Some(s) = extract_str(v) { delim_set = Some(s.chars().collect()); }
+            if let Some(s) = extract_str(v) {
+                delim_set = Some(s.chars().collect());
+            }
         }
     }
     let text = extract_str(sample).unwrap_or_default();
@@ -1352,7 +1640,10 @@ pub extern "C" fn sniffer_sniff(slf: MbValue, args_list: MbValue) -> MbValue {
     fields.insert("quotechar".into(), new_str(quotechar.to_string()));
     fields.insert("escapechar".into(), MbValue::none());
     fields.insert("doublequote".into(), MbValue::from_bool(doublequote));
-    fields.insert("skipinitialspace".into(), MbValue::from_bool(skipinitialspace));
+    fields.insert(
+        "skipinitialspace".into(),
+        MbValue::from_bool(skipinitialspace),
+    );
     fields.insert("lineterminator".into(), new_str("\r\n"));
     fields.insert("quoting".into(), MbValue::from_int(QUOTE_MINIMAL));
     fields.insert("strict".into(), MbValue::from_bool(false));
@@ -1372,9 +1663,7 @@ fn sniff_full(sample: &str, restrict: Option<&[char]>) -> (char, char, bool, boo
 /// CPython-style quote+delimiter guess. Returns
 /// (delimiter, quotechar, doublequote, skipinitialspace) when a quotechar
 /// is found, else None.
-fn sniff_quoted_full(sample: &str, restrict: Option<&[char]>)
-    -> Option<(char, char, bool, bool)>
-{
+fn sniff_quoted_full(sample: &str, restrict: Option<&[char]>) -> Option<(char, char, bool, bool)> {
     let chars: Vec<char> = sample.chars().collect();
     let n = chars.len();
     for &q in &['"', '\''] {
@@ -1384,7 +1673,9 @@ fn sniff_quoted_full(sample: &str, restrict: Option<&[char]>)
         while i < n {
             if chars[i] == q {
                 let mut j = i + 1;
-                while j < n && chars[j] != q { j += 1; }
+                while j < n && chars[j] != q {
+                    j += 1;
+                }
                 if j < n {
                     regions.push((i, j));
                     i = j + 1;
@@ -1393,7 +1684,9 @@ fn sniff_quoted_full(sample: &str, restrict: Option<&[char]>)
             }
             i += 1;
         }
-        if regions.is_empty() { continue; }
+        if regions.is_empty() {
+            continue;
+        }
 
         // Skip regions that look like stray apostrophes inside a word: content
         // spans a newline AND is bounded by alnum on both sides (e.g. the span
@@ -1404,9 +1697,14 @@ fn sniff_quoted_full(sample: &str, restrict: Option<&[char]>)
             let rhs_alnum = close + 1 >= n || chars[close + 1].is_alphanumeric();
             !(inner_newline && lhs_alnum && rhs_alnum)
         };
-        let usable: Vec<(usize, usize)> = regions.iter().copied()
-            .filter(|&(o, c)| good_region(o, c)).collect();
-        if usable.is_empty() { continue; }
+        let usable: Vec<(usize, usize)> = regions
+            .iter()
+            .copied()
+            .filter(|&(o, c)| good_region(o, c))
+            .collect();
+        if usable.is_empty() {
+            continue;
+        }
 
         // Tally the char adjacent to each usable quoted region (before open or
         // after close) as the delimiter vote.
@@ -1415,18 +1713,25 @@ fn sniff_quoted_full(sample: &str, restrict: Option<&[char]>)
         for &(open, close) in &usable {
             if open > 0 {
                 let before = chars[open - 1];
-                if is_delim_candidate(before, q) { *delim_votes.entry(before).or_insert(0) += 1; }
+                if is_delim_candidate(before, q) {
+                    *delim_votes.entry(before).or_insert(0) += 1;
+                }
             }
             if close + 1 < n {
                 let after = chars[close + 1];
-                if after == ' ' { space_after = true; }
-                if is_delim_candidate(after, q) { *delim_votes.entry(after).or_insert(0) += 1; }
+                if after == ' ' {
+                    space_after = true;
+                }
+                if is_delim_candidate(after, q) {
+                    *delim_votes.entry(after).or_insert(0) += 1;
+                }
             }
         }
         let regions = usable;
 
         // Pick the best delimiter, honoring the restrict set.
-        let best_vote = delim_votes.iter()
+        let best_vote = delim_votes
+            .iter()
             .filter(|(c, _)| restrict.map(|r| r.contains(c)).unwrap_or(true))
             .max_by_key(|(_, &v)| v)
             .map(|(&c, v)| (c, *v));
@@ -1463,9 +1768,12 @@ fn sniff_dialect(sample: &str, restrict: Option<&[char]>) -> (char, char, bool) 
     // First try the quote+delimiter regex approach for quoted samples.
     if let Some((d, q)) = sniff_quoted(sample) {
         if restrict.map(|r| r.contains(&d)).unwrap_or(true) {
-            let sis = sample.lines().next()
+            let sis = sample
+                .lines()
+                .next()
                 .map(|l| l.contains(&format!("{d} ")) || l.contains(", "))
-                .unwrap_or(false) && d == ',';
+                .unwrap_or(false)
+                && d == ',';
             return (d, q, sis);
         }
     }
@@ -1477,7 +1785,13 @@ fn sniff_dialect(sample: &str, restrict: Option<&[char]>) -> (char, char, bool) 
             // Collect all non-alphanumeric chars seen, ranked by consistency.
             let mut seen: Vec<char> = Vec::new();
             for ch in sample.chars() {
-                if !ch.is_alphanumeric() && ch != '\n' && ch != '\r' && ch != '"' && ch != '\'' && !seen.contains(&ch) {
+                if !ch.is_alphanumeric()
+                    && ch != '\n'
+                    && ch != '\r'
+                    && ch != '"'
+                    && ch != '\''
+                    && !seen.contains(&ch)
+                {
                     seen.push(ch);
                 }
             }
@@ -1490,18 +1804,27 @@ fn sniff_dialect(sample: &str, restrict: Option<&[char]>) -> (char, char, bool) 
     for &cand in candidates.iter() {
         // Count occurrences per line; reward consistency.
         let counts: Vec<usize> = lines.iter().map(|l| l.matches(cand).count()).collect();
-        if counts.iter().all(|&c| c == 0) { continue; }
+        if counts.iter().all(|&c| c == 0) {
+            continue;
+        }
         let first = counts.first().copied().unwrap_or(0);
-        if first == 0 { continue; }
+        if first == 0 {
+            continue;
+        }
         let consistent = counts.iter().all(|&c| c == first);
-        let pref_bonus = preferred.iter().position(|&p| p == cand).map(|i| (preferred.len() - i) as i64).unwrap_or(0);
+        let pref_bonus = preferred
+            .iter()
+            .position(|&p| p == cand)
+            .map(|i| (preferred.len() - i) as i64)
+            .unwrap_or(0);
         let score = (if consistent { 1000 } else { 0 }) + (first as i64) * 10 + pref_bonus;
         if best.map(|(_, s)| score > s).unwrap_or(true) {
             best = Some((cand, score));
         }
     }
     let delimiter = best.map(|(c, _)| c).unwrap_or(',');
-    let skipinitialspace = lines.first()
+    let skipinitialspace = lines
+        .first()
         .map(|l| l.contains(&format!("{delimiter} ")))
         .unwrap_or(false);
     (delimiter, '"', skipinitialspace)
@@ -1521,19 +1844,31 @@ fn sniff_quoted(sample: &str) -> Option<(char, char)> {
                 found_quote = true;
                 // find closing quote
                 let mut j = i + 1;
-                while j < n && bytes[j] != q { j += 1; }
+                while j < n && bytes[j] != q {
+                    j += 1;
+                }
                 if j < n {
                     // char after closing quote
                     if j + 1 < n {
                         let after = bytes[j + 1];
-                        if !after.is_alphanumeric() && after != q && after != '\n' && after != '\r' && after != ' ' {
+                        if !after.is_alphanumeric()
+                            && after != q
+                            && after != '\n'
+                            && after != '\r'
+                            && after != ' '
+                        {
                             *delim_after_quote.entry(after).or_insert(0) += 1;
                         }
                     }
                     // char before opening quote
                     if i > 0 {
                         let before = bytes[i - 1];
-                        if !before.is_alphanumeric() && before != q && before != '\n' && before != '\r' && before != ' ' {
+                        if !before.is_alphanumeric()
+                            && before != q
+                            && before != '\n'
+                            && before != '\r'
+                            && before != ' '
+                        {
                             *delim_after_quote.entry(before).or_insert(0) += 1;
                         }
                     }
@@ -1556,13 +1891,22 @@ fn sniff_quoted(sample: &str) -> Option<(char, char)> {
 /// complex literals such as `5+0j`). complex() strips surrounding whitespace.
 fn parses_as_complex(s: &str) -> bool {
     let t = s.trim();
-    if t.is_empty() { return false; }
-    if t.parse::<f64>().is_ok() { return true; }
+    if t.is_empty() {
+        return false;
+    }
+    if t.parse::<f64>().is_ok() {
+        return true;
+    }
     // Strip an optional surrounding parens pair.
-    let body = t.strip_prefix('(').and_then(|b| b.strip_suffix(')')).unwrap_or(t);
+    let body = t
+        .strip_prefix('(')
+        .and_then(|b| b.strip_suffix(')'))
+        .unwrap_or(t);
     // Trailing 'j'/'J' → imaginary; split a+bj.
     let lower = body.to_ascii_lowercase();
-    if !lower.contains('j') { return false; }
+    if !lower.contains('j') {
+        return false;
+    }
     // Find split point between real and imaginary at a +/- that is not an
     // exponent sign and not the leading sign.
     let bytes: Vec<char> = body.chars().collect();
@@ -1579,9 +1923,13 @@ fn parses_as_complex(s: &str) -> bool {
     };
     // imag must end with j and the rest (minus j) be a float or sign-only.
     let imag_l = imag.to_ascii_lowercase();
-    if !imag_l.ends_with('j') { return false; }
+    if !imag_l.ends_with('j') {
+        return false;
+    }
     let imag_num = &imag[..imag.len() - 1];
-    let imag_ok = imag_num.is_empty() || imag_num == "+" || imag_num == "-"
+    let imag_ok = imag_num.is_empty()
+        || imag_num == "+"
+        || imag_num == "-"
         || imag_num.parse::<f64>().is_ok();
     let real_ok = real.is_empty() || real.parse::<f64>().is_ok();
     imag_ok && real_ok
@@ -1603,13 +1951,21 @@ pub extern "C" fn sniffer_has_header(slf: MbValue, sample: MbValue) -> MbValue {
         ..CsvFmt::default()
     };
     let records: Vec<String> = split_records(&text, fmt.quotechar)
-        .into_iter().filter(|r| !r.is_empty()).collect();
+        .into_iter()
+        .filter(|r| !r.is_empty())
+        .collect();
     if records.is_empty() {
         return MbValue::from_bool(false);
     }
-    let header: Vec<String> = parse_record(&records[0], &fmt).0.into_iter().map(|f| f.text).collect();
+    let header: Vec<String> = parse_record(&records[0], &fmt)
+        .0
+        .into_iter()
+        .map(|f| f.text)
+        .collect();
     let columns = header.len();
-    if columns == 0 { return MbValue::from_bool(false); }
+    if columns == 0 {
+        return MbValue::from_bool(false);
+    }
 
     // Column type: None = unset; Some(None) = complex (numeric); Some(Some(len))
     // = string of that length. A column gets removed once it's inconsistent.
@@ -1618,12 +1974,22 @@ pub extern "C" fn sniffer_has_header(slf: MbValue, sample: MbValue) -> MbValue {
 
     let mut checked = 0;
     for rec in records.iter().skip(1) {
-        if checked > 20 { break; }
+        if checked > 20 {
+            break;
+        }
         checked += 1;
-        let fields: Vec<String> = parse_record(rec, &fmt).0.into_iter().map(|f| f.text).collect();
-        if fields.len() != columns { continue; }
+        let fields: Vec<String> = parse_record(rec, &fmt)
+            .0
+            .into_iter()
+            .map(|f| f.text)
+            .collect();
+        if fields.len() != columns {
+            continue;
+        }
         for c in 0..columns {
-            if removed[c] { continue; }
+            if removed[c] {
+                continue;
+            }
             let this_type: Option<usize> = if parses_as_complex(&fields[c]) {
                 None // complex/numeric
             } else {
@@ -1642,15 +2008,25 @@ pub extern "C" fn sniffer_has_header(slf: MbValue, sample: MbValue) -> MbValue {
 
     let mut has_header: i64 = 0;
     for c in 0..columns {
-        if removed[c] { continue; }
+        if removed[c] {
+            continue;
+        }
         match col_type[c] {
             Some(Some(len)) => {
                 // String column of length `len`.
-                if header[c].chars().count() != len { has_header += 1; } else { has_header -= 1; }
+                if header[c].chars().count() != len {
+                    has_header += 1;
+                } else {
+                    has_header -= 1;
+                }
             }
             Some(None) => {
                 // Numeric (complex) column.
-                if parses_as_complex(&header[c]) { has_header -= 1; } else { has_header += 1; }
+                if parses_as_complex(&header[c]) {
+                    has_header -= 1;
+                } else {
+                    has_header += 1;
+                }
             }
             None => {}
         }
@@ -1665,7 +2041,11 @@ pub extern "C" fn sniffer_has_header(slf: MbValue, sample: MbValue) -> MbValue {
 unsafe extern "C" fn dispatch_reader(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
-    let positional_end = if kw.is_some() { a.len().saturating_sub(1) } else { a.len() };
+    let positional_end = if kw.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
     if positional_end == 0 {
         return raise_type_error("reader() argument 1 must support iteration");
     }
@@ -1673,14 +2053,20 @@ unsafe extern "C" fn dispatch_reader(args_ptr: *const MbValue, nargs: usize) -> 
     if csvfile.is_none() {
         return raise_type_error("argument 1 must be an iterator");
     }
-    let dialect = if positional_end >= 2 { a[1] } else { MbValue::none() };
+    let dialect = if positional_end >= 2 {
+        a[1]
+    } else {
+        MbValue::none()
+    };
     let fmt = match resolve_fmt(dialect, &kw) {
         Some(f) => f,
         None => return MbValue::none(),
     };
     // CPython rejects bytes lines with csv.Error.
     if list_has_bytes(csvfile) {
-        return raise_csv_error("iterator should return strings, not bytes (the file should be opened in text mode)");
+        return raise_csv_error(
+            "iterator should return strings, not bytes (the file should be opened in text mode)",
+        );
     }
     build_reader(csvfile, fmt)
 }
@@ -1691,7 +2077,13 @@ fn list_has_bytes(v: MbValue) -> bool {
         unsafe {
             match &(*ptr).data {
                 ObjData::List(lock) => {
-                    return lock.read().unwrap().iter().next().map(|x| is_bytes(*x)).unwrap_or(false);
+                    return lock
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .next()
+                        .map(|x| is_bytes(*x))
+                        .unwrap_or(false);
                 }
                 ObjData::Tuple(items) => {
                     return items.iter().next().map(|x| is_bytes(*x)).unwrap_or(false);
@@ -1706,7 +2098,11 @@ fn list_has_bytes(v: MbValue) -> bool {
 unsafe extern "C" fn dispatch_writer(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
-    let positional_end = if kw.is_some() { a.len().saturating_sub(1) } else { a.len() };
+    let positional_end = if kw.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
     if positional_end == 0 {
         return raise_type_error("writer() argument 1 must have a \"write\" method");
     }
@@ -1714,7 +2110,11 @@ unsafe extern "C" fn dispatch_writer(args_ptr: *const MbValue, nargs: usize) -> 
     if fileobj.is_none() {
         return raise_type_error("argument 1 must have a \"write\" method");
     }
-    let dialect = if positional_end >= 2 { a[1] } else { MbValue::none() };
+    let dialect = if positional_end >= 2 {
+        a[1]
+    } else {
+        MbValue::none()
+    };
     let fmt = match resolve_fmt(dialect, &kw) {
         Some(f) => f,
         None => return MbValue::none(),
@@ -1725,12 +2125,36 @@ unsafe extern "C" fn dispatch_writer(args_ptr: *const MbValue, nargs: usize) -> 
 unsafe extern "C" fn dispatch_dictreader(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
-    let positional_end = if kw.is_some() { a.len().saturating_sub(1) } else { a.len() };
-    let f = if positional_end >= 1 { a[0] } else { MbValue::none() };
-    let mut fieldnames = if positional_end >= 2 { a[1] } else { MbValue::none() };
-    let mut restkey = if positional_end >= 3 { a[2] } else { MbValue::none() };
-    let mut restval = if positional_end >= 4 { a[3] } else { MbValue::none() };
-    let mut dialect = if positional_end >= 5 { a[4] } else { MbValue::none() };
+    let positional_end = if kw.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
+    let f = if positional_end >= 1 {
+        a[0]
+    } else {
+        MbValue::none()
+    };
+    let mut fieldnames = if positional_end >= 2 {
+        a[1]
+    } else {
+        MbValue::none()
+    };
+    let mut restkey = if positional_end >= 3 {
+        a[2]
+    } else {
+        MbValue::none()
+    };
+    let mut restval = if positional_end >= 4 {
+        a[3]
+    } else {
+        MbValue::none()
+    };
+    let mut dialect = if positional_end >= 5 {
+        a[4]
+    } else {
+        MbValue::none()
+    };
     let mut fmt_kw: KwMap = indexmap::IndexMap::new();
     if let Some(ref m) = kw {
         for (k, v) in m.iter() {
@@ -1740,24 +2164,54 @@ unsafe extern "C" fn dispatch_dictreader(args_ptr: *const MbValue, nargs: usize)
                     "restkey" => restkey = *v,
                     "restval" => restval = *v,
                     "dialect" => dialect = *v,
-                    _ => { fmt_kw.insert(k.clone(), *v); }
+                    _ => {
+                        fmt_kw.insert(k.clone(), *v);
+                    }
                 }
             }
         }
     }
-    let fmt_kw_opt = if fmt_kw.is_empty() { None } else { Some(fmt_kw) };
+    let fmt_kw_opt = if fmt_kw.is_empty() {
+        None
+    } else {
+        Some(fmt_kw)
+    };
     build_dictreader(f, fieldnames, restkey, restval, dialect, fmt_kw_opt)
 }
 
 unsafe extern "C" fn dispatch_dictwriter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
-    let positional_end = if kw.is_some() { a.len().saturating_sub(1) } else { a.len() };
-    let f = if positional_end >= 1 { a[0] } else { MbValue::none() };
-    let mut fieldnames = if positional_end >= 2 { a[1] } else { MbValue::none() };
-    let mut restval = if positional_end >= 3 { a[2] } else { MbValue::none() };
-    let mut extrasaction = if positional_end >= 4 { a[3] } else { MbValue::none() };
-    let mut dialect = if positional_end >= 5 { a[4] } else { MbValue::none() };
+    let positional_end = if kw.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
+    let f = if positional_end >= 1 {
+        a[0]
+    } else {
+        MbValue::none()
+    };
+    let mut fieldnames = if positional_end >= 2 {
+        a[1]
+    } else {
+        MbValue::none()
+    };
+    let mut restval = if positional_end >= 3 {
+        a[2]
+    } else {
+        MbValue::none()
+    };
+    let mut extrasaction = if positional_end >= 4 {
+        a[3]
+    } else {
+        MbValue::none()
+    };
+    let mut dialect = if positional_end >= 5 {
+        a[4]
+    } else {
+        MbValue::none()
+    };
     let mut fmt_kw: KwMap = indexmap::IndexMap::new();
     if let Some(ref m) = kw {
         for (k, v) in m.iter() {
@@ -1767,12 +2221,18 @@ unsafe extern "C" fn dispatch_dictwriter(args_ptr: *const MbValue, nargs: usize)
                     "restval" => restval = *v,
                     "extrasaction" => extrasaction = *v,
                     "dialect" => dialect = *v,
-                    _ => { fmt_kw.insert(k.clone(), *v); }
+                    _ => {
+                        fmt_kw.insert(k.clone(), *v);
+                    }
                 }
             }
         }
     }
-    let fmt_kw_opt = if fmt_kw.is_empty() { None } else { Some(fmt_kw) };
+    let fmt_kw_opt = if fmt_kw.is_empty() {
+        None
+    } else {
+        Some(fmt_kw)
+    };
     build_dictwriter(f, fieldnames, restval, extrasaction, dialect, fmt_kw_opt)
 }
 
@@ -1783,7 +2243,11 @@ unsafe extern "C" fn dispatch_sniffer_new(_args_ptr: *const MbValue, _nargs: usi
 unsafe extern "C" fn dispatch_register_dialect(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
-    let positional_end = if kw.is_some() { a.len().saturating_sub(1) } else { a.len() };
+    let positional_end = if kw.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
     if positional_end == 0 {
         return raise_type_error("register_dialect() takes at least 1 argument (0 given)");
     }
@@ -1794,11 +2258,18 @@ unsafe extern "C" fn dispatch_register_dialect(args_ptr: *const MbValue, nargs: 
     if positional_end > 2 {
         return raise_type_error("register_dialect() takes at most 2 positional arguments");
     }
-    let dialect = if positional_end >= 2 { a[1] } else { MbValue::none() };
+    let dialect = if positional_end >= 2 {
+        a[1]
+    } else {
+        MbValue::none()
+    };
     mb_csv_register_dialect_impl(name, dialect, &kw)
 }
 
-unsafe extern "C" fn dispatch_unregister_dialect(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_unregister_dialect(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     if a.is_empty() {
         return raise_type_error("unregister_dialect() takes exactly 1 argument (0 given)");
@@ -1823,8 +2294,16 @@ unsafe extern "C" fn dispatch_get_dialect(args_ptr: *const MbValue, nargs: usize
     let name = a[0];
     let n = match extract_str(name) {
         Some(s) => s,
-        None => return raise_csv_error(&format!("unknown dialect: {}",
-            if name.is_none() { "None".to_string() } else { String::new() })),
+        None => {
+            return raise_csv_error(&format!(
+                "unknown dialect: {}",
+                if name.is_none() {
+                    "None".to_string()
+                } else {
+                    String::new()
+                }
+            ))
+        }
     };
     match DIALECTS.with(|d| d.borrow().get(&n).copied()) {
         Some(v) => v,
@@ -1837,16 +2316,19 @@ unsafe extern "C" fn dispatch_list_dialects(args_ptr: *const MbValue, nargs: usi
     if !a.is_empty() && trailing_kwargs(a).is_none() {
         return raise_type_error("list_dialects() takes no arguments");
     }
-    let names: Vec<MbValue> = DIALECTS.with(|d| {
-        d.borrow().keys().map(|k| new_str(k.clone())).collect()
-    });
+    let names: Vec<MbValue> =
+        DIALECTS.with(|d| d.borrow().keys().map(|k| new_str(k.clone())).collect());
     MbValue::from_ptr(MbObject::new_list(names))
 }
 
 unsafe extern "C" fn dispatch_field_size_limit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let kw = trailing_kwargs(a);
-    let positional_end = if kw.is_some() { a.len().saturating_sub(1) } else { a.len() };
+    let positional_end = if kw.is_some() {
+        a.len().saturating_sub(1)
+    } else {
+        a.len()
+    };
     if positional_end > 1 {
         return raise_type_error("field_size_limit() takes at most 1 argument");
     }
@@ -1875,7 +2357,9 @@ fn mb_csv_register_dialect_impl(name: MbValue, dialect: MbValue, kw: &Option<KwM
         None => return MbValue::none(),
     };
     let val = fmt_to_dialect(&fmt);
-    DIALECTS.with(|d| { d.borrow_mut().insert(n, val); });
+    DIALECTS.with(|d| {
+        d.borrow_mut().insert(n, val);
+    });
     MbValue::none()
 }
 
@@ -1903,7 +2387,9 @@ pub extern "C" fn dialect_init(slf: MbValue) -> MbValue {
             Some(val) => {
                 if val.is_none() {
                     if required {
-                        raise_csv_error(&format!("\"{name}\" must be string{or_none}, not NoneType"));
+                        raise_csv_error(&format!(
+                            "\"{name}\" must be string{or_none}, not NoneType"
+                        ));
                         return false;
                     }
                     return true;
@@ -1913,7 +2399,10 @@ pub extern "C" fn dialect_init(slf: MbValue) -> MbValue {
                     return false;
                 }
                 if !is_str(val) {
-                    raise_csv_error(&format!("\"{name}\" must be string{or_none}, not {}", type_name_of(val)));
+                    raise_csv_error(&format!(
+                        "\"{name}\" must be string{or_none}, not {}",
+                        type_name_of(val)
+                    ));
                     return false;
                 }
                 let s = extract_str(val).unwrap_or_default();
@@ -1926,7 +2415,9 @@ pub extern "C" fn dialect_init(slf: MbValue) -> MbValue {
         }
     };
 
-    if !check_1char("delimiter", true) { return MbValue::none(); }
+    if !check_1char("delimiter", true) {
+        return MbValue::none();
+    }
     // quotechar may be None only when quoting is QUOTE_NONE. When `quoting`
     // resolves to a concrete int that isn't QUOTE_NONE and quotechar is None,
     // the dialect is incomplete. (If `quoting` can't be resolved — a known
@@ -1943,7 +2434,9 @@ pub extern "C" fn dialect_init(slf: MbValue) -> MbValue {
     } else if !check_1char("quotechar", false) {
         return MbValue::none();
     }
-    if !check_1char("escapechar", false) { return MbValue::none(); }
+    if !check_1char("escapechar", false) {
+        return MbValue::none();
+    }
 
     // lineterminator must be a string.
     if let Some(v) = getattr_opt(slf, "lineterminator") {
@@ -1969,15 +2462,25 @@ pub extern "C" fn dialect_init(slf: MbValue) -> MbValue {
     MbValue::none()
 }
 
-fn build_dialect_instance(name: &str, delimiter: &str, quotechar: &str, quoting: i64,
-                          doublequote: bool, skipinitialspace: bool,
-                          lineterminator: &str, strict: bool) -> MbValue {
+fn build_dialect_instance(
+    name: &str,
+    delimiter: &str,
+    quotechar: &str,
+    quoting: i64,
+    doublequote: bool,
+    skipinitialspace: bool,
+    lineterminator: &str,
+    strict: bool,
+) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("delimiter".into(), new_str(delimiter));
     fields.insert("quotechar".into(), new_str(quotechar));
     fields.insert("escapechar".into(), MbValue::none());
     fields.insert("doublequote".into(), MbValue::from_bool(doublequote));
-    fields.insert("skipinitialspace".into(), MbValue::from_bool(skipinitialspace));
+    fields.insert(
+        "skipinitialspace".into(),
+        MbValue::from_bool(skipinitialspace),
+    );
     fields.insert("lineterminator".into(), new_str(lineterminator));
     fields.insert("quoting".into(), MbValue::from_int(quoting));
     fields.insert("strict".into(), MbValue::from_bool(strict));
@@ -1986,16 +2489,30 @@ fn build_dialect_instance(name: &str, delimiter: &str, quotechar: &str, quoting:
 
 /// Register a dialect as a real class with class attributes, so user
 /// subclasses inherit its fields. Returns the class-name string value.
-fn register_dialect_class(name: &str, base: &str, delimiter: &str, quotechar: &str,
-                          quoting: i64, doublequote: bool, skipinitialspace: bool,
-                          lineterminator: &str, strict: bool) {
-    let bases = if base.is_empty() { vec![] } else { vec![base.to_string()] };
+fn register_dialect_class(
+    name: &str,
+    base: &str,
+    delimiter: &str,
+    quotechar: &str,
+    quoting: i64,
+    doublequote: bool,
+    skipinitialspace: bool,
+    lineterminator: &str,
+    strict: bool,
+) {
+    let bases = if base.is_empty() {
+        vec![]
+    } else {
+        vec![base.to_string()]
+    };
     // Attach a validating __init__ to the root Dialect class; subclasses
     // inherit it so `class X(csv.Dialect)` validates on instantiation.
     let mut methods: HashMap<String, MbValue> = HashMap::new();
     if base.is_empty() {
-        methods.insert("__init__".to_string(),
-            MbValue::from_func(dialect_init as *const () as usize));
+        methods.insert(
+            "__init__".to_string(),
+            MbValue::from_func(dialect_init as *const () as usize),
+        );
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(dialect_init as *const () as u64);
         });
@@ -2007,8 +2524,22 @@ fn register_dialect_class(name: &str, base: &str, delimiter: &str, quotechar: &s
     // The root Dialect leaves delimiter/quotechar unset (None) so a subclass
     // that supplies only some attributes fails validation (CPython parity);
     // concrete dialects (excel, …) override with real values.
-    set("delimiter", if delimiter.is_empty() { MbValue::none() } else { new_str(delimiter) });
-    set("quotechar", if quotechar.is_empty() { MbValue::none() } else { new_str(quotechar) });
+    set(
+        "delimiter",
+        if delimiter.is_empty() {
+            MbValue::none()
+        } else {
+            new_str(delimiter)
+        },
+    );
+    set(
+        "quotechar",
+        if quotechar.is_empty() {
+            MbValue::none()
+        } else {
+            new_str(quotechar)
+        },
+    );
     set("escapechar", MbValue::none());
     set("doublequote", MbValue::from_bool(doublequote));
     set("skipinitialspace", MbValue::from_bool(skipinitialspace));
@@ -2040,11 +2571,25 @@ pub fn mb_csv_writer(fileobj: MbValue, dialect: MbValue) -> MbValue {
 }
 
 pub fn mb_csv_dictreader(f: MbValue, fieldnames: MbValue) -> MbValue {
-    build_dictreader(f, fieldnames, MbValue::none(), MbValue::none(), MbValue::none(), None)
+    build_dictreader(
+        f,
+        fieldnames,
+        MbValue::none(),
+        MbValue::none(),
+        MbValue::none(),
+        None,
+    )
 }
 
 pub fn mb_csv_dictwriter(f: MbValue, fieldnames: MbValue) -> MbValue {
-    build_dictwriter(f, fieldnames, MbValue::none(), MbValue::none(), MbValue::none(), None)
+    build_dictwriter(
+        f,
+        fieldnames,
+        MbValue::none(),
+        MbValue::none(),
+        MbValue::none(),
+        None,
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -2056,7 +2601,9 @@ pub fn register() {
 
     fn add_dispatch(attrs: &mut HashMap<String, MbValue>, name: &str, addr: usize) {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
-        NATIVE_FUNC_ADDRS.with(|s| { s.borrow_mut().insert(addr as u64); });
+        NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
     }
 
     // Register the reader / writer / Dict* / Sniffer classes carrying their
@@ -2070,27 +2617,42 @@ pub fn register() {
         super::super::class::mb_class_register(name, vec![], map);
     }
 
-    reg_class("_csv.reader", &[
-        ("__iter__", reader_iter as *const ()),
-        ("__next__", reader_next as *const ()),
-    ]);
-    reg_class("_csv.writer", &[
-        ("writerow", writer_writerow as *const ()),
-        ("writerows", writer_writerows as *const ()),
-    ]);
-    reg_class("csv.DictReader", &[
-        ("__iter__", dictreader_iter as *const ()),
-        ("__next__", dictreader_next as *const ()),
-    ]);
-    reg_class("csv.DictWriter", &[
-        ("writeheader", dictwriter_writeheader as *const ()),
-        ("writerow", dictwriter_writerow as *const ()),
-        ("writerows", dictwriter_writerows as *const ()),
-    ]);
-    reg_class("csv.Sniffer", &[
-        ("has_header", sniffer_has_header as *const ()),
-        ("sniff", sniffer_sniff as *const ()),
-    ]);
+    reg_class(
+        "_csv.reader",
+        &[
+            ("__iter__", reader_iter as *const ()),
+            ("__next__", reader_next as *const ()),
+        ],
+    );
+    reg_class(
+        "_csv.writer",
+        &[
+            ("writerow", writer_writerow as *const ()),
+            ("writerows", writer_writerows as *const ()),
+        ],
+    );
+    reg_class(
+        "csv.DictReader",
+        &[
+            ("__iter__", dictreader_iter as *const ()),
+            ("__next__", dictreader_next as *const ()),
+        ],
+    );
+    reg_class(
+        "csv.DictWriter",
+        &[
+            ("writeheader", dictwriter_writeheader as *const ()),
+            ("writerow", dictwriter_writerow as *const ()),
+            ("writerows", dictwriter_writerows as *const ()),
+        ],
+    );
+    reg_class(
+        "csv.Sniffer",
+        &[
+            ("has_header", sniffer_has_header as *const ()),
+            ("sniff", sniffer_sniff as *const ()),
+        ],
+    );
     // sniff(self, *args): variadic so the generic instance dispatch packs
     // positional args (+ trailing kwargs dict) into a single list arg.
     super::super::module::register_variadic_func(sniffer_sniff as *const () as u64);
@@ -2103,11 +2665,23 @@ pub fn register() {
         ("DictReader", dispatch_dictreader as *const () as usize),
         ("DictWriter", dispatch_dictwriter as *const () as usize),
         ("Sniffer", dispatch_sniffer_new as *const () as usize),
-        ("register_dialect", dispatch_register_dialect as *const () as usize),
-        ("unregister_dialect", dispatch_unregister_dialect as *const () as usize),
+        (
+            "register_dialect",
+            dispatch_register_dialect as *const () as usize,
+        ),
+        (
+            "unregister_dialect",
+            dispatch_unregister_dialect as *const () as usize,
+        ),
         ("get_dialect", dispatch_get_dialect as *const () as usize),
-        ("list_dialects", dispatch_list_dialects as *const () as usize),
-        ("field_size_limit", dispatch_field_size_limit as *const () as usize),
+        (
+            "list_dialects",
+            dispatch_list_dialects as *const () as usize,
+        ),
+        (
+            "field_size_limit",
+            dispatch_field_size_limit as *const () as usize,
+        ),
     ];
     for (n, a) in dispatchers {
         add_dispatch(&mut attrs, n, *a);
@@ -2116,30 +2690,98 @@ pub fn register() {
     // Bind constructor types so isinstance() / type() see them.
     NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
-        map.insert(dispatch_sniffer_new as *const () as u64, "csv.Sniffer".into());
+        map.insert(
+            dispatch_sniffer_new as *const () as u64,
+            "csv.Sniffer".into(),
+        );
     });
 
     // Quoting constants.
     attrs.insert("QUOTE_MINIMAL".into(), MbValue::from_int(QUOTE_MINIMAL));
     attrs.insert("QUOTE_ALL".into(), MbValue::from_int(QUOTE_ALL));
-    attrs.insert("QUOTE_NONNUMERIC".into(), MbValue::from_int(QUOTE_NONNUMERIC));
+    attrs.insert(
+        "QUOTE_NONNUMERIC".into(),
+        MbValue::from_int(QUOTE_NONNUMERIC),
+    );
     attrs.insert("QUOTE_NONE".into(), MbValue::from_int(QUOTE_NONE));
     attrs.insert("QUOTE_STRINGS".into(), MbValue::from_int(QUOTE_STRINGS));
     attrs.insert("QUOTE_NOTNULL".into(), MbValue::from_int(QUOTE_NOTNULL));
 
     // Dialect classes (subclassable; subclasses inherit fields via MRO).
     // Root Dialect: delimiter/quotechar unset so incomplete subclasses fail.
-    register_dialect_class("Dialect", "", "", "", QUOTE_MINIMAL, true, false, "\r\n", false);
-    register_dialect_class("excel", "Dialect", ",", "\"", QUOTE_MINIMAL, true, false, "\r\n", false);
-    register_dialect_class("excel-tab", "excel", "\t", "\"", QUOTE_MINIMAL, true, false, "\r\n", false);
-    register_dialect_class("unix_dialect", "Dialect", ",", "\"", QUOTE_ALL, true, false, "\n", false);
+    register_dialect_class(
+        "Dialect",
+        "",
+        "",
+        "",
+        QUOTE_MINIMAL,
+        true,
+        false,
+        "\r\n",
+        false,
+    );
+    register_dialect_class(
+        "excel",
+        "Dialect",
+        ",",
+        "\"",
+        QUOTE_MINIMAL,
+        true,
+        false,
+        "\r\n",
+        false,
+    );
+    register_dialect_class(
+        "excel-tab",
+        "excel",
+        "\t",
+        "\"",
+        QUOTE_MINIMAL,
+        true,
+        false,
+        "\r\n",
+        false,
+    );
+    register_dialect_class(
+        "unix_dialect",
+        "Dialect",
+        ",",
+        "\"",
+        QUOTE_ALL,
+        true,
+        false,
+        "\n",
+        false,
+    );
 
     // csv.Error as a subclassable Exception.
-    super::super::class::mb_class_register("csv.Error", vec!["Exception".to_string()], HashMap::new());
+    super::super::class::mb_class_register(
+        "csv.Error",
+        vec!["Exception".to_string()],
+        HashMap::new(),
+    );
 
     // Built-in dialect instances in the registry.
-    let excel = build_dialect_instance("excel", ",", "\"", QUOTE_MINIMAL, true, false, "\r\n", false);
-    let excel_tab = build_dialect_instance("excel-tab", "\t", "\"", QUOTE_MINIMAL, true, false, "\r\n", false);
+    let excel = build_dialect_instance(
+        "excel",
+        ",",
+        "\"",
+        QUOTE_MINIMAL,
+        true,
+        false,
+        "\r\n",
+        false,
+    );
+    let excel_tab = build_dialect_instance(
+        "excel-tab",
+        "\t",
+        "\"",
+        QUOTE_MINIMAL,
+        true,
+        false,
+        "\r\n",
+        false,
+    );
     let unix = build_dialect_instance("unix", ",", "\"", QUOTE_ALL, true, false, "\n", false);
     DIALECTS.with(|d| {
         let mut map = d.borrow_mut();
@@ -2174,21 +2816,30 @@ mod tests {
     fn test_parse_simple() {
         let fmt = CsvFmt::default();
         let f = parse_record("a,b,c", &fmt).0;
-        assert_eq!(f.iter().map(|x| x.text.clone()).collect::<Vec<_>>(), vec!["a", "b", "c"]);
+        assert_eq!(
+            f.iter().map(|x| x.text.clone()).collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
     }
 
     #[test]
     fn test_parse_quoted_comma() {
         let fmt = CsvFmt::default();
         let f = parse_record("\"a,b\",c", &fmt).0;
-        assert_eq!(f.iter().map(|x| x.text.clone()).collect::<Vec<_>>(), vec!["a,b", "c"]);
+        assert_eq!(
+            f.iter().map(|x| x.text.clone()).collect::<Vec<_>>(),
+            vec!["a,b", "c"]
+        );
     }
 
     #[test]
     fn test_parse_doubled_quote() {
         let fmt = CsvFmt::default();
         let f = parse_record("\"a\"\"b\",c", &fmt).0;
-        assert_eq!(f.iter().map(|x| x.text.clone()).collect::<Vec<_>>(), vec!["a\"b", "c"]);
+        assert_eq!(
+            f.iter().map(|x| x.text.clone()).collect::<Vec<_>>(),
+            vec!["a\"b", "c"]
+        );
     }
 
     #[test]

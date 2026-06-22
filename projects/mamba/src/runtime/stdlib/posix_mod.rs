@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// posix module for Mamba (POSIX system call interface).
 ///
 /// In CPython, `posix` is the C module that provides raw POSIX syscall wrappers.
@@ -7,10 +9,7 @@
 ///
 /// Re-exports functions from os_mod where possible and adds POSIX-specific
 /// functions: uname(), environ, getuid(), getgid().
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Dispatch wrappers (delegate to os_mod implementations) ──
 
@@ -134,15 +133,20 @@ pub fn mb_posix_uname() -> MbValue {
         let mut buf: libc::utsname = std::mem::zeroed();
         if libc::uname(&mut buf) == 0 {
             let sysname = CStr::from_ptr(buf.sysname.as_ptr())
-                .to_string_lossy().to_string();
+                .to_string_lossy()
+                .to_string();
             let nodename = CStr::from_ptr(buf.nodename.as_ptr())
-                .to_string_lossy().to_string();
+                .to_string_lossy()
+                .to_string();
             let release = CStr::from_ptr(buf.release.as_ptr())
-                .to_string_lossy().to_string();
+                .to_string_lossy()
+                .to_string();
             let version = CStr::from_ptr(buf.version.as_ptr())
-                .to_string_lossy().to_string();
+                .to_string_lossy()
+                .to_string();
             let machine = CStr::from_ptr(buf.machine.as_ptr())
-                .to_string_lossy().to_string();
+                .to_string_lossy()
+                .to_string();
             MbValue::from_ptr(MbObject::new_tuple(vec![
                 MbValue::from_ptr(MbObject::new_str(sysname)),
                 MbValue::from_ptr(MbObject::new_str(nodename)),
@@ -197,10 +201,7 @@ fn build_environ_dict() -> MbValue {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
             for (key, val) in std::env::vars() {
-                map.insert(
-                    key.into(),
-                    MbValue::from_ptr(MbObject::new_str(val)),
-                );
+                map.insert(key.into(), MbValue::from_ptr(MbObject::new_str(val)));
             }
         }
     }
@@ -213,53 +214,87 @@ pub fn register() {
 
     // R7: posix.name constant
     let name = if cfg!(unix) { "posix" } else { "nt" };
-    attrs.insert("name".into(),
-        MbValue::from_ptr(MbObject::new_str(name.to_string())));
+    attrs.insert(
+        "name".into(),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
 
     // R3: posix.environ — live dict populated from std::env::vars()
     attrs.insert("environ".into(), build_environ_dict());
 
     // R2: Re-export os_mod functions as dispatch wrappers
-    attrs.insert("getpid".into(),
-        MbValue::from_func(dispatch_getpid as *const () as usize));
-    attrs.insert("getcwd".into(),
-        MbValue::from_func(dispatch_getcwd as *const () as usize));
-    attrs.insert("getenv".into(),
-        MbValue::from_func(dispatch_getenv as *const () as usize));
-    attrs.insert("listdir".into(),
-        MbValue::from_func(dispatch_listdir as *const () as usize));
-    attrs.insert("mkdir".into(),
-        MbValue::from_func(dispatch_mkdir as *const () as usize));
-    attrs.insert("remove".into(),
-        MbValue::from_func(dispatch_remove as *const () as usize));
-    attrs.insert("rename".into(),
-        MbValue::from_func(dispatch_rename as *const () as usize));
-    attrs.insert("makedirs".into(),
-        MbValue::from_func(dispatch_makedirs as *const () as usize));
-    attrs.insert("rmdir".into(),
-        MbValue::from_func(dispatch_rmdir as *const () as usize));
-    attrs.insert("walk".into(),
-        MbValue::from_func(dispatch_walk as *const () as usize));
-    attrs.insert("cpu_count".into(),
-        MbValue::from_func(dispatch_cpu_count as *const () as usize));
+    attrs.insert(
+        "getpid".into(),
+        MbValue::from_func(dispatch_getpid as *const () as usize),
+    );
+    attrs.insert(
+        "getcwd".into(),
+        MbValue::from_func(dispatch_getcwd as *const () as usize),
+    );
+    attrs.insert(
+        "getenv".into(),
+        MbValue::from_func(dispatch_getenv as *const () as usize),
+    );
+    attrs.insert(
+        "listdir".into(),
+        MbValue::from_func(dispatch_listdir as *const () as usize),
+    );
+    attrs.insert(
+        "mkdir".into(),
+        MbValue::from_func(dispatch_mkdir as *const () as usize),
+    );
+    attrs.insert(
+        "remove".into(),
+        MbValue::from_func(dispatch_remove as *const () as usize),
+    );
+    attrs.insert(
+        "rename".into(),
+        MbValue::from_func(dispatch_rename as *const () as usize),
+    );
+    attrs.insert(
+        "makedirs".into(),
+        MbValue::from_func(dispatch_makedirs as *const () as usize),
+    );
+    attrs.insert(
+        "rmdir".into(),
+        MbValue::from_func(dispatch_rmdir as *const () as usize),
+    );
+    attrs.insert(
+        "walk".into(),
+        MbValue::from_func(dispatch_walk as *const () as usize),
+    );
+    attrs.insert(
+        "cpu_count".into(),
+        MbValue::from_func(dispatch_cpu_count as *const () as usize),
+    );
 
     // R4: POSIX-specific: uname()
-    attrs.insert("uname".into(),
-        MbValue::from_func(dispatch_uname as *const () as usize));
+    attrs.insert(
+        "uname".into(),
+        MbValue::from_func(dispatch_uname as *const () as usize),
+    );
 
     // R5: POSIX-specific: getuid(), getgid()
-    attrs.insert("getuid".into(),
-        MbValue::from_func(dispatch_getuid as *const () as usize));
-    attrs.insert("getgid".into(),
-        MbValue::from_func(dispatch_getgid as *const () as usize));
+    attrs.insert(
+        "getuid".into(),
+        MbValue::from_func(dispatch_getuid as *const () as usize),
+    );
+    attrs.insert(
+        "getgid".into(),
+        MbValue::from_func(dispatch_getgid as *const () as usize),
+    );
 
     // path.exists and path.join re-exported at top level for convenience
-    attrs.insert("path_exists".into(),
-        MbValue::from_func(dispatch_path_exists as *const () as usize));
-    attrs.insert("path_join".into(),
-        MbValue::from_func(dispatch_path_join as *const () as usize));
+    attrs.insert(
+        "path_exists".into(),
+        MbValue::from_func(dispatch_path_exists as *const () as usize),
+    );
+    attrs.insert(
+        "path_join".into(),
+        MbValue::from_func(dispatch_path_join as *const () as usize),
+    );
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("CLD_CONTINUED".into(), MbValue::from_int(6));
     attrs.insert("CLD_DUMPED".into(), MbValue::from_int(3));
     attrs.insert("CLD_EXITED".into(), MbValue::from_int(1));
@@ -378,7 +413,10 @@ mod tests {
     #[test]
     fn test_posix_getpid() {
         let result = super::mb_posix_getpid_via_os();
-        assert!(result.as_int().unwrap() > 0, "getpid() should return a positive integer");
+        assert!(
+            result.as_int().unwrap() > 0,
+            "getpid() should return a positive integer"
+        );
     }
 
     // REQ: R2
@@ -395,7 +433,10 @@ mod tests {
         // PATH should exist on virtually all systems
         let result = super::super::os_mod::mb_os_getenv(s("PATH"), MbValue::none());
         let val = get_str(result);
-        assert!(!val.is_empty(), "getenv('PATH') should return non-empty string");
+        assert!(
+            !val.is_empty(),
+            "getenv('PATH') should return non-empty string"
+        );
     }
 
     // REQ: R2
@@ -412,14 +453,17 @@ mod tests {
     #[test]
     fn test_posix_environ_populated() {
         let env = build_environ_dict();
-        let has_path = env.as_ptr().map(|ptr| unsafe {
-            if let ObjData::Dict(ref lock) = (*ptr).data {
-                let map = lock.read().unwrap();
-                !map.is_empty() && map.contains_key("PATH")
-            } else {
-                false
-            }
-        }).unwrap_or(false);
+        let has_path = env
+            .as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let map = lock.read().unwrap();
+                    !map.is_empty() && map.contains_key("PATH")
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
         assert!(has_path, "environ should be non-empty and contain PATH");
     }
 
@@ -436,7 +480,10 @@ mod tests {
                 for (i, item) in items.iter().enumerate() {
                     let s = extract_str(*item);
                     assert!(s.is_some(), "uname element {i} should be a string");
-                    assert!(!s.unwrap().is_empty(), "uname element {i} should be non-empty");
+                    assert!(
+                        !s.unwrap().is_empty(),
+                        "uname element {i} should be non-empty"
+                    );
                 }
             } else {
                 panic!("uname() should return a Tuple");
@@ -470,7 +517,10 @@ mod tests {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
-                assert!(!items.is_empty(), "listdir('.') should return non-empty list");
+                assert!(
+                    !items.is_empty(),
+                    "listdir('.') should return non-empty list"
+                );
             } else {
                 panic!("listdir should return a List");
             }
@@ -485,13 +535,17 @@ mod tests {
 
         // mkdir
         super::super::os_mod::mb_os_mkdir(dir_val);
-        assert!(std::path::Path::new(&dir_name).exists(), "mkdir should create directory");
+        assert!(
+            std::path::Path::new(&dir_name).exists(),
+            "mkdir should create directory"
+        );
 
         // rmdir (clean up)
-        super::super::os_mod::mb_os_rmdir(
-            MbValue::from_ptr(MbObject::new_str(dir_name.clone()))
+        super::super::os_mod::mb_os_rmdir(MbValue::from_ptr(MbObject::new_str(dir_name.clone())));
+        assert!(
+            !std::path::Path::new(&dir_name).exists(),
+            "rmdir should remove directory"
         );
-        assert!(!std::path::Path::new(&dir_name).exists(), "rmdir should remove directory");
     }
 
     // REQ: R1
@@ -514,9 +568,10 @@ mod tests {
     #[test]
     fn test_posix_environ_dict_type() {
         let env = build_environ_dict();
-        let is_dict = env.as_ptr().map(|ptr| unsafe {
-            matches!((*ptr).data, ObjData::Dict(_))
-        }).unwrap_or(false);
+        let is_dict = env
+            .as_ptr()
+            .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
         assert!(is_dict, "environ should be a Dict");
     }
 }

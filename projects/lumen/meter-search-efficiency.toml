@@ -1,9 +1,9 @@
-# SPEC-MANAGED: projects/lumen/external-contracts/search/efficiency/competitive-benchmark.md#lumen-meter-search-efficiency
+# SPEC-MANAGED: projects/lumen/external-contracts/competitor-performance/efficiency/competitive-benchmark.md#lumen-meter-search-efficiency
 # CODEGEN-BEGIN
 # AW-EC-TOOL-BEGIN
-delegate_command = "target/debug/meter test -- -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
+delegate_command = "cd projects/lumen && ../../target/debug/vat run ec-efficiency-meter"
 project = "lumen"
-source_contract = "lumen-search-efficiency-competitive"
+source_contract = "lumen-competitor-performance-competitive"
 version = 1
 # AW-EC-TOOL-END
 # CODEGEN-END

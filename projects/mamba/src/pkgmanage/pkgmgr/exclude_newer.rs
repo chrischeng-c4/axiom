@@ -56,12 +56,13 @@ impl ExcludeNewer {
         }
 
         // RFC 3339 form. Expect `YYYY-MM-DDTHH:MM:SS(.fff)?(Z|±HH:MM)`.
-        let (date_part, time_and_tz) = raw_trimmed
-            .split_once('T')
-            .ok_or_else(|| IndexError::ParseError {
-                url: DETAIL.into(),
-                detail: format!("expected `T` separator in `{raw_trimmed}`"),
-            })?;
+        let (date_part, time_and_tz) =
+            raw_trimmed
+                .split_once('T')
+                .ok_or_else(|| IndexError::ParseError {
+                    url: DETAIL.into(),
+                    detail: format!("expected `T` separator in `{raw_trimmed}`"),
+                })?;
 
         let (y, m, d) = parse_ymd(date_part)?;
         let (hms_part, tz_offset_seconds) = split_tz(time_and_tz)?;
@@ -117,7 +118,9 @@ pub fn parse_upload_time(raw: &str) -> Option<i64> {
     }
     // Reuse the ExcludeNewer parser — it accepts exactly the same
     // forms PEP 700 emits.
-    ExcludeNewer::parse(trimmed).ok().map(|e| e.utc_unix_seconds)
+    ExcludeNewer::parse(trimmed)
+        .ok()
+        .map(|e| e.utc_unix_seconds)
 }
 
 /// Split `HH:MM:SS(.fff)?(Z|+HH:MM|-HH:MM)` into the HMS part and

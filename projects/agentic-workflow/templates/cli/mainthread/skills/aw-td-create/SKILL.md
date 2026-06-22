@@ -1,6 +1,6 @@
 ---
 name: aw:td:create
-description: Resume a stalled TD lifecycle — picks up from current issue phase and drives the CRRR loop. Mainthread-only; no subagent dispatch.
+description: Resume a stalled TD lifecycle — picks up from current issue phase and drives EC/code-check iteration. Mainthread-only; no subagent dispatch.
 user-invocable: true
 amended_by: aw-mainthread-phase-2-skill-rewrite-and-agent-delete.md
 amended_on: "2026-05-03"
@@ -42,11 +42,11 @@ Reads the current issue phase and picks up where the chain left off.
 | `td_applicability_created` | Run `aw td review <slug> --phase applicability --spec-path <path>`, write `.aw/payloads/<slug>/applicability/review.md`, then run the projection's exact review apply command |
 | `td_contract_in_progress` | Write `.aw/payloads/<slug>/contract/<section>.md`, then run the projection's exact `aw td create --apply --phase contract --section <section>` command |
 | `td_created` | Run `aw td review <slug> --phase contract --spec-path <path>`, write `.aw/payloads/<slug>/contract/review.md`, then run the projection's exact review apply command |
-| `td_reviewed` | Approved contract is ready for `aw cb gen`; if review requested revision, follow the active projection lock |
+| `td_reviewed` | Legacy reviewed phase: continue to `aw td gen`; EC and code-check gates decide whether another TD iteration is needed |
 | `td_revised` | Legacy phase: run `aw td review <slug> --spec-path <path>` and follow the emitted envelope |
-| `cb_genned` | Dispatch `/aw:cb:fill` to fill HANDWRITE markers |
-| `cb_filled` | Run `aw cb review` (mainthread writes review payload + `--apply`) |
-| `cb_reviewed` | Check verdict — if `needs-revision`, run `aw cb revise` (mainthread); if `approved`, run `aw td merge` |
+| `cb_genned` | Run `aw td fill` to fill HANDWRITE markers |
+| `cb_filled` | Run `aw td merge`; local code-check already passed, and EC/health decide the next iteration |
+| `cb_reviewed` | Legacy reviewed phase: run `aw td merge` |
 | `td_merged` | Already done — report success |
 
 3. For phases that need the spec_path, find it by scanning `projects/agentic-workflow/tech-design/` in the current checkout for `.md` files with `fill_sections` in their frontmatter.
@@ -58,4 +58,4 @@ Reads the current issue phase and picks up where the chain left off.
 ### When to use
 
 - Session ended mid-section or mid-review while a WI projection lock is active
-- Manual restart after `aw td arbitrate` or `aw cb arbitrate`
+- Manual restart after a lifecycle command stopped before emitting the next command

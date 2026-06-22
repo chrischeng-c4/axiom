@@ -11,22 +11,21 @@
 //!   [seq]   matches any character in seq
 //!   [!seq]  matches any character NOT in seq
 //! ```
-use std::collections::HashMap;
-use super::super::value::MbValue;
 use super::super::rc::MbObject;
+use super::super::value::MbValue;
+use std::collections::HashMap;
 
 /// Extract a Rust String from an MbValue that holds a heap string object.
 /// Returns None if the value is not a string.
 fn extract_str(val: MbValue) -> Option<String> {
-    val.as_ptr()
-        .and_then(|ptr| unsafe {
-            use super::super::rc::ObjData;
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
+    val.as_ptr().and_then(|ptr| unsafe {
+        use super::super::rc::ObjData;
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
 }
 
 /// Classify a string-like argument as `Str` or `Bytes`, mirroring CPython's
@@ -57,9 +56,7 @@ fn extract_strlike(val: MbValue) -> Option<StrLike> {
         match (*ptr).data {
             ObjData::Str(ref s) => Some(StrLike::Str(s.clone())),
             // Latin-1 decode: each byte → one char (0..=255).
-            ObjData::Bytes(ref b) => {
-                Some(StrLike::Bytes(b.iter().map(|&x| x as char).collect()))
-            }
+            ObjData::Bytes(ref b) => Some(StrLike::Bytes(b.iter().map(|&x| x as char).collect())),
             _ => None,
         }
     })
@@ -409,8 +406,8 @@ fn match_bracket(pat: &[char], c: char) -> (bool, usize) {
 /// Special set (3.12): `\t \n \x0b \x0c \r (space) # $ & ( ) * + - . ? [ \ ] ^ { | } ~`.
 fn re_escape_char(c: char, out: &mut String) {
     const SPECIAL: &[char] = &[
-        '\t', '\n', '\u{0b}', '\u{0c}', '\r', ' ', '#', '$', '&', '(', ')', '*',
-        '+', '-', '.', '?', '[', '\\', ']', '^', '{', '|', '}', '~',
+        '\t', '\n', '\u{0b}', '\u{0c}', '\r', ' ', '#', '$', '&', '(', ')', '*', '+', '-', '.',
+        '?', '[', '\\', ']', '^', '{', '|', '}', '~',
     ];
     if SPECIAL.contains(&c) {
         out.push('\\');
@@ -769,7 +766,7 @@ pub fn mb_fnmatch_filter(names: MbValue, pat: MbValue) -> MbValue {
         normcase(pat_sl.text()).into_owned()
     };
 
-    use super::super::rc::{ObjData, retain_if_ptr};
+    use super::super::rc::{retain_if_ptr, ObjData};
     // Materialize the names: List directly; Tuple / iterator handles via the
     // generic protocol. A non-iterable scalar is CPython's iteration
     // TypeError ("'int' object is not iterable").
@@ -876,7 +873,11 @@ mod tests {
         let name = make_str("foo.txt");
         let pat = make_str("*.txt");
         let result = mb_fnmatch_fnmatch(name, pat);
-        assert_eq!(result.as_bool(), Some(true), "fnmatch('foo.txt', '*.txt') must be true");
+        assert_eq!(
+            result.as_bool(),
+            Some(true),
+            "fnmatch('foo.txt', '*.txt') must be true"
+        );
     }
 
     // REQ: R2
@@ -886,7 +887,11 @@ mod tests {
         let name = make_str("foo.rs");
         let pat = make_str("*.txt");
         let result = mb_fnmatch_fnmatch(name, pat);
-        assert_eq!(result.as_bool(), Some(false), "fnmatch('foo.rs', '*.txt') must be false");
+        assert_eq!(
+            result.as_bool(),
+            Some(false),
+            "fnmatch('foo.rs', '*.txt') must be false"
+        );
     }
 
     // REQ: R2
@@ -917,11 +922,7 @@ mod tests {
     #[test]
     fn test_filter_list() {
         // Build a list: ["foo.txt", "bar.rs", "baz.txt"]
-        let elems = vec![
-            make_str("foo.txt"),
-            make_str("bar.rs"),
-            make_str("baz.txt"),
-        ];
+        let elems = vec![make_str("foo.txt"), make_str("bar.rs"), make_str("baz.txt")];
         let names = MbValue::from_ptr(MbObject::new_list(elems));
         let pat = make_str("*.txt");
         let result = mb_fnmatch_filter(names, pat);
@@ -948,9 +949,21 @@ mod tests {
         let pat = make_str("*.txt");
         let result = mb_fnmatch_translate(pat);
         let s = get_str(result);
-        assert!(s.contains(".*"), "translate('*.txt') must contain '.*', got: {}", s);
-        assert!(s.starts_with("(?s:"), "translate result must start with '(?s:': {}", s);
-        assert!(s.ends_with(r")\Z"), r"translate result must end with ')\Z': {}", s);
+        assert!(
+            s.contains(".*"),
+            "translate('*.txt') must contain '.*', got: {}",
+            s
+        );
+        assert!(
+            s.starts_with("(?s:"),
+            "translate result must start with '(?s:': {}",
+            s
+        );
+        assert!(
+            s.ends_with(r")\Z"),
+            r"translate result must end with ')\Z': {}",
+            s
+        );
     }
 
     // REQ: R2, R4
@@ -965,9 +978,17 @@ mod tests {
             .strip_prefix("(?s:")
             .and_then(|s| s.strip_suffix(r")\Z"))
             .unwrap_or(&s);
-        assert_eq!(inner, "f.o", "translate('f?o') inner pattern must be 'f.o', got inner: {}", inner);
+        assert_eq!(
+            inner, "f.o",
+            "translate('f?o') inner pattern must be 'f.o', got inner: {}",
+            inner
+        );
         // The inner pattern must not contain a literal '?'.
-        assert!(!inner.contains('?'), "inner pattern must not contain literal '?': {}", inner);
+        assert!(
+            !inner.contains('?'),
+            "inner pattern must not contain literal '?': {}",
+            inner
+        );
     }
 
     // REQ: R2, R4
@@ -977,12 +998,20 @@ mod tests {
         let name = make_str("foo");
         let pat = make_str("f?o");
         let result = mb_fnmatch_fnmatchcase(name, pat);
-        assert_eq!(result.as_bool(), Some(true), "fnmatchcase('foo', 'f?o') must be true");
+        assert_eq!(
+            result.as_bool(),
+            Some(true),
+            "fnmatchcase('foo', 'f?o') must be true"
+        );
 
         let name2 = make_str("fo");
         let pat2 = make_str("f?o");
         let result2 = mb_fnmatch_fnmatchcase(name2, pat2);
-        assert_eq!(result2.as_bool(), Some(false), "fnmatchcase('fo', 'f?o') must be false");
+        assert_eq!(
+            result2.as_bool(),
+            Some(false),
+            "fnmatchcase('fo', 'f?o') must be false"
+        );
     }
 
     // REQ: R4
@@ -992,6 +1021,10 @@ mod tests {
         let pat = make_str("[!abc]");
         let result = mb_fnmatch_translate(pat);
         let s = get_str(result);
-        assert!(s.contains("[^abc]"), "translate('[!abc]') must produce '[^abc]', got: {}", s);
+        assert!(
+            s.contains("[^abc]"),
+            "translate('[!abc]') must produce '[^abc]', got: {}",
+            s
+        );
     }
 }

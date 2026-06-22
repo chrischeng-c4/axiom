@@ -19,7 +19,11 @@ pub enum CodegenOutput {
 /// Trait for pluggable code generation backends.
 pub trait CodegenBackend {
     /// Compile a complete MIR module (functions + externs) to native code.
-    fn codegen(&mut self, module: &MirModule, tcx: &TypeContext) -> crate::error::Result<CodegenOutput>;
+    fn codegen(
+        &mut self,
+        module: &MirModule,
+        tcx: &TypeContext,
+    ) -> crate::error::Result<CodegenOutput>;
     fn name(&self) -> &str;
 }
 
@@ -51,7 +55,9 @@ mod tests {
         let wasm = CodegenOutput::Wasm(vec![0x00, 0x61, 0x73, 0x6d]);
         matches!(wasm, CodegenOutput::Wasm(_));
 
-        let jit = CodegenOutput::Jit { entry: std::ptr::null() };
+        let jit = CodegenOutput::Jit {
+            entry: std::ptr::null(),
+        };
         matches!(jit, CodegenOutput::Jit { .. });
 
         let ir = CodegenOutput::LlvmIr("define i64 @main()".to_string());
@@ -72,7 +78,9 @@ mod tests {
                 assert_eq!(module.bodies.len(), 1);
                 Ok(CodegenOutput::LlvmIr("ok".to_string()))
             }
-            fn name(&self) -> &str { "dummy" }
+            fn name(&self) -> &str {
+                "dummy"
+            }
         }
 
         let tcx = TypeContext::new();

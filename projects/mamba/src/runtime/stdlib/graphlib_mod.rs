@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// graphlib module for Mamba.
 ///
 /// Implements Python 3.12 `graphlib` stdlib: functionality to operate with
@@ -18,8 +20,6 @@
 /// remaining predecessors.
 use std::cell::RefCell;
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Internal state ──
 
@@ -91,7 +91,9 @@ impl TopoSorter {
         }
         let h = super::super::builtins::mb_hash(val).as_int().unwrap_or(0);
         let idx = self.nodes.len();
-        unsafe { super::super::rc::retain_if_ptr(val); }
+        unsafe {
+            super::super::rc::retain_if_ptr(val);
+        }
         self.nodes.push(NodeInfo {
             value: val,
             npredecessors: 0,
@@ -106,7 +108,9 @@ impl TopoSorter {
     /// Release all retained node values.
     fn release(&mut self) {
         for n in &self.nodes {
-            unsafe { super::super::rc::release_if_ptr(n.value); }
+            unsafe {
+                super::super::rc::release_if_ptr(n.value);
+            }
         }
         self.nodes.clear();
         self.lookup.clear();
@@ -127,10 +131,14 @@ thread_local! {
 
 #[cfg(test)]
 fn cleanup_all_sorters() {
-    let _ = SORTERS.with(|c| c.try_borrow_mut().map(|mut m| {
-        for (_, s) in m.iter_mut() { s.release(); }
-        m.clear();
-    }));
+    let _ = SORTERS.with(|c| {
+        c.try_borrow_mut().map(|mut m| {
+            for (_, s) in m.iter_mut() {
+                s.release();
+            }
+            m.clear();
+        })
+    });
     let _ = SORTER_REFCOUNTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = NEXT_SORTER_ID.with(|c| c.set(SORTER_HANDLE_BASE));
 }
@@ -141,7 +149,9 @@ fn drop_sorter_handle(id: u64) {
             s.release();
         }
     });
-    SORTER_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
+    SORTER_REFCOUNTS.with(|r| {
+        r.borrow_mut().remove(&id);
+    });
 }
 
 /// class.rs `mb_call_method` (and the integer-handle registry) consult
@@ -200,7 +210,11 @@ fn node_repr(val: MbValue) -> String {
     let r = super::super::builtins::mb_repr(val);
     r.as_ptr()
         .and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
         .unwrap_or_default()
 }
@@ -354,11 +368,14 @@ fn prepare_impl(handle_id: u64) -> MbValue {
         let cycle_vals = SORTERS.with(|c| {
             let map = c.borrow();
             let sorter = map.get(&handle_id).unwrap();
-            cycle.iter().map(|&i| {
-                let v = sorter.nodes[i].value;
-                unsafe { super::super::rc::retain_if_ptr(v) };
-                v
-            }).collect::<Vec<MbValue>>()
+            cycle
+                .iter()
+                .map(|&i| {
+                    let v = sorter.nodes[i].value;
+                    unsafe { super::super::rc::retain_if_ptr(v) };
+                    v
+                })
+                .collect::<Vec<MbValue>>()
         });
         return raise_cycle_error(cycle_vals);
     }
@@ -460,7 +477,9 @@ fn get_ready_impl(handle_id: u64) -> MbValue {
             sorter.nodes[i].passed_out = true;
             sorter.n_passed_out += 1;
             let v = sorter.nodes[i].value;
-            unsafe { super::super::rc::retain_if_ptr(v); }
+            unsafe {
+                super::super::rc::retain_if_ptr(v);
+            }
             out.push(v);
         }
         (out, false)
@@ -526,21 +545,17 @@ fn done_impl(handle_id: u64, nodes: &[MbValue]) -> MbValue {
 
     match res {
         Ok(_) => MbValue::none(),
-        Err(Err2::NotPrepared) => {
-            raise("ValueError", "prepare() must be called first".to_string())
+        Err(Err2::NotPrepared) => raise("ValueError", "prepare() must be called first".to_string()),
+        Err(Err2::NotAdded(r)) => {
+            raise("ValueError", format!("node {r} was not added using add()"))
         }
-        Err(Err2::NotAdded(r)) => raise(
-            "ValueError",
-            format!("node {r} was not added using add()"),
-        ),
         Err(Err2::NotPassedOut(r)) => raise(
             "ValueError",
             format!("node {r} was not passed out (still not ready)"),
         ),
-        Err(Err2::AlreadyDone(r)) => raise(
-            "ValueError",
-            format!("node {r} was already marked done"),
-        ),
+        Err(Err2::AlreadyDone(r)) => {
+            raise("ValueError", format!("node {r} was already marked done"))
+        }
     }
 }
 
@@ -593,7 +608,9 @@ fn static_order_impl(handle_id: u64) -> MbValue {
             if let Some(sorter) = map.get_mut(&handle_id) {
                 for &i in &ready {
                     let v = sorter.nodes[i].value;
-                    unsafe { super::super::rc::retain_if_ptr(v); }
+                    unsafe {
+                        super::super::rc::retain_if_ptr(v);
+                    }
                     order.push(v);
                     sorter.nodes[i].done = true;
                     sorter.n_finished += 1;
@@ -614,7 +631,9 @@ fn static_order_impl(handle_id: u64) -> MbValue {
 // ── Instance method dispatchers (variadic: fn(self, args_list)) ──
 
 unsafe extern "C" fn method_add(self_v: MbValue, args: MbValue) -> MbValue {
-    let Some(handle_id) = handle_of(self_v) else { return MbValue::none() };
+    let Some(handle_id) = handle_of(self_v) else {
+        return MbValue::none();
+    };
     let items = args_items(args);
     if items.is_empty() {
         return raise(
@@ -629,7 +648,9 @@ unsafe extern "C" fn method_add(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn method_prepare(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(handle_id) = handle_of(self_v) else { return MbValue::none() };
+    let Some(handle_id) = handle_of(self_v) else {
+        return MbValue::none();
+    };
     prepare_impl(handle_id)
 }
 
@@ -641,13 +662,17 @@ unsafe extern "C" fn method_get_ready(self_v: MbValue, _args: MbValue) -> MbValu
 }
 
 unsafe extern "C" fn method_done(self_v: MbValue, args: MbValue) -> MbValue {
-    let Some(handle_id) = handle_of(self_v) else { return MbValue::none() };
+    let Some(handle_id) = handle_of(self_v) else {
+        return MbValue::none();
+    };
     let nodes = args_items(args);
     done_impl(handle_id, &nodes)
 }
 
 unsafe extern "C" fn method_is_active(self_v: MbValue, _args: MbValue) -> MbValue {
-    let Some(handle_id) = handle_of(self_v) else { return MbValue::from_bool(false) };
+    let Some(handle_id) = handle_of(self_v) else {
+        return MbValue::from_bool(false);
+    };
     is_active_impl(handle_id)
 }
 
@@ -661,25 +686,22 @@ unsafe extern "C" fn method_static_order(self_v: MbValue, _args: MbValue) -> MbV
 // ── Constructor ──
 
 /// graphlib.TopologicalSorter([graph]) -> Instance
-unsafe extern "C" fn dispatch_TopologicalSorter(
-    args_ptr: *const MbValue,
-    nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_TopologicalSorter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let inst = mb_graphlib_new();
     if nargs >= 1 {
         let args = std::slice::from_raw_parts(args_ptr, nargs);
         let graph = args[0];
         if !graph.is_none() {
-            let Some(handle_id) = handle_of(inst) else { return inst };
+            let Some(handle_id) = handle_of(inst) else {
+                return inst;
+            };
             // Iterate the mapping {node: predecessors} in insertion order.
             if let Some(ptr) = graph.as_ptr() {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let pairs: Vec<(MbValue, MbValue)> = {
                         let g = lock.read().unwrap();
                         g.iter()
-                            .map(|(k, v)| {
-                                (super::super::dict_ops::dict_key_to_mbvalue(k), *v)
-                            })
+                            .map(|(k, v)| (super::super::dict_ops::dict_key_to_mbvalue(k), *v))
                             .collect()
                     };
                     for (node, preds_val) in pairs {
@@ -719,11 +741,7 @@ pub fn register() {
             s.borrow_mut().insert(*maddr as u64);
         });
     }
-    super::super::class::mb_class_register(
-        "TopologicalSorter",
-        vec!["object".to_string()],
-        table,
-    );
+    super::super::class::mb_class_register("TopologicalSorter", vec!["object".to_string()], table);
     // CycleError ⊂ ValueError (CPython 3.12). Seed the BaseException
     // chaining slots (`__cause__` / `__context__` / `__suppress_context__`)
     // into the class method table so the surface probe
@@ -816,7 +834,9 @@ pub fn mb_graphlib_new() -> MbValue {
 /// graphlib.TopologicalSorter.add(handle, node, predecessors) — legacy entry.
 /// `predecessors` is an iterable of nodes.
 pub fn mb_graphlib_add(handle: MbValue, node: MbValue, predecessors: MbValue) -> MbValue {
-    let Some(handle_id) = handle_of(handle) else { return MbValue::none() };
+    let Some(handle_id) = handle_of(handle) else {
+        return MbValue::none();
+    };
     let preds = collect_iterable(predecessors);
     let _ = add_impl(handle_id, node, &preds);
     MbValue::none()
@@ -824,7 +844,9 @@ pub fn mb_graphlib_add(handle: MbValue, node: MbValue, predecessors: MbValue) ->
 
 /// graphlib.TopologicalSorter.prepare(handle) — legacy entry.
 pub fn mb_graphlib_prepare(handle: MbValue) -> MbValue {
-    let Some(handle_id) = handle_of(handle) else { return MbValue::none() };
+    let Some(handle_id) = handle_of(handle) else {
+        return MbValue::none();
+    };
     prepare_impl(handle_id)
 }
 
@@ -838,14 +860,18 @@ pub fn mb_graphlib_get_ready(handle: MbValue) -> MbValue {
 
 /// graphlib.TopologicalSorter.done(handle, nodes) — legacy entry.
 pub fn mb_graphlib_done(handle: MbValue, nodes: MbValue) -> MbValue {
-    let Some(handle_id) = handle_of(handle) else { return MbValue::none() };
+    let Some(handle_id) = handle_of(handle) else {
+        return MbValue::none();
+    };
     let nodes = collect_iterable(nodes);
     done_impl(handle_id, &nodes)
 }
 
 /// graphlib.TopologicalSorter.is_active(handle) — legacy entry.
 pub fn mb_graphlib_is_active(handle: MbValue) -> MbValue {
-    let Some(handle_id) = handle_of(handle) else { return MbValue::from_bool(false) };
+    let Some(handle_id) = handle_of(handle) else {
+        return MbValue::from_bool(false);
+    };
     is_active_impl(handle_id)
 }
 
@@ -859,7 +885,9 @@ pub fn mb_graphlib_static_order(handle: MbValue) -> MbValue {
 
 /// graphlib.TopologicalSorter.destroy(handle) — clean up sorter state.
 pub fn mb_graphlib_destroy(handle: MbValue) {
-    let Some(handle_id) = handle_of(handle) else { return };
+    let Some(handle_id) = handle_of(handle) else {
+        return;
+    };
     drop_sorter_handle(handle_id);
 }
 
@@ -867,8 +895,8 @@ pub fn mb_graphlib_destroy(handle: MbValue) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::rc::ObjData;
+    use super::*;
 
     fn make_int(i: i64) -> MbValue {
         MbValue::from_int(i)
@@ -883,9 +911,10 @@ mod tests {
         val.as_ptr()
             .and_then(|ptr| unsafe {
                 match &(*ptr).data {
-                    ObjData::List(ref rw) => {
-                        rw.read().ok().map(|g| g.iter().filter_map(|v| v.as_int()).collect())
-                    }
+                    ObjData::List(ref rw) => rw
+                        .read()
+                        .ok()
+                        .map(|g| g.iter().filter_map(|v| v.as_int()).collect()),
                     ObjData::Tuple(ref items) => {
                         Some(items.iter().filter_map(|v| v.as_int()).collect())
                     }
@@ -916,7 +945,10 @@ mod tests {
     fn test_new_returns_instance() {
         setup();
         let h = mb_graphlib_new();
-        assert!(handle_of(h).is_some(), "new must return an instance with a handle");
+        assert!(
+            handle_of(h).is_some(),
+            "new must return an instance with a handle"
+        );
         mb_graphlib_destroy(h);
     }
 
@@ -929,7 +961,11 @@ mod tests {
         mb_graphlib_add(h, make_int(3), make_list_ints(&[2]));
         let order = mb_graphlib_static_order(h);
         let ints = get_seq_ints(order);
-        assert_eq!(ints, vec![1, 2, 3], "linear chain must order deps first: {ints:?}");
+        assert_eq!(
+            ints,
+            vec![1, 2, 3],
+            "linear chain must order deps first: {ints:?}"
+        );
         mb_graphlib_destroy(h);
     }
 
@@ -993,9 +1029,10 @@ mod tests {
         mb_graphlib_prepare(h);
         let ready = mb_graphlib_get_ready(h);
         // get_ready returns a tuple in CPython.
-        let is_tuple = ready.as_ptr().map(|p| unsafe {
-            matches!((*p).data, ObjData::Tuple(_))
-        }).unwrap_or(false);
+        let is_tuple = ready
+            .as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Tuple(_)) })
+            .unwrap_or(false);
         assert!(is_tuple, "get_ready must return a tuple");
         let mut ints = get_seq_ints(ready);
         ints.sort();

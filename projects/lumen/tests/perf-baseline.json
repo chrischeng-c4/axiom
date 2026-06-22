@@ -74,8 +74,8 @@
       "os": { "gate": "win", "baseline": 3.0, "note": "Official JetStream WAL POST /index docs/s divided by OpenSearch _bulk docs/s at 100 workers. Latest LUMEN_PERF_STRICT=1 run measured 3.40x over 5s (822.6k vs 241.9k docs/s), with 0 errors. Keep the 3x gate, but repeat on an isolated perf host before treating the write margin as release-stable." }
     },
     "natssharded_index_100": {
-      "pg": { "gate": "target", "baseline": 6.0, "note": "Exploratory partitioned JetStream trend row, not the official strict write gate. Latest full run timed out at 100 workers (200 timeouts), so it remains a target until stable under the same timeout/error envelope as nats_index_100." },
-      "os": { "gate": "target", "baseline": 3.0, "note": "Exploratory partitioned JetStream trend row, not the official strict write gate. Latest full run timed out at 100 workers (200 timeouts), so it remains a target until stable under the same timeout/error envelope as nats_index_100." }
+      "pg": { "gate": "target", "baseline": 6.0, "note": "Exploratory partitioned JetStream trend row, not the historical strict write gate. Latest full run timed out at 100 workers (200 timeouts), so it remains a target until stable under the same timeout/error envelope as nats_index_100." },
+      "os": { "gate": "target", "baseline": 3.0, "note": "Exploratory partitioned JetStream trend row, not the historical strict write gate. Latest full run timed out at 100 workers (200 timeouts), so it remains a target until stable under the same timeout/error envelope as nats_index_100." }
     }
   }
 }

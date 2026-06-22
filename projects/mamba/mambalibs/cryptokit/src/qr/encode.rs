@@ -12,7 +12,9 @@ pub struct BitStream {
 
 impl BitStream {
     pub fn new() -> Self {
-        Self { bits: Vec::with_capacity(256) }
+        Self {
+            bits: Vec::with_capacity(256),
+        }
     }
 
     /// Append `count` bits from `value` (MSB first).
@@ -246,7 +248,7 @@ mod tests {
         let data = b"1";
         let cw = encode_data(data, 1, Mode::Numeric, EcLevel::L);
         assert_eq!(cw.len(), 19); // V1-L has 19 data codewords
-        // Check padding pattern at the end
-        // After data + terminator + byte padding, rest should alternate 0xEC 0x11
+                                  // Check padding pattern at the end
+                                  // After data + terminator + byte padding, rest should alternate 0xEC 0x11
     }
 }

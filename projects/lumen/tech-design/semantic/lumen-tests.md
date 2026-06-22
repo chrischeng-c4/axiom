@@ -2,11 +2,54 @@
 id: semantic-lumen-tests
 summary: Semantic coverage for "projects/lumen/tests"
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
+    gap: "query-planner-boolean-eval-roaring-postings"
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
     rationale: "Semantic takeover coverage for existing source group `projects/lumen/tests`."
+  - id: "security-hardening"
+    role: primary
+    gap: "adversarial-query-safety"
+    claim: "adversarial-query-safety"
+    coverage: full
+    rationale: "coverage_gaps_e2e pins malformed/deep/special-character query safety as a production security contract."
+  - id: "security-hardening"
+    role: primary
+    gap: "score-confidentiality"
+    claim: "score-confidentiality"
+    coverage: full
+    rationale: "coverage_gaps_e2e proves collection boundary isolation for hit existence and relevance scores."
+  - id: "long-running-stability"
+    role: primary
+    gap: "search-p99-survives-fault-and-recovers"
+    claim: "search-p99-survives-fault-and-recovers"
+    coverage: full
+    rationale: "tests/rig resilience cases pin search p99 and recovery behavior under fault."
+  - id: "long-running-stability"
+    role: primary
+    gap: "graceful-degradation-under-overload"
+    claim: "graceful-degradation-under-overload"
+    coverage: full
+    rationale: "tests/rig load cases and pins define bounded overload behavior."
+  - id: "long-running-stability"
+    role: primary
+    gap: "no-fd-socket-thread-leak"
+    claim: "no-fd-socket-thread-leak"
+    coverage: full
+    rationale: "tests/rig endurance cases define sustained-load FD/socket/thread leak checks."
+  - id: "long-running-stability"
+    role: primary
+    gap: "no-latency-drift-over-soak"
+    claim: "no-latency-drift-over-soak"
+    coverage: full
+    rationale: "tests/rig endurance soak cases define the latency drift contract."
+  - id: "competitor-performance"
+    role: primary
+    gap: "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
+    claim: "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
+    coverage: full
+    rationale: "perf_gate_vs_db is the ratcheted competitive regression gate used by the efficiency EC."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -1130,16 +1173,16 @@ semantic_domain:
           - name: "deployment_wires_serving_contract"
             kind: "function"
             public: false
-          - name: "configmap_and_nats_url_track_spec"
+          - name: "configmap_and_broker_url_track_spec"
             kind: "function"
             public: false
-          - name: "hpa_and_single_replica_nats_have_no_routes"
+          - name: "hpa_and_single_replica_relay_are_rendered"
             kind: "function"
             public: false
-          - name: "prod_clusters_nats_and_wires_auth"
+          - name: "prod_wires_managed_relay_and_auth"
             kind: "function"
             public: false
-          - name: "external_nats_skips_broker_objects"
+          - name: "external_broker_skips_managed_relay_objects"
             kind: "function"
             public: false
           - name: "crd_yaml_emits_lumen_definition"

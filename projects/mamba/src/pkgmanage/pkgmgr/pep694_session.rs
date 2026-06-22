@@ -77,7 +77,11 @@ pub struct UploadSession {
     pub status: SessionStatus,
     /// Human-readable reason; populated when status is
     /// `Cancelled` or `Errored`.
-    #[serde(rename = "status-reason", skip_serializing_if = "Option::is_none", default)]
+    #[serde(
+        rename = "status-reason",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub status_reason: Option<String>,
     /// RFC 3339 timestamp at which the index will reclaim staged state
     /// if not published. Kept as a string for round-trip fidelity —
@@ -187,9 +191,7 @@ mod tests {
             ("cancelled", SessionStatus::Cancelled),
             ("errored", SessionStatus::Errored),
         ] {
-            let src = format!(
-                r#"{{"name":"x","version":"1.0","status":"{text}"}}"#
-            );
+            let src = format!(r#"{{"name":"x","version":"1.0","status":"{text}"}}"#);
             assert_eq!(parse_session(&src).unwrap().status, expected);
         }
     }
@@ -242,18 +244,9 @@ mod tests {
         assert_eq!(sdist.size, None);
         assert!(sdist.hashes.is_empty());
 
-        assert_eq!(
-            s.upload_link(),
-            Some("https://example.com/upload/abc")
-        );
-        assert_eq!(
-            s.cancel_link(),
-            Some("https://example.com/cancel/abc")
-        );
-        assert_eq!(
-            s.publish_link(),
-            Some("https://example.com/publish/abc")
-        );
+        assert_eq!(s.upload_link(), Some("https://example.com/upload/abc"));
+        assert_eq!(s.cancel_link(), Some("https://example.com/cancel/abc"));
+        assert_eq!(s.publish_link(), Some("https://example.com/publish/abc"));
     }
 
     #[test]
@@ -268,7 +261,10 @@ mod tests {
             }
         }"#;
         let s = parse_session(src).unwrap();
-        assert_eq!(s.links.get("custom-rel"), Some(&"https://custom/".to_string()));
+        assert_eq!(
+            s.links.get("custom-rel"),
+            Some(&"https://custom/".to_string())
+        );
     }
 
     #[test]
@@ -363,8 +359,7 @@ mod tests {
     #[test]
     fn realistic_workflow_pending_then_initiated_then_completed() {
         // 1. Pending
-        let s1 = parse_session(r#"{"name":"mypkg","version":"1.0","status":"pending"}"#)
-            .unwrap();
+        let s1 = parse_session(r#"{"name":"mypkg","version":"1.0","status":"pending"}"#).unwrap();
         assert_eq!(s1.status, SessionStatus::Pending);
 
         // 2. Initiated, files pending

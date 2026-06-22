@@ -39,21 +39,18 @@ impl ExportFormat {
 /// Export a chart to the given path, inferring format from extension.
 pub fn export_chart<P: AsRef<Path>>(chart: &Chart, path: P) -> Result<()> {
     let path = path.as_ref();
-    let format = ExportFormat::from_path(path)
-        .ok_or_else(|| VizError::InvalidParameter(format!(
+    let format = ExportFormat::from_path(path).ok_or_else(|| {
+        VizError::InvalidParameter(format!(
             "cannot infer export format from extension: {:?}",
             path.extension()
-        )))?;
+        ))
+    })?;
 
     export_chart_as(chart, path, format)
 }
 
 /// Export a chart to the given path with an explicit format.
-pub fn export_chart_as<P: AsRef<Path>>(
-    chart: &Chart,
-    path: P,
-    format: ExportFormat,
-) -> Result<()> {
+pub fn export_chart_as<P: AsRef<Path>>(chart: &Chart, path: P, format: ExportFormat) -> Result<()> {
     match format {
         ExportFormat::Svg => chart.save_svg(path),
         ExportFormat::Html => save_html(chart, path),
@@ -153,9 +150,10 @@ mod tests {
     use crate::viz::DataSeries;
 
     fn sample_chart() -> Chart {
-        Chart::new()
-            .title("Test")
-            .add_series(DataSeries::line(vec![1.0, 2.0, 3.0], vec![10.0, 20.0, 30.0]))
+        Chart::new().title("Test").add_series(DataSeries::line(
+            vec![1.0, 2.0, 3.0],
+            vec![10.0, 20.0, 30.0],
+        ))
     }
 
     #[test]

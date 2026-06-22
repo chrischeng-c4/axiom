@@ -2,8 +2,8 @@
 // REQ: Mapping: releases[v][i].digests.sha256 → ReleaseFile.hash (algorithm = "sha256")
 // REQ: versions = all keys of JSON releases object, sorted newest-first (lexicographic desc)
 
-use std::collections::BTreeMap;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 use crate::pkgmanage::pkgmgr::pep440::sort_versions_newest_first;
 use crate::pkgmanage::pkgmgr::types::{FileHash, IndexError, PackageMetadata, ReleaseFile};
@@ -68,13 +68,22 @@ impl PypiDigests {
     /// should treat this sentinel as "no hash available".
     fn best(&self) -> FileHash {
         if let Some(d) = &self.sha256 {
-            return FileHash { algorithm: "sha256".into(), digest: d.clone() };
+            return FileHash {
+                algorithm: "sha256".into(),
+                digest: d.clone(),
+            };
         }
         if let Some(d) = &self.sha384 {
-            return FileHash { algorithm: "sha384".into(), digest: d.clone() };
+            return FileHash {
+                algorithm: "sha384".into(),
+                digest: d.clone(),
+            };
         }
         if let Some(d) = &self.sha512 {
-            return FileHash { algorithm: "sha512".into(), digest: d.clone() };
+            return FileHash {
+                algorithm: "sha512".into(),
+                digest: d.clone(),
+            };
         }
         FileHash::default()
     }
@@ -227,7 +236,8 @@ mod tests {
             }
         }"#;
 
-        let meta = parse_json_metadata(body).expect("should parse successfully even without digests");
+        let meta =
+            parse_json_metadata(body).expect("should parse successfully even without digests");
         let files = &meta.releases["0.1.0"];
         assert_eq!(files.len(), 1);
         // Sentinel: both algorithm and digest are empty strings
@@ -320,7 +330,9 @@ mod tests {
                 "digests": { "sha256": "d256", "sha384": "d384", "sha512": "d512" } } ] }
         }"#;
         let m = parse_json_metadata(all_three).unwrap();
-        assert_eq!(m.releases["1.0.0"][0].hash.algorithm, "sha256",
-            "sha256 must win when all three present");
+        assert_eq!(
+            m.releases["1.0.0"][0].hash.algorithm, "sha256",
+            "sha256 must win when all three present"
+        );
     }
 }

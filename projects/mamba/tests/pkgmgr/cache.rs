@@ -90,10 +90,7 @@ fn cache_clean_on_missing_root_is_no_op() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("no_op"),
-        "stderr signals no-op: {stderr:?}"
-    );
+    assert!(stderr.contains("no_op"), "stderr signals no-op: {stderr:?}");
 }
 
 #[test]
@@ -118,7 +115,10 @@ fn cache_without_subcommand_fails() {
     let tmp = tempfile::tempdir().unwrap();
     let cache_root = tmp.path().join("mamba-cache");
     let out = run_with_cache(&cache_root, &["cache"]);
-    assert!(!out.status.success(), "bare `cache` must require subcommand");
+    assert!(
+        !out.status.success(),
+        "bare `cache` must require subcommand"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("dir") && stderr.contains("clean") && stderr.contains("prune"),

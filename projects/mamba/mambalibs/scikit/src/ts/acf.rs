@@ -67,15 +67,9 @@ pub fn pacf_from_acf(acf_vals: &[f64]) -> Result<Vec<f64>> {
 
     for k in 2..=max_lag {
         // Numerator: r(k) - sum_{j=1}^{k-1} phi[k-1][j] * r(k-j)
-        let num = acf_vals[k]
-            - (1..k)
-                .map(|j| phi[k - 1][j] * acf_vals[k - j])
-                .sum::<f64>();
+        let num = acf_vals[k] - (1..k).map(|j| phi[k - 1][j] * acf_vals[k - j]).sum::<f64>();
         // Denominator: 1 - sum_{j=1}^{k-1} phi[k-1][j] * r(j)
-        let den =
-            1.0 - (1..k)
-                .map(|j| phi[k - 1][j] * acf_vals[j])
-                .sum::<f64>();
+        let den = 1.0 - (1..k).map(|j| phi[k - 1][j] * acf_vals[j]).sum::<f64>();
 
         if den.abs() < 1e-15 {
             // Degenerate — fill remaining with 0

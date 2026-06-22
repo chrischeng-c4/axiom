@@ -1,19 +1,18 @@
 #![cfg(test)]
 
+use crate::codegen::cranelift::CraneliftBackend;
+use crate::codegen::{CodegenBackend, CodegenOutput};
 /// End-to-end FFI integration tests (#271).
 ///
 /// Tests the full FFI pipeline: C header → parse → type map → stub gen → MIR → codegen.
-
 use crate::ffi::c_parser::parse_c_header;
 use crate::ffi::c_types::*;
-use crate::ffi::type_map;
+use crate::ffi::memory::{self, FfiAllocation, MemoryBridge};
+use crate::ffi::safety::{self, ResultConvention, SafeWrapper};
 use crate::ffi::stub_gen::generate_tpi_stub;
-use crate::ffi::safety::{self, SafeWrapper, ResultConvention};
-use crate::ffi::memory::{self, MemoryBridge, FfiAllocation};
+use crate::ffi::type_map;
 use crate::mir::*;
 use crate::types::context::TypeContext;
-use crate::codegen::cranelift::CraneliftBackend;
-use crate::codegen::{CodegenBackend, CodegenOutput};
 
 // ── Pipeline: parse → map → stub ──
 
@@ -239,8 +238,14 @@ fn test_memory_bridge_lifecycle() {
 
 #[test]
 fn test_free_fn_selection() {
-    assert_eq!(memory::free_fn_for_type(&CType::ConstChar), "mamba_free_string");
-    assert_eq!(memory::free_fn_for_type(&CType::MutChar), "mamba_free_string");
+    assert_eq!(
+        memory::free_fn_for_type(&CType::ConstChar),
+        "mamba_free_string"
+    );
+    assert_eq!(
+        memory::free_fn_for_type(&CType::MutChar),
+        "mamba_free_string"
+    );
     assert_eq!(
         memory::free_fn_for_type(&CType::Pointer(Box::new(CType::Void))),
         "free"

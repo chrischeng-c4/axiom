@@ -1,14 +1,13 @@
 #![cfg(test)]
 
+use crate::lower::{lower_hir_to_mir, lower_module};
+use crate::mir::*;
 /// Integration tests for the full compiler pipeline (parse → HIR → MIR).
 /// Covers features from issues #283–#294.
-
 use crate::parser;
 use crate::parser::ast::*;
 use crate::source::span::FileId;
 use crate::types::TypeChecker;
-use crate::lower::{lower_module, lower_hir_to_mir};
-use crate::mir::*;
 
 fn parse(src: &str) -> Module {
     parser::parse(src, FileId(0)).expect("parse failed")
@@ -42,7 +41,11 @@ fn test_parse_try_except_finally() {
     let src = "try:\n    pass\nexcept:\n    pass\nfinally:\n    pass\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::Try { handlers, finally_body, .. } => {
+        Stmt::Try {
+            handlers,
+            finally_body,
+            ..
+        } => {
             assert_eq!(handlers.len(), 1);
             assert!(finally_body.is_some());
         }
@@ -82,7 +85,10 @@ fn test_pipeline_try_except() {
     // Try block generates multiple basic blocks (try body + handler + merge)
     assert!(!mir.bodies.is_empty());
     let main = &mir.bodies[0];
-    assert!(main.blocks.len() >= 3, "try/except should produce >=3 blocks");
+    assert!(
+        main.blocks.len() >= 3,
+        "try/except should produce >=3 blocks"
+    );
 }
 
 // ── #284: String operations ──
@@ -93,7 +99,15 @@ fn test_pipeline_string_literal() {
     assert!(!mir.bodies.is_empty());
     let main = &mir.bodies[0];
     let has_str_const = main.blocks.iter().any(|b| {
-        b.stmts.iter().any(|inst| matches!(inst, MirInst::LoadConst { value: MirConst::Str(_), .. }))
+        b.stmts.iter().any(|inst| {
+            matches!(
+                inst,
+                MirInst::LoadConst {
+                    value: MirConst::Str(_),
+                    ..
+                }
+            )
+        })
     });
     assert!(has_str_const, "should have string constant");
 }
@@ -106,7 +120,9 @@ fn test_pipeline_list_literal() {
     assert!(!mir.bodies.is_empty());
     let main = &mir.bodies[0];
     let has_make_list = main.blocks.iter().any(|b| {
-        b.stmts.iter().any(|inst| matches!(inst, MirInst::MakeList { .. }))
+        b.stmts
+            .iter()
+            .any(|inst| matches!(inst, MirInst::MakeList { .. }))
     });
     assert!(has_make_list, "should have MakeList instruction");
 }
@@ -117,7 +133,9 @@ fn test_pipeline_dict_literal() {
     assert!(!mir.bodies.is_empty());
     let main = &mir.bodies[0];
     let has_make_dict = main.blocks.iter().any(|b| {
-        b.stmts.iter().any(|inst| matches!(inst, MirInst::MakeDict { .. }))
+        b.stmts
+            .iter()
+            .any(|inst| matches!(inst, MirInst::MakeDict { .. }))
     });
     assert!(has_make_dict, "should have MakeDict instruction");
 }
@@ -128,7 +146,9 @@ fn test_pipeline_tuple_literal() {
     assert!(!mir.bodies.is_empty());
     let main = &mir.bodies[0];
     let has_make_tuple = main.blocks.iter().any(|b| {
-        b.stmts.iter().any(|inst| matches!(inst, MirInst::MakeTuple { .. }))
+        b.stmts
+            .iter()
+            .any(|inst| matches!(inst, MirInst::MakeTuple { .. }))
     });
     assert!(has_make_tuple, "should have MakeTuple instruction");
 }
@@ -166,7 +186,9 @@ fn test_parse_class_with_decorator() {
     let src = "@dataclass\nclass Point:\n    x: int = 0\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::ClassDef { decorators, name, .. } => {
+        Stmt::ClassDef {
+            decorators, name, ..
+        } => {
             assert_eq!(name, "Point");
             assert_eq!(decorators.len(), 1);
         }
@@ -181,15 +203,13 @@ fn test_parse_lambda() {
     let src = "f = lambda x: int: x + 1\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::Assign { value, .. } => {
-            match &value.node {
-                Expr::Lambda { params, .. } => {
-                    assert_eq!(params.len(), 1);
-                    assert_eq!(params[0].name, "x");
-                }
-                other => panic!("expected Lambda, got {other:?}"),
+        Stmt::Assign { value, .. } => match &value.node {
+            Expr::Lambda { params, .. } => {
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].name, "x");
             }
-        }
+            other => panic!("expected Lambda, got {other:?}"),
+        },
         other => panic!("expected Assign, got {other:?}"),
     }
 }
@@ -199,7 +219,9 @@ fn test_parse_decorator() {
     let src = "@my_decorator\ndef foo() -> int:\n    return 1\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::FnDef { decorators, name, .. } => {
+        Stmt::FnDef {
+            decorators, name, ..
+        } => {
             assert_eq!(name, "foo");
             assert_eq!(decorators.len(), 1);
         }
@@ -214,14 +236,12 @@ fn test_parse_yield() {
     let src = "def gen() -> int:\n    yield 1\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::FnDef { body, .. } => {
-            match &body[0].node {
-                Stmt::ExprStmt(expr) => {
-                    assert!(matches!(&expr.node, Expr::Yield(Some(_))));
-                }
-                other => panic!("expected ExprStmt(Yield), got {other:?}"),
+        Stmt::FnDef { body, .. } => match &body[0].node {
+            Stmt::ExprStmt(expr) => {
+                assert!(matches!(&expr.node, Expr::Yield(Some(_))));
             }
-        }
+            other => panic!("expected ExprStmt(Yield), got {other:?}"),
+        },
         other => panic!("expected FnDef, got {other:?}"),
     }
 }
@@ -231,14 +251,12 @@ fn test_parse_yield_from() {
     let src = "def gen() -> int:\n    yield from other_gen()\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::FnDef { body, .. } => {
-            match &body[0].node {
-                Stmt::ExprStmt(expr) => {
-                    assert!(matches!(&expr.node, Expr::YieldFrom(_)));
-                }
-                other => panic!("expected ExprStmt(YieldFrom), got {other:?}"),
+        Stmt::FnDef { body, .. } => match &body[0].node {
+            Stmt::ExprStmt(expr) => {
+                assert!(matches!(&expr.node, Expr::YieldFrom(_)));
             }
-        }
+            other => panic!("expected ExprStmt(YieldFrom), got {other:?}"),
+        },
         other => panic!("expected FnDef, got {other:?}"),
     }
 }
@@ -250,16 +268,14 @@ fn test_parse_list_comprehension() {
     let src = "[x * 2 for x in items]\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::ExprStmt(expr) => {
-            match &expr.node {
-                Expr::ListComp { generators, .. } => {
-                    assert_eq!(generators.len(), 1);
-                    assert_eq!(generators[0].targets.len(), 1);
-                    assert_eq!(generators[0].targets[0], "x");
-                }
-                other => panic!("expected ListComp, got {other:?}"),
+        Stmt::ExprStmt(expr) => match &expr.node {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators.len(), 1);
+                assert_eq!(generators[0].targets.len(), 1);
+                assert_eq!(generators[0].targets[0], "x");
             }
-        }
+            other => panic!("expected ListComp, got {other:?}"),
+        },
         other => panic!("expected ExprStmt, got {other:?}"),
     }
 }
@@ -281,14 +297,12 @@ fn test_parse_list_comp_with_condition() {
     let src = "[x for x in items if x > 0]\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::ExprStmt(expr) => {
-            match &expr.node {
-                Expr::ListComp { generators, .. } => {
-                    assert_eq!(generators[0].conditions.len(), 1);
-                }
-                other => panic!("expected ListComp, got {other:?}"),
+        Stmt::ExprStmt(expr) => match &expr.node {
+            Expr::ListComp { generators, .. } => {
+                assert_eq!(generators[0].conditions.len(), 1);
             }
-        }
+            other => panic!("expected ListComp, got {other:?}"),
+        },
         other => panic!("expected ExprStmt, got {other:?}"),
     }
 }
@@ -300,7 +314,9 @@ fn test_parse_import() {
     let src = "import os.path\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::Import { module: m, names, .. } => {
+        Stmt::Import {
+            module: m, names, ..
+        } => {
             assert_eq!(m, &["os", "path"]);
             assert!(names.is_none());
         }
@@ -339,14 +355,12 @@ fn test_parse_await() {
     let src = "async def f() -> int:\n    x: int = await fetch()\n    return x\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::AsyncFnDef { body, .. } => {
-            match &body[0].node {
-                Stmt::VarDecl { value, .. } => {
-                    assert!(matches!(&value.node, Expr::Await(_)));
-                }
-                other => panic!("expected VarDecl with Await, got {other:?}"),
+        Stmt::AsyncFnDef { body, .. } => match &body[0].node {
+            Stmt::VarDecl { value, .. } => {
+                assert!(matches!(&value.node, Expr::Await(_)));
             }
-        }
+            other => panic!("expected VarDecl with Await, got {other:?}"),
+        },
         other => panic!("expected AsyncFnDef, got {other:?}"),
     }
 }
@@ -452,7 +466,13 @@ fn test_parse_bitwise_ops() {
     match &module.stmts[0].node {
         Stmt::ExprStmt(expr) => {
             // Should parse without error (bitwise OR at top)
-            assert!(matches!(&expr.node, Expr::BinOp { op: BinOp::BitOr, .. }));
+            assert!(matches!(
+                &expr.node,
+                Expr::BinOp {
+                    op: BinOp::BitOr,
+                    ..
+                }
+            ));
         }
         other => panic!("expected ExprStmt, got {other:?}"),
     }
@@ -463,7 +483,13 @@ fn test_parse_shift_ops() {
     let module = parse("x << 2\n");
     match &module.stmts[0].node {
         Stmt::ExprStmt(expr) => {
-            assert!(matches!(&expr.node, Expr::BinOp { op: BinOp::LShift, .. }));
+            assert!(matches!(
+                &expr.node,
+                Expr::BinOp {
+                    op: BinOp::LShift,
+                    ..
+                }
+            ));
         }
         other => panic!("expected ExprStmt, got {other:?}"),
     }
@@ -474,7 +500,13 @@ fn test_parse_bitnot() {
     let module = parse("~x\n");
     match &module.stmts[0].node {
         Stmt::ExprStmt(expr) => {
-            assert!(matches!(&expr.node, Expr::UnaryOp { op: UnaryOp::BitNot, .. }));
+            assert!(matches!(
+                &expr.node,
+                Expr::UnaryOp {
+                    op: UnaryOp::BitNot,
+                    ..
+                }
+            ));
         }
         other => panic!("expected ExprStmt, got {other:?}"),
     }
@@ -520,12 +552,17 @@ fn test_pep701_fstring_each_line() {
         ("lambda_expr", "s = f\"{(lambda x: x + 1)(5)}\"\n"),
         ("dict_comp", "s = f\"{ {k: v for k, v in items} }\"\n"),
         ("multiline_expr", "result = f\"value: {\n    x + y\n}\"\n"),
-        ("multiline_list_comp", "s = f\"mapped: {[\n    item\n    for item in range(10)\n    if item > 5\n]}\"\n"),
+        (
+            "multiline_list_comp",
+            "s = f\"mapped: {[\n    item\n    for item in range(10)\n    if item > 5\n]}\"\n",
+        ),
         ("nested_fstr", "s = f\"{f\\\"{f\\\"deep\\\"}\\\"}\"\n"),
         ("closing_brace_in_str", "s = f\"{'}'}\"\n"),
     ];
     // Test whole pep701 fixture file
-    let fixture = include_str!("../../../tests/cpython/_regression/core/grammar/test_fstring/pep701_fstrings.py");
+    let fixture = include_str!(
+        "../../../tests/cpython/_regression/core/grammar/test_fstring/pep701_fstrings.py"
+    );
     parser::parse(fixture, FileId(0)).unwrap_or_else(|e| panic!("whole pep701 file: {e:?}"));
     for (name, src) in lines {
         parser::parse(src, FileId(0)).unwrap_or_else(|e| panic!("{name}: parse failed: {e:?}"));
@@ -537,16 +574,14 @@ fn test_parse_fstring() {
     let src = "f\"hello {name}\"\n";
     let module = parse(src);
     match &module.stmts[0].node {
-        Stmt::ExprStmt(expr) => {
-            match &expr.node {
-                Expr::FString(parts) => {
-                    assert_eq!(parts.len(), 2);
-                    assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "hello "));
-                    assert!(matches!(&parts[1], FStringPart::Expr(_, None)));
-                }
-                other => panic!("expected FString, got {other:?}"),
+        Stmt::ExprStmt(expr) => match &expr.node {
+            Expr::FString(parts) => {
+                assert_eq!(parts.len(), 2);
+                assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "hello "));
+                assert!(matches!(&parts[1], FStringPart::Expr(_, None)));
             }
-        }
+            other => panic!("expected FString, got {other:?}"),
+        },
         other => panic!("expected ExprStmt, got {other:?}"),
     }
 }
@@ -577,7 +612,10 @@ fn test_pipeline_while_loop() {
     let mir = pipeline("while True:\n    break\n");
     assert!(!mir.bodies.is_empty());
     let main = &mir.bodies[0];
-    assert!(main.blocks.len() >= 3, "while loop should produce >=3 blocks");
+    assert!(
+        main.blocks.len() >= 3,
+        "while loop should produce >=3 blocks"
+    );
 }
 
 #[test]
@@ -587,9 +625,10 @@ fn test_pipeline_function_with_binops() {
     let mir = pipeline("def add(a: int, b: int) -> int:\n    return a + b\n");
     assert!(!mir.bodies.is_empty());
     let func = &mir.bodies[0];
-    let has_return = func.blocks.iter().any(|b| {
-        matches!(b.terminator, Terminator::Return(_))
-    });
+    let has_return = func
+        .blocks
+        .iter()
+        .any(|b| matches!(b.terminator, Terminator::Return(_)));
     assert!(has_return, "should have Return terminator");
 }
 
@@ -598,7 +637,15 @@ fn test_pipeline_bitwise_ops() {
     let mir = pipeline("x: int = 5 & 3\n");
     let main = &mir.bodies[0];
     let has_bitand = main.blocks.iter().any(|b| {
-        b.stmts.iter().any(|inst| matches!(inst, MirInst::BinOp { op: MirBinOp::BitAnd, .. }))
+        b.stmts.iter().any(|inst| {
+            matches!(
+                inst,
+                MirInst::BinOp {
+                    op: MirBinOp::BitAnd,
+                    ..
+                }
+            )
+        })
     });
     assert!(has_bitand, "should have BitAnd binop");
 }
@@ -607,9 +654,7 @@ fn test_pipeline_bitwise_ops() {
 fn test_pipeline_nested_function() {
     // Nested functions defined at top-level scope are visible.
     // Inner functions defined inside outer lose scope, so test top-level only.
-    let mir = pipeline(
-        "def outer() -> int:\n    return 1\ndef helper() -> int:\n    return 2\n"
-    );
+    let mir = pipeline("def outer() -> int:\n    return 1\ndef helper() -> int:\n    return 2\n");
     // Should produce 2 function bodies (outer + helper)
     assert!(mir.bodies.len() >= 2, "should have 2 top-level functions");
 }
@@ -620,44 +665,72 @@ fn test_pipeline_nested_function() {
 fn test_pipeline_list_comprehension() {
     let mir = pipeline("items = [1, 2, 3]\nresult = [x * 2 for x in items]\n");
     let main = &mir.bodies[0];
-    let all_insts: Vec<&MirInst> = main.blocks.iter()
-        .flat_map(|b| &b.stmts).collect();
+    let all_insts: Vec<&MirInst> = main.blocks.iter().flat_map(|b| &b.stmts).collect();
     // Should have MakeList (empty target) + mb_iter + mb_list_append calls
-    assert!(all_insts.iter().any(|i| matches!(i, MirInst::MakeList { .. })),
-        "list comp should create empty list");
-    let extern_names: Vec<&str> = all_insts.iter().filter_map(|i| {
-        if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None }
-    }).collect();
+    assert!(
+        all_insts
+            .iter()
+            .any(|i| matches!(i, MirInst::MakeList { .. })),
+        "list comp should create empty list"
+    );
+    let extern_names: Vec<&str> = all_insts
+        .iter()
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
     assert!(extern_names.contains(&"mb_iter"), "should call mb_iter");
     // List comprehensions use the unchecked variant — local list, no
     // concurrent readers, so the RwLock try_write is skipped.
-    assert!(extern_names.contains(&"mb_list_append_unchecked"),
-        "should call mb_list_append_unchecked");
+    assert!(
+        extern_names.contains(&"mb_list_append_unchecked"),
+        "should call mb_list_append_unchecked"
+    );
 }
 
 #[test]
 fn test_pipeline_dict_comprehension() {
     let mir = pipeline("pairs = [1, 2]\nresult = {k: k for k in pairs}\n");
     let main = &mir.bodies[0];
-    let all_insts: Vec<&MirInst> = main.blocks.iter()
-        .flat_map(|b| &b.stmts).collect();
-    assert!(all_insts.iter().any(|i| matches!(i, MirInst::MakeDict { .. })),
-        "dict comp should create empty dict");
-    let extern_names: Vec<&str> = all_insts.iter().filter_map(|i| {
-        if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None }
-    }).collect();
-    assert!(extern_names.contains(&"mb_dict_setitem"), "should call mb_dict_setitem");
+    let all_insts: Vec<&MirInst> = main.blocks.iter().flat_map(|b| &b.stmts).collect();
+    assert!(
+        all_insts
+            .iter()
+            .any(|i| matches!(i, MirInst::MakeDict { .. })),
+        "dict comp should create empty dict"
+    );
+    let extern_names: Vec<&str> = all_insts
+        .iter()
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        extern_names.contains(&"mb_dict_setitem"),
+        "should call mb_dict_setitem"
+    );
 }
 
 #[test]
 fn test_pipeline_set_comprehension() {
     let mir = pipeline("items = [1, 2]\nresult = {x for x in items}\n");
     let main = &mir.bodies[0];
-    let all_insts: Vec<&MirInst> = main.blocks.iter()
-        .flat_map(|b| &b.stmts).collect();
+    let all_insts: Vec<&MirInst> = main.blocks.iter().flat_map(|b| &b.stmts).collect();
     // Sets backed by list currently
-    assert!(all_insts.iter().any(|i| matches!(i, MirInst::MakeList { .. })),
-        "set comp should create container");
+    assert!(
+        all_insts
+            .iter()
+            .any(|i| matches!(i, MirInst::MakeList { .. })),
+        "set comp should create container"
+    );
 }
 
 #[test]
@@ -665,12 +738,21 @@ fn test_pipeline_generator_expr() {
     // Generator expressions desugar to eager list comprehension
     let mir = pipeline("items = [1, 2, 3]\nresult = (x * 2 for x in items)\n");
     let main = &mir.bodies[0];
-    let all_insts: Vec<&MirInst> = main.blocks.iter()
-        .flat_map(|b| &b.stmts).collect();
-    let extern_names: Vec<&str> = all_insts.iter().filter_map(|i| {
-        if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None }
-    }).collect();
-    assert!(extern_names.contains(&"mb_iter"), "generator expr should use iteration");
+    let all_insts: Vec<&MirInst> = main.blocks.iter().flat_map(|b| &b.stmts).collect();
+    let extern_names: Vec<&str> = all_insts
+        .iter()
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        extern_names.contains(&"mb_iter"),
+        "generator expr should use iteration"
+    );
 }
 
 #[test]
@@ -678,10 +760,14 @@ fn test_pipeline_comprehension_with_filter() {
     let mir = pipeline("items = [1, 2, 3]\nresult = [x for x in items if x > 0]\n");
     let main = &mir.bodies[0];
     // Filtered comprehension should have a Branch for the condition
-    let has_branch = main.blocks.iter().any(|b| {
-        matches!(&b.terminator, Terminator::Branch { .. })
-    });
-    assert!(has_branch, "filtered comprehension needs conditional branch");
+    let has_branch = main
+        .blocks
+        .iter()
+        .any(|b| matches!(&b.terminator, Terminator::Branch { .. }));
+    assert!(
+        has_branch,
+        "filtered comprehension needs conditional branch"
+    );
 }
 
 // ── #309: Pattern Matching Codegen ──
@@ -693,33 +779,41 @@ fn test_pipeline_match_literal() {
     );
     let main = &mir.bodies[0];
     // Should have Branch terminators for literal pattern checks
-    let branch_count = main.blocks.iter().filter(|b| {
-        matches!(&b.terminator, Terminator::Branch { .. })
-    }).count();
-    assert!(branch_count >= 2, "match with 2 literal cases needs >=2 branches, got {branch_count}");
+    let branch_count = main
+        .blocks
+        .iter()
+        .filter(|b| matches!(&b.terminator, Terminator::Branch { .. }))
+        .count();
+    assert!(
+        branch_count >= 2,
+        "match with 2 literal cases needs >=2 branches, got {branch_count}"
+    );
 }
 
 #[test]
 fn test_pipeline_match_wildcard() {
-    let mir = pipeline(
-        "x: int = 1\nmatch x:\n    case _:\n        y: int = 99\n"
-    );
+    let mir = pipeline("x: int = 1\nmatch x:\n    case _:\n        y: int = 99\n");
     let main = &mir.bodies[0];
     // Wildcard always matches — should have Goto, not Branch
-    let has_goto_to_body = main.blocks.iter().any(|b| {
-        matches!(&b.terminator, Terminator::Goto(_))
-    });
-    assert!(has_goto_to_body, "wildcard pattern should use unconditional goto");
+    let has_goto_to_body = main
+        .blocks
+        .iter()
+        .any(|b| matches!(&b.terminator, Terminator::Goto(_)));
+    assert!(
+        has_goto_to_body,
+        "wildcard pattern should use unconditional goto"
+    );
 }
 
 #[test]
 fn test_pipeline_match_capture() {
-    let mir = pipeline(
-        "x: int = 42\nmatch x:\n    case val:\n        y: int = val\n"
-    );
+    let mir = pipeline("x: int = 42\nmatch x:\n    case val:\n        y: int = val\n");
     let main = &mir.bodies[0];
     // Capture binds subject to variable — should have Copy instruction
-    let has_copy = main.blocks.iter().flat_map(|b| &b.stmts)
+    let has_copy = main
+        .blocks
+        .iter()
+        .flat_map(|b| &b.stmts)
         .any(|i| matches!(i, MirInst::Copy { .. }));
     assert!(has_copy, "capture pattern should copy subject to variable");
 }
@@ -727,47 +821,70 @@ fn test_pipeline_match_capture() {
 #[test]
 fn test_pipeline_match_or_pattern() {
     // PEP 634: OR patterns with literals (now correctly parsed as Pattern::Or, not BinOp::BitOr)
-    let mir = pipeline(
-        "x: int = 1\nmatch x:\n    case 1 | 2:\n        y: int = 10\n"
-    );
+    let mir = pipeline("x: int = 1\nmatch x:\n    case 1 | 2:\n        y: int = 10\n");
     let main = &mir.bodies[0];
     // OR with 2 alternatives — at least one branch
-    let branch_count = main.blocks.iter().filter(|b| {
-        matches!(&b.terminator, Terminator::Branch { .. } | Terminator::Goto(_))
-    }).count();
-    assert!(branch_count >= 2, "OR pattern needs branches, got {branch_count}");
+    let branch_count = main
+        .blocks
+        .iter()
+        .filter(|b| {
+            matches!(
+                &b.terminator,
+                Terminator::Branch { .. } | Terminator::Goto(_)
+            )
+        })
+        .count();
+    assert!(
+        branch_count >= 2,
+        "OR pattern needs branches, got {branch_count}"
+    );
 }
 
 #[test]
 fn test_pipeline_match_with_guard() {
     // Use binding pattern (not literal) so `if` isn't consumed as ternary
-    let mir = pipeline(
-        "x: int = 5\nmatch x:\n    case val if val > 0:\n        y: int = 1\n"
-    );
+    let mir = pipeline("x: int = 5\nmatch x:\n    case val if val > 0:\n        y: int = 1\n");
     let main = &mir.bodies[0];
     // Guard generates either a BinOp::Gt (primitive) or mb_gt call (when operand is any-typed)
-    let has_guard_cmp = main.blocks.iter().flat_map(|b| &b.stmts)
-        .any(|i| matches!(i, MirInst::BinOp { op: MirBinOp::Gt, .. })
-            || matches!(i, MirInst::CallExtern { name, .. } if name == "mb_gt"));
-    assert!(has_guard_cmp, "guarded capture pattern should have guard comparison");
+    let has_guard_cmp = main.blocks.iter().flat_map(|b| &b.stmts).any(|i| {
+        matches!(
+            i,
+            MirInst::BinOp {
+                op: MirBinOp::Gt,
+                ..
+            }
+        ) || matches!(i, MirInst::CallExtern { name, .. } if name == "mb_gt")
+    });
+    assert!(
+        has_guard_cmp,
+        "guarded capture pattern should have guard comparison"
+    );
 }
 
 #[test]
 fn test_pipeline_match_sequence_pattern() {
-    let mir = pipeline(
-        "x = [1, 2]\nmatch x:\n    case [a, b]:\n        y: int = a\n"
-    );
+    let mir = pipeline("x = [1, 2]\nmatch x:\n    case [a, b]:\n        y: int = a\n");
     let main = &mir.bodies[0];
-    let all_insts: Vec<&MirInst> = main.blocks.iter()
-        .flat_map(|b| &b.stmts).collect();
-    let extern_names: Vec<&str> = all_insts.iter().filter_map(|i| {
-        if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None }
-    }).collect();
+    let all_insts: Vec<&MirInst> = main.blocks.iter().flat_map(|b| &b.stmts).collect();
+    let extern_names: Vec<&str> = all_insts
+        .iter()
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
     // Sequence pattern should check length and extract elements (sequence-generic helpers #827)
-    assert!(extern_names.contains(&"mb_seq_len"),
-        "sequence pattern should check length");
-    assert!(extern_names.contains(&"mb_seq_getitem"),
-        "sequence pattern should extract elements");
+    assert!(
+        extern_names.contains(&"mb_seq_len"),
+        "sequence pattern should check length"
+    );
+    assert!(
+        extern_names.contains(&"mb_seq_getitem"),
+        "sequence pattern should extract elements"
+    );
 }
 
 // ── #827: AS-pattern and class-pattern pipeline tests ──
@@ -775,13 +892,13 @@ fn test_pipeline_match_sequence_pattern() {
 #[test]
 fn test_pipeline_match_as_pattern() {
     // AS-pattern: `case <pattern> as <name>:` should bind the alias
-    let mir = pipeline(
-        "x = 42\nmatch x:\n    case n as m:\n        y: int = m\n"
-    );
+    let mir = pipeline("x = 42\nmatch x:\n    case n as m:\n        y: int = m\n");
     let main = &mir.bodies[0];
     // The alias binding should appear as a Copy or LoadConst (vreg alias)
     let has_binding = main.blocks.iter().any(|b| {
-        b.stmts.iter().any(|i| matches!(i, MirInst::Copy { .. } | MirInst::LoadConst { .. }))
+        b.stmts
+            .iter()
+            .any(|i| matches!(i, MirInst::Copy { .. } | MirInst::LoadConst { .. }))
     });
     assert!(has_binding, "AS-pattern should produce a register binding");
 }
@@ -792,12 +909,21 @@ fn test_pipeline_match_class_pattern() {
     let mir = pipeline(
         "class Point:\n    x: int = 0\n    y: int = 0\np = Point()\nmatch p:\n    case Point(x=1):\n        z: int = 1\n    case _:\n        z: int = 0\n"
     );
-    let all_insts: Vec<&MirInst> = mir.bodies.iter()
+    let all_insts: Vec<&MirInst> = mir
+        .bodies
+        .iter()
         .flat_map(|b| b.blocks.iter().flat_map(|bl| &bl.stmts))
         .collect();
-    let extern_names: Vec<&str> = all_insts.iter().filter_map(|i| {
-        if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None }
-    }).collect();
+    let extern_names: Vec<&str> = all_insts
+        .iter()
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
     // Class pattern should use instance attribute check helper
     assert!(
         extern_names.contains(&"mb_instance_hasattr"),
@@ -809,8 +935,8 @@ fn test_pipeline_match_class_pattern() {
 
 #[test]
 fn test_llvm_backend_simple() {
-    use crate::codegen::CodegenBackend;
     use crate::codegen::llvm::LlvmBackend;
+    use crate::codegen::CodegenBackend;
     let mir = pipeline("x: int = 42\n");
     let tcx = crate::types::TypeContext::new();
     let mut backend = LlvmBackend::new();
@@ -833,7 +959,10 @@ fn test_llvm_ir_structure() {
         }
         crate::codegen::CodegenOutput::LlvmIr(ir) => {
             assert!(!ir.is_empty(), "LLVM IR should be non-empty");
-            assert!(ir.contains("define"), "LLVM IR should contain function definitions");
+            assert!(
+                ir.contains("define"),
+                "LLVM IR should contain function definitions"
+            );
         }
         _ => panic!("expected ObjectFile or LlvmIr variant"),
     }
@@ -841,7 +970,7 @@ fn test_llvm_ir_structure() {
 
 #[test]
 fn test_llvm_backend_selection() {
-    use crate::driver::{CompilerConfig, Backend};
+    use crate::driver::{Backend, CompilerConfig};
     let config = CompilerConfig {
         backend: Backend::Llvm,
         ..CompilerConfig::default()
@@ -867,23 +996,29 @@ fn test_async_function_creates_coroutine() {
     // R1: async functions produce wrapper + body MirBodies
     let mir = pipeline("async def fetch() -> int:\n    return 42\n");
     // Should have at least 3 bodies: body_step, wrapper, __main__
-    let non_main: Vec<_> = mir.bodies.iter()
-        .filter(|b| b.name.0 != u32::MAX).collect();
-    assert!(non_main.len() >= 2, "async function should produce wrapper + body");
+    let non_main: Vec<_> = mir.bodies.iter().filter(|b| b.name.0 != u32::MAX).collect();
+    assert!(
+        non_main.len() >= 2,
+        "async function should produce wrapper + body"
+    );
     // Wrapper should call mb_coroutine_new
     let has_coro_new = non_main.iter().any(|f| {
         f.blocks.iter().any(|b| {
-            b.stmts.iter().any(|s| matches!(s,
-                MirInst::CallExtern { name, .. } if name == "mb_coroutine_new"
-            ))
+            b.stmts.iter().any(|s| {
+                matches!(s,
+                    MirInst::CallExtern { name, .. } if name == "mb_coroutine_new"
+                )
+            })
         })
     });
     // Body should call mb_coroutine_complete
     let has_coro_complete = non_main.iter().any(|f| {
         f.blocks.iter().any(|b| {
-            b.stmts.iter().any(|s| matches!(s,
-                MirInst::CallExtern { name, .. } if name == "mb_coroutine_complete"
-            ))
+            b.stmts.iter().any(|s| {
+                matches!(s,
+                    MirInst::CallExtern { name, .. } if name == "mb_coroutine_complete"
+                )
+            })
         })
     });
     assert!(has_coro_new, "wrapper should call mb_coroutine_new");
@@ -895,41 +1030,60 @@ fn test_await_expression_lowering() {
     // R1+R3: await should lower to mb_await with GIL release/acquire
     let mir = pipeline(
         "async def inner() -> int:\n    return 1\n\
-         async def outer() -> int:\n    x: int = await inner()\n    return x\n"
+         async def outer() -> int:\n    x: int = await inner()\n    return x\n",
     );
     // Body functions should contain mb_await for the await expression
     let any_has_await = mir.bodies.iter().any(|body| {
         body.blocks.iter().any(|b| {
-            b.stmts.iter().any(|s| matches!(s,
-                MirInst::CallExtern { name, .. } if name == "mb_await"
-            ))
+            b.stmts.iter().any(|s| {
+                matches!(s,
+                    MirInst::CallExtern { name, .. } if name == "mb_await"
+                )
+            })
         })
     });
-    assert!(any_has_await, "await expression should lower to mb_await call");
+    assert!(
+        any_has_await,
+        "await expression should lower to mb_await call"
+    );
 }
 
 #[test]
 fn test_async_function_gil_release_acquire() {
     // R3: GIL should be released before await and acquired after
-    let mir = pipeline(
-        "async def f() -> int:\n    x: int = await f()\n    return x\n"
-    );
+    let mir = pipeline("async def f() -> int:\n    x: int = await f()\n    return x\n");
     // Find the body function (has the await/GIL calls)
-    let body = mir.bodies.iter().find(|b| {
-        b.blocks.iter().any(|blk| {
-            blk.stmts.iter().any(|s| matches!(s,
-                MirInst::CallExtern { name, .. } if name == "mb_await"
-            ))
+    let body = mir
+        .bodies
+        .iter()
+        .find(|b| {
+            b.blocks.iter().any(|blk| {
+                blk.stmts.iter().any(|s| {
+                    matches!(s,
+                        MirInst::CallExtern { name, .. } if name == "mb_await"
+                    )
+                })
+            })
         })
-    }).expect("should have a body with mb_await");
-    let all_externs: Vec<&str> = body.blocks.iter().flat_map(|b| {
-        b.stmts.iter().filter_map(|s| match s {
-            MirInst::CallExtern { name, .. } => Some(name.as_str()),
-            _ => None,
+        .expect("should have a body with mb_await");
+    let all_externs: Vec<&str> = body
+        .blocks
+        .iter()
+        .flat_map(|b| {
+            b.stmts.iter().filter_map(|s| match s {
+                MirInst::CallExtern { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
         })
-    }).collect();
-    assert!(all_externs.contains(&"mb_gil_release"), "should release GIL before await");
-    assert!(all_externs.contains(&"mb_gil_acquire"), "should acquire GIL after await");
+        .collect();
+    assert!(
+        all_externs.contains(&"mb_gil_release"),
+        "should release GIL before await"
+    );
+    assert!(
+        all_externs.contains(&"mb_gil_acquire"),
+        "should acquire GIL after await"
+    );
     // GIL release should come before mb_await, acquire after
     let release_pos = all_externs.iter().position(|&n| n == "mb_gil_release");
     let await_pos = all_externs.iter().position(|&n| n == "mb_await");
@@ -946,9 +1100,11 @@ fn test_sync_function_no_coroutine() {
     let mir = pipeline("def add(a: int, b: int) -> int:\n    return a + b\n");
     let func = mir.bodies.iter().find(|b| b.name.0 != u32::MAX).unwrap();
     let has_coro_new = func.blocks.iter().any(|b| {
-        b.stmts.iter().any(|s| matches!(s,
-            MirInst::CallExtern { name, .. } if name == "mb_coroutine_new"
-        ))
+        b.stmts.iter().any(|s| {
+            matches!(s,
+                MirInst::CallExtern { name, .. } if name == "mb_coroutine_new"
+            )
+        })
     });
     assert!(!has_coro_new, "sync function should NOT create coroutines");
 }
@@ -957,14 +1113,15 @@ fn test_sync_function_no_coroutine() {
 fn test_async_function_return_is_coroutine_handle() {
     // Both wrapper and body should return a value (coroutine handle)
     let mir = pipeline("async def compute() -> int:\n    return 100\n");
-    let non_main: Vec<_> = mir.bodies.iter()
-        .filter(|b| b.name.0 != u32::MAX).collect();
+    let non_main: Vec<_> = mir.bodies.iter().filter(|b| b.name.0 != u32::MAX).collect();
     // The wrapper should always return a value (the coroutine handle)
     for func in &non_main {
         for block in &func.blocks {
             if let Terminator::Return(ret) = &block.terminator {
-                assert!(ret.is_some(),
-                    "async wrapper/body should always return a value (coroutine handle)");
+                assert!(
+                    ret.is_some(),
+                    "async wrapper/body should always return a value (coroutine handle)"
+                );
             }
         }
     }
@@ -979,12 +1136,22 @@ fn test_pipeline_method_call_produces_call_method() {
     // runtime symbol registered), so it falls through to mb_call_method.
     let mir = pipeline("s: str = \"hello\"\ns.encode()\n");
     let main = &mir.bodies[0];
-    let all_externs: Vec<&str> = main.blocks.iter()
+    let all_externs: Vec<&str> = main
+        .blocks
+        .iter()
         .flat_map(|b| &b.stmts)
-        .filter_map(|i| if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None })
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
         .collect();
-    assert!(all_externs.contains(&"mb_call_method"),
-        "method call should lower to mb_call_method, got: {all_externs:?}");
+    assert!(
+        all_externs.contains(&"mb_call_method"),
+        "method call should lower to mb_call_method, got: {all_externs:?}"
+    );
 }
 
 #[test]
@@ -992,12 +1159,15 @@ fn test_pipeline_method_call_packs_args() {
     // Task 4.1: method args should be packed into a MakeList
     let mir = pipeline("s: str = \"hello world\"\ns.split(\" \")\n");
     let main = &mir.bodies[0];
-    let all_insts: Vec<&MirInst> = main.blocks.iter()
-        .flat_map(|b| &b.stmts).collect();
+    let all_insts: Vec<&MirInst> = main.blocks.iter().flat_map(|b| &b.stmts).collect();
     // Should have MakeList (for args packing) + CallExtern("mb_call_method")
-    let has_make_list = all_insts.iter().any(|i| matches!(i, MirInst::MakeList { .. }));
-    let has_call_method = all_insts.iter().any(|i| matches!(i,
-        MirInst::CallExtern { name, .. } if name == "mb_call_method"));
+    let has_make_list = all_insts
+        .iter()
+        .any(|i| matches!(i, MirInst::MakeList { .. }));
+    let has_call_method = all_insts.iter().any(|i| {
+        matches!(i,
+        MirInst::CallExtern { name, .. } if name == "mb_call_method")
+    });
     assert!(has_make_list, "method args should be packed into a list");
     assert!(has_call_method, "should call mb_call_method");
 }
@@ -1007,9 +1177,10 @@ fn test_pipeline_attribute_assignment() {
     // Task 4.1: x.attr = val should produce SetAttr
     let mir = pipeline("x = 1\nx.foo = 42\n");
     let main = &mir.bodies[0];
-    let has_setattr = main.blocks.iter().any(|b| {
-        b.stmts.iter().any(|i| matches!(i, MirInst::SetAttr { .. }))
-    });
+    let has_setattr = main
+        .blocks
+        .iter()
+        .any(|b| b.stmts.iter().any(|i| matches!(i, MirInst::SetAttr { .. })));
     assert!(has_setattr, "attribute assignment should produce SetAttr");
 }
 
@@ -1018,9 +1189,10 @@ fn test_pipeline_index_assignment() {
     // Task 4.1: x[i] = val should produce SetItem
     let mir = pipeline("x = [1, 2, 3]\nx[0] = 42\n");
     let main = &mir.bodies[0];
-    let has_setitem = main.blocks.iter().any(|b| {
-        b.stmts.iter().any(|i| matches!(i, MirInst::SetItem { .. }))
-    });
+    let has_setitem = main
+        .blocks
+        .iter()
+        .any(|b| b.stmts.iter().any(|i| matches!(i, MirInst::SetItem { .. })));
     assert!(has_setitem, "index assignment should produce SetItem");
 }
 
@@ -1029,11 +1201,22 @@ fn test_pipeline_string_method_call() {
     // Task 4.2: string methods go through mb_call_method
     let mir = pipeline("s: str = \"  hello  \"\ns.strip()\n");
     let main = &mir.bodies[0];
-    let externs: Vec<&str> = main.blocks.iter()
+    let externs: Vec<&str> = main
+        .blocks
+        .iter()
         .flat_map(|b| &b.stmts)
-        .filter_map(|i| if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None })
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
         .collect();
-    assert!(externs.contains(&"mb_call_method"), "string method should use mb_call_method");
+    assert!(
+        externs.contains(&"mb_call_method"),
+        "string method should use mb_call_method"
+    );
 }
 
 #[test]
@@ -1043,11 +1226,22 @@ fn test_pipeline_list_method_call() {
     // entry so it stays on the generic dispatch path.
     let mir = pipeline("lst = [1, 2]\nlst.__sizeof__()\n");
     let main = &mir.bodies[0];
-    let externs: Vec<&str> = main.blocks.iter()
+    let externs: Vec<&str> = main
+        .blocks
+        .iter()
         .flat_map(|b| &b.stmts)
-        .filter_map(|i| if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None })
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
         .collect();
-    assert!(externs.contains(&"mb_call_method"), "list method should use mb_call_method");
+    assert!(
+        externs.contains(&"mb_call_method"),
+        "list method should use mb_call_method"
+    );
 }
 
 #[test]
@@ -1057,28 +1251,52 @@ fn test_pipeline_chained_method_call() {
     // so each lowers via mb_call_method.
     let mir = pipeline("s: str = \"hello\"\ns.encode().decode()\n");
     let main = &mir.bodies[0];
-    let call_count = main.blocks.iter()
+    let call_count = main
+        .blocks
+        .iter()
         .flat_map(|b| &b.stmts)
         .filter(|i| matches!(i, MirInst::CallExtern { name, .. } if name == "mb_call_method"))
         .count();
-    assert!(call_count >= 2, "chained methods should produce 2+ mb_call_method calls, got {call_count}");
+    assert!(
+        call_count >= 2,
+        "chained methods should produce 2+ mb_call_method calls, got {call_count}"
+    );
 }
 
 #[test]
 fn test_pipeline_try_except_produces_handler_blocks() {
     // Task 4.6: exception handling produces proper control flow
-    let mir = pipeline("try:\n    x: int = 1\nexcept ValueError:\n    y: int = 2\nfinally:\n    z: int = 3\n");
+    let mir = pipeline(
+        "try:\n    x: int = 1\nexcept ValueError:\n    y: int = 2\nfinally:\n    z: int = 3\n",
+    );
     let main = &mir.bodies[0];
     // Should have multiple blocks for try/except/finally
-    assert!(main.blocks.len() >= 4,
-        "try/except/finally should produce >=4 blocks, got {}", main.blocks.len());
+    assert!(
+        main.blocks.len() >= 4,
+        "try/except/finally should produce >=4 blocks, got {}",
+        main.blocks.len()
+    );
     // Should have mb_push_handler and mb_pop_handler
-    let externs: Vec<&str> = main.blocks.iter()
+    let externs: Vec<&str> = main
+        .blocks
+        .iter()
         .flat_map(|b| &b.stmts)
-        .filter_map(|i| if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None })
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
         .collect();
-    assert!(externs.contains(&"mb_push_handler"), "try should push exception handler");
-    assert!(externs.contains(&"mb_pop_handler"), "try should pop exception handler");
+    assert!(
+        externs.contains(&"mb_push_handler"),
+        "try should push exception handler"
+    );
+    assert!(
+        externs.contains(&"mb_pop_handler"),
+        "try should pop exception handler"
+    );
 }
 
 #[test]
@@ -1087,9 +1305,14 @@ fn test_pipeline_raise_stmt() {
     let mir = pipeline("raise ValueError(\"bad\")\n");
     let main = &mir.bodies[0];
     let has_raise = main.blocks.iter().any(|b| {
-        b.stmts.iter().any(|i| matches!(i, MirInst::CallExtern { name, .. } if name.starts_with("mb_raise")))
+        b.stmts
+            .iter()
+            .any(|i| matches!(i, MirInst::CallExtern { name, .. } if name.starts_with("mb_raise")))
     });
-    assert!(has_raise, "raise statement should produce mb_raise CallExtern");
+    assert!(
+        has_raise,
+        "raise statement should produce mb_raise CallExtern"
+    );
 }
 
 #[test]
@@ -1097,14 +1320,31 @@ fn test_pipeline_for_loop_uses_iterator_protocol() {
     // Task 4.5 (post-Lever-A): for loop uses mb_iter/mb_next_or_stop/mb_is_stop_iter
     let mir = pipeline("items = [1, 2, 3]\nfor x in items:\n    y: int = x\n");
     let main = &mir.bodies[0];
-    let externs: Vec<&str> = main.blocks.iter()
+    let externs: Vec<&str> = main
+        .blocks
+        .iter()
         .flat_map(|b| &b.stmts)
-        .filter_map(|i| if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None })
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
         .collect();
     assert!(externs.contains(&"mb_iter"), "for loop should call mb_iter");
-    assert!(externs.contains(&"mb_next_or_stop"), "for loop should call mb_next_or_stop");
-    assert!(externs.contains(&"mb_is_stop_iter"), "for loop should call mb_is_stop_iter");
-    assert!(externs.contains(&"mb_iter_release"), "for loop should release iterator");
+    assert!(
+        externs.contains(&"mb_next_or_stop"),
+        "for loop should call mb_next_or_stop"
+    );
+    assert!(
+        externs.contains(&"mb_is_stop_iter"),
+        "for loop should call mb_is_stop_iter"
+    );
+    assert!(
+        externs.contains(&"mb_iter_release"),
+        "for loop should release iterator"
+    );
 }
 
 #[test]
@@ -1114,9 +1354,17 @@ fn test_pipeline_fstring_calls_mb_str() {
     // fast path for non-instances).
     let mir = pipeline("x: int = 42\nf\"value is {x}\"\n");
     let main = &mir.bodies[0];
-    let externs: Vec<&str> = main.blocks.iter()
+    let externs: Vec<&str> = main
+        .blocks
+        .iter()
         .flat_map(|b| &b.stmts)
-        .filter_map(|i| if let MirInst::CallExtern { name, .. } = i { Some(name.as_str()) } else { None })
+        .filter_map(|i| {
+            if let MirInst::CallExtern { name, .. } = i {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
         .collect();
     assert!(
         externs.contains(&"mb_fstring_value"),
@@ -1137,7 +1385,10 @@ fn test_pipeline_binop_on_any_type_dispatches() {
             _ => false,
         })
     });
-    assert!(has_dispatch, "list addition should produce BinOp or mb_add dispatch");
+    assert!(
+        has_dispatch,
+        "list addition should produce BinOp or mb_add dispatch"
+    );
 }
 
 #[test]
@@ -1147,21 +1398,31 @@ fn test_async_function_body_reads_locals() {
     // Body function should call mb_coroutine_get_local to read args
     let has_get_local = mir.bodies.iter().any(|body| {
         body.blocks.iter().any(|b| {
-            b.stmts.iter().any(|s| matches!(s,
-                MirInst::CallExtern { name, .. } if name == "mb_coroutine_get_local"
-            ))
+            b.stmts.iter().any(|s| {
+                matches!(s,
+                    MirInst::CallExtern { name, .. } if name == "mb_coroutine_get_local"
+                )
+            })
         })
     });
     // Wrapper should call mb_coroutine_set_local to store args
     let has_set_local = mir.bodies.iter().any(|body| {
         body.blocks.iter().any(|b| {
-            b.stmts.iter().any(|s| matches!(s,
-                MirInst::CallExtern { name, .. } if name == "mb_coroutine_set_local"
-            ))
+            b.stmts.iter().any(|s| {
+                matches!(s,
+                    MirInst::CallExtern { name, .. } if name == "mb_coroutine_set_local"
+                )
+            })
         })
     });
-    assert!(has_get_local, "body should read args via mb_coroutine_get_local");
-    assert!(has_set_local, "wrapper should store args via mb_coroutine_set_local");
+    assert!(
+        has_get_local,
+        "body should read args via mb_coroutine_get_local"
+    );
+    assert!(
+        has_set_local,
+        "wrapper should store args via mb_coroutine_set_local"
+    );
 }
 
 // ── string-ops: Str + Str lowers to mb_str_concat ──
@@ -1172,16 +1433,19 @@ fn test_str_concat_emits_mb_str_concat() {
     let mir = pipeline(
         "a: str = \"hello\"\n\
          b: str = \" world\"\n\
-         c: str = a + b\n"
+         c: str = a + b\n",
     );
     assert!(!mir.bodies.is_empty());
     let main = &mir.bodies[0];
     let has_concat = main.blocks.iter().any(|blk| {
-        blk.stmts.iter().any(|inst| {
-            matches!(inst, MirInst::CallExtern { name, .. } if name == "mb_str_concat")
-        })
+        blk.stmts
+            .iter()
+            .any(|inst| matches!(inst, MirInst::CallExtern { name, .. } if name == "mb_str_concat"))
     });
-    assert!(has_concat, "str + str should lower to CallExtern mb_str_concat");
+    assert!(
+        has_concat,
+        "str + str should lower to CallExtern mb_str_concat"
+    );
 }
 
 #[test]
@@ -1190,14 +1454,14 @@ fn test_str_concat_does_not_use_mb_add() {
     let mir = pipeline(
         "a: str = \"hello\"\n\
          b: str = \" world\"\n\
-         c: str = a + b\n"
+         c: str = a + b\n",
     );
     assert!(!mir.bodies.is_empty());
     let main = &mir.bodies[0];
     let uses_mb_add = main.blocks.iter().any(|blk| {
-        blk.stmts.iter().any(|inst| {
-            matches!(inst, MirInst::CallExtern { name, .. } if name == "mb_add")
-        })
+        blk.stmts
+            .iter()
+            .any(|inst| matches!(inst, MirInst::CallExtern { name, .. } if name == "mb_add"))
     });
     assert!(!uses_mb_add, "str + str must not dispatch to mb_add");
 }
@@ -1215,26 +1479,36 @@ fn test_pipeline_match_integer_constants_distinct() {
          \x20   case 1:\n\
          \x20       y: int = 1\n\
          \x20   case _:\n\
-         \x20       y: int = 2\n"
+         \x20       y: int = 2\n",
     );
     let main = &mir.bodies[0];
-    let all_insts: Vec<&MirInst> = main.blocks.iter()
-        .flat_map(|b| &b.stmts).collect();
+    let all_insts: Vec<&MirInst> = main.blocks.iter().flat_map(|b| &b.stmts).collect();
 
     // Collect every integer constant loaded in the function body
-    let int_consts: Vec<i64> = all_insts.iter().filter_map(|i| {
-        if let MirInst::LoadConst { value: MirConst::Int(v), .. } = i {
-            Some(*v)
-        } else {
-            None
-        }
-    }).collect();
+    let int_consts: Vec<i64> = all_insts
+        .iter()
+        .filter_map(|i| {
+            if let MirInst::LoadConst {
+                value: MirConst::Int(v),
+                ..
+            } = i
+            {
+                Some(*v)
+            } else {
+                None
+            }
+        })
+        .collect();
 
     // The pattern comparison constants 0 and 1 must both appear
-    assert!(int_consts.contains(&0),
-        "case 0 must emit LoadConst(Int(0)), got consts: {int_consts:?}");
-    assert!(int_consts.contains(&1),
-        "case 1 must emit LoadConst(Int(1)), got consts: {int_consts:?}");
+    assert!(
+        int_consts.contains(&0),
+        "case 0 must emit LoadConst(Int(0)), got consts: {int_consts:?}"
+    );
+    assert!(
+        int_consts.contains(&1),
+        "case 1 must emit LoadConst(Int(1)), got consts: {int_consts:?}"
+    );
 }
 
 #[test]
@@ -1246,21 +1520,30 @@ fn test_pipeline_match_integer_constant_value_preserved() {
          \x20   case 42:\n\
          \x20       y: int = 1\n\
          \x20   case _:\n\
-         \x20       y: int = 0\n"
+         \x20       y: int = 0\n",
     );
     let main = &mir.bodies[0];
-    let int_consts: Vec<i64> = main.blocks.iter()
+    let int_consts: Vec<i64> = main
+        .blocks
+        .iter()
         .flat_map(|b| &b.stmts)
         .filter_map(|i| {
-            if let MirInst::LoadConst { value: MirConst::Int(v), .. } = i {
+            if let MirInst::LoadConst {
+                value: MirConst::Int(v),
+                ..
+            } = i
+            {
                 Some(*v)
             } else {
                 None
             }
-        }).collect();
+        })
+        .collect();
 
-    assert!(int_consts.contains(&42),
-        "case 42 must emit LoadConst(Int(42)), got: {int_consts:?}");
+    assert!(
+        int_consts.contains(&42),
+        "case 42 must emit LoadConst(Int(42)), got: {int_consts:?}"
+    );
 }
 
 // ── R7: Walrus := scope assignment ──
@@ -1271,11 +1554,13 @@ fn test_pipeline_walrus_simple_lowers_without_error() {
     let mir = pipeline(
         "x: int = 1\n\
          if (y := x + 1) > 0:\n\
-         \x20   z: int = y\n"
+         \x20   z: int = y\n",
     );
     // Main body should be non-empty — walrus must not abort the pipeline
-    assert!(!mir.bodies[0].blocks.is_empty(),
-        "walrus in if condition must produce non-empty MIR");
+    assert!(
+        !mir.bodies[0].blocks.is_empty(),
+        "walrus in if condition must produce non-empty MIR"
+    );
 }
 
 #[test]
@@ -1285,11 +1570,15 @@ fn test_pipeline_raise_from_lowers_to_mir() {
         "try:\n\
          \x20   x: int = 1\n\
          except Exception:\n\
-         \x20   raise RuntimeError(\"wrap\")\n"
+         \x20   raise RuntimeError(\"wrap\")\n",
     );
     let main = &mir.bodies[0];
-    let all_insts: Vec<&MirInst> = main.blocks.iter()
-        .flat_map(|b| &b.stmts).collect();
-    let has_raise = all_insts.iter().any(|i| matches!(i, MirInst::CallExtern { name, .. } if name.starts_with("mb_raise")));
-    assert!(has_raise, "raise in except handler must emit mb_raise CallExtern");
+    let all_insts: Vec<&MirInst> = main.blocks.iter().flat_map(|b| &b.stmts).collect();
+    let has_raise = all_insts
+        .iter()
+        .any(|i| matches!(i, MirInst::CallExtern { name, .. } if name.starts_with("mb_raise")));
+    assert!(
+        has_raise,
+        "raise in except handler must emit mb_raise CallExtern"
+    );
 }

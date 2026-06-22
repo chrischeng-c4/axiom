@@ -13,13 +13,13 @@ resources:
 components:
   - ../../components/observability
 
-# staging: 3 serving nodes, a single NATS broker, modest resources,
+# staging: 3 serving nodes, a single Relay broker, modest resources,
 # json logs, auth off (a pre-prod soak environment).
 
 replicas:
   - name: lumen
     count: 3
-  - name: lumen-nats
+  - name: lumen-relay
     count: 1
 
 patches:
@@ -74,7 +74,7 @@ patches:
         value: 8
   - target:
       kind: StatefulSet
-      name: lumen-nats
+      name: lumen-relay
     patch: |-
       # Cloud SSD storage class (base omits storageClassName for portability).
       - op: add

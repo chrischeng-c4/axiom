@@ -24,17 +24,11 @@ fn manifest() -> Value {
 fn header_is_well_formed() {
     let m = manifest();
     assert_eq!(m["version"].as_integer(), Some(1));
-    assert_eq!(
-        m["fixture"].as_str(),
-        Some("list_sort_builtin_perf_gate")
-    );
+    assert_eq!(m["fixture"].as_str(), Some("list_sort_builtin_perf_gate"));
     assert_eq!(m["issue"].as_integer(), Some(2513));
     assert_eq!(m["parent_issue"].as_integer(), Some(2458));
     assert_eq!(m["profile"].as_str(), Some("conformance"));
-    assert_eq!(
-        m["family"].as_str(),
-        Some("list_sort_builtin_perf_gate")
-    );
+    assert_eq!(m["family"].as_str(), Some("list_sort_builtin_perf_gate"));
     assert_eq!(m["network"].as_str(), Some("offline"));
 }
 
@@ -137,7 +131,9 @@ fn r2_no_other_accepted_bench_regresses() {
     let c = &manifest()["r2_no_other_accepted_bench_regresses_contract"];
     assert_eq!(
         c["case"].as_str(),
-        Some("improving_list_sort_builtin_does_not_regress_any_other_accepted_bench_below_its_floor")
+        Some(
+            "improving_list_sort_builtin_does_not_regress_any_other_accepted_bench_below_its_floor"
+        )
     );
     assert_eq!(c["requirement_id"].as_str(), Some("R2"));
     for key in [
@@ -169,18 +165,12 @@ fn r2_no_other_accepted_bench_regresses() {
         c["per_bench_regression_failure_kind"].as_str(),
         Some("perf_list_sort_builtin_caused_per_bench_regression")
     );
-    assert_eq!(
-        c["per_bench_regression_exit_code"].as_integer(),
-        Some(430)
-    );
+    assert_eq!(c["per_bench_regression_exit_code"].as_integer(), Some(430));
     assert_eq!(
         c["geomean_only_check_failure_kind"].as_str(),
         Some("perf_list_sort_builtin_used_geomean_only_check")
     );
-    assert_eq!(
-        c["geomean_only_check_exit_code"].as_integer(),
-        Some(431)
-    );
+    assert_eq!(c["geomean_only_check_exit_code"].as_integer(), Some(431));
     assert_eq!(
         c["regression_threshold_widened_failure_kind"].as_str(),
         Some("perf_list_sort_builtin_regression_threshold_silently_widened")
@@ -226,10 +216,7 @@ fn r3_starting_deficit_recorded() {
             "warmup_iters",
         ]
     );
-    assert_eq!(
-        c["expected_starting_mamba_ns"].as_integer(),
-        Some(400050)
-    );
+    assert_eq!(c["expected_starting_mamba_ns"].as_integer(), Some(400050));
     assert_eq!(c["expected_starting_cpython_ns"].as_integer(), Some(411));
     assert_eq!(c["expected_starting_ratio"].as_str(), Some("0.001x"));
     assert_eq!(
@@ -293,10 +280,7 @@ fn r4_timsort_stability_in_place_kwargs_preserved() {
         c["non_stable_algorithm_failure_kind"].as_str(),
         Some("perf_list_sort_builtin_non_stable_algorithm_substituted")
     );
-    assert_eq!(
-        c["non_stable_algorithm_exit_code"].as_integer(),
-        Some(435)
-    );
+    assert_eq!(c["non_stable_algorithm_exit_code"].as_integer(), Some(435));
     assert_eq!(
         c["not_in_place_failure_kind"].as_str(),
         Some("perf_list_sort_builtin_not_in_place")

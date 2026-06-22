@@ -1,7 +1,7 @@
 ---
 id: projects-lumen-src-storage-rs
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
@@ -20,7 +20,7 @@ Public API manifest for `projects/lumen/src/storage.rs` captured as a per-file r
 
 | Name | Target | Kind | Visibility |
 |------|--------|------|------------|
-| `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | const | pub |
+| `MAX_INDEX_ITEMS` | projects/lumen/src/storage.rs | constant | pub |
 | `DropOutcome` | projects/lumen/src/storage.rs | enum | pub |
 | `StorageError` | projects/lumen/src/storage.rs | enum | pub |
 | `SortableF64` | projects/lumen/src/storage.rs | struct | pub |
@@ -78,6 +78,8 @@ Public API manifest for `projects/lumen/src/storage.rs` captured as a per-file r
 <!-- type: rust-source-unit lang: rust -->
 
 ````rust
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! In-memory storage and query execution.
 //!
 //! The engine is `BTreeMap`-backed inverted indexes per field,
@@ -117,7 +119,7 @@ use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
     DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
     HammingQuery, HasChildQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp, MatchQuery,
-    QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortOrder,
+    QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortOrder, SortSpec,
     StatsResponse, StorageStats, TermQuery, TermsQuery, VectorSpec,
 };
 use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
@@ -132,6 +134,7 @@ type FastHashMap<K, V> = FxHashMap<K, V>;
 pub const MAX_INDEX_ITEMS: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum DropOutcome {
     /// The collection did not exist.
     NotFound,
@@ -144,6 +147,7 @@ pub enum DropOutcome {
 }
 
 #[derive(Debug, Error)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum StorageError {
     #[error("collection not found: {0}")]
     CollectionNotFound(String),
@@ -163,6 +167,8 @@ pub enum StorageError {
     BulkLimit { got: usize, max: usize },
     #[error("query too complex: {0}")]
     QueryTooComplex(String),
+    #[error("unsupported sort: {0}")]
+    UnsupportedSort(String),
     #[error("collection `{0}` was deleted and is pending physical removal")]
     Gone(String),
 }
@@ -174,10 +180,12 @@ pub enum StorageError {
 /// Total-ordered, bit-monotone wrapper around `f64`. NaN is rejected at
 /// construction (the API layer must validate before reaching here).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct SortableF64(u64);
 
 const MISSING_SORTABLE_F64_BITS: u64 = 0xfff8_0000_0000_0000;
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl SortableF64 {
     pub fn new(x: f64) -> Result<Self> {
         if x.is_nan() {
@@ -312,6 +320,7 @@ enum InternerBucket {
     Many(Vec<u32>),
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Interner {
     fn intern(&mut self, eid: &str) -> u32 {
         self.intern_with_status(eid).0
@@ -380,11 +389,13 @@ fn hash_external_id(eid: &str) -> u64 {
 /// exactly `docids.len()`. Replaces the old `BTreeMap<u32,u32>` whose per-doc
 /// access chased heap-scattered tree nodes.
 #[derive(Debug, Default, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub(crate) struct Postings {
     docids: Vec<u32>,
     tfs: Vec<u32>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Postings {
     /// Build a posting list from ascending `(docid, tf)` pairs. Crate-internal,
     /// used by the Text segment writer round-trip test to fabricate postings
@@ -586,6 +597,7 @@ struct TextIndex {
     tombstones: RoaringBitmap,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl TextIndex {
     fn clear_match_rank_cache(&self) {
         if let Ok(mut cache) = self.match_rank_cache.write() {
@@ -948,6 +960,7 @@ struct KeywordIndex {
     tombstones: RoaringBitmap,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl KeywordIndex {
     /// The doc's keyword for a per-doc PREDICATE point lookup. When a sealed
     /// segment is attached it serves ids in its covered range `[0..n_docs)`
@@ -1149,6 +1162,7 @@ struct NumberRangeStats {
 /// unchanged tree is O(log distinct).
 const RANGE_STATS_BUILD_THRESHOLD: u64 = 1024;
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl NumberRangeStats {
     fn build(values: &BTreeMap<SortableF64, RoaringBitmap>) -> Self {
         let mut keys = Vec::with_capacity(values.len());
@@ -1249,6 +1263,7 @@ struct NumberIndex {
     tombstones: RoaringBitmap,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl NumberIndex {
     /// The doc's value for a per-doc PREDICATE point lookup. When a sealed
     /// segment is attached it serves ids in its covered range `[0..n_docs)`
@@ -1355,12 +1370,7 @@ impl NumberIndex {
         low: std::ops::Bound<SortableF64>,
         high: std::ops::Bound<SortableF64>,
     ) -> (u64, u64) {
-        if let Some(stats) = self
-            .range_stats
-            .read()
-            .ok()
-            .and_then(|guard| guard.clone())
-        {
+        if let Some(stats) = self.range_stats.read().ok().and_then(|guard| guard.clone()) {
             return stats.range(low, high);
         }
         let mut distinct = 0u64;
@@ -2096,6 +2106,7 @@ struct SetIndex {
     tombstones: RoaringBitmap,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl SetIndex {
     /// Does doc `id`'s set contain `el`, for a per-doc PREDICATE point lookup?
     /// When a sealed segment is attached it serves ids in its covered range
@@ -2306,6 +2317,7 @@ struct HashIndex {
     segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl HashIndex {
     /// The doc's 64-bit hash for the per-doc Hamming read. When a sealed segment
     /// is attached it serves ids in its covered range `[0..n_docs)` (the live
@@ -2330,6 +2342,7 @@ impl HashIndex {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl std::fmt::Debug for FieldIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -2362,6 +2375,7 @@ fn parse_hash(s: &str) -> Result<u64> {
         .map_err(|e| anyhow!("hash field expects a 64-bit hex string (got `{s}`): {e}"))
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldIndex {
     fn from_spec(spec: &FieldSpec) -> Result<Self> {
         Ok(match spec.field_type {
@@ -2736,6 +2750,7 @@ struct FieldCoverage {
     names: Vec<String>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldCoverage {
     fn insert(&mut self, field: String) -> bool {
         if self.contains(&field) {
@@ -2786,6 +2801,7 @@ struct TokenSet {
     tokens: SmallVec<[String; 8]>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl TokenSet {
     fn insert_str(&mut self, token: &str) -> bool {
         if self.tokens.iter().any(|seen| seen == token) {
@@ -2859,6 +2875,7 @@ struct Collection {
     search_cache: RwLock<FastHashMap<String, SearchResponse>>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Collection {
     fn new(schema: BTreeMap<String, FieldSpec>) -> Result<Self> {
         let mut fields = FastHashMap::default();
@@ -2959,12 +2976,14 @@ impl Collection {
 // ---------------------------------------------------------------------------
 
 #[derive(Default)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct Engine {
     state: RwLock<EngineState>,
     metrics: Metrics,
     draining: AtomicBool,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Engine")
@@ -2978,6 +2997,7 @@ struct EngineState {
     collections: BTreeMap<String, Collection>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Engine {
     pub fn new() -> Self {
         Self::default()
@@ -3447,6 +3467,7 @@ impl Engine {
             .get(collection_id)
             .ok_or_else(|| StorageError::CollectionNotFound(collection_id.to_string()))?;
         coll.check_live(collection_id)?;
+        validate_sort_request(coll, collection_id, &req)?;
 
         let interner = &coll.interner;
         let parsed_cursor = req.cursor.as_deref().and_then(parse_page_cursor);
@@ -3458,19 +3479,7 @@ impl Engine {
         // a score keyset only continues score-ranked pages. A cursor that does
         // not match the request shape degrades to first-page semantics (caller
         // error — cursors are bound to the query that produced them).
-        let single_number_sort = req.sort.as_deref().and_then(|sort| match sort {
-            [s] => match coll.fields.get(&s.field) {
-                Some(FieldIndex::Number(_)) => Some(s.field.clone()),
-                _ => None,
-            },
-            _ => None,
-        });
-        let sort_after: Option<(u64, u32)> = match &parsed_cursor {
-            Some(PageCursor::SortKeyset { bits, docid }) if single_number_sort.is_some() => {
-                Some((*bits, *docid))
-            }
-            _ => None,
-        };
+        let sort_after = sort_after_for_request(coll, req.sort.as_deref(), &parsed_cursor)?;
         let score_after: Option<(f32, String)> = match &parsed_cursor {
             Some(PageCursor::ScoreKeyset { score_bits, eid }) if req.sort.is_none() => {
                 Some((f32::from_bits(*score_bits), eid.clone()))
@@ -3630,7 +3639,7 @@ impl Engine {
         let planned = if score_after.is_some() {
             None
         } else {
-            try_plan(coll, &req, offset, sort_after)?
+            try_plan(coll, &req, offset, sort_after.as_ref())?
         };
 
         let (page, total, plan_kind): (Vec<(u32, f32)>, u64, PlanKind) = match planned {
@@ -3743,13 +3752,20 @@ impl Engine {
         } else {
             match plan_kind {
                 PlanKind::SortedField if hits.len() == limit => {
-                    let field = single_number_sort.as_deref().expect("sorted plan has field");
-                    let Some(FieldIndex::Number(n)) = coll.fields.get(field) else {
-                        unreachable!("sorted plan field is a number index");
-                    };
+                    let sort = req.sort.as_deref().expect("sorted plan has sort");
                     let (last_id, _) = *page.last().expect("non-empty page");
-                    n.number_bits_at(last_id)
-                        .map(|bits| make_sort_cursor(bits, last_id))
+                    let values = sort_values_for_doc(coll, sort, last_id)?;
+                    match (sort, values) {
+                        ([spec], Some(values)) => match coll.fields.get(&spec.field) {
+                            Some(FieldIndex::Number(_)) => match values.as_slice() {
+                                [SortValue::Number(bits)] => Some(make_sort_cursor(*bits, last_id)),
+                                _ => Some(make_sort_values_cursor(&values, last_id)),
+                            },
+                            _ => Some(make_sort_values_cursor(&values, last_id)),
+                        },
+                        (_, Some(values)) => Some(make_sort_values_cursor(&values, last_id)),
+                        (_, None) => None,
+                    }
                 }
                 PlanKind::ScoreRanked if hits.len() == limit => {
                     let last = hits.last().expect("non-empty hits");
@@ -3805,7 +3821,7 @@ impl Engine {
                     collection: collection_id.to_string(),
                     field: field.to_string(),
                 }
-                .into())
+                .into());
             }
         };
         let limit = limit as usize;
@@ -3903,9 +3919,7 @@ impl Engine {
                         .iter()
                         .filter_map(|v| k.terms.get(v).map(|set| (v, set)))
                         .filter(|(_, set)| (set.len() as usize) >= min)
-                        .map(|(v, set)| {
-                            (serde_json::Value::String(v.clone()), Cow::Borrowed(set))
-                        })
+                        .map(|(v, set)| (serde_json::Value::String(v.clone()), Cow::Borrowed(set)))
                         .collect()
                 }
             }
@@ -3956,9 +3970,7 @@ impl Engine {
                         .iter()
                         .filter_map(|v| s.elements.get(v).map(|set| (v, set)))
                         .filter(|(_, set)| (set.len() as usize) >= min)
-                        .map(|(v, set)| {
-                            (serde_json::Value::String(v.clone()), Cow::Borrowed(set))
-                        })
+                        .map(|(v, set)| (serde_json::Value::String(v.clone()), Cow::Borrowed(set)))
                         .collect()
                 }
             }
@@ -4127,6 +4139,7 @@ impl Engine {
 /// the waiting write handler (by sequence) so the HTTP response keeps
 /// its rich shape even though apply happens in the subscribe layer.
 #[derive(Debug, Clone)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum ApplyOutcome {
     Created(CreateCollectionResponse),
     Indexed(IndexResponse),
@@ -4347,6 +4360,7 @@ const MAX_KNN_K: u32 = 10_000;
 /// Reject pathological queries with a clear error. Traversal is **iterative**
 /// (explicit stack) so validating a deeply-nested tree cannot itself overflow
 /// the stack. Bounds: nesting depth, total node count, `terms` fan-out, `knn` k.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub fn validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> {
     let mut stack: Vec<(&QueryNode, usize)> = vec![(root, 1)];
     let mut nodes = 0usize;
@@ -4438,9 +4452,11 @@ fn eval_query(
         QueryNode::Knn(k) => eval_knn(coll, k)?,
         QueryNode::Hamming(hq) => eval_hamming(coll, hq)?,
         QueryNode::Exists(e) => constant_score(eval_field_doc_union(coll, &e.field, 1)?),
-        QueryNode::Duplicated(d) => {
-            constant_score(eval_field_doc_union(coll, &d.field, d.min_group_size.max(2) as u64)?)
-        }
+        QueryNode::Duplicated(d) => constant_score(eval_field_doc_union(
+            coll,
+            &d.field,
+            d.min_group_size.max(2) as u64,
+        )?),
         QueryNode::Rrf(r) => eval_rrf(coll, collection_id, r, universe, state)?,
         QueryNode::And(children) => {
             // A `Not` conjunct is a filter: `A AND NOT B = A \ B`.
@@ -5139,6 +5155,7 @@ struct TopRankedHit {
     external_id: String,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl PartialEq for TopRankedHit {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -5147,8 +5164,10 @@ impl PartialEq for TopRankedHit {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Eq for TopRankedHit {}
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Ord for TopRankedHit {
     fn cmp(&self, other: &Self) -> CmpOrdering {
         match self.score.total_cmp(&other.score) {
@@ -5159,6 +5178,7 @@ impl Ord for TopRankedHit {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl PartialOrd for TopRankedHit {
     fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
         Some(self.cmp(other))
@@ -5987,6 +6007,7 @@ struct SortableBitsBounds {
     high: Option<(u64, bool)>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl SortableBitsBounds {
     #[inline]
     fn new(lo: &std::ops::Bound<SortableF64>, hi: &std::ops::Bound<SortableF64>) -> Self {
@@ -7263,11 +7284,356 @@ enum PlanKind {
     ScoreRanked,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SortValue {
+    Number(u64),
+    Keyword(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SortAfter {
+    values: Vec<SortValue>,
+    docid: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SortFieldKind {
+    Number,
+    Keyword,
+}
+
+fn sort_field_kind(
+    coll: &Collection,
+    collection_id: &str,
+    spec: &SortSpec,
+) -> Result<SortFieldKind> {
+    match coll.fields.get(&spec.field) {
+        Some(FieldIndex::Number(_)) => Ok(SortFieldKind::Number),
+        Some(FieldIndex::Keyword(_)) => Ok(SortFieldKind::Keyword),
+        Some(_) => Err(StorageError::UnsupportedSort(format!(
+            "field `{}` is not sortable; supported sort fields are number and keyword",
+            spec.field
+        ))
+        .into()),
+        None => Err(StorageError::UnknownField {
+            collection: collection_id.to_string(),
+            field: spec.field.clone(),
+        }
+        .into()),
+    }
+}
+
+fn query_can_be_sort_predicate(node: &QueryNode) -> bool {
+    match node {
+        QueryNode::Knn(_) | QueryNode::Rrf(_) | QueryNode::HasChild(_) | QueryNode::Hamming(_) => {
+            false
+        }
+        QueryNode::And(cs) | QueryNode::Or(cs) => cs.iter().all(query_can_be_sort_predicate),
+        QueryNode::Not(c) => query_can_be_sort_predicate(c),
+        _ => true,
+    }
+}
+
+fn validate_sort_request(
+    coll: &Collection,
+    collection_id: &str,
+    req: &SearchRequest,
+) -> Result<()> {
+    let Some(sort) = req.sort.as_deref() else {
+        return Ok(());
+    };
+    if sort.is_empty() {
+        return Err(
+            StorageError::UnsupportedSort("sort must contain at least one key".into()).into(),
+        );
+    }
+    if sort.len() > 2 {
+        return Err(StorageError::UnsupportedSort(format!(
+            "multi-key sort supports at most two keys, got {}",
+            sort.len()
+        ))
+        .into());
+    }
+    if req.collapse.is_some() {
+        return Err(StorageError::UnsupportedSort(
+            "sort cannot be combined with collapse/group-by results".into(),
+        )
+        .into());
+    }
+    if !query_can_be_sort_predicate(&req.query) {
+        return Err(StorageError::UnsupportedSort(
+            "sort cannot be combined with knn, rrf, has_child, or hamming queries".into(),
+        )
+        .into());
+    }
+    for spec in sort {
+        sort_field_kind(coll, collection_id, spec)?;
+    }
+    Ok(())
+}
+
+fn sort_value_at(coll: &Collection, spec: &SortSpec, id: u32) -> Result<Option<SortValue>> {
+    match coll.fields.get(&spec.field) {
+        Some(FieldIndex::Number(n)) => Ok(n.number_bits_at(id).map(SortValue::Number)),
+        Some(FieldIndex::Keyword(k)) => Ok(k.keyword_at(id).map(SortValue::Keyword)),
+        Some(_) => Err(StorageError::UnsupportedSort(format!(
+            "field `{}` is not sortable; supported sort fields are number and keyword",
+            spec.field
+        ))
+        .into()),
+        None => Err(StorageError::UnknownField {
+            collection: "<>".into(),
+            field: spec.field.clone(),
+        }
+        .into()),
+    }
+}
+
+fn sort_values_for_doc(
+    coll: &Collection,
+    sort: &[SortSpec],
+    id: u32,
+) -> Result<Option<Vec<SortValue>>> {
+    let mut values = Vec::with_capacity(sort.len());
+    for spec in sort {
+        let Some(value) = sort_value_at(coll, spec, id)? else {
+            return Ok(None);
+        };
+        values.push(value);
+    }
+    Ok(Some(values))
+}
+
+fn compare_sort_value(a: &SortValue, b: &SortValue) -> CmpOrdering {
+    match (a, b) {
+        (SortValue::Number(a), SortValue::Number(b)) => a.cmp(b),
+        (SortValue::Keyword(a), SortValue::Keyword(b)) => a.cmp(b),
+        _ => CmpOrdering::Equal,
+    }
+}
+
+fn compare_sort_tuples(
+    a_values: &[SortValue],
+    a_docid: u32,
+    b_values: &[SortValue],
+    b_docid: u32,
+    sort: &[SortSpec],
+) -> CmpOrdering {
+    for ((a, b), spec) in a_values.iter().zip(b_values).zip(sort) {
+        let ord = compare_sort_value(a, b);
+        if ord != CmpOrdering::Equal {
+            return match spec.order {
+                SortOrder::Asc => ord,
+                SortOrder::Desc => ord.reverse(),
+            };
+        }
+    }
+    a_docid.cmp(&b_docid)
+}
+
+fn is_after_sort_cursor(
+    values: &[SortValue],
+    docid: u32,
+    after: Option<&SortAfter>,
+    sort: &[SortSpec],
+) -> bool {
+    let Some(after) = after else {
+        return true;
+    };
+    if values.len() != after.values.len() || values.len() != sort.len() {
+        return true;
+    }
+    compare_sort_tuples(values, docid, &after.values, after.docid, sort) == CmpOrdering::Greater
+}
+
+fn sort_score(value: &SortValue) -> f32 {
+    match value {
+        SortValue::Number(bits) => SortableF64::from_bits(*bits).to_f64() as f32,
+        SortValue::Keyword(_) => 1.0,
+    }
+}
+
+fn cursor_value_matches_kind(value: &SortValue, kind: SortFieldKind) -> bool {
+    matches!(
+        (value, kind),
+        (SortValue::Number(_), SortFieldKind::Number)
+            | (SortValue::Keyword(_), SortFieldKind::Keyword)
+    )
+}
+
+fn sort_after_for_request(
+    coll: &Collection,
+    sort: Option<&[SortSpec]>,
+    parsed_cursor: &Option<PageCursor>,
+) -> Result<Option<SortAfter>> {
+    let Some(sort) = sort else {
+        return Ok(None);
+    };
+    let Some(parsed_cursor) = parsed_cursor else {
+        return Ok(None);
+    };
+    let candidate = match parsed_cursor {
+        PageCursor::SortKeyset { bits, docid } if sort.len() == 1 => SortAfter {
+            values: vec![SortValue::Number(*bits)],
+            docid: *docid,
+        },
+        PageCursor::SortValuesKeyset { values, docid } => SortAfter {
+            values: values.clone(),
+            docid: *docid,
+        },
+        _ => return Ok(None),
+    };
+    if candidate.values.len() != sort.len() {
+        return Ok(None);
+    }
+    for (value, spec) in candidate.values.iter().zip(sort) {
+        let kind = sort_field_kind(coll, "<>", spec)?;
+        if !cursor_value_matches_kind(value, kind) {
+            return Ok(None);
+        }
+    }
+    Ok(Some(candidate))
+}
+
+fn visit_sorted_bucket(
+    coll: &Collection,
+    req: &SearchRequest,
+    sort: &[SortSpec],
+    docs: &RoaringBitmap,
+    after: Option<&SortAfter>,
+    page: &mut Vec<(u32, f32)>,
+    total: &mut u64,
+) -> Result<bool> {
+    let want = req.limit as usize;
+    if sort.len() == 1 {
+        for id in docs {
+            if !query_predicate(coll, &req.query, id)? {
+                continue;
+            }
+            let Some(values) = sort_values_for_doc(coll, sort, id)? else {
+                continue;
+            };
+            if !is_after_sort_cursor(&values, id, after, sort) {
+                continue;
+            }
+            *total += 1;
+            if page.len() < want {
+                page.push((id, sort_score(&values[0])));
+            } else if !req.track_total {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+
+    let mut bucket = Vec::new();
+    for id in docs {
+        if !query_predicate(coll, &req.query, id)? {
+            continue;
+        }
+        let Some(values) = sort_values_for_doc(coll, sort, id)? else {
+            continue;
+        };
+        bucket.push((values, id));
+    }
+    bucket.sort_by(|(av, aid), (bv, bid)| compare_sort_tuples(av, *aid, bv, *bid, sort));
+    for (values, id) in bucket {
+        if !is_after_sort_cursor(&values, id, after, sort) {
+            continue;
+        }
+        *total += 1;
+        if page.len() < want {
+            page.push((id, sort_score(&values[0])));
+        } else if !req.track_total {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn try_generic_sort_plan(
+    coll: &Collection,
+    req: &SearchRequest,
+    sort: &[SortSpec],
+    sort_after: Option<&SortAfter>,
+) -> Result<Option<(Vec<(u32, f32)>, u64, PlanKind)>> {
+    let want = req.limit as usize;
+    let mut page: Vec<(u32, f32)> = Vec::with_capacity(want.min(1024));
+    let mut total: u64 = 0;
+    let first = &sort[0];
+    match coll.fields.get(&first.field) {
+        Some(FieldIndex::Number(n)) => {
+            let values = n.sorted_values();
+            match first.order {
+                SortOrder::Asc => {
+                    for (_v, docs) in values.iter() {
+                        if !visit_sorted_bucket(
+                            coll, req, sort, docs, sort_after, &mut page, &mut total,
+                        )? {
+                            break;
+                        }
+                    }
+                }
+                SortOrder::Desc => {
+                    for (_v, docs) in values.iter().rev() {
+                        if !visit_sorted_bucket(
+                            coll, req, sort, docs, sort_after, &mut page, &mut total,
+                        )? {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Some(FieldIndex::Keyword(k)) => {
+            let terms = k.live_terms();
+            match first.order {
+                SortOrder::Asc => {
+                    for (_term, docs) in terms.iter() {
+                        if !visit_sorted_bucket(
+                            coll, req, sort, docs, sort_after, &mut page, &mut total,
+                        )? {
+                            break;
+                        }
+                    }
+                }
+                SortOrder::Desc => {
+                    for (_term, docs) in terms.iter().rev() {
+                        if !visit_sorted_bucket(
+                            coll, req, sort, docs, sort_after, &mut page, &mut total,
+                        )? {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Some(_) => {
+            return Err(StorageError::UnsupportedSort(format!(
+                "field `{}` is not sortable; supported sort fields are number and keyword",
+                first.field
+            ))
+            .into());
+        }
+        None => {
+            return Err(StorageError::UnknownField {
+                collection: "<>".into(),
+                field: first.field.clone(),
+            }
+            .into());
+        }
+    }
+    if !req.track_total {
+        total = total.max(page.len() as u64);
+    }
+    Ok(Some((page, total, PlanKind::SortedField)))
+}
+
 fn try_plan(
     coll: &Collection,
     req: &SearchRequest,
     offset: usize,
-    sort_after: Option<(u64, u32)>,
+    sort_after: Option<&SortAfter>,
 ) -> Result<Option<(Vec<(u32, f32)>, u64, PlanKind)>> {
     if offset != 0 {
         return Ok(None);
@@ -7277,22 +7643,26 @@ fn try_plan(
     // ---- sort by a single number field ----
     if let Some(sort) = &req.sort {
         let [s] = sort.as_slice() else {
-            return Ok(None); // multi-key sort not specialized
+            return try_generic_sort_plan(coll, req, sort, sort_after);
         };
         let Some(FieldIndex::Number(n)) = coll.fields.get(&s.field) else {
-            return Ok(None); // only number fields are sortable here
+            return try_generic_sort_plan(coll, req, sort, sort_after);
         };
         if query_has_knn(&req.query) {
             return Ok(None);
         }
+        let number_sort_after = sort_after.and_then(|after| match after.values.as_slice() {
+            [SortValue::Number(bits)] => Some((*bits, after.docid)),
+            _ => None,
+        });
         let descending = matches!(s.order, SortOrder::Desc);
         // Keyset continuation: a (v, id) pair is on the page iff it sits
         // strictly AFTER the cursor in walk order. Within an equal key the
         // walk emits docids ascending in BOTH directions, so the equal-key
         // remainder is `id > cursor_docid`.
-        let after_bits = sort_after.map(|(bits, _)| bits);
+        let after_bits = number_sort_after.map(|(bits, _)| bits);
         let past_cursor = |v_bits: u64, id: u32| -> bool {
-            match sort_after {
+            match number_sort_after {
                 None => true,
                 Some((k, d)) => {
                     if v_bits == k {
@@ -7323,7 +7693,7 @@ fn try_plan(
                 })?;
             } else {
                 let values = n.sorted_values();
-                let after_key = sort_after.map(|(bits, _)| SortableF64::from_bits(bits));
+                let after_key = number_sort_after.map(|(bits, _)| SortableF64::from_bits(bits));
                 match s.order {
                     SortOrder::Asc => {
                         let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
@@ -7372,7 +7742,7 @@ fn try_plan(
             }
             return Ok(Some((page, total, PlanKind::SortedField)));
         }
-        if sort_after.is_none() {
+        if number_sort_after.is_none() {
             if let Some(out) = eval_number_sort_keyword_term_page(
                 coll,
                 &req.query,
@@ -7426,7 +7796,7 @@ fn try_plan(
         // Score is the sort value (informational; ranking IS the walk order).
         // `track_total=false` lets us stop as soon as the page is full.
         let values = n.sorted_values();
-        let after_key = sort_after.map(|(bits, _)| SortableF64::from_bits(bits));
+        let after_key = number_sort_after.map(|(bits, _)| SortableF64::from_bits(bits));
         match s.order {
             SortOrder::Asc => {
                 let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
@@ -7583,11 +7953,14 @@ fn try_plan(
 // ---------------------------------------------------------------------------
 
 /// A parsed pagination cursor.
+#[derive(Debug)]
 enum PageCursor {
     /// Legacy offset skip.
     Offset(u64),
     /// Continue a single-number-field sorted walk after (sort-value bits, docid).
     SortKeyset { bits: u64, docid: u32 },
+    /// Continue a keyword or composite sorted walk after (sort-key tuple, docid).
+    SortValuesKeyset { values: Vec<SortValue>, docid: u32 },
     /// Continue a score-ranked page after (score bits, external_id).
     ScoreKeyset { score_bits: u32, eid: String },
 }
@@ -7602,7 +7975,21 @@ fn make_cursor(offset: usize) -> String {
 }
 
 fn make_sort_cursor(bits: u64, docid: u32) -> String {
-    encode_cursor(format!("{{\"v\":2,\"m\":\"sort\",\"k\":{bits},\"d\":{docid}}}"))
+    encode_cursor(format!(
+        "{{\"v\":2,\"m\":\"sort\",\"k\":{bits},\"d\":{docid}}}"
+    ))
+}
+
+fn make_sort_values_cursor(values: &[SortValue], docid: u32) -> String {
+    let keys: Vec<serde_json::Value> = values
+        .iter()
+        .map(|value| match value {
+            SortValue::Number(bits) => serde_json::json!({"n": bits}),
+            SortValue::Keyword(term) => serde_json::json!({"s": term}),
+        })
+        .collect();
+    let payload = serde_json::json!({"v": 2, "m": "sortv", "k": keys, "d": docid});
+    encode_cursor(payload.to_string())
 }
 
 fn make_score_cursor(score: f32, eid: &str) -> String {
@@ -7625,6 +8012,26 @@ fn parse_page_cursor(s: &str) -> Option<PageCursor> {
             bits: v.get("k")?.as_u64()?,
             docid: v.get("d")?.as_u64()? as u32,
         }),
+        "sortv" => {
+            let values = v
+                .get("k")?
+                .as_array()?
+                .iter()
+                .map(|value| {
+                    if let Some(bits) = value.get("n").and_then(|n| n.as_u64()) {
+                        return Some(SortValue::Number(bits));
+                    }
+                    value
+                        .get("s")
+                        .and_then(|s| s.as_str())
+                        .map(|s| SortValue::Keyword(s.to_string()))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(PageCursor::SortValuesKeyset {
+                values,
+                docid: v.get("d")?.as_u64()? as u32,
+            })
+        }
         "score" => Some(PageCursor::ScoreKeyset {
             score_bits: v.get("k")?.as_u64()? as u32,
             eid: v.get("t")?.as_str()?.to_string(),
@@ -7645,6 +8052,7 @@ const SNAPSHOT_VERSION: u32 = 1;
 
 /// Top-level snapshot document. JSON-serialisable.
 #[derive(Debug, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct SnapshotV1 {
     /// Format version. Bump when the wire layout changes
     /// incompatibly so old snapshots can be detected at restore.
@@ -7653,6 +8061,7 @@ pub struct SnapshotV1 {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub struct CollectionSnapshot {
     pub schema: BTreeMap<String, FieldSpec>,
     pub version: u32,
@@ -7662,6 +8071,7 @@ pub struct CollectionSnapshot {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 pub enum FieldIndexSnapshot {
     Text {
         analyzer: Analyzer,
@@ -7708,6 +8118,7 @@ pub enum FieldIndexSnapshot {
     },
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Collection {
     fn to_snapshot(&self) -> Result<CollectionSnapshot> {
         let mut fields: BTreeMap<String, FieldIndexSnapshot> = BTreeMap::new();
@@ -7730,6 +8141,7 @@ impl Collection {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldIndex {
     fn to_snapshot(&self, interner: &Interner) -> Result<FieldIndexSnapshot> {
         let eid = |id: u32| interner.resolve(id).to_string();
@@ -7850,6 +8262,7 @@ impl FieldIndex {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Collection {
     fn from_snapshot(snap: CollectionSnapshot) -> Result<Self> {
         // Re-intern every external_id (eid_fields covers all indexed docs) so
@@ -7878,6 +8291,7 @@ impl Collection {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldIndex {
     fn from_snapshot(snap: FieldIndexSnapshot, interner: &mut Interner) -> Result<Self> {
         Ok(match snap {
@@ -8074,6 +8488,7 @@ impl FieldIndex {
 const EID_META_FILE: &str = "_collection.lmeta.lseg";
 
 #[cfg_attr(not(test), allow(dead_code))]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl FieldIndex {
     /// Seal this field's forward payload into `<field>.lseg` under `dir`, attach
     /// the reader, and DROP the in-RAM forward payload. Keeps the inverted
@@ -8440,6 +8855,7 @@ impl FieldIndex {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Collection {
     /// PRODUCTION seal (Phase 2f-1): seal EVERY field into a columnar mmap
     /// segment under `dir`, write the collection EID column, attach each reader,
@@ -8662,6 +9078,7 @@ struct CheckpointSchema {
 
 const CHECKPOINT_SCHEMA_FILE: &str = "_schema.json";
 
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Engine {
     /// PRODUCTION checkpoint (Phase 2f-2): seal EVERY live collection into a
     /// segment checkpoint under `dir` — one subdir `dir/<collection>/` per
@@ -8815,6 +9232,7 @@ fn collection_name_from_dir(dir: &std::path::Path) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-storage-rs.md#source
 impl Engine {
     /// TEST SEAM (Stage 2 Phase 2c): seal the current in-RAM state of a Number
     /// field into a columnar mmap segment under `dir`, then attach it so per-doc
@@ -12967,6 +13385,229 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_text_sort_is_rejected_instead_of_silent_score_ranking() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![item("u1", "bio", FieldValue::String("rust".into()))],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        let err = e
+            .search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Match(crate::types::MatchQuery {
+                        field: "bio".into(),
+                        text: "rust".into(),
+                        op: MatchOp::And,
+                    }),
+                    limit: 10,
+                    cursor: None,
+                    sort: Some(vec![crate::types::SortSpec {
+                        field: "bio".into(),
+                        order: SortOrder::Asc,
+                    }]),
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                err.downcast_ref::<StorageError>(),
+                Some(StorageError::UnsupportedSort(_))
+            ),
+            "text sort must be a 400-class unsupported sort error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn keyword_sort_keyset_pagination_walks_lexicographically() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let docs = [
+            ("u00", "delta", 4.0),
+            ("u01", "alpha", 1.0),
+            ("u02", "charlie", 3.0),
+            ("u03", "alpha", 2.0),
+            ("u04", "bravo", 5.0),
+        ];
+        let mut items = Vec::new();
+        for (eid, email, age) in docs {
+            items.push(item(eid, "email", FieldValue::String(email.into())));
+            items.push(item(eid, "age", FieldValue::Number(age)));
+        }
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        for (order, expected) in [
+            (SortOrder::Asc, vec!["u01", "u03", "u04", "u02", "u00"]),
+            (SortOrder::Desc, vec!["u00", "u02", "u04", "u01", "u03"]),
+        ] {
+            let base = SearchRequest {
+                query: QueryNode::Range(crate::types::RangeQuery {
+                    field: "age".into(),
+                    gt: None,
+                    gte: None,
+                    lt: None,
+                    lte: None,
+                }),
+                limit: 2,
+                cursor: None,
+                sort: Some(vec![crate::types::SortSpec {
+                    field: "email".into(),
+                    order,
+                }]),
+                track_total: true,
+                collapse: None,
+            };
+            let first = e.search("users", base.clone()).unwrap();
+            match parse_page_cursor(first.cursor.as_deref().expect("more pages")).unwrap() {
+                PageCursor::SortValuesKeyset { values, .. } => {
+                    assert!(matches!(values.as_slice(), [SortValue::Keyword(_)]));
+                }
+                other => panic!("expected keyword sort cursor, got {other:?}"),
+            }
+            assert_eq!(walk_pages(&e, &base), expected, "order {order:?}");
+        }
+    }
+
+    #[test]
+    fn composite_keyword_number_sort_keyset_paginates_to_oracle() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let docs = [
+            ("u00", "todo", 10.0),
+            ("u01", "done", 20.0),
+            ("u02", "todo", 30.0),
+            ("u03", "done", 15.0),
+            ("u04", "blocked", 40.0),
+            ("u05", "todo", 30.0),
+        ];
+        let mut items = Vec::new();
+        for (eid, status, age) in docs {
+            items.push(item(eid, "email", FieldValue::String(status.into())));
+            items.push(item(eid, "age", FieldValue::Number(age)));
+        }
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+        let base = SearchRequest {
+            query: QueryNode::Range(crate::types::RangeQuery {
+                field: "age".into(),
+                gt: None,
+                gte: None,
+                lt: None,
+                lte: None,
+            }),
+            limit: 2,
+            cursor: None,
+            sort: Some(vec![
+                crate::types::SortSpec {
+                    field: "email".into(),
+                    order: SortOrder::Asc,
+                },
+                crate::types::SortSpec {
+                    field: "age".into(),
+                    order: SortOrder::Desc,
+                },
+            ]),
+            track_total: true,
+            collapse: None,
+        };
+        let first = e.search("users", base.clone()).unwrap();
+        match parse_page_cursor(first.cursor.as_deref().expect("more pages")).unwrap() {
+            PageCursor::SortValuesKeyset { values, .. } => {
+                assert!(matches!(
+                    values.as_slice(),
+                    [SortValue::Keyword(_), SortValue::Number(_)]
+                ));
+            }
+            other => panic!("expected composite sort cursor, got {other:?}"),
+        }
+        assert_eq!(
+            walk_pages(&e, &base),
+            vec!["u04", "u01", "u03", "u02", "u05", "u00"]
+        );
+    }
+
+    #[test]
+    fn keyword_sort_paginates_over_sealed_segment_plus_live_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let mut sealed = Vec::new();
+        for (eid, email, age) in [
+            ("u00", "delta", 4.0),
+            ("u01", "alpha", 1.0),
+            ("u02", "charlie", 3.0),
+        ] {
+            sealed.push(item(eid, "email", FieldValue::String(email.into())));
+            sealed.push(item(eid, "age", FieldValue::Number(age)));
+        }
+        e.index(
+            "users",
+            IndexRequest {
+                items: sealed,
+                request_id: None,
+            },
+        )
+        .unwrap();
+        e.__seal_keyword_field_to_segment("users", "email", dir.path())
+            .unwrap();
+        let mut tail = Vec::new();
+        for (eid, email, age) in [("u03", "alpha", 2.0), ("u04", "bravo", 5.0)] {
+            tail.push(item(eid, "email", FieldValue::String(email.into())));
+            tail.push(item(eid, "age", FieldValue::Number(age)));
+        }
+        e.index(
+            "users",
+            IndexRequest {
+                items: tail,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        let base = SearchRequest {
+            query: QueryNode::Range(crate::types::RangeQuery {
+                field: "age".into(),
+                gt: None,
+                gte: None,
+                lt: None,
+                lte: None,
+            }),
+            limit: 2,
+            cursor: None,
+            sort: Some(vec![crate::types::SortSpec {
+                field: "email".into(),
+                order: SortOrder::Asc,
+            }]),
+            track_total: true,
+            collapse: None,
+        };
+        assert_eq!(
+            walk_pages(&e, &base),
+            vec!["u01", "u03", "u04", "u02", "u00"]
+        );
+    }
+
+    #[test]
     fn sorted_keyset_pagination_walks_exhaustively_with_ties() {
         let e = Engine::new();
         e.create_collection("users", build_users_schema()).unwrap();
@@ -13031,7 +13672,11 @@ mod tests {
         e.create_collection("users", build_users_schema()).unwrap();
         let mut items = Vec::new();
         for i in 0..60 {
-            items.push(item(&format!("u{i:03}"), "age", FieldValue::Number(i as f64)));
+            items.push(item(
+                &format!("u{i:03}"),
+                "age",
+                FieldValue::Number(i as f64),
+            ));
             items.push(item(
                 &format!("u{i:03}"),
                 "email",
@@ -13179,7 +13824,13 @@ mod tests {
         // 50 sealed docs with duplicate keys, then a live tail of 13 more —
         // the keyset walk must seek correctly across BOTH sources.
         let items: Vec<_> = (0..50)
-            .map(|i| item(&format!("u{i:03}"), "age", FieldValue::Number((i % 7) as f64)))
+            .map(|i| {
+                item(
+                    &format!("u{i:03}"),
+                    "age",
+                    FieldValue::Number((i % 7) as f64),
+                )
+            })
             .collect();
         e.index(
             "users",
@@ -13192,7 +13843,13 @@ mod tests {
         e.__seal_number_field_to_segment("users", "age", dir.path())
             .unwrap();
         let tail: Vec<_> = (50..63)
-            .map(|i| item(&format!("u{i:03}"), "age", FieldValue::Number((i % 7) as f64)))
+            .map(|i| {
+                item(
+                    &format!("u{i:03}"),
+                    "age",
+                    FieldValue::Number((i % 7) as f64),
+                )
+            })
             .collect();
         e.index(
             "users",
@@ -13830,20 +14487,35 @@ mod tests {
         .unwrap();
 
         // Keyword field: only docs that actually hold an email value.
-        let (total, ids) =
-            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "email".into() }));
+        let (total, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Exists(ExistsQuery {
+                field: "email".into(),
+            }),
+        );
         assert_eq!(total, 2);
         assert_eq!(ids, vec!["u1", "u3"]);
 
         // Set field: presence via element postings.
-        let (total, ids) =
-            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "tags".into() }));
+        let (total, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Exists(ExistsQuery {
+                field: "tags".into(),
+            }),
+        );
         assert_eq!(total, 1);
         assert_eq!(ids, vec!["u4"]);
 
         // Number field.
-        let (total, ids) =
-            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "age".into() }));
+        let (total, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Exists(ExistsQuery {
+                field: "age".into(),
+            }),
+        );
         assert_eq!(total, 2);
         assert_eq!(ids, vec!["u1", "u2"]);
     }
@@ -13868,7 +14540,9 @@ mod tests {
         .unwrap();
         // has-email AND age in [25,40): u1 only (u2 too old, u3 no email).
         let q = QueryNode::And(vec![
-            QueryNode::Exists(ExistsQuery { field: "email".into() }),
+            QueryNode::Exists(ExistsQuery {
+                field: "email".into(),
+            }),
             QueryNode::Range(RangeQuery {
                 field: "age".into(),
                 gte: Some(25.0),
@@ -14027,7 +14701,11 @@ mod tests {
                     item("u6", "email", FieldValue::String("solo@z.com".into())),
                     item("u1", "age", FieldValue::Number(30.0)),
                     item("u2", "age", FieldValue::Number(30.0)),
-                    item("u7", "tags", FieldValue::StringList(vec!["x".into(), "y".into()])),
+                    item(
+                        "u7",
+                        "tags",
+                        FieldValue::StringList(vec!["x".into(), "y".into()]),
+                    ),
                     item("u8", "tags", FieldValue::StringList(vec!["x".into()])),
                 ],
                 request_id: None,
@@ -14036,24 +14714,51 @@ mod tests {
         .unwrap();
 
         let queries: Vec<(&str, QueryNode)> = vec![
-            ("exists email", QueryNode::Exists(ExistsQuery { field: "email".into() })),
-            ("exists age", QueryNode::Exists(ExistsQuery { field: "age".into() })),
-            ("exists tags", QueryNode::Exists(ExistsQuery { field: "tags".into() })),
+            (
+                "exists email",
+                QueryNode::Exists(ExistsQuery {
+                    field: "email".into(),
+                }),
+            ),
+            (
+                "exists age",
+                QueryNode::Exists(ExistsQuery {
+                    field: "age".into(),
+                }),
+            ),
+            (
+                "exists tags",
+                QueryNode::Exists(ExistsQuery {
+                    field: "tags".into(),
+                }),
+            ),
             (
                 "dup email >=2",
-                QueryNode::Duplicated(DuplicatedQuery { field: "email".into(), min_group_size: 2 }),
+                QueryNode::Duplicated(DuplicatedQuery {
+                    field: "email".into(),
+                    min_group_size: 2,
+                }),
             ),
             (
                 "dup email >=3",
-                QueryNode::Duplicated(DuplicatedQuery { field: "email".into(), min_group_size: 3 }),
+                QueryNode::Duplicated(DuplicatedQuery {
+                    field: "email".into(),
+                    min_group_size: 3,
+                }),
             ),
             (
                 "dup age >=2",
-                QueryNode::Duplicated(DuplicatedQuery { field: "age".into(), min_group_size: 2 }),
+                QueryNode::Duplicated(DuplicatedQuery {
+                    field: "age".into(),
+                    min_group_size: 2,
+                }),
             ),
             (
                 "dup tags >=2",
-                QueryNode::Duplicated(DuplicatedQuery { field: "tags".into(), min_group_size: 2 }),
+                QueryNode::Duplicated(DuplicatedQuery {
+                    field: "tags".into(),
+                    min_group_size: 2,
+                }),
             ),
         ];
         let tail: Vec<_> = queries
@@ -14083,12 +14788,28 @@ mod tests {
         let (_, ids) = search_ids(
             &e,
             "users",
-            QueryNode::Duplicated(DuplicatedQuery { field: "email".into(), min_group_size: 2 }),
+            QueryNode::Duplicated(DuplicatedQuery {
+                field: "email".into(),
+                min_group_size: 2,
+            }),
         );
-        assert_eq!(ids, vec!["u1", "u2", "u3"], "2-group survivor must exit duplicated");
-        let (_, ids) =
-            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "email".into() }));
-        assert_eq!(ids, vec!["u1", "u2", "u3", "u4", "u6"], "exists must drop only the deleted doc");
+        assert_eq!(
+            ids,
+            vec!["u1", "u2", "u3"],
+            "2-group survivor must exit duplicated"
+        );
+        let (_, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Exists(ExistsQuery {
+                field: "email".into(),
+            }),
+        );
+        assert_eq!(
+            ids,
+            vec!["u1", "u2", "u3", "u4", "u6"],
+            "exists must drop only the deleted doc"
+        );
     }
 
     #[test]
@@ -14099,7 +14820,9 @@ mod tests {
             .search(
                 "users",
                 SearchRequest {
-                    query: QueryNode::Exists(ExistsQuery { field: "bio".into() }),
+                    query: QueryNode::Exists(ExistsQuery {
+                        field: "bio".into(),
+                    }),
                     limit: 10,
                     cursor: None,
                     sort: None,
@@ -14253,7 +14976,10 @@ mod tests {
         let c = make_sort_cursor(0x8000_0000_0000_0000, 7);
         assert!(matches!(
             parse_page_cursor(&c),
-            Some(PageCursor::SortKeyset { bits: 0x8000_0000_0000_0000, docid: 7 })
+            Some(PageCursor::SortKeyset {
+                bits: 0x8000_0000_0000_0000,
+                docid: 7
+            })
         ));
         let c = make_score_cursor(1.5, "u042");
         match parse_page_cursor(&c) {
@@ -15834,6 +16560,8 @@ mod checkpoint_engine_tests {
         }
     }
 }
+// CODEGEN-END
+
 ````
 
 ## Changes

@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// textwrap module for Mamba (#448, #1261 long-tail wire).
 ///
 /// Provides the public module functions `wrap`, `fill`, `dedent`, `indent`,
@@ -12,10 +14,7 @@
 /// method table via `mb_class_register` (same shape as `argparse_mod`); its
 /// options live as ordinary instance fields so user code can both read
 /// (`wrapper.width`) and mutate (`wrapper.width = 20`) them between wraps.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 const WRAPPER_CLASS: &str = "TextWrapper";
 
@@ -31,16 +30,24 @@ fn new_list(items: Vec<MbValue>) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
 fn is_str(val: MbValue) -> bool {
-    val.as_ptr().map(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) }).unwrap_or(false)
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) })
+        .unwrap_or(false)
 }
 
 fn is_dict(val: MbValue) -> bool {
-    val.as_ptr().map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) }).unwrap_or(false)
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
 }
 
 fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
@@ -54,10 +61,18 @@ fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
 }
 
 fn truthy(val: MbValue) -> bool {
-    if val.is_none() { return false; }
-    if let Some(b) = val.as_bool() { return b; }
-    if let Some(i) = val.as_int() { return i != 0; }
-    if let Some(s) = extract_str(val) { return !s.is_empty(); }
+    if val.is_none() {
+        return false;
+    }
+    if let Some(b) = val.as_bool() {
+        return b;
+    }
+    if let Some(i) = val.as_int() {
+        return i != 0;
+    }
+    if let Some(s) = extract_str(val) {
+        return !s.is_empty();
+    }
     true
 }
 
@@ -149,7 +164,9 @@ fn is_ws(c: char) -> bool {
 
 /// `[^\d\W]` — a word char that is not a digit (letters + underscore).
 fn is_letter(c: char) -> bool {
-    if c == '_' { return true; }
+    if c == '_' {
+        return true;
+    }
     c.is_alphabetic() && !c.is_numeric()
 }
 
@@ -403,7 +420,10 @@ fn handle_long_word(
 fn wrap_chunks(mut chunks: Vec<String>, opts: &Options) -> Result<Vec<String>, ()> {
     let mut lines: Vec<String> = Vec::new();
     if opts.width <= 0 {
-        raise("ValueError", &format!("invalid width {} (must be > 0)", opts.width));
+        raise(
+            "ValueError",
+            &format!("invalid width {} (must be > 0)", opts.width),
+        );
         return Err(());
     }
     if let Some(ml) = opts.max_lines {
@@ -458,15 +478,19 @@ fn wrap_chunks(mut chunks: Vec<String>, opts: &Options) -> Result<Vec<String>, (
         // If the next chunk is too big to fit on *any* line, break it.
         if let Some(last) = chunks.last() {
             if last.chars().count() > width {
-                handle_long_word(&mut chunks, &mut cur_line, cur_len, opts.width - indent.chars().count() as i64, opts);
+                handle_long_word(
+                    &mut chunks,
+                    &mut cur_line,
+                    cur_len,
+                    opts.width - indent.chars().count() as i64,
+                    opts,
+                );
                 cur_len = cur_line.iter().map(|s| s.chars().count()).sum();
             }
         }
 
         // Drop a trailing whitespace chunk on this line.
-        if opts.drop_whitespace
-            && cur_line.last().map(|c| strip_empty(c)).unwrap_or(false)
-        {
+        if opts.drop_whitespace && cur_line.last().map(|c| strip_empty(c)).unwrap_or(false) {
             cur_len -= cur_line.last().unwrap().chars().count();
             cur_line.pop();
         }
@@ -850,11 +874,18 @@ unsafe extern "C" fn dispatch_indent(args_ptr: *const MbValue, nargs: usize) -> 
     let text_v = pos.first().copied().unwrap_or_else(MbValue::none);
     if !is_str(text_v) {
         // CPython does text.splitlines(True) → AttributeError on non-str.
-        raise("AttributeError", "'int' object has no attribute 'splitlines'");
+        raise(
+            "AttributeError",
+            "'int' object has no attribute 'splitlines'",
+        );
         return MbValue::none();
     }
     let text = extract_str(text_v).unwrap_or_default();
-    let prefix = pos.get(1).copied().and_then(extract_str).unwrap_or_default();
+    let prefix = pos
+        .get(1)
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let predicate = pos
         .get(2)
         .copied()
@@ -896,11 +927,31 @@ unsafe extern "C" fn dispatch_text_wrapper(args_ptr: *const MbValue, nargs: usiz
     set_field(inst, "initial_indent", new_str(&d.initial_indent));
     set_field(inst, "subsequent_indent", new_str(&d.subsequent_indent));
     set_field(inst, "expand_tabs", MbValue::from_bool(d.expand_tabs));
-    set_field(inst, "replace_whitespace", MbValue::from_bool(d.replace_whitespace));
-    set_field(inst, "fix_sentence_endings", MbValue::from_bool(d.fix_sentence_endings));
-    set_field(inst, "break_long_words", MbValue::from_bool(d.break_long_words));
-    set_field(inst, "drop_whitespace", MbValue::from_bool(d.drop_whitespace));
-    set_field(inst, "break_on_hyphens", MbValue::from_bool(d.break_on_hyphens));
+    set_field(
+        inst,
+        "replace_whitespace",
+        MbValue::from_bool(d.replace_whitespace),
+    );
+    set_field(
+        inst,
+        "fix_sentence_endings",
+        MbValue::from_bool(d.fix_sentence_endings),
+    );
+    set_field(
+        inst,
+        "break_long_words",
+        MbValue::from_bool(d.break_long_words),
+    );
+    set_field(
+        inst,
+        "drop_whitespace",
+        MbValue::from_bool(d.drop_whitespace),
+    );
+    set_field(
+        inst,
+        "break_on_hyphens",
+        MbValue::from_bool(d.break_on_hyphens),
+    );
     set_field(inst, "tabsize", MbValue::from_int(d.tabsize));
     set_field(inst, "max_lines", MbValue::none());
     set_field(inst, "placeholder", new_str(&d.placeholder));
@@ -936,7 +987,11 @@ unsafe extern "C" fn dispatch_text_wrapper(args_ptr: *const MbValue, nargs: usiz
 /// wrapper.wrap(text) -> list[str]
 unsafe extern "C" fn method_wrap(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let text = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let text = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let opts = opts_from_instance(self_v);
     match do_wrap(&text, &opts) {
         Ok(lines) => new_list(lines.iter().map(|l| new_str(l)).collect()),
@@ -947,7 +1002,11 @@ unsafe extern "C" fn method_wrap(self_v: MbValue, args: MbValue) -> MbValue {
 /// wrapper.fill(text) -> str
 unsafe extern "C" fn method_fill(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let text = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let text = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let opts = opts_from_instance(self_v);
     match do_wrap(&text, &opts) {
         Ok(lines) => new_str(&lines.join("\n")),
@@ -958,7 +1017,11 @@ unsafe extern "C" fn method_fill(self_v: MbValue, args: MbValue) -> MbValue {
 /// wrapper._split(text) -> list[str]  (test-facing helper).
 unsafe extern "C" fn method_split(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let text = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let text = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let opts = opts_from_instance(self_v);
     let prepared = munge_whitespace(&text, &opts);
     let chunks = split_chunks(&prepared, opts.break_on_hyphens);
@@ -968,7 +1031,11 @@ unsafe extern "C" fn method_split(self_v: MbValue, args: MbValue) -> MbValue {
 /// wrapper._munge_whitespace(text) -> str.
 unsafe extern "C" fn method_munge(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let text = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let text = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let opts = opts_from_instance(self_v);
     new_str(&munge_whitespace(&text, &opts))
 }
@@ -1122,7 +1189,10 @@ mod tests {
 
     #[test]
     fn test_split_funky_hyphens() {
-        assert_eq!(split_chunks("what the--hey!", true), vec!["what", " ", "the", "--", "hey!"]);
+        assert_eq!(
+            split_chunks("what the--hey!", true),
+            vec!["what", " ", "the", "--", "hey!"]
+        );
         assert_eq!(split_chunks("what the--", true), vec!["what", " ", "the--"]);
         assert_eq!(split_chunks("--option-opt", true), vec!["--option-", "opt"]);
     }

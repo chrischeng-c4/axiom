@@ -25,10 +25,10 @@
 //! Predicted Gate 2: wall >=3.0x PASS (scout estimate), internal
 //! borderline PASS (no Instance allocation), mem ~1.0x PASS.
 
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 thread_local! {
     /// User-added `(ext, type, strict)` entries via `mimetypes.add_type`.
@@ -238,7 +238,11 @@ const COMMON_TYPES: &[(&str, &str)] = &[
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
         use super::super::rc::ObjData;
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -282,9 +286,7 @@ fn is_kwargs_dict(val: MbValue) -> bool {
             use super::super::rc::ObjData;
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
-                map.get("url").is_some()
-                    || map.get("type").is_some()
-                    || map.get("strict").is_some()
+                map.get("url").is_some() || map.get("type").is_some() || map.get("strict").is_some()
             } else {
                 false
             }
@@ -325,10 +327,7 @@ fn resolve_value_strict(args: &[MbValue], value_kw: &str) -> (MbValue, bool) {
         .and_then(|k| kwarg(k, "strict"))
         .or_else(|| {
             // Second non-kwargs positional, if present (e.g. guess_type(u, False)).
-            args.iter()
-                .copied()
-                .filter(|v| !is_kwargs_dict(*v))
-                .nth(1)
+            args.iter().copied().filter(|v| !is_kwargs_dict(*v)).nth(1)
         })
         .unwrap_or_else(MbValue::none);
     let strict_flag = !matches!(strict_val.as_bool(), Some(false));
@@ -348,7 +347,9 @@ fn lookup_type(suffix: &str, strict: bool) -> Option<String> {
             .find(|(ext, _, entry_strict)| ext == suffix && (*entry_strict || !strict))
             .map(|(_, ty, _)| ty.clone())
     });
-    if user.is_some() { return user; }
+    if user.is_some() {
+        return user;
+    }
     if let Some(ty) = TYPES_MAP.iter().find(|(ext, _)| *ext == suffix) {
         return Some(ty.1.to_string());
     }
@@ -601,10 +602,19 @@ pub fn mb_mimetypes_add_type(type_val: MbValue, ext_val: MbValue, strict: MbValu
 fn instance_methods() -> [(&'static str, usize); 6] {
     [
         ("guess_type", dispatch_guess_type as *const () as usize),
-        ("guess_extension", dispatch_guess_extension as *const () as usize),
-        ("guess_all_extensions", dispatch_guess_all_extensions as *const () as usize),
+        (
+            "guess_extension",
+            dispatch_guess_extension as *const () as usize,
+        ),
+        (
+            "guess_all_extensions",
+            dispatch_guess_all_extensions as *const () as usize,
+        ),
         ("add_type", dispatch_add_type as *const () as usize),
-        ("read_mime_types", dispatch_read_mime_types as *const () as usize),
+        (
+            "read_mime_types",
+            dispatch_read_mime_types as *const () as usize,
+        ),
         ("read", dispatch_read as *const () as usize),
     ]
 }
@@ -715,7 +725,10 @@ unsafe extern "C" fn dispatch_guess_extension(args_ptr: *const MbValue, nargs: u
     mb_mimetypes_guess_extension(type_v, MbValue::from_bool(strict_flag))
 }
 
-unsafe extern "C" fn dispatch_guess_all_extensions(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_guess_all_extensions(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (type_v, strict_flag) = resolve_value_strict(a, "type");
     mb_mimetypes_guess_all_extensions(type_v, MbValue::from_bool(strict_flag))
@@ -799,11 +812,20 @@ pub fn register() {
     let dispatchers: &[(&str, usize)] = &[
         ("MimeTypes", dispatch_MimeTypes as *const () as usize),
         ("guess_type", dispatch_guess_type as *const () as usize),
-        ("guess_extension", dispatch_guess_extension as *const () as usize),
-        ("guess_all_extensions", dispatch_guess_all_extensions as *const () as usize),
+        (
+            "guess_extension",
+            dispatch_guess_extension as *const () as usize,
+        ),
+        (
+            "guess_all_extensions",
+            dispatch_guess_all_extensions as *const () as usize,
+        ),
         ("add_type", dispatch_add_type as *const () as usize),
         ("init", dispatch_init as *const () as usize),
-        ("read_mime_types", dispatch_read_mime_types as *const () as usize),
+        (
+            "read_mime_types",
+            dispatch_read_mime_types as *const () as usize,
+        ),
     ];
     for (name, addr) in dispatchers {
         attrs.insert((*name).to_string(), MbValue::from_func(*addr));
@@ -815,16 +837,23 @@ pub fn register() {
     // not in the dispatchers list above — register its addr so is_native_func
     // recognises it when dispatched off a MimeTypes instance.
     NATIVE_FUNC_ADDRS.with(|s| {
-        s.borrow_mut().insert(dispatch_read as *const () as usize as u64);
+        s.borrow_mut()
+            .insert(dispatch_read as *const () as usize as u64);
     });
 
     // Module attrs.
     attrs.insert("inited".to_string(), MbValue::from_bool(true));
-    attrs.insert("knownfiles".to_string(), MbValue::from_ptr(MbObject::new_list(vec![])));
+    attrs.insert(
+        "knownfiles".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
 
     // Static maps as Dict module attrs.
     attrs.insert("types_map".to_string(), build_static_dict(TYPES_MAP));
-    attrs.insert("encodings_map".to_string(), build_static_dict(ENCODINGS_MAP));
+    attrs.insert(
+        "encodings_map".to_string(),
+        build_static_dict(ENCODINGS_MAP),
+    );
     attrs.insert("suffix_map".to_string(), build_static_dict(SUFFIX_MAP));
     attrs.insert("common_types".to_string(), build_static_dict(COMMON_TYPES));
 
@@ -851,7 +880,9 @@ mod tests {
         t.as_ptr().and_then(|p| unsafe {
             if let ObjData::Tuple(ref items) = (*p).data {
                 items.first().and_then(|v| extract_str(*v))
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
@@ -860,7 +891,9 @@ mod tests {
         t.as_ptr().and_then(|p| unsafe {
             if let ObjData::Tuple(ref items) = (*p).data {
                 items.get(1).and_then(|v| extract_str(*v))
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 

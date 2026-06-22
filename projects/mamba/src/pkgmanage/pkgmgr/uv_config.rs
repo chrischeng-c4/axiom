@@ -73,13 +73,8 @@ pub struct UvConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UvConfigError {
     InvalidToml(String),
-    WrongType {
-        field: String,
-    },
-    UnknownValue {
-        field: String,
-        value: String,
-    },
+    WrongType { field: String },
+    UnknownValue { field: String, value: String },
 }
 
 impl std::fmt::Display for UvConfigError {
@@ -260,7 +255,10 @@ version = "0.0.0"
             ("allow", PrereleaseMode::Allow),
             ("if-necessary", PrereleaseMode::IfNecessary),
             ("explicit", PrereleaseMode::Explicit),
-            ("if-necessary-or-explicit", PrereleaseMode::IfNecessaryOrExplicit),
+            (
+                "if-necessary-or-explicit",
+                PrereleaseMode::IfNecessaryOrExplicit,
+            ),
         ] {
             let src = format!("[tool.uv]\nprerelease = \"{raw}\"\n");
             let cfg = parse_uv_config(&src).unwrap();
@@ -328,7 +326,9 @@ managed = true
 constraint-dependencies = ["pkg-a==1.0", 42]
 "#;
         let err = parse_uv_config(src).unwrap_err();
-        assert!(matches!(err, UvConfigError::WrongType { field } if field.starts_with("constraint-dependencies[")));
+        assert!(
+            matches!(err, UvConfigError::WrongType { field } if field.starts_with("constraint-dependencies["))
+        );
     }
 
     #[test]

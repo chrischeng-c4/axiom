@@ -22,19 +22,19 @@
 //! );
 //! ```
 
-pub mod runner;
 pub mod model_diff;
+pub mod runner;
 pub mod status_report;
 
+pub use model_diff::{ModelDiffResult, ModelDiffer};
 pub use runner::MigrationRunner;
-pub use model_diff::{ModelDiffer, ModelDiffResult};
 pub use status_report::MigrationStatusReport;
 
-use crate::{Result, DataBridgeError};
+use crate::{DataBridgeError, Result};
 use chrono::{DateTime, Utc};
-use std::path::Path;
+use sha2::{Digest, Sha256};
 use std::fs;
-use sha2::{Sha256, Digest};
+use std::path::Path;
 
 // -- Constants ----------------------------------------------------------------
 
@@ -143,11 +143,13 @@ impl Migration {
     /// ```
     pub fn from_file(path: &Path) -> Result<Self> {
         // Read file contents
-        let content = fs::read_to_string(path)
-            .map_err(|e| DataBridgeError::Internal(format!("Failed to read migration file: {}", e)))?;
+        let content = fs::read_to_string(path).map_err(|e| {
+            DataBridgeError::Internal(format!("Failed to read migration file: {}", e))
+        })?;
 
         // Extract version and description from filename
-        let filename = path.file_stem()
+        let filename = path
+            .file_stem()
             .and_then(|s| s.to_str())
             .ok_or_else(|| DataBridgeError::Validation("Invalid migration filename".to_string()))?;
 
@@ -211,12 +213,19 @@ impl Migration {
 
             // Check for section markers
             if trimmed.starts_with("-- Description:") {
-                description = trimmed.trim_start_matches("-- Description:").trim().to_string();
+                description = trimmed
+                    .trim_start_matches("-- Description:")
+                    .trim()
+                    .to_string();
                 continue;
-            } else if trimmed.eq_ignore_ascii_case("-- UP") || trimmed.eq_ignore_ascii_case("-- migrate:up") {
+            } else if trimmed.eq_ignore_ascii_case("-- UP")
+                || trimmed.eq_ignore_ascii_case("-- migrate:up")
+            {
                 current_section = Section::Up;
                 continue;
-            } else if trimmed.eq_ignore_ascii_case("-- DOWN") || trimmed.eq_ignore_ascii_case("-- migrate:down") {
+            } else if trimmed.eq_ignore_ascii_case("-- DOWN")
+                || trimmed.eq_ignore_ascii_case("-- migrate:down")
+            {
                 current_section = Section::Down;
                 continue;
             }
@@ -243,17 +252,21 @@ impl Migration {
         // Validate that we have both UP and DOWN sections
         if up_sql.trim().is_empty() {
             return Err(DataBridgeError::Validation(
-                "Migration file missing UP section".to_string()
+                "Migration file missing UP section".to_string(),
             ));
         }
 
         if down_sql.trim().is_empty() {
             return Err(DataBridgeError::Validation(
-                "Migration file missing DOWN section".to_string()
+                "Migration file missing DOWN section".to_string(),
             ));
         }
 
-        Ok((description, up_sql.trim().to_string(), down_sql.trim().to_string()))
+        Ok((
+            description,
+            up_sql.trim().to_string(),
+            down_sql.trim().to_string(),
+        ))
     }
 
     /// Calculates SHA256 checksum for migration content verification.
@@ -339,7 +352,8 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
                 let stmt = current_statement.trim().trim_end_matches(';').trim();
 
                 // Check if this statement has any SQL (not just comments)
-                let has_sql = stmt.lines()
+                let has_sql = stmt
+                    .lines()
                     .map(|line| line.trim())
                     .any(|line| !line.is_empty() && !line.starts_with("--"));
 
@@ -354,7 +368,8 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
 
     // Don't forget the last statement if it doesn't end with a semicolon
     let final_stmt = current_statement.trim().trim_end_matches(';').trim();
-    let has_sql = final_stmt.lines()
+    let has_sql = final_stmt
+        .lines()
         .map(|line| line.trim())
         .any(|line| !line.is_empty() && !line.starts_with("--"));
 
@@ -613,9 +628,15 @@ mod tests {
     #[test]
     fn migration_source_from_str() {
         assert_eq!(MigrationSource::from_str("legacy"), MigrationSource::Legacy);
-        assert_eq!(MigrationSource::from_str("alembic"), MigrationSource::Legacy);
+        assert_eq!(
+            MigrationSource::from_str("alembic"),
+            MigrationSource::Legacy
+        );
         assert_eq!(MigrationSource::from_str("native"), MigrationSource::Native);
-        assert_eq!(MigrationSource::from_str("unknown"), MigrationSource::Native);
+        assert_eq!(
+            MigrationSource::from_str("unknown"),
+            MigrationSource::Native
+        );
     }
 
     #[test]

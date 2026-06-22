@@ -79,7 +79,13 @@ fn filter_type_ignored(errors: Vec<MambaError>, source: &str) -> Vec<MambaError>
         return errors;
     }
     let line_starts: Vec<usize> = std::iter::once(0)
-        .chain(source.bytes().enumerate().filter(|(_, b)| *b == b'\n').map(|(i, _)| i + 1))
+        .chain(
+            source
+                .bytes()
+                .enumerate()
+                .filter(|(_, b)| *b == b'\n')
+                .map(|(i, _)| i + 1),
+        )
         .collect();
     let line_of = |off: usize| -> usize {
         match line_starts.binary_search(&off) {
@@ -205,7 +211,11 @@ impl CompilerSession {
 
         // Lower HIR → MIR (with builtin resolution)
         let mir_module = lower::lower_hir_to_mir_with_symbols_src(
-            &hir, &checker.tcx, &checker.symbols, Some((path, source.as_str())));
+            &hir,
+            &checker.tcx,
+            &checker.symbols,
+            Some((path, source.as_str())),
+        );
 
         if let Some(EmitMode::Mir) = self.config.emit {
             println!("{mir_module:#?}");
@@ -306,7 +316,11 @@ impl CompilerSession {
         let hir = lower::lower_module(&module, &checker)
             .map_err(|errs| errs.into_iter().next().unwrap())?;
         let mir_module = lower::lower_hir_to_mir_with_symbols_src(
-            &hir, &checker.tcx, &checker.symbols, Some((display_name, src.as_str())));
+            &hir,
+            &checker.tcx,
+            &checker.symbols,
+            Some((display_name, src.as_str())),
+        );
 
         let mut backend = CraneliftJitBackend::new_with_externals(&ext_syms)
             .map_err(|e| MambaError::codegen(e.to_string()))?;
@@ -405,7 +419,11 @@ impl CompilerSession {
         let hir = lower::lower_module(&module, &checker)
             .map_err(|errs| errs.into_iter().next().unwrap())?;
         let mir_module = lower::lower_hir_to_mir_with_symbols_src(
-            &hir, &checker.tcx, &checker.symbols, Some((path, source.as_str())));
+            &hir,
+            &checker.tcx,
+            &checker.symbols,
+            Some((path, source.as_str())),
+        );
 
         // Collect external crate symbols when in project mode (R2).
         let ext_syms = register_external_modules(self.config.project_config.as_ref());
@@ -859,7 +877,10 @@ mod tests {
             MbValue::from_ptr(MbObject::new_str("mambalibs.http".to_string())),
             MbValue::from_ptr(MbObject::new_str("App".to_string())),
         );
-        assert!(ctor.as_func().is_some(), "App must import as a function pointer");
+        assert!(
+            ctor.as_func().is_some(),
+            "App must import as a function pointer"
+        );
 
         let app = crate::runtime::class::mb_call0(ctor);
         let app_reg = cclab_mamba_registry::MbValue::from_bits(app.to_bits());
@@ -1409,8 +1430,14 @@ print(CatalogItem.model_json_schema())
             schema_doc["properties"]["quantity"]["multipleOf"].as_i64(),
             Some(5)
         );
-        assert_eq!(schema_doc["properties"]["tags"]["minItems"].as_i64(), Some(1));
-        assert_eq!(schema_doc["properties"]["tags"]["maxItems"].as_i64(), Some(2));
+        assert_eq!(
+            schema_doc["properties"]["tags"]["minItems"].as_i64(),
+            Some(1)
+        );
+        assert_eq!(
+            schema_doc["properties"]["tags"]["maxItems"].as_i64(),
+            Some(2)
+        );
         assert_eq!(
             schema_doc["properties"]["tags"]["writeOnly"].as_bool(),
             Some(true)
@@ -1591,9 +1618,11 @@ print(app.preflight("POST", "/items", {"name": "al", "age": "two", "tags": [1]},
         let invalid_doc: serde_json::Value =
             serde_json::from_str(invalid).expect("invalid preflight output should be JSON");
         assert_eq!(invalid_doc["status_code"].as_i64(), Some(422));
-        assert!(invalid_doc["errors"].as_array().is_some_and(|errors| errors
-            .iter()
-            .any(|error| error.as_str().is_some_and(|msg| msg.contains("ValidationError")))));
+        assert!(invalid_doc["errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|error| error
+                .as_str()
+                .is_some_and(|msg| msg.contains("ValidationError")))));
     }
 
     #[cfg(feature = "native-modules")]
@@ -1628,16 +1657,21 @@ print(Item.model_dump_json({"name": "al", "age": "two"}))
         let report_doc: serde_json::Value =
             serde_json::from_str(report).expect("preflight output should be JSON");
         assert_eq!(report_doc["status_code"].as_i64(), Some(422));
-        assert!(report_doc["errors"].as_array().is_some_and(|errors| errors
-            .iter()
-            .any(|error| error.as_str().is_some_and(|msg| msg.contains("ValidationError")))));
-        assert!(report_doc["detail"].as_array().is_some_and(|details| details
-            .iter()
-            .any(|detail| detail["loc"] == serde_json::json!(["body", "age"])
-                && detail["type"].as_str() == Some("type_error"))));
-        assert!(report_doc["detail"].as_array().is_some_and(|details| details
-            .iter()
-            .any(|detail| detail["loc"] == serde_json::json!(["body", "name"])
+        assert!(report_doc["errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|error| error
+                .as_str()
+                .is_some_and(|msg| msg.contains("ValidationError")))));
+        assert!(report_doc["detail"]
+            .as_array()
+            .is_some_and(|details| details
+                .iter()
+                .any(|detail| detail["loc"] == serde_json::json!(["body", "age"])
+                    && detail["type"].as_str() == Some("type_error"))));
+        assert!(report_doc["detail"]
+            .as_array()
+            .is_some_and(|details| details.iter().any(|detail| detail["loc"]
+                == serde_json::json!(["body", "name"])
                 && detail["msg"]
                     .as_str()
                     .is_some_and(|msg| msg.contains("at least")))));
@@ -1703,10 +1737,12 @@ print(app.preflight("GET", "/search", {}, None))
         let missing_doc: serde_json::Value =
             serde_json::from_str(missing).expect("missing preflight output should be JSON");
         assert_eq!(missing_doc["status_code"].as_i64(), Some(422));
-        assert!(missing_doc["detail"].as_array().is_some_and(|details| details
-            .iter()
-            .any(|detail| detail["loc"] == serde_json::json!(["query", "q"])
-                && detail["type"].as_str() == Some("missing"))));
+        assert!(missing_doc["detail"]
+            .as_array()
+            .is_some_and(|details| details
+                .iter()
+                .any(|detail| detail["loc"] == serde_json::json!(["query", "q"])
+                    && detail["type"].as_str() == Some("missing"))));
     }
 
     #[cfg(feature = "native-modules")]

@@ -125,7 +125,10 @@ fn resolve_cache(env: &EnvLookup, platform: Platform, tmp_dir: &str) -> PathBuf 
         }
         Platform::Macos => {
             if let Some(home) = env.get("HOME") {
-                return PathBuf::from(home).join("Library").join("Caches").join("uv");
+                return PathBuf::from(home)
+                    .join("Library")
+                    .join("Caches")
+                    .join("uv");
             }
             PathBuf::from(tmp_dir).join("uv-cache")
         }
@@ -312,10 +315,7 @@ mod tests {
     fn macos_cache_in_library_caches() {
         let e = env(&[("HOME", "/Users/u")]);
         let d = resolve_dirs(&e, Platform::Macos, "/tmp");
-        assert_eq!(
-            d.cache,
-            PathBuf::from("/Users/u/Library/Caches/uv")
-        );
+        assert_eq!(d.cache, PathBuf::from("/Users/u/Library/Caches/uv"));
     }
 
     #[test]
@@ -351,7 +351,9 @@ mod tests {
         let d = resolve_dirs(&e, Platform::Windows, "C:\\Temp");
         assert_eq!(
             d.cache,
-            PathBuf::from("C:\\Users\\u\\AppData\\Local").join("uv").join("cache")
+            PathBuf::from("C:\\Users\\u\\AppData\\Local")
+                .join("uv")
+                .join("cache")
         );
     }
 
@@ -361,7 +363,9 @@ mod tests {
         let d = resolve_dirs(&e, Platform::Windows, "C:\\Temp");
         assert_eq!(
             d.data,
-            PathBuf::from("C:\\Users\\u\\AppData\\Roaming").join("uv").join("data")
+            PathBuf::from("C:\\Users\\u\\AppData\\Roaming")
+                .join("uv")
+                .join("data")
         );
     }
 

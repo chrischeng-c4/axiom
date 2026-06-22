@@ -5,7 +5,7 @@
 //! Run with: cargo run --example metrics_example --features metrics
 
 #[cfg(feature = "metrics")]
-use cclab_queue::metrics::{METRICS, gather_metrics};
+use cclab_queue::metrics::{gather_metrics, METRICS};
 
 #[cfg(feature = "metrics")]
 fn main() {

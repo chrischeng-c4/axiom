@@ -246,13 +246,10 @@ fn mvp_umbrella_links_to_ecosystem_manifest() {
         .and_then(|v| v.as_table())
         .expect("validation/mvp.toml missing `[profiles.ecosystem]`");
 
-    let manifest = entry
-        .get("manifest")
-        .and_then(|v| v.as_str())
-        .expect(
-            "validation/mvp.toml `[profiles.ecosystem].manifest` must be set \
+    let manifest = entry.get("manifest").and_then(|v| v.as_str()).expect(
+        "validation/mvp.toml `[profiles.ecosystem].manifest` must be set \
              so workers can locate ecosystem.toml",
-        );
+    );
     assert_eq!(
         manifest, "profiles/ecosystem.toml",
         "umbrella must point at profiles/ecosystem.toml; got {manifest:?}"

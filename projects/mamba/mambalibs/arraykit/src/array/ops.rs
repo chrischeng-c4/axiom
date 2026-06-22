@@ -52,7 +52,12 @@ impl<T: NumericOps> NdArray<T> {
         let b = other.broadcast_to(&broadcast_shape)?;
 
         // Apply operation element-wise
-        let data: Vec<T> = a.data().iter().zip(b.data()).map(|(&x, &y)| op(x, y)).collect();
+        let data: Vec<T> = a
+            .data()
+            .iter()
+            .zip(b.data())
+            .map(|(&x, &y)| op(x, y))
+            .collect();
 
         NdArray::new(data, broadcast_shape)
     }

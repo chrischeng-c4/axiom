@@ -194,7 +194,7 @@ impl WriteBackend for LocalWriteBackend {
 
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-api-rs.md#source
 impl AppState {
-    /// Build state with an explicit write log (e.g. a NATS-backed one
+    /// Build state with an explicit write log (e.g. a broker-backed one
     /// for clustered deployments). Spawns the apply loop.
     pub fn with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self {
         let writer = WriteCoordinator::start(wal, engine.clone());
@@ -365,7 +365,7 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/restore", post(restore))
         .layer(from_fn_with_state(auth_state, auth_middleware))
         // Bound request bodies: a bulk index is ~MBs (the item cap is the real
-        // guard); 8MiB also matches the NATS max_payload. Rejects oversized
+        // guard); 8MiB is the broker payload budget. Rejects oversized
         // bodies with 413 before they hit a handler.
         .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024));
 
@@ -681,10 +681,9 @@ async fn search(
 ) -> Result<Json<SearchResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Read)?;
     let _consistency = read_consistency_from(&headers);
-    // Single-pod build: every replica is the leader; consistency
-    // requirement is always satisfied. The header is parsed and
-    // recorded so callers may set the contract today without changing
-    // their code when Raft lands.
+    // Standalone and explicit-broker builds satisfy this locally. Primary-
+    // replica mode will enforce leader/bounded/any against the live cluster
+    // state once the raftcore-backed surface is wired.
     Ok(Json(
         state
             .search_backend

@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::{Broker, ResultBackend, TaskError, TaskId, TaskMessage, TaskState};
 use super::{ChainMeta, TaskOptions, TaskSignature};
+use crate::{Broker, ResultBackend, TaskError, TaskId, TaskMessage, TaskState};
 
 /// A chain of tasks executed sequentially
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,10 +37,7 @@ impl Chain {
     ///
     /// The chain metadata is stored in the result backend for the worker to continue
     /// execution after each task completes.
-    pub async fn apply_async<B: Broker>(
-        &self,
-        broker: &B,
-    ) -> Result<AsyncChainResult, TaskError> {
+    pub async fn apply_async<B: Broker>(&self, broker: &B) -> Result<AsyncChainResult, TaskError> {
         if self.tasks.is_empty() {
             return Err(TaskError::InvalidWorkflow(
                 "Chain must have at least one task".to_string(),
@@ -97,8 +94,8 @@ impl Chain {
     pub fn get_metadata(&self) -> Result<(String, String), TaskError> {
         let meta = ChainMeta::new(self.id.clone(), self.tasks.clone());
         let key = format!("chain:{}", self.id);
-        let data = serde_json::to_string(&meta)
-            .map_err(|e| TaskError::Serialization(e.to_string()))?;
+        let data =
+            serde_json::to_string(&meta).map_err(|e| TaskError::Serialization(e.to_string()))?;
         Ok((key, data))
     }
 }
@@ -151,7 +148,10 @@ impl AsyncChainResult {
     }
 
     /// Get the current state of the chain
-    pub async fn state<R: ResultBackend>(&self, backend: &R) -> Result<Option<TaskState>, TaskError> {
+    pub async fn state<R: ResultBackend>(
+        &self,
+        backend: &R,
+    ) -> Result<Option<TaskState>, TaskError> {
         backend.get_state(&self.last_task_id).await
     }
 }
@@ -240,9 +240,10 @@ mod tests {
 
     #[test]
     fn test_single_task_chain() {
-        let chain = Chain::new(vec![
-            TaskSignature::new("only_task", serde_json::json!(["arg1"])),
-        ]);
+        let chain = Chain::new(vec![TaskSignature::new(
+            "only_task",
+            serde_json::json!(["arg1"]),
+        )]);
         assert_eq!(chain.tasks.len(), 1);
         assert_eq!(chain.tasks[0].task_name, "only_task");
         assert_eq!(chain.tasks[0].args, serde_json::json!(["arg1"]));
@@ -267,17 +268,15 @@ mod tests {
         let sig = TaskSignature::new("task1", serde_json::json!([1]))
             .with_kwargs(serde_json::json!({"key": "value"}));
         let chain = Chain::new(vec![sig]);
-        assert_eq!(
-            chain.tasks[0].kwargs,
-            serde_json::json!({"key": "value"})
-        );
+        assert_eq!(chain.tasks[0].kwargs, serde_json::json!({"key": "value"}));
     }
 
     #[test]
     fn test_chain_tasks_with_individual_options() {
-        let sig = TaskSignature::new("task1", serde_json::json!([]))
-            .set_queue("task-specific-queue");
-        let chain = Chain::new(vec![sig]).with_options(TaskOptions::new().with_queue("chain-queue"));
+        let sig =
+            TaskSignature::new("task1", serde_json::json!([])).set_queue("task-specific-queue");
+        let chain =
+            Chain::new(vec![sig]).with_options(TaskOptions::new().with_queue("chain-queue"));
         // Task-level queue should be preserved independently of chain-level
         assert_eq!(
             chain.tasks[0].options.queue,
@@ -327,9 +326,7 @@ mod tests {
 
     #[test]
     fn test_chain_serde_json_value_roundtrip() {
-        let chain = Chain::new(vec![
-            TaskSignature::new("add", serde_json::json!([1, 2])),
-        ]);
+        let chain = Chain::new(vec![TaskSignature::new("add", serde_json::json!([1, 2]))]);
         let value = serde_json::to_value(&chain).expect("to_value");
         assert!(value.is_object());
         assert!(value.get("id").is_some());
@@ -360,9 +357,7 @@ mod tests {
 
     #[test]
     fn test_chain_get_metadata_single_task() {
-        let chain = Chain::new(vec![
-            TaskSignature::new("only", serde_json::json!([])),
-        ]);
+        let chain = Chain::new(vec![TaskSignature::new("only", serde_json::json!([]))]);
         let (_, data) = chain.get_metadata().expect("get_metadata");
         let meta: ChainMeta = serde_json::from_str(&data).expect("parse");
         assert_eq!(meta.tasks.len(), 1);
@@ -371,10 +366,8 @@ mod tests {
 
     #[test]
     fn test_chain_clone() {
-        let chain = Chain::new(vec![
-            TaskSignature::new("t1", serde_json::json!([1])),
-        ])
-        .with_options(TaskOptions::new().with_queue("q"));
+        let chain = Chain::new(vec![TaskSignature::new("t1", serde_json::json!([1]))])
+            .with_options(TaskOptions::new().with_queue("q"));
         let cloned = chain.clone();
         assert_eq!(cloned.id, chain.id);
         assert_eq!(cloned.tasks.len(), chain.tasks.len());

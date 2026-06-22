@@ -16,7 +16,6 @@
 ///   R9:  Yield-from throw/close passthrough
 ///   R10: MRO introspection and descriptors
 ///   R11: Stdlib fixture simplification (12 modules, 18 files)
-
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -97,7 +96,12 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
+                diff.push_str(&format!(
+                    "  line {}: expected {:?}, got {:?}\n",
+                    i + 1,
+                    e,
+                    a
+                ));
             }
         }
         panic!(
@@ -118,13 +122,9 @@ fn run_fixture(fixture_rel_path: &str) {
     let src = std::fs::read_to_string(&py_path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", py_path.display()));
 
-    let oracle = std::process::Command::new("python3")
-        .arg(&py_path)
-        .output();
+    let oracle = std::process::Command::new("python3").arg(&py_path).output();
     let expected = match oracle {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).into_owned()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
         Ok(out) => panic!(
             "CPython oracle failed for {}: {}\nstderr:\n{}",
             py_path.display(),
@@ -274,9 +274,7 @@ fn test_s5_lambda_in_list() {
 /// THEN: inner lambda captures x, output is 7
 #[test]
 fn test_s6_nested_lambda() {
-    let output = jit_capture(
-        "add = lambda x: lambda y: x + y\nprint(add(3)(4))\n",
-    );
+    let output = jit_capture("add = lambda x: lambda y: x + y\nprint(add(3)(4))\n");
     assert_output(&output, "7\n");
 }
 
@@ -301,18 +299,15 @@ print(list(iter(counter, 4)))
 /// Lambda composed with map (R2 supplement).
 #[test]
 fn test_r2_lambda_with_map() {
-    let output = jit_capture(
-        "nums = list(map(lambda x: x * 2, [1, 2, 3]))\nprint(nums)\n",
-    );
+    let output = jit_capture("nums = list(map(lambda x: x * 2, [1, 2, 3]))\nprint(nums)\n");
     assert_output(&output, "[2, 4, 6]\n");
 }
 
 /// Lambda composed with filter (R2 supplement).
 #[test]
 fn test_r2_lambda_with_filter() {
-    let output = jit_capture(
-        "evens = list(filter(lambda x: x % 2 == 0, range(10)))\nprint(evens)\n",
-    );
+    let output =
+        jit_capture("evens = list(filter(lambda x: x % 2 == 0, range(10)))\nprint(evens)\n");
     assert_output(&output, "[0, 2, 4, 6, 8]\n");
 }
 
@@ -839,8 +834,8 @@ const XFAIL_ZERO_FIXTURES: [&str; 16] = [
 /// file owns (the graduated xfail-zero set).
 #[test]
 fn test_s18_zero_xfail_markers() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(crate::conformance::FIXTURES_ROOT);
+    let base =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::conformance::FIXTURES_ROOT);
 
     let mut xfail_files = Vec::new();
     for fixture in &XFAIL_ZERO_FIXTURES {
@@ -867,15 +862,17 @@ fn test_s18_zero_xfail_markers() {
 /// markers and still exist on disk at their post-migration locations.
 #[test]
 fn test_xfail_removed_from_non_stdlib_fixtures() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(crate::conformance::FIXTURES_ROOT);
+    let base =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::conformance::FIXTURES_ROOT);
 
     for fixture in &XFAIL_ZERO_FIXTURES {
         let path = base.join(fixture);
         let content = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
         assert!(
-            !content.lines().any(|l| l.trim().starts_with("# mamba-xfail:")),
+            !content
+                .lines()
+                .any(|l| l.trim().starts_with("# mamba-xfail:")),
             "{fixture} should not have active mamba-xfail marker"
         );
     }

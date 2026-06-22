@@ -25,9 +25,7 @@
 //! scope; PEP 695's scope-isolation corner cases (out-of-scope NameError) are
 //! out of scope here.
 
-use crate::parser::ast::{
-    CallArg, Expr, Module, Stmt, TypeParam, TypeParamKind,
-};
+use crate::parser::ast::{CallArg, Expr, Module, Stmt, TypeParam, TypeParamKind};
 use crate::source::span::{Span, Spanned};
 
 /// Name of the TypeVar-construction intrinsic (see `runtime::pep695`).
@@ -55,7 +53,10 @@ fn typevar_assign(param: &TypeParam, span: Span) -> Spanned<Stmt> {
     };
     let bound_arg = match &param.bound {
         Some(b) => sp(
-            Expr::Lambda { params: vec![], body: Box::new(b.clone()) },
+            Expr::Lambda {
+                params: vec![],
+                body: Box::new(b.clone()),
+            },
             b.span,
         ),
         None => sp(Expr::NoneLit, span),
@@ -111,14 +112,20 @@ fn attr_tuple_assign(
     let mut object = sp(Expr::Ident(path[0].clone()), span);
     for seg in &path[1..] {
         object = sp(
-            Expr::Attr { object: Box::new(object), attr: seg.clone() },
+            Expr::Attr {
+                object: Box::new(object),
+                attr: seg.clone(),
+            },
             span,
         );
     }
     Spanned::new(
         Stmt::Assign {
             target: sp(
-                Expr::Attr { object: Box::new(object), attr: attr.to_string() },
+                Expr::Attr {
+                    object: Box::new(object),
+                    attr: attr.to_string(),
+                },
                 span,
             ),
             value: params_tuple(type_params, span),
@@ -164,7 +171,10 @@ struct AfterItem {
 fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists {
     let old = std::mem::take(stmts);
     let mut out: Vec<Spanned<Stmt>> = Vec::new();
-    let mut hoist_up = ClassHoists { before: Vec::new(), after: Vec::new() };
+    let mut hoist_up = ClassHoists {
+        before: Vec::new(),
+        after: Vec::new(),
+    };
 
     // Emit one deferred wiring item into a non-class block.
     fn emit_after(out: &mut Vec<Spanned<Stmt>>, item: AfterItem) {
@@ -178,7 +188,12 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
         let span = st.span;
         match &mut st.node {
             // ── class definitions (recursion + emission together) ──
-            Stmt::ClassDef { name, type_params, body, .. } => {
+            Stmt::ClassDef {
+                name,
+                type_params,
+                body,
+                ..
+            } => {
                 let name = name.clone();
                 let tps = type_params.clone();
                 let mut h = desugar_block(body, true);
@@ -226,8 +241,18 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                 }
             }
             // ── function definitions ──
-            Stmt::FnDef { name, type_params, body, .. }
-            | Stmt::AsyncFnDef { name, type_params, body, .. } => {
+            Stmt::FnDef {
+                name,
+                type_params,
+                body,
+                ..
+            }
+            | Stmt::AsyncFnDef {
+                name,
+                type_params,
+                body,
+                ..
+            } => {
                 let name = name.clone();
                 let tps = type_params.clone();
                 let _ = desugar_block(body, false);
@@ -255,7 +280,11 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                 }
             }
             // ── type aliases ──
-            Stmt::TypeAlias { name, type_params, value } => {
+            Stmt::TypeAlias {
+                name,
+                type_params,
+                value,
+            } => {
                 let name = name.clone();
                 let tps = type_params.clone();
                 let value = value.clone();
@@ -276,10 +305,7 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                 // the lazy value thunk below may reference the alias's own
                 // name — recursive aliases (`type R = R | None`) resolve.
                 let placeholder = Expr::Call {
-                    func: Box::new(sp(
-                        Expr::Ident(TYPE_ALIAS_INTRINSIC.to_string()),
-                        span,
-                    )),
+                    func: Box::new(sp(Expr::Ident(TYPE_ALIAS_INTRINSIC.to_string()), span)),
                     args: vec![
                         CallArg::Positional(sp(Expr::StrLit(name.clone()), span)),
                         CallArg::Positional(sp(Expr::NoneLit, span)),
@@ -295,14 +321,14 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                 ));
                 // X = __mb_pep695_type_alias__("X", lambda: V, (params...))
                 let thunk = sp(
-                    Expr::Lambda { params: vec![], body: Box::new(value) },
+                    Expr::Lambda {
+                        params: vec![],
+                        body: Box::new(value),
+                    },
                     span,
                 );
                 let call = Expr::Call {
-                    func: Box::new(sp(
-                        Expr::Ident(TYPE_ALIAS_INTRINSIC.to_string()),
-                        span,
-                    )),
+                    func: Box::new(sp(Expr::Ident(TYPE_ALIAS_INTRINSIC.to_string()), span)),
                     args: vec![
                         CallArg::Positional(sp(Expr::StrLit(name.clone()), span)),
                         CallArg::Positional(thunk),
@@ -322,21 +348,25 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                 // Route hoists from a same-scope sub-block (if/try/...):
                 // for non-class blocks emit immediately (paths complete);
                 // for class blocks keep bubbling.
-                let mut route = |h: ClassHoists,
-                                 out: &mut Vec<Spanned<Stmt>>,
-                                 hoist_up: &mut ClassHoists| {
-                    if in_class {
-                        hoist_up.before.extend(h.before);
-                        hoist_up.after.extend(h.after);
-                    } else {
-                        out.extend(h.before);
-                        for item in h.after {
-                            emit_after(out, item);
+                let mut route =
+                    |h: ClassHoists, out: &mut Vec<Spanned<Stmt>>, hoist_up: &mut ClassHoists| {
+                        if in_class {
+                            hoist_up.before.extend(h.before);
+                            hoist_up.after.extend(h.after);
+                        } else {
+                            out.extend(h.before);
+                            for item in h.after {
+                                emit_after(out, item);
+                            }
                         }
-                    }
-                };
+                    };
                 match &mut st.node {
-                    Stmt::If { body, elif_clauses, else_body, .. } => {
+                    Stmt::If {
+                        body,
+                        elif_clauses,
+                        else_body,
+                        ..
+                    } => {
                         let h = desugar_block(body, in_class);
                         route(h, &mut out, &mut hoist_up);
                         for (_, b) in elif_clauses {
@@ -348,9 +378,15 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                             route(h, &mut out, &mut hoist_up);
                         }
                     }
-                    Stmt::While { body, else_body, .. }
-                    | Stmt::For { body, else_body, .. }
-                    | Stmt::AsyncFor { body, else_body, .. } => {
+                    Stmt::While {
+                        body, else_body, ..
+                    }
+                    | Stmt::For {
+                        body, else_body, ..
+                    }
+                    | Stmt::AsyncFor {
+                        body, else_body, ..
+                    } => {
                         let h = desugar_block(body, in_class);
                         route(h, &mut out, &mut hoist_up);
                         if let Some(b) = else_body {
@@ -362,7 +398,12 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
                         let h = desugar_block(body, in_class);
                         route(h, &mut out, &mut hoist_up);
                     }
-                    Stmt::Try { body, handlers, else_body, finally_body } => {
+                    Stmt::Try {
+                        body,
+                        handlers,
+                        else_body,
+                        finally_body,
+                    } => {
                         let h = desugar_block(body, in_class);
                         route(h, &mut out, &mut hoist_up);
                         for handler in handlers {
@@ -394,7 +435,6 @@ fn desugar_block(stmts: &mut Vec<Spanned<Stmt>>, in_class: bool) -> ClassHoists 
     *stmts = out;
     hoist_up
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -446,9 +486,7 @@ mod tests {
 
     #[test]
     fn method_typevars_hoist_out_of_class_body() {
-        let m = desugared(
-            "class C:\n    def meth[U](self):\n        return U\n",
-        );
+        let m = desugared("class C:\n    def meth[U](self):\n        return U\n");
         // Deferred wiring: class first, then U = typevar(...), then
         // `C.meth.__type_params__ = (U,)` (dotted path).
         assert_eq!(m.stmts.len(), 3);

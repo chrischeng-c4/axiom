@@ -7,7 +7,7 @@
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::{info, warn, instrument};
+use tracing::{info, instrument, warn};
 
 use crate::driver::executor::QueryExecutor;
 use crate::driver::row::Row;
@@ -55,8 +55,8 @@ impl RetryConfig {
             return Duration::from_millis(self.initial_delay_ms);
         }
 
-        let delay_ms = (self.initial_delay_ms as f64)
-            * self.backoff_multiplier.powi(attempt as i32);
+        let delay_ms =
+            (self.initial_delay_ms as f64) * self.backoff_multiplier.powi(attempt as i32);
 
         Duration::from_millis((delay_ms as u64).min(self.max_delay_ms))
     }
@@ -90,7 +90,7 @@ impl Default for PoolConfig {
             max_connections: 10,
             connect_timeout: 30,
             max_lifetime: Some(1800), // 30 minutes
-            idle_timeout: Some(600),   // 10 minutes
+            idle_timeout: Some(600),  // 10 minutes
             retry: RetryConfig::default(),
             statement_cache_capacity: 100, // SQLx default
         }
@@ -159,13 +159,13 @@ impl Connection {
             pool_options,
             &config.retry,
             config.statement_cache_capacity,
-        ).await?;
+        )
+        .await?;
 
         // Test the connection with a simple ping
-        sqlx::query("SELECT 1")
-            .execute(&pool)
-            .await
-            .map_err(|e| DataBridgeError::Connection(format!("Failed to verify connection: {}", e)))?;
+        sqlx::query("SELECT 1").execute(&pool).await.map_err(|e| {
+            DataBridgeError::Connection(format!("Failed to verify connection: {}", e))
+        })?;
 
         info!("Connection pool initialized successfully");
         Ok(Self { pool })
@@ -186,7 +186,11 @@ impl Connection {
             .statement_cache_capacity(statement_cache_capacity);
 
         for attempt in 0..=retry_config.max_retries {
-            match pool_options.clone().connect_with(connect_options.clone()).await {
+            match pool_options
+                .clone()
+                .connect_with(connect_options.clone())
+                .await
+            {
                 Ok(pool) => {
                     if attempt > 0 {
                         info!(attempt = attempt, "Connection established after retry");
@@ -230,9 +234,7 @@ impl Connection {
 
     /// Pings the database to verify connectivity.
     pub async fn ping(&self) -> Result<()> {
-        sqlx::query("SELECT 1")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
         Ok(())
     }
 
@@ -243,7 +245,9 @@ impl Connection {
 
     /// Executes a parameterized statement through the driver executor.
     pub async fn execute_params(&self, sql: &str, params: &[ExtractedValue]) -> Result<u64> {
-        QueryExecutor::new(&self.pool).execute_params(sql, params).await
+        QueryExecutor::new(&self.pool)
+            .execute_params(sql, params)
+            .await
     }
 
     /// Fetches rows through the driver executor.
@@ -257,7 +261,9 @@ impl Connection {
         sql: &str,
         params: &[ExtractedValue],
     ) -> Result<Option<Row>> {
-        QueryExecutor::new(&self.pool).fetch_optional_row(sql, params).await
+        QueryExecutor::new(&self.pool)
+            .fetch_optional_row(sql, params)
+            .await
     }
 }
 
@@ -274,7 +280,7 @@ mod tests {
         assert_eq!(config.max_connections, 10);
         assert_eq!(config.connect_timeout, 30);
         assert_eq!(config.max_lifetime, Some(1800)); // 30 minutes
-        assert_eq!(config.idle_timeout, Some(600));  // 10 minutes
+        assert_eq!(config.idle_timeout, Some(600)); // 10 minutes
         assert_eq!(config.statement_cache_capacity, 100); // SQLx default
     }
 
@@ -424,9 +430,9 @@ mod tests {
         let maybe_connection: Option<Connection> = None;
 
         // Attempt to get pool when connection is not initialized
-        let result = maybe_connection.as_ref().ok_or_else(|| {
-            DataBridgeError::Connection("Connection not initialized".to_string())
-        });
+        let result = maybe_connection
+            .as_ref()
+            .ok_or_else(|| DataBridgeError::Connection("Connection not initialized".to_string()));
 
         assert!(result.is_err());
 

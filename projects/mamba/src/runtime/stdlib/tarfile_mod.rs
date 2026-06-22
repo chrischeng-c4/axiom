@@ -1,3 +1,6 @@
+use super::super::dict_ops::DictKey;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// tarfile module for Mamba (#445).
 ///
 /// Real in-memory TarFile / TarInfo objects following the __class__-tagged
@@ -17,11 +20,7 @@
 ///   * Extraction filters: `fully_trusted_filter` (identity), `tar_filter`,
 ///     `data_filter` (strip leading '/', reject traversal/absolute links,
 ///     clear high mode bits) raising the FilterError hierarchy.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::dict_ops::DictKey;
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -157,7 +156,11 @@ fn tf_fileobj_remaining(val: MbValue) -> Option<Vec<u8>> {
             let f = fields.read().unwrap();
             let buf = f.get("_buffer").and_then(|v| tf_as_bytes(*v))?;
             let pos = f.get("_pos").and_then(|v| v.as_int()).unwrap_or(0).max(0) as usize;
-            Some(if pos < buf.len() { buf[pos..].to_vec() } else { Vec::new() })
+            Some(if pos < buf.len() {
+                buf[pos..].to_vec()
+            } else {
+                Vec::new()
+            })
         } else {
             None
         }
@@ -304,7 +307,13 @@ fn checksum_unsigned(block: &[u8]) -> i128 {
     block
         .iter()
         .enumerate()
-        .map(|(i, &b)| if (148..156).contains(&i) { 0x20 } else { b as i128 })
+        .map(|(i, &b)| {
+            if (148..156).contains(&i) {
+                0x20
+            } else {
+                b as i128
+            }
+        })
         .sum()
 }
 
@@ -578,7 +587,11 @@ fn create_pax(v: &TView, name: &str) -> Result<Vec<u8>, String> {
         None => v.mtime_int,
     };
     {
-        let num = |key: &str, digits: u32, hdr: &mut i128, fval: Option<f64>, pax: &mut Vec<(String, String)>| {
+        let num = |key: &str,
+                   digits: u32,
+                   hdr: &mut i128,
+                   fval: Option<f64>,
+                   pax: &mut Vec<(String, String)>| {
             let limit = 8i128.pow(digits - 1);
             let mut needs = false;
             let record_val = match fval {
@@ -782,11 +795,7 @@ fn parse_archive(data: &[u8]) -> Result<Vec<PMember>, String> {
         let magic = &block[257..265];
         let prefix = nts(&block[345..500]);
         let is_meta = matches!(v.type_b, b'x' | b'g' | b'L' | b'K');
-        if magic.starts_with(b"ustar")
-            && !prefix.is_empty()
-            && !is_meta
-            && v.type_b != b'S'
-        {
+        if magic.starts_with(b"ustar") && !prefix.is_empty() && !is_meta && v.type_b != b'S' {
             v.name = format!("{}/{}", prefix, v.name);
         }
         // A pending pax `size` record overrides the header size BEFORE the
@@ -906,9 +915,21 @@ fn tarinfo_dict_new(name: &str) -> MbValue {
 /// Materialize a parsed member as a TarInfo dict-stub (payload under `_data`).
 fn member_to_tarinfo(m: &PMember) -> MbValue {
     let ti = tarinfo_dict_new(&m.v.name);
-    dset(ti, "mode", m.v.mode.map(int_value).unwrap_or_else(MbValue::none));
-    dset(ti, "uid", m.v.uid.map(int_value).unwrap_or_else(MbValue::none));
-    dset(ti, "gid", m.v.gid.map(int_value).unwrap_or_else(MbValue::none));
+    dset(
+        ti,
+        "mode",
+        m.v.mode.map(int_value).unwrap_or_else(MbValue::none),
+    );
+    dset(
+        ti,
+        "uid",
+        m.v.uid.map(int_value).unwrap_or_else(MbValue::none),
+    );
+    dset(
+        ti,
+        "gid",
+        m.v.gid.map(int_value).unwrap_or_else(MbValue::none),
+    );
     dset(ti, "size", int_value(m.v.size));
     match m.v.mtime_float {
         Some(f) => dset(ti, "mtime", MbValue::from_float(f)),
@@ -1117,8 +1138,7 @@ unsafe extern "C" fn dispatch_data_filter(args_ptr: *const MbValue, nargs: usize
 
 fn gz_compress(data: &[u8], level: u32) -> Vec<u8> {
     use std::io::Write;
-    let mut enc =
-        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
     let _ = enc.write_all(data);
     enc.finish().unwrap_or_default()
 }
@@ -1144,7 +1164,14 @@ fn parse_mode(mode: &str) -> Result<(char, String), ()> {
     }
     let rest: String = chars.collect();
     if rest.is_empty() {
-        return Ok((action, if action == 'r' { "*".to_string() } else { String::new() }));
+        return Ok((
+            action,
+            if action == 'r' {
+                "*".to_string()
+            } else {
+                String::new()
+            },
+        ));
     }
     let mut rc = rest.chars();
     let sep = rc.next().unwrap();
@@ -1268,7 +1295,11 @@ pub fn tarfile_close_impl(tf: MbValue, finalize: bool) {
             buf.resize(buf.len() + RECORDSIZE - rem, 0);
         }
         let comp = dget(tf, "_comp").and_then(tf_as_str).unwrap_or_default();
-        let out = if comp == "gz" { gz_compress(&buf, 9) } else { buf };
+        let out = if comp == "gz" {
+            gz_compress(&buf, 9)
+        } else {
+            buf
+        };
         let fileobj = dget(tf, "fileobj").filter(|f| !f.is_none());
         if let Some(f) = fileobj {
             let data_val = b_val(out);
@@ -1338,8 +1369,20 @@ fn split_known_kwargs(items: &[MbValue], known: &[&str]) -> (Vec<MbValue>, Optio
 }
 
 const METHOD_KWS: &[&str] = &[
-    "format", "encoding", "errors", "filter", "path", "members", "numeric_owner",
-    "name", "mode", "fileobj", "arcname", "recursive", "set_attrs", "tarinfo",
+    "format",
+    "encoding",
+    "errors",
+    "filter",
+    "path",
+    "members",
+    "numeric_owner",
+    "name",
+    "mode",
+    "fileobj",
+    "arcname",
+    "recursive",
+    "set_attrs",
+    "tarinfo",
 ];
 
 /// TarInfo.get_info(): header-building metadata dict (mode masked to 0o7777,
@@ -1520,14 +1563,16 @@ pub fn dispatch_tar_stub_method(
             "create_pax_header" => {
                 Some(ti_header_method(receiver, pos.first().copied(), PAX_FORMAT))
             }
-            "create_ustar_header" => {
-                Some(ti_header_method(receiver, pos.first().copied(), USTAR_FORMAT))
-            }
+            "create_ustar_header" => Some(ti_header_method(
+                receiver,
+                pos.first().copied(),
+                USTAR_FORMAT,
+            )),
             "create_gnu_header" => {
                 Some(ti_header_method(receiver, pos.first().copied(), GNU_FORMAT))
             }
-            "isreg" | "isfile" | "isdir" | "issym" | "islnk" | "ischr" | "isblk"
-            | "isfifo" | "isdev" | "issparse" => {
+            "isreg" | "isfile" | "isdir" | "issym" | "islnk" | "ischr" | "isblk" | "isfifo"
+            | "isdev" | "issparse" => {
                 let t = dget(receiver, "type")
                     .and_then(tf_as_bytes)
                     .and_then(|b| b.first().copied())
@@ -1603,7 +1648,10 @@ pub fn dispatch_tar_stub_method(
                     }
                     None => {
                         let nm = tf_as_str(raw).unwrap_or_default();
-                        Some(tf_raise("KeyError", &format!("filename {:?} not found", nm)))
+                        Some(tf_raise(
+                            "KeyError",
+                            &format!("filename {:?} not found", nm),
+                        ))
                     }
                 }
             }
@@ -1626,7 +1674,10 @@ pub fn dispatch_tar_stub_method(
                     }
                     None => {
                         let nm = tf_as_str(raw).unwrap_or_default();
-                        Some(tf_raise("KeyError", &format!("filename {:?} not found", nm)))
+                        Some(tf_raise(
+                            "KeyError",
+                            &format!("filename {:?} not found", nm),
+                        ))
                     }
                 }
             }
@@ -1666,14 +1717,25 @@ pub fn dispatch_tar_stub_method(
                     .or_else(|| tf_kw_get(kw, "path"))
                     .and_then(tf_as_str)
                     .unwrap_or_default();
-                let dest = if dest.is_empty() { ".".to_string() } else { dest };
+                let dest = if dest.is_empty() {
+                    ".".to_string()
+                } else {
+                    dest
+                };
                 let filter_name = tf_kw_get(kw, "filter")
                     .filter(|v| !v.is_none())
                     .and_then(tf_as_str);
-                Some(tf_extract_members(receiver, &dest, filter_name, vec![member]))
+                Some(tf_extract_members(
+                    receiver,
+                    &dest,
+                    filter_name,
+                    vec![member],
+                ))
             }
             "next" => {
-                let idx = dget(receiver, "_next").and_then(|v| v.as_int()).unwrap_or(0);
+                let idx = dget(receiver, "_next")
+                    .and_then(|v| v.as_int())
+                    .unwrap_or(0);
                 let members = tf_members(receiver);
                 if (idx as usize) < members.len() {
                     let m = members[idx as usize];
@@ -1717,9 +1779,13 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
     let mode_val = pos.get(1).copied().or_else(|| tf_kw_get(kw, "mode"));
     let fileobj = pos.get(2).copied().or_else(|| tf_kw_get(kw, "fileobj"));
     let compresslevel = tf_kw_get(kw, "compresslevel").and_then(|v| v.as_int());
-    let format = tf_kw_get(kw, "format").and_then(|v| v.as_int()).unwrap_or(PAX_FORMAT);
+    let format = tf_kw_get(kw, "format")
+        .and_then(|v| v.as_int())
+        .unwrap_or(PAX_FORMAT);
 
-    let mode = mode_val.and_then(tf_as_str).unwrap_or_else(|| "r".to_string());
+    let mode = mode_val
+        .and_then(tf_as_str)
+        .unwrap_or_else(|| "r".to_string());
     let has_fileobj = fileobj.map(|f| !f.is_none()).unwrap_or(false);
 
     // bz2 requires compresslevel 1..=9; e.g. mode='w:bz2', compresslevel=0.
@@ -1798,8 +1864,7 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
         if data.is_empty() {
             return tf_raise("ReadError", "empty file");
         }
-        let raw = if data.starts_with(&[0x1f, 0x8b]) && matches!(comp.as_str(), "" | "*" | "gz")
-        {
+        let raw = if data.starts_with(&[0x1f, 0x8b]) && matches!(comp.as_str(), "" | "*" | "gz") {
             match gz_decompress(&data) {
                 Some(d) => d,
                 None => return tf_raise("ReadError", "not a gzip file"),
@@ -1886,7 +1951,12 @@ unsafe extern "C" fn dispatch_stn(args_ptr: *const MbValue, nargs: usize) -> MbV
     let Some(s) = a.first().copied().and_then(tf_as_str) else {
         return MbValue::none();
     };
-    let length = a.get(1).copied().and_then(|v| v.as_int()).unwrap_or(0).max(0) as usize;
+    let length = a
+        .get(1)
+        .copied()
+        .and_then(|v| v.as_int())
+        .unwrap_or(0)
+        .max(0) as usize;
     let encoding = a
         .get(2)
         .copied()
@@ -1953,7 +2023,10 @@ pub fn register() {
         ("stn", dispatch_stn as usize),
         ("tar_filter", dispatch_tar_filter as usize),
         ("data_filter", dispatch_data_filter as usize),
-        ("fully_trusted_filter", dispatch_fully_trusted_filter as usize),
+        (
+            "fully_trusted_filter",
+            dispatch_fully_trusted_filter as usize,
+        ),
         ("TarInfo", dispatch_tarinfo_new as usize),
     ];
     for (name, addr) in dispatchers {
@@ -1968,10 +2041,13 @@ pub fn register() {
         m.borrow_mut()
             .insert(dispatch_tarinfo_new as usize as u64, "TarInfo".into());
     });
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("BLOCKSIZE".into(), MbValue::from_int(512));
     attrs.insert("DEFAULT_FORMAT".into(), MbValue::from_int(2));
-    attrs.insert("ENCODING".into(), MbValue::from_ptr(MbObject::new_str("utf-8".to_string())));
+    attrs.insert(
+        "ENCODING".into(),
+        MbValue::from_ptr(MbObject::new_str("utf-8".to_string())),
+    );
     attrs.insert("GNU_FORMAT".into(), MbValue::from_int(1));
     attrs.insert("LENGTH_LINK".into(), MbValue::from_int(100));
     attrs.insert("LENGTH_NAME".into(), MbValue::from_int(100));
@@ -1979,7 +2055,10 @@ pub fn register() {
     attrs.insert("PAX_FORMAT".into(), MbValue::from_int(2));
     attrs.insert("RECORDSIZE".into(), MbValue::from_int(10240));
     attrs.insert("USTAR_FORMAT".into(), MbValue::from_int(0));
-    attrs.insert("version".into(), MbValue::from_ptr(MbObject::new_str("0.9.0".to_string())));
+    attrs.insert(
+        "version".into(),
+        MbValue::from_ptr(MbObject::new_str("0.9.0".to_string())),
+    );
 
     // surface: remaining CPython 3.12 tarfile module names (hasattr/callable
     // probes — see config/manifests/std-libs/cpython312_surface/tarfile.toml).
@@ -1987,47 +2066,129 @@ pub fn register() {
     // PAX_FORMAT/RECORDSIZE/USTAR_FORMAT/version already inserted above.)
 
     // bytes constants (single-byte type flags + magics).
-    attrs.insert("REGTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![48])));
-    attrs.insert("AREGTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![0])));
-    attrs.insert("LNKTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![49])));
-    attrs.insert("SYMTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![50])));
-    attrs.insert("CHRTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![51])));
-    attrs.insert("BLKTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![52])));
-    attrs.insert("DIRTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![53])));
-    attrs.insert("FIFOTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![54])));
-    attrs.insert("CONTTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![55])));
-    attrs.insert("GNUTYPE_LONGNAME".into(), MbValue::from_ptr(MbObject::new_bytes(vec![76])));
-    attrs.insert("GNUTYPE_LONGLINK".into(), MbValue::from_ptr(MbObject::new_bytes(vec![75])));
-    attrs.insert("GNUTYPE_SPARSE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![83])));
-    attrs.insert("XHDTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![120])));
-    attrs.insert("XGLTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![103])));
-    attrs.insert("SOLARIS_XHDTYPE".into(), MbValue::from_ptr(MbObject::new_bytes(vec![88])));
-    attrs.insert("NUL".into(), MbValue::from_ptr(MbObject::new_bytes(vec![0])));
-    attrs.insert("GNU_MAGIC".into(),
-        MbValue::from_ptr(MbObject::new_bytes(vec![117, 115, 116, 97, 114, 32, 32, 0])));
-    attrs.insert("POSIX_MAGIC".into(),
-        MbValue::from_ptr(MbObject::new_bytes(vec![117, 115, 116, 97, 114, 0, 48, 48])));
+    attrs.insert(
+        "REGTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![48])),
+    );
+    attrs.insert(
+        "AREGTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![0])),
+    );
+    attrs.insert(
+        "LNKTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![49])),
+    );
+    attrs.insert(
+        "SYMTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![50])),
+    );
+    attrs.insert(
+        "CHRTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![51])),
+    );
+    attrs.insert(
+        "BLKTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![52])),
+    );
+    attrs.insert(
+        "DIRTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![53])),
+    );
+    attrs.insert(
+        "FIFOTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![54])),
+    );
+    attrs.insert(
+        "CONTTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![55])),
+    );
+    attrs.insert(
+        "GNUTYPE_LONGNAME".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![76])),
+    );
+    attrs.insert(
+        "GNUTYPE_LONGLINK".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![75])),
+    );
+    attrs.insert(
+        "GNUTYPE_SPARSE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![83])),
+    );
+    attrs.insert(
+        "XHDTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![120])),
+    );
+    attrs.insert(
+        "XGLTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![103])),
+    );
+    attrs.insert(
+        "SOLARIS_XHDTYPE".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![88])),
+    );
+    attrs.insert(
+        "NUL".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![0])),
+    );
+    attrs.insert(
+        "GNU_MAGIC".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![117, 115, 116, 97, 114, 32, 32, 0])),
+    );
+    attrs.insert(
+        "POSIX_MAGIC".into(),
+        MbValue::from_ptr(MbObject::new_bytes(vec![117, 115, 116, 97, 114, 0, 48, 48])),
+    );
 
     // Tuple / set / dict structured constants.
     let b = |x: u8| MbValue::from_ptr(MbObject::new_bytes(vec![x]));
-    attrs.insert("GNU_TYPES".into(),
-        MbValue::from_ptr(MbObject::new_tuple(vec![b(76), b(75), b(83)])));
-    attrs.insert("REGULAR_TYPES".into(),
-        MbValue::from_ptr(MbObject::new_tuple(vec![b(48), b(0), b(55), b(83)])));
-    attrs.insert("SUPPORTED_TYPES".into(),
+    attrs.insert(
+        "GNU_TYPES".into(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![b(76), b(75), b(83)])),
+    );
+    attrs.insert(
+        "REGULAR_TYPES".into(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![b(48), b(0), b(55), b(83)])),
+    );
+    attrs.insert(
+        "SUPPORTED_TYPES".into(),
         MbValue::from_ptr(MbObject::new_tuple(vec![
-            b(48), b(0), b(49), b(50), b(53), b(54), b(55), b(51), b(52), b(76), b(75), b(83),
-        ])));
+            b(48),
+            b(0),
+            b(49),
+            b(50),
+            b(53),
+            b(54),
+            b(55),
+            b(51),
+            b(52),
+            b(76),
+            b(75),
+            b(83),
+        ])),
+    );
     let s = |x: &str| MbValue::from_ptr(MbObject::new_str(x.to_string()));
-    attrs.insert("PAX_FIELDS".into(),
+    attrs.insert(
+        "PAX_FIELDS".into(),
         MbValue::from_ptr(MbObject::new_tuple(vec![
-            s("path"), s("linkpath"), s("size"), s("mtime"),
-            s("uid"), s("gid"), s("uname"), s("gname"),
-        ])));
-    attrs.insert("PAX_NAME_FIELDS".into(),
+            s("path"),
+            s("linkpath"),
+            s("size"),
+            s("mtime"),
+            s("uid"),
+            s("gid"),
+            s("uname"),
+            s("gname"),
+        ])),
+    );
+    attrs.insert(
+        "PAX_NAME_FIELDS".into(),
         MbValue::from_ptr(MbObject::new_set(vec![
-            s("path"), s("linkpath"), s("uname"), s("gname"),
-        ])));
+            s("path"),
+            s("linkpath"),
+            s("uname"),
+            s("gname"),
+        ])),
+    );
     // PAX_NUMBER_FIELDS maps field -> Python type object in CPython; we surface
     // it as a dict mapping field -> type-name string (present + dict-typed)
     // since real type objects as map values are not yet representable here.
@@ -2061,8 +2222,10 @@ pub fn register() {
     // `issubclass` / `except tarfile.X` resolve (gzip precedent).
     let plain_classes: Vec<&str> = vec!["TarFile", "ExFileObject"];
     for name in plain_classes {
-        attrs.insert(name.to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())));
+        attrs.insert(
+            name.to_string(),
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
+        );
     }
     // (class-name, direct-base) pairs, parents before children for clean MRO.
     let exc_classes: Vec<(&str, &str)> = vec![
@@ -2086,13 +2249,11 @@ pub fn register() {
         ("LinkFallbackError", "FilterError"),
     ];
     for (name, base) in exc_classes {
-        super::super::class::mb_class_register(
-            name,
-            vec![base.to_string()],
-            HashMap::new(),
+        super::super::class::mb_class_register(name, vec![base.to_string()], HashMap::new());
+        attrs.insert(
+            name.to_string(),
+            MbValue::from_ptr(MbObject::new_str(name.to_string())),
         );
-        attrs.insert(name.to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())));
     }
     // surface: TarFile must satisfy `callable(...)` (a constructable class
     // object in CPython). The string-sentinel registration above leaves it
@@ -2109,10 +2270,14 @@ pub fn register() {
 
     // symlink_exception is a tuple of exception classes; surface as a tuple of
     // class-name string sentinels (present + tuple-typed).
-    attrs.insert("symlink_exception".into(),
+    attrs.insert(
+        "symlink_exception".into(),
         MbValue::from_ptr(MbObject::new_tuple(vec![
-            s("AttributeError"), s("NotImplementedError"), s("OSError"),
-        ])));
+            s("AttributeError"),
+            s("NotImplementedError"),
+            s("OSError"),
+        ])),
+    );
 
     super::register_module("tarfile", attrs);
 }

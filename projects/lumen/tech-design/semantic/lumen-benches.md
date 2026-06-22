@@ -2,7 +2,7 @@
 id: semantic-lumen-benches
 summary: Semantic coverage for "projects/lumen/benches"
 capability_refs:
-  - id: "ops-operability"
+  - id: "long-running-stability"
     role: primary
     claim: "stateless-serving-rebuild-from-log-no-pvc"
     coverage: partial

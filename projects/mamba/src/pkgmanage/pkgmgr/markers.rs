@@ -33,7 +33,11 @@ pub enum MarkerError {
     #[error("unexpected end of marker at column {col}")]
     UnexpectedEof { col: usize },
     #[error("unexpected token `{got}` at column {col}: {detail}")]
-    Unexpected { got: String, col: usize, detail: String },
+    Unexpected {
+        got: String,
+        col: usize,
+        detail: String,
+    },
     #[error("unknown environment variable `{name}`")]
     UnknownEnvVar { name: String },
     #[error("operator `{op}` requires a PEP 440 version on at least one side")]
@@ -146,7 +150,10 @@ fn detect_platform_machine() -> String {
 /// Top-level: parse + evaluate `marker` against `env`.
 pub fn evaluate(marker: &str, env: &MarkerEnv) -> Result<bool, MarkerError> {
     let tokens = lex(marker)?;
-    let mut p = Parser { tokens: &tokens, pos: 0 };
+    let mut p = Parser {
+        tokens: &tokens,
+        pos: 0,
+    };
     let ast = p.parse_or()?;
     if p.pos != tokens.len() {
         return Err(MarkerError::Unexpected {
@@ -160,9 +167,9 @@ pub fn evaluate(marker: &str, env: &MarkerEnv) -> Result<bool, MarkerError> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Tok {
-    Ident(String),       // env_var name
-    Str(String),         // string literal
-    Op(String),          // ==, !=, <, <=, >, >=, ~=, ===, in, not in
+    Ident(String), // env_var name
+    Str(String),   // string literal
+    Op(String),    // ==, !=, <, <=, >, >=, ~=, ===, in, not in
     And,
     Or,
     LParen,
@@ -206,15 +213,13 @@ fn lex(src: &str) -> Result<Vec<Tok>, MarkerError> {
             }
             b'=' | b'!' | b'<' | b'>' | b'~' => {
                 // === / == / != / <= / >= / ~= / < / >
-                let three = std::str::from_utf8(&bytes[i..(i + 3).min(bytes.len())])
-                    .unwrap_or("");
+                let three = std::str::from_utf8(&bytes[i..(i + 3).min(bytes.len())]).unwrap_or("");
                 if three == "===" {
                     out.push(Tok::Op("===".into()));
                     i += 3;
                     continue;
                 }
-                let two = std::str::from_utf8(&bytes[i..(i + 2).min(bytes.len())])
-                    .unwrap_or("");
+                let two = std::str::from_utf8(&bytes[i..(i + 2).min(bytes.len())]).unwrap_or("");
                 if matches!(two, "==" | "!=" | "<=" | ">=" | "~=") {
                     out.push(Tok::Op(two.into()));
                     i += 2;
@@ -233,9 +238,7 @@ fn lex(src: &str) -> Result<Vec<Tok>, MarkerError> {
             }
             _ if c.is_ascii_alphabetic() || c == b'_' => {
                 let start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-                {
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
                 let word = &src[start..i];
@@ -283,7 +286,11 @@ fn lex(src: &str) -> Result<Vec<Tok>, MarkerError> {
 enum Node {
     Or(Vec<Node>),
     And(Vec<Node>),
-    Cmp { lhs: Operand, op: String, rhs: Operand },
+    Cmp {
+        lhs: Operand,
+        op: String,
+        rhs: Operand,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -403,12 +410,7 @@ fn eval_node(node: &Node, env: &MarkerEnv) -> Result<bool, MarkerError> {
     }
 }
 
-fn eval_cmp(
-    lhs: &Operand,
-    op: &str,
-    rhs: &Operand,
-    env: &MarkerEnv,
-) -> Result<bool, MarkerError> {
+fn eval_cmp(lhs: &Operand, op: &str, rhs: &Operand, env: &MarkerEnv) -> Result<bool, MarkerError> {
     // `extra` is always evaluated against the active extras set.
     if matches!(lhs, Operand::Var(n) if n == "extra")
         || matches!(rhs, Operand::Var(n) if n == "extra")
@@ -538,10 +540,15 @@ fn compatible_release(left: &str, bound: &str) -> Result<bool, MarkerError> {
     // Upper bound: drop the last release segment, bump the preceding one.
     let segs: Vec<&str> = bound.split('.').collect();
     if segs.len() < 2 {
-        return Err(MarkerError::NeedsVersion { op: "~=".to_string() });
+        return Err(MarkerError::NeedsVersion {
+            op: "~=".to_string(),
+        });
     }
     let prefix_len = segs.len() - 1;
-    let mut bumped: Vec<String> = segs[..prefix_len].iter().map(|s| (*s).to_string()).collect();
+    let mut bumped: Vec<String> = segs[..prefix_len]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
     let last_prefix = bumped.last_mut().ok_or_else(|| MarkerError::NeedsVersion {
         op: "~=".to_string(),
     })?;
@@ -594,32 +601,26 @@ mod tests {
     fn and_or_precedence() {
         let env = cpython312();
         // and binds tighter than or
-        assert!(
-            evaluate(
-                "sys_platform == 'linux' or sys_platform == 'darwin' and python_version >= '3.10'",
-                &env
-            )
-            .unwrap()
-        );
-        assert!(
-            !evaluate(
-                "sys_platform == 'linux' and python_version >= '3.10' or sys_platform == 'win32'",
-                &env
-            )
-            .unwrap()
-        );
+        assert!(evaluate(
+            "sys_platform == 'linux' or sys_platform == 'darwin' and python_version >= '3.10'",
+            &env
+        )
+        .unwrap());
+        assert!(!evaluate(
+            "sys_platform == 'linux' and python_version >= '3.10' or sys_platform == 'win32'",
+            &env
+        )
+        .unwrap());
     }
 
     #[test]
     fn parens_override_precedence() {
         let env = cpython312();
-        assert!(
-            evaluate(
-                "(sys_platform == 'linux' or sys_platform == 'darwin') and python_version >= '3.10'",
-                &env
-            )
-            .unwrap()
-        );
+        assert!(evaluate(
+            "(sys_platform == 'linux' or sys_platform == 'darwin') and python_version >= '3.10'",
+            &env
+        )
+        .unwrap());
     }
 
     #[test]

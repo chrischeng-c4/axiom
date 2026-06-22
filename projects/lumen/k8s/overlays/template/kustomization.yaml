@@ -35,12 +35,15 @@ images:
   - name: lumen
     newName: REPLACE_ME__REGISTRY/lumen   # e.g. asia-east1-docker.pkg.dev/PROJECT/REPO/lumen
     newTag: REPLACE_ME__IMAGE_TAG         # e.g. v1   (avoid :latest in prod)
+  - name: relay
+    newName: REPLACE_ME__REGISTRY/relay
+    newTag: REPLACE_ME__RELAY_IMAGE_TAG
 
 # Replica floors at apply time. The HPA owns lumen's live count from here up.
 replicas:
   - name: lumen
     count: 2
-  - name: lumen-nats
+  - name: lumen-relay
     count: 1
 
 patches:
@@ -56,10 +59,10 @@ patches:
         path: /data/LUMEN_LOG_FORMAT
         value: "json"
 
-  # GKE storage class for the NATS PVC (the one stateful component). base omits
+  # GKE storage class for the Relay PVC (the one stateful component). base omits
   # it (cluster default). GKE SSD = premium-rwo; balanced PD = standard-rwo.
   # Non-GKE: set your class, or delete this patch to use the cluster default.
-  - target: { kind: StatefulSet, name: lumen-nats }
+  - target: { kind: StatefulSet, name: lumen-relay }
     patch: |-
       - op: add
         path: /spec/volumeClaimTemplates/0/spec/storageClassName

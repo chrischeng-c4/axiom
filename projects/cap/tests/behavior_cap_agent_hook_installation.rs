@@ -16,7 +16,8 @@
 #[test]
 #[ignore = "AW EC gate: run via `aw health --verify-ec` or `cargo test -- --ignored`"]
 fn cap_agent_hook_installation() {
-    let command = "cargo test -p cap hook_install -- --nocapture && cargo test -p cap hook -- --nocapture";
+    let command =
+        "cargo test -p cap hook_install -- --nocapture && cargo test -p cap hook -- --nocapture";
     let id = "cap-agent-hook-installation";
     let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while !root.join(".aw").is_dir() {

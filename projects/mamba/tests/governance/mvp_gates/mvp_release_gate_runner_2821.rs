@@ -28,7 +28,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 fn runner_script() -> PathBuf {
-    crate::common::project_root().join("scripts").join("release_gate.py")
+    crate::common::project_root()
+        .join("scripts")
+        .join("release_gate.py")
 }
 
 fn unique_output_dir(tag: &str) -> PathBuf {
@@ -52,8 +54,7 @@ fn run_runner(args: &[&str]) -> (i32, String, String) {
 fn read_summary(path: &Path) -> Value {
     let raw = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("read summary {}: {e}", path.display()));
-    serde_json::from_str(&raw)
-        .unwrap_or_else(|e| panic!("parse summary {}: {e}", path.display()))
+    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse summary {}: {e}", path.display()))
 }
 
 // ─── Acceptance 1: nonzero exit on blocking failure ─────────────────
@@ -63,8 +64,10 @@ fn dry_run_clean_exits_zero_and_writes_summary() {
     let out = unique_output_dir("clean");
     let (code, stdout, stderr) = run_runner(&[
         "--dry-run",
-        "--release-id", "test-clean",
-        "--output-dir", out.to_str().unwrap(),
+        "--release-id",
+        "test-clean",
+        "--output-dir",
+        out.to_str().unwrap(),
     ]);
     assert_eq!(
         code, 0,
@@ -86,9 +89,12 @@ fn dry_run_clean_exits_zero_and_writes_summary() {
 fn simulated_blocking_failure_propagates_to_exit_code() {
     let out = unique_output_dir("fail");
     let (code, _stdout, stderr) = run_runner(&[
-        "--simulate", "performance=fail",
-        "--release-id", "test-fail-1",
-        "--output-dir", out.to_str().unwrap(),
+        "--simulate",
+        "performance=fail",
+        "--release-id",
+        "test-fail-1",
+        "--output-dir",
+        out.to_str().unwrap(),
     ]);
     assert_eq!(
         code, 1,
@@ -112,10 +118,14 @@ fn simulated_blocking_failure_propagates_to_exit_code() {
 fn exit_code_equals_blocking_failure_count() {
     let out = unique_output_dir("multi-fail");
     let (code, _stdout, _stderr) = run_runner(&[
-        "--simulate", "performance=fail",
-        "--simulate", "ecosystem=fail",
-        "--release-id", "test-fail-2",
-        "--output-dir", out.to_str().unwrap(),
+        "--simulate",
+        "performance=fail",
+        "--simulate",
+        "ecosystem=fail",
+        "--release-id",
+        "test-fail-2",
+        "--output-dir",
+        out.to_str().unwrap(),
     ]);
     assert_eq!(
         code, 2,
@@ -131,8 +141,10 @@ fn summary_lands_at_release_id_dot_summary_dot_json() {
     let release_id = "mamba-2026-05-20T00-00-00Z";
     let (code, _stdout, _stderr) = run_runner(&[
         "--dry-run",
-        "--release-id", release_id,
-        "--output-dir", out.to_str().unwrap(),
+        "--release-id",
+        release_id,
+        "--output-dir",
+        out.to_str().unwrap(),
     ]);
     assert_eq!(code, 0);
     let expected = out.join(format!("{release_id}.summary.json"));
@@ -172,8 +184,10 @@ fn output_dir_is_created_when_missing() {
     assert!(!nested.exists());
     let (code, _stdout, _stderr) = run_runner(&[
         "--dry-run",
-        "--release-id", "nested",
-        "--output-dir", nested.to_str().unwrap(),
+        "--release-id",
+        "nested",
+        "--output-dir",
+        nested.to_str().unwrap(),
     ]);
     assert_eq!(code, 0);
     assert!(
@@ -198,7 +212,9 @@ fn dry_run_does_not_require_network_env() {
     // Together these prove "Runner does not require network for default
     // profiles" without forcing every per-profile manifest to redeclare
     // the umbrella default.
-    let mvp_toml = crate::common::project_root().join("validation").join("mvp.toml");
+    let mvp_toml = crate::common::project_root()
+        .join("validation")
+        .join("mvp.toml");
     let body = std::fs::read_to_string(&mvp_toml)
         .unwrap_or_else(|e| panic!("read {}: {e}", mvp_toml.display()));
     assert!(
@@ -207,7 +223,10 @@ fn dry_run_does_not_require_network_env() {
     );
 
     let (code, stdout, stderr) = run_runner(&["--help"]);
-    assert_eq!(code, 0, "release_gate.py --help must exit 0 (stderr={stderr})");
+    assert_eq!(
+        code, 0,
+        "release_gate.py --help must exit 0 (stderr={stderr})"
+    );
     assert!(
         stdout.contains("--include-live-network"),
         "help text must surface the live-network opt-in flag: stdout={stdout}",
@@ -226,8 +245,10 @@ fn dry_run_summary_matches_release_summary_schema_top_keys() {
     let out = unique_output_dir("schema");
     let (code, _stdout, _stderr) = run_runner(&[
         "--dry-run",
-        "--release-id", "schema-check",
-        "--output-dir", out.to_str().unwrap(),
+        "--release-id",
+        "schema-check",
+        "--output-dir",
+        out.to_str().unwrap(),
     ]);
     assert_eq!(code, 0);
     let summary = read_summary(&out.join("schema-check.summary.json"));
@@ -251,10 +272,11 @@ fn dry_run_summary_matches_release_summary_schema_top_keys() {
     assert_eq!(summary["schema_version"], Value::from(1));
 
     // Every profile entry must declare the schema's required keys.
-    let profiles = summary["profiles"]
-        .as_object()
-        .expect("profiles is object");
-    assert!(!profiles.is_empty(), "dry-run must emit at least one profile");
+    let profiles = summary["profiles"].as_object().expect("profiles is object");
+    assert!(
+        !profiles.is_empty(),
+        "dry-run must emit at least one profile"
+    );
     for (pid, entry) in profiles {
         for key in ["profile", "command", "status", "blocking", "counts"] {
             assert!(
@@ -279,10 +301,14 @@ fn profile_filter_restricts_summary_to_listed_ids() {
     let out = unique_output_dir("filter");
     let (code, _stdout, _stderr) = run_runner(&[
         "--dry-run",
-        "--profile", "smoke",
-        "--profile", "correctness",
-        "--release-id", "filter-1",
-        "--output-dir", out.to_str().unwrap(),
+        "--profile",
+        "smoke",
+        "--profile",
+        "correctness",
+        "--release-id",
+        "filter-1",
+        "--output-dir",
+        out.to_str().unwrap(),
     ]);
     assert_eq!(code, 0);
     let summary = read_summary(&out.join("filter-1.summary.json"));
@@ -290,7 +316,8 @@ fn profile_filter_restricts_summary_to_listed_ids() {
     let mut keys: Vec<&str> = profiles.keys().map(String::as_str).collect();
     keys.sort();
     assert_eq!(
-        keys, ["correctness", "smoke"],
+        keys,
+        ["correctness", "smoke"],
         "--profile filter must restrict the rolled-up summary to the listed ids",
     );
 }

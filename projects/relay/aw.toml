@@ -1,0 +1,81 @@
+[project]
+name = "relay"
+cap_path = "README.md"
+label = "project:relay"
+
+[capability.profile]
+traits = ["long_running", "cli_facing", "competitive_replacement", "network_exposed", "http2_api", "kubernetes_native", "primary_replicas"]
+
+[ec.efficiency]
+tool = "meter"
+meter = "projects/relay"
+command = "cd projects/relay && ../../target/debug/vat run meter-perf"
+
+[ec.security]
+tool = "guard"
+dir = "projects/relay"
+command = "cd projects/relay && ../../target/debug/vat run guard-security"
+
+[[workspaces]]
+name = "relay"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p relay"
+codegen.profile = "rust/score-crate"
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "relay"
+generated_from_td_digest = "sha256:63c6e8ccaaa32b4261c3e89b2a86574db4503ff7ce1593ef6b986f5e6a16bae3"
+
+[[aw.ec.generated.cases]]
+id = "relay-competitor-performance-meter-gate"
+capability_id = "competitor-performance"
+claim_id = "normalized-win-ratchet-decision-model"
+contract_id = "relay-meter-throughput-ratchet"
+category = "efficiency"
+td_ref = "projects/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-competitor-performance-meter-gate"
+test_path = "projects/relay/tests/benchmark_relay_competitor_performance_meter_gate.rs"
+command = "cd projects/relay && ../../target/debug/vat run meter-perf"
+required_for_production = true
+assertions = [
+    "The normalized perf-gate ratchet fails on regression and must-beat loss.",
+    "The small-scale append, broadcast, and work-queue lease/ack workloads complete correctly.",
+    "The gate is executed by meter inside a vat workspace, not by a legacy arena-only dispatch path.",
+]
+
+[[aw.ec.generated.cases]]
+id = "relay-security-hardening-guard-scan"
+capability_id = "security-hardening"
+claim_id = "guard-static-runtime-evidence"
+contract_id = "relay-guard-security-report"
+category = "security"
+td_ref = "projects/relay/external-contracts/security-hardening/security/security-evidence.md#relay-security-hardening-guard-scan"
+test_path = "projects/relay/tests/security_relay_security_hardening_guard_scan.rs"
+command = "cd projects/relay && ../../target/debug/vat run guard-security"
+required_for_production = false
+assertions = [
+    "guard scan over relay reports no untriaged Docker, Kubernetes, or static security findings.",
+    "guard attaches meter evidence for relay_core opaque-payload request-boundary smoke.",
+    "The security evidence runs inside vat so generated reports and transient files do not mutate the host checkout.",
+]
+
+[[aw.ec.generated.tool_manifests]]
+id = "relay-guard-security"
+tool = "guard"
+path = "projects/relay/guard-relay-security.toml"
+td_ref = "projects/relay/external-contracts/security-hardening/security/security-evidence.md#relay-guard-security"
+content_digest = "sha256:78c4cf81a90a14cb90f3b3eaba6619a3e461fca40cbee8ba9dac5cc6280f77ba"
+command = "cd projects/relay && ../../target/debug/vat run guard-security"
+category = "security"
+
+[[aw.ec.generated.tool_manifests]]
+id = "relay-meter-performance"
+tool = "meter"
+path = "projects/relay/meter-relay-performance.toml"
+td_ref = "projects/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-meter-performance"
+content_digest = "sha256:18c7be1cefd5145804129bc19c4d5ec6c812cb70c9d0c888ced0eb8d5c14841b"
+command = "cd projects/relay && ../../target/debug/vat run meter-perf"
+category = "efficiency"
+# AW-EC-END

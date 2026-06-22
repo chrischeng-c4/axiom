@@ -16,8 +16,7 @@ pub(crate) fn manifest_dir() -> PathBuf {
 
 pub(crate) fn load_manifest(rel: &str) -> Value {
     let p = manifest_dir().join(rel);
-    let raw = fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+    let raw = fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
     raw.parse::<Value>()
         .unwrap_or_else(|e| panic!("parse {}: {e}", p.display()))
 }

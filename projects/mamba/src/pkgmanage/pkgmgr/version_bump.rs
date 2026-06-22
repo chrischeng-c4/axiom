@@ -203,7 +203,11 @@ pub fn parse_version(src: &str) -> Option<Version> {
 fn strip_numbered_suffix(s: &str, marker: &str) -> (String, Option<u64>) {
     if let Some((base, rest)) = s.rsplit_once(marker) {
         if rest.chars().all(|c| c.is_ascii_digit()) {
-            let n = if rest.is_empty() { 0 } else { rest.parse().unwrap_or(0) };
+            let n = if rest.is_empty() {
+                0
+            } else {
+                rest.parse().unwrap_or(0)
+            };
             return (base.to_string(), Some(n));
         }
     }
@@ -220,7 +224,11 @@ fn strip_pre_suffix(s: &str) -> (String, Option<(PrePhase, u64)>) {
             if rest.chars().all(|c| c.is_ascii_digit()) {
                 if let Some(last) = base.chars().last() {
                     if last.is_ascii_digit() {
-                        let n = if rest.is_empty() { 0 } else { rest.parse().unwrap_or(0) };
+                        let n = if rest.is_empty() {
+                            0
+                        } else {
+                            rest.parse().unwrap_or(0)
+                        };
                         return (base.to_string(), Some((phase, n)));
                     }
                 }
@@ -346,8 +354,7 @@ pub fn write_pyproject_version(toml_src: &str, new_version: &str) -> Result<Stri
         let stripped = line.trim_start();
         if stripped.starts_with('[') {
             // New table — close any prior membership.
-            in_project = stripped.starts_with("[project]")
-                && !stripped.starts_with("[project.");
+            in_project = stripped.starts_with("[project]") && !stripped.starts_with("[project.");
         }
         if in_project && !replaced {
             if let Some(rebuilt) = replace_version_assignment(line, new_version) {

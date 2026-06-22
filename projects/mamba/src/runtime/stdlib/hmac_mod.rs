@@ -35,10 +35,10 @@
 //!   so `h.update(buf)` is constant-overhead per call and `h.hexdigest()`
 //!   does not invalidate the hasher (clone-then-finalize).
 
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // HANDWRITE-BEGIN
 
@@ -61,8 +61,8 @@ type HmacSha3_512 = Hmac<Sha3_512>;
 
 /// Algorithms exposed via `hmac.new(key, msg, digestmod="<algo>")`.
 const ALGOS: &[&str] = &[
-    "md5", "sha1", "sha224", "sha256", "sha384", "sha512",
-    "sha3_224", "sha3_256", "sha3_384", "sha3_512",
+    "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_384",
+    "sha3_512",
 ];
 
 fn digest_size(algo: &str) -> i64 {
@@ -111,20 +111,42 @@ impl HmacState {
         // the standard HMAC key-derivation (truncate via hash if longer
         // than block size, zero-pad if shorter). CPython's hmac matches.
         match algo {
-            "md5" => HmacState::Md5(HmacMd5::new_from_slice(key).expect("HMAC accepts any key length")),
-            "sha1" => HmacState::Sha1(HmacSha1::new_from_slice(key).expect("HMAC accepts any key length")),
-            "sha224" => HmacState::Sha224(HmacSha224::new_from_slice(key).expect("HMAC accepts any key length")),
-            "sha256" => HmacState::Sha256(HmacSha256::new_from_slice(key).expect("HMAC accepts any key length")),
-            "sha384" => HmacState::Sha384(HmacSha384::new_from_slice(key).expect("HMAC accepts any key length")),
-            "sha512" => HmacState::Sha512(HmacSha512::new_from_slice(key).expect("HMAC accepts any key length")),
-            "sha3_224" => HmacState::Sha3_224(HmacSha3_224::new_from_slice(key).expect("HMAC accepts any key length")),
-            "sha3_256" => HmacState::Sha3_256(HmacSha3_256::new_from_slice(key).expect("HMAC accepts any key length")),
-            "sha3_384" => HmacState::Sha3_384(HmacSha3_384::new_from_slice(key).expect("HMAC accepts any key length")),
-            "sha3_512" => HmacState::Sha3_512(HmacSha3_512::new_from_slice(key).expect("HMAC accepts any key length")),
+            "md5" => {
+                HmacState::Md5(HmacMd5::new_from_slice(key).expect("HMAC accepts any key length"))
+            }
+            "sha1" => {
+                HmacState::Sha1(HmacSha1::new_from_slice(key).expect("HMAC accepts any key length"))
+            }
+            "sha224" => HmacState::Sha224(
+                HmacSha224::new_from_slice(key).expect("HMAC accepts any key length"),
+            ),
+            "sha256" => HmacState::Sha256(
+                HmacSha256::new_from_slice(key).expect("HMAC accepts any key length"),
+            ),
+            "sha384" => HmacState::Sha384(
+                HmacSha384::new_from_slice(key).expect("HMAC accepts any key length"),
+            ),
+            "sha512" => HmacState::Sha512(
+                HmacSha512::new_from_slice(key).expect("HMAC accepts any key length"),
+            ),
+            "sha3_224" => HmacState::Sha3_224(
+                HmacSha3_224::new_from_slice(key).expect("HMAC accepts any key length"),
+            ),
+            "sha3_256" => HmacState::Sha3_256(
+                HmacSha3_256::new_from_slice(key).expect("HMAC accepts any key length"),
+            ),
+            "sha3_384" => HmacState::Sha3_384(
+                HmacSha3_384::new_from_slice(key).expect("HMAC accepts any key length"),
+            ),
+            "sha3_512" => HmacState::Sha3_512(
+                HmacSha3_512::new_from_slice(key).expect("HMAC accepts any key length"),
+            ),
             // Unknown algo: fall back to sha256 (most common). CPython
             // would raise ValueError; brute-force conformance accepts
             // best-effort here.
-            _ => HmacState::Sha256(HmacSha256::new_from_slice(key).expect("HMAC accepts any key length")),
+            _ => HmacState::Sha256(
+                HmacSha256::new_from_slice(key).expect("HMAC accepts any key length"),
+            ),
         }
     }
 
@@ -212,9 +234,15 @@ pub fn is_hmac_handle(id: u64) -> bool {
 }
 
 fn drop_hmac_handle(id: u64) {
-    HMACS.with(|m| { m.borrow_mut().remove(&id); });
-    HMAC_IDS.with(|s| { s.borrow_mut().remove(&id); });
-    HMAC_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
+    HMACS.with(|m| {
+        m.borrow_mut().remove(&id);
+    });
+    HMAC_IDS.with(|s| {
+        s.borrow_mut().remove(&id);
+    });
+    HMAC_REFCOUNTS.with(|r| {
+        r.borrow_mut().remove(&id);
+    });
 }
 
 /// `mb_retain_value` integer-handle dispatch (#2111).
@@ -254,12 +282,17 @@ pub fn release_handle(id: u64) -> bool {
 fn make_handle(algo: &str, key: &[u8]) -> MbValue {
     let id = alloc_hmac_id();
     HMACS.with(|m| {
-        m.borrow_mut().insert(id, MbHmac {
-            algo: algo.to_string(),
-            state: HmacState::new(algo, key),
-        });
+        m.borrow_mut().insert(
+            id,
+            MbHmac {
+                algo: algo.to_string(),
+                state: HmacState::new(algo, key),
+            },
+        );
     });
-    HMAC_IDS.with(|s| { s.borrow_mut().insert(id); });
+    HMAC_IDS.with(|s| {
+        s.borrow_mut().insert(id);
+    });
     MbValue::from_int(id as i64)
 }
 
@@ -459,9 +492,7 @@ pub fn mb_hmac_new_handle(key: MbValue, msg: MbValue, digestmod: MbValue) -> MbV
 /// TypeError, matching CPython (`hmac.HMAC.update` rejects `str`).
 pub fn mb_hmac_update(handle: MbValue, data: MbValue) -> MbValue {
     if !is_bytes_like(data) {
-        return raise_type_error(
-            "Strings must be encoded before hashing",
-        );
+        return raise_type_error("Strings must be encoded before hashing");
     }
     if let Some(id) = handle.as_int() {
         let id = id as u64;
@@ -477,7 +508,11 @@ pub fn mb_hmac_update(handle: MbValue, data: MbValue) -> MbValue {
 /// `h.hexdigest()` — finalize a clone, return lowercase hex string.
 pub fn mb_hmac_hexdigest(handle: MbValue) -> MbValue {
     let digest_bytes = handle.as_int().and_then(|id| {
-        HMACS.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone()))
+        HMACS.with(|m| {
+            m.borrow()
+                .get(&(id as u64))
+                .map(|h| h.state.finalize_clone())
+        })
     });
     let bytes = digest_bytes.unwrap_or_default();
     let mut hex = String::with_capacity(bytes.len() * 2);
@@ -490,8 +525,15 @@ pub fn mb_hmac_hexdigest(handle: MbValue) -> MbValue {
 
 /// `h.digest()` — finalize a clone, return raw digest bytes.
 pub fn mb_hmac_digest(handle: MbValue) -> MbValue {
-    let bytes = handle.as_int()
-        .and_then(|id| HMACS.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone())))
+    let bytes = handle
+        .as_int()
+        .and_then(|id| {
+            HMACS.with(|m| {
+                m.borrow()
+                    .get(&(id as u64))
+                    .map(|h| h.state.finalize_clone())
+            })
+        })
         .unwrap_or_default();
     MbValue::from_ptr(MbObject::new_bytes(bytes))
 }
@@ -500,13 +542,16 @@ pub fn mb_hmac_digest(handle: MbValue) -> MbValue {
 pub fn mb_hmac_copy(handle: MbValue) -> MbValue {
     if let Some(id) = handle.as_int() {
         let (algo, state) = HMACS.with(|m| {
-            m.borrow().get(&(id as u64))
+            m.borrow()
+                .get(&(id as u64))
                 .map(|h| (h.algo.clone(), h.state.clone_state()))
                 .unwrap_or_else(|| ("sha256".to_string(), HmacState::new("sha256", b"")))
         });
         let new_id = alloc_hmac_id();
         HMACS.with(|m| m.borrow_mut().insert(new_id, MbHmac { algo, state }));
-        HMAC_IDS.with(|s| { s.borrow_mut().insert(new_id); });
+        HMAC_IDS.with(|s| {
+            s.borrow_mut().insert(new_id);
+        });
         return MbValue::from_int(new_id as i64);
     }
     MbValue::none()
@@ -515,16 +560,22 @@ pub fn mb_hmac_copy(handle: MbValue) -> MbValue {
 /// Read the algorithm name for a handle (used by class.rs to expose `h.name`).
 /// CPython returns "hmac-<algo>" (e.g. "hmac-sha256").
 pub fn mb_hmac_name(handle: MbValue) -> MbValue {
-    let algo = handle.as_int()
+    let algo = handle
+        .as_int()
         .and_then(|id| HMACS.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
         .unwrap_or_default();
-    let name = if algo.is_empty() { String::new() } else { format!("hmac-{}", algo) };
+    let name = if algo.is_empty() {
+        String::new()
+    } else {
+        format!("hmac-{}", algo)
+    };
     MbValue::from_ptr(MbObject::new_str(name))
 }
 
 /// Read `digest_size` for a handle (CPython attribute).
 pub fn mb_hmac_digest_size_attr(handle: MbValue) -> MbValue {
-    let algo = handle.as_int()
+    let algo = handle
+        .as_int()
         .and_then(|id| HMACS.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
         .unwrap_or_default();
     MbValue::from_int(digest_size(&algo))
@@ -532,7 +583,8 @@ pub fn mb_hmac_digest_size_attr(handle: MbValue) -> MbValue {
 
 /// Read `block_size` for a handle (CPython attribute).
 pub fn mb_hmac_block_size_attr(handle: MbValue) -> MbValue {
-    let algo = handle.as_int()
+    let algo = handle
+        .as_int()
         .and_then(|id| HMACS.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
         .unwrap_or_default();
     MbValue::from_int(block_size(&algo))
@@ -572,9 +624,7 @@ pub fn mb_hmac_compare_digest(a: MbValue, b: MbValue) -> MbValue {
     if a_is_str || b_is_str {
         // Both must be str (mixing str with bytes-like is a TypeError).
         if !(a_is_str && b_is_str) {
-            return raise_type_error(
-                "unsupported operand types(s) or combination of types",
-            );
+            return raise_type_error("unsupported operand types(s) or combination of types");
         }
         // Both str: require ASCII on each.
         let mut a_ascii = true;
@@ -594,9 +644,7 @@ pub fn mb_hmac_compare_digest(a: MbValue, b: MbValue) -> MbValue {
 
     // Neither is str: both must be bytes-like.
     if !is_bytes_like(a) || !is_bytes_like(b) {
-        return raise_type_error(
-            "unsupported operand types(s) or combination of types",
-        );
+        return raise_type_error("unsupported operand types(s) or combination of types");
     }
     let result = with_bytes(a, |ba| with_bytes(b, |bb| const_time_eq(ba, bb)));
     MbValue::from_bool(result)
@@ -635,13 +683,19 @@ unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbV
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (pos, kw) = split_kwargs(a);
     // key/msg/digestmod: positional first, then keyword override.
-    let key = pos.first().copied()
+    let key = pos
+        .first()
+        .copied()
         .or_else(|| kwarg(kw, "key"))
         .unwrap_or_else(MbValue::none);
-    let msg = pos.get(1).copied()
+    let msg = pos
+        .get(1)
+        .copied()
         .or_else(|| kwarg(kw, "msg"))
         .unwrap_or_else(MbValue::none);
-    let digestmod = pos.get(2).copied()
+    let digestmod = pos
+        .get(2)
+        .copied()
         .or_else(|| kwarg(kw, "digestmod"))
         .unwrap_or_else(MbValue::none);
     if !is_bytes_like(key) {
@@ -656,13 +710,19 @@ unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbV
 unsafe extern "C" fn dispatch_digest(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let (pos, kw) = split_kwargs(a);
-    let key = pos.first().copied()
+    let key = pos
+        .first()
+        .copied()
         .or_else(|| kwarg(kw, "key"))
         .unwrap_or_else(MbValue::none);
-    let msg = pos.get(1).copied()
+    let msg = pos
+        .get(1)
+        .copied()
         .or_else(|| kwarg(kw, "msg"))
         .unwrap_or_else(MbValue::none);
-    let digest = pos.get(2).copied()
+    let digest = pos
+        .get(2)
+        .copied()
         .or_else(|| kwarg(kw, "digest"))
         .unwrap_or_else(MbValue::none);
     if !is_bytes_like(key) {
@@ -742,7 +802,8 @@ pub fn register() {
     // `isinstance(h, hmac.HMAC)` resolves the target type name to "HMAC"
     // (the class.rs isinstance arm then matches it against hmac handles).
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(dispatch_new as usize as u64, "HMAC".to_string());
+        m.borrow_mut()
+            .insert(dispatch_new as usize as u64, "HMAC".to_string());
     });
 
     // Register the HMAC class + its instance methods (`update`, `hexdigest`,
@@ -960,23 +1021,38 @@ mod tests {
 
     #[test]
     fn test_compare_digest_equal() {
-        assert_eq!(mb_hmac_compare_digest(b(b"abc"), b(b"abc")).as_bool(), Some(true));
+        assert_eq!(
+            mb_hmac_compare_digest(b(b"abc"), b(b"abc")).as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
     fn test_compare_digest_differ() {
-        assert_eq!(mb_hmac_compare_digest(b(b"abc"), b(b"abd")).as_bool(), Some(false));
+        assert_eq!(
+            mb_hmac_compare_digest(b(b"abc"), b(b"abd")).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
     fn test_compare_digest_length_differ() {
-        assert_eq!(mb_hmac_compare_digest(b(b"abc"), b(b"abcd")).as_bool(), Some(false));
+        assert_eq!(
+            mb_hmac_compare_digest(b(b"abc"), b(b"abcd")).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
     fn test_compare_digest_str_path() {
-        assert_eq!(mb_hmac_compare_digest(s("abc"), s("abc")).as_bool(), Some(true));
-        assert_eq!(mb_hmac_compare_digest(s("abc"), s("xyz")).as_bool(), Some(false));
+        assert_eq!(
+            mb_hmac_compare_digest(s("abc"), s("abc")).as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            mb_hmac_compare_digest(s("abc"), s("xyz")).as_bool(),
+            Some(false)
+        );
     }
 
     // is_hmac_handle predicate — class.rs entry point.

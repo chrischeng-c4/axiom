@@ -259,7 +259,9 @@ fn mambalibs_dir_help_doc_or_name_case_accepts_either() {
     );
 
     assert_eq!(
-        block.get("at_least_one_must_be_non_none").and_then(|v| v.as_bool()),
+        block
+            .get("at_least_one_must_be_non_none")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[doc_or_name_case].at_least_one_must_be_non_none` must be true \
          (issue: \"__doc__ or __name__\" — either is sufficient)"
@@ -270,7 +272,9 @@ fn mambalibs_dir_help_doc_or_name_case_accepts_either() {
         "`[doc_or_name_case].expected_name_value` must be \"mambalibs\""
     );
     assert_eq!(
-        block.get("diagnostic_must_name_attribute").and_then(|v| v.as_bool()),
+        block
+            .get("diagnostic_must_name_attribute")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[doc_or_name_case].diagnostic_must_name_attribute` must be true"
     );
@@ -279,11 +283,14 @@ fn mambalibs_dir_help_doc_or_name_case_accepts_either() {
 #[test]
 fn mambalibs_dir_help_hidden_symbol_guard_pins_all_fail_flags() {
     let doc = load_toml(&manifest_path());
-    let guard = doc.get("hidden_symbol_guard").and_then(|v| v.as_table()).expect(
-        "missing `[hidden_symbol_guard]` block \
+    let guard = doc
+        .get("hidden_symbol_guard")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[hidden_symbol_guard]` block \
          (acceptance: \"Fixture fails if exported symbols are hidden \
          from dir or getattr.\")",
-    );
+        );
 
     for flag in &[
         "fail_if_symbol_missing_from_dir",
@@ -303,11 +310,14 @@ fn mambalibs_dir_help_hidden_symbol_guard_pins_all_fail_flags() {
 #[test]
 fn mambalibs_dir_help_outcome_distinction_disambiguates_failure_modes() {
     let doc = load_toml(&manifest_path());
-    let block = doc.get("outcome_distinction").and_then(|v| v.as_table()).expect(
-        "missing `[outcome_distinction]` block \
+    let block = doc
+        .get("outcome_distinction")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[outcome_distinction]` block \
          (acceptance: \"Failure distinguishes import failure from \
          introspection failure.\")",
-    );
+        );
 
     let import_fail = block
         .get("import_failure_outcome")
@@ -328,7 +338,9 @@ fn mambalibs_dir_help_outcome_distinction_disambiguates_failure_modes() {
         "`[outcome_distinction].must_be_disjoint` must be true"
     );
     assert_eq!(
-        block.get("diagnostic_must_name_failure_mode").and_then(|v| v.as_bool()),
+        block
+            .get("diagnostic_must_name_failure_mode")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[outcome_distinction].diagnostic_must_name_failure_mode` must be true"
     );
@@ -352,18 +364,25 @@ fn mambalibs_dir_help_outcome_distinction_disambiguates_failure_modes() {
 #[test]
 fn mambalibs_dir_help_no_production_change_keeps_scope_local() {
     let doc = load_toml(&manifest_path());
-    let block = doc.get("no_production_change").and_then(|v| v.as_table()).expect(
-        "missing `[no_production_change]` block \
+    let block = doc
+        .get("no_production_change")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[no_production_change]` block \
          (acceptance: \"No production cclab library behavior is changed.\")",
-    );
+        );
 
     assert_eq!(
-        block.get("cclab_library_behavior_unchanged").and_then(|v| v.as_bool()),
+        block
+            .get("cclab_library_behavior_unchanged")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[no_production_change].cclab_library_behavior_unchanged` must be true"
     );
     assert_eq!(
-        block.get("forbid_touching_production_crates").and_then(|v| v.as_bool()),
+        block
+            .get("forbid_touching_production_crates")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[no_production_change].forbid_touching_production_crates` must be true"
     );
@@ -466,7 +485,8 @@ fn mambalibs_dir_help_pins_out_of_scope_per_issue_2667() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("rich_inspect_signature_support").and_then(|v| v.as_bool()),
+        oos.get("rich_inspect_signature_support")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].rich_inspect_signature_support` must be true \
          (issue text: \"Out of scope: rich inspect.signature support.\")"

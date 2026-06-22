@@ -1,11 +1,10 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// unittest module for Mamba (#419).
 ///
 /// Provides: TestCase base (assertEqual, assertTrue, assertFalse, assertRaises),
 /// main() test runner, TestResult.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 /// Set the pending mamba exception of `exc_type` with `message`. Used by the
 /// assertion helpers in place of `panic!`: a `panic!` inside an `extern "C"`
@@ -62,7 +61,11 @@ unsafe extern "C" fn dispatch_assert_equal(args_ptr: *const MbValue, nargs: usiz
 
 unsafe extern "C" fn dispatch_assert_true(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let v = if nargs >= 2 { a[1] } else { a.get(0).copied().unwrap_or_else(MbValue::none) };
+    let v = if nargs >= 2 {
+        a[1]
+    } else {
+        a.get(0).copied().unwrap_or_else(MbValue::none)
+    };
     mb_unittest_assert_true(v)
 }
 
@@ -137,7 +140,8 @@ unsafe extern "C" fn dispatch_assert_raises(args_ptr: *const MbValue, nargs: usi
 //     wrapped function/class) and returns it unchanged. Doubling as
 //     `@unittest.expectedFailure` for the no-parens shape.
 unsafe extern "C" fn dispatch_identity_decorator(
-    args_ptr: *const MbValue, nargs: usize,
+    args_ptr: *const MbValue,
+    nargs: usize,
 ) -> MbValue {
     if nargs >= 1 {
         unsafe { *args_ptr }
@@ -146,9 +150,7 @@ unsafe extern "C" fn dispatch_identity_decorator(
     }
 }
 
-unsafe extern "C" fn dispatch_skip_factory(
-    _args_ptr: *const MbValue, _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_skip_factory(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_func(dispatch_identity_decorator as *const () as usize)
 }
 
@@ -158,9 +160,7 @@ unsafe extern "C" fn dispatch_skip_factory(
 /// names are not yet backed by a real implementation; the stub keeps the
 /// module surface complete so `hasattr(unittest, NAME)` and
 /// `callable(unittest.NAME)` hold, returning `None` if invoked.
-unsafe extern "C" fn dispatch_surface_stub(
-    _args_ptr: *const MbValue, _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_surface_stub(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::none()
 }
 
@@ -358,7 +358,9 @@ extern "C" fn tr_init(self_obj: MbValue) -> MbValue {
 
 /// `result.startTest(test)` — increment the run counter (mirrors CPython).
 extern "C" fn tr_start_test(self_obj: MbValue, _test: MbValue) -> MbValue {
-    let n = inst_get(self_obj, "testsRun").and_then(|v| v.as_int()).unwrap_or(0);
+    let n = inst_get(self_obj, "testsRun")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
     inst_set(self_obj, "testsRun", MbValue::from_int(n + 1));
     MbValue::none()
 }
@@ -414,7 +416,9 @@ extern "C" fn tr_add_sub_test(
 }
 
 fn maybe_stop_on_failfast(self_obj: MbValue) {
-    let failfast = inst_get(self_obj, "failfast").and_then(|v| v.as_bool()).unwrap_or(false);
+    let failfast = inst_get(self_obj, "failfast")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if failfast {
         inst_set(self_obj, "shouldStop", MbValue::from_bool(true));
     }
@@ -437,8 +441,7 @@ extern "C" fn tr_stop(self_obj: MbValue) -> MbValue {
 
 /// `result.wasSuccessful()` — True iff no failures and no errors recorded.
 extern "C" fn tr_was_successful(self_obj: MbValue) -> MbValue {
-    let ok = list_field_len(self_obj, "failures") == 0
-        && list_field_len(self_obj, "errors") == 0;
+    let ok = list_field_len(self_obj, "failures") == 0 && list_field_len(self_obj, "errors") == 0;
     MbValue::from_bool(ok)
 }
 
@@ -524,7 +527,12 @@ fn failure_type_name(v: MbValue) -> Option<String> {
     }
     v.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-            fields.read().unwrap().get("__name__").copied().and_then(extract_str)
+            fields
+                .read()
+                .unwrap()
+                .get("__name__")
+                .copied()
+                .and_then(extract_str)
         } else {
             None
         }
@@ -536,7 +544,11 @@ fn failure_type_name(v: MbValue) -> Option<String> {
 /// protocol records addFailure and surrounding handlers can observe it.
 extern "C" fn tc_fail(self_obj: MbValue, args: MbValue) -> MbValue {
     let items = super::super::builtins::extract_items(args);
-    let msg = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let msg = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let exc_type = failure_exception_name(self_obj);
     raise_exc(&exc_type, &msg);
     MbValue::none()
@@ -616,10 +628,10 @@ extern "C" fn tc_run(self_obj: MbValue, args: MbValue) -> MbValue {
     // The test passed only if setUp, the body, AND tearDown all left no pending
     // exception, and no sub-test recorded a failure.
     let subtest_recorded = inst_get(self_obj, "_subtest_recorded")
-        .and_then(|v| v.as_bool()).unwrap_or(false);
-    let any_outcome = setup_outcome.is_some()
-        || body_outcome.is_some()
-        || teardown_outcome.is_some();
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let any_outcome =
+        setup_outcome.is_some() || body_outcome.is_some() || teardown_outcome.is_some();
 
     if subtest_recorded {
         // Already recorded as a sub-test failure via addSubTest; do not
@@ -662,8 +674,7 @@ fn take_pending_outcome() -> Option<(String, MbValue)> {
 /// `result.failures` / `result.errors` are `(test, str)` tuples whose second
 /// element is this formatted string — NOT the raw exception instance.
 fn format_exc_string(exc_type: &str, exc_val: MbValue) -> MbValue {
-    let msg = super::super::exception::get_exception_message_pub(exc_val)
-        .filter(|m| !m.is_empty());
+    let msg = super::super::exception::get_exception_message_pub(exc_val).filter(|m| !m.is_empty());
     let tail = match msg {
         Some(m) => format!("{exc_type}: {m}"),
         None => exc_type.to_string(),
@@ -682,8 +693,8 @@ fn record_outcome(result: MbValue, self_obj: MbValue, exc_type: &str, exc_val: M
         return;
     }
     let failure_exc = failure_exception_name(self_obj);
-    let is_failure = exc_type == failure_exc
-        || super::super::exception::is_subclass_of(exc_type, &failure_exc);
+    let is_failure =
+        exc_type == failure_exc || super::super::exception::is_subclass_of(exc_type, &failure_exc);
     let err = format_exc_string(exc_type, exc_val);
     if is_failure {
         call_method_n(result, "addFailure", &[self_obj, err]);
@@ -730,7 +741,9 @@ extern "C" fn ts_count_test_cases(self_obj: MbValue) -> MbValue {
     let mut total: i64 = 0;
     if let Some(list) = inst_get(self_obj, "_tests") {
         for t in super::super::builtins::extract_items(list) {
-            total += call_method_n(t, "countTestCases", &[]).as_int().unwrap_or(0);
+            total += call_method_n(t, "countTestCases", &[])
+                .as_int()
+                .unwrap_or(0);
         }
     }
     MbValue::from_int(total)
@@ -743,7 +756,9 @@ extern "C" fn ts_run(self_obj: MbValue, args: MbValue) -> MbValue {
     let result = items.first().copied().unwrap_or_else(MbValue::none);
     if let Some(list) = inst_get(self_obj, "_tests") {
         for t in super::super::builtins::extract_items(list) {
-            let stop = inst_get(result, "shouldStop").and_then(|v| v.as_bool()).unwrap_or(false);
+            let stop = inst_get(result, "shouldStop")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if stop {
                 break;
             }
@@ -799,7 +814,11 @@ extern "C" fn tl_load_tests_from_name(self_obj: MbValue, args: MbValue) -> MbVal
 /// per-name results.
 extern "C" fn tl_load_tests_from_names(self_obj: MbValue, args: MbValue) -> MbValue {
     let items = super::super::builtins::extract_items(args);
-    let names = items.first().copied().map(super::super::builtins::extract_items).unwrap_or_default();
+    let names = items
+        .first()
+        .copied()
+        .map(super::super::builtins::extract_items)
+        .unwrap_or_default();
     let suites: Vec<MbValue> = names
         .into_iter()
         .map(|_| make_test_suite(vec![make_load_error()]))
@@ -879,9 +898,18 @@ fn register_test_result_class() {
 fn register_suite_loader_classes() {
     // TestSuite
     let mut suite_methods: HashMap<String, MbValue> = HashMap::new();
-    suite_methods.insert("__init__".into(), MbValue::from_func(ts_init as *const () as usize));
-    suite_methods.insert("addTest".into(), MbValue::from_func(ts_add_test as *const () as usize));
-    suite_methods.insert("countTestCases".into(), MbValue::from_func(ts_count_test_cases as *const () as usize));
+    suite_methods.insert(
+        "__init__".into(),
+        MbValue::from_func(ts_init as *const () as usize),
+    );
+    suite_methods.insert(
+        "addTest".into(),
+        MbValue::from_func(ts_add_test as *const () as usize),
+    );
+    suite_methods.insert(
+        "countTestCases".into(),
+        MbValue::from_func(ts_count_test_cases as *const () as usize),
+    );
     let ts_run_addr = ts_run as *const () as usize;
     suite_methods.insert("run".into(), MbValue::from_func(ts_run_addr));
     super::super::module::register_variadic_func(ts_run_addr as u64);
@@ -892,20 +920,32 @@ fn register_suite_loader_classes() {
     let lerr_run_addr = loaderror_run as *const () as usize;
     failed_methods.insert("run".into(), MbValue::from_func(lerr_run_addr));
     super::super::module::register_variadic_func(lerr_run_addr as u64);
-    failed_methods.insert("countTestCases".into(), MbValue::from_func(loaderror_count as *const () as usize));
+    failed_methods.insert(
+        "countTestCases".into(),
+        MbValue::from_func(loaderror_count as *const () as usize),
+    );
     super::super::class::mb_class_register("_FailedTest", Vec::new(), failed_methods);
 
     // TestLoader
     let mut loader_methods: HashMap<String, MbValue> = HashMap::new();
-    loader_methods.insert("__init__".into(), MbValue::from_func(tl_init as *const () as usize));
+    loader_methods.insert(
+        "__init__".into(),
+        MbValue::from_func(tl_init as *const () as usize),
+    );
     let lfn_addr = tl_load_tests_from_name as *const () as usize;
     loader_methods.insert("loadTestsFromName".into(), MbValue::from_func(lfn_addr));
     super::super::module::register_variadic_func(lfn_addr as u64);
     let lfns_addr = tl_load_tests_from_names as *const () as usize;
     loader_methods.insert("loadTestsFromNames".into(), MbValue::from_func(lfns_addr));
     super::super::module::register_variadic_func(lfns_addr as u64);
-    loader_methods.insert("loadTestsFromTestCase".into(), MbValue::from_func(tl_load_tests_from_test_case as *const () as usize));
-    loader_methods.insert("getTestCaseNames".into(), MbValue::from_func(tl_get_test_case_names as *const () as usize));
+    loader_methods.insert(
+        "loadTestsFromTestCase".into(),
+        MbValue::from_func(tl_load_tests_from_test_case as *const () as usize),
+    );
+    loader_methods.insert(
+        "getTestCaseNames".into(),
+        MbValue::from_func(tl_get_test_case_names as *const () as usize),
+    );
     super::super::class::mb_class_register("TestLoader", Vec::new(), loader_methods);
 }
 
@@ -938,24 +978,36 @@ unsafe extern "C" fn dispatch_new_test_loader(_args: *const MbValue, _nargs: usi
 pub fn register_classes() {
     let mut methods: HashMap<String, MbValue> = HashMap::new();
     let m = [
-        ("assertEqual",     method_assert_equal as *const () as usize),
-        ("assertNotEqual",  method_assert_not_equal as *const () as usize),
-        ("assertTrue",      method_assert_true as *const () as usize),
-        ("assertFalse",     method_assert_false as *const () as usize),
-        ("assertIs",        method_assert_is as *const () as usize),
-        ("assertIsNone",    method_assert_is_none as *const () as usize),
-        ("assertIn",        method_assert_in as *const () as usize),
-        ("skipTest",        method_skip_test as *const () as usize),
-        ("assertListEqual", method_assert_list_equal as *const () as usize),
-        ("addCleanup",      method_add_cleanup_4 as *const () as usize),
+        ("assertEqual", method_assert_equal as *const () as usize),
+        (
+            "assertNotEqual",
+            method_assert_not_equal as *const () as usize,
+        ),
+        ("assertTrue", method_assert_true as *const () as usize),
+        ("assertFalse", method_assert_false as *const () as usize),
+        ("assertIs", method_assert_is as *const () as usize),
+        ("assertIsNone", method_assert_is_none as *const () as usize),
+        ("assertIn", method_assert_in as *const () as usize),
+        ("skipTest", method_skip_test as *const () as usize),
+        (
+            "assertListEqual",
+            method_assert_list_equal as *const () as usize,
+        ),
+        ("addCleanup", method_add_cleanup_4 as *const () as usize),
         // Run protocol (see TestCase run-protocol block above).
-        ("id",                tc_id as *const () as usize),
-        ("setUp",             tc_set_up as *const () as usize),
-        ("tearDown",          tc_tear_down as *const () as usize),
-        ("countTestCases",    tc_count_test_cases as *const () as usize),
-        ("defaultTestResult", tc_default_test_result as *const () as usize),
-        ("shortDescription",  tc_short_description as *const () as usize),
-        ("debug",             tc_debug as *const () as usize),
+        ("id", tc_id as *const () as usize),
+        ("setUp", tc_set_up as *const () as usize),
+        ("tearDown", tc_tear_down as *const () as usize),
+        ("countTestCases", tc_count_test_cases as *const () as usize),
+        (
+            "defaultTestResult",
+            tc_default_test_result as *const () as usize,
+        ),
+        (
+            "shortDescription",
+            tc_short_description as *const () as usize,
+        ),
+        ("debug", tc_debug as *const () as usize),
     ];
     for (name, addr) in m {
         methods.insert(name.to_string(), MbValue::from_func(addr));
@@ -1000,20 +1052,30 @@ pub fn register_classes() {
 /// path.
 fn register_context_manager_classes() {
     let mut arc: HashMap<String, MbValue> = HashMap::new();
-    arc.insert("__enter__".into(), MbValue::from_func(arc_enter as *const () as usize));
-    arc.insert("__exit__".into(), MbValue::from_func(arc_exit as *const () as usize));
+    arc.insert(
+        "__enter__".into(),
+        MbValue::from_func(arc_enter as *const () as usize),
+    );
+    arc.insert(
+        "__exit__".into(),
+        MbValue::from_func(arc_exit as *const () as usize),
+    );
     super::super::class::mb_class_register("_AssertRaisesCtx", Vec::new(), arc);
 
     let mut sub: HashMap<String, MbValue> = HashMap::new();
-    sub.insert("__enter__".into(), MbValue::from_func(subtest_enter as *const () as usize));
-    sub.insert("__exit__".into(), MbValue::from_func(subtest_exit as *const () as usize));
+    sub.insert(
+        "__enter__".into(),
+        MbValue::from_func(subtest_enter as *const () as usize),
+    );
+    sub.insert(
+        "__exit__".into(),
+        MbValue::from_func(subtest_exit as *const () as usize),
+    );
     super::super::class::mb_class_register("_SubTestCtx", Vec::new(), sub);
 
     // `unittest.SkipTest` derives from `Exception` (CPython). Register it so
     // subclass checks (`is_subclass_of`) resolve consistently.
-    super::super::class::mb_class_register(
-        "SkipTest", vec!["Exception".into()], HashMap::new(),
-    );
+    super::super::class::mb_class_register("SkipTest", vec!["Exception".into()], HashMap::new());
 }
 
 /// Register the unittest module.
@@ -1025,10 +1087,16 @@ pub fn register() {
         ("TestCase", dispatch_testcase as *const () as usize),
         ("assertEqual", dispatch_assert_equal as *const () as usize),
         ("assertTrue", dispatch_assert_true as *const () as usize),
-        ("assertNotEqual", dispatch_assert_not_equal as *const () as usize),
+        (
+            "assertNotEqual",
+            dispatch_assert_not_equal as *const () as usize,
+        ),
         ("assertFalse", dispatch_assert_false as *const () as usize),
         ("assertIs", dispatch_assert_is as *const () as usize),
-        ("assertIsNone", dispatch_assert_is_none as *const () as usize),
+        (
+            "assertIsNone",
+            dispatch_assert_is_none as *const () as usize,
+        ),
         ("assertIn", dispatch_assert_in as *const () as usize),
         ("assertRaises", dispatch_assert_raises as *const () as usize),
         // #1684: skip decorators. `skipUnless` / `skipIf` / `skip` are
@@ -1051,19 +1119,49 @@ pub fn register() {
         // (a single address cannot map to six distinct type names); they
         // satisfy `hasattr` + `callable` as plain native callables.
         ("BaseTestSuite", dispatch_surface_stub as *const () as usize),
-        ("FunctionTestCase", dispatch_surface_stub as *const () as usize),
-        ("IsolatedAsyncioTestCase", dispatch_surface_stub as *const () as usize),
+        (
+            "FunctionTestCase",
+            dispatch_surface_stub as *const () as usize,
+        ),
+        (
+            "IsolatedAsyncioTestCase",
+            dispatch_surface_stub as *const () as usize,
+        ),
         ("TestProgram", dispatch_surface_stub as *const () as usize),
-        ("TextTestResult", dispatch_surface_stub as *const () as usize),
-        ("TextTestRunner", dispatch_surface_stub as *const () as usize),
-        ("addModuleCleanup", dispatch_surface_stub as *const () as usize),
-        ("doModuleCleanups", dispatch_surface_stub as *const () as usize),
-        ("enterModuleContext", dispatch_surface_stub as *const () as usize),
+        (
+            "TextTestResult",
+            dispatch_surface_stub as *const () as usize,
+        ),
+        (
+            "TextTestRunner",
+            dispatch_surface_stub as *const () as usize,
+        ),
+        (
+            "addModuleCleanup",
+            dispatch_surface_stub as *const () as usize,
+        ),
+        (
+            "doModuleCleanups",
+            dispatch_surface_stub as *const () as usize,
+        ),
+        (
+            "enterModuleContext",
+            dispatch_surface_stub as *const () as usize,
+        ),
         ("findTestCases", dispatch_surface_stub as *const () as usize),
-        ("getTestCaseNames", dispatch_surface_stub as *const () as usize),
-        ("installHandler", dispatch_surface_stub as *const () as usize),
+        (
+            "getTestCaseNames",
+            dispatch_surface_stub as *const () as usize,
+        ),
+        (
+            "installHandler",
+            dispatch_surface_stub as *const () as usize,
+        ),
         ("makeSuite", dispatch_surface_stub as *const () as usize),
-        ("registerResult", dispatch_surface_stub as *const () as usize),
+        (
+            "registerResult",
+            dispatch_surface_stub as *const () as usize,
+        ),
         ("removeHandler", dispatch_surface_stub as *const () as usize),
         ("removeResult", dispatch_surface_stub as *const () as usize),
     ];
@@ -1100,7 +1198,10 @@ pub fn register() {
         for (name, addr) in &ctor_dispatchers {
             map.insert(*addr as u64, name.to_string());
         }
-        map.insert(dispatch_testcase as *const () as usize as u64, "TestCase".to_string());
+        map.insert(
+            dispatch_testcase as *const () as usize as u64,
+            "TestCase".to_string(),
+        );
     });
     // Model the public class objects as real type-objects so
     // `type(unittest.TestCase).__name__ == "type"` (likewise TestSuite /
@@ -1114,9 +1215,18 @@ pub fn register() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*cls).data {
                 let mut f = fields.write().unwrap();
-                f.insert("__name__".to_string(), MbValue::from_ptr(MbObject::new_str(n.to_string())));
-                f.insert("__qualname__".to_string(), MbValue::from_ptr(MbObject::new_str(n.to_string())));
-                f.insert("__module__".to_string(), MbValue::from_ptr(MbObject::new_str("unittest".to_string())));
+                f.insert(
+                    "__name__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(n.to_string())),
+                );
+                f.insert(
+                    "__qualname__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(n.to_string())),
+                );
+                f.insert(
+                    "__module__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str("unittest".to_string())),
+                );
             }
         }
         MbValue::from_ptr(cls)
@@ -1125,10 +1235,9 @@ pub fn register() {
         attrs.insert(n.to_string(), unittest_type_object(n));
     }
     // `unittest.defaultTestLoader` is a ready-made TestLoader instance.
-    attrs.insert(
-        "defaultTestLoader".to_string(),
-        unsafe { dispatch_new_test_loader(std::ptr::null(), 0) },
-    );
+    attrs.insert("defaultTestLoader".to_string(), unsafe {
+        dispatch_new_test_loader(std::ptr::null(), 0)
+    });
     // The identity decorator is also called dynamically as the return
     // value of `skip*` factories — register it so the JIT trusts the
     // address as a native callable.
@@ -1161,7 +1270,11 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -1184,7 +1297,9 @@ fn values_equal(a: MbValue, b: MbValue) -> bool {
     // for `assertEqual([1,2,3], [1,2,3])` style checks. Route through
     // the runtime's deep-equality entrypoint so structural comparison
     // matches Python `==`.
-    super::super::builtins::mb_eq(a, b).as_bool().unwrap_or(false)
+    super::super::builtins::mb_eq(a, b)
+        .as_bool()
+        .unwrap_or(false)
 }
 
 /// unittest.TestCase() -> test case instance dict
@@ -1193,8 +1308,10 @@ pub fn mb_unittest_testcase() -> MbValue {
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
-            map.insert("__class__".into(),
-                MbValue::from_ptr(MbObject::new_str("TestCase".to_string())));
+            map.insert(
+                "__class__".into(),
+                MbValue::from_ptr(MbObject::new_str("TestCase".to_string())),
+            );
             map.insert("_failures".into(), MbValue::from_int(0));
             map.insert("_successes".into(), MbValue::from_int(0));
         }
@@ -1327,8 +1444,8 @@ fn assert_raises_dispatch(args: &[MbValue]) -> MbValue {
             raise_assertion(&format!("{expected} not raised"));
         }
         Some(actual) => {
-            let matches = actual == expected
-                || super::super::exception::is_subclass_of(&actual, &expected);
+            let matches =
+                actual == expected || super::super::exception::is_subclass_of(&actual, &expected);
             if matches {
                 // Expected exception raised — consume it (CPython returns None).
                 super::super::exception::mb_clear_exception();
@@ -1354,21 +1471,25 @@ extern "C" fn arc_exit(
     exc_val: MbValue,
     _exc_tb: MbValue,
 ) -> MbValue {
-    let expected = inst_get(self_obj, "expected").and_then(extract_str).unwrap_or_default();
+    let expected = inst_get(self_obj, "expected")
+        .and_then(extract_str)
+        .unwrap_or_default();
     if exc_val.is_none() {
         // No exception was raised inside the body — assertRaises must fail.
         raise_assertion(&format!("{expected} not raised"));
         return MbValue::from_bool(false);
     }
-    let actual = exc_val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-            Some(class_name.clone())
-        } else {
-            None
-        }
-    }).unwrap_or_default();
-    let matches = actual == expected
-        || super::super::exception::is_subclass_of(&actual, &expected);
+    let actual = exc_val
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    let matches = actual == expected || super::super::exception::is_subclass_of(&actual, &expected);
     if matches {
         // Capture the exception (CPython exposes it as cm.exception) and
         // suppress it by returning True.
@@ -1417,7 +1538,9 @@ extern "C" fn subtest_exit(
         // instead of silently suppressing it.
         return MbValue::from_bool(false);
     }
-    let failfast = inst_get(result, "failfast").and_then(|v| v.as_bool()).unwrap_or(false);
+    let failfast = inst_get(result, "failfast")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     call_method_n(result, "addSubTest", &[case, self_obj, exc_val]);
     // Mark this exception as already recorded so the top-level run protocol
     // does not count it again if it propagates out.
@@ -1486,13 +1609,22 @@ mod tests {
 
     #[test]
     fn test_values_equal_float() {
-        assert!(values_equal(MbValue::from_float(1.5), MbValue::from_float(1.5)));
+        assert!(values_equal(
+            MbValue::from_float(1.5),
+            MbValue::from_float(1.5)
+        ));
     }
 
     #[test]
     fn test_values_equal_bool() {
-        assert!(values_equal(MbValue::from_bool(true), MbValue::from_bool(true)));
-        assert!(!values_equal(MbValue::from_bool(true), MbValue::from_bool(false)));
+        assert!(values_equal(
+            MbValue::from_bool(true),
+            MbValue::from_bool(true)
+        ));
+        assert!(!values_equal(
+            MbValue::from_bool(true),
+            MbValue::from_bool(false)
+        ));
     }
 
     #[test]
@@ -1669,22 +1801,25 @@ mod tests {
     fn test_assert_raises_exit_suppresses_matching() {
         // __exit__ with a matching pending exception suppresses (returns True)
         // and captures the exception.
-        let cm = mb_unittest_assert_raises(
-            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-        );
+        let cm = mb_unittest_assert_raises(MbValue::from_ptr(MbObject::new_str(
+            "ValueError".to_string(),
+        )));
         let exc = MbValue::from_ptr(MbObject::new_instance("ValueError".to_string()));
         let none = MbValue::none();
         let suppressed = arc_exit(cm, exc, exc, none);
         assert_eq!(suppressed.as_bool(), Some(true));
-        assert_eq!(inst_class_name(inst_get(cm, "exception").unwrap()).as_deref(), Some("ValueError"));
+        assert_eq!(
+            inst_class_name(inst_get(cm, "exception").unwrap()).as_deref(),
+            Some("ValueError")
+        );
     }
 
     #[test]
     fn test_assert_raises_exit_no_exception_raises_assertion() {
         super::super::super::exception::mb_clear_exception();
-        let cm = mb_unittest_assert_raises(
-            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-        );
+        let cm = mb_unittest_assert_raises(MbValue::from_ptr(MbObject::new_str(
+            "ValueError".to_string(),
+        )));
         let none = MbValue::none();
         let suppressed = arc_exit(cm, none, none, none);
         assert_eq!(suppressed.as_bool(), Some(false));

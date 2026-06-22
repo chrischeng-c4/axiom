@@ -25,8 +25,8 @@
 //! ```
 
 use crate::{
-    Connection, DataBridgeError, ExtractedValue, QueryBuilder, Result, Row,
-    row_to_extracted, BackRef,
+    row_to_extracted, BackRef, Connection, DataBridgeError, ExtractedValue, QueryBuilder, Result,
+    Row,
 };
 use sqlx::postgres::PgRow;
 use sqlx::Row as SqlxRow;
@@ -96,7 +96,8 @@ impl BackRefConfig {
 
     /// Add a filter condition.
     pub fn filter(mut self, column: &str, operator: &str, value: ExtractedValue) -> Self {
-        self.filters.push((column.to_string(), operator.to_string(), value));
+        self.filters
+            .push((column.to_string(), operator.to_string(), value));
         self
     }
 }
@@ -404,11 +405,7 @@ impl<'a> BackRefLoader<'a> {
     /// This is a convenience method when you have the BackRef from
     /// SchemaInspector::get_backreferences().
     #[instrument(skip(self, backref), fields(source = %backref.source_table, target = %backref.target_table))]
-    pub async fn load_from_backref(
-        &self,
-        backref: &BackRef,
-        parent_id: i64,
-    ) -> Result<Vec<Row>> {
+    pub async fn load_from_backref(&self, backref: &BackRef, parent_id: i64) -> Result<Vec<Row>> {
         self.load_related(
             &backref.target_table,
             parent_id,
@@ -569,7 +566,10 @@ mod tests {
             .limit(10)
             .offset(5);
 
-        assert_eq!(config.select_columns, Some(vec!["id".to_string(), "title".to_string()]));
+        assert_eq!(
+            config.select_columns,
+            Some(vec!["id".to_string(), "title".to_string()])
+        );
         assert_eq!(config.order_by, Some("created_at".to_string()));
         assert!(!config.order_asc);
         assert_eq!(config.limit, Some(10));
@@ -579,7 +579,11 @@ mod tests {
     #[test]
     fn test_backref_config_with_filter() {
         let config = BackRefConfig::new()
-            .filter("status", "=", ExtractedValue::String("published".to_string()))
+            .filter(
+                "status",
+                "=",
+                ExtractedValue::String("published".to_string()),
+            )
             .filter("views", ">", ExtractedValue::Int(100));
 
         assert_eq!(config.filters.len(), 2);

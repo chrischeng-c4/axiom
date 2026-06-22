@@ -233,14 +233,37 @@ fn index_range(e: &Engine, coll: &str, lo: u64, hi: u64, dim: usize, with_vector
     for i in lo..hi {
         let eid = eid_of(i);
         let mut items = vec![
-            IndexItem { external_id: eid.clone(), field: "num".into(), value: FieldValue::Number(num_of(i)) },
-            IndexItem { external_id: eid.clone(), field: "kw".into(), value: FieldValue::String(kw_of(i)) },
-            IndexItem { external_id: eid.clone(), field: "body".into(), value: FieldValue::String(body_of(i)) },
+            IndexItem {
+                external_id: eid.clone(),
+                field: "num".into(),
+                value: FieldValue::Number(num_of(i)),
+            },
+            IndexItem {
+                external_id: eid.clone(),
+                field: "kw".into(),
+                value: FieldValue::String(kw_of(i)),
+            },
+            IndexItem {
+                external_id: eid.clone(),
+                field: "body".into(),
+                value: FieldValue::String(body_of(i)),
+            },
         ];
         if with_vector {
-            items.push(IndexItem { external_id: eid.clone(), field: "emb".into(), value: FieldValue::Vector(vec_of(i, dim)) });
+            items.push(IndexItem {
+                external_id: eid.clone(),
+                field: "emb".into(),
+                value: FieldValue::Vector(vec_of(i, dim)),
+            });
         }
-        e.index(coll, IndexRequest { items, request_id: None }).unwrap();
+        e.index(
+            coll,
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
     }
 }
 
@@ -251,7 +274,14 @@ fn index_range(e: &Engine, coll: &str, lo: u64, hi: u64, dim: usize, with_vector
 fn search_ids(e: &Engine, coll: &str, query: QueryNode, limit: u32) -> Vec<String> {
     e.search(
         coll,
-        SearchRequest { query, limit, cursor: None, sort: None, track_total: true, collapse: None },
+        SearchRequest {
+            query,
+            limit,
+            cursor: None,
+            sort: None,
+            track_total: true,
+            collapse: None,
+        },
     )
     .unwrap()
     .hits
@@ -278,7 +308,13 @@ fn battery(e: &Engine, coll: &str, n: u64, dim: usize, with_vector: bool) -> Bat
     let range = search_ids(
         e,
         coll,
-        QueryNode::Range(RangeQuery { field: "num".into(), gt: None, gte: Some(10_000.0), lt: Some(10_500.0), lte: None }),
+        QueryNode::Range(RangeQuery {
+            field: "num".into(),
+            gt: None,
+            gte: Some(10_000.0),
+            lt: Some(10_500.0),
+            lte: None,
+        }),
         100_000,
     )
     .into_iter()
@@ -289,7 +325,10 @@ fn battery(e: &Engine, coll: &str, n: u64, dim: usize, with_vector: bool) -> Bat
     let term = search_ids(
         e,
         coll,
-        QueryNode::Term(TermQuery { field: "kw".into(), value: FieldValue::String(kw_probe) }),
+        QueryNode::Term(TermQuery {
+            field: "kw".into(),
+            value: FieldValue::String(kw_probe),
+        }),
         100_000,
     )
     .into_iter()
@@ -301,10 +340,7 @@ fn battery(e: &Engine, coll: &str, n: u64, dim: usize, with_vector: bool) -> Bat
         coll,
         QueryNode::Terms(TermsQuery {
             field: "kw".into(),
-            values: vec![
-                FieldValue::String(kw_of(11)),
-                FieldValue::String(kw_of(13)),
-            ],
+            values: vec![FieldValue::String(kw_of(11)), FieldValue::String(kw_of(13))],
         }),
         100_000,
     )
@@ -315,7 +351,11 @@ fn battery(e: &Engine, coll: &str, n: u64, dim: usize, with_vector: bool) -> Bat
     let bm25 = search_ids(
         e,
         coll,
-        QueryNode::Match(MatchQuery { field: "body".into(), text: "t1".into(), op: MatchOp::And }),
+        QueryNode::Match(MatchQuery {
+            field: "body".into(),
+            text: "t1".into(),
+            op: MatchOp::And,
+        }),
         50,
     );
 
@@ -326,14 +366,24 @@ fn battery(e: &Engine, coll: &str, n: u64, dim: usize, with_vector: bool) -> Bat
         Some(search_ids(
             e,
             coll,
-            QueryNode::Knn(KnnQuery { field: "emb".into(), vector: vec_of(probe_doc, dim), k: 8 }),
+            QueryNode::Knn(KnnQuery {
+                field: "emb".into(),
+                vector: vec_of(probe_doc, dim),
+                k: 8,
+            }),
             8,
         ))
     } else {
         None
     };
 
-    BatteryOut { range, term, terms, bm25, knn }
+    BatteryOut {
+        range,
+        term,
+        terms,
+        bm25,
+        knn,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -403,13 +453,20 @@ fn reopen_query_equals_inram_oracle_small_n() {
     // a Term hit's eid must actually carry that keyword.
     for id in &r.term {
         let i: u64 = id.trim_start_matches('d').parse().unwrap();
-        assert_eq!(kw_of(i), kw_of(7), "Term leg returned a non-matching doc {id}");
+        assert_eq!(
+            kw_of(i),
+            kw_of(7),
+            "Term leg returned a non-matching doc {id}"
+        );
     }
     // Range hits must fall inside the queried numeric window.
     for id in &r.range {
         let i: u64 = id.trim_start_matches('d').parse().unwrap();
         let v = num_of(i);
-        assert!((10_000.0..10_500.0).contains(&v), "Range leg returned out-of-window doc {id} (num={v})");
+        assert!(
+            (10_000.0..10_500.0).contains(&v),
+            "Range leg returned out-of-window doc {id} (num={v})"
+        );
     }
     // The kNN probe used doc (N/2 - 1)'s exact vector → that eid must be the top hit.
     let probe = eid_of((N / 2).max(1) - 1);
@@ -419,7 +476,11 @@ fn reopen_query_equals_inram_oracle_small_n() {
         "kNN top hit is not the exact-match probe doc"
     );
 
-    assert_eq!(reopened.stats(COLL).unwrap().documents_indexed, N, "doc_count wrong after reopen");
+    assert_eq!(
+        reopened.stats(COLL).unwrap().documents_indexed,
+        N,
+        "doc_count wrong after reopen"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -452,7 +513,11 @@ fn measure(label: &str, coll: &str, n: u64, dim: usize, with_vector: bool) -> Op
     let rss_full;
     {
         let live = Arc::new(Engine::new());
-        let sch = if with_vector { schema(dim as u32) } else { lexical_schema() };
+        let sch = if with_vector {
+            schema(dim as u32)
+        } else {
+            lexical_schema()
+        };
         live.create_collection(coll, sch).unwrap();
         index_range(&live, coll, 0, n, dim, with_vector);
         rss_full = procmem::rss_bytes().unwrap();
@@ -473,8 +538,15 @@ fn measure(label: &str, coll: &str, n: u64, dim: usize, with_vector: bool) -> Op
     // --- Phase C: fresh engine, reopen from the segment dir (mmap). -----------
     let reopened = Arc::new(Engine::new());
     let seq = reopened.reopen_from_segment_dir(dir.path()).unwrap();
-    assert_eq!(seq, 1, "{label}: applied_seq must round-trip through the checkpoint");
-    assert_eq!(reopened.stats(coll).unwrap().documents_indexed, n, "{label}: reopened doc_count wrong");
+    assert_eq!(
+        seq, 1,
+        "{label}: applied_seq must round-trip through the checkpoint"
+    );
+    assert_eq!(
+        reopened.stats(coll).unwrap().documents_indexed,
+        n,
+        "{label}: reopened doc_count wrong"
+    );
     let rss_after_reopen = procmem::rss_bytes().unwrap();
 
     // --- Phase D: run the query battery against a bounded subset. -------------
@@ -483,15 +555,25 @@ fn measure(label: &str, coll: &str, n: u64, dim: usize, with_vector: bool) -> Op
     let (maj1, min1) = procmem::page_faults();
 
     // Spot-check correctness against known-by-construction answers.
-    assert!(!r.bm25.is_empty(), "{label}: BM25 leg returned nothing — corpus/posting broken");
+    assert!(
+        !r.bm25.is_empty(),
+        "{label}: BM25 leg returned nothing — corpus/posting broken"
+    );
     for id in &r.range {
         let i: u64 = id.trim_start_matches('d').parse().unwrap();
         let v = num_of(i);
-        assert!((10_000.0..10_500.0).contains(&v), "{label}: Range returned out-of-window doc {id}");
+        assert!(
+            (10_000.0..10_500.0).contains(&v),
+            "{label}: Range returned out-of-window doc {id}"
+        );
     }
     for id in &r.term {
         let i: u64 = id.trim_start_matches('d').parse().unwrap();
-        assert_eq!(kw_of(i), kw_of(7), "{label}: Term returned a non-matching doc {id}");
+        assert_eq!(
+            kw_of(i),
+            kw_of(7),
+            "{label}: Term returned a non-matching doc {id}"
+        );
     }
     if with_vector {
         let probe = eid_of((n / 2).max(1) - 1);
@@ -509,22 +591,69 @@ fn measure(label: &str, coll: &str, n: u64, dim: usize, with_vector: bool) -> Op
     let min = min1.saturating_sub(min0);
 
     eprintln!("\n===================== SCALE PROOF (Phase 2i) — {label} =====================");
-    eprintln!("  schema                      : {}", if with_vector { "Number+Keyword+Text+Vector(flat-cpu)" } else { "Number+Keyword+Text (lexical-only)" });
+    eprintln!(
+        "  schema                      : {}",
+        if with_vector {
+            "Number+Keyword+Text+Vector(flat-cpu)"
+        } else {
+            "Number+Keyword+Text (lexical-only)"
+        }
+    );
     eprintln!("  N (docs)                    : {n}");
-    if with_vector { eprintln!("  vector dim                  : {dim}"); }
-    eprintln!("  RSS_full (post-index)       : {:>9.1} MiB", procmem::mib(rss_full));
-    eprintln!("  on-disk segment bytes       : {:>9.1} MiB", procmem::mib(on_disk_bytes));
-    eprintln!("  baseline RSS (post-drop)    : {:>9.1} MiB", procmem::mib(baseline));
-    eprintln!("  RSS after reopen            : {:>9.1} MiB", procmem::mib(rss_after_reopen));
-    eprintln!("  RSS after query battery     : {:>9.1} MiB", procmem::mib(rss_after_queries));
-    eprintln!("  DELTA (after_q - baseline)  : {:>9.1} MiB", procmem::mib(delta));
-    eprintln!("  denom max(on_disk,RSS_full) : {:>9.1} MiB", procmem::mib(denom));
-    eprintln!("  resident growth fraction    : {:>9.1} %  (delta / denom)", frac * 100.0);
+    if with_vector {
+        eprintln!("  vector dim                  : {dim}");
+    }
+    eprintln!(
+        "  RSS_full (post-index)       : {:>9.1} MiB",
+        procmem::mib(rss_full)
+    );
+    eprintln!(
+        "  on-disk segment bytes       : {:>9.1} MiB",
+        procmem::mib(on_disk_bytes)
+    );
+    eprintln!(
+        "  baseline RSS (post-drop)    : {:>9.1} MiB",
+        procmem::mib(baseline)
+    );
+    eprintln!(
+        "  RSS after reopen            : {:>9.1} MiB",
+        procmem::mib(rss_after_reopen)
+    );
+    eprintln!(
+        "  RSS after query battery     : {:>9.1} MiB",
+        procmem::mib(rss_after_queries)
+    );
+    eprintln!(
+        "  DELTA (after_q - baseline)  : {:>9.1} MiB",
+        procmem::mib(delta)
+    );
+    eprintln!(
+        "  denom max(on_disk,RSS_full) : {:>9.1} MiB",
+        procmem::mib(denom)
+    );
+    eprintln!(
+        "  resident growth fraction    : {:>9.1} %  (delta / denom)",
+        frac * 100.0
+    );
     eprintln!("  major page faults (window)  : {maj}");
     eprintln!("  minor page faults (window)  : {min}");
     eprintln!("=========================================================================\n");
 
-    Some(Measured { n, dim, with_vector, rss_full, on_disk_bytes, baseline, rss_after_reopen, rss_after_queries, delta, denom, frac, maj, min })
+    Some(Measured {
+        n,
+        dim,
+        with_vector,
+        rss_full,
+        on_disk_bytes,
+        baseline,
+        rss_after_reopen,
+        rss_after_queries,
+        delta,
+        denom,
+        frac,
+        maj,
+        min,
+    })
 }
 
 // ===========================================================================
@@ -544,8 +673,14 @@ fn measure(label: &str, coll: &str, n: u64, dim: usize, with_vector: bool) -> Op
 #[test]
 #[ignore = "heavy scale proof: run explicitly with --ignored (like perf_gate_vs_db)"]
 fn scale_proof_reopen_rss_is_bounded() {
-    let n: u64 = std::env::var("LUMEN_SCALE_N").ok().and_then(|s| s.parse().ok()).unwrap_or(50_000);
-    let dim: usize = std::env::var("LUMEN_SCALE_DIM").ok().and_then(|s| s.parse().ok()).unwrap_or(96);
+    let n: u64 = std::env::var("LUMEN_SCALE_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50_000);
+    let dim: usize = std::env::var("LUMEN_SCALE_DIM")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(96);
 
     // =====================================================================
     // PART 1 — THE PROOF (lexical path). Measured at TWO scales (N and 4N) so
@@ -609,7 +744,9 @@ fn scale_proof_reopen_rss_is_bounded() {
     eprintln!(
         "[scale_proof] OBSERVATION — LEXICAL resident fraction N→4N: {:.1}% → {:.1}% \
          (flat ⇒ O(working-set + identity), not O(forward payload); both < {:.0}% bound)",
-        lex1.frac * 100.0, lex4.frac * 100.0, BOUND * 100.0,
+        lex1.frac * 100.0,
+        lex4.frac * 100.0,
+        BOUND * 100.0,
     );
 
     // =====================================================================
@@ -682,7 +819,10 @@ fn scale_proof_reopen_rss_is_bounded() {
             "[scale_proof] OBSERVATION — VECTOR delta grew {delta_growth:.2}x vs on-disk payload \
              {payload_growth:.2}x (dim {:.1} MiB → 2*dim {:.1} MiB); fraction {:.1}% → {:.1}% \
              (delta_growth ≪ payload_growth ⇒ demand-paged, not re-materialized)",
-            procmem::mib(lo.delta), procmem::mib(hi.delta), lo.frac * 100.0, hi.frac * 100.0,
+            procmem::mib(lo.delta),
+            procmem::mib(hi.delta),
+            lo.frac * 100.0,
+            hi.frac * 100.0,
         );
 
         eprintln!(
@@ -698,6 +838,15 @@ fn scale_proof_reopen_rss_is_bounded() {
     );
 
     // Keep the full Measured struct shape live (documents the captured fields).
-    let _ = (lex1.n, lex1.dim, lex1.with_vector, lex1.rss_full, lex1.on_disk_bytes, lex1.baseline, lex1.rss_after_reopen, lex1.rss_after_queries);
+    let _ = (
+        lex1.n,
+        lex1.dim,
+        lex1.with_vector,
+        lex1.rss_full,
+        lex1.on_disk_bytes,
+        lex1.baseline,
+        lex1.rss_after_reopen,
+        lex1.rss_after_queries,
+    );
 }
 // CODEGEN-END

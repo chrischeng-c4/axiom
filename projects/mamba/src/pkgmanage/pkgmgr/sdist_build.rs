@@ -154,18 +154,18 @@ impl SdistBuilder {
                 header.set_username("root").ok();
                 header.set_groupname("root").ok();
                 header.set_path(&full).map_err(|e| IndexError::CacheIo {
-            path: "<sdist>".into(),
+                    path: "<sdist>".into(),
                     detail: format!("sdist: tar path {full}: {e}"),
                 })?;
                 header.set_cksum();
                 tar.append(&header, data.as_slice())
                     .map_err(|e| IndexError::CacheIo {
-            path: "<sdist>".into(),
+                        path: "<sdist>".into(),
                         detail: format!("sdist: tar append {full}: {e}"),
                     })?;
             }
             tar.finish().map_err(|e| IndexError::CacheIo {
-            path: "<sdist>".into(),
+                path: "<sdist>".into(),
                 detail: format!("sdist: tar finish: {e}"),
             })?;
         }
@@ -209,10 +209,7 @@ pub fn list_archive_paths(builder: &SdistBuilder) -> Vec<String> {
     let root = builder.filename.root_dir();
     let mut files = builder.files.clone();
     files.entry("PKG-INFO".to_string()).or_default();
-    files
-        .keys()
-        .map(|p| format!("{root}/{p}"))
-        .collect()
+    files.keys().map(|p| format!("{root}/{p}")).collect()
 }
 
 #[cfg(test)]
@@ -246,7 +243,10 @@ mod tests {
 
     #[test]
     fn filename_renders_canonical_form() {
-        let f = SdistFilename { name: "requests".into(), version: "2.31.0".into() };
+        let f = SdistFilename {
+            name: "requests".into(),
+            version: "2.31.0".into(),
+        };
         assert_eq!(f.to_filename(), "requests-2.31.0.tar.gz");
         assert_eq!(f.root_dir(), "requests-2.31.0");
     }
@@ -318,7 +318,11 @@ mod tests {
         let b = SdistBuilder::new("demo", "1.0.0");
         let out = b.build_to_dir(tmp.path()).unwrap();
         assert!(out.exists());
-        assert!(out.file_name().unwrap().to_string_lossy().ends_with("demo-1.0.0.tar.gz"));
+        assert!(out
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .ends_with("demo-1.0.0.tar.gz"));
     }
 
     #[test]

@@ -11,7 +11,7 @@
 // AW-EC-END
 
 #[test]
-#[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
+#[ignore = "AW EC placeholder: implement this external contract test or keep the aw.toml inventory command authoritative"]
 fn vat_copy_on_write_lifecycle() {
     panic!("AW EC placeholder for vat-copy-on-write-lifecycle");
 }

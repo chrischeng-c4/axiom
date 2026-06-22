@@ -26,6 +26,8 @@ No public AST symbols.
 
 <!-- source-snapshot: path=projects/agentic-workflow/tests/cli/tests/recovery_flow_test.rs -->
 ```rust
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/validate/tests/recovery_flow_test.md#source
+// CODEGEN-BEGIN
 //! End-to-end recovery-flow tests (B1, B2, B3).
 //!
 //! These flows require live infrastructure (real GitHub for B1, real
@@ -35,8 +37,8 @@ No public AST symbols.
 //!
 //! Recovery-flow CLI surface tests.
 
-use clap::{CommandFactory, Parser};
 use agentic_workflow::cli::Commands;
+use clap::{CommandFactory, Parser};
 
 #[derive(Parser)]
 #[command(name = "aw")]
@@ -55,10 +57,13 @@ fn test_recovery_verbs_present() {
         td.find_subcommand("idle").is_none(),
         "td idle was removed with the old .aw/worktrees recovery model"
     );
-    let cb = cmd.find_subcommand("cb").expect("cb namespace");
-    cb.find_subcommand("claim").expect("cb claim");
     assert!(
-        cb.find_subcommand("idle").is_none(),
+        cmd.find_subcommand("cb").is_none(),
+        "cb namespace is retired into td"
+    );
+    td.find_subcommand("code-claim").expect("td code-claim");
+    assert!(
+        cmd.find_subcommand("idle").is_none(),
         "cb idle was removed with the old .aw/worktrees recovery model"
     );
 }
@@ -75,25 +80,27 @@ fn flow_b1_e2e_init_and_sync() {
 }
 
 /// B2 e2e: `aw td claim --from-path <spec.md>` advances phase to
-/// td_reviewed and emits a dispatch envelope to `aw cb gen`.
+/// td_reviewed and emits a dispatch envelope to `aw td gen`.
 /// Requires a temp git repo with the spec on disk.
 #[test]
 #[ignore = "requires temp git repo + git binary; run manually with --ignored"]
 fn flow_b2_e2e_td_claim_from_path() {
-    // Reserved for e2e: stage a projects/agentic-workflow/tech-design/core/tools/spec.md outside .aw/, run
-    // `aw td claim slug --from-path projects/agentic-workflow/tech-design/core/tools/spec.md`, assert phase advance
+    // Reserved for e2e: stage a spec.md outside .aw/, run
+    // `aw td claim slug --from-path spec.md`, assert phase advance
     // and dispatch envelope.
 }
 
-/// B3 e2e: `aw cb claim <code-path>` followed by
+/// B3 e2e: `aw td code-claim <code-path>` followed by
 /// `aw td claim <slug>` reaches td_reviewed. Requires fillback
 /// infrastructure (tree-sitter, codebase fixture).
 #[test]
 #[ignore = "requires fillback pipeline + tree-sitter fixtures; run manually with --ignored"]
 fn flow_b3_e2e_cb_then_td_claim() {
-    // Reserved for e2e: cb claim creates a spec from code, then td
+    // Reserved for e2e: td code-claim creates a spec from code, then td
     // claim --from-path on that spec lands at td_reviewed.
 }
+
+// CODEGEN-END
 ```
 
 ## Changes

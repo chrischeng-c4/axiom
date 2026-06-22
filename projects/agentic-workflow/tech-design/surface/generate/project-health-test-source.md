@@ -26,6 +26,8 @@ No public AST symbols.
 
 <!-- source-snapshot: path=projects/agentic-workflow/tests/cli/tests/project_health_test.rs -->
 ```rust
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/generate/project-health-test-source.md#source
+// CODEGEN-BEGIN
 use std::collections::BTreeMap;
 
 use agentic_workflow::cli::cb::{CbCodegenOriginSummary, CbColdVerifySummary, CbVerifySummary};
@@ -211,6 +213,89 @@ fn project_option_propagates_to_nested_project_commands() {
     }
 }
 
+#[test]
+fn capability_issue_inventory_flags_parse_for_report_next_run_and_check() {
+    let command = parse_cli([
+        "aw",
+        "capability",
+        "--project",
+        "demo",
+        "report",
+        "--skip-issue-inventory",
+    ]);
+    match command {
+        Commands::Capability(args) => {
+            assert_eq!(args.project.as_deref(), Some("demo"));
+            match args.command {
+                agentic_workflow::cli::capability::CapabilityCommand::Report(report) => {
+                    assert!(report.skip_issue_inventory);
+                    assert!(!report.include_issue_inventory);
+                }
+                _ => panic!("expected capability report"),
+            }
+        }
+        _ => panic!("expected capability command"),
+    }
+
+    let command = parse_cli([
+        "aw",
+        "capability",
+        "--project",
+        "demo",
+        "next",
+        "--skip-issue-inventory",
+    ]);
+    match command {
+        Commands::Capability(args) => match args.command {
+            agentic_workflow::cli::capability::CapabilityCommand::Next(next) => {
+                assert!(next.skip_issue_inventory);
+                assert!(!next.include_issue_inventory);
+            }
+            _ => panic!("expected capability next"),
+        },
+        _ => panic!("expected capability command"),
+    }
+
+    let command = parse_cli([
+        "aw",
+        "capability",
+        "--project",
+        "demo",
+        "run",
+        "--non-interactive",
+        "--skip-issue-inventory",
+    ]);
+    match command {
+        Commands::Capability(args) => match args.command {
+            agentic_workflow::cli::capability::CapabilityCommand::Run(run) => {
+                assert!(run.skip_issue_inventory);
+                assert!(!run.include_issue_inventory);
+            }
+            _ => panic!("expected capability run"),
+        },
+        _ => panic!("expected capability command"),
+    }
+
+    let command = parse_cli([
+        "aw",
+        "capability",
+        "--project",
+        "demo",
+        "check",
+        "--include-issue-inventory",
+    ]);
+    match command {
+        Commands::Capability(args) => match args.command {
+            agentic_workflow::cli::capability::CapabilityCommand::Check(check) => {
+                assert!(check.include_issue_inventory);
+                assert!(!check.skip_issue_inventory);
+            }
+            _ => panic!("expected capability check"),
+        },
+        _ => panic!("expected capability command"),
+    }
+}
+
 fn managed(percent: f64, uncovered_files: Vec<String>) -> StandardizationCoverage {
     StandardizationCoverage {
         scope: vec!["projects/demo/**".to_string()],
@@ -231,12 +316,15 @@ fn regenerable(
     handwrite_files: usize,
     unmarked_files: usize,
 ) -> RegenerabilityCoverage {
+    let gap_files = (0..handwrite_files)
+        .map(|idx| format!("projects/demo/src/handwrite_{idx}.rs"))
+        .chain((0..unmarked_files).map(|idx| format!("projects/demo/src/unmarked_{idx}.rs")))
+        .collect();
     RegenerabilityCoverage {
         scope: vec!["projects/demo/**".to_string()],
         total_files: 2,
         eligible_files: 2,
         codegen_files: 2 - handwrite_files - unmarked_files,
-        fully_codegen_files: 2 - handwrite_files - unmarked_files,
         handwrite_files,
         unmarked_files,
         unsupported_codegen_files: Vec::new(),
@@ -245,7 +333,7 @@ fn regenerable(
         codegen_drift_evaluated: false,
         codegen_drift_files: Vec::new(),
         percent,
-        gap_files: Vec::new(),
+        gap_files,
         semantic_percent: 100.0,
         generator_primitive_gaps: 0,
         primitive_covered_files: 2 - handwrite_files - unmarked_files,
@@ -463,20 +551,23 @@ fn project_health_summary_marks_complete_health_done() {
         Some(true)
     );
     assert_eq!(
-        summary["readiness"]["codegen_percent"].as_f64(),
+        summary["axes"]["td_gen"]["generated_percent"].as_f64(),
         Some(100.0)
     );
     assert_eq!(
-        summary["readiness"]["full_codegen_percent"].as_f64(),
-        Some(100.0)
-    );
-    assert_eq!(summary["readiness"]["codegen_files"].as_u64(), Some(2));
-    assert_eq!(
-        summary["readiness"]["fully_codegen_files"].as_u64(),
+        summary["axes"]["td_gen"]["generated_units"].as_u64(),
         Some(2)
     );
-    assert_eq!(summary["report"]["codegen_percent"].as_f64(), Some(100.0));
-    assert_eq!(summary["report"]["project"].as_str(), Some("demo"));
+    assert_eq!(
+        summary["axes"]["td_gen"]["expected_units"].as_u64(),
+        Some(2)
+    );
+    assert_eq!(
+        summary["axes"]["td_gen"]["handwrite_units"].as_u64(),
+        Some(0)
+    );
+    assert!(summary["axes"]["td_gen"].get("codegen_files").is_none());
+    assert_eq!(summary["project"].as_str(), Some("demo"));
 }
 
 #[test]
@@ -522,9 +613,11 @@ fn project_health_summary_with_payload_path_is_bounded_result() {
         verify_evaluated: true,
         status: ProjectEcGateStatus::Failed,
         note: None,
-        manifest_path: "projects/demo/tests/aw-ec.toml".to_string(),
+        inventory_path: "projects/demo/aw.toml".to_string(),
         expected_case_count: 1,
         case_count: 1,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
         command_count: 1,
         passed_count: 0,
         failed_count: 1,
@@ -548,35 +641,32 @@ fn project_health_summary_with_payload_path_is_bounded_result() {
         summary["payload_path"].as_str(),
         Some("/tmp/aw/demo/health/report.json")
     );
-    assert_eq!(summary["report"]["blocker_count"].as_u64(), Some(30));
+    assert!(summary.get("report").is_none());
+    assert_eq!(summary["blockers"]["blocker_count"].as_u64(), Some(30));
     assert_eq!(
-        summary["report"]["blockers_preview"]
+        summary["blockers"]["blockers_preview"]
             .as_array()
             .map(|items| items.len()),
-        Some(20)
+        Some(5)
     );
-    assert!(summary["report"].get("blockers").is_none());
-    assert!(summary["report"]["test_gates"].get("commands").is_none());
+    assert!(summary.get("test_gates").is_none());
+    assert!(summary.get("ec").is_none());
+    assert_eq!(summary["axes"]["ec"]["status"].as_str(), Some("failed"));
     assert_eq!(
-        summary["report"]["test_gates"]["failed_commands_preview"]
-            .as_array()
-            .map(|items| items.len()),
+        summary["axes"]["ec_gen"]["generated_units"].as_u64(),
         Some(1)
     );
-    assert!(
-        summary["report"]["test_gates"]["failed_commands_preview"][0]
-            .get("stdout_tail")
-            .is_none()
-    );
-    assert!(summary["report"]["ec"].get("commands").is_none());
     assert_eq!(
-        summary["report"]["ec"]["failed_commands_preview"]
-            .as_array()
-            .map(|items| items.len()),
+        summary["axes"]["ec_gen"]["expected_units"].as_u64(),
         Some(1)
     );
-    assert!(summary["report"]["ec"]["failed_commands_preview"][0]
-        .get("stderr_tail")
+    assert_eq!(
+        summary["axes"]["ec_gen"]["generated_percent"].as_f64(),
+        Some(100.0)
+    );
+    assert!(summary["axes"]["ec_gen"].get("case_count").is_none());
+    assert!(summary["axes"]["ec_gen"]
+        .get("tool_manifest_count")
         .is_none());
     let rendered = serde_json::to_string(&summary).expect("summary renders");
     assert!(!rendered.contains("stdout_tail"));
@@ -608,11 +698,13 @@ fn project_health_compact_summary_is_low_token_default() {
         summary["payload_path"].as_str(),
         Some("/tmp/aw/demo/health/report.json")
     );
-    assert!(summary.get("report").is_none());
     assert_eq!(
-        summary["metrics"]["coverage"]["regenerable_percent"].as_f64(),
+        summary["axes"]["td_gen"]["generated_percent"].as_f64(),
         Some(100.0)
     );
+    assert!(summary.get("metrics").is_none());
+    assert!(summary.get("gates").is_none());
+    assert!(summary.get("report").is_none());
     assert_eq!(
         summary["blockers"]["blockers_preview"]
             .as_array()
@@ -621,6 +713,52 @@ fn project_health_compact_summary_is_low_token_default() {
     );
     let rendered = serde_json::to_string(&summary).expect("compact summary renders");
     assert!(!rendered.contains("blocker 29"));
+}
+
+#[test]
+fn project_health_ec_gen_axis_is_not_configured_for_zero_expected_units() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.ec = ProjectEcGateReport {
+        evaluated: true,
+        check_clean: true,
+        verify_evaluated: false,
+        status: ProjectEcGateStatus::NotConfigured,
+        note: None,
+        inventory_path: "projects/demo/aw.toml".to_string(),
+        expected_case_count: 0,
+        case_count: 0,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
+        command_count: 0,
+        passed_count: 0,
+        failed_count: 0,
+        findings: Vec::new(),
+        commands: Vec::new(),
+    };
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(
+        summary["axes"]["ec_gen"]["status"].as_str(),
+        Some("not_configured")
+    );
+    assert_eq!(
+        summary["axes"]["ec_gen"]["expected_units"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(
+        summary["axes"]["ec_gen"]["generated_units"].as_u64(),
+        Some(0)
+    );
 }
 
 #[test]
@@ -638,9 +776,9 @@ fn project_health_section_full_preserves_detailed_report() {
 
     let summary = project_health_section_summary(&report, ProjectHealthSection::Full);
 
-    assert_eq!(summary["report"]["project"].as_str(), Some("demo"));
+    assert_eq!(summary["project"].as_str(), Some("demo"));
     assert_eq!(
-        summary["readiness"]["regenerable_percent"].as_f64(),
+        summary["axes"]["td_gen"]["generated_percent"].as_f64(),
         Some(100.0)
     );
 }
@@ -662,7 +800,7 @@ fn project_health_section_regenerable_is_focused() {
 
     assert_eq!(summary["section"].as_str(), Some("regenerable"));
     assert!(summary.get("report").is_none());
-    assert_eq!(summary["data"]["regenerable_percent"].as_f64(), Some(100.0));
+    assert_eq!(summary["data"]["codegen_percent"].as_f64(), Some(100.0));
     assert!(summary["data"].get("codegen_origin").is_some());
 }
 
@@ -694,7 +832,7 @@ fn project_health_summary_points_to_full_verify_when_gates_are_missing() {
     assert_eq!(summary["next"]["kind"].as_str(), Some("run_command"));
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw health --project demo")
+        Some("aw health --project demo full")
     );
 }
 
@@ -722,7 +860,49 @@ fn project_health_summary_routes_managed_blockers_to_standardize() {
 }
 
 #[test]
-fn no_cold_rebuild_workspace_routes_back_to_health() {
+fn project_health_next_reason_matches_managed_route_when_ec_has_no_expected_units() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(50.0, vec!["projects/demo/src/lib.rs".to_string()]),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.ec = ProjectEcGateReport {
+        evaluated: true,
+        check_clean: true,
+        verify_evaluated: false,
+        status: ProjectEcGateStatus::NotConfigured,
+        note: Some("EC inventory has no cases".to_string()),
+        inventory_path: "projects/demo/aw.toml".to_string(),
+        expected_case_count: 0,
+        case_count: 0,
+        expected_tool_manifest_count: 0,
+        tool_manifest_count: 0,
+        command_count: 0,
+        passed_count: 0,
+        failed_count: 0,
+        findings: Vec::new(),
+        commands: Vec::new(),
+    };
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(
+        summary["next"]["command"].as_str(),
+        Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
+    );
+    assert_eq!(
+        summary["next"]["reason"].as_str(),
+        Some("source ownership is incomplete; advance managed takeover")
+    );
+}
+
+#[test]
+fn no_cold_rebuild_workspace_keeps_specific_repair_route() {
     let mut report = ProjectHealthReport::from_components(
         "demo",
         managed(50.0, vec!["projects/demo/src/lib.rs".to_string()]),
@@ -745,7 +925,7 @@ fn no_cold_rebuild_workspace_routes_back_to_health() {
 
     assert_eq!(
         summary["next"]["command"].as_str(),
-        Some("aw health --project demo")
+        Some("aw standardize managed run --project demo --non-interactive --max-ticks 1")
     );
     let missing = summary["completion"]["missing"].as_array().unwrap();
     assert!(missing
@@ -883,8 +1063,6 @@ fn regenerability_gaps_are_advisory_when_production_gates_clean() {
     assert!(report.production_ready);
     assert!(report.blockers.is_empty());
     assert_eq!(report.codegen_percent, 50.0);
-    assert_eq!(report.full_codegen_percent, 50.0);
-    assert_eq!(report.regenerable_percent, 50.0);
     assert!(report
         .optional_regenerability_gaps
         .iter()
@@ -895,6 +1073,32 @@ fn regenerability_gaps_are_advisory_when_production_gates_clean() {
     );
     assert!(!report.regenerability_authority.required_for_production);
     assert_eq!(report.regenerability_authority.gap_count, 1);
+}
+
+#[test]
+fn codegen_metric_counts_only_ast_codegen_units() {
+    let mut regenerable = regenerable(50.0, 1, 0);
+    regenerable.non_replayable_codegen_files = vec!["projects/demo/src/build.rs".to_string()];
+
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable,
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    assert_eq!(report.codegen_percent, 50.0);
+    assert_eq!(report.codegen_files, 1);
+    assert_eq!(report.cb_ownership.codegen_files, 1);
+    assert_eq!(report.cb_ownership.handwrite_files, 1);
+    assert!(report
+        .optional_regenerability_gaps
+        .iter()
+        .any(|gap| gap.contains("mark HANDWRITE or implement AST codegen")));
 }
 
 #[test]
@@ -1164,6 +1368,8 @@ fn preflight_gate(severity: PreFlightGateSeverity) -> PreFlightGate {
         description: "targeted test evidence".to_string(),
     }
 }
+// CODEGEN-END
+
 ```
 
 ## Changes

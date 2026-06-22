@@ -64,7 +64,11 @@ impl SegmentRdbStore {
 
     /// Parse the sequence out of a committed `gen-<seq>` directory name.
     fn seq_of(path: &Path) -> Option<u64> {
-        path.file_name()?.to_str()?.strip_prefix("gen-")?.parse().ok()
+        path.file_name()?
+            .to_str()?
+            .strip_prefix("gen-")?
+            .parse()
+            .ok()
     }
 
     /// Every committed generation, ascending by sequence. Staging dirs
@@ -127,7 +131,11 @@ impl SegmentRdbStore {
         // does not fail on platforms that reject it.
         let _ = std::fs::remove_dir_all(&committed);
         std::fs::rename(&staging, &committed).with_context(|| {
-            format!("commit checkpoint {} -> {}", staging.display(), committed.display())
+            format!(
+                "commit checkpoint {} -> {}",
+                staging.display(),
+                committed.display()
+            )
         })?;
         Ok(())
     }
@@ -180,7 +188,11 @@ impl SegmentRdbStore {
 
     /// The committed generation sequences, ascending (observability / tests).
     pub fn generation_seqs(&self) -> Result<Vec<u64>> {
-        Ok(self.generations()?.into_iter().map(|(seq, _)| seq).collect())
+        Ok(self
+            .generations()?
+            .into_iter()
+            .map(|(seq, _)| seq)
+            .collect())
     }
 }
 

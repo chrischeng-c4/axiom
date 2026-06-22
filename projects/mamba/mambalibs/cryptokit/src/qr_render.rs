@@ -191,9 +191,13 @@ fn deflate_store(data: &[u8]) -> Vec<u8> {
     // zlib header: CM=8 (deflate), CINFO=7 (32K window), FCHECK makes it valid
     let cmf: u8 = 0x78; // CM=8, CINFO=7
     let flg: u8 = 0x01; // FCHECK=1, no dict, FLEVEL=0
-    // Adjust FCHECK so (CMF*256+FLG) % 31 == 0
+                        // Adjust FCHECK so (CMF*256+FLG) % 31 == 0
     let check = (cmf as u16 * 256 + flg as u16) % 31;
-    let flg = if check == 0 { flg } else { flg + (31 - check) as u8 };
+    let flg = if check == 0 {
+        flg
+    } else {
+        flg + (31 - check) as u8
+    };
 
     let mut out = Vec::with_capacity(data.len() + data.len() / 0xFFFF * 5 + 20);
     out.push(cmf);
@@ -248,10 +252,7 @@ mod tests {
 
     #[test]
     fn test_render_png_signature() {
-        let modules = vec![
-            vec![true, false],
-            vec![false, true],
-        ];
+        let modules = vec![vec![true, false], vec![false, true]];
         let png = render_png(&modules, 2, 4, [0, 0, 0], [255, 255, 255], 1);
         // PNG signature
         assert_eq!(&png[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);

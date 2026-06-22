@@ -35,10 +35,10 @@
 //! `test_mod.rs`; the win here is removing the *import wall* so the fixtures can
 //! reach their actual test body.
 
-use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 use super::super::module::{MODULES, NATIVE_FUNC_ADDRS};
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use std::collections::HashMap;
 
 // ── byte-size constants used by bigmem / array / gzip fixtures ──
 const _1G: i64 = 1024 * 1024 * 1024;
@@ -63,7 +63,11 @@ fn func(addr: usize) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -98,14 +102,15 @@ unsafe extern "C" fn dispatch_import_module(args: *const MbValue, n: usize) -> M
     let a = unsafe { std::slice::from_raw_parts(args, n) };
     let name = a.first().copied().unwrap_or_else(MbValue::none);
     let modval = super::super::module::mb_import(name);
-    if super::super::exception::mb_has_exception().as_bool().unwrap_or(false) {
+    if super::super::exception::mb_has_exception()
+        .as_bool()
+        .unwrap_or(false)
+    {
         // Swallow the import failure and re-raise as a skip.
         let _ = super::super::exception::mb_catch_exception();
         let nm = extract_str(name).unwrap_or_default();
         let exc = MbValue::from_ptr(MbObject::new_str("unittest.SkipTest".to_string()));
-        let msg = MbValue::from_ptr(MbObject::new_str(
-            format!("No module named '{nm}'"),
-        ));
+        let msg = MbValue::from_ptr(MbObject::new_str(format!("No module named '{nm}'")));
         super::super::exception::mb_raise(exc, msg);
         return MbValue::none();
     }
@@ -125,7 +130,9 @@ unsafe extern "C" fn dispatch_import_module(args: *const MbValue, n: usize) -> M
 /// captured text.
 fn make_stringio() -> MbValue {
     let stringio = MODULES.with(|mods| {
-        mods.borrow().get("io").and_then(|m| m.attrs.get("StringIO").copied())
+        mods.borrow()
+            .get("io")
+            .and_then(|m| m.attrs.get("StringIO").copied())
     });
     if let Some(sio_ctor) = stringio {
         if let Some(addr) = sio_ctor.as_func() {
@@ -169,7 +176,9 @@ fn make_captured(stream: &str) -> MbValue {
         "test.support._CapturedStream".to_string(),
     ));
     let buf = make_stringio();
-    unsafe { super::super::rc::retain_if_ptr(buf); }
+    unsafe {
+        super::super::rc::retain_if_ptr(buf);
+    }
     set_cm_field(inst, "_buffer", buf);
     set_cm_field(
         inst,
@@ -252,18 +261,21 @@ fn register_captured_cm_class() {
 fn augment_module(name: &str, entries: Vec<(&str, MbValue)>) {
     MODULES.with(|mods| {
         let mut map = mods.borrow_mut();
-        let m = map.entry(name.to_string()).or_insert_with(|| {
-            super::super::module::MbModule {
+        let m = map
+            .entry(name.to_string())
+            .or_insert_with(|| super::super::module::MbModule {
                 name: name.to_string(),
                 file: None,
                 attrs: HashMap::new(),
-                is_package: name.contains("support") && !name.contains("import")
-                    && !name.contains("os_") && !name.contains("script")
-                    && !name.contains("threading") && !name.contains("warnings")
+                is_package: name.contains("support")
+                    && !name.contains("import")
+                    && !name.contains("os_")
+                    && !name.contains("script")
+                    && !name.contains("threading")
+                    && !name.contains("warnings")
                     && !name.contains("socket"),
                 cached_value: None,
-            }
-        });
+            });
         for (k, v) in entries {
             m.attrs.insert(k.to_string(), v);
         }
@@ -310,80 +322,106 @@ pub fn register() {
     register_captured_cm_class();
 
     // 1) Constants + generator stubs directly on `test.support`.
-    augment_module("test.support", vec![
-        ("_1G", MbValue::from_int(_1G)),
-        ("_2G", MbValue::from_int(_2G)),
-        ("_4G", MbValue::from_int(_4G)),
-        ("_10G", MbValue::from_int(_10G)),
-        ("iter_builtin_types", empty_iter),
-        ("iter_slot_wrappers", empty_iter),
-        // Platform predicate used by the auto-ported zlib/gzip/etc cohort as a
-        // module-level constant (`from test.support import is_s390x`). CPython
-        // defines it as `platform.machine() == 's390x'`; on every supported
-        // mamba target that is False. Without this the multi-name import line
-        // raises ImportError and skips the whole fixture.
-        ("is_s390x", MbValue::from_bool(false)),
-        // Make the top-level captured_* match the real context-manager behavior:
-        // __enter__ pushes a StringIO onto the stdout/stderr redirect stack so
-        // print() inside the block is captured, and yields it for getvalue().
-        ("captured_stdout", captured_out),
-        ("captured_stderr", captured_err),
-        ("captured_stdin", captured_in),
-    ]);
+    augment_module(
+        "test.support",
+        vec![
+            ("_1G", MbValue::from_int(_1G)),
+            ("_2G", MbValue::from_int(_2G)),
+            ("_4G", MbValue::from_int(_4G)),
+            ("_10G", MbValue::from_int(_10G)),
+            ("iter_builtin_types", empty_iter),
+            ("iter_slot_wrappers", empty_iter),
+            // Platform predicate used by the auto-ported zlib/gzip/etc cohort as a
+            // module-level constant (`from test.support import is_s390x`). CPython
+            // defines it as `platform.machine() == 's390x'`; on every supported
+            // mamba target that is False. Without this the multi-name import line
+            // raises ImportError and skips the whole fixture.
+            ("is_s390x", MbValue::from_bool(false)),
+            // Make the top-level captured_* match the real context-manager behavior:
+            // __enter__ pushes a StringIO onto the stdout/stderr redirect stack so
+            // print() inside the block is captured, and yields it for getvalue().
+            ("captured_stdout", captured_out),
+            ("captured_stderr", captured_err),
+            ("captured_stdin", captured_in),
+        ],
+    );
 
     // 2) `import_helper`: real import + skip-on-missing. Use merge_register so
     //    the parent-attr snapshot (`from test.support import import_helper`) is
     //    rebuilt from the merged attrs, not left pointing at the stub value.
-    merge_register("test.support.import_helper", vec![
-        ("import_module", import_module),
-        ("import_fresh_module", import_module),
-    ]);
+    merge_register(
+        "test.support.import_helper",
+        vec![
+            ("import_module", import_module),
+            ("import_fresh_module", import_module),
+        ],
+    );
 
     // 3) `script_helper`: the one missing runner name the cohort imports.
-    merge_register("test.support.script_helper", vec![
-        ("run_test_script", noop),
-    ]);
+    merge_register(
+        "test.support.script_helper",
+        vec![("run_test_script", noop)],
+    );
 
     // 4) `os_helper.TESTFN`: a concrete scratch-file name (CPython uses
     //    `@test_<pid>`). A plain string is enough for the fixtures that build
     //    `os_helper.TESTFN + '.gz'` etc.
-    merge_register("test.support.os_helper", vec![
-        ("TESTFN", MbValue::from_ptr(MbObject::new_str("@mamba_test".to_string()))),
-    ]);
+    merge_register(
+        "test.support.os_helper",
+        vec![(
+            "TESTFN",
+            MbValue::from_ptr(MbObject::new_str("@mamba_test".to_string())),
+        )],
+    );
 
     // 5) Missing submodules referenced via `from test.support import <leaf>`.
     //    `interpreters` (subinterpreter helpers) and `socket_helper` (network
     //    test gating). Both are pure no-op surfaces under mamba; the fixtures
     //    that import them then guard on `requires_*` and skip.
-    merge_register("test.support.interpreters", vec![
-        ("create", noop),
-        ("list_all", noop),
-        ("get_current", noop),
-        ("get_main", noop),
-        ("RunFailedError", noop),
-        ("InterpreterError", noop),
-        ("InterpreterNotFoundError", noop),
-        ("NotShareableError", noop),
-        ("Interpreter", noop),
-    ]);
-    merge_register("test.support.socket_helper", vec![
-        ("find_unused_port", noop),
-        ("bind_port", noop),
-        ("bind_unix_socket", noop),
-        ("HOST", MbValue::from_ptr(MbObject::new_str("localhost".to_string()))),
-        ("HOSTv4", MbValue::from_ptr(MbObject::new_str("127.0.0.1".to_string()))),
-        ("HOSTv6", MbValue::from_ptr(MbObject::new_str("::1".to_string()))),
-        ("transient_internet", noop),
-        ("skip_unless_bind_unix_socket", identity),
-        ("requires_IPv6", identity),
-        ("IPV6_ENABLED", MbValue::from_bool(false)),
-        ("get_socket_conn_refused_errs", noop),
-        // CPython sets this True on any host that exposes socket.gethostname()
-        // (i.e. effectively everywhere). Auto-ported urllib tests guard their
-        // bodies on `if not socket_helper.has_gethostname: raise SkipTest`, so
-        // a missing attr (falsy default) wrongly skips them. Match CPython.
-        ("has_gethostname", MbValue::from_bool(true)),
-    ]);
+    merge_register(
+        "test.support.interpreters",
+        vec![
+            ("create", noop),
+            ("list_all", noop),
+            ("get_current", noop),
+            ("get_main", noop),
+            ("RunFailedError", noop),
+            ("InterpreterError", noop),
+            ("InterpreterNotFoundError", noop),
+            ("NotShareableError", noop),
+            ("Interpreter", noop),
+        ],
+    );
+    merge_register(
+        "test.support.socket_helper",
+        vec![
+            ("find_unused_port", noop),
+            ("bind_port", noop),
+            ("bind_unix_socket", noop),
+            (
+                "HOST",
+                MbValue::from_ptr(MbObject::new_str("localhost".to_string())),
+            ),
+            (
+                "HOSTv4",
+                MbValue::from_ptr(MbObject::new_str("127.0.0.1".to_string())),
+            ),
+            (
+                "HOSTv6",
+                MbValue::from_ptr(MbObject::new_str("::1".to_string())),
+            ),
+            ("transient_internet", noop),
+            ("skip_unless_bind_unix_socket", identity),
+            ("requires_IPv6", identity),
+            ("IPV6_ENABLED", MbValue::from_bool(false)),
+            ("get_socket_conn_refused_errs", noop),
+            // CPython sets this True on any host that exposes socket.gethostname()
+            // (i.e. effectively everywhere). Auto-ported urllib tests guard their
+            // bodies on `if not socket_helper.has_gethostname: raise SkipTest`, so
+            // a missing attr (falsy default) wrongly skips them. Match CPython.
+            ("has_gethostname", MbValue::from_bool(true)),
+        ],
+    );
 }
 
 #[cfg(test)]
@@ -449,15 +487,19 @@ mod tests {
     fn test_register_adds_submodules() {
         super::super::test_mod::register();
         register();
-        let has_interp = MODULES.with(|mods| mods.borrow().contains_key("test.support.interpreters"));
-        let has_sock = MODULES.with(|mods| mods.borrow().contains_key("test.support.socket_helper"));
+        let has_interp =
+            MODULES.with(|mods| mods.borrow().contains_key("test.support.interpreters"));
+        let has_sock =
+            MODULES.with(|mods| mods.borrow().contains_key("test.support.socket_helper"));
         assert!(has_interp);
         assert!(has_sock);
         // Parent-attr propagation should have attached the leaves to test.support.
         let has_leaf = MODULES.with(|mods| {
             mods.borrow()
                 .get("test.support")
-                .map(|m| m.attrs.contains_key("interpreters") && m.attrs.contains_key("socket_helper"))
+                .map(|m| {
+                    m.attrs.contains_key("interpreters") && m.attrs.contains_key("socket_helper")
+                })
                 .unwrap_or(false)
         });
         assert!(has_leaf);

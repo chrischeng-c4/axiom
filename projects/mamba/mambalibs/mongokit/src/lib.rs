@@ -21,19 +21,17 @@ pub mod query;
 pub mod state;
 pub mod validation;
 
-
 pub use aggregation::{Accumulator, AggregationBuilder, AggregationStage, GroupId};
 pub use bulk::{BulkOperation, BulkWriteResult};
+pub use cclab_core::{DataBridgeError, Result};
+pub use connection::{Connection, PoolConfig};
+pub use document::Document;
 pub use link::{BatchFetchResult, CollectedRefs, LinkField, LinkRef, LinkType};
 pub use query::{QueryBuilder, QueryExpr};
 pub use state::StateTracker;
-pub use connection::{Connection, PoolConfig};
-pub use cclab_core::{DataBridgeError, Result};
-pub use document::Document;
 pub use validation::{
-    ValidatedCollectionName, ValidatedFieldName, ObjectIdParser,
-    validate_query, BsonConstraints, BsonTypeDescriptor,
-    validate_field, validate_document,
+    validate_document, validate_field, validate_query, BsonConstraints, BsonTypeDescriptor,
+    ObjectIdParser, ValidatedCollectionName, ValidatedFieldName,
 };
 
 #[cfg(test)]

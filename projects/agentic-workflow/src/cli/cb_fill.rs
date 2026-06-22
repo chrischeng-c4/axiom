@@ -1,6 +1,6 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/interfaces/src/cb_fill.md#source
 // CODEGEN-BEGIN
-//! `aw cb fill` — Phase 3 marker-fill workflow.
+//! `aw td fill` — Phase 3 marker-fill workflow.
 //!
 //! Two modes:
 //! - **Brief** (no `--apply`): walk the current checkout source tree and emit a
@@ -10,7 +10,7 @@
 //! - **Apply** (`--apply --marker <id>`): merge the expected marker payload
 //!   into the HANDWRITE block matching `<id>`, commit that marker with WI
 //!   projection trailers, then lock the next marker or dispatch
-//!   `aw cb check`.
+//!   `aw td code-check`.
 //!
 //! @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-fill-workflow.md
 
@@ -169,7 +169,7 @@ fn cb_marker_payload_rel(slug: &str, marker_id: &str) -> String {
 }
 
 fn cb_fill_apply_command(slug: &str, marker_id: &str) -> String {
-    format!("aw cb fill {} --apply --marker {}", slug, marker_id)
+    format!("aw td fill {} --apply --marker {}", slug, marker_id)
 }
 
 fn td_merge_command(slug: &str, spec_path: &str) -> String {
@@ -453,7 +453,7 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
             &worktree_abs,
             &crate::cli::workflow_guard::TransitionLock::new(
                 &slug,
-                "cb",
+                "td",
                 cb_fill_apply_command(&slug, &first.id),
             )
             .with_expected_payload(first_payload.clone())
@@ -485,7 +485,7 @@ async fn run_brief(args: CbFillArgs) -> Result<()> {
         "next": next_for_marker(&slug, first, &first_payload),
         "payload_initialized": first_payload_created,
         "invoke": {
-            "command": "aw cb fill",
+            "command": "aw td fill",
             "args": {
                 "slug": slug,
                 "marker_list": markers,
@@ -702,7 +702,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
                 &slug,
                 &format!(
                     "marker id '{}' is ambiguous — {} files match: {}. \
-                     Re-run `aw cb fill` (no --apply) to get the disambiguated marker list.",
+                     Re-run `aw td fill` (no --apply) to get the disambiguated marker list.",
                     marker_id,
                     many.len(),
                     paths.join(", "),
@@ -757,7 +757,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             &worktree_abs,
             &crate::cli::workflow_guard::TransitionLock::new(
                 &slug,
-                "cb",
+                "td",
                 cb_fill_apply_command(&slug, &next.id),
             )
             .with_expected_payload(next_payload.clone())
@@ -793,7 +793,7 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             "next": next_for_marker(&slug, next, &next_payload),
             "payload_initialized": next_payload_created,
             "invoke": {
-                "command": "aw cb fill",
+                "command": "aw td fill",
                 "args": {
                     "slug": slug,
                     "apply": true,
@@ -807,13 +807,13 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         return Ok(());
     }
 
-    // All markers applied — run cb check as gate.
+    // All markers applied — run the code check gate.
     let check_ok = run_cb_check_gate(&worktree_abs).await;
     if !check_ok.is_ok() {
         let msg = check_ok
             .err()
-            .unwrap_or_else(|| "cb check failed".to_string());
-        emit_error(&slug, &format!("cb check gate failed: {}", msg))?;
+            .unwrap_or_else(|| "td code-check failed".to_string());
+        emit_error(&slug, &format!("td code-check gate failed: {}", msg))?;
         std::process::exit(1);
     }
 
@@ -837,43 +837,20 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
         emit_error(&slug, &format!("git commit failed: {}", e))?;
         std::process::exit(1);
     }
-    crate::cli::workflow_guard::complete_issue_lock(&worktree_abs, &slug, "cb").await?;
+    crate::cli::workflow_guard::complete_issue_lock(&worktree_abs, &slug, "td").await?;
 
-    // Dispatch next verb.
-    // Default: dispatch `aw cb review` so filled handwrite bodies pass
-    // through the CB CRRR loop. Backward-compat: `--no-review` short-circuits
-    // straight to `aw td merge` for callers that don't need review (e.g.,
-    // greenfield slugs with no novel handwrite content).
-    // @spec projects/agentic-workflow/tech-design/surface/specs/score-cb-review-revise-crrr.md#cli
-    let env = if args.no_review {
-        serde_json::json!({
-            "action": "dispatch",
-            "agent": serde_json::Value::Null,
-            "slug": slug,
-            "next": next_for_td_merge(&slug, ""),
-            "invoke": {
-                "command": "aw td merge",
-                "args": { "slug": slug },
-            },
-        })
-    } else {
-        serde_json::json!({
-            "action": "dispatch",
-            "agent": serde_json::Value::Null,
-            "slug": slug,
-            "next": {
-                "kind": "dispatch",
-                "command": format!("aw cb review {}", slug),
-                "reason": "filled HANDWRITE markers require CB review",
-                "requires_hitl": false,
-                "payload_path": null,
-            },
-            "invoke": {
-                "command": "aw cb review",
-                "args": { "slug": slug },
-            },
-        })
-    };
+    // Dispatch to merge after the local code gate. Capability/EC/health gates
+    // decide whether the TD and implementation need another iteration.
+    let env = serde_json::json!({
+        "action": "dispatch",
+        "agent": serde_json::Value::Null,
+        "slug": slug,
+        "next": next_for_td_merge(&slug, ""),
+        "invoke": {
+            "command": "aw td merge",
+            "args": { "slug": slug },
+        },
+    });
     print_compact_json(&env)?;
     let _ = args.json;
     let _ = args.force;
@@ -1007,7 +984,7 @@ pub fn branch_changed_files(worktree: &Path, base_branch: &str) -> HashSet<Strin
         .collect()
 }
 
-// Run `aw cb check` against the worktree as a gate. Returns Ok(())
+// Run code-check semantics against the worktree as a gate. Returns Ok(())
 // when no slug-introduced markers remain, Err(msg) on findings or
 // invocation error.
 ///
@@ -1133,7 +1110,7 @@ fn stage_and_commit_cb_marker(
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
          CB-Marker: {marker_id}\n\
-         Next-Command: aw cb fill {slug} --apply --marker {next_marker_id}",
+         Next-Command: aw td fill {slug} --apply --marker {next_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -1179,7 +1156,7 @@ fn stage_and_commit_cb_queue_start(
          Lifecycle-Stage: Cb-Fill-Start\n\
          Lifecycle-Phase: cb_fill_in_progress\n\
          Lifecycle-Pass: fill\n\
-         Next-Command: aw cb fill {slug} --apply --marker {first_marker_id}",
+         Next-Command: aw td fill {slug} --apply --marker {first_marker_id}",
     );
     let out = std::process::Command::new(&git_bin)
         .arg("-C")
@@ -1335,7 +1312,7 @@ mod tests {
 
         assert_eq!(
             next["command"],
-            "aw cb fill 4124 --apply --marker missing-generator-cli"
+            "aw td fill 4124 --apply --marker missing-generator-cli"
         );
         assert!(!next["command"].as_str().unwrap().contains("--json"));
         assert_eq!(

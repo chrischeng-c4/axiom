@@ -84,7 +84,10 @@ pub struct MbProvider {
 
 impl MbProvider {
     pub fn new(name: impl Into<String>, api_key: impl Into<String>) -> Self {
-        Self { name: name.into(), api_key: api_key.into() }
+        Self {
+            name: name.into(),
+            api_key: api_key.into(),
+        }
     }
 }
 
@@ -99,7 +102,10 @@ pub struct MbMessage {
 
 impl MbMessage {
     pub fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { role: role.into(), content: content.into() }
+        Self {
+            role: role.into(),
+            content: content.into(),
+        }
     }
 }
 

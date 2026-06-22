@@ -1,12 +1,11 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// test module for Mamba (#999).
 ///
 /// Provides CPython-style test support utilities: TestCase base class with
 /// core assertion methods (assertEqual, assertTrue, assertFalse, assertRaises),
 /// and a main() test runner entry point. Distinct from the `unittest` module.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -57,7 +56,11 @@ unsafe extern "C" fn dispatch_identity(args_ptr: *const MbValue, nargs: usize) -
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -281,7 +284,10 @@ fn register_support_submodules() {
         ("FloatsAreIdenticalMixin", noop),
         ("ComplexesAreIdenticalMixin", noop),
     ];
-    super::register_module("test.support.testcase", make_attrs(support_testcase_entries));
+    super::register_module(
+        "test.support.testcase",
+        make_attrs(support_testcase_entries),
+    );
 
     let script_helper_entries: &[(&str, usize)] = &[
         ("assert_python_failure", noop),
@@ -292,7 +298,10 @@ fn register_support_submodules() {
         ("kill_python", noop),
         ("make_script", noop),
     ];
-    super::register_module("test.support.script_helper", make_attrs(script_helper_entries));
+    super::register_module(
+        "test.support.script_helper",
+        make_attrs(script_helper_entries),
+    );
 
     let os_helper_entries: &[(&str, usize)] = &[
         ("FakePath", noop),
@@ -320,7 +329,10 @@ fn register_support_submodules() {
         ("CleanImport", noop),
         ("DirsOnSysPath", noop),
     ];
-    super::register_module("test.support.import_helper", make_attrs(import_helper_entries));
+    super::register_module(
+        "test.support.import_helper",
+        make_attrs(import_helper_entries),
+    );
 
     let threading_helper_entries: &[(&str, usize)] = &[
         ("threading_setup", noop),
@@ -330,7 +342,10 @@ fn register_support_submodules() {
         ("join_thread", noop),
         ("requires_working_threading", identity),
     ];
-    super::register_module("test.support.threading_helper", make_attrs(threading_helper_entries));
+    super::register_module(
+        "test.support.threading_helper",
+        make_attrs(threading_helper_entries),
+    );
 
     let warnings_helper_entries: &[(&str, usize)] = &[
         ("save_restore_warnings_filters", noop),
@@ -339,29 +354,38 @@ fn register_support_submodules() {
         ("check_no_resource_warning", noop),
         ("ignore_warnings", identity),
     ];
-    super::register_module("test.support.warnings_helper", make_attrs(warnings_helper_entries));
+    super::register_module(
+        "test.support.warnings_helper",
+        make_attrs(warnings_helper_entries),
+    );
 
     super::register_module("test.support.testresult", make_attrs(&[]));
     super::register_module("test.mapping_tests", make_attrs(&[]));
     super::register_module("test.seq_tests", make_attrs(&[]));
     super::register_module("test.string_tests", make_attrs(&[]));
     super::register_module("test.list_tests", make_attrs(&[]));
-    super::register_module("test.test_grammar", make_attrs(&[
-        ("INVALID_UNDERSCORE_LITERALS", noop),
-        ("VALID_UNDERSCORE_LITERALS", noop),
-    ]));
+    super::register_module(
+        "test.test_grammar",
+        make_attrs(&[
+            ("INVALID_UNDERSCORE_LITERALS", noop),
+            ("VALID_UNDERSCORE_LITERALS", noop),
+        ]),
+    );
     super::register_module("test.test_future_stmt", make_attrs(&[]));
     super::register_module("test.typing", make_attrs(&[("ann_module2", noop)]));
-    super::register_module("test.typinganndata", make_attrs(&[
-        ("ann_module", noop),
-        ("ann_module2", noop),
-        ("ann_module3", noop),
-        ("ann_module4", noop),
-        ("ann_module5", noop),
-        ("ann_module6", noop),
-        ("ann_module7", noop),
-        ("ann_module8", noop),
-    ]));
+    super::register_module(
+        "test.typinganndata",
+        make_attrs(&[
+            ("ann_module", noop),
+            ("ann_module2", noop),
+            ("ann_module3", noop),
+            ("ann_module4", noop),
+            ("ann_module5", noop),
+            ("ann_module6", noop),
+            ("ann_module7", noop),
+            ("ann_module8", noop),
+        ]),
+    );
     super::register_module("test.typinganndata.ann_module", make_attrs(&[]));
     super::register_module("test.typinganndata.ann_module2", make_attrs(&[]));
     super::register_module("test.typinganndata.ann_module3", make_attrs(&[]));
@@ -392,8 +416,10 @@ pub fn mb_test_testcase() -> MbValue {
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
-            map.insert("__class__".into(),
-                MbValue::from_ptr(MbObject::new_str("TestCase".to_string())));
+            map.insert(
+                "__class__".into(),
+                MbValue::from_ptr(MbObject::new_str("TestCase".to_string())),
+            );
             map.insert("_failures".into(), MbValue::from_int(0));
             map.insert("_successes".into(), MbValue::from_int(0));
         }
@@ -413,8 +439,7 @@ pub fn mb_test_assert_equal(a: MbValue, b: MbValue) -> MbValue {
 // @spec .aw/changes/mamba-stdlib-test/groups/mamba-stdlib-test/specs/stdlib-test-module.md#R2
 /// assertTrue(val) -> None or panic
 pub fn mb_test_assert_true(val: MbValue) -> MbValue {
-    let truthy = val.as_bool().unwrap_or(false)
-        || val.as_int().map(|i| i != 0).unwrap_or(false);
+    let truthy = val.as_bool().unwrap_or(false) || val.as_int().map(|i| i != 0).unwrap_or(false);
     if !truthy {
         panic!("AssertionError: expected True");
     }
@@ -424,8 +449,7 @@ pub fn mb_test_assert_true(val: MbValue) -> MbValue {
 // @spec .aw/changes/mamba-stdlib-test/groups/mamba-stdlib-test/specs/stdlib-test-module.md#R2
 /// assertFalse(val) -> None or panic
 pub fn mb_test_assert_false(val: MbValue) -> MbValue {
-    let truthy = val.as_bool().unwrap_or(false)
-        || val.as_int().map(|i| i != 0).unwrap_or(false);
+    let truthy = val.as_bool().unwrap_or(false) || val.as_int().map(|i| i != 0).unwrap_or(false);
     if truthy {
         panic!("AssertionError: expected False");
     }
@@ -458,8 +482,10 @@ pub fn mb_test_support() -> MbValue {
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
-            map.insert("__name__".into(),
-                MbValue::from_ptr(MbObject::new_str("test.support".to_string())));
+            map.insert(
+                "__name__".into(),
+                MbValue::from_ptr(MbObject::new_str("test.support".to_string())),
+            );
         }
     }
     MbValue::from_ptr(dict)
@@ -511,14 +537,26 @@ mod tests {
 
     #[test]
     fn test_values_equal_float() {
-        assert!(values_equal(MbValue::from_float(1.5), MbValue::from_float(1.5)));
-        assert!(!values_equal(MbValue::from_float(1.0), MbValue::from_float(2.0)));
+        assert!(values_equal(
+            MbValue::from_float(1.5),
+            MbValue::from_float(1.5)
+        ));
+        assert!(!values_equal(
+            MbValue::from_float(1.0),
+            MbValue::from_float(2.0)
+        ));
     }
 
     #[test]
     fn test_values_equal_bool() {
-        assert!(values_equal(MbValue::from_bool(true), MbValue::from_bool(true)));
-        assert!(!values_equal(MbValue::from_bool(true), MbValue::from_bool(false)));
+        assert!(values_equal(
+            MbValue::from_bool(true),
+            MbValue::from_bool(true)
+        ));
+        assert!(!values_equal(
+            MbValue::from_bool(true),
+            MbValue::from_bool(false)
+        ));
     }
 
     #[test]

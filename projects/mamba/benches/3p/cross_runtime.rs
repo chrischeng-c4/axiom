@@ -98,9 +98,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant};
 
-use qc::performance::profiler::{
-    MemorySnapshot, PhaseBreakdown, PhaseTiming, ProfilePhase,
-};
+use qc::performance::profiler::{MemorySnapshot, PhaseBreakdown, PhaseTiming, ProfilePhase};
 
 const FLOOR: f64 = 1.0;
 
@@ -123,19 +121,19 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--fixture" => fixture_filter = it.next(),
             "--iters" => {
-                iters = it
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_else(|| {
-                        eprintln!("--iters requires a positive integer");
-                        std::process::exit(2);
-                    });
+                iters = it.next().and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+                    eprintln!("--iters requires a positive integer");
+                    std::process::exit(2);
+                });
             }
             // cargo bench passes through args we don't recognise — ignore.
             _ => {}
         }
     }
-    Args { fixture_filter, iters }
+    Args {
+        fixture_filter,
+        iters,
+    }
 }
 
 fn fixtures_root() -> PathBuf {
@@ -341,25 +339,37 @@ fn time_one(cmd: &Path, args: &[&str], phase: &mut PhaseTiming) -> (Sample, bool
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr).to_string();
             let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-            let rss = if wrapped { parse_peak_rss(&stderr) } else { None };
+            let rss = if wrapped {
+                parse_peak_rss(&stderr)
+            } else {
+                None
+            };
             // INTERNAL_TIME_NS is emitted by the fixture itself (independent
             // of the `time` wrapper). Mamba currently routes `print(...,
             // file=sys.stderr)` to stdout — until that runtime gap closes,
             // accept the marker on either stream so the same fixture file
             // works under both runtimes unchanged.
-            let internal_ns = parse_internal_time_ns(&stderr)
-                .or_else(|| parse_internal_time_ns(&stdout));
+            let internal_ns =
+                parse_internal_time_ns(&stderr).or_else(|| parse_internal_time_ns(&stdout));
             // Note: when wrapped, the child's stderr is interleaved with
             // `time`'s memory report. The exit status is the child's
             // (preserved by `time`), so success-checking is unchanged.
             (
-                Sample { wall: elapsed, rss_bytes: rss, internal_ns },
+                Sample {
+                    wall: elapsed,
+                    rss_bytes: rss,
+                    internal_ns,
+                },
                 o.status.success(),
                 stderr,
             )
         }
         Err(e) => (
-            Sample { wall: elapsed, rss_bytes: None, internal_ns: None },
+            Sample {
+                wall: elapsed,
+                rss_bytes: None,
+                internal_ns: None,
+            },
             false,
             format!("spawn error: {e}"),
         ),
@@ -408,11 +418,17 @@ fn warmup_probe(
 ) -> Result<String, String> {
     let (py_out, py_ok, py_err) = run_once_capture(python, py_args);
     if !py_ok {
-        return Err(format!("cpython warmup failed: {}", py_err.lines().take(3).collect::<Vec<_>>().join(" | ")));
+        return Err(format!(
+            "cpython warmup failed: {}",
+            py_err.lines().take(3).collect::<Vec<_>>().join(" | ")
+        ));
     }
     let (mb_out, mb_ok, mb_err) = run_once_capture(mamba, mb_args);
     if !mb_ok {
-        return Err(format!("mamba warmup failed: {}", mb_err.lines().take(3).collect::<Vec<_>>().join(" | ")));
+        return Err(format!(
+            "mamba warmup failed: {}",
+            mb_err.lines().take(3).collect::<Vec<_>>().join(" | ")
+        ));
     }
     // Strip the internal-time marker line before comparing. The integer
     // ns value will always differ between runtimes (and between
@@ -445,15 +461,16 @@ fn warmup_probe(
 /// the accumulator typed as `PhaseTiming` means a future patch can
 /// split mamba compile-vs-run without changing the bench loop shape.
 fn summarise_phase(phase: PhaseTiming) -> PhaseBreakdown {
-    let mut times: std::collections::HashMap<String, Vec<u64>> =
-        std::collections::HashMap::new();
+    let mut times: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
     // We only retain min/max/avg in PhaseTiming itself; replay a synthetic
     // sample vector here so PhaseBreakdown::from_times can render a row.
     // The recorded count + total are the source of truth and remain accurate;
     // per-iter detail is intentionally collapsed to keep harness state lean.
     let total = phase.total_ns;
     let count = phase.count;
-    let synthetic: Vec<u64> = (0..count).map(|_| if count == 0 { 0 } else { total / count }).collect();
+    let synthetic: Vec<u64> = (0..count)
+        .map(|_| if count == 0 { 0 } else { total / count })
+        .collect();
     times.insert(ProfilePhase::Total.to_string(), synthetic);
     PhaseBreakdown::from_times(times, count, total)
 }
@@ -493,7 +510,11 @@ fn best_of(
             best_internal = Some(best_internal.map_or(int_ns, |cur| cur.min(int_ns)));
         }
     }
-    Ok(Sample { wall: best_wall, rss_bytes: best_rss, internal_ns: best_internal })
+    Ok(Sample {
+        wall: best_wall,
+        rss_bytes: best_rss,
+        internal_ns: best_internal,
+    })
 }
 
 fn main() -> ExitCode {
@@ -518,9 +539,9 @@ fn main() -> ExitCode {
     let fixtures: Vec<_> = fixtures
         .into_iter()
         .filter(|f| {
-            args.fixture_filter
-                .as_deref()
-                .map_or(true, |needle| f.scenario.contains(needle) || f.lib.contains(needle))
+            args.fixture_filter.as_deref().map_or(true, |needle| {
+                f.scenario.contains(needle) || f.lib.contains(needle)
+            })
         })
         .collect();
 

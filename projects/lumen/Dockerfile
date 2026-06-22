@@ -25,7 +25,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release -p lumen --bin lumen --features "otel operator" \
+    cargo build --release -p lumen --bin lumen --features "otel operator relay-wal" \
  && cp target/release/lumen /usr/local/bin/
 
 # distroless runtime: glibc + libgcc + CA certs + nonroot (uid 65532, matching
@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # binary handles SIGTERM (graceful drain) and spawns no children.
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=builder /usr/local/bin/lumen /usr/local/bin/lumen
-# 7373 = client API. The write log lives in NATS, not in this container.
+# 7373 = client API. The write log lives in the broker, not in this container.
 EXPOSE 7373
 ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]

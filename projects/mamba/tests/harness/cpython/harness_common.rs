@@ -56,7 +56,9 @@ use std::time::{Duration, Instant};
 pub fn mamba_bin() -> PathBuf {
     option_env!("CARGO_BIN_EXE_mamba")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/mamba"))
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/mamba")
+        })
 }
 
 // ── recursive fixture collection ──────────────────────────────────
@@ -280,10 +282,7 @@ impl TimeoutPolicy {
 /// `wait_with_output` fails — i.e. the same `Err` cases the old loops
 /// surfaced. A normal exit yields `WaitOutcome::Finished`; an elapsed budget
 /// yields `WaitOutcome::TimedOut`.
-pub fn wait_with_timeout(
-    mut child: Child,
-    policy: TimeoutPolicy,
-) -> std::io::Result<WaitOutcome> {
+pub fn wait_with_timeout(mut child: Child, policy: TimeoutPolicy) -> std::io::Result<WaitOutcome> {
     let start = Instant::now();
     // Exponential backoff from 1ms up to the policy's poll interval (the
     // cap). A fixed 20ms cadence only observes exits on poll ticks, wasting

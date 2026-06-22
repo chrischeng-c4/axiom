@@ -1,6 +1,19 @@
 ---
 id: relay-raft-k8s
 summary: Deploy the Raft-backed relay on Kubernetes and prove failover on kind. A relay-raft binary reads identity from the downward API (pod hostname relay-ordinal, replica count N), derives auto_membership and headless-Service peer URLs via a pure unit-tested config function, opens a RaftStore on its PVC and serves the RaftDriver over h2c. Ships a StatefulSet + headless Service + PodDisruptionBudget, a Dockerfile, and a kind failover smoke script. Standalone, no axiom-project dep.
+capability_refs:
+  - id: competitor-feature-parity
+    role: primary
+    gap: kubernetes-kind-failover-smoke
+    claim: kubernetes-kind-failover-smoke
+    coverage: full
+    rationale: "Defines the relay-raft Kubernetes deployment shape and kind failover smoke that remains the HA production dogfood proof."
+  - id: cli-interface
+    role: primary
+    gap: relay-raft-process-interface
+    claim: relay-raft-process-interface
+    coverage: full
+    rationale: "Defines the relay-raft binary process interface, Kubernetes identity/config input, and h2c serving shape."
 fill_sections: [logic, unit-test, changes]
 ---
 

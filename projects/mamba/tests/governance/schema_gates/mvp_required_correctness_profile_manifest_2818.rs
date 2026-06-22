@@ -25,14 +25,9 @@ use std::path::{Path, PathBuf};
 
 const EXPECTED_BUCKETS: &[&str] = &["required", "optional", "xfail", "blocker"];
 
-const REQUIRED_FAMILIES: &[&str] = &[
-    "language_semantics",
-    "cpython_seeds",
-    "stdlib_behavior",
-];
+const REQUIRED_FAMILIES: &[&str] = &["language_semantics", "cpython_seeds", "stdlib_behavior"];
 
-const REQUIRED_EXCLUDED_OUTCOMES: &[&str] =
-    &["ImportPass", "Stub", "skip", "xfail"];
+const REQUIRED_EXCLUDED_OUTCOMES: &[&str] = &["ImportPass", "Stub", "skip", "xfail"];
 
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

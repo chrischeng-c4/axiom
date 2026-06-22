@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// selectors module for Mamba (#1471, #1265 Goal 2 / 3-gate).
 ///
 /// Provides the CPython 3.12 `selectors` 15-entry public surface
@@ -46,10 +48,7 @@
 ///     the way CPython does. It is its own surface entry returning its
 ///     own Instance shell; `selectors.DefaultSelector is
 ///     selectors.KqueueSelector` is False even on macOS.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Variadic dispatchers ──
 
@@ -67,27 +66,27 @@ macro_rules! disp_variadic {
 }
 
 // Selector class shells (6 surface entries)
-disp_variadic!(d_base_selector,     mb_selectors_base_selector_new);
-disp_variadic!(d_default_selector,  mb_selectors_default_selector_new);
-disp_variadic!(d_select_selector,   mb_selectors_select_selector_new);
-disp_variadic!(d_poll_selector,     mb_selectors_poll_selector_new);
-disp_variadic!(d_epoll_selector,    mb_selectors_epoll_selector_new);
-disp_variadic!(d_kqueue_selector,   mb_selectors_kqueue_selector_new);
+disp_variadic!(d_base_selector, mb_selectors_base_selector_new);
+disp_variadic!(d_default_selector, mb_selectors_default_selector_new);
+disp_variadic!(d_select_selector, mb_selectors_select_selector_new);
+disp_variadic!(d_poll_selector, mb_selectors_poll_selector_new);
+disp_variadic!(d_epoll_selector, mb_selectors_epoll_selector_new);
+disp_variadic!(d_kqueue_selector, mb_selectors_kqueue_selector_new);
 
 // SelectorKey record shell (1 surface entry)
-disp_variadic!(d_selector_key,      mb_selectors_selector_key_new);
+disp_variadic!(d_selector_key, mb_selectors_selector_key_new);
 
 // Re-exported names from CPython's import cascade (7 entries) — every
 // one is a passive Instance shell so `callable(selectors.namedtuple)` is
 // True and `hasattr(selectors, "ABCMeta")` is True without leaning on
 // other stdlib modules.
-disp_variadic!(d_abc_meta,          mb_selectors_abc_meta_new);
-disp_variadic!(d_mapping,           mb_selectors_mapping_new);
-disp_variadic!(d_abstractmethod,    mb_selectors_abstractmethod_new);
-disp_variadic!(d_math,              mb_selectors_math_new);
-disp_variadic!(d_namedtuple,        mb_selectors_namedtuple_new);
-disp_variadic!(d_select,            mb_selectors_select_new);
-disp_variadic!(d_sys,               mb_selectors_sys_new);
+disp_variadic!(d_abc_meta, mb_selectors_abc_meta_new);
+disp_variadic!(d_mapping, mb_selectors_mapping_new);
+disp_variadic!(d_abstractmethod, mb_selectors_abstractmethod_new);
+disp_variadic!(d_math, mb_selectors_math_new);
+disp_variadic!(d_namedtuple, mb_selectors_namedtuple_new);
+disp_variadic!(d_select, mb_selectors_select_new);
+disp_variadic!(d_sys, mb_selectors_sys_new);
 
 /// Register the selectors module.
 pub fn register() {
@@ -96,22 +95,22 @@ pub fn register() {
     // ── Callables / class shells ──
     let dispatchers: Vec<(&str, usize)> = vec![
         // Selector class shells
-        ("BaseSelector",    d_base_selector    as *const () as usize),
+        ("BaseSelector", d_base_selector as *const () as usize),
         ("DefaultSelector", d_default_selector as *const () as usize),
-        ("SelectSelector",  d_select_selector  as *const () as usize),
-        ("PollSelector",    d_poll_selector    as *const () as usize),
-        ("EpollSelector",   d_epoll_selector   as *const () as usize),
-        ("KqueueSelector",  d_kqueue_selector  as *const () as usize),
+        ("SelectSelector", d_select_selector as *const () as usize),
+        ("PollSelector", d_poll_selector as *const () as usize),
+        ("EpollSelector", d_epoll_selector as *const () as usize),
+        ("KqueueSelector", d_kqueue_selector as *const () as usize),
         // Record shell
-        ("SelectorKey",     d_selector_key     as *const () as usize),
+        ("SelectorKey", d_selector_key as *const () as usize),
         // Re-exports
-        ("ABCMeta",         d_abc_meta         as *const () as usize),
-        ("Mapping",         d_mapping          as *const () as usize),
-        ("abstractmethod",  d_abstractmethod   as *const () as usize),
-        ("math",            d_math             as *const () as usize),
-        ("namedtuple",      d_namedtuple       as *const () as usize),
-        ("select",          d_select           as *const () as usize),
-        ("sys",             d_sys              as *const () as usize),
+        ("ABCMeta", d_abc_meta as *const () as usize),
+        ("Mapping", d_mapping as *const () as usize),
+        ("abstractmethod", d_abstractmethod as *const () as usize),
+        ("math", d_math as *const () as usize),
+        ("namedtuple", d_namedtuple as *const () as usize),
+        ("select", d_select as *const () as usize),
+        ("sys", d_sys as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -122,7 +121,7 @@ pub fn register() {
 
     // ── Integer event-mask constants — CPython values from
     //    Lib/selectors.py: `EVENT_READ = (1 << 0)`, `EVENT_WRITE = (1 << 1)`.
-    attrs.insert("EVENT_READ".to_string(),  MbValue::from_int(1));
+    attrs.insert("EVENT_READ".to_string(), MbValue::from_int(1));
     attrs.insert("EVENT_WRITE".to_string(), MbValue::from_int(2));
 
     super::register_module("selectors", attrs);
@@ -199,17 +198,17 @@ pub fn mb_selectors_kqueue_selector_new(_args: &[MbValue]) -> MbValue {
 /// from the positional arguments.
 pub fn mb_selectors_selector_key_new(args: &[MbValue]) -> MbValue {
     let fileobj = args.first().copied().unwrap_or_else(MbValue::none);
-    let fd      = args.get(1).copied().unwrap_or_else(MbValue::none);
-    let events  = args.get(2).copied().unwrap_or_else(MbValue::none);
-    let data    = args.get(3).copied().unwrap_or_else(MbValue::none);
+    let fd = args.get(1).copied().unwrap_or_else(MbValue::none);
+    let events = args.get(2).copied().unwrap_or_else(MbValue::none);
+    let data = args.get(3).copied().unwrap_or_else(MbValue::none);
     let inst_ptr = MbObject::new_instance("SelectorKey".to_string());
     unsafe {
         if let super::super::rc::ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
             let mut map = fields.write().unwrap();
             map.insert("fileobj".to_string(), fileobj);
-            map.insert("fd".to_string(),      fd);
-            map.insert("events".to_string(),  events);
-            map.insert("data".to_string(),    data);
+            map.insert("fd".to_string(), fd);
+            map.insert("events".to_string(), events);
+            map.insert("data".to_string(), data);
             map.insert(
                 "__class__".to_string(),
                 MbValue::from_ptr(MbObject::new_str("SelectorKey".to_string())),
@@ -352,9 +351,9 @@ fn read_map(self_v: MbValue) -> Vec<MbValue> {
 
 /// True if `key` is already present in the registration List.
 fn map_contains(self_v: MbValue, key: i64) -> bool {
-    read_map(self_v).iter().any(|pair| {
-        method_pos(*pair).first().and_then(|k| k.as_int()) == Some(key)
-    })
+    read_map(self_v)
+        .iter()
+        .any(|pair| method_pos(*pair).first().and_then(|k| k.as_int()) == Some(key))
 }
 
 /// selector.register(fileobj, events, data=None) -> SelectorKey.
@@ -466,10 +465,10 @@ unsafe extern "C" fn m_get_key(self_v: MbValue, args: MbValue) -> MbValue {
 /// normal MRO path (mirrors the configparser instance-class pattern).
 fn register_selector_methods() {
     let methods: Vec<(&str, usize)> = vec![
-        ("register",   m_register   as usize),
+        ("register", m_register as usize),
         ("unregister", m_unregister as usize),
-        ("modify",     m_modify     as usize),
-        ("get_key",    m_get_key    as usize),
+        ("modify", m_modify as usize),
+        ("get_key", m_get_key as usize),
     ];
     let mut map: HashMap<String, MbValue> = HashMap::new();
     for (name, addr) in &methods {
@@ -477,8 +476,12 @@ fn register_selector_methods() {
         super::super::module::register_variadic_func(*addr as u64);
     }
     for class_name in [
-        "BaseSelector", "DefaultSelector", "SelectSelector",
-        "PollSelector", "EpollSelector", "KqueueSelector",
+        "BaseSelector",
+        "DefaultSelector",
+        "SelectSelector",
+        "PollSelector",
+        "EpollSelector",
+        "KqueueSelector",
     ] {
         super::super::class::mb_class_register(class_name, Vec::new(), map.clone());
     }
@@ -490,7 +493,8 @@ mod tests {
 
     fn selectors_attr(name: &str) -> Option<MbValue> {
         super::super::super::module::MODULES.with(|mods| {
-            mods.borrow().get("selectors")
+            mods.borrow()
+                .get("selectors")
                 .and_then(|m| m.attrs.get(name).copied())
         })
     }
@@ -500,26 +504,44 @@ mod tests {
         register();
         for name in [
             // Integer constants
-            "EVENT_READ", "EVENT_WRITE",
+            "EVENT_READ",
+            "EVENT_WRITE",
             // Selector class shells
-            "BaseSelector", "DefaultSelector", "SelectSelector",
-            "PollSelector", "EpollSelector", "KqueueSelector",
+            "BaseSelector",
+            "DefaultSelector",
+            "SelectSelector",
+            "PollSelector",
+            "EpollSelector",
+            "KqueueSelector",
             // Record shell
             "SelectorKey",
             // Re-exports
-            "ABCMeta", "Mapping", "abstractmethod", "math",
-            "namedtuple", "select", "sys",
+            "ABCMeta",
+            "Mapping",
+            "abstractmethod",
+            "math",
+            "namedtuple",
+            "select",
+            "sys",
         ] {
-            assert!(selectors_attr(name).is_some(),
-                "selectors module missing entry: {name}");
+            assert!(
+                selectors_attr(name).is_some(),
+                "selectors module missing entry: {name}"
+            );
         }
     }
 
     #[test]
     fn test_event_constants_values() {
         register();
-        assert_eq!(selectors_attr("EVENT_READ").and_then(|v| v.as_int()),  Some(1));
-        assert_eq!(selectors_attr("EVENT_WRITE").and_then(|v| v.as_int()), Some(2));
+        assert_eq!(
+            selectors_attr("EVENT_READ").and_then(|v| v.as_int()),
+            Some(1)
+        );
+        assert_eq!(
+            selectors_attr("EVENT_WRITE").and_then(|v| v.as_int()),
+            Some(2)
+        );
     }
 
     #[test]
@@ -539,15 +561,20 @@ mod tests {
             MbValue::none(),
         ]);
         unsafe {
-            if let super::super::super::rc::ObjData::Instance { ref class_name, ref fields, .. }
-                = (*inst.as_ptr().unwrap()).data
+            if let super::super::super::rc::ObjData::Instance {
+                ref class_name,
+                ref fields,
+                ..
+            } = (*inst.as_ptr().unwrap()).data
             {
                 assert_eq!(class_name, "SelectorKey");
                 let f = fields.read().unwrap();
                 assert_eq!(f.get("fileobj").and_then(|v| v.as_int()), Some(42));
-                assert_eq!(f.get("fd").and_then(|v| v.as_int()),      Some(7));
-                assert_eq!(f.get("events").and_then(|v| v.as_int()),  Some(1));
-            } else { panic!("expected Instance"); }
+                assert_eq!(f.get("fd").and_then(|v| v.as_int()), Some(7));
+                assert_eq!(f.get("events").and_then(|v| v.as_int()), Some(1));
+            } else {
+                panic!("expected Instance");
+            }
         }
     }
 }

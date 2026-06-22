@@ -20,7 +20,8 @@ pub struct MigrationRunner {
 
 impl std::fmt::Debug for MigrationRunner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("blocking::MigrationRunner").finish_non_exhaustive()
+        f.debug_struct("blocking::MigrationRunner")
+            .finish_non_exhaustive()
     }
 }
 
@@ -60,15 +61,14 @@ impl MigrationRunner {
 
     /// Returns applied migrations rehydrated as full [`Migration`] objects.
     pub fn applied_migrations_with_details(&self) -> Result<Vec<Migration>> {
-        self.rt.block_on(self.inner.applied_migrations_with_details())
+        self.rt
+            .block_on(self.inner.applied_migrations_with_details())
     }
 
     /// Returns migrations from `all_migrations` that have not yet been applied.
-    pub fn pending_migrations(
-        &self,
-        all_migrations: &[Migration],
-    ) -> Result<Vec<Migration>> {
-        self.rt.block_on(self.inner.pending_migrations(all_migrations))
+    pub fn pending_migrations(&self, all_migrations: &[Migration]) -> Result<Vec<Migration>> {
+        self.rt
+            .block_on(self.inner.pending_migrations(all_migrations))
     }
 
     /// Applies a single migration.
@@ -97,11 +97,7 @@ impl MigrationRunner {
     }
 
     /// Rolls back the most recent `count` migrations.
-    pub fn rollback(
-        &self,
-        migrations: &[Migration],
-        count: usize,
-    ) -> Result<Vec<String>> {
+    pub fn rollback(&self, migrations: &[Migration], count: usize) -> Result<Vec<String>> {
         self.rt.block_on(self.inner.rollback(migrations, count))
     }
 

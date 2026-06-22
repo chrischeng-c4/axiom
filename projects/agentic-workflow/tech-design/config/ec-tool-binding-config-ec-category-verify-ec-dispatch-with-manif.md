@@ -1,6 +1,6 @@
 ---
 id: aw-ec-tool-binding-config
-summary: Per-project EC tool-binding config (`ec.<category>` map on the Project model) plus verify-ec dispatch — bound categories run an external tool (arena/rig/meter/vat) command; unbound categories fall back to the EC manifest command. Exit-code gated; report-JSON folding deferred.
+summary: Per-project EC tool-binding config (`ec.<category>` map on the Project model) plus verify-ec dispatch — bound categories run an external tool (arena/rig/meter/vat) command; unbound categories fall back to the generated EC case command in the aw.toml inventory. Exit-code gated; report-JSON folding deferred.
 fill_sections: [logic, schema, unit-test]
 capability_refs:
   - id: project-local-td-and-ec-gates
@@ -8,7 +8,7 @@ capability_refs:
     gap: ec-tool-binding-dispatch
     claim: ec-tool-binding-dispatch
     coverage: full
-    rationale: "Lets verify-ec route an EC category to an external measurement tool declared in config, instead of only the fixed manifest command."
+    rationale: "Lets verify-ec route an EC category to an external measurement tool declared in config, instead of only the fixed generated EC case command."
 ---
 
 # TD: aw EC tool-binding config + verify-ec dispatch
@@ -27,7 +27,7 @@ nodes:
   build:        { kind: process,  label: "cmd = binding.command() (arena/rig/meter/vat)" }
   build_ok:     { kind: decision, label: "command built ok?" }
   bad_tool:     { kind: terminal, label: "Failed: unknown tool in binding" }
-  use_manifest: { kind: process,  label: "cmd = case.command (manifest / cargo-test fallback)" }
+  use_manifest: { kind: process,  label: "cmd = case.command (aw.toml inventory fallback)" }
   spawn:        { kind: process,  label: "sh -c cmd in project_root" }
   exit0:        { kind: decision, label: "exit code == 0?" }
   passed:       { kind: terminal, label: "ProjectEcCommandReport: Passed" }
@@ -70,7 +70,7 @@ type: object
 properties:
   ec:
     type: object
-    description: "Optional. Map of EC category (free string: correctness | benchmark | security | stability | ...) to a tool binding. A category absent from this map falls back to the EC manifest command (the cargo-test default)."
+    description: "Optional. Map of EC category (free string: correctness | benchmark | security | stability | ...) to a tool binding. A category absent from this map falls back to the generated EC case command in the aw.toml inventory."
     additionalProperties:
       $ref: "#/$defs/EcBinding"
 $defs:
@@ -114,13 +114,13 @@ requirements:
     verify: test
   dispatch_binding:
     id: R3
-    text: "run_project_ec_command uses the tool command when the case category is bound, else the manifest command"
+    text: "run_project_ec_command uses the tool command when the case category is bound, else the generated EC case command"
     kind: functional
     risk: high
     verify: test
   absent_is_default:
     id: R4
-    text: "a project with no ec map verifies exactly as today (manifest command), absence is a clean default"
+    text: "a project with no ec map verifies with generated EC case commands, absence is a clean default"
     kind: design-constraint
     risk: medium
     verify: test
@@ -191,8 +191,8 @@ requirementDiagram
 ### Review 1
 **Verdict:** approved
 
-- [logic] applicable: the verify-ec dispatch flow is correct — category→binding lookup, build tool command (arena/rig/meter/vat) or fall back to the manifest command, exit-code gate. Matches the existing `run_project_ec_command` shape; report-JSON folding is correctly out of scope.
-- [schema] applicable: `ec` is an optional project-scoped map of category→EcBinding; EcBinding{tool enum arena|rig|meter|vat, spec/dir/meter}; additionalProperties false guards typos; absent = manifest fallback. Project-scoped placement (before workspaces) matches aw's TD/contract-is-project-scoped model.
+- [logic] applicable: the verify-ec dispatch flow is correct — category→binding lookup, build tool command (arena/rig/meter/vat) or fall back to the generated EC case command, exit-code gate. Matches the existing `run_project_ec_command` shape; report-JSON folding is correctly out of scope.
+- [schema] applicable: `ec` is an optional project-scoped map of category→EcBinding; EcBinding{tool enum arena|rig|meter|vat, spec/dir/meter}; additionalProperties false guards typos; absent = generated EC case fallback. Project-scoped placement (before workspaces) matches aw's TD/contract-is-project-scoped model.
 - [unit-test] applicable: R1–R4 each verified by one #[test] element covering config round-trip, the command builder (incl. unknown-tool error), dispatch-uses-binding, and no-ec-is-manifest-default. One-to-one with the acceptance criteria.
 
 # Reviews

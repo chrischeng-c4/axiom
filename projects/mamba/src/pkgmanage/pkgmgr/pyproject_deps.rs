@@ -270,10 +270,7 @@ fn section_matches(line: &str, header: &str) -> bool {
     // Treat `[project]` and `[project] # comment` alike.
     line.trim_end_matches('\n').trim_end() == header
         || line.starts_with(header)
-            && line
-                .trim_end_matches('\n')
-                .trim_end()
-                .starts_with(header)
+            && line.trim_end_matches('\n').trim_end().starts_with(header)
             && line
                 .trim_end_matches('\n')
                 .trim_end()
@@ -346,8 +343,7 @@ test = [
     \"pytest-asyncio\",
 ]
 ";
-        let r =
-            list_dependencies(src, &DependencyGroup::Optional("test".into())).unwrap();
+        let r = list_dependencies(src, &DependencyGroup::Optional("test".into())).unwrap();
         assert_eq!(r, vec!["pytest>=7".to_string(), "pytest-asyncio".into()]);
     }
 
@@ -390,12 +386,10 @@ test = [
     #[test]
     fn add_into_optional_dependencies_creates_extra_group() {
         let src = "[project]\nname = \"demo\"\nversion = \"0.1\"\n";
-        let r = add_dependency(src, &DependencyGroup::Optional("test".into()), "pytest")
-            .unwrap();
+        let r = add_dependency(src, &DependencyGroup::Optional("test".into()), "pytest").unwrap();
         // The synthetic header path is `[project.optional-dependencies]`
         // with the key being the extra's name.
-        let listed =
-            list_dependencies(&r, &DependencyGroup::Optional("test".into())).unwrap();
+        let listed = list_dependencies(&r, &DependencyGroup::Optional("test".into())).unwrap();
         assert_eq!(listed, vec!["pytest".to_string()]);
     }
 
@@ -408,8 +402,7 @@ test = [
 
     #[test]
     fn add_rejects_malformed_requirement() {
-        let err =
-            add_dependency(SAMPLE, &DependencyGroup::Main, "@@@bad@@@").unwrap_err();
+        let err = add_dependency(SAMPLE, &DependencyGroup::Main, "@@@bad@@@").unwrap_err();
         assert!(err.contains("PEP 508"));
     }
 

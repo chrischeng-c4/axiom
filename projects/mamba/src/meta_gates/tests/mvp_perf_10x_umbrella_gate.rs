@@ -148,10 +148,7 @@ fn r2_geomean_at_least_10x() {
         c["geomean_below_target_failure_kind"].as_str(),
         Some("mvp_perf_geomean_below_10x_target")
     );
-    assert_eq!(
-        c["geomean_below_target_exit_code"].as_integer(),
-        Some(315)
-    );
+    assert_eq!(c["geomean_below_target_exit_code"].as_integer(), Some(315));
     assert_eq!(
         c["geomean_replaced_with_arithmetic_mean_failure_kind"].as_str(),
         Some("mvp_perf_geomean_replaced_with_arithmetic_mean")

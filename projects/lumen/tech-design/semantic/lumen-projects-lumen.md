@@ -2,7 +2,7 @@
 id: semantic-lumen-projects-lumen
 summary: Semantic coverage for "projects/lumen"
 capability_refs:
-  - id: "search"
+  - id: "competitor-feature-parity"
     role: primary
     claim: "query-planner-boolean-eval-roaring-postings"
     coverage: partial
@@ -22,6 +22,23 @@ semantic_domain:
   coverage_kind: semantic
   evidence:
     source_units:
+      - path: "projects/lumen/build.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "main"
+            kind: "function"
+            public: false
+          - name: "short_sha"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "source"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/lumen"
       - path: "projects/lumen/build.sh"
         language: "shell"
         ownership_state: "handwrite"
@@ -78,6 +95,12 @@ element UT_SOURCE_TESTS {
 ```yaml
 coverage_kind: semantic
 changes:
+  - path: "projects/lumen/build.rs"
+    action: modify
+    section: schema
+    description: |
+      Build-time provenance stamping for /version is covered by this root-level semantic TD.
+    impl_mode: hand-written
   - path: "projects/lumen/build.sh"
     action: modify
     section: schema

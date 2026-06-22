@@ -312,15 +312,11 @@ impl<B: Broker, S: SchedulerBackend + 'static> PeriodicScheduler<B, S> {
     #[cfg(feature = "push-receiver")]
     async fn start_external_push(&self) -> Result<(), TaskError> {
         // Validate push_receiver_config is present (required for ExternalPush mode)
-        let push_config = self
-            .config
-            .push_receiver_config
-            .clone()
-            .ok_or_else(|| {
-                TaskError::Configuration(
-                    "push_receiver_config required for ExternalPush mode".to_string(),
-                )
-            })?;
+        let push_config = self.config.push_receiver_config.clone().ok_or_else(|| {
+            TaskError::Configuration(
+                "push_receiver_config required for ExternalPush mode".to_string(),
+            )
+        })?;
 
         // Construct PushReceiver
         #[cfg(feature = "scheduler")]
@@ -389,14 +385,10 @@ impl<B: Broker, S: SchedulerBackend + 'static> PeriodicScheduler<B, S> {
     ) -> Result<super::schedule_monitor::TaskSchedule, TaskError> {
         match &task.schedule {
             #[cfg(feature = "scheduler")]
-            PeriodicSchedule::Cron(expr) => {
-                super::schedule_monitor::TaskSchedule::cron(expr)
-            }
-            PeriodicSchedule::Interval(secs) => {
-                Ok(super::schedule_monitor::TaskSchedule::interval(
-                    Duration::from_secs(*secs),
-                ))
-            }
+            PeriodicSchedule::Cron(expr) => super::schedule_monitor::TaskSchedule::cron(expr),
+            PeriodicSchedule::Interval(secs) => Ok(
+                super::schedule_monitor::TaskSchedule::interval(Duration::from_secs(*secs)),
+            ),
         }
     }
 
@@ -488,9 +480,7 @@ impl<B: Broker, S: SchedulerBackend + 'static> PeriodicScheduler<B, S> {
                             // Best-effort monitor integration (R7)
                             #[cfg(feature = "scheduler")]
                             if let Some(mon) = monitor {
-                                if let Err(e) =
-                                    mon.record_trigger(&task.name, Utc::now())
-                                {
+                                if let Err(e) = mon.record_trigger(&task.name, Utc::now()) {
                                     tracing::warn!(
                                         task_name = %task.name,
                                         error = %e,
@@ -500,11 +490,7 @@ impl<B: Broker, S: SchedulerBackend + 'static> PeriodicScheduler<B, S> {
                             }
                         }
                         Err(e) => {
-                            tracing::error!(
-                                "Failed to publish periodic task {}: {}",
-                                task.name,
-                                e
-                            );
+                            tracing::error!("Failed to publish periodic task {}: {}", task.name, e);
                         }
                     }
                 }
@@ -616,9 +602,9 @@ mod tests {
     // Mock backend and broker for mode selection tests
     // -----------------------------------------------------------------------
 
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use crate::scheduler::backend::{SchedulerBackend, SchedulingMode, TaskScheduleState};
     use crate::broker::{BrokerCapabilities, DeliveryModel};
+    use crate::scheduler::backend::{SchedulerBackend, SchedulingMode, TaskScheduleState};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     /// Mock broker that records publish calls.
     struct MockBroker {
@@ -635,15 +621,32 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::Broker for MockBroker {
-        async fn connect(&self) -> Result<(), crate::TaskError> { Ok(()) }
-        async fn disconnect(&self) -> Result<(), crate::TaskError> { Ok(()) }
-        async fn publish(&self, queue: &str, message: crate::TaskMessage) -> Result<(), crate::TaskError> {
-            self.published.lock().await.push((queue.to_string(), message));
+        async fn connect(&self) -> Result<(), crate::TaskError> {
             Ok(())
         }
-        async fn health_check(&self) -> Result<(), crate::TaskError> { Ok(()) }
-        fn delivery_model(&self) -> DeliveryModel { DeliveryModel::Pull }
-        fn capabilities(&self) -> BrokerCapabilities { BrokerCapabilities::default() }
+        async fn disconnect(&self) -> Result<(), crate::TaskError> {
+            Ok(())
+        }
+        async fn publish(
+            &self,
+            queue: &str,
+            message: crate::TaskMessage,
+        ) -> Result<(), crate::TaskError> {
+            self.published
+                .lock()
+                .await
+                .push((queue.to_string(), message));
+            Ok(())
+        }
+        async fn health_check(&self) -> Result<(), crate::TaskError> {
+            Ok(())
+        }
+        fn delivery_model(&self) -> DeliveryModel {
+            DeliveryModel::Pull
+        }
+        fn capabilities(&self) -> BrokerCapabilities {
+            BrokerCapabilities::default()
+        }
     }
 
     /// Mock self-hosted backend (uses default scheduling_mode → SelfHosted).
@@ -663,7 +666,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl SchedulerBackend for MockSelfHostedBackend {
-        async fn acquire_leader(&self, _ttl: std::time::Duration) -> Result<bool, crate::TaskError> {
+        async fn acquire_leader(
+            &self,
+            _ttl: std::time::Duration,
+        ) -> Result<bool, crate::TaskError> {
             let mut is_leader = self.is_leader.write().await;
             *is_leader = true;
             Ok(true)
@@ -681,8 +687,15 @@ mod tests {
             let states = self.task_states.read().await;
             Ok(states.get(name).cloned().unwrap_or_default())
         }
-        async fn set_task_state(&self, name: &str, state: &TaskScheduleState) -> Result<(), crate::TaskError> {
-            self.task_states.write().await.insert(name.to_string(), state.clone());
+        async fn set_task_state(
+            &self,
+            name: &str,
+            state: &TaskScheduleState,
+        ) -> Result<(), crate::TaskError> {
+            self.task_states
+                .write()
+                .await
+                .insert(name.to_string(), state.clone());
             Ok(())
         }
         // Uses default scheduling_mode() → SelfHosted
@@ -722,7 +735,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl SchedulerBackend for MockExternalPushBackend {
-        async fn acquire_leader(&self, _ttl: std::time::Duration) -> Result<bool, crate::TaskError> {
+        async fn acquire_leader(
+            &self,
+            _ttl: std::time::Duration,
+        ) -> Result<bool, crate::TaskError> {
             Ok(true)
         }
         async fn renew_leader(&self, _ttl: std::time::Duration) -> Result<bool, crate::TaskError> {
@@ -735,14 +751,24 @@ mod tests {
             let states = self.task_states.read().await;
             Ok(states.get(name).cloned().unwrap_or_default())
         }
-        async fn set_task_state(&self, name: &str, state: &TaskScheduleState) -> Result<(), crate::TaskError> {
-            self.task_states.write().await.insert(name.to_string(), state.clone());
+        async fn set_task_state(
+            &self,
+            name: &str,
+            state: &TaskScheduleState,
+        ) -> Result<(), crate::TaskError> {
+            self.task_states
+                .write()
+                .await
+                .insert(name.to_string(), state.clone());
             Ok(())
         }
         fn scheduling_mode(&self) -> SchedulingMode {
             SchedulingMode::ExternalPush
         }
-        async fn register_external_schedule(&self, _task: &PeriodicTask) -> Result<(), crate::TaskError> {
+        async fn register_external_schedule(
+            &self,
+            _task: &PeriodicTask,
+        ) -> Result<(), crate::TaskError> {
             if self.fail_register.load(Ordering::SeqCst) {
                 return Err(crate::TaskError::Authentication(
                     "K8s API 403 Forbidden".to_string(),
@@ -790,7 +816,10 @@ mod tests {
         let config = PeriodicSchedulerConfig::default();
         assert_eq!(config.leader_ttl, DEFAULT_LEADER_TTL);
         assert_eq!(config.follower_sleep, DEFAULT_FOLLOWER_SLEEP);
-        assert_eq!(config.leader_renew_interval, std::time::Duration::from_secs(5));
+        assert_eq!(
+            config.leader_renew_interval,
+            std::time::Duration::from_secs(5)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1115,9 +1144,18 @@ mod tests {
             ..Default::default()
         };
         let scheduler = PeriodicScheduler::with_config(broker, backend, config);
-        assert_eq!(scheduler.config.leader_ttl, std::time::Duration::from_secs(30));
-        assert_eq!(scheduler.config.follower_sleep, std::time::Duration::from_secs(10));
-        assert_eq!(scheduler.config.leader_renew_interval, std::time::Duration::from_secs(8));
+        assert_eq!(
+            scheduler.config.leader_ttl,
+            std::time::Duration::from_secs(30)
+        );
+        assert_eq!(
+            scheduler.config.follower_sleep,
+            std::time::Duration::from_secs(10)
+        );
+        assert_eq!(
+            scheduler.config.leader_renew_interval,
+            std::time::Duration::from_secs(8)
+        );
     }
 
     // -----------------------------------------------------------------------

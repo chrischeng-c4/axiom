@@ -1,7 +1,7 @@
 ---
 id: lumen-cli-consolidation
 summary: Consolidate lumen into a single agent-first CLI — serve / spec / llm / k8s operator — removing the openapi-dump, bench, and consumer sibling binaries and folding the operator behind the `operator` feature gate so a non-operator build is kube-free.
-fill_sections: [logic, cli, manifest, unit-test]
+fill_sections: [logic, cli, manifest, unit-test, changes]
 ---
 
 # TD: lumen CLI consolidation (single binary)
@@ -67,7 +67,10 @@ cli:
       args:
         - {name: "--host", env: "LUMEN_HOST", default: "127.0.0.1"}
         - {name: "--port", env: "LUMEN_PORT", default: "7373"}
-        - {name: "--wal", env: "LUMEN_WAL", default: "embedded", choices: ["embedded", "nats"]}
+        - {name: "--wal", env: "LUMEN_WAL", default: "embedded", choices: ["embedded", "nats", "relay"]}
+        - {name: "--relay-url", env: "LUMEN_RELAY_URL", default: "http://localhost:7000"}
+        - {name: "--relay-subject", env: "LUMEN_RELAY_SUBJECT", default: "lumen-wal"}
+        - {name: "--relay-subscriber-id", env: "LUMEN_RELAY_SUBSCRIBER_ID", default: "POD_NAME/HOSTNAME"}
         - {name: "--persistence", env: "LUMEN_PERSISTENCE", default: "cbor", choices: ["cbor", "segment"]}
     - name: spec
       about: "Print the machine-readable integration contract (offline, no server)."
@@ -182,6 +185,33 @@ requirementDiagram
     operator_dispatch_test - verifies -> operator_subcommand
     operator_dispatch_test - verifies -> operator_feature_gate
     parity_test - verifies -> output_parity
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: "Single-binary dispatch flow for serve/spec/llm/k8s subcommands."
+  - path: projects/lumen/src/bin/lumen.rs
+    action: modify
+    section: cli
+    impl_mode: hand-written
+    description: "Agent-facing lumen CLI command tree and argument surface."
+  - path: projects/lumen/Cargo.toml
+    action: modify
+    section: manifest
+    impl_mode: hand-written
+    description: "Operator dependencies remain feature-gated behind the operator feature."
+  - path: projects/lumen/tests/spec_cli.rs
+    action: modify
+    section: unit-test
+    impl_mode: hand-written
+    description: "CLI/spec/LLM parity and operator dispatch test coverage."
 ```
 
 # Reviews

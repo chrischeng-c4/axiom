@@ -1,3 +1,6 @@
+use super::super::rc::MbObject;
+use super::super::rc::ObjData;
+use super::super::value::MbValue;
 /// http.cookies module for Mamba (#1477, #1265 Goal 2 / 3-gate).
 ///
 /// Provides the CPython 3.12 `http.cookies` 5-entry public surface
@@ -42,11 +45,7 @@
 ///   - `Morsel` is not a real `dict` subclass; the reserved keys
 ///     (`expires`, `path`, `comment`, etc.) are not enforced.
 ///   - `CookieError` is a class shell, not a real exception type.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
-use super::super::rc::ObjData;
 
 // ── Variadic dispatchers ──
 
@@ -59,10 +58,10 @@ macro_rules! disp_variadic {
     };
 }
 
-disp_variadic!(d_base_cookie,   mb_http_cookies_base_cookie_new);
-disp_variadic!(d_cookie,        mb_http_cookies_cookie_new);
-disp_variadic!(d_cookie_error,  mb_http_cookies_cookie_error_new);
-disp_variadic!(d_morsel,        mb_http_cookies_morsel_new);
+disp_variadic!(d_base_cookie, mb_http_cookies_base_cookie_new);
+disp_variadic!(d_cookie, mb_http_cookies_cookie_new);
+disp_variadic!(d_cookie_error, mb_http_cookies_cookie_error_new);
+disp_variadic!(d_morsel, mb_http_cookies_morsel_new);
 disp_variadic!(d_simple_cookie, mb_http_cookies_simple_cookie_new);
 
 /// No-op method body for surface-only methods (`load`, `value_encode`,
@@ -127,7 +126,11 @@ fn set_field(inst: MbValue, key: &str, val: MbValue) {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -186,10 +189,7 @@ fn quote_val(s: &str) -> String {
             out.push_str("\\\"");
         } else if c == '\\' {
             out.push_str("\\\\");
-        } else if (c as u32) < 256
-            && !LEGAL_CHARS.contains(c)
-            && !UNESCAPED_EXTRA.contains(c)
-        {
+        } else if (c as u32) < 256 && !LEGAL_CHARS.contains(c) && !UNESCAPED_EXTRA.contains(c) {
             out.push_str(&format!("\\{:03o}", c as u32));
         } else {
             out.push(c);
@@ -211,7 +211,8 @@ fn unquote_val(s: &str) -> String {
     let mut out = String::with_capacity(inner.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 3 < bytes.len()
+        if bytes[i] == b'\\'
+            && i + 3 < bytes.len()
             && (b'0'..=b'3').contains(&bytes[i + 1])
             && (b'0'..=b'7').contains(&bytes[i + 2])
             && (b'0'..=b'7').contains(&bytes[i + 3])
@@ -260,8 +261,7 @@ fn is_flag_attr(key: &str) -> bool {
 /// CPython `_CookiePattern` key charset (3.12): includes `=`, `,`, and most
 /// punctuation; notably excludes whitespace, `;`, `"`, and `[`/`]`.
 fn is_parse_key_char(c: char) -> bool {
-    c.is_ascii_alphanumeric()
-        || "!#%&'~_`><@,:/$*+-.^|)(?}{=".contains(c)
+    c.is_ascii_alphanumeric() || "!#%&'~_`><@,:/$*+-.^|)(?}{=".contains(c)
 }
 
 fn is_parse_value_char(c: char) -> bool {
@@ -275,7 +275,11 @@ fn try_parse_gmt_date(s: &str) -> Option<usize> {
     if b.len() < 3 + 2 + 9 + 1 + 8 + 4 {
         return None;
     }
-    if !(b[0].is_ascii_alphanumeric() && b[1].is_ascii_alphanumeric() && b[2].is_ascii_alphanumeric() && b[3] == b',') {
+    if !(b[0].is_ascii_alphanumeric()
+        && b[1].is_ascii_alphanumeric()
+        && b[2].is_ascii_alphanumeric()
+        && b[3] == b',')
+    {
         return None;
     }
     if !b[4].is_ascii_whitespace() {
@@ -286,14 +290,20 @@ fn try_parse_gmt_date(s: &str) -> Option<usize> {
         if b.len() < date_end + 1 + 8 + 4 {
             continue;
         }
-        if !b[5..date_end].iter().all(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || *c == b'-') {
+        if !b[5..date_end]
+            .iter()
+            .all(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || *c == b'-')
+        {
             continue;
         }
         if !b[date_end].is_ascii_whitespace() {
             continue;
         }
         let time_end = date_end + 1 + 8;
-        if !b[date_end + 1..time_end].iter().all(|c| c.is_ascii_digit() || *c == b':') {
+        if !b[date_end + 1..time_end]
+            .iter()
+            .all(|c| c.is_ascii_digit() || *c == b':')
+        {
             continue;
         }
         if &b[time_end..time_end + 4] == b" GMT" {
@@ -353,7 +363,7 @@ fn parse_cookie_string(input: &str) -> Result<Vec<ParsedItem>, ()> {
             // value: look ahead past the '='.
             while i < n && chars[i].is_whitespace() && chars[i] != ';' {
                 // CPython allows whitespace between '=' and the value.
-                if chars[i] == '\n' || chars[i] == '\r' { }
+                if chars[i] == '\n' || chars[i] == '\r' {}
                 i += 1;
             }
             if i < n && chars[i] == '"' {
@@ -526,10 +536,14 @@ fn make_morsel() -> MbValue {
 /// non-empty reserved attribute (sorted by key, optionally filtered by
 /// `attrs`), with the expires/max-age/comment/flag special cases.
 fn morsel_output_string(self_v: MbValue, attrs: Option<&[String]>) -> String {
-    let key = extract_str(get_field(self_v, "key").unwrap_or_else(MbValue::none))
-        .unwrap_or_default();
+    let key =
+        extract_str(get_field(self_v, "key").unwrap_or_else(MbValue::none)).unwrap_or_default();
     let coded = get_field(self_v, "coded_value").unwrap_or_else(MbValue::none);
-    let coded_s = if coded.is_none() { String::new() } else { value_str(coded) };
+    let coded_s = if coded.is_none() {
+        String::new()
+    } else {
+        value_str(coded)
+    };
     let mut result = vec![format!("{key}={coded_s}")];
     // Sorted (key, value) attribute pairs from the backing dict.
     let data = cookie_data(self_v);
@@ -551,17 +565,26 @@ fn morsel_output_string(self_v: MbValue, attrs: Option<&[String]>) -> String {
                 continue;
             }
         }
-        let header = RESERVED.iter().find(|(rk, _)| *rk == k)
-            .map(|(_, h)| *h).unwrap_or("");
+        let header = RESERVED
+            .iter()
+            .find(|(rk, _)| *rk == k)
+            .map(|(_, h)| *h)
+            .unwrap_or("");
         if header.is_empty() {
             continue;
         }
         if k == "expires" && v.as_int().is_some() && !v.is_bool() {
-            result.push(format!("{header}={}", cookie_getdate(v.as_int().unwrap_or(0))));
+            result.push(format!(
+                "{header}={}",
+                cookie_getdate(v.as_int().unwrap_or(0))
+            ));
         } else if k == "max-age" && v.as_int().is_some() && !v.is_bool() {
             result.push(format!("{header}={}", v.as_int().unwrap_or(0)));
         } else if k == "comment" && extract_str(v).is_some() {
-            result.push(format!("{header}={}", quote_val(&extract_str(v).unwrap_or_default())));
+            result.push(format!(
+                "{header}={}",
+                quote_val(&extract_str(v).unwrap_or_default())
+            ));
         } else if is_flag_attr(&k) {
             if super::super::builtins::mb_is_truthy(v) != 0 {
                 result.push(header.to_string());
@@ -595,7 +618,10 @@ fn attrs_filter(items: &[MbValue]) -> Option<Vec<String>> {
 
 unsafe extern "C" fn morsel_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let key = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let key = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let data = cookie_data(self_v);
     // Reserved keys are always present (default ""); a non-reserved miss
     // returns None rather than raising, matching the prior shell's
@@ -605,7 +631,10 @@ unsafe extern "C" fn morsel_getitem(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn morsel_setitem(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let key = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let key = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let val = items.get(1).copied().unwrap_or_else(MbValue::none);
     let lower = key.to_lowercase();
     if !RESERVED.iter().any(|(k, _)| *k == lower) {
@@ -630,7 +659,10 @@ unsafe extern "C" fn morsel_items(self_v: MbValue, _args: MbValue) -> MbValue {
 
 unsafe extern "C" fn morsel_setdefault(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let key = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let key = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let default = items.get(1).copied().unwrap_or_else(MbValue::none);
     let data = cookie_data(self_v);
     super::super::dict_ops::mb_dict_setdefault(data, new_str(&key.to_lowercase()), default)
@@ -664,7 +696,10 @@ unsafe extern "C" fn morsel_update(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn morsel_isreservedkey(_self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let key = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let key = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let lower = key.to_lowercase();
     MbValue::from_bool(RESERVED.iter().any(|(k, _)| *k == lower))
 }
@@ -678,15 +713,22 @@ unsafe extern "C" fn morsel_outputstring(self_v: MbValue, args: MbValue) -> MbVa
 unsafe extern "C" fn morsel_output(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
     let attrs = attrs_filter(&items);
-    let header = items.get(1)
+    let header = items
+        .get(1)
         .and_then(|v| extract_str(*v))
         .unwrap_or_else(|| "Set-Cookie:".to_string());
-    new_str(&format!("{header} {}", morsel_output_string(self_v, attrs.as_deref())))
+    new_str(&format!(
+        "{header} {}",
+        morsel_output_string(self_v, attrs.as_deref())
+    ))
 }
 
 /// `str(Morsel)` == `Morsel.output()`.
 unsafe extern "C" fn morsel_str(self_v: MbValue, _args: MbValue) -> MbValue {
-    new_str(&format!("Set-Cookie: {}", morsel_output_string(self_v, None)))
+    new_str(&format!(
+        "Set-Cookie: {}",
+        morsel_output_string(self_v, None)
+    ))
 }
 
 fn morsel_js_output_string(self_v: MbValue, attrs: Option<&[String]>) -> String {
@@ -708,7 +750,10 @@ unsafe extern "C" fn morsel_js_output(self_v: MbValue, args: MbValue) -> MbValue
 /// validation.
 unsafe extern "C" fn morsel_set(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let key = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let key = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let val = items.get(1).copied().unwrap_or_else(MbValue::none);
     let coded = items.get(2).copied().unwrap_or_else(MbValue::none);
     let lower = key.to_lowercase();
@@ -776,7 +821,11 @@ fn cookie_set_inner(self_v: MbValue, key: &str, real: MbValue, coded: MbValue) -
     }
     let data = cookie_data(self_v);
     let existing = super::super::dict_ops::mb_dict_get(data, new_str(key), MbValue::none());
-    let morsel = if existing.is_none() { make_morsel() } else { existing };
+    let morsel = if existing.is_none() {
+        make_morsel()
+    } else {
+        existing
+    };
     set_field(morsel, "key", new_str(key));
     set_field(morsel, "value", real);
     set_field(morsel, "coded_value", coded);
@@ -786,7 +835,10 @@ fn cookie_set_inner(self_v: MbValue, key: &str, real: MbValue, coded: MbValue) -
 
 unsafe extern "C" fn cookie_setitem(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let key = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let key = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let raw = items.get(1).copied().unwrap_or_else(MbValue::none);
     // SimpleCookie.value_encode: strval = str(val); coded = _quote(strval).
     let strval = value_str(raw);
@@ -797,15 +849,15 @@ unsafe extern "C" fn cookie_setitem(self_v: MbValue, args: MbValue) -> MbValue {
 
 unsafe extern "C" fn cookie_getitem(self_v: MbValue, args: MbValue) -> MbValue {
     let items = seq_items(args);
-    let key = items.first().and_then(|v| extract_str(*v)).unwrap_or_default();
+    let key = items
+        .first()
+        .and_then(|v| extract_str(*v))
+        .unwrap_or_default();
     let data = cookie_data(self_v);
     let found = super::super::dict_ops::mb_dict_get(data, new_str(&key), MbValue::none());
     if found.is_none() {
         // CPython: dict subscript miss raises KeyError.
-        super::super::exception::mb_raise(
-            new_str("KeyError"),
-            new_str(&format!("'{key}'")),
-        );
+        super::super::exception::mb_raise(new_str("KeyError"), new_str(&format!("'{key}'")));
         return MbValue::none();
     }
     found
@@ -847,16 +899,22 @@ unsafe extern "C" fn cookie_output(self_v: MbValue, args: MbValue) -> MbValue {
         .collect();
     let kwargs = seq_items(args).into_iter().find(|v| is_kwargs_dict(*v));
     let attrs = attrs_filter(&call_items).or_else(|| {
-        kwargs
-            .and_then(|d| dict_str_get(d, "attrs"))
-            .map(|v| {
-                seq_items(v).into_iter().filter_map(extract_str)
-                    .map(|s| s.to_lowercase()).collect()
-            })
+        kwargs.and_then(|d| dict_str_get(d, "attrs")).map(|v| {
+            seq_items(v)
+                .into_iter()
+                .filter_map(extract_str)
+                .map(|s| s.to_lowercase())
+                .collect()
+        })
     });
-    let header = call_items.get(1)
+    let header = call_items
+        .get(1)
         .and_then(|v| extract_str(*v))
-        .or_else(|| kwargs.and_then(|d| dict_str_get(d, "header")).and_then(extract_str))
+        .or_else(|| {
+            kwargs
+                .and_then(|d| dict_str_get(d, "header"))
+                .and_then(extract_str)
+        })
         .unwrap_or_else(|| "Set-Cookie:".to_string());
     let sep = kwargs
         .and_then(|d| dict_str_get(d, "sep"))
@@ -864,7 +922,10 @@ unsafe extern "C" fn cookie_output(self_v: MbValue, args: MbValue) -> MbValue {
         .unwrap_or_else(|| "\r\n".to_string());
     let mut lines: Vec<String> = Vec::new();
     for (_k, morsel) in sorted_morsels(self_v) {
-        lines.push(format!("{header} {}", morsel_output_string(morsel, attrs.as_deref())));
+        lines.push(format!(
+            "{header} {}",
+            morsel_output_string(morsel, attrs.as_deref())
+        ));
     }
     new_str(&lines.join(&sep))
 }
@@ -882,13 +943,16 @@ unsafe extern "C" fn cookie_js_output(self_v: MbValue, args: MbValue) -> MbValue
 
 /// `repr(SimpleCookie)` -> `<SimpleCookie: k='v' k2='v2'>` (sorted keys).
 unsafe extern "C" fn cookie_repr(self_v: MbValue, _args: MbValue) -> MbValue {
-    let class_name = self_v.as_ptr().map(|ptr| {
-        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-            class_name.clone()
-        } else {
-            String::new()
-        }
-    }).unwrap_or_default();
+    let class_name = self_v
+        .as_ptr()
+        .map(|ptr| {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                class_name.clone()
+            } else {
+                String::new()
+            }
+        })
+        .unwrap_or_default();
     let mut parts: Vec<String> = Vec::new();
     for (k, morsel) in sorted_morsels(self_v) {
         let value = get_field(morsel, "value").unwrap_or_else(MbValue::none);
@@ -933,8 +997,8 @@ unsafe extern "C" fn cookie_load(self_v: MbValue, args: MbValue) -> MbValue {
                     if cookie_set_inner(self_v, &key, new_str(&real), new_str(&coded)).is_err() {
                         return MbValue::none(); // CookieError pending
                     }
-                    current = super::super::dict_ops::mb_dict_get(
-                        data, new_str(&key), MbValue::none());
+                    current =
+                        super::super::dict_ops::mb_dict_get(data, new_str(&key), MbValue::none());
                 }
                 ParsedItem::Attr(key, value) => {
                     if current.is_none() {
@@ -946,7 +1010,10 @@ unsafe extern "C" fn cookie_load(self_v: MbValue, args: MbValue) -> MbValue {
                         return MbValue::none();
                     }
                     super::super::dict_ops::mb_dict_setitem(
-                        cookie_data(current), new_str(&lower), value);
+                        cookie_data(current),
+                        new_str(&lower),
+                        value,
+                    );
                 }
             }
         }
@@ -974,12 +1041,18 @@ unsafe extern "C" fn cookie_load(self_v: MbValue, args: MbValue) -> MbValue {
 /// True iff the value is a dict (mamba folds keyword args into one trailing
 /// dict positional).
 fn is_kwargs_dict(v: MbValue) -> bool {
-    v.as_ptr().map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) }).unwrap_or(false)
+    v.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
 }
 
 fn dict_str_get(d: MbValue, key: &str) -> Option<MbValue> {
     let v = super::super::dict_ops::mb_dict_get(d, new_str(key), MbValue::none());
-    if v.is_none() { None } else { Some(v) }
+    if v.is_none() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 /// Register the http.cookies module under its dotted name. Also wire it
@@ -989,10 +1062,10 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("BaseCookie",   d_base_cookie   as *const () as usize),
-        ("Cookie",       d_cookie        as *const () as usize),
-        ("CookieError",  d_cookie_error  as *const () as usize),
-        ("Morsel",       d_morsel        as *const () as usize),
+        ("BaseCookie", d_base_cookie as *const () as usize),
+        ("Cookie", d_cookie as *const () as usize),
+        ("CookieError", d_cookie_error as *const () as usize),
+        ("Morsel", d_morsel as *const () as usize),
         ("SimpleCookie", d_simple_cookie as *const () as usize),
     ];
     for (name, addr) in dispatchers {
@@ -1014,10 +1087,7 @@ pub fn register() {
             r.get("http.cookies")
                 .map(|m| super::super::module::module_to_value(m))
         };
-        if let (Some(v), Some(http_mod)) = (
-            cookies_val,
-            mods.borrow_mut().get_mut("http"),
-        ) {
+        if let (Some(v), Some(http_mod)) = (cookies_val, mods.borrow_mut().get_mut("http")) {
             http_mod.attrs.insert("cookies".to_string(), v);
         }
     });
@@ -1062,23 +1132,27 @@ fn register_cookie_classes() {
     // Morsel (per-cookie record): a case-insensitive reserved-key mapping plus
     // the OutputString / output / js_output serializers (CPython 3.12).
     // `set` / `copy` retain surface presence as no-op stubs.
-    register_cookie_method_class("Morsel", &[], &[
-        ("__getitem__", morsel_getitem as usize),
-        ("__setitem__", morsel_setitem as usize),
-        ("__eq__", morsel_eq as usize),
-        ("__str__", morsel_str as usize),
-        ("keys", morsel_keys as usize),
-        ("values", morsel_values as usize),
-        ("items", morsel_items as usize),
-        ("setdefault", morsel_setdefault as usize),
-        ("update", morsel_update as usize),
-        ("isReservedKey", morsel_isreservedkey as usize),
-        ("OutputString", morsel_outputstring as usize),
-        ("output", morsel_output as usize),
-        ("js_output", morsel_js_output as usize),
-        ("set", morsel_set as usize),
-        ("copy", morsel_copy as usize),
-    ]);
+    register_cookie_method_class(
+        "Morsel",
+        &[],
+        &[
+            ("__getitem__", morsel_getitem as usize),
+            ("__setitem__", morsel_setitem as usize),
+            ("__eq__", morsel_eq as usize),
+            ("__str__", morsel_str as usize),
+            ("keys", morsel_keys as usize),
+            ("values", morsel_values as usize),
+            ("items", morsel_items as usize),
+            ("setdefault", morsel_setdefault as usize),
+            ("update", morsel_update as usize),
+            ("isReservedKey", morsel_isreservedkey as usize),
+            ("OutputString", morsel_outputstring as usize),
+            ("output", morsel_output as usize),
+            ("js_output", morsel_js_output as usize),
+            ("set", morsel_set as usize),
+            ("copy", morsel_copy as usize),
+        ],
+    );
 
     // Morsel._reserved: a dict mapping each lowercase reserved key to its
     // header rendering. Built in the same order as the per-Morsel backing dict
@@ -1087,17 +1161,25 @@ fn register_cookie_classes() {
     for (k, hdr) in RESERVED {
         super::super::dict_ops::mb_dict_setitem(reserved, new_str(k), new_str(hdr));
     }
-    super::super::class::mb_class_set_class_attr(
-        new_str("Morsel"), new_str("_reserved"), reserved);
+    super::super::class::mb_class_set_class_attr(new_str("Morsel"), new_str("_reserved"), reserved);
 
     // Map each constructor func addr -> its class name so the func->native-class
     // method bridge in mb_getattr can find the class for `Class.method`.
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
-        map.insert(d_base_cookie   as *const () as usize as u64, "BaseCookie".to_string());
-        map.insert(d_cookie_error  as *const () as usize as u64, "CookieError".to_string());
-        map.insert(d_simple_cookie as *const () as usize as u64, "SimpleCookie".to_string());
-        map.insert(d_morsel        as *const () as usize as u64, "Morsel".to_string());
+        map.insert(
+            d_base_cookie as *const () as usize as u64,
+            "BaseCookie".to_string(),
+        );
+        map.insert(
+            d_cookie_error as *const () as usize as u64,
+            "CookieError".to_string(),
+        );
+        map.insert(
+            d_simple_cookie as *const () as usize as u64,
+            "SimpleCookie".to_string(),
+        );
+        map.insert(d_morsel as *const () as usize as u64, "Morsel".to_string());
     });
 }
 
@@ -1187,7 +1269,8 @@ mod tests {
 
     fn cookies_attr(name: &str) -> Option<MbValue> {
         super::super::super::module::MODULES.with(|mods| {
-            mods.borrow().get("http.cookies")
+            mods.borrow()
+                .get("http.cookies")
                 .and_then(|m| m.attrs.get(name).copied())
         })
     }
@@ -1196,10 +1279,16 @@ mod tests {
     fn test_register_installs_full_surface() {
         register();
         for name in [
-            "BaseCookie", "Cookie", "CookieError", "Morsel", "SimpleCookie",
+            "BaseCookie",
+            "Cookie",
+            "CookieError",
+            "Morsel",
+            "SimpleCookie",
         ] {
-            assert!(cookies_attr(name).is_some(),
-                "http.cookies module missing entry: {name}");
+            assert!(
+                cookies_attr(name).is_some(),
+                "http.cookies module missing entry: {name}"
+            );
         }
     }
 

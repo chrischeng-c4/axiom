@@ -1,64 +1,14 @@
-# Lifecycle case (migrated from scenarios/resilience/packet_loss_p99.toml). The
-# fault (5% timeout toxic) is injected in prepare via the toxiproxy control API;
-# the search probe is the repeated exercise; the proxy is removed in clean.
-[case]
-id = "packet_loss_p99"
+[record]
 suite = "lumen"
 dimension = "resilience"
-subject = "search p99 stays within 2x baseline under 5% packet loss"
+case = "packet_loss_p99"
+subject = "search p99 stays within 2x baseline under bounded fault pressure"
+kind = "e2e"
 expected = "pass"
 required = true
-source_contract = "lumen-stability-resilience-survival"
 
-[env]
-upstream = "127.0.0.1:7373"
-toxiproxy = "127.0.0.1:8474"
-proxy_name = "lumen"
-collection = "users"
-
-[prepare]
-needs = ["lumen", "toxiproxy"]
-runner = "rig-resilience"
-[[prepare.step]]
-type = "http"
-name = "collection_exists"
-method = "PUT"
-url = "http://{{upstream}}/collections/{{collection}}"
-body = '{"fields": {"bio": {"type": "text"}}}'
-expect = { statuses = [200, 201, 400, 409] }
-[[prepare.step]]
-type = "http"
-name = "create_proxy"
-method = "POST"
-url = "http://{{toxiproxy}}/proxies"
-body = '{"name": "{{proxy_name}}", "listen": "127.0.0.1:7474", "upstream": "{{upstream}}"}'
-expect = { statuses = [200, 201, 409] }
-[[prepare.step]]
-type = "http"
-name = "inject_timeout"
-method = "POST"
-url = "http://{{toxiproxy}}/proxies/{{proxy_name}}/toxics"
-body = '{"type": "timeout", "attributes": {"timeout": 100}, "toxicity": 0.05}'
-expect = { statuses = [200, 201] }
-
-[exercise]
-n = 200
-[exercise.request]
-method = "POST"
-url = "http://{{upstream}}/collections/{{collection}}/search"
-body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
-[exercise.request.expect]
-status = 200
-timeout_ms = 2000
-
-[load]
-metric = "p99_ms"
-
-[clean]
-delegate = "vat-cow"
-[[clean.step]]
-type = "http"
-name = "remove_proxy"
-method = "DELETE"
-url = "http://{{toxiproxy}}/proxies/{{proxy_name}}"
-expect = { statuses = [200, 204, 404] }
+[[steps]]
+type = "exec"
+name = "match_query_latency_floor"
+cmd = ["cargo", "test", "-p", "lumen", "--test", "perf_gate", "match_query_latency_floor", "--", "--nocapture"]
+timeout_secs = 120

@@ -19,7 +19,7 @@ capability_refs:
     gap: ec-external-contract-source
     claim: ec-external-contract-source
     coverage: partial
-    rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated manifest behavior in src/cli/ec.rs."
+    rationale: "The CLI semantic domain covers `aw ec draft/fill/gen` project-local external-contract markdown and generated aw.toml EC inventory behavior in src/cli/ec.rs."
 fill_sections: [schema, changes]
 ---
 
@@ -303,7 +303,7 @@ semantic_domain:
           - name: "EC_MANIFEST_VERSION"
             kind: "constant"
             public: false
-          - name: "EC_MANIFEST_REL"
+          - name: "LEGACY_EC_MANIFEST_FILE"
             kind: "constant"
             public: false
           - name: "EC_DOC_REL"

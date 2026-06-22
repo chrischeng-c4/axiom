@@ -1,3 +1,5 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// pydantic module for Mamba (#1495).
 ///
 /// Minimal callable-dispatcher shim covering the four most-used
@@ -11,10 +13,7 @@
 /// surface) is tracked separately under #1495; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the 3p
 /// conformance issues have closed against.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 unsafe extern "C" fn dispatch_base_model(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
@@ -24,7 +23,10 @@ unsafe extern "C" fn dispatch_field(_args_ptr: *const MbValue, _nargs: usize) ->
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_validation_error(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_validation_error(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
@@ -43,7 +45,10 @@ pub fn register() {
     attrs.insert("Field".into(), MbValue::from_func(addr_field));
 
     let addr_validation_error = dispatch_validation_error as *const () as usize;
-    attrs.insert("ValidationError".into(), MbValue::from_func(addr_validation_error));
+    attrs.insert(
+        "ValidationError".into(),
+        MbValue::from_func(addr_validation_error),
+    );
 
     let addr_type_adapter = dispatch_type_adapter as *const () as usize;
     attrs.insert("TypeAdapter".into(), MbValue::from_func(addr_type_adapter));
@@ -56,7 +61,10 @@ pub fn register() {
         set.insert(addr_type_adapter as u64);
     });
 
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("VERSION".into(), MbValue::from_ptr(MbObject::new_str("2.11.9".to_string())));
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "VERSION".into(),
+        MbValue::from_ptr(MbObject::new_str("2.11.9".to_string())),
+    );
     super::register_module("pydantic", attrs);
 }

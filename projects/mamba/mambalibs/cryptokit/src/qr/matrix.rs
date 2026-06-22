@@ -32,11 +32,7 @@ impl Cell {
 
 /// Build the complete QR matrix for the given version, EC level, and codewords.
 /// Returns a 2D boolean grid where `true` = dark module.
-pub fn build_matrix(
-    version: u8,
-    ec: EcLevel,
-    data_with_ec: &[u8],
-) -> Vec<Vec<bool>> {
+pub fn build_matrix(version: u8, ec: EcLevel, data_with_ec: &[u8]) -> Vec<Vec<bool>> {
     let size = tables::modules_per_side(version);
     let mut grid = vec![vec![Cell::Empty; size]; size];
 
@@ -285,12 +281,7 @@ fn place_data_bits(grid: &mut [Vec<Cell>], size: usize, codewords: &[u8]) {
 // ── Masking ──────────────────────────────────────────────
 
 /// Evaluate all 8 mask patterns and return the best one (lowest penalty).
-fn select_best_mask(
-    grid: &[Vec<Cell>],
-    size: usize,
-    version: u8,
-    ec: EcLevel,
-) -> u8 {
+fn select_best_mask(grid: &[Vec<Cell>], size: usize, version: u8, ec: EcLevel) -> u8 {
     let mut best_mask = 0u8;
     let mut best_penalty = u32::MAX;
 
@@ -302,7 +293,8 @@ fn select_best_mask(
             write_version_info(&mut test, size, version);
         }
 
-        let bool_grid: Vec<Vec<bool>> = test.iter()
+        let bool_grid: Vec<Vec<bool>> = test
+            .iter()
             .map(|row| row.iter().map(|c| c.is_dark()).collect())
             .collect();
         let penalty = evaluate_penalty(&bool_grid, size);

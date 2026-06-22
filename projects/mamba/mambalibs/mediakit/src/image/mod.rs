@@ -25,6 +25,9 @@ pub use filter::{canny, gaussian_blur, sharpen, sobel_edges};
 pub use histogram::{clahe, compute_histogram, equalize};
 pub use io::{imdecode, imencode, imread, imwrite, ImageError};
 pub use morphology::{dilate, erode, median_blur};
-pub use ops::{crop, flip_horizontal, flip_vertical, resize, resize_bilinear, resize_bicubic, rgb_to_grayscale, rotate90};
+pub use ops::{
+    crop, flip_horizontal, flip_vertical, resize, resize_bicubic, resize_bilinear,
+    rgb_to_grayscale, rotate90,
+};
 pub use transform::{adjust_brightness, adjust_contrast, histogram_equalize, threshold};
 pub use types::{Image, PixelFormat};

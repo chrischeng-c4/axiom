@@ -112,8 +112,8 @@ mod tests {
         // canonical key.
         let s = ReinstallScope::selective(["Foo.Bar"]);
         assert!(s.should_reinstall("foo-bar"));
-        assert!(s.should_reinstall("foo_bar")
-            || s.should_reinstall("foo-bar")); // tolerate normalization choice
+        assert!(s.should_reinstall("foo_bar") || s.should_reinstall("foo-bar"));
+        // tolerate normalization choice
     }
 
     #[test]

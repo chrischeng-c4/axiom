@@ -1,10 +1,11 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
-//! The full-stack proof: two independent lumen serving nodes backed by
+//! Legacy full-stack proof: two independent lumen serving nodes backed by
 //! the SAME NATS write log. Write through node A's HTTP API; read it
 //! back through node B's HTTP API. This exercises the entire data plane
 //! end to end — write handler → coordinator → NATS publish → both nodes'
-//! apply loops → B's local index → B's read handler.
+//! apply loops → B's local index → B's read handler. RelayWal is the current
+//! deployment default; this preserves compatibility coverage for `--wal nats`.
 //!
 //! Run a JetStream server first: `nats-server -js` (or point
 //! `LUMEN_TEST_NATS_URL` at one). Skips if unavailable.
@@ -88,7 +89,7 @@ async fn write_on_node_a_is_readable_on_node_b() {
         return;
     }
 
-    // Two nodes, one shared NATS log.
+    // Two nodes, one shared legacy NATS log.
     let wal_a: SharedWal = Arc::new(
         NatsWal::connect_with_config(&nats_url(), config.clone())
             .await
@@ -123,7 +124,7 @@ async fn write_on_node_a_is_readable_on_node_b() {
     assert_eq!(search_total(&node_a, "email", "a@x.com").await, 2);
 
     // Node B — a DIFFERENT process-equivalent with its own engine —
-    // converges by tailing the same NATS log. THIS is the payoff.
+    // converges by tailing the same legacy NATS log.
     assert!(
         wait_total(&node_b, "email", "a@x.com", 2).await,
         "node B did not converge from the shared NATS log"

@@ -1,3 +1,6 @@
+use super::super::dict_ops::DictKey;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// http.cookiejar module for Mamba (#1478, #1265 Goal 2 / 3-gate).
 ///
 /// Provides the CPython 3.12 `http.cookiejar` 8-entry public surface
@@ -47,11 +50,7 @@
 ///     `time2isoz`, `time2netscape`, `parse_ns_headers`,
 ///     `split_header_words`, `join_header_words`, ...) are NOT exposed;
 ///     the surface JSON denominator only requires the 8 class entries.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
-use super::super::dict_ops::DictKey;
 
 // ── Small value helpers ──
 
@@ -65,14 +64,22 @@ fn new_list(items: Vec<MbValue>) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
 /// Truthiness of a stored field: None and False are falsy, everything else truthy.
 fn is_truthy(val: MbValue) -> bool {
-    if val.is_none() { return false; }
-    if let Some(b) = val.as_bool() { return b; }
+    if val.is_none() {
+        return false;
+    }
+    if let Some(b) = val.as_bool() {
+        return b;
+    }
     true
 }
 
@@ -94,7 +101,9 @@ fn set_inst_field(obj: MbValue, name: &str, value: MbValue) {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 super::super::rc::retain_if_ptr(value);
                 let prev = fields.write().unwrap().insert(name.to_string(), value);
-                if let Some(p) = prev { super::super::rc::release_if_ptr(p); }
+                if let Some(p) = prev {
+                    super::super::rc::release_if_ptr(p);
+                }
             }
         }
     }
@@ -116,7 +125,11 @@ fn items_of(val: MbValue) -> Vec<MbValue> {
 /// Pull the trailing kwargs dict out of a variadic arg slice (or None).
 fn trailing_kwargs(args: &[MbValue]) -> MbValue {
     if let Some(last) = args.last() {
-        if last.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) }).unwrap_or(false) {
+        if last
+            .as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .unwrap_or(false)
+        {
             return *last;
         }
     }
@@ -144,7 +157,12 @@ fn kwarg_str(args_items: &[MbValue], name: &str) -> Option<String> {
     let ptr = last.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
-            return lock.read().unwrap().get(name).copied().and_then(extract_str);
+            return lock
+                .read()
+                .unwrap()
+                .get(name)
+                .copied()
+                .and_then(extract_str);
         }
     }
     None
@@ -180,14 +198,20 @@ macro_rules! disp_variadic {
     };
 }
 
-disp_variadic!(d_cookie,               mb_http_cookiejar_cookie_new);
-disp_variadic!(d_cookie_jar,           mb_http_cookiejar_cookie_jar_new);
-disp_variadic!(d_cookie_policy,        mb_http_cookiejar_cookie_policy_new);
-disp_variadic!(d_default_cookie_policy, mb_http_cookiejar_default_cookie_policy_new);
-disp_variadic!(d_file_cookie_jar,      mb_http_cookiejar_file_cookie_jar_new);
-disp_variadic!(d_lwp_cookie_jar,       mb_http_cookiejar_lwp_cookie_jar_new);
-disp_variadic!(d_mozilla_cookie_jar,   mb_http_cookiejar_mozilla_cookie_jar_new);
-disp_variadic!(d_load_error,           mb_http_cookiejar_load_error_new);
+disp_variadic!(d_cookie, mb_http_cookiejar_cookie_new);
+disp_variadic!(d_cookie_jar, mb_http_cookiejar_cookie_jar_new);
+disp_variadic!(d_cookie_policy, mb_http_cookiejar_cookie_policy_new);
+disp_variadic!(
+    d_default_cookie_policy,
+    mb_http_cookiejar_default_cookie_policy_new
+);
+disp_variadic!(d_file_cookie_jar, mb_http_cookiejar_file_cookie_jar_new);
+disp_variadic!(d_lwp_cookie_jar, mb_http_cookiejar_lwp_cookie_jar_new);
+disp_variadic!(
+    d_mozilla_cookie_jar,
+    mb_http_cookiejar_mozilla_cookie_jar_new
+);
+disp_variadic!(d_load_error, mb_http_cookiejar_load_error_new);
 
 /// Register the http.cookiejar module under its dotted name. Also wire it
 /// back into the parent `http` namespace as `http.cookiejar`, mirroring
@@ -197,14 +221,20 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("Cookie",              d_cookie               as *const () as usize),
-        ("CookieJar",           d_cookie_jar           as *const () as usize),
-        ("CookiePolicy",        d_cookie_policy        as *const () as usize),
-        ("DefaultCookiePolicy", d_default_cookie_policy as *const () as usize),
-        ("FileCookieJar",       d_file_cookie_jar      as *const () as usize),
-        ("LWPCookieJar",        d_lwp_cookie_jar       as *const () as usize),
-        ("MozillaCookieJar",    d_mozilla_cookie_jar   as *const () as usize),
-        ("LoadError",           d_load_error           as *const () as usize),
+        ("Cookie", d_cookie as *const () as usize),
+        ("CookieJar", d_cookie_jar as *const () as usize),
+        ("CookiePolicy", d_cookie_policy as *const () as usize),
+        (
+            "DefaultCookiePolicy",
+            d_default_cookie_policy as *const () as usize,
+        ),
+        ("FileCookieJar", d_file_cookie_jar as *const () as usize),
+        ("LWPCookieJar", d_lwp_cookie_jar as *const () as usize),
+        (
+            "MozillaCookieJar",
+            d_mozilla_cookie_jar as *const () as usize,
+        ),
+        ("LoadError", d_load_error as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -222,13 +252,31 @@ pub fn register() {
         }
     }
 
-        // surface: missing CPython module constants (auto-added)
-    attrs.insert("DEFAULT_HTTP_PORT".into(), MbValue::from_ptr(MbObject::new_str("80".to_string())));
+    // surface: missing CPython module constants (auto-added)
+    attrs.insert(
+        "DEFAULT_HTTP_PORT".into(),
+        MbValue::from_ptr(MbObject::new_str("80".to_string())),
+    );
     attrs.insert("EPOCH_YEAR".into(), MbValue::from_int(1970));
-    attrs.insert("HTTPONLY_ATTR".into(), MbValue::from_ptr(MbObject::new_str("HTTPOnly".to_string())));
-    attrs.insert("HTTPONLY_PREFIX".into(), MbValue::from_ptr(MbObject::new_str("#HttpOnly_".to_string())));
-    attrs.insert("HTTP_PATH_SAFE".into(), MbValue::from_ptr(MbObject::new_str("%/;:@&=+$,!~*'()".to_string())));
-    attrs.insert("MISSING_FILENAME_TEXT".into(), MbValue::from_ptr(MbObject::new_str("a filename was not supplied (nor was the CookieJar instance initialised with one)".to_string())));
+    attrs.insert(
+        "HTTPONLY_ATTR".into(),
+        MbValue::from_ptr(MbObject::new_str("HTTPOnly".to_string())),
+    );
+    attrs.insert(
+        "HTTPONLY_PREFIX".into(),
+        MbValue::from_ptr(MbObject::new_str("#HttpOnly_".to_string())),
+    );
+    attrs.insert(
+        "HTTP_PATH_SAFE".into(),
+        MbValue::from_ptr(MbObject::new_str("%/;:@&=+$,!~*'()".to_string())),
+    );
+    attrs.insert(
+        "MISSING_FILENAME_TEXT".into(),
+        MbValue::from_ptr(MbObject::new_str(
+            "a filename was not supplied (nor was the CookieJar instance initialised with one)"
+                .to_string(),
+        )),
+    );
     attrs.insert("NETSCAPE_HEADER_TEXT".into(), MbValue::from_ptr(MbObject::new_str("# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n# This is a generated file!  Do not edit.\n\n".to_string())));
     attrs.insert("debug".into(), MbValue::from_int(0));
 
@@ -251,10 +299,7 @@ pub fn register() {
             r.get("http.cookiejar")
                 .map(|m| super::super::module::module_to_value(m))
         };
-        if let (Some(v), Some(http_mod)) = (
-            cookiejar_val,
-            mods.borrow_mut().get_mut("http"),
-        ) {
+        if let (Some(v), Some(http_mod)) = (cookiejar_val, mods.borrow_mut().get_mut("http")) {
             http_mod.attrs.insert("cookiejar".to_string(), v);
         }
     });
@@ -291,13 +336,18 @@ pub fn mb_http_cookiejar_cookie_new(args: &[MbValue]) -> MbValue {
     if let Some(ptr) = kwargs.as_ptr() {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                let pairs: Vec<(String, MbValue)> = lock.read().unwrap().iter()
+                let pairs: Vec<(String, MbValue)> = lock
+                    .read()
+                    .unwrap()
+                    .iter()
                     .filter_map(|(k, v)| match k {
                         DictKey::Str(s) => Some((s.clone(), *v)),
                         _ => None,
                     })
                     .collect();
-                for (k, v) in pairs { set_inst_field(inst, &k, v); }
+                for (k, v) in pairs {
+                    set_inst_field(inst, &k, v);
+                }
             }
         }
     }
@@ -313,7 +363,10 @@ unsafe extern "C" fn m_cookie_is_expired(self_v: MbValue, args: MbValue) -> MbVa
         return MbValue::from_bool(false);
     }
     // Compare against `now` (positional arg 0, defaulting to current time).
-    let now = items_of(args).first().copied().unwrap_or_else(MbValue::none);
+    let now = items_of(args)
+        .first()
+        .copied()
+        .unwrap_or_else(MbValue::none);
     let now_secs = if let Some(n) = now.as_int() {
         n as f64
     } else if let Some(f) = now.as_float() {
@@ -370,8 +423,7 @@ pub fn mb_http_cookiejar_default_cookie_policy_new(_args: &[MbValue]) -> MbValue
 fn make_file_jar_shell(class_name: &str, args: &[MbValue]) -> MbValue {
     let inst = make_class_shell(class_name);
     if let Some(first) = args.first().copied() {
-        if let Some(name) = extract_str(first)
-            .or_else(|| super::pathlib_mod::coerce_fspath(first))
+        if let Some(name) = extract_str(first).or_else(|| super::pathlib_mod::coerce_fspath(first))
         {
             set_inst_field(inst, "filename", new_str(&name));
         }
@@ -444,9 +496,13 @@ unsafe extern "C" fn m_jar_clear(self_v: MbValue, args: MbValue) -> MbValue {
     if let Some(ptr) = cookies.as_ptr() {
         if let ObjData::List(ref lock) = (*ptr).data {
             let mut guard = lock.write().unwrap();
-            for &old in guard.iter() { super::super::rc::release_if_ptr(old); }
+            for &old in guard.iter() {
+                super::super::rc::release_if_ptr(old);
+            }
             guard.clear();
-            for c in &kept { super::super::rc::retain_if_ptr(*c); }
+            for c in &kept {
+                super::super::rc::retain_if_ptr(*c);
+            }
             guard.extend(kept);
         }
     }
@@ -464,9 +520,13 @@ unsafe extern "C" fn m_jar_clear_session_cookies(self_v: MbValue, _args: MbValue
     if let Some(ptr) = cookies.as_ptr() {
         if let ObjData::List(ref lock) = (*ptr).data {
             let mut guard = lock.write().unwrap();
-            for &old in guard.iter() { super::super::rc::release_if_ptr(old); }
+            for &old in guard.iter() {
+                super::super::rc::release_if_ptr(old);
+            }
             guard.clear();
-            for c in &kept { super::super::rc::retain_if_ptr(*c); }
+            for c in &kept {
+                super::super::rc::retain_if_ptr(*c);
+            }
             guard.extend(kept);
         }
     }
@@ -478,9 +538,17 @@ unsafe extern "C" fn m_jar_clear_session_cookies(self_v: MbValue, _args: MbValue
 /// Format one cookie as a Netscape cookies.txt line:
 /// `domain\tflag\tpath\tsecure\texpiration\tname\tvalue`.
 fn netscape_line(cookie: MbValue) -> String {
-    let domain = inst_field(cookie, "domain").and_then(extract_str).unwrap_or_default();
-    let flag = if domain.starts_with('.') { "TRUE" } else { "FALSE" };
-    let path = inst_field(cookie, "path").and_then(extract_str).unwrap_or_else(|| "/".to_string());
+    let domain = inst_field(cookie, "domain")
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let flag = if domain.starts_with('.') {
+        "TRUE"
+    } else {
+        "FALSE"
+    };
+    let path = inst_field(cookie, "path")
+        .and_then(extract_str)
+        .unwrap_or_else(|| "/".to_string());
     let secure = if is_truthy(inst_field(cookie, "secure").unwrap_or_else(MbValue::none)) {
         "TRUE"
     } else {
@@ -488,10 +556,18 @@ fn netscape_line(cookie: MbValue) -> String {
     };
     let expires = inst_field(cookie, "expires")
         .filter(|v| !v.is_none())
-        .and_then(|v| v.as_int().map(|n| n.to_string()).or_else(|| v.as_float().map(|f| (f as i64).to_string())))
+        .and_then(|v| {
+            v.as_int()
+                .map(|n| n.to_string())
+                .or_else(|| v.as_float().map(|f| (f as i64).to_string()))
+        })
         .unwrap_or_else(|| "0".to_string());
-    let name = inst_field(cookie, "name").and_then(extract_str).unwrap_or_default();
-    let value = inst_field(cookie, "value").and_then(extract_str).unwrap_or_default();
+    let name = inst_field(cookie, "name")
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let value = inst_field(cookie, "value")
+        .and_then(extract_str)
+        .unwrap_or_default();
     format!("{domain}\t{flag}\t{path}\t{secure}\t{expires}\t{name}\t{value}")
 }
 
@@ -500,7 +576,9 @@ fn netscape_line(cookie: MbValue) -> String {
 /// fixture always passes an explicit filename plus ignore_* kwargs.
 unsafe extern "C" fn m_jar_save(self_v: MbValue, args: MbValue) -> MbValue {
     let pos = items_of(args);
-    let filename = pos.first().copied()
+    let filename = pos
+        .first()
+        .copied()
         .filter(|v| !v.is_none())
         .and_then(extract_str)
         .or_else(|| inst_field(self_v, "filename").and_then(extract_str));
@@ -538,7 +616,9 @@ unsafe extern "C" fn m_jar_load(self_v: MbValue, args: MbValue) -> MbValue {
     let pos = items_of(args);
     // `filename` may arrive positionally, as a `filename=` keyword (trailing
     // kwargs Dict), or be deferred to `self.filename` from the constructor.
-    let filename = pos.first().copied()
+    let filename = pos
+        .first()
+        .copied()
         .filter(|v| !v.is_none())
         .and_then(extract_str)
         .or_else(|| kwarg_str(&pos, "filename"))
@@ -560,7 +640,9 @@ unsafe extern "C" fn m_jar_load(self_v: MbValue, args: MbValue) -> MbValue {
         Err(_) => {
             super::super::exception::mb_raise(
                 new_str("FileNotFoundError"),
-                new_str(&format!("[Errno 2] No such file or directory: '{filename}'")),
+                new_str(&format!(
+                    "[Errno 2] No such file or directory: '{filename}'"
+                )),
             );
             return MbValue::none();
         }
@@ -605,7 +687,11 @@ unsafe extern "C" fn m_jar_load(self_v: MbValue, args: MbValue) -> MbValue {
         let cookie = make_class_shell("Cookie");
         set_inst_field(cookie, "domain", new_str(cols[0]));
         set_inst_field(cookie, "path", new_str(cols[2]));
-        set_inst_field(cookie, "secure", MbValue::from_bool(cols[3].eq_ignore_ascii_case("TRUE")));
+        set_inst_field(
+            cookie,
+            "secure",
+            MbValue::from_bool(cols[3].eq_ignore_ascii_case("TRUE")),
+        );
         match cols[4].parse::<i64>() {
             Ok(0) => set_inst_field(cookie, "expires", MbValue::none()),
             Ok(n) => set_inst_field(cookie, "expires", MbValue::from_int(n)),
@@ -641,22 +727,36 @@ fn register_classes() {
         super::super::class::mb_class_register(class_name, base_vec, map);
     }
 
-    install("Cookie", &[], &[
-        ("is_expired", m_cookie_is_expired as usize, true),
-    ]);
-    install("CookieJar", &[], &[
-        ("set_cookie", m_jar_set_cookie as usize, true),
-        ("clear", m_jar_clear as usize, true),
-        ("clear_session_cookies", m_jar_clear_session_cookies as usize, true),
-        ("__len__", m_jar_len as usize, true),
-        ("__iter__", m_jar_iter as usize, true),
-    ]);
+    install(
+        "Cookie",
+        &[],
+        &[("is_expired", m_cookie_is_expired as usize, true)],
+    );
+    install(
+        "CookieJar",
+        &[],
+        &[
+            ("set_cookie", m_jar_set_cookie as usize, true),
+            ("clear", m_jar_clear as usize, true),
+            (
+                "clear_session_cookies",
+                m_jar_clear_session_cookies as usize,
+                true,
+            ),
+            ("__len__", m_jar_len as usize, true),
+            ("__iter__", m_jar_iter as usize, true),
+        ],
+    );
     // FileCookieJar adds the on-disk save/load surface; MozillaCookieJar /
     // LWPCookieJar inherit the whole jar + file API via the MRO.
-    install("FileCookieJar", &["CookieJar"], &[
-        ("save", m_jar_save as usize, true),
-        ("load", m_jar_load as usize, true),
-    ]);
+    install(
+        "FileCookieJar",
+        &["CookieJar"],
+        &[
+            ("save", m_jar_save as usize, true),
+            ("load", m_jar_load as usize, true),
+        ],
+    );
     install("MozillaCookieJar", &["FileCookieJar"], &[]);
     install("LWPCookieJar", &["FileCookieJar"], &[]);
 
@@ -674,7 +774,8 @@ mod tests {
 
     fn cookiejar_attr(name: &str) -> Option<MbValue> {
         super::super::super::module::MODULES.with(|mods| {
-            mods.borrow().get("http.cookiejar")
+            mods.borrow()
+                .get("http.cookiejar")
                 .and_then(|m| m.attrs.get(name).copied())
         })
     }
@@ -683,11 +784,19 @@ mod tests {
     fn test_register_installs_full_surface() {
         register();
         for name in [
-            "Cookie", "CookieJar", "CookiePolicy", "DefaultCookiePolicy",
-            "FileCookieJar", "LWPCookieJar", "MozillaCookieJar", "LoadError",
+            "Cookie",
+            "CookieJar",
+            "CookiePolicy",
+            "DefaultCookiePolicy",
+            "FileCookieJar",
+            "LWPCookieJar",
+            "MozillaCookieJar",
+            "LoadError",
         ] {
-            assert!(cookiejar_attr(name).is_some(),
-                "http.cookiejar module missing entry: {name}");
+            assert!(
+                cookiejar_attr(name).is_some(),
+                "http.cookiejar module missing entry: {name}"
+            );
         }
     }
 
@@ -754,8 +863,7 @@ fn timegm_guarded(yr: i64, mon: i64, day: i64, hr: i64, min: i64, sec: i64) -> O
 }
 
 const MONTHS_LOWER: [&str; 12] = [
-    "jan", "feb", "mar", "apr", "may", "jun",
-    "jul", "aug", "sep", "oct", "nov", "dec",
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
 ];
 
 fn month_number(mon: &str) -> Option<i64> {
@@ -802,9 +910,7 @@ fn str2time(
     let mut yr: i64 = yr.parse().ok()?;
     let hr: i64 = hr.map_or(Ok(0), str::parse).ok()?;
     let min: i64 = min.map_or(Ok(0), str::parse).ok()?;
-    let sec: i64 = sec
-        .map_or(Ok(0.0), str::parse::<f64>)
-        .ok()? as i64;
+    let sec: i64 = sec.map_or(Ok(0.0), str::parse::<f64>).ok()? as i64;
     if yr < 1000 {
         let cur_yr = current_utc_year();
         let m = cur_yr % 100;
@@ -840,9 +946,8 @@ fn current_utc_year() -> i64 {
 fn http2time_impl(text: &str) -> Option<i64> {
     static WEEKDAY_RE: OnceLock<Regex> = OnceLock::new();
     static LOOSE_RE: OnceLock<Regex> = OnceLock::new();
-    let weekday = WEEKDAY_RE.get_or_init(|| {
-        Regex::new(r"(?i)^(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*,?\s*").unwrap()
-    });
+    let weekday = WEEKDAY_RE
+        .get_or_init(|| Regex::new(r"(?i)^(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*,?\s*").unwrap());
     // CPython's LOOSE_HTTP_DATE_RE, minus the (?!..) lookahead (the am/pm
     // exclusion is enforced after the match — rust regex has no lookahead).
     let loose = LOOSE_RE.get_or_init(|| {
@@ -925,8 +1030,7 @@ fn time2isoz_impl(t: i64) -> String {
 fn time2netscape_impl(t: i64) -> String {
     const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
     let days = t.div_euclid(86_400);
     let (y, mo, d) = civil_from_days(days);
@@ -1045,8 +1149,9 @@ enum NsVal {
 }
 
 fn parse_ns_headers_impl(headers: &[String]) -> Vec<Vec<(String, NsVal)>> {
-    const KNOWN_ATTRS: [&str; 7] =
-        ["expires", "domain", "path", "secure", "version", "port", "max-age"];
+    const KNOWN_ATTRS: [&str; 7] = [
+        "expires", "domain", "path", "secure", "version", "port", "max-age",
+    ];
     static SPLIT_RE: OnceLock<Regex> = OnceLock::new();
     let splitter = SPLIT_RE.get_or_init(|| Regex::new(r";\s*").unwrap());
     let mut result = Vec::new();
@@ -1115,10 +1220,11 @@ fn escape_path_impl(path: &str) -> String {
     }
     // Upper-case pre-existing %xx escapes (quote leaves '%' alone).
     static ESCAPED_RE: OnceLock<Regex> = OnceLock::new();
-    let re = ESCAPED_RE
-        .get_or_init(|| Regex::new(r"%([0-9a-fA-F][0-9a-fA-F])").unwrap());
-    re.replace_all(&out, |c: &regex::Captures| format!("%{}", c[1].to_uppercase()))
-        .into_owned()
+    let re = ESCAPED_RE.get_or_init(|| Regex::new(r"%([0-9a-fA-F][0-9a-fA-F])").unwrap());
+    re.replace_all(&out, |c: &regex::Captures| {
+        format!("%{}", c[1].to_uppercase())
+    })
+    .into_owned()
 }
 
 // ── domain rules ──
@@ -1373,13 +1479,22 @@ fn register_helpers(attrs: &mut HashMap<String, MbValue>) {
         ("iso2time", d_iso2time as *const () as usize),
         ("time2isoz", d_time2isoz as *const () as usize),
         ("time2netscape", d_time2netscape as *const () as usize),
-        ("split_header_words", d_split_header_words as *const () as usize),
-        ("join_header_words", d_join_header_words as *const () as usize),
+        (
+            "split_header_words",
+            d_split_header_words as *const () as usize,
+        ),
+        (
+            "join_header_words",
+            d_join_header_words as *const () as usize,
+        ),
         ("parse_ns_headers", d_parse_ns_headers as *const () as usize),
         ("escape_path", d_escape_path as *const () as usize),
         ("is_HDN", d_is_hdn as *const () as usize),
         ("domain_match", d_domain_match as *const () as usize),
-        ("user_domain_match", d_user_domain_match as *const () as usize),
+        (
+            "user_domain_match",
+            d_user_domain_match as *const () as usize,
+        ),
         ("reach", d_reach as *const () as usize),
     ];
     for (name, addr) in dispatchers {
@@ -1406,7 +1521,12 @@ fn req_header(req: MbValue, name: &str) -> Option<String> {
     let hd = req_get_field(req, "headers")?.as_ptr()?;
     unsafe {
         if let ObjData::Dict(ref lock) = (*hd).data {
-            return lock.read().unwrap().get(name).copied().and_then(extract_str);
+            return lock
+                .read()
+                .unwrap()
+                .get(name)
+                .copied()
+                .and_then(extract_str);
         }
     }
     None

@@ -117,7 +117,11 @@ mod tests {
     #[test]
     fn host_os_is_one_of_supported() {
         let got = host_os();
-        if cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows")) {
+        if cfg!(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows"
+        )) {
             assert!(got.is_ok(), "expected supported os, got {got:?}");
         }
     }
