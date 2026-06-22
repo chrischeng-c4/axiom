@@ -612,6 +612,41 @@ pub fn mb_bz2_open(_filename: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_str("bz2.open".to_string()))
 }
 
+fn decompress_bz2_streams(b: &[u8]) -> Result<Vec<u8>, ()> {
+    if b.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut out = Vec::with_capacity(b.len().saturating_mul(4));
+    let mut offset = 0usize;
+    let mut decoded_any = false;
+
+    while offset < b.len() {
+        let before_len = out.len();
+        let mut dec = BzDecoder::new(&b[offset..]);
+        match dec.read_to_end(&mut out) {
+            Ok(_) => {
+                let consumed = (dec.total_in() as usize).min(b.len() - offset);
+                if consumed == 0 {
+                    out.truncate(before_len);
+                    return if decoded_any { Ok(out) } else { Err(()) };
+                }
+                decoded_any = true;
+                offset += consumed;
+            }
+            Err(err) => {
+                out.truncate(before_len);
+                if decoded_any && err.kind() != std::io::ErrorKind::UnexpectedEof {
+                    return Ok(out);
+                }
+                return Err(());
+            }
+        }
+    }
+
+    if decoded_any { Ok(out) } else { Err(()) }
+}
+
 /// bz2.decompress(data) -> bytes (real bzip2 stream decode).
 ///
 /// CPython returns `b''` for empty input and raises `OSError` ("Invalid
@@ -619,16 +654,7 @@ pub fn mb_bz2_open(_filename: MbValue) -> MbValue {
 /// input is special-cased to `b''` *before* the decoder so a valid empty
 /// payload never trips the error path.
 pub fn mb_bz2_decompress(data: MbValue) -> MbValue {
-    let out = with_bytes(data, |b| {
-        if b.is_empty() {
-            return Ok(Vec::new());
-        }
-        // CPython decodes concatenated streams (multi-stream payloads
-        // decompress to the joined plaintext).
-        let mut dec = bzip2::read::MultiBzDecoder::new(b);
-        let mut buf = Vec::with_capacity(b.len() * 4);
-        dec.read_to_end(&mut buf).map(|_| buf)
-    });
+    let out = with_bytes(data, decompress_bz2_streams);
     match out {
         Ok(buf) => MbValue::from_ptr(MbObject::new_bytes(buf)),
         Err(_) => raise_os_error("Invalid data stream"),
@@ -737,6 +763,41 @@ mod tests {
         let cb = get_bytes_val(compressed).expect("compressed bytes");
         let dec = mb_bz2_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
         assert_eq!(get_bytes_val(dec), Some(payload));
+    }
+
+    #[test]
+    fn test_decompress_ignores_trailing_junk_after_stream() {
+        let payload = b"bz2 payload".to_vec();
+        let compressed = mb_bz2_compress(MbValue::from_ptr(
+            MbObject::new_bytes(payload.clone()),
+        ));
+        let mut cb = get_bytes_val(compressed).expect("compressed bytes");
+        cb.extend_from_slice(b"not a bzip2 stream");
+
+        let dec = mb_bz2_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
+        assert_eq!(get_bytes_val(dec), Some(payload));
+    }
+
+    #[test]
+    fn test_decompress_joins_streams_before_trailing_junk() {
+        let left = b"left".to_vec();
+        let right = b"right".to_vec();
+        let mut joined = get_bytes_val(mb_bz2_compress(MbValue::from_ptr(
+            MbObject::new_bytes(left.clone()),
+        )))
+        .expect("left compressed bytes");
+        joined.extend(
+            get_bytes_val(mb_bz2_compress(MbValue::from_ptr(
+                MbObject::new_bytes(right.clone()),
+            )))
+            .expect("right compressed bytes"),
+        );
+        joined.extend_from_slice(b"trailing junk");
+
+        let dec = mb_bz2_decompress(MbValue::from_ptr(MbObject::new_bytes(joined)));
+        let mut expected = left;
+        expected.extend(right);
+        assert_eq!(get_bytes_val(dec), Some(expected));
     }
 
     #[test]
