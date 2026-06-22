@@ -1216,6 +1216,14 @@ fn lru_encode_value_key(v: MbValue, out: &mut String) {
             out.push_str(s);
             out.push('"');
         }
+        DictKey::Bytes(b) => {
+            out.push('b');
+            out.push_str(&b.len().to_string());
+            out.push(':');
+            for byte in b {
+                out.push_str(&format!("{byte:02x}"));
+            }
+        }
         DictKey::Bool(b) => out.push_str(if *b { "T" } else { "F" }),
         DictKey::None => out.push_str("None"),
         DictKey::Instance { hash_val, ptr, .. } => {
