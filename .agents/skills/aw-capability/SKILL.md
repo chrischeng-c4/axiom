@@ -34,7 +34,12 @@ promises from inference alone.
    pending-review artifact under `/tmp/aw/{project}/capability-map-drafts/`.
    For README prose roots, the artifact proposes candidate roots. For an
    existing README with no capability roots, the artifact is a definition
-   worksheet with placeholders. Use its `Review Decisions` table to record
+   worksheet with placeholders. For projects with project-local
+   `aw.toml` `[capability.profile].traits`, the artifact also lists
+   trait-derived baseline capabilities. These baseline capabilities are a
+   mandatory minimum for that profile, not the complete capability set; add
+   domain-specific capability roots when the product promise requires them.
+   Use its `Review Decisions` table to record
    confirm/rename/split/merge/defer plus Type, Surfaces, EC Dimensions, Root
    WI, and gate/inventory decisions before touching README. In all cases it is
    inference-only and must not be treated as a confirmed README edit until the
@@ -107,6 +112,20 @@ capability registry, and `### Capability Index` is the compact scan surface.
 Capability roots are H3-Hn headings under `## Capabilities`; each heading maps
 to an epic/subepic work root. Atomic `change` WIs usually come from
 `aw wi atomize`, not README rows.
+
+Capability definition order is project traits -> required baseline
+capabilities -> domain capabilities -> reviewed `apply-draft`. Project traits
+live in project-local `aw.toml` under `[capability.profile] traits = [...]`.
+Traits are planning metadata, not README capabilities. `CapabilityType` remains
+the EC-dimension ceiling for one capability and must not be used as the project
+archetype.
+
+Supported profile traits include `cli_facing`, `competitive_replacement`,
+`http2_api`, `kubernetes_native`, `long_running`, `network_exposed`,
+`primary_replicas`, `agent_facing`, and `stateful_storage`. `http2_api`
+derives an API-list baseline, not an OpenAPI-completeness requirement. Use
+`primary_replicas` only when the product is expected to expose a primary /
+replica topology; do not select it for single-primary products such as Lumen.
 
 ```md
 # Jet

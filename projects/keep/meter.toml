@@ -3,7 +3,7 @@
 # Enforced by meter's vitals gate on the keep server under a FIXED load:
 #
 #   cd projects/keep
-#   meter profile --exec ../../target/release/keep --level vitals \
+#   meter measure --exec ../../target/release/keep --level vitals \
 #     --drive 'for i in $(seq 1 15); do curl -sf -o /dev/null --max-time 1 \
 #       http://127.0.0.1:7117/healthz && break; sleep 1; done; \
 #       ../../target/release/examples/bench_compare --backend keep --ops 200000 \

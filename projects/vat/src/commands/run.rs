@@ -489,9 +489,18 @@ fn run_configured(
             "id": runner.id.as_str(),
             "state": "started",
         }))?;
-        procs.push(spawn_runner_process(
-            runner, &cwd, logs_dir, &run_env, single,
-        )?);
+        match spawn_runner_process(runner, &cwd, logs_dir, &run_env, single) {
+            Ok(proc) => procs.push(proc),
+            Err(err) => {
+                kill_runner_processes(&mut procs);
+                stop_services(
+                    &mut services,
+                    should_delete_clusters(&cfg.workspace.keep, -1),
+                );
+                persist_services(vat, &services)?;
+                return Err(err);
+            }
+        }
     }
     let records = wait_runner_processes(procs)?;
 
@@ -530,6 +539,13 @@ fn run_configured(
         .join("; ");
     vat.log(Event::new(EventKind::RunFinished, summary))?;
     Ok(code)
+}
+
+fn kill_runner_processes(procs: &mut [RunnerProc]) {
+    for proc in procs {
+        kill_child(&mut proc.child);
+        let _ = proc.child.wait();
+    }
 }
 
 fn ordered_required_services<'a>(
@@ -981,9 +997,27 @@ fn prepare_preset_service(
                 .with_context(|| format!("clone service image {}", cache_key))?;
             "warm_clone"
         } else {
-            std::fs::create_dir_all(&cache_dir)
-                .with_context(|| format!("create {}", cache_dir.display()))?;
-            cold_prepare_service_image(cfg, service, preset, &cache_dir)?;
+            let cache_parent = cache_dir
+                .parent()
+                .context("service cache directory has no parent")?;
+            let tmp_cache_dir = cache_parent.join(format!("{}.tmp-{}", cache_key, vat.meta.id));
+            if tmp_cache_dir.exists() {
+                std::fs::remove_dir_all(&tmp_cache_dir)
+                    .with_context(|| format!("remove {}", tmp_cache_dir.display()))?;
+            }
+            std::fs::create_dir_all(&tmp_cache_dir)
+                .with_context(|| format!("create {}", tmp_cache_dir.display()))?;
+            if let Err(err) = cold_prepare_service_image(cfg, service, preset, &tmp_cache_dir) {
+                let _ = std::fs::remove_dir_all(&tmp_cache_dir);
+                return Err(err);
+            }
+            std::fs::rename(&tmp_cache_dir, &cache_dir).with_context(|| {
+                format!(
+                    "promote service image cache {} to {}",
+                    tmp_cache_dir.display(),
+                    cache_dir.display()
+                )
+            })?;
             if data_dir.exists() {
                 std::fs::remove_dir_all(&data_dir)
                     .with_context(|| format!("remove {}", data_dir.display()))?;
@@ -1697,26 +1731,56 @@ fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path)
     }
     // Unix-socket-only on a per-prepare socket dir keeps the temp server off
     // the network and avoids port races during a cold build.
-    let sock_dir = data_dir.join("seed-sock");
+    let data_dir_abs = data_dir
+        .canonicalize()
+        .with_context(|| format!("canonicalize postgres data dir {}", data_dir.display()))?;
+    let sock_dir = std::env::temp_dir().join(format!(
+        "vat-pg-seed-{}-{}",
+        service.id,
+        digest_bytes(data_dir_abs.to_string_lossy().as_bytes())
+    ));
+    if sock_dir.exists() {
+        std::fs::remove_dir_all(&sock_dir)
+            .with_context(|| format!("remove stale {}", sock_dir.display()))?;
+    }
     std::fs::create_dir_all(&sock_dir).with_context(|| format!("create {}", sock_dir.display()))?;
+    let sock_dir_abs = sock_dir
+        .canonicalize()
+        .with_context(|| format!("canonicalize postgres seed socket dir {}", sock_dir.display()))?;
     let sock_arg = format!(
         "-h '' -k {} -p 5432",
-        shell_single_quote(&sock_dir.to_string_lossy())
+        shell_single_quote(&sock_dir_abs.to_string_lossy())
     );
+    let start_stdout_path = sock_dir.join("pg_ctl-start.stdout.log");
+    let start_stdout_handle = File::create(&start_stdout_path).with_context(|| {
+        format!(
+            "create postgres seed start stdout capture {}",
+            start_stdout_path.display()
+        )
+    })?;
+    let start_stderr_path = sock_dir.join("pg_ctl-start.stderr.log");
+    let start_stderr_handle = File::create(&start_stderr_path).with_context(|| {
+        format!(
+            "create postgres seed start stderr capture {}",
+            start_stderr_path.display()
+        )
+    })?;
     let start = Command::new("pg_ctl")
         .arg("-D")
-        .arg(data_dir)
+        .arg(&data_dir_abs)
         .args(["-w", "-t", "60", "-o"])
         .arg(&sock_arg)
         .arg("start")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(start_stdout_handle)
+        .stderr(start_stderr_handle)
         .status()
         .context("start temporary postgres for corpus seeding")?;
     if !start.success() {
         bail!(
-            "could not start temporary postgres to seed service `{}`",
-            service.id
+            "could not start temporary postgres to seed service `{}`: stdout: {}; stderr: {}",
+            service.id,
+            command_output_file_tail(&start_stdout_path),
+            command_output_file_tail(&start_stderr_path)
         );
     }
 
@@ -1724,22 +1788,35 @@ fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path)
     let mut seed_result = Ok(());
     for seed in &service.seed {
         let path = config::resolve_relative(&cfg.root, seed);
+        let seed_stderr_path = sock_dir.join(format!(
+            "psql-seed-{}.stderr.log",
+            seed.file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("seed")
+        ));
+        let seed_stderr_handle = File::create(&seed_stderr_path).with_context(|| {
+            format!(
+                "create postgres seed stderr capture {}",
+                seed_stderr_path.display()
+            )
+        })?;
         let status = Command::new("psql")
             .args(["-v", "ON_ERROR_STOP=1", "-h"])
-            .arg(&sock_dir)
+            .arg(&sock_dir_abs)
             .args(["-p", "5432", "-U", "postgres", "-d", "postgres", "-f"])
             .arg(&path)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(seed_stderr_handle)
             .status();
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => {
                 seed_result = Err(anyhow::anyhow!(
-                    "seed `{}` failed (exit {:?}) for service `{}`",
+                    "seed `{}` failed (exit {:?}) for service `{}`: {}",
                     path.display(),
                     s.code(),
-                    service.id
+                    service.id,
+                    command_output_file_tail(&seed_stderr_path)
                 ));
                 break;
             }
@@ -1756,7 +1833,7 @@ fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path)
 
     let stop = Command::new("pg_ctl")
         .arg("-D")
-        .arg(data_dir)
+        .arg(&data_dir_abs)
         .args(["-w", "-t", "60", "-m", "fast", "stop"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1772,6 +1849,29 @@ fn cold_seed_postgres(cfg: &VatConfig, service: &ServiceConfig, data_dir: &Path)
     // Drop the throwaway socket dir so it is not baked into the cached image.
     let _ = std::fs::remove_dir_all(&sock_dir);
     Ok(())
+}
+
+fn command_output_file_tail(path: &Path) -> String {
+    std::fs::read(path)
+        .map(|bytes| command_output_tail(&bytes))
+        .unwrap_or_else(|err| format!("<stderr unavailable: {err}>"))
+}
+
+fn command_output_tail(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        "<no stderr>".to_string()
+    } else {
+        trimmed
+            .chars()
+            .rev()
+            .take(2000)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect()
+    }
 }
 
 /// Build a single-node dev OpenSearch image: a config dir (security plugin

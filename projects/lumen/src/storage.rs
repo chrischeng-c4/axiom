@@ -39,7 +39,7 @@ use crate::types::{
     Analyzer, CacheStats, CreateCollectionRequest, CreateCollectionResponse, DuplicateGroup,
     DuplicatesRequest, DuplicatesResponse, FieldSpec, FieldStats, FieldType, FieldValue,
     HammingQuery, HasChildQuery, IndexRequest, IndexResponse, KnnQuery, MatchOp, MatchQuery,
-    QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortOrder,
+    QueryNode, RangeQuery, RrfQuery, SearchHit, SearchRequest, SearchResponse, SortOrder, SortSpec,
     StatsResponse, StorageStats, TermQuery, TermsQuery, VectorSpec,
 };
 use crate::vector_index::{open_backend, FlatCpuIndex, HnswCpuIndex, ScalarCodebook, VectorIndex};
@@ -3582,6 +3582,7 @@ impl Engine {
                 // the map path.
                 // Anything else (nested bool, multi-token OR, knn/rrf, …) falls
                 // through to the general `eval_query` map path unchanged.
+                let materialized_sort = req.sort.as_deref().filter(|sort| !sort.is_empty());
                 let mut ranked: Vec<(u32, f32)>;
                 let total: u64;
                 if score_after.is_some() {
@@ -3602,6 +3603,19 @@ impl Engine {
                                     && interner.resolve(*id) > after_eid.as_str())
                         })
                         .collect();
+                } else if materialized_sort.is_some() {
+                    // Unsupported-by-planner field sorts still define result
+                    // order. Build the full match set before sorting so score
+                    // top-k shortcuts cannot discard hits that should appear
+                    // after field ordering is applied.
+                    let universe: BTreeSet<u32> = if query_needs_universe(&req.query) {
+                        coll.eid_fields.keys().copied().collect()
+                    } else {
+                        BTreeSet::new()
+                    };
+                    let scored = eval_query(coll, collection_id, &req.query, &universe, &state)?;
+                    total = scored.len() as u64;
+                    ranked = scored.into_iter().collect();
                 } else if let QueryNode::Match(m) = &req.query {
                     if let Some((top, exact_total)) =
                         eval_match_topk(coll, m, interner, offset.saturating_add(limit))?
@@ -3635,22 +3649,29 @@ impl Engine {
                     ranked = scored.into_iter().collect();
                 }
 
-                // Rank by score desc, then external_id asc (tie-break on the
-                // resolved string, stable across snapshot rebuilds). Partition
-                // the top-k to the front in O(n), then sort just that slice.
-                let cmp = |a: &(u32, f32), b: &(u32, f32)| {
-                    b.1.partial_cmp(&a.1)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| interner.resolve(a.0).cmp(interner.resolve(b.0)))
-                };
-                let k = offset.saturating_add(limit);
-                if k > 0 && ranked.len() > k {
-                    ranked.select_nth_unstable_by(k - 1, cmp);
-                    ranked.truncate(k);
+                if let Some(sort) = materialized_sort {
+                    ranked
+                        .sort_by(|a, b| compare_materialized_sort(coll, interner, sort, a.0, b.0));
+                    let page = ranked.into_iter().skip(offset).take(limit).collect();
+                    (page, total, PlanKind::Posting)
+                } else {
+                    // Rank by score desc, then external_id asc (tie-break on the
+                    // resolved string, stable across snapshot rebuilds). Partition
+                    // the top-k to the front in O(n), then sort just that slice.
+                    let cmp = |a: &(u32, f32), b: &(u32, f32)| {
+                        b.1.partial_cmp(&a.1)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| interner.resolve(a.0).cmp(interner.resolve(b.0)))
+                    };
+                    let k = offset.saturating_add(limit);
+                    if k > 0 && ranked.len() > k {
+                        ranked.select_nth_unstable_by(k - 1, cmp);
+                        ranked.truncate(k);
+                    }
+                    ranked.sort_by(cmp);
+                    let page = ranked.into_iter().skip(offset).take(limit).collect();
+                    (page, total, PlanKind::ScoreRanked)
                 }
-                ranked.sort_by(cmp);
-                let page = ranked.into_iter().skip(offset).take(limit).collect();
-                (page, total, PlanKind::ScoreRanked)
             }
         };
 
@@ -5156,6 +5177,42 @@ fn finish_top_ranked(heap: BinaryHeap<TopRankedHit>) -> Vec<(u32, f32)> {
             .then_with(|| a.external_id.cmp(&b.external_id))
     });
     ranked.into_iter().map(|h| (h.id, h.score)).collect()
+}
+
+fn compare_materialized_sort(
+    coll: &Collection,
+    interner: &Interner,
+    sort: &[SortSpec],
+    a_id: u32,
+    b_id: u32,
+) -> CmpOrdering {
+    for spec in sort {
+        let order = match coll.fields.get(&spec.field) {
+            Some(FieldIndex::Keyword(k)) => {
+                compare_optional_sort(k.keyword_at(a_id), k.keyword_at(b_id), spec.order)
+            }
+            Some(FieldIndex::Number(n)) => {
+                compare_optional_sort(n.number_at(a_id), n.number_at(b_id), spec.order)
+            }
+            _ => CmpOrdering::Equal,
+        };
+        if order != CmpOrdering::Equal {
+            return order;
+        }
+    }
+    interner.resolve(a_id).cmp(interner.resolve(b_id))
+}
+
+fn compare_optional_sort<T: Ord>(a: Option<T>, b: Option<T>, order: SortOrder) -> CmpOrdering {
+    match (a, b) {
+        (Some(a), Some(b)) => match order {
+            SortOrder::Asc => a.cmp(&b),
+            SortOrder::Desc => b.cmp(&a),
+        },
+        (Some(_), None) => CmpOrdering::Less,
+        (None, Some(_)) => CmpOrdering::Greater,
+        (None, None) => CmpOrdering::Equal,
+    }
 }
 
 fn match_rank_key(op: MatchOp, tokens: &[String]) -> String {

@@ -3,13 +3,13 @@
 //! Operator render tests: a `Lumen` spec → the exact child objects, with no
 //! cluster. This encodes the operational knowledge that lives in `k8s/base` +
 //! the overlays as executable assertions — replicas, env wiring, resources,
-//! probes, owner refs, NATS clustering, and the BYO-broker / observability
+//! probes, owner refs, Relay broker wiring, and the BYO-broker / observability
 //! toggles.
 #![cfg(feature = "operator")]
 
 use kube::api::ObjectMeta;
-use lumen::operator::crd::{AuthMode, Autoscaling, LogFormat, NatsSpec, ServingSpec};
-use lumen::operator::render::{nats_url, render};
+use lumen::operator::crd::{AuthMode, Autoscaling, BrokerSpec, LogFormat, ServingSpec};
+use lumen::operator::render::{broker_url, render};
 use lumen::operator::{Lumen, LumenSpec};
 use serde_json::Value;
 
@@ -43,7 +43,7 @@ fn dev_spec() -> LumenSpec {
             },
             ..Default::default()
         },
-        nats: NatsSpec {
+        broker: BrokerSpec {
             replicas: 1,
             ..Default::default()
         },
@@ -70,8 +70,10 @@ fn prod_spec() -> LumenSpec {
             memory: "16Gi".into(),
             grace_secs: 45,
         },
-        nats: NatsSpec {
+        broker: BrokerSpec {
             external_url: None,
+            image: "registry.example.com/relay:1.2.3".into(),
+            subject: "lumen-wal".into(),
             replicas: 3,
             storage: "100Gi".into(),
             storage_class: Some("ssd".into()),
@@ -136,13 +138,12 @@ fn dev_renders_full_managed_set() {
             kinds(&objs)
         );
     }
-    // Managed NATS broker.
+    // Managed Relay broker.
     for (kind, name) in [
-        ("ConfigMap", "search-nats-config"),
-        ("StatefulSet", "search-nats"),
-        ("Service", "search-nats"),
-        ("Service", "search-nats-headless"),
-        ("PodDisruptionBudget", "search-nats"),
+        ("StatefulSet", "search-relay"),
+        ("Service", "search-relay"),
+        ("Service", "search-relay-headless"),
+        ("PodDisruptionBudget", "search-relay"),
     ] {
         assert!(
             has(&objs, kind, name),
@@ -209,14 +210,16 @@ fn deployment_wires_serving_contract() {
         serde_json::json!(["ALL"])
     );
 
-    // Env: downward-API identity + the NATS write-log + config-driven knobs.
+    // Env: downward-API identity + the Relay write-log + config-driven knobs.
     let names = env_names(c);
     for required in [
         "POD_NAME",
         "POD_NAMESPACE",
         "LUMEN_HOST",
         "LUMEN_WAL",
-        "LUMEN_NATS_URL",
+        "LUMEN_RELAY_URL",
+        "LUMEN_RELAY_SUBJECT",
+        "LUMEN_RELAY_SUBSCRIBER_ID",
         "SHARD_COUNT",
         "LUMEN_AUTH",
     ] {
@@ -231,23 +234,24 @@ fn deployment_wires_serving_contract() {
 }
 
 #[test]
-fn configmap_and_nats_url_track_spec() {
+fn configmap_and_broker_url_track_spec() {
     let l = lumen("search", dev_spec());
     let objs = render(&l);
     let cm = find(&objs, "ConfigMap", "search-config");
     assert_eq!(cm["data"]["SHARD_COUNT"], "1");
-    assert_eq!(cm["data"]["LUMEN_NATS_URL"], "nats://search-nats:4222");
+    assert_eq!(cm["data"]["LUMEN_RELAY_URL"], "http://search-relay:7000");
+    assert_eq!(cm["data"]["LUMEN_RELAY_SUBJECT"], "lumen-wal");
     assert_eq!(cm["data"]["LUMEN_LOG_FORMAT"], "pretty");
     assert_eq!(cm["data"]["LUMEN_AUTH"], "off");
     assert_eq!(cm["data"]["LUMEN_PORT"], "7373");
     // No log level set → key omitted.
     assert!(cm["data"]["LUMEN_LOG_LEVEL"].is_null());
 
-    assert_eq!(nats_url(&l), "nats://search-nats:4222");
+    assert_eq!(broker_url(&l), "http://search-relay:7000");
 }
 
 #[test]
-fn hpa_and_single_replica_nats_have_no_routes() {
+fn hpa_and_single_replica_relay_are_rendered() {
     let l = lumen("search", dev_spec());
     let objs = render(&l);
 
@@ -256,46 +260,38 @@ fn hpa_and_single_replica_nats_have_no_routes() {
     assert_eq!(hpa["spec"]["maxReplicas"], 3);
     assert_eq!(hpa["spec"]["scaleTargetRef"]["name"], "search");
 
-    // 1 replica → plain JetStream args, no cluster routes.
-    let sts = find(&objs, "StatefulSet", "search-nats");
+    // Managed relay-server is one durable broker. HA uses an external Relay URL
+    // until relay-raft exposes subscribe/len for Lumen.
+    let sts = find(&objs, "StatefulSet", "search-relay");
     assert_eq!(sts["spec"]["replicas"], 1);
-    let args = sts["spec"]["template"]["spec"]["containers"][0]["args"]
+    let command = sts["spec"]["template"]["spec"]["containers"][0]["command"]
         .as_array()
         .unwrap();
-    let joined: Vec<&str> = args.iter().map(|a| a.as_str().unwrap()).collect();
-    assert!(
-        !joined.iter().any(|a| *a == "--routes"),
-        "single-replica must not wire routes: {joined:?}"
-    );
+    let joined: Vec<&str> = command.iter().map(|a| a.as_str().unwrap()).collect();
+    assert_eq!(joined, vec!["relay-server"]);
     // Base PVC: no storageClassName (portable / cluster default).
     assert!(sts["spec"]["volumeClaimTemplates"][0]["spec"]["storageClassName"].is_null());
 }
 
 #[test]
-fn prod_clusters_nats_and_wires_auth() {
+fn prod_wires_managed_relay_and_auth() {
     let l = lumen("lumen", prod_spec());
     let objs = render(&l);
 
-    // 3 NATS replicas → clustered JetStream routes to per-pod headless DNS.
-    let sts = find(&objs, "StatefulSet", "lumen-nats");
-    assert_eq!(sts["spec"]["replicas"], 3);
-    let args: Vec<String> = sts["spec"]["template"]["spec"]["containers"][0]["args"]
+    // Managed relay-server is intentionally clamped to one broker; externalUrl
+    // is the HA path until relay-raft exposes Lumen's subscribe/len surface.
+    let sts = find(&objs, "StatefulSet", "lumen-relay");
+    assert_eq!(sts["spec"]["replicas"], 1);
+    let c0 = &sts["spec"]["template"]["spec"]["containers"][0];
+    assert_eq!(c0["image"], "registry.example.com/relay:1.2.3");
+    assert_eq!(c0["ports"][0]["containerPort"], 7000);
+    let data_dir = c0["env"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| a.as_str().unwrap().to_string())
-        .collect();
-    let routes_idx = args
-        .iter()
-        .position(|a| a == "--routes")
-        .expect("routes wired");
-    let routes = &args[routes_idx + 1];
-    for i in 0..3 {
-        assert!(
-            routes.contains(&format!("nats://lumen-nats-{i}.lumen-nats-headless:6222")),
-            "route {i} missing: {routes}"
-        );
-    }
+        .find(|e| e["name"] == "RELAY_DATA_DIR")
+        .expect("RELAY_DATA_DIR env");
+    assert_eq!(data_dir["value"], "/data");
     // Cloud SSD storage class + size from spec.
     assert_eq!(
         sts["spec"]["volumeClaimTemplates"][0]["spec"]["storageClassName"],
@@ -333,28 +329,27 @@ fn prod_clusters_nats_and_wires_auth() {
 }
 
 #[test]
-fn external_nats_skips_broker_objects() {
+fn external_broker_skips_managed_relay_objects() {
     let mut spec = dev_spec();
-    spec.nats = NatsSpec {
-        external_url: Some("nats://shared-broker.infra:4222".into()),
+    spec.broker = BrokerSpec {
+        external_url: Some("http://shared-relay.infra:7000".into()),
         ..Default::default()
     };
     let l = lumen("search", spec);
     let objs = render(&l);
 
-    // BYO broker: no NATS objects at all.
-    assert!(!has(&objs, "StatefulSet", "search-nats"));
-    assert!(!has(&objs, "Service", "search-nats"));
-    assert!(!has(&objs, "Service", "search-nats-headless"));
-    assert!(!has(&objs, "ConfigMap", "search-nats-config"));
-    assert!(!has(&objs, "PodDisruptionBudget", "search-nats"));
+    // BYO broker: no managed Relay objects at all.
+    assert!(!has(&objs, "StatefulSet", "search-relay"));
+    assert!(!has(&objs, "Service", "search-relay"));
+    assert!(!has(&objs, "Service", "search-relay-headless"));
+    assert!(!has(&objs, "PodDisruptionBudget", "search-relay"));
 
     // Serving still wired to the external URL.
-    assert_eq!(nats_url(&l), "nats://shared-broker.infra:4222");
+    assert_eq!(broker_url(&l), "http://shared-relay.infra:7000");
     let cm = find(&objs, "ConfigMap", "search-config");
     assert_eq!(
-        cm["data"]["LUMEN_NATS_URL"],
-        "nats://shared-broker.infra:4222"
+        cm["data"]["LUMEN_RELAY_URL"],
+        "http://shared-relay.infra:7000"
     );
 }
 

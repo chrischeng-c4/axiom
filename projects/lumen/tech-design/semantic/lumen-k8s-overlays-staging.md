@@ -41,6 +41,8 @@ deployment:
     - path: "projects/lumen/k8s/overlays/staging/kustomization.yaml"
       kind: "kustomization"
       content: |
+        # SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-overlays-staging.md#deployment
+        # CODEGEN-BEGIN
         apiVersion: kustomize.config.k8s.io/v1beta1
         kind: Kustomization
         
@@ -54,13 +56,13 @@ deployment:
         components:
           - ../../components/observability
         
-        # staging: 3 serving nodes, a single NATS broker, modest resources,
+        # staging: 3 serving nodes, a single Relay broker, modest resources,
         # json logs, auth off (a pre-prod soak environment).
         
         replicas:
           - name: lumen
             count: 3
-          - name: lumen-nats
+          - name: lumen-relay
             count: 1
         
         patches:
@@ -115,7 +117,7 @@ deployment:
                 value: 8
           - target:
               kind: StatefulSet
-              name: lumen-nats
+              name: lumen-relay
             patch: |-
               # Cloud SSD storage class (base omits storageClassName for portability).
               - op: add
@@ -124,6 +126,8 @@ deployment:
               - op: replace
                 path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
                 value: "10Gi"
+        # CODEGEN-END
+
 ```
 
 ## Changes

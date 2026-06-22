@@ -2,12 +2,10 @@
 // CODEGEN-BEGIN
 //! Write-ahead log abstraction — the data-plane backbone.
 //!
-//! lumen's write path is "turn the database inside out": a write is not
-//! applied to the receiving node's index. It is **published** to an
-//! ordered, durable log; every serving node **subscribes** to that log
-//! and folds it into its own materialized index. All nodes converge by
-//! applying the same totally-ordered stream — there is no primary among
-//! the serving nodes, only the log decides order.
+//! lumen's write path is "turn the database inside out": a write is published
+//! to an ordered log and then folded into each serving node's materialized
+//! index. The log may be in-process (`MemWal`), externally owned (`RelayWal` /
+//! legacy `NatsWal`), or Lumen-owned primary/replica replication.
 //!
 //! This mirrors Redis's AOF (the op log) + replication stream, with the
 //! "master" role dissolved into "the log owner":
@@ -17,14 +15,15 @@
 //!   with the log sequence they correspond to, so a fresh node loads a
 //!   baseline then tails the log from there.
 //!
-//! Two backends implement [`WalLog`]:
+//! Three backends implement [`WalLog`]:
 //!
 //! - [`MemWal`] — in-process, in-memory. Unit tests + the simplest
 //!   single-node dev runs. Publish applies synchronously from the
 //!   caller's perspective (the subscriber sees it immediately).
-//! - `NatsWal` (in `wal_nats`) — NATS JetStream. Clustered deployments:
-//!   the broker owns durability, ordering, replication and fan-out. Each
-//!   serving node is an independent consumer reading the full stream.
+//! - `RelayWal` (in `wal_relay`) — explicit Relay broadcast broker mode. Each
+//!   serving node has an independent subscriber id reading the full stream.
+//! - `NatsWal` (in `wal_nats`) — legacy NATS JetStream backend retained for
+//!   compatibility/tests.
 //!
 //! The record payload reuses [`crate::log_entry::RaftLogEntry`] — it
 //! already enumerates every mutation 1:1 with an `Engine` method and is
@@ -53,8 +52,8 @@ const WAL_VALUE_STRING_LIST: u8 = 4;
 
 /// One durable, ordered mutation in the log. The sequence number is
 /// **not** part of the record — it is assigned by the log on publish
-/// and delivered alongside the record on subscribe (NATS owns it in the
-/// clustered case; `MemWal` uses the append index).
+/// and delivered alongside the record on subscribe (`MemWal` uses the append
+/// index; broker or primary/replica backends own sequence assignment).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-wal-rs.md#source
 pub struct WalRecord {

@@ -50,7 +50,7 @@ finding and a non-zero exit.
 
 ```bash
 cd projects/keep
-KEEP_DISABLE_PERSISTENCE=true meter profile \
+KEEP_DISABLE_PERSISTENCE=true meter measure \
   --exec ../../target/release/keep --level vitals --duration-cap 30 \
   --drive 'for i in $(seq 1 15); do curl -sf -o /dev/null --max-time 1 \
       http://127.0.0.1:7117/healthz && break; sleep 1; done; \

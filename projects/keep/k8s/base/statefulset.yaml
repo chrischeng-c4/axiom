@@ -43,7 +43,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: keep
-          image: keep:latest
+          image: keep:0.4.0
           imagePullPolicy: IfNotPresent
           command: ["keep"]
           ports:

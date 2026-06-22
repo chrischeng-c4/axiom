@@ -10,10 +10,10 @@
 //!
 //! 1. **RDB** — reopen the newest segment checkpoint (engine seeded to seq `S`),
 //! 2. **AOF** — replay every frame with `seq > S` into the engine (to seq `A`),
-//! 3. **NATS** — tail the log from `A + 1`.
+//! 3. **Broker** — tail the log from `A + 1`.
 //!
-//! Because the AOF is durable through `A`, the NATS stream only needs retention
-//! beyond `A`, not from seq 0 — which is the whole point: NATS retention can be
+//! Because the AOF is durable through `A`, the broker stream only needs retention
+//! beyond `A`, not from seq 0 — which is the whole point: broker retention can be
 //! TRIMMED instead of kept forever.
 //!
 //! ## Frame format
@@ -404,7 +404,7 @@ impl AofReader {
 
 /// Recovery helper: replay every AOF frame with `seq > from_seq` into `engine`
 /// via [`crate::storage::Engine::apply_raft_entry`], returning the max seq
-/// replayed. This is step 2 of cold start (RDB → **AOF** → NATS); the engine is
+/// replayed. This is step 2 of cold start (RDB → **AOF** → broker); the engine is
 /// already seeded to `from_seq` by the segment checkpoint.
 /// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-aof-rs.md#source
 pub fn replay_aof_into(
@@ -636,7 +636,7 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
-// THE CRUX: RDB + AOF recovery WITHOUT NATS (Stage 2 Phase 2f-3).
+// THE CRUX: RDB + AOF recovery WITHOUT broker replay (Stage 2 Phase 2f-3).
 //
 // The whole durability story end-to-end, with the log out of the picture:
 //
@@ -961,7 +961,7 @@ mod crux_recovery_tests {
         let live_knn_alpha = knn(&live, "alpha", &qa);
         let live_knn_beta = knn(&live, "beta", &qa);
 
-        // --- RESTART: fresh engine, RDB reopen → AOF replay (no NATS). ---
+        // --- RESTART: fresh engine, RDB reopen → AOF replay (no broker tail). ---
         let restarted = Arc::new(Engine::new());
         let s_recovered = restarted.reopen_from_segment_dir(&seg_dir).unwrap();
         assert_eq!(

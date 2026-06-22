@@ -203,13 +203,13 @@ async fn reconcile(lumen: Arc<Lumen>, ctx: Arc<Ctx>) -> Result<Action, Error> {
 
     // 2. Observe readiness.
     let ready = ready_replicas(client, &ns, "Deployment", &name).await? as i32;
-    let nats_ready = if lumen.spec.nats.is_managed() {
-        ready_replicas(client, &ns, "StatefulSet", &format!("{name}-nats")).await? >= 1
+    let broker_ready = if lumen.spec.broker.is_managed() {
+        ready_replicas(client, &ns, "StatefulSet", &format!("{name}-relay")).await? >= 1
     } else {
         true // external broker: assumed up; serving pods' connect-retry covers blips.
     };
     let desired = lumen.spec.serving.autoscaling.min_replicas;
-    let phase = if ready >= desired && nats_ready {
+    let phase = if ready >= desired && broker_ready {
         "Ready"
     } else if ready > 0 {
         "Reconciling"
@@ -224,8 +224,8 @@ async fn reconcile(lumen: Arc<Lumen>, ctx: Arc<Ctx>) -> Result<Action, Error> {
         "servingReadyReplicas": ready,
         "desiredReplicas": desired,
         "shardCount": lumen.spec.shard_count,
-        "natsReady": nats_ready,
-        "message": format!("{ready}/{desired} serving pods ready; natsReady={nats_ready}"),
+        "brokerReady": broker_ready,
+        "message": format!("{ready}/{desired} serving pods ready; brokerReady={broker_ready}"),
     }});
     let lum_api: Api<Lumen> = Api::namespaced(client.clone(), &ns);
     lum_api

@@ -31,7 +31,7 @@ tool_contracts:
     tool: rig
     manifest: rig.toml
     category: stability
-    command: "rig run --dir projects/lumen/tests/rig/cases/resilience"
+    command: "cd projects/lumen && ../../target/debug/vat run rig-resilience"
     native:
       version: 1
       project: lumen

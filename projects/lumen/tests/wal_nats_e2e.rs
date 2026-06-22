@@ -1,16 +1,16 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
-//! End-to-end fan-out proof against a real NATS JetStream server.
+//! Legacy end-to-end fan-out proof against a real NATS JetStream server.
 //!
-//! Spin one up with: `nats-server -js` (the project's standard test
+//! Spin one up with: `nats-server -js` (the legacy WAL backend test
 //! broker; `brew services start nats-server` also works). The test
 //! skips gracefully if no server is reachable, per the repo's
 //! "real services, skip if unavailable" pattern.
 //!
 //! What it proves: publish a mutation stream once; two INDEPENDENT
 //! consumers (simulating two serving nodes) each tail the full stream
-//! and build identical indexes. That is fan-out — the property GCP
-//! Pub/Sub can't give cheaply and the whole data-plane design rests on.
+//! and build identical indexes. RelayWal is the current deployment default;
+//! this keeps the older NATS backend honest while it remains available.
 
 use std::sync::Arc;
 use std::time::Duration;

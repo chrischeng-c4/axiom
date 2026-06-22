@@ -21,6 +21,13 @@ spec:
         app: relay
     spec:
       terminationGracePeriodSeconds: 5
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: relay
           image: relay-raft:dev
@@ -54,6 +61,13 @@ spec:
               port: 8080
             initialDelaySeconds: 2
             periodSeconds: 3
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /data

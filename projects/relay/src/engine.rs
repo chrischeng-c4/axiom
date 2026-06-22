@@ -28,12 +28,19 @@ use crate::types::{
     AppendOutcome, CommittedOffset, DeliveryModel, Lease, LogEntry, Payload, Seq, ShardId,
 };
 use crate::workqueue::WorkQueue;
+use tokio::sync::watch;
 
 struct SubjectState {
     log: Log,
     broadcast: BroadcastDelivery,
     workqueue: WorkQueue,
     model: DeliveryModel,
+}
+
+#[derive(Clone)]
+struct SubjectWake {
+    tx: watch::Sender<u64>,
+    rev: Arc<AtomicU64>,
 }
 
 /// In-process broker core. Internally synchronized; share it as `Arc<Relay>`.
@@ -43,6 +50,7 @@ pub struct Relay {
     config: RelayCoreConfig,
     shards: u32,
     subjects: RwLock<HashMap<(String, ShardId), Arc<Mutex<SubjectState>>>>,
+    subject_wakes: RwLock<HashMap<String, SubjectWake>>,
     /// Rotating start shard for `lease`, to spread consumers across shards.
     lease_cursor: AtomicU64,
 }
@@ -55,6 +63,7 @@ impl Relay {
             config,
             shards,
             subjects: RwLock::new(HashMap::new()),
+            subject_wakes: RwLock::new(HashMap::new()),
             lease_cursor: AtomicU64::new(0),
         }
     }
@@ -96,6 +105,50 @@ impl Relay {
         Ok(ss)
     }
 
+    fn ensure_subject_wake(&self, subject: &str) -> SubjectWake {
+        if let Some(wake) = self
+            .subject_wakes
+            .read()
+            .expect("subject wake registry rwlock")
+            .get(subject)
+            .cloned()
+        {
+            return wake;
+        }
+        let mut wakes = self
+            .subject_wakes
+            .write()
+            .expect("subject wake registry rwlock");
+        wakes
+            .entry(subject.to_string())
+            .or_insert_with(|| {
+                let (tx, _) = watch::channel(0);
+                SubjectWake {
+                    tx,
+                    rev: Arc::new(AtomicU64::new(0)),
+                }
+            })
+            .clone()
+    }
+
+    fn wake_subscribers(&self, subject: &str) {
+        let Some(wake) = self
+            .subject_wakes
+            .read()
+            .expect("subject wake registry rwlock")
+            .get(subject)
+            .cloned()
+        else {
+            return;
+        };
+        let rev = wake.rev.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = wake.tx.send(rev);
+    }
+
+    pub fn subscribe_wake(&self, subject: &str) -> watch::Receiver<u64> {
+        self.ensure_subject_wake(subject).tx.subscribe()
+    }
+
     /// Publish a message; routed to `crc32(message_id) % shards`. Idempotent per id.
     ///
     /// @spec projects/relay/tech-design/logic/multi-shard-per-subject-server-side-sharding-horizontal-scale.md#logic
@@ -109,8 +162,14 @@ impl Relay {
     ) -> io::Result<AppendOutcome> {
         let shard = self.route(message_id);
         let ss = self.shard_state(subject, shard)?;
-        let mut g = ss.lock().expect("subject mutex");
-        g.log.append(message_id, payload, headers, now)
+        let outcome = {
+            let mut g = ss.lock().expect("subject mutex");
+            g.log.append(message_id, payload, headers, now)?
+        };
+        if !outcome.deduped {
+            self.wake_subscribers(subject);
+        }
+        Ok(outcome)
     }
 
     /// Publish a batch (group commit); each message routes to its shard, one
@@ -146,10 +205,14 @@ impl Relay {
                 out[idx] = Some(oc);
             }
         }
-        Ok(out
+        let out: Vec<AppendOutcome> = out
             .into_iter()
             .map(|o| o.expect("every index filled"))
-            .collect())
+            .collect();
+        if out.iter().any(|outcome| !outcome.deduped) {
+            self.wake_subscribers(subject);
+        }
+        Ok(out)
     }
 
     /// Set the descriptive delivery model for a subject (recorded on shard 0).

@@ -23,7 +23,7 @@ e2e_tests:
     contract_id: search-stability-fault-resilience
     category: stability
     test_path: projects/lumen/tests/stability_lumen_long_running_stability_query_resilience.rs
-    command: "rig run --dir projects/lumen/tests/rig/cases/resilience"
+    command: "cd projects/lumen && ../../target/debug/vat run rig-resilience"
     assertions:
       - "FILTERING/RANKING: under 5% packet loss (toxiproxy timeout toxic) search p99 stays <= 2x baseline_p99 + 20ms."
       - "ALL: after a full network partition, search recovers within 10s and post-recovery p99 stays <= 2x baseline_p99 + 1ms."
@@ -34,7 +34,7 @@ e2e_tests:
     contract_id: search-stability-backpressure
     category: stability
     test_path: projects/lumen/tests/stability_lumen_long_running_stability_overload_backpressure.rs
-    command: "rig run --dir projects/lumen/tests/rig/cases/load --pins projects/lumen/tests/rig/config/pins"
+    command: "cd projects/lumen && ../../target/debug/vat run rig-load"
     assertions:
       - "(d) Under 3x steady-state concurrent load the server stays up and bounded: error_rate <= 0.05 and p99 <= 250ms (rig load/backpressure_overload.toml + pins); no OOM/crash. Env-dependent (vat-provisioned lumen)."
   - id: lumen-long-running-stability-resource-leak
@@ -43,7 +43,7 @@ e2e_tests:
     contract_id: search-stability-resource-leak
     category: stability
     test_path: projects/lumen/tests/stability_lumen_long_running_stability_resource_leak.rs
-    command: "rig run --dir projects/lumen/tests/rig/cases/endurance"
+    command: "cd projects/lumen && ../../target/debug/vat run rig-endurance"
     assertions:
       - "(e) Open FD count after sustained index+search load <= 1.20x before + 16 (rig endurance/fd_leak.toml). Env-dependent (vat-provisioned lumen)."
   - id: lumen-long-running-stability-latency-drift
@@ -52,7 +52,7 @@ e2e_tests:
     contract_id: search-stability-latency-drift
     category: stability
     test_path: projects/lumen/tests/stability_lumen_long_running_stability_latency_drift.rs
-    command: "rig run --dir projects/lumen/tests/rig/cases/endurance"
+    command: "cd projects/lumen && ../../target/debug/vat run rig-endurance"
     assertions:
       - "(f) search p99 per window over the soak drifts <= 1.10x + 6ms (rig endurance/soak_p99_drift.toml). Env-dependent (vat-provisioned lumen)."
 ```
@@ -66,7 +66,7 @@ tool_contracts:
     tool: rig
     manifest: rig-search.toml
     category: stability
-    command: "rig run --dir projects/lumen/tests/rig/cases/resilience"
+    command: "cd projects/lumen && ../../target/debug/vat run rig-resilience"
     native:
       version: 1
       project: lumen

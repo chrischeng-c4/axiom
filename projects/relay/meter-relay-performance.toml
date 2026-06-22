@@ -1,0 +1,9 @@
+# SPEC-MANAGED: projects/relay/external-contracts/competitor-performance/efficiency/perf-gate.md#relay-meter-performance
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+delegate_command = "cd projects/relay && ../../target/debug/vat run meter-perf"
+project = "relay"
+source_contract = "relay-competitor-performance-meter-gate"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END

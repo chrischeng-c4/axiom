@@ -10,9 +10,10 @@ domain model.
 
 ## Capabilities
 
-The five RuntimeTool baseline capabilities are mandatory for this long-running
-broker class. They do not replace Relay's product capabilities; ordered log,
-work queue, worker protocol, and raft HA remain first-class domain roots.
+The RuntimeTool baseline capabilities selected by `aw.toml` are mandatory for
+this long-running broker class. They do not replace Relay's product
+capabilities; ordered log, work queue, worker protocol, and raft HA remain
+first-class domain roots.
 
 ### Capability Index
 
@@ -20,9 +21,12 @@ work queue, worker protocol, and raft HA remain first-class domain roots.
 |---|---:|---|---|---|---|---|
 | CLI Interface | 108 | implemented | passing | conformance | not_ready | mandatory baseline: relay-server, relay-raft, and OpenAPI surfaces |
 | Competitive Broker Feature Parity | - | implemented | planned | dogfood | not_ready | mandatory baseline: NATS/RabbitMQ/Redpanda replacement breadth; kind failover remains open |
-| Competitive Broker Performance | 125 | implemented | planned | dogfood | not_ready | mandatory baseline: throughput ratchet and external broker arena |
+| Competitive Broker Performance | 125 | implemented | planned | dogfood | not_ready | mandatory baseline: vat-isolated meter throughput ratchet; external broker arena is advisory |
 | Long-Running Stability | - | implemented | passing | dogfood | not_ready | mandatory baseline: recovery, retention, lease reclaim, and raft restart/failover |
 | Security Hardening | - | planned | planned | negative | not_ready | mandatory baseline: opaque payload boundary exists; auth/TLS/negative gates remain open |
+| HTTP/2 API List | 108 | implemented | passing | conformance | not_ready | mandatory baseline: concise h2c producer, replay, worker, probe, and OpenAPI route list |
+| Kubernetes-Native Deployment | - | implemented | planned | dogfood | not_ready | mandatory baseline: StatefulSet raft deployment and kind failover smoke |
+| Primary Replicas | - | implemented | planned | dogfood | not_ready | mandatory baseline: raft leader/follower primary-replica topology |
 | Durable Ordered Log | - | implemented | passing | conformance | not_ready | domain: per-subject append, replay, broadcast fan-out, and segment lifecycle |
 | Work Queue Lifecycle | - | implemented | passing | conformance | not_ready | domain: lease, heartbeat, ack, redelivery, and reconciler behavior |
 | HTTP/OpenAPI Worker Protocol | 108 | implemented | passing | conformance | not_ready | domain: polyglot h2c worker contract |
@@ -81,21 +85,23 @@ Gate Inventory:
 
 ID: competitor-performance
 Type: RuntimeTool
-Surfaces: Arena: `projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml` - external broker comparison spec.; Rust bench: `relay_bench` - local broker throughput baseline.
-EC Dimensions: efficiency: `arena` - compare and ratchet against NATS, RabbitMQ, and Redpanda; behavior: `cargo test -p relay --test work_queue_throughput --test perf_gate` - throughput model and ratchet conformance
+Surfaces: Meter/Vat: `projects/relay/vat.toml#meter-perf` - isolated meter execution for the throughput ratchet.; Arena: `projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml` - advisory external broker comparison spec.; Rust bench: `relay_bench` - local broker throughput baseline.
+EC Dimensions: efficiency: `cd projects/relay && ../../target/debug/vat run meter-perf` - meter-owned throughput model and ratchet conformance; behavior: `cargo test -p relay --test work_queue_throughput --test perf_gate` - deterministic local gate shape
 Root WI: 125
 Status: auditing
 Required Verification: dogfood
 Promise:
 Keep Relay's performance claims tied to repeatable throughput tests and an
-external competitor arena against NATS, RabbitMQ, and Redpanda.
+vat-isolated meter gate and keep the external competitor arena against NATS,
+RabbitMQ, and Redpanda as advisory dogfood until native adapters are promoted.
 Gate Inventory:
-- projects/relay/tests/work_queue_throughput.rs; projects/relay/tests/perf_gate.rs; projects/relay/src/perf_gate.rs; projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml
+- projects/relay/vat.toml; projects/relay/tests/work_queue_throughput.rs; projects/relay/tests/perf_gate.rs; projects/relay/src/perf_gate.rs; projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | o-1-lease-cursor-throughput | epic | - | implemented | passing | conformance | projects/relay/tests/work_queue_throughput.rs |
 | normalized-win-ratchet-decision-model | epic | 125 | implemented | passing | conformance | projects/relay/tests/perf_gate.rs |
+| vat-meter-throughput-gate | epic | 125 | implemented | planned | dogfood | projects/relay/vat.toml#meter-perf |
 | external-broker-comparison | epic | 125 | implemented | planned | dogfood | projects/arena/examples/relay-vs-nats-rabbitmq-redpanda.toml |
 
 ### Long-Running Stability
@@ -126,8 +132,8 @@ Gate Inventory:
 
 ID: security-hardening
 Type: RuntimeTool
-Surfaces: HTTP: relay h2c API - worker and producer request boundary.; K8s: `projects/relay/k8s` - deployment boundary for future network policy and identity.
-EC Dimensions: security: `guard` - negative API and deployment security gate to be authored; behavior: `cargo test -p relay --test relay_core --test worker_loop` - opaque payload and worker contract boundary smoke
+Surfaces: Guard/Vat: `projects/relay/vat.toml#guard-security` - isolated guard scan with meter runtime evidence.; HTTP: relay h2c API - worker and producer request boundary.; K8s: `projects/relay/k8s` - deployment boundary for future network policy and identity.
+EC Dimensions: security: `cd projects/relay && ../../target/debug/vat run guard-security` - guard-owned static/runtime evidence for the in-process opaque payload boundary; behavior: `cargo test -p relay --test relay_core --test worker_loop` - opaque payload and worker contract boundary smoke
 Root WI: -
 Status: auditing
 Required Verification: negative
@@ -136,13 +142,80 @@ Keep Relay safe as a long-running broker by preserving opaque payload
 boundaries and adding explicit negative gates for request limits, authn/z,
 TLS/network policy, and deployment identity before production readiness.
 Gate Inventory:
-- projects/relay/tests/relay_core.rs; projects/relay/tests/worker_loop.rs; pending guard/negative security inventory
+- projects/relay/vat.toml; projects/relay/tests/relay_core.rs; projects/relay/tests/worker_loop.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | opaque-payload-boundary | epic | - | implemented | passing | smoke | projects/relay/tests/relay_core.rs; projects/relay/tests/worker_loop.rs |
-| request-limit-and-malformed-frame-negative-tests | epic | - | planned | planned | negative | pending guard/negative security inventory |
+| guard-static-runtime-evidence | epic | - | implemented | planned | negative | projects/relay/vat.toml#guard-security |
+| request-limit-and-malformed-frame-negative-tests | epic | - | planned | planned | negative | projects/relay/vat.toml#guard-security |
 | auth-tls-network-policy-boundary | epic | - | planned | planned | negative | pending guard/negative security inventory |
+
+### HTTP/2 API List
+
+ID: http2-api-list
+Type: RuntimeTool
+Surfaces: HTTP: publish, subscribe, lease, heartbeat, ack, replay, `/openapi.json`, and probe routes - concise h2c API list for producers and workers.; Docs: `projects/relay/docs/worker-protocol.md` - endpoint contract summary.
+EC Dimensions: behavior: `cargo test -p relay --test http2_transport --test worker_loop` - h2c transport and worker protocol conformance
+Root WI: 108
+Status: auditing
+Required Verification: conformance
+Promise:
+Publish Relay's supported HTTP/2 API as a compact producer, replay, and worker
+endpoint inventory, with OpenAPI/docs pointers, without making OpenAPI
+completeness the capability definition.
+Gate Inventory:
+- projects/relay/tests/http2_transport.rs; projects/relay/tests/worker_loop.rs; projects/relay/docs/worker-protocol.md
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| h2c-producer-and-replay-route-list | epic | - | implemented | passing | conformance | projects/relay/tests/http2_transport.rs |
+| worker-lease-heartbeat-ack-route-list | epic | 108 | implemented | passing | conformance | projects/relay/tests/worker_loop.rs; projects/relay/docs/worker-protocol.md |
+| served-openapi-contract | epic | 108 | implemented | passing | conformance | projects/relay/tests/worker_loop.rs |
+
+### Kubernetes-Native Deployment
+
+ID: kubernetes-native-deployment
+Type: Devops
+Surfaces: K8s: `projects/relay/k8s` - StatefulSet-oriented raft deployment and service topology.; Script: `projects/relay/scripts/kind-failover-smoke.sh` - live failover dogfood path.; CLI: `relay-raft` - Kubernetes node process.
+EC Dimensions: behavior: `cargo test -p relay --test raft_config --test raft_cluster` - node config and real h2c cluster smoke; stability: `projects/relay/scripts/kind-failover-smoke.sh` - kind failover dogfood
+Root WI: -
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Run Relay as a Kubernetes-native broker with a StatefulSet-oriented raft node,
+stable service discovery, persistent hard state, and a kind failover path for
+deployment dogfood.
+Gate Inventory:
+- projects/relay/k8s; projects/relay/scripts/kind-failover-smoke.sh; projects/relay/tests/raft_config.rs; projects/relay/tests/raft_cluster.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| statefulset-raft-service-topology | epic | - | implemented | planned | dogfood | projects/relay/k8s |
+| relay-raft-node-config | epic | - | implemented | passing | conformance | projects/relay/tests/raft_config.rs |
+| kubernetes-kind-failover-smoke | epic | - | implemented | planned | dogfood | projects/relay/scripts/kind-failover-smoke.sh |
+
+### Primary Replicas
+
+ID: primary-replicas
+Type: Runtime
+Surfaces: CLI: `relay-raft` - raft-backed primary/replica broker node.; Rust API: raft state machine and hard-state persistence.; K8s: `projects/relay/k8s` - replica pods with stable identities.
+EC Dimensions: stability: `cargo test -p relay --test raft_core --test raft_persistence --test raft_cluster` - leader/follower convergence, hard-state restore, and h2c cluster smoke
+Root WI: -
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Support a primary/replica broker topology where the raft leader owns writes,
+followers replicate committed state, and failover preserves the ordered-log and
+work-queue API contract.
+Gate Inventory:
+- projects/relay/tests/raft_core.rs; projects/relay/tests/raft_persistence.rs; projects/relay/tests/raft_cluster.rs; projects/relay/k8s
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| in-process-leader-follower-convergence | epic | - | implemented | passing | conformance | projects/relay/tests/raft_core.rs |
+| durable-primary-replica-hard-state | epic | - | implemented | passing | conformance | projects/relay/tests/raft_persistence.rs |
+| real-h2c-replica-cluster-smoke | epic | - | implemented | passing | dogfood | projects/relay/tests/raft_cluster.rs |
 
 ### Durable Ordered Log
 

@@ -9,9 +9,10 @@ engine and tiered RAM+disk persistence are unchanged; the transport is now
 
 ## Capabilities
 
-The five RuntimeTool baseline capabilities are mandatory for this long-running
-service class. They do not replace Keep's product capabilities; KV, collections,
-durability, HA, and the relay data plane remain first-class domain roots.
+The RuntimeTool baseline capabilities selected by `aw.toml` are mandatory for
+this long-running service class. They do not replace Keep's product
+capabilities; KV, collections, durability, HA, and the relay data plane remain
+first-class domain roots.
 
 ### Capability Index
 
@@ -22,6 +23,9 @@ durability, HA, and the relay data plane remain first-class domain roots.
 | Competitive KV Performance | 126 | implemented | planned | dogfood | not_ready | mandatory baseline: engine ratchet and external Redis/Dragonfly comparison are not release-closed |
 | Long-Running Stability | 121 | implemented | planned | dogfood | not_ready | mandatory baseline: durable recovery and drain pass locally; multi-node raft remains staged |
 | Security Hardening | - | planned | planned | negative | not_ready | mandatory baseline: request limits exist; auth/TLS/negative gates are still open |
+| HTTP/2 API List | - | implemented | passing | conformance | not_ready | mandatory baseline: concise HTTP/2 route list, OpenAPI pointer, probes, and metrics |
+| Kubernetes-Native Deployment | - | implemented | passing | conformance | not_ready | mandatory baseline: kustomize manifests, probes, drain, env config, and nonroot image |
+| Primary Replicas | 121 | planned | planned | dogfood | not_ready | mandatory baseline: raft-backed primary/replica topology and failover remains staged |
 | KV API | - | implemented | passing | conformance | not_ready | domain: scalar KV, batch, scan, locks, probes, metrics, and claim-check blobs |
 | Collections | - | implemented | passing | conformance | not_ready | domain: hash, set, sorted-set, and list APIs |
 | Durability | - | implemented | passing | conformance | not_ready | domain: WAL-backed durable-before-ack recovery |
@@ -76,8 +80,8 @@ Gate Inventory:
 
 ID: competitor-performance
 Type: RuntimeTool
-Surfaces: Example: `bench_compare` - Redis/Dragonfly comparison harness.; Meter: `PERF-GATE.md` - engine throughput and resource gate.
-EC Dimensions: efficiency: `meter` - engine throughput and resource ratchet; behavior: `cargo test -p keep` - API behavior under the performance-relevant surfaces
+Surfaces: Meter/Vat: `projects/keep/vat.toml#meter-efficiency` - isolated meter execution for performance-relevant API and durability gates.; Example: `bench_compare` - Redis/Dragonfly comparison harness.; Meter: `PERF-GATE.md` - engine throughput and resource gate.
+EC Dimensions: efficiency: `cd projects/keep && ../../target/debug/vat run meter-efficiency` - meter-owned runtime evidence inside vat; behavior: `cargo test -p keep` - API behavior under the performance-relevant surfaces
 Root WI: 126
 Status: auditing
 Required Verification: conformance, dogfood
@@ -85,10 +89,11 @@ Promise:
 Keep performance claims stay tied to repeatable engine/resource gates and an
 external Redis/Dragonfly comparison, not anecdotal local timings.
 Gate Inventory:
-- projects/keep/PERF-GATE.md; projects/keep/examples/bench_compare.rs
+- projects/keep/vat.toml; projects/keep/PERF-GATE.md; projects/keep/examples/bench_compare.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
+| vat-meter-runtime-gate | epic | 126 | implemented | planned | conformance | projects/keep/vat.toml#meter-efficiency |
 | engine-throughput-ratchet | epic | 126 | implemented | planned | conformance | projects/keep/PERF-GATE.md |
 | redis-dragonfly-comparison | epic | 126 | implemented | planned | dogfood | projects/keep/examples/bench_compare.rs |
 
@@ -118,8 +123,8 @@ Gate Inventory:
 
 ID: security-hardening
 Type: RuntimeTool
-Surfaces: HTTP: keep public API - request body and data-plane boundary.; K8s: `projects/keep/k8s` - deployment boundary for future network policy and identity.
-EC Dimensions: security: `guard` - negative API and deployment security gate to be authored; behavior: `cargo test -p keep --test http_api` - body-limit and public-route smoke
+Surfaces: Guard/Vat: `projects/keep/vat.toml#guard-security` - isolated guard scan with meter runtime evidence.; HTTP: keep public API - request body and data-plane boundary.; K8s: `projects/keep/k8s` - deployment boundary for future network policy and identity.
+EC Dimensions: security: `cd projects/keep && ../../target/debug/vat run guard-security` - guard-owned static/runtime evidence; behavior: `cargo test -p keep --test http_api` - body-limit and public-route smoke
 Root WI: -
 Status: auditing
 Required Verification: negative
@@ -128,13 +133,81 @@ Keep the long-running KV service safe by enforcing request boundaries and
 adding explicit negative gates for authn/z, TLS, network policy, and malformed
 or oversized request handling before production readiness.
 Gate Inventory:
-- projects/keep/src/http/routes.rs; projects/keep/tests/http_api.rs; pending guard/negative security inventory
+- projects/keep/vat.toml; projects/keep/src/http/routes.rs; projects/keep/tests/http_api.rs
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | body-limit-and-public-route-boundary | epic | - | implemented | passing | smoke | projects/keep/src/http/routes.rs; projects/keep/tests/http_api.rs |
 | auth-tls-network-policy-boundary | epic | - | planned | planned | negative | pending guard/negative security inventory |
-| malformed-and-oversized-request-negative-tests | epic | - | planned | planned | negative | pending guard/negative security inventory |
+| guard-static-runtime-evidence | epic | - | implemented | planned | negative | projects/keep/vat.toml#guard-security |
+| malformed-and-oversized-request-negative-tests | epic | - | planned | planned | negative | projects/keep/vat.toml#guard-security |
+
+### HTTP/2 API List
+
+ID: http2-api-list
+Type: RuntimeTool
+Surfaces: HTTP: `/v1/kv/*`, `/v1/hashes`, `/v1/sets`, `/v1/zsets`, `/v1/lists`, `/v1/locks`, `/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/docs` - concise HTTP/2 API list for operators and client authors.
+EC Dimensions: behavior: `cargo test -p keep --test http_api --test collections_api` - public route list and data-plane conformance
+Root WI: -
+Status: auditing
+Required Verification: conformance
+Promise:
+Publish the supported HTTP/2 API surface as a compact endpoint inventory, with
+probe, metrics, and OpenAPI pointers, without making OpenAPI completeness the
+capability definition.
+Gate Inventory:
+- projects/keep/README.md#http-surface-v1; projects/keep/tests/http_api.rs; projects/keep/tests/collections_api.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| http2-api-route-list | epic | - | implemented | passing | conformance | projects/keep/README.md#http-surface-v1 |
+| openapi-docs-probes-and-metrics | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
+| collection-route-breadth | epic | - | implemented | passing | conformance | projects/keep/tests/collections_api.rs |
+
+### Kubernetes-Native Deployment
+
+ID: kubernetes-native-deployment
+Type: Devops
+Surfaces: K8s: `projects/keep/k8s` - StatefulSet, headless/ClusterIP Services, ConfigMap, PDB, and overlays.; Container: `Dockerfile` and `Dockerfile.release` - repo-root and published-binary images.
+EC Dimensions: behavior: `cargo test -p keep --test http_api` - readiness, metrics, and graceful drain behavior; stability: `kubectl apply -k projects/keep/k8s/overlays/dev` - deployment dogfood path
+Root WI: -
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Run Keep as a Kubernetes-native stateful service with PVC-backed instances,
+headless and ClusterIP service discovery, probe-aware readiness drain, bounded
+config through env/flags, and nonroot container images.
+Gate Inventory:
+- projects/keep/k8s; projects/keep/Dockerfile; projects/keep/Dockerfile.release; projects/keep/tests/http_api.rs
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| statefulset-pvc-service-topology | epic | - | implemented | passing | conformance | projects/keep/k8s |
+| readiness-drain-and-probe-contract | epic | - | implemented | passing | conformance | projects/keep/tests/http_api.rs |
+| nonroot-container-image-path | epic | - | implemented | passing | smoke | projects/keep/Dockerfile; projects/keep/Dockerfile.release |
+
+### Primary Replicas
+
+ID: primary-replicas
+Type: Runtime
+Surfaces: Rust API: `keep::raft` - raftcore-backed state machine for primary/replica convergence.; K8s: StatefulSet - stable network identity and PVC-backed replica pods.; HTTP: future raft network - primary write ownership with replica failover.
+EC Dimensions: stability: `cargo test -p keep --test raft_node` - current raft state-machine conformance; behavior: multi-node HTTP/2 raft network - staged failover gate
+Root WI: 121
+Status: auditing
+Required Verification: conformance, dogfood
+Promise:
+Support a primary/replica HA topology where one write-owning primary is backed
+by durable replicas and failover preserves the public KV API. The capability is
+tracked separately from the generic HA domain root so the profile explicitly
+names the replica requirement.
+Gate Inventory:
+- projects/keep/tests/raft_node.rs; projects/keep/HA.md; projects/keep/k8s
+
+| Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
+|---|---|---:|---|---|---|---|
+| single-node-raftcore-state-machine | epic | 121 | implemented | passing | conformance | projects/keep/tests/raft_node.rs |
+| primary-replica-topology-contract | epic | 121 | planned | planned | dogfood | projects/keep/HA.md |
+| multi-node-replica-failover | epic | 121 | planned | planned | dogfood | projects/keep/HA.md; projects/keep/k8s |
 
 ### KV API
 

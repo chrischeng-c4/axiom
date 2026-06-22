@@ -13,7 +13,7 @@ WORKDIR /src
 # Only ca-certificates needed — keep links no openssl.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY . .
+COPY --chown=root:root . .
 # BuildKit cache mounts keep the cargo registry + target dir warm across builds.
 # target/ is a cache mount (not persisted into the layer), so copy the binary
 # out in the same RUN.
@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # the k8s securityContext). No shell, no init shim — a single tokio binary
 # handles SIGTERM (graceful drain) and spawns no children.
 FROM gcr.io/distroless/cc-debian12:nonroot
-COPY --from=builder /usr/local/bin/keep /usr/local/bin/keep
+COPY --chown=65532:65532 --from=builder /usr/local/bin/keep /usr/local/bin/keep
 # 7117 = HTTP API (HTTP/1.1 + HTTP/2 cleartext).
 EXPOSE 7117
 ENTRYPOINT ["/usr/local/bin/keep"]

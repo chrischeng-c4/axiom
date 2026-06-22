@@ -4,15 +4,21 @@
 //! with the background lease reconciler running.
 
 use std::time::Duration;
+use std::{env, io};
 
 use relay::server::{router, AppState};
 use relay::server_config::RelayServerConfig;
 use relay::spawn_reconciler;
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    // v1: defaults. Config loading (env / file) is a later concern.
-    let config = RelayServerConfig::default();
+async fn main() -> io::Result<()> {
+    let mut config = RelayServerConfig::default();
+    if let Ok(bind) = env::var("RELAY_BIND") {
+        config.bind = bind;
+    }
+    if let Ok(data_dir) = env::var("RELAY_DATA_DIR") {
+        config.core.data_dir = data_dir;
+    }
     let bind = config.bind.clone();
     let reconcile_interval = Duration::from_millis(config.reconcile_interval_ms);
 

@@ -122,10 +122,10 @@ impl WriteCoordinator {
         tokio::spawn(async move {
             let mut backoff = std::time::Duration::from_millis(100);
             // Outer loop: re-subscribe from the last-applied sequence whenever
-            // the stream ends or the subscribe fails. A NATS broker restart
-            // tears down our ephemeral consumer, so the apply loop MUST
-            // recreate it and resume tailing — otherwise writes silently stop
-            // applying after a broker blip. Resuming from `applied` is safe:
+            // the stream ends or the subscribe fails. A broker restart can tear
+            // down our ephemeral subscription, so the apply loop MUST recreate
+            // it and resume tailing — otherwise writes silently stop applying
+            // after a broker blip. Resuming from `applied` is safe:
             // redelivery is skipped idempotently below.
             loop {
                 let from = loop_coord.applied.load(Ordering::Acquire);
@@ -183,7 +183,7 @@ impl WriteCoordinator {
                             }
                             // apply_raft_entry is synchronous and CPU-bound (a bulk index folds
                             // thousands of items + BM25 stats). Run ready records in one blocking
-                            // task to keep NATS I/O moving without paying a thread handoff per WAL
+                            // task to keep broker I/O moving without paying a thread handoff per WAL
                             // record.
                             let eng = engine.clone();
                             let seqs: Vec<u64> = batch.iter().map(|pending| pending.seq).collect();

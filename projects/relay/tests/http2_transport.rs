@@ -15,8 +15,10 @@ use serde_json::json;
 
 use relay::server::{router, AppState};
 use relay::server_config::RelayServerConfig;
-use relay::wire::{to_cbor, AckResponse, LeaseRequest, LeaseResponse};
-use relay::LogEntry;
+use relay::wire::{
+    from_cbor, to_cbor, AckResponse, LeaseRequest, LeaseResponse, PublishRequest, CBOR,
+};
+use relay::{AppendOutcome, LogEntry};
 
 async fn start_server() -> SocketAddr {
     let state = AppState::new(RelayServerConfig::ephemeral());
@@ -67,6 +69,33 @@ async fn publish_is_idempotent_over_h2c() {
     assert_eq!(first["deduped"], false);
     assert_eq!(second["seq"], 0);
     assert_eq!(second["deduped"], true);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publish_cbor_fast_path_over_h2c() {
+    let addr = start_server().await;
+    let client = h2c_client();
+    let body = to_cbor(&PublishRequest {
+        message_id: "m0".into(),
+        payload: json!({ "n": 1 }),
+        headers: Default::default(),
+    });
+    let bytes = client
+        .post(url(addr, "/v1/s/publish"))
+        .header("content-type", CBOR)
+        .header("accept", CBOR)
+        .body(body)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let outcome: AppendOutcome = from_cbor(bytes.as_ref()).unwrap();
+    assert_eq!(outcome.seq, 0);
+    assert!(!outcome.deduped);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

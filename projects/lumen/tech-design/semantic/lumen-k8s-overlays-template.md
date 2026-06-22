@@ -41,6 +41,8 @@ deployment:
     - path: "projects/lumen/k8s/overlays/template/kustomization.yaml"
       kind: "kustomization"
       content: |
+        # SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-overlays-template.md#deployment
+        # CODEGEN-BEGIN
         apiVersion: kustomize.config.k8s.io/v1beta1
         kind: Kustomization
         
@@ -76,12 +78,15 @@ deployment:
           - name: lumen
             newName: REPLACE_ME__REGISTRY/lumen   # e.g. asia-east1-docker.pkg.dev/PROJECT/REPO/lumen
             newTag: REPLACE_ME__IMAGE_TAG         # e.g. v1   (avoid :latest in prod)
+          - name: relay
+            newName: REPLACE_ME__REGISTRY/relay
+            newTag: REPLACE_ME__RELAY_IMAGE_TAG
         
         # Replica floors at apply time. The HPA owns lumen's live count from here up.
         replicas:
           - name: lumen
             count: 2
-          - name: lumen-nats
+          - name: lumen-relay
             count: 1
         
         patches:
@@ -97,10 +102,10 @@ deployment:
                 path: /data/LUMEN_LOG_FORMAT
                 value: "json"
         
-          # GKE storage class for the NATS PVC (the one stateful component). base omits
+          # GKE storage class for the Relay PVC (the one stateful component). base omits
           # it (cluster default). GKE SSD = premium-rwo; balanced PD = standard-rwo.
           # Non-GKE: set your class, or delete this patch to use the cluster default.
-          - target: { kind: StatefulSet, name: lumen-nats }
+          - target: { kind: StatefulSet, name: lumen-relay }
             patch: |-
               - op: add
                 path: /spec/volumeClaimTemplates/0/spec/storageClassName
@@ -126,6 +131,8 @@ deployment:
           #       value:
           #         name: LUMEN_TOKENS
           #         valueFrom: { secretKeyRef: { name: lumen-tokens, key: LUMEN_TOKENS } }
+        # CODEGEN-END
+
 ```
 
 ## Changes
