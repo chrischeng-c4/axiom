@@ -1565,6 +1565,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             Void
         ),
         rt_sym!(
+            "mb_class_update_bases",
+            class::mb_class_update_bases as fn(super::MbValue, super::MbValue),
+            [I64, I64],
+            Void
+        ),
+        rt_sym!(
             "mb_class_set_metaclass",
             class::mb_class_set_metaclass as fn(super::MbValue, super::MbValue),
             [I64, I64],
