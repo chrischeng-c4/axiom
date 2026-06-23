@@ -192,7 +192,7 @@ fn call_fileobj(fileobj: MbValue, method: &str, args: Vec<MbValue>) -> MbValue {
 /// object or a path string) in `mode` (r/w/a/x with optional `b`/`t`
 /// suffix). Raises ValueError on a malformed mode.
 pub fn make_file(class_name: &str, codec: Codec, source: MbValue, mode: &str) -> MbValue {
-    make_file_opts(class_name, codec, source, mode, None, None)
+    make_file_opts(class_name, codec, source, mode, None, None, None)
 }
 
 /// `make_file` with the text-layer options the `open()` wrappers accept:
@@ -206,6 +206,7 @@ pub fn make_file_opts(
     mode: &str,
     encoding: Option<String>,
     errors: Option<String>,
+    newline: Option<String>,
 ) -> MbValue {
     let is_text = mode.contains('t') || encoding.is_some();
     let base = mode.trim_end_matches(['b', 't']);
@@ -262,6 +263,12 @@ pub fn make_file_opts(
             errors.unwrap_or_else(|| "strict".to_string()),
         )),
     );
+    if let Some(newline) = newline {
+        fields.insert(
+            "_newline".to_string(),
+            MbValue::from_ptr(MbObject::new_str(newline)),
+        );
+    }
     // GzipFile exposes the underlying filename as `.name` ('' for
     // in-memory file objects).
     fields.insert(
@@ -387,6 +394,10 @@ fn pos_of(slf: MbValue) -> usize {
 
 fn is_text(slf: MbValue) -> bool {
     inst_field(slf, "_text").and_then(|v| v.as_bool()) == Some(true)
+}
+
+fn newline_of(slf: MbValue) -> Option<String> {
+    inst_field(slf, "_newline").and_then(as_str).filter(|s| !s.is_empty())
 }
 
 fn encoding_of(slf: MbValue) -> String {
@@ -557,7 +568,25 @@ unsafe extern "C" fn m_read(slf: MbValue, args: MbValue) -> MbValue {
 }
 
 fn readline_slice(plain: &[u8], pos: usize) -> (Vec<u8>, usize) {
+    readline_slice_with_sep(plain, pos, None)
+}
+
+fn readline_slice_for(slf: MbValue, plain: &[u8], pos: usize) -> (Vec<u8>, usize) {
+    let newline = newline_of(slf);
+    readline_slice_with_sep(plain, pos, newline.as_deref())
+}
+
+fn readline_slice_with_sep(plain: &[u8], pos: usize, sep: Option<&str>) -> (Vec<u8>, usize) {
     let rest = &plain[pos.min(plain.len())..];
+    if let Some(sep) = sep.map(str::as_bytes).filter(|s| !s.is_empty()) {
+        return match rest.windows(sep.len()).position(|window| window == sep) {
+            Some(i) => {
+                let end = i + sep.len();
+                (rest[..end].to_vec(), pos + end)
+            }
+            None => (rest.to_vec(), plain.len()),
+        };
+    }
     match rest.iter().position(|&b| b == b'\n') {
         Some(i) => (rest[..=i].to_vec(), pos + i + 1),
         None => (rest.to_vec(), plain.len()),
@@ -571,7 +600,7 @@ unsafe extern "C" fn m_readline(slf: MbValue, _args: MbValue) -> MbValue {
     let Some(plain) = ensure_plain(slf) else {
         return MbValue::none();
     };
-    let (line, new_pos) = readline_slice(&plain, pos_of(slf));
+    let (line, new_pos) = readline_slice_for(slf, &plain, pos_of(slf));
     inst_set(slf, "_pos", MbValue::from_int(new_pos as i64));
     if is_text(slf) {
         return match decode_text(slf, &line) {
@@ -592,8 +621,15 @@ unsafe extern "C" fn m_readlines(slf: MbValue, _args: MbValue) -> MbValue {
     let mut pos = pos_of(slf);
     let mut lines = Vec::new();
     while pos < plain.len() {
-        let (line, new_pos) = readline_slice(&plain, pos);
-        lines.push(bytes_val(line));
+        let (line, new_pos) = readline_slice_for(slf, &plain, pos);
+        if is_text(slf) {
+            let Some(s) = decode_text(slf, &line) else {
+                return MbValue::none();
+            };
+            lines.push(MbValue::from_ptr(MbObject::new_str(s)));
+        } else {
+            lines.push(bytes_val(line));
+        }
         pos = new_pos;
     }
     inst_set(slf, "_pos", MbValue::from_int(pos as i64));
@@ -870,7 +906,7 @@ unsafe extern "C" fn m_next(slf: MbValue, _args: MbValue) -> MbValue {
     if pos >= plain.len() {
         return raise("StopIteration", "");
     }
-    let (line, new_pos) = readline_slice(&plain, pos);
+    let (line, new_pos) = readline_slice_for(slf, &plain, pos);
     inst_set(slf, "_pos", MbValue::from_int(new_pos as i64));
     if is_text(slf) {
         return match decode_text(slf, &line) {
