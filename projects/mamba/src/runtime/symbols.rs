@@ -342,6 +342,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_match_bool_literal",
+            builtins::mb_match_bool_literal as fn(super::MbValue, i64) -> super::MbValue,
+            [I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_lt",
             builtins::mb_lt as fn(super::MbValue, super::MbValue) -> super::MbValue,
             [I64, I64],

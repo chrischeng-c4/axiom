@@ -5211,15 +5211,24 @@ impl<'a> HirToMir<'a> {
             }
             Literal(expr) => {
                 let lit_raw = self.lower_expr(expr);
-                // Box the literal so both operands are MbValue for mb_eq (#827 R1)
-                let lit = self.box_operand(lit_raw, expr.ty());
                 let eq = self.fresh_vreg();
-                self.current_stmts.push(MirInst::CallExtern {
-                    dest: Some(eq),
-                    name: "mb_eq".to_string(),
-                    args: vec![subj_vreg, lit],
-                    ty: self.tcx.bool(),
-                });
+                if matches!(expr, HirExpr::BoolLit(..)) {
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(eq),
+                        name: "mb_match_bool_literal".to_string(),
+                        args: vec![subj_vreg, lit_raw],
+                        ty: self.tcx.bool(),
+                    });
+                } else {
+                    // Box the literal so both operands are MbValue for mb_eq (#827 R1)
+                    let lit = self.box_operand(lit_raw, expr.ty());
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(eq),
+                        name: "mb_eq".to_string(),
+                        args: vec![subj_vreg, lit],
+                        ty: self.tcx.bool(),
+                    });
+                }
                 let ok_block = self.fresh_block();
                 self.finish_block(Terminator::Branch {
                     cond: eq,
@@ -5286,15 +5295,24 @@ impl<'a> HirToMir<'a> {
                     match alt {
                         Literal(expr) => {
                             let lit_raw = self.lower_expr(expr);
-                            // Box the literal so both operands are MbValue for mb_eq (#827 R1)
-                            let lit = self.box_operand(lit_raw, expr.ty());
                             let eq = self.fresh_vreg();
-                            self.current_stmts.push(MirInst::CallExtern {
-                                dest: Some(eq),
-                                name: "mb_eq".to_string(),
-                                args: vec![subj_vreg, lit],
-                                ty: self.tcx.bool(),
-                            });
+                            if matches!(expr, HirExpr::BoolLit(..)) {
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(eq),
+                                    name: "mb_match_bool_literal".to_string(),
+                                    args: vec![subj_vreg, lit_raw],
+                                    ty: self.tcx.bool(),
+                                });
+                            } else {
+                                // Box the literal so both operands are MbValue for mb_eq (#827 R1)
+                                let lit = self.box_operand(lit_raw, expr.ty());
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: Some(eq),
+                                    name: "mb_eq".to_string(),
+                                    args: vec![subj_vreg, lit],
+                                    ty: self.tcx.bool(),
+                                });
+                            }
                             self.finish_block(Terminator::Branch {
                                 cond: eq,
                                 then_block: success,
