@@ -69,6 +69,47 @@ fn is_str_value(val: MbValue) -> bool {
     }
 }
 
+fn split_kwargs(args: &[MbValue]) -> (Vec<MbValue>, Option<MbValue>) {
+    if let Some(last) = args.last() {
+        let is_dict = last
+            .as_ptr()
+            .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
+        if is_dict {
+            return (args[..args.len() - 1].to_vec(), Some(*last));
+        }
+    }
+    (args.to_vec(), None)
+}
+
+fn dict_get(dict: MbValue, key: &str) -> Option<MbValue> {
+    dict.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().iter().find_map(|(k, v)| {
+                if let super::super::dict_ops::DictKey::Str(ref s) = k {
+                    if s == key {
+                        return Some(*v);
+                    }
+                }
+                None
+            })
+        } else {
+            None
+        }
+    })
+}
+
+fn arg_or_kw(pos_args: &[MbValue], idx: usize, kwargs: &Option<MbValue>, name: &str) -> Option<MbValue> {
+    if let Some(v) = pos_args.get(idx).copied() {
+        if !v.is_none() {
+            return Some(v);
+        }
+    }
+    kwargs
+        .and_then(|kw| dict_get(kw, name))
+        .filter(|v| !v.is_none())
+}
+
 // @spec .aw/changes/mamba-stdlib-builtins/groups/stdlib-builtins-module/specs/mamba-stdlib-builtins-spec.md#R1
 
 unsafe extern "C" fn dispatch_print(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -247,12 +288,15 @@ unsafe extern "C" fn dispatch_input(args_ptr: *const MbValue, nargs: usize) -> M
 
 unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    let path = args.first().copied().unwrap_or_else(MbValue::none);
-    let mode = args
-        .get(1)
-        .copied()
-        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str("r".to_string())));
-    super::super::file_io::mb_open(path, mode)
+    let (pos, kwargs) = split_kwargs(args);
+    let path = pos.first().copied().unwrap_or_else(MbValue::none);
+    let mode = arg_or_kw(&pos, 1, &kwargs, "mode").unwrap_or_else(|| {
+        MbValue::from_ptr(MbObject::new_str("r".to_string()))
+    });
+    let encoding = arg_or_kw(&pos, 3, &kwargs, "encoding").unwrap_or_else(MbValue::none);
+    let errors = arg_or_kw(&pos, 4, &kwargs, "errors").unwrap_or_else(MbValue::none);
+    let closefd = arg_or_kw(&pos, 6, &kwargs, "closefd").unwrap_or_else(|| MbValue::from_bool(true));
+    super::super::file_io::mb_open_ex(path, mode, encoding, errors, closefd)
 }
 
 unsafe extern "C" fn dispatch_chr(args_ptr: *const MbValue, nargs: usize) -> MbValue {

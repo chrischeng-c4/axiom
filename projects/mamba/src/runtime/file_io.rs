@@ -327,6 +327,46 @@ pub fn mb_open_ex(
     handle
 }
 
+fn dict_get_kw(dict: MbValue, key: &str) -> Option<MbValue> {
+    dict.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().iter().find_map(|(k, v)| {
+                if let super::dict_ops::DictKey::Str(ref s) = k {
+                    if s == key {
+                        return Some(*v);
+                    }
+                }
+                None
+            })
+        } else {
+            None
+        }
+    })
+}
+
+fn kw_or_default(kwargs: MbValue, key: &str, default: MbValue) -> MbValue {
+    dict_get_kw(kwargs, key)
+        .filter(|v| !v.is_none())
+        .unwrap_or(default)
+}
+
+/// open(path, *pos_defaults, **kwargs) lowered through a single runtime helper
+/// so the merged kwargs mapping is evaluated once before open_ex reads it.
+pub fn mb_open_kwargs(
+    path: MbValue,
+    mode_default: MbValue,
+    encoding_default: MbValue,
+    errors_default: MbValue,
+    closefd_default: MbValue,
+    kwargs: MbValue,
+) -> MbValue {
+    let mode = kw_or_default(kwargs, "mode", mode_default);
+    let encoding = kw_or_default(kwargs, "encoding", encoding_default);
+    let errors = kw_or_default(kwargs, "errors", errors_default);
+    let closefd = kw_or_default(kwargs, "closefd", closefd_default);
+    mb_open_ex(path, mode, encoding, errors, closefd)
+}
+
 /// Extract a String from an MbValue str, or None for non-str / None.
 fn extract_str_opt(v: MbValue) -> Option<String> {
     v.as_ptr().and_then(|p| unsafe {
@@ -620,6 +660,9 @@ pub fn mb_file_write(handle: MbValue, text: MbValue) -> MbValue {
 /// file.writelines(lines) → None
 /// Writes each element of the iterable to the file (no separator added).
 pub fn mb_file_writelines(handle: MbValue, lines: MbValue) -> MbValue {
+    if mb_file_raise_if_closed(handle) {
+        return MbValue::none();
+    }
     let iter_handle = super::iter::mb_iter(lines);
     if iter_handle.is_none() {
         return MbValue::none();
@@ -720,6 +763,37 @@ pub fn is_file_closed(handle: MbValue) -> bool {
         });
     }
     false
+}
+
+pub fn mb_file_raise_if_closed(handle: MbValue) -> bool {
+    if is_file_closed(handle) {
+        raise_value_error("I/O operation on closed file");
+        return true;
+    }
+    false
+}
+
+/// file.fileno() — expose the table-backed handle id as the fd surrogate.
+pub fn mb_file_fileno(handle: MbValue) -> MbValue {
+    if mb_file_raise_if_closed(handle) {
+        return MbValue::none();
+    }
+    handle
+}
+
+/// file.isatty() — regular file handles are never terminals in this runtime.
+pub fn mb_file_isatty(handle: MbValue) -> MbValue {
+    if mb_file_raise_if_closed(handle) {
+        return MbValue::none();
+    }
+    MbValue::from_bool(false)
+}
+
+pub fn mb_file_iter(handle: MbValue) -> MbValue {
+    if mb_file_raise_if_closed(handle) {
+        return MbValue::none();
+    }
+    super::iter::mb_iter(handle)
 }
 
 /// file.tell() — current byte offset.
