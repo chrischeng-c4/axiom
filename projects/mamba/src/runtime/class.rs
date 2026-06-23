@@ -11052,6 +11052,21 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                 let args_list = MbValue::from_ptr(super::rc::MbObject::new_list(vec![arg]));
                 return super::builtins::mb_call_spread(func, args_list);
             }
+            if let Some(params) = super::closure::func_params(func) {
+                let positional_capacity = params.iter().filter(|p| p.kind <= 1).count();
+                if positional_capacity == 0 {
+                    let fname = super::closure::mb_func_get_name(func)
+                        .as_ptr()
+                        .and_then(|p| unsafe {
+                            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                        })
+                        .unwrap_or_default();
+                    super::builtins::raise_type_error(format!(
+                        "{fname}() takes 0 positional arguments but 1 was given"
+                    ));
+                    return MbValue::none();
+                }
+            }
             // REQ: JIT-compiled functions use SystemV/C calling convention.
             let is_boxed = super::module::is_boxed_return_func(addr as u64);
             let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
