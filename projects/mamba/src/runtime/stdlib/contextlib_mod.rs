@@ -55,6 +55,12 @@ fn items_of(val: MbValue) -> Vec<MbValue> {
         .unwrap_or_default()
 }
 
+fn is_dict_value(val: MbValue) -> bool {
+    val.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
+}
+
 // ── Variadic dispatchers ──
 
 macro_rules! disp_unary {
@@ -183,6 +189,15 @@ fn make_entry(kind: &str, callable: MbValue, args: Vec<MbValue>) -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(vec![kind_v, callable, args_v]))
 }
 
+fn make_callback_entry(callable: MbValue, args: Vec<MbValue>, kwargs: MbValue) -> MbValue {
+    let kind_v = MbValue::from_ptr(MbObject::new_str("cb".to_string()));
+    let args_v = MbValue::from_ptr(MbObject::new_list(args));
+    unsafe {
+        super::super::rc::retain_if_ptr(callable);
+    }
+    MbValue::from_ptr(MbObject::new_tuple(vec![kind_v, callable, args_v, kwargs]))
+}
+
 /// Run every registered callback in LIFO order. `pending` is the in-flight
 /// exception value (or None). Returns true if the exception was suppressed by
 /// one of the exit callbacks. New exceptions raised by callbacks become the
@@ -207,13 +222,22 @@ fn exit_stack_unwind(self_v: MbValue, mut pending: MbValue) -> bool {
         let kind = extract_str(parts[0]).unwrap_or_default();
         let callable = parts[1];
         let args = items_of(parts[2]);
+        let kwargs = parts
+            .get(3)
+            .copied()
+            .filter(|v| is_dict_value(*v))
+            .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
 
         let has_exc = !pending.is_none();
         match kind.as_str() {
             "cb" => {
                 // Plain callback — invoked regardless of exception state.
                 let args_list = MbValue::from_ptr(MbObject::new_list(args));
-                let _ = super::super::builtins::mb_call_spread(callable, args_list);
+                let _ = super::super::builtins::mb_call_spread_kwargs(
+                    callable,
+                    args_list,
+                    kwargs,
+                );
                 // A callback that itself raises becomes the new pending exc.
                 if super::super::exception::mb_has_exception().as_bool() == Some(true) {
                     pending = super::super::exception::mb_get_exception();
@@ -324,8 +348,17 @@ pub fn mb_exitstack_method(self_v: MbValue, name: &str, args: MbValue) -> MbValu
         }
         "callback" => {
             let cb = items.first().copied().unwrap_or_else(MbValue::none);
-            let rest = items.get(1..).map(|s| s.to_vec()).unwrap_or_default();
-            let entry = make_entry("cb", cb, rest);
+            let mut rest = items.get(1..).map(|s| s.to_vec()).unwrap_or_default();
+            let kwargs = rest
+                .last()
+                .copied()
+                .filter(|v| is_dict_value(*v))
+                .map(|kw| {
+                    rest.pop();
+                    kw
+                })
+                .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
+            let entry = make_callback_entry(cb, rest, kwargs);
             super::super::list_ops::mb_list_append(exit_stack_callbacks(self_v), entry);
             unsafe {
                 super::super::rc::retain_if_ptr(cb);
