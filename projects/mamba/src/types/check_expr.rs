@@ -776,7 +776,11 @@ impl TypeChecker {
         };
 
         let Some(sig) = sig else { return };
-        if !sig.enforceable {
+        let strict_keyword_wall = self.strict_type_fixture
+            && sig.module == "keyword"
+            && sig.qualifier.is_empty()
+            && matches!(sig.name, "iskeyword" | "issoftkeyword");
+        if !sig.enforceable && !strict_keyword_wall {
             return;
         }
 

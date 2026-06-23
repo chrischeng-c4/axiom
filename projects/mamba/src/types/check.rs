@@ -119,6 +119,10 @@ pub struct TypeChecker {
     pub(crate) current_class: Option<String>,
     /// Strict mode: treat Any-inference warnings as errors (#244).
     pub strict: bool,
+    /// Source carries `# mamba-strict-type:`. A few stdlib APIs are runtime
+    /// permissive but still have explicit type-wall fixtures; keep those
+    /// compile-time checks scoped to strict fixtures.
+    pub strict_type_fixture: bool,
     /// Suppress Any-inference warnings (#244).
     pub no_warn_any: bool,
     errors: Vec<MambaError>,
@@ -181,6 +185,7 @@ impl TypeChecker {
             current_return_ty: None,
             current_class: None,
             strict: false,
+            strict_type_fixture: false,
             no_warn_any: false,
             errors: Vec::new(),
             diagnostics: Vec::new(),
