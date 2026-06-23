@@ -623,6 +623,9 @@ pub fn mb_module_getattr(module_name: MbValue, attr: MbValue) -> MbValue {
 /// Return an attribute from the canonical `builtins` module.
 pub fn mb_builtin_get(attr: MbValue) -> MbValue {
     let attr_name = extract_str(attr).unwrap_or_default();
+    if let Some(val) = mb_module_value_getattr("builtins", &attr_name) {
+        return val;
+    }
     let existing = MODULES.with(|mods| {
         let mods = mods.borrow();
         mods.get("builtins")
