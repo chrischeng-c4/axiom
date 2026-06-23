@@ -2561,6 +2561,21 @@ fn make_unbound_method(type_name: &str, method_name: &str) -> MbValue {
     MbValue::from_ptr(inst)
 }
 
+fn inherited_builtin_unbound_method(class_name: &str, method_name: &str) -> Option<MbValue> {
+    if !class_is_registered(class_name) {
+        return None;
+    }
+    for ancestor in class_mro_list(class_name).into_iter().skip(1) {
+        if builtin_type_method_names_by_name(&ancestor)
+            .iter()
+            .any(|m| *m == method_name)
+        {
+            return Some(make_unbound_method(&ancestor, method_name));
+        }
+    }
+    None
+}
+
 /// Build a bound method over a builtin instance: a `__bound_native_method__`
 /// shell carrying the receiver + method name. `mb_call_spread` / `mb_call0` /
 /// `mb_call1_val` dispatch it through `mb_call_method`, which already serves the
@@ -4037,6 +4052,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             {
                                 return make_unbound_method(&type_name_str, &attr_name);
                             }
+                            if let Some(method) =
+                                inherited_builtin_unbound_method(&type_name_str, &attr_name)
+                            {
+                                return method;
+                            }
                             // <type>.__new__ — every type inherits
                             // object.__new__(cls), which allocates a BARE
                             // instance without running __init__ (used by the
@@ -4545,6 +4565,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                     let (unwrapped, _dk) = unwrap_descriptor_method(method);
                                     super::rc::retain_if_ptr(unwrapped);
                                     return unwrapped;
+                                }
+                                if let Some(method) =
+                                    inherited_builtin_unbound_method(s, &attr_name)
+                                {
+                                    return method;
                                 }
                                 let class_attr = mro_lookup_class_attr(s, &attr_name);
                                 if let Some(val) = class_attr {
