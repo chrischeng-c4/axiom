@@ -1139,6 +1139,11 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
             );
         };
         let bytes = match enc.as_str() {
+            "utf-8-sig" | "utf_8_sig" => {
+                let mut out = vec![0xEF, 0xBB, 0xBF];
+                out.extend_from_slice(st.as_bytes());
+                out
+            }
             "utf-8" | "utf8" | "u8" => st.as_bytes().to_vec(),
             "ascii" | "us-ascii" => {
                 let mut out: Vec<u8> = Vec::with_capacity(st.len());
