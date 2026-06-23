@@ -1248,7 +1248,7 @@ pub fn mb_class_define_multi(
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 for item in items.iter() {
-                    if let Some(base_name) = extract_str(*item) {
+                    if let Some(base_name) = resolve_class_name(*item) {
                         bases.push(base_name);
                     }
                 }
@@ -1279,6 +1279,54 @@ pub fn mb_class_define_multi(
         u.borrow_mut().insert(class_name.clone());
     });
     mb_class_register(&class_name, bases, methods);
+}
+
+/// Update a previously registered class's runtime-evaluated bases while
+/// preserving its method table and class attributes.
+pub fn mb_class_update_bases(name: MbValue, bases_list: MbValue) {
+    let class_name = match extract_str(name) {
+        Some(name) if !name.is_empty() => name,
+        _ => return,
+    };
+    let mut bases = Vec::new();
+    if let Some(ptr) = bases_list.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let items = lock.read().unwrap();
+                for item in items.iter() {
+                    if let Some(base_name) = resolve_class_name(*item) {
+                        bases.push(base_name);
+                    }
+                }
+            }
+        }
+    }
+    let mro = compute_mro(&class_name, &bases);
+    CLASS_REGISTRY.with(|reg| {
+        if let Some(cls) = reg.borrow_mut().get_mut(&class_name) {
+            cls.bases = bases;
+            cls.mro = mro;
+            cls.cached_init = None;
+        }
+    });
+    invalidate_method_cache();
+
+    let init_method = lookup_method(&class_name, "__init__");
+    if !init_method.is_none() {
+        let addr = extract_func_addr(init_method);
+        if addr != 0 {
+            let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+            CLASS_REGISTRY.with(|reg| {
+                if let Some(cls) = reg.borrow_mut().get_mut(&class_name) {
+                    cls.cached_init = Some((addr, is_registered));
+                }
+            });
+        }
+    }
+    let mro = CLASS_REGISTRY.with(|reg| {
+        reg.borrow().get(&class_name).map(|c| c.mro.clone()).unwrap_or_default()
+    });
+    install_abc_mixins(&class_name, &mro);
 }
 
 /// R10: Store class keyword arguments for __init_subclass__ dispatch.
