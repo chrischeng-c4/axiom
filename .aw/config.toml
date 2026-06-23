@@ -138,6 +138,21 @@ test_cmd = "cargo test -p vat"
 verify_cold = true
 codegen.profile = "rust/score-crate"
 
+[[projects]]
+name = "loom"
+path = "projects/loom"
+td_path = "projects/loom/tech-design"
+cap_path = "projects/loom/README.md"
+label = "project:loom"
+
+[[projects.workspaces]]
+name = "loom"
+paths = ["projects/loom/**"]
+target = "rust"
+test_cmd = "cargo test -p loom"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
 
 [[projects]]
 name = "arena"

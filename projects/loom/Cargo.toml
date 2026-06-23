@@ -1,0 +1,23 @@
+[package]
+name = "loom"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "loom — DAG workflow scheduler. Control-plane orchestrator over relay (broker) + keep (store); owns sharded, strongly-consistent workflow/DAG state and never sits in the data path."
+
+[lib]
+name = "loom"
+path = "src/lib.rs"
+
+[[bin]]
+name = "loom"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
