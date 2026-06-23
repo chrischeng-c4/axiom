@@ -2160,6 +2160,16 @@ struct AstLowerer<'a> {
     /// positionals — `dataclass(frozen=True)` / `field(default_factory=list)`
     /// / `replace(obj, a=99)` all need their keyword names at runtime.
     dataclasses_kwarg_idents: std::collections::HashSet<String>,
+    /// Local module aliases that refer to `functools` (`functools`, or
+    /// `import functools as ft`). Used to recognize `ft.partial(...)`.
+    functools_module_idents: std::collections::HashSet<String>,
+    /// Local names that refer to the `functools.partial` factory, for example
+    /// `from functools import partial as p`.
+    functools_partial_factory_idents: std::collections::HashSet<String>,
+    /// Local names bound to a `functools.partial(...)` instance. Calls through
+    /// these names must keep explicit keyword arguments structural so call-time
+    /// kwargs can override the partial's stored kwargs.
+    functools_partial_kwarg_idents: std::collections::HashSet<String>,
     /// Function-name SymbolId → declared return type. Populated *before* a
     /// function's body is lowered so recursive calls can read the callee's
     /// return type (without this, the call falls through to `any_ty`,
@@ -2233,6 +2243,9 @@ impl<'a> AstLowerer<'a> {
             funcs_with_mutated_defaults: std::collections::HashSet::new(),
             dataclass_init_params: HashMap::new(),
             dataclasses_kwarg_idents: std::collections::HashSet::new(),
+            functools_module_idents: std::iter::once("functools".to_string()).collect(),
+            functools_partial_factory_idents: std::collections::HashSet::new(),
+            functools_partial_kwarg_idents: std::collections::HashSet::new(),
             func_return_tys: HashMap::new(),
             func_param_float_hint: HashMap::new(),
             func_ret_float_hint: HashMap::new(),
@@ -3691,6 +3704,27 @@ impl<'a> AstLowerer<'a> {
                             }
                         }
                     }
+                    let is_functools_partial_instance = match &value.node {
+                        ast::Expr::Call { func: call_func, .. } => match &call_func.node {
+                            ast::Expr::Attr { object, attr } if attr == "partial" => {
+                                matches!(
+                                    &object.node,
+                                    ast::Expr::Ident(module_name)
+                                        if self.functools_module_idents.contains(module_name.as_str())
+                                )
+                            }
+                            ast::Expr::Ident(factory_name) => self
+                                .functools_partial_factory_idents
+                                .contains(factory_name.as_str()),
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+                    if is_functools_partial_instance {
+                        self.functools_partial_kwarg_idents.insert(name.clone());
+                    } else {
+                        self.functools_partial_kwarg_idents.remove(name.as_str());
+                    }
                     let val = self.lower_expr(value)?;
                     // Python scoping: inside a function body, an assignment
                     // to a name that's NOT already local defines a new local
@@ -4145,6 +4179,19 @@ impl<'a> AstLowerer<'a> {
                         for (orig, alias) in names {
                             if orig == "quantiles" {
                                 self.dataclasses_kwarg_idents
+                                    .insert(alias.clone().unwrap_or_else(|| orig.clone()));
+                            }
+                        }
+                    }
+                }
+                if module.len() == 1 && module[0] == "functools" {
+                    if let Some(alias) = module_alias {
+                        self.functools_module_idents.insert(alias.clone());
+                    }
+                    if let Some(names) = names {
+                        for (orig, alias) in names {
+                            if orig == "partial" {
+                                self.functools_partial_factory_idents
                                     .insert(alias.clone().unwrap_or_else(|| orig.clone()));
                             }
                         }
@@ -5758,18 +5805,18 @@ impl<'a> AstLowerer<'a> {
                     || (is_native_kwargs_ident && (has_any_kwargs || has_dstar))
                     || (is_type_metaclass_kwargs && (has_any_kwargs || has_dstar));
 
-                // `f(**d)` / `f(a, **d)` / `f(k=1, **d)` to a bare-Ident callee
-                // with a `**mapping` splat: the static func_param_info reorder
-                // can't bind dynamic keyword keys, and the generic fallback
-                // misreads the mapping as a positional argument (`three(**{a:1})`
-                // → `[{...}, 0, 0]`). Route through mb_call_spread_kwargs, which
-                // binds the kwargs dict to the callee's named params at runtime
-                // (builtins.rs mb_call_spread_kwargs step 4) and falls back to the
-                // native flattened-positional convention for native targets.
-                // Scoped to bare-Ident, non-`*`-splat calls not already covered by
-                // the trailing-kwargs-dict path (methods / native-kwargs idents).
-                if has_dstar && !pack_trailing_kwargs && !has_star
-                    && matches!(func.node, ast::Expr::Ident(_))
+                let is_functools_partial_kwarg_ident = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name)
+                        if self.functools_partial_kwarg_idents.contains(name.as_str())
+                );
+                // `p(k=1)` where `p` is a local `functools.partial(...)`
+                // instance must keep keyword names alive so call-time kwargs
+                // can override stored kwargs. Do not generalize this to every
+                // bare identifier: builtin constructors and imported classes
+                // still rely on the legacy flattening/trailing-dict conventions.
+                if (has_any_kwargs || has_dstar) && !pack_trailing_kwargs && !has_star
+                    && is_functools_partial_kwarg_ident
                 {
                     return Some(self.build_spread_kwargs_call(f, args, any_ty));
                 }
