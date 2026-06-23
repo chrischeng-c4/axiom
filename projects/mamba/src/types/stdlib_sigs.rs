@@ -338,24 +338,24 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         ],
         enforceable: false,
     },
-    // NEGATIVE GUARD: keyword.iskeyword/issoftkeyword accept ANY object (a
-    // non-str compares unequal to every kwlist entry -> False, no raise), so
-    // the generated `s: str` sig must NOT be enforced. Overrides the typeshed row.
+    // keyword.iskeyword/issoftkeyword are force-typed as `s: str`; the runtime
+    // dispatcher raises TypeError for non-str values, matching the strict-type
+    // fixtures rather than CPython's permissive False result.
     StdlibSig {
         module: "keyword",
         qualifier: "",
         name: "iskeyword",
         kind: SigKind::ModuleFn,
-        params: &[p("s", CoreTy::Unknown)],
-        enforceable: false,
+        params: &[p("s", CoreTy::Str)],
+        enforceable: true,
     },
     StdlibSig {
         module: "keyword",
         qualifier: "",
         name: "issoftkeyword",
         kind: SigKind::ModuleFn,
-        params: &[p("s", CoreTy::Unknown)],
-        enforceable: false,
+        params: &[p("s", CoreTy::Str)],
+        enforceable: true,
     },
 ];
 
