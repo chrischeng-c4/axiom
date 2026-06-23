@@ -57,7 +57,9 @@ Public API manifest for `projects/lumen/src/lib.rs` captured as a per-file rust-
 //! `Collection / Field` primitive over `external_id` — lumen never owns
 //! the source of truth and has no document concept of its own.
 //!
-//! - Durable via the broker log (Relay by default), rebuildable from the caller.
+//! - Durable via the configured write log; multi-pod Lumen is moving to
+//!   Lumen-owned primary/replica replication, while Relay remains an explicit
+//!   external broker mode. Rebuildable from the caller.
 //! - HTTP/2 transport, client-side collection-shard routing.
 //!
 //! Full surface and v1 scope: `projects/lumen/README.md`.
@@ -86,9 +88,8 @@ pub mod native_wire;
 /// serving binary never pulls in kube-rs.
 #[cfg(feature = "operator")]
 pub mod operator;
-/// Cluster-state view types backing the read/admin API. lumen has no
-/// application consensus layer — durability + replication is the broker
-/// write-log, and serving nodes are full replicas that tail it.
+/// Cluster-state view types backing the read/admin API. This surface is the
+/// compatibility bridge for Lumen-owned primary/replica replication.
 pub mod raft;
 pub mod rdb;
 pub mod routing;
@@ -118,7 +119,6 @@ pub mod wal_nats;
 #[cfg(feature = "relay-wal")]
 pub mod wal_relay;
 // CODEGEN-END
-
 ````
 
 ## Changes
