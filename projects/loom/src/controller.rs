@@ -324,8 +324,29 @@ pub fn run() -> anyhow::Result<()> {
             app = app.merge(rr);
         }
         // With a real relay, consume worker completions and advance the DAG.
+        // Run one consumer per shard (#127): completions are published to
+        // `loom.completions.{shard_of(run_id)}`, so per-run folding stays serial
+        // (no race) while distinct runs fold in parallel. LOOM_COMPLETION_SHARDS
+        // must match the workers' sink (same default).
         if let Some(base) = relay_base {
-            tokio::spawn(completion_consumer(base, store, dispatcher));
+            let shards = std::env::var("LOOM_COMPLETION_SHARDS")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(8)
+                .max(1);
+            for k in 0..shards {
+                let subject = if shards <= 1 {
+                    "loom.completions".to_string()
+                } else {
+                    format!("loom.completions.{k}")
+                };
+                tokio::spawn(completion_consumer(
+                    base.clone(),
+                    subject,
+                    store.clone(),
+                    dispatcher.clone(),
+                ));
+            }
         }
         serve(&addr, app).await
     })
@@ -335,6 +356,7 @@ pub fn run() -> anyhow::Result<()> {
 /// subject and fold them into the DAG (which dispatches newly-ready nodes).
 async fn completion_consumer(
     relay_base: String,
+    subject: String,
     store: Arc<dyn RunStore>,
     dispatcher: Arc<dyn Dispatcher>,
 ) {
@@ -345,14 +367,15 @@ async fn completion_consumer(
             return;
         }
     };
-    let lease_url = format!("{relay_base}/v1/loom.completions/lease");
-    let ack_url = format!("{relay_base}/v1/loom.completions/ack");
+    let lease_url = format!("{relay_base}/v1/{subject}/lease");
+    let ack_url = format!("{relay_base}/v1/{subject}/ack");
+    let consumer_id = format!("loom-controller-{subject}");
     let idle = std::time::Duration::from_millis(200);
     eprintln!("loom: consuming completions from {lease_url}");
     loop {
         let leased = client
             .post(&lease_url)
-            .json(&serde_json::json!({ "consumer_id": "loom-controller" }))
+            .json(&serde_json::json!({ "consumer_id": consumer_id }))
             .send()
             .await;
         let body: serde_json::Value = match leased {
