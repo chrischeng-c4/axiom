@@ -81,6 +81,7 @@ struct MbDecimal {
     class: DecClass,
     value: Decimal,
     neg: bool,
+    tuple_exp: Option<i64>,
 }
 
 impl MbDecimal {
@@ -89,6 +90,7 @@ impl MbDecimal {
             class: DecClass::Finite,
             neg: value.is_sign_negative(),
             value,
+            tuple_exp: None,
         }
     }
     fn inf(neg: bool) -> Self {
@@ -96,6 +98,7 @@ impl MbDecimal {
             class: DecClass::Inf,
             value: Decimal::ZERO,
             neg,
+            tuple_exp: None,
         }
     }
     fn qnan() -> Self {
@@ -103,6 +106,7 @@ impl MbDecimal {
             class: DecClass::QNan,
             value: Decimal::ZERO,
             neg: false,
+            tuple_exp: None,
         }
     }
     fn snan() -> Self {
@@ -110,6 +114,7 @@ impl MbDecimal {
             class: DecClass::SNan,
             value: Decimal::ZERO,
             neg: false,
+            tuple_exp: None,
         }
     }
     fn is_nan(&self) -> bool {
@@ -1530,8 +1535,18 @@ fn decimal_from_tuple(items: &[MbValue]) -> MbDecimal {
         coeff.push('0');
     }
     let c: BigInt = BigInt::from_str(&coeff).unwrap_or_else(|_| BigInt::from(0u32));
+    let is_zero = c.is_zero();
     let signed = if sign == 1 { -c } else { c };
-    finite_from_coeff_scale(signed, -exp).unwrap_or_else(|_| MbDecimal::finite(Decimal::ZERO))
+    let mut state = finite_from_coeff_scale(signed, -exp)
+        .unwrap_or_else(|_| MbDecimal::finite(Decimal::ZERO));
+    if is_zero {
+        if sign == 1 {
+            state.value.set_sign_negative(true);
+            state.neg = true;
+        }
+        state.tuple_exp = Some(exp);
+    }
+    state
 }
 
 // ── Public surface — construction ────────────────────────────────────────
@@ -1954,13 +1969,18 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
                 ),
                 DecClass::Finite => {
                     let d = &st.value;
-                    let sign = if d.is_sign_negative() { 1 } else { 0 };
-                    let digits_str = d.mantissa().unsigned_abs().to_string();
-                    let digits: Vec<MbValue> = digits_str
-                        .bytes()
-                        .map(|b| MbValue::from_int((b - b'0') as i64))
-                        .collect();
-                    (sign, digits, MbValue::from_int(-(d.scale() as i64)))
+                    let sign = if st.neg || d.is_sign_negative() { 1 } else { 0 };
+                    if d.is_zero() {
+                        let exp = st.tuple_exp.unwrap_or_else(|| -(d.scale() as i64));
+                        (sign, vec![MbValue::from_int(0)], MbValue::from_int(exp))
+                    } else {
+                        let digits_str = d.mantissa().unsigned_abs().to_string();
+                        let digits: Vec<MbValue> = digits_str
+                            .bytes()
+                            .map(|b| MbValue::from_int((b - b'0') as i64))
+                            .collect();
+                        (sign, digits, MbValue::from_int(-(d.scale() as i64)))
+                    }
                 }
             };
             MbValue::from_ptr(MbObject::new_tuple(vec![
