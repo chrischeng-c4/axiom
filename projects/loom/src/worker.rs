@@ -97,26 +97,21 @@ impl Registry {
     }
 }
 
-/// Lease one task (if available) and run it through the full worker loop.
-/// Returns `true` when a task was processed, `false` when the lease was empty.
-pub async fn run_once(
-    consumer_id: &str,
-    consumer: &dyn RelayConsumer,
+/// Execute one task: fetch its claim-check input from keep, run the handler,
+/// write the result (and any fan-out children's inputs) to keep, and report
+/// completion (or failure). No lease/ack — shared by the resident worker (after
+/// a lease) and the in-Job [`crate::runtask`] entrypoint. Idempotent under retry
+/// (keep writes are keyed by run/node; a duplicate completion is a no-op once
+/// the node is Done).
+pub async fn execute_task(
+    m: &TaskMessage,
     keep: &dyn KeepStore,
     sink: &dyn CompletionSink,
     registry: &Registry,
-) -> anyhow::Result<bool> {
-    let Some(task) = consumer.lease(consumer_id).await? else {
-        return Ok(false);
-    };
-    let m = &task.message;
-
+) -> anyhow::Result<()> {
     // Claim-check input: the first input ref, else the message id as the key.
-    let input_id = m
-        .input_refs
-        .first()
-        .map(|r| r.0.clone())
-        .unwrap_or_else(|| m.message_id());
+    let input_id =
+        m.input_refs.first().map(|r| r.0.clone()).unwrap_or_else(|| m.message_id());
     let input = keep.get_input(&input_id).await?.unwrap_or_default();
 
     let outcome = match registry.get(&m.task_name) {
@@ -137,7 +132,6 @@ pub async fn run_once(
                     child.input_refs = vec![KeepRef(in_id)];
                 }
             }
-            consumer.ack(&task.lease_id, task.epoch).await?;
             sink.report(
                 &m.run_id,
                 &m.node_id,
@@ -149,12 +143,27 @@ pub async fn run_once(
             .await?;
         }
         Err(_) => {
-            // Release the lease and let loom decide retry-or-fail (loom owns the
-            // DAG + retry policy; it re-dispatches a fresh attempt).
-            consumer.ack(&task.lease_id, task.epoch).await?;
+            // Let loom decide retry-or-fail (it owns the DAG + retry policy).
             sink.report(&m.run_id, &m.node_id, m.attempt, None, true, &[]).await?;
         }
     }
+    Ok(())
+}
+
+/// Lease one task (if available), execute it, and ack. Returns `true` when a
+/// task was processed, `false` when the lease was empty.
+pub async fn run_once(
+    consumer_id: &str,
+    consumer: &dyn RelayConsumer,
+    keep: &dyn KeepStore,
+    sink: &dyn CompletionSink,
+    registry: &Registry,
+) -> anyhow::Result<bool> {
+    let Some(task) = consumer.lease(consumer_id).await? else {
+        return Ok(false);
+    };
+    execute_task(&task.message, keep, sink, registry).await?;
+    consumer.ack(&task.lease_id, task.epoch).await?;
     Ok(true)
 }
 
@@ -162,6 +171,61 @@ pub async fn run_once(
 /// Env: `LOOM_RELAY` (relay base), `LOOM_KEEP` (keep base), `LOOM_RUNNER`
 /// (subject/runner class to lease; default `resident`). Registers a built-in
 /// `echo` handler; real deployments register their task handlers.
+/// The reference handler set, shared by the resident worker and the in-Job
+/// `run-task` entrypoint: `echo`, `split` (count→N echoes), and the #111 CSV
+/// pair (`csv-split` chunks rows + fans out, `csv-process` counts a chunk).
+pub fn default_registry() -> Registry {
+    let mut registry = Registry::new();
+    registry.register("echo", Arc::new(|input: Vec<u8>| Ok(input.into())));
+    registry.register(
+        "split",
+        Arc::new(|input: Vec<u8>| {
+            let n: usize = std::str::from_utf8(&input)
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(3);
+            let fan_out = (0..n)
+                .map(|i| FanOutSpec {
+                    id: format!("chunk-{i}"),
+                    task_name: "echo".to_string(),
+                    input_refs: Vec::new(),
+                    input_data: None,
+                })
+                .collect();
+            Ok(TaskOutput { result: Vec::new(), fan_out })
+        }),
+    );
+    registry.register(
+        "csv-split",
+        Arc::new(|input: Vec<u8>| {
+            let text = String::from_utf8_lossy(&input).into_owned();
+            let rows: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+            let fan_out = rows
+                .chunks(2)
+                .enumerate()
+                .map(|(i, chunk)| FanOutSpec {
+                    id: format!("rows-{i}"),
+                    task_name: "csv-process".to_string(),
+                    input_refs: Vec::new(),
+                    input_data: Some(chunk.join("\n").into_bytes()),
+                })
+                .collect();
+            Ok(TaskOutput { result: Vec::new(), fan_out })
+        }),
+    );
+    registry.register(
+        "csv-process",
+        Arc::new(|input: Vec<u8>| {
+            let n = String::from_utf8_lossy(&input)
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count();
+            Ok(format!("{n}").into_bytes().into())
+        }),
+    );
+    registry
+}
+
 pub fn run() -> anyhow::Result<()> {
     let relay = std::env::var("LOOM_RELAY")
         .map_err(|_| anyhow::anyhow!("loom worker requires LOOM_RELAY (relay base url)"))?;
@@ -174,59 +238,7 @@ pub fn run() -> anyhow::Result<()> {
         let consumer = crate::relay_client::RelayWorkConsumer::new(&relay, &subject)?;
         let keep = crate::keep_client::KeepHttp::new(&keep_base)?;
         let sink = crate::relay_client::RelayCompletionSink::new(&relay, "loom.completions")?;
-        let mut registry = Registry::new();
-        registry.register("echo", Arc::new(|input: Vec<u8>| Ok(input.into())));
-        // `split` reads its input as a chunk count and fans out N echo children.
-        registry.register(
-            "split",
-            Arc::new(|input: Vec<u8>| {
-                let n: usize = std::str::from_utf8(&input)
-                    .ok()
-                    .and_then(|s| s.trim().parse().ok())
-                    .unwrap_or(3);
-                let fan_out = (0..n)
-                    .map(|i| FanOutSpec {
-                        id: format!("chunk-{i}"),
-                        task_name: "echo".to_string(),
-                        input_refs: Vec::new(),
-                        input_data: None,
-                    })
-                    .collect();
-                Ok(TaskOutput { result: Vec::new(), fan_out })
-            }),
-        );
-        // `csv-split` (#111): split CSV input into row-chunks and fan out one
-        // `csv-process` per chunk, each carrying its chunk as claim-check input
-        // (the worker writes it to keep before the children run).
-        registry.register(
-            "csv-split",
-            Arc::new(|input: Vec<u8>| {
-                let text = String::from_utf8_lossy(&input).into_owned();
-                let rows: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-                let fan_out = rows
-                    .chunks(2)
-                    .enumerate()
-                    .map(|(i, chunk)| FanOutSpec {
-                        id: format!("rows-{i}"),
-                        task_name: "csv-process".to_string(),
-                        input_refs: Vec::new(),
-                        input_data: Some(chunk.join("\n").into_bytes()),
-                    })
-                    .collect();
-                Ok(TaskOutput { result: Vec::new(), fan_out })
-            }),
-        );
-        // `csv-process` (#111): process one chunk — here, count its rows.
-        registry.register(
-            "csv-process",
-            Arc::new(|input: Vec<u8>| {
-                let n = String::from_utf8_lossy(&input)
-                    .lines()
-                    .filter(|l| !l.trim().is_empty())
-                    .count();
-                Ok(format!("{n}").into_bytes().into())
-            }),
-        );
+        let registry = default_registry();
 
         eprintln!("loom worker: leasing `{subject}` from relay {relay}, keep {keep_base}");
         loop {
