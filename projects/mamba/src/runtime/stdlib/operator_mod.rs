@@ -787,13 +787,14 @@ extern "C" fn op_methodcaller_call(self_inst: MbValue, args_list: MbValue) -> Mb
     }
     let target = items[0];
     let name = field(self_inst, "_name");
-    let mut call_args = seq_items(field(self_inst, "_args")).unwrap_or_default();
+    let call_args = seq_items(field(self_inst, "_args")).unwrap_or_default();
     let kwargs = field(self_inst, "_kwargs");
-    if !kwargs.is_none() {
-        call_args.push(kwargs);
-    }
     let args_val = MbValue::from_ptr(MbObject::new_list(call_args));
-    class::mb_call_method(target, name, args_val)
+    if kwargs.is_none() {
+        class::mb_call_method(target, name, args_val)
+    } else {
+        class::mb_call_method_kwargs(target, name, args_val, kwargs)
+    }
 }
 
 /// Register the operator module.
