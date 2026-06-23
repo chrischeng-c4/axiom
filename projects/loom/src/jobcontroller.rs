@@ -145,7 +145,9 @@ pub fn run() -> anyhow::Result<()> {
     let keep = std::env::var("LOOM_KEEP").unwrap_or_default();
     let image = std::env::var("LOOM_JOB_IMAGE").unwrap_or_else(|_| "loom:latest".to_string());
     let namespace = std::env::var("LOOM_JOB_NAMESPACE").ok();
-    let subject = format!("loom.{}", crate::runner::RunnerClass::K8sJob.relay_route());
+    // Match the dispatcher's route: it publishes to the bare runner route
+    // (`k8s-job`), same convention the resident worker leases (`resident`).
+    let subject = crate::runner::RunnerClass::K8sJob.relay_route().to_string();
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
@@ -253,5 +255,49 @@ mod tests {
             .unwrap();
         assert!(!again);
         assert_eq!(kube.created.lock().unwrap().len(), 1);
+    }
+
+    /// Exercises the real `KubectlApi.create_job` path against a live cluster:
+    /// renders our manifest, `kubectl create`s it, and waits for the Job to run
+    /// to completion. Needs a kube context (e.g. `kind create cluster`). Run:
+    ///   cargo test -p loom --lib -- --ignored kubectl_create_job_against_real_cluster
+    #[tokio::test]
+    #[ignore = "needs a real k8s cluster (kind); run with --ignored"]
+    async fn kubectl_create_job_against_real_cluster() {
+        use tokio::process::Command;
+        let spec = JobSpec {
+            name: "loom-live-verify".into(),
+            image: "busybox:stable".into(),
+            args: vec!["sh".into(), "-c".into(), "echo loom-ok".into()],
+            env: vec![("LOOM_TASK_NAME".into(), "verify".into())],
+            backoff_limit: 0,
+        };
+        let del = || async {
+            let _ = Command::new("kubectl")
+                .args(["delete", "job", "loom-live-verify", "--ignore-not-found"])
+                .output()
+                .await;
+        };
+        del().await;
+        // THE gated code path: our manifest → kubectl create → real k8s API.
+        kube_create_or_skip(&spec).await;
+        let out = Command::new("kubectl")
+            .args(["wait", "--for=condition=complete", "job/loom-live-verify", "--timeout=90s"])
+            .output()
+            .await
+            .expect("kubectl wait");
+        del().await;
+        assert!(
+            out.status.success(),
+            "Job did not complete: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    async fn kube_create_or_skip(spec: &JobSpec) {
+        let kube = KubectlApi { namespace: None };
+        if let Err(e) = kube.create_job(spec).await {
+            panic!("create_job against real cluster failed: {e}");
+        }
     }
 }
