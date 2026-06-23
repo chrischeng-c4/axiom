@@ -2267,10 +2267,25 @@ fn instance_new_with_init_impl(
     } else {
         0
     };
-    let instance = MbValue::from_ptr(MbObject::new_instance_with_capacity(
-        name.clone(),
-        field_capacity,
-    ));
+    let instance = if class_defines_own_method(&name, "__new__")
+        && !class_defines_own_method(&name, "__init__")
+        && !check_class_hierarchy(&name, "int")
+    {
+        let new_func = lookup_method(&name, "__new__");
+        let mut ctor_args = vec![MbValue::from_ptr(MbObject::new_str(name.clone()))];
+        ctor_args.extend(super::builtins::extract_items(args_list));
+        let result = super::builtins::mb_call_spread(
+            new_func,
+            MbValue::from_ptr(MbObject::new_list(ctor_args)),
+        );
+        if !result.is_none() {
+            result
+        } else {
+            MbValue::from_ptr(MbObject::new_instance_with_capacity(name.clone(), field_capacity))
+        }
+    } else {
+        MbValue::from_ptr(MbObject::new_instance_with_capacity(name.clone(), field_capacity))
+    };
     if check_class_hierarchy(&name, "int")
         && !seed_int_subclass_value(instance, args_list)
     {
