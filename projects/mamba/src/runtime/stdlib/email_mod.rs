@@ -578,6 +578,21 @@ extern "C" fn m_get_content_disposition(this: MbValue) -> MbValue {
     }
 }
 
+extern "C" fn m_get_content(this: MbValue) -> MbValue {
+    let payload = field_get(this, "_payload").unwrap_or_else(MbValue::none);
+    let is_text = content_type(this).to_lowercase().starts_with("text/");
+    if is_text {
+        if let Some(s) = extract_str(payload) {
+            return new_str(s);
+        }
+        if let Some(b) = extract_bytes(payload) {
+            return new_str(String::from_utf8_lossy(&b).to_string());
+        }
+    }
+    retain(payload);
+    payload
+}
+
 unsafe extern "C" fn m_get_params(this: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     let pos = positional(&items);
@@ -994,6 +1009,92 @@ unsafe extern "C" fn m_attach(this: MbValue, payload: MbValue) -> MbValue {
     MbValue::none()
 }
 
+fn quoted_header_param(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn append_payload_part(parent: MbValue, part: MbValue) {
+    let cur = field_get(parent, "_payload").unwrap_or_else(MbValue::none);
+    if cur.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::List(_)) }).unwrap_or(false) {
+        if let Some(ptr) = cur.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    retain(part);
+                    lock.write().unwrap().push(part);
+                    return;
+                }
+            }
+        }
+    }
+    retain(part);
+    field_set(parent, "_payload", new_list(vec![part]));
+}
+
+fn ensure_multipart_mixed(parent: MbValue) {
+    let cur = field_get(parent, "_payload").unwrap_or_else(MbValue::none);
+    if cur.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::List(_)) }).unwrap_or(false) {
+        return;
+    }
+
+    let body_part = new_message("EmailMessage");
+    if let Some(ct) = header_get_first(parent, "content-type") {
+        retain(ct);
+        header_append(body_part, "Content-Type", ct);
+    } else {
+        header_append(body_part, "Content-Type", new_str("text/plain; charset=\"utf-8\""));
+    }
+    if let Some(cte) = header_get_first(parent, "content-transfer-encoding") {
+        retain(cte);
+        header_append(body_part, "Content-Transfer-Encoding", cte);
+    }
+    retain(cur);
+    field_set(body_part, "_payload", cur);
+
+    header_del(parent, "Content-Type");
+    header_del(parent, "Content-Transfer-Encoding");
+    if header_get_first(parent, "mime-version").is_none() {
+        header_append(parent, "MIME-Version", new_str("1.0"));
+    }
+    header_append(
+        parent,
+        "Content-Type",
+        new_str("multipart/mixed; boundary=\"mamba-boundary\""),
+    );
+    field_set(parent, "_payload", new_list(vec![body_part]));
+}
+
+unsafe extern "C" fn m_add_attachment(this: MbValue, args: MbValue) -> MbValue {
+    let items = args_items(args);
+    let pos = positional(&items);
+    let payload = pos.first().copied().unwrap_or_else(MbValue::none);
+    let maintype = kwarg(&items, "maintype")
+        .and_then(extract_str)
+        .unwrap_or_else(|| "application".to_string());
+    let subtype = kwarg(&items, "subtype")
+        .and_then(extract_str)
+        .unwrap_or_else(|| "octet-stream".to_string());
+    let filename = kwarg(&items, "filename").and_then(extract_str);
+
+    ensure_multipart_mixed(this);
+
+    let part = new_message("EmailMessage");
+    header_append(part, "Content-Type", new_str(format!("{maintype}/{subtype}")));
+    header_append(part, "Content-Transfer-Encoding", new_str("7bit"));
+    if let Some(name) = filename {
+        header_append(
+            part,
+            "Content-Disposition",
+            new_str(format!("attachment; filename=\"{}\"", quoted_header_param(&name))),
+        );
+    } else {
+        header_append(part, "Content-Disposition", new_str("attachment"));
+    }
+    retain(payload);
+    field_set(part, "_payload", payload);
+    append_payload_part(this, part);
+    MbValue::none()
+}
+
 extern "C" fn m_walk(this: MbValue) -> MbValue {
     // Return a list of all messages (self + recursive subparts), depth-first.
     let mut out = Vec::new();
@@ -1043,6 +1144,9 @@ unsafe extern "C" fn m_set_content(this: MbValue, args: MbValue) -> MbValue {
 fn message_as_string(this: MbValue) -> String {
     let mut out = String::new();
     let payload = field_get(this, "_payload").unwrap_or_else(MbValue::none);
+    let is_multipart = payload.as_ptr().map(|p| unsafe {
+        matches!((*p).data, ObjData::List(_))
+    }).unwrap_or(false);
     let payload_text = if let Some(s) = extract_str(payload) {
         s
     } else if let Some(b) = extract_bytes(payload) {
@@ -1062,6 +1166,27 @@ fn message_as_string(this: MbValue) -> String {
         out.push_str("Content-Transfer-Encoding: quoted-printable\n");
     }
     out.push('\n');
+    if is_multipart {
+        let boundary = header_get_first(this, "content-type")
+            .map(value_to_string)
+            .and_then(|ct| parse_param_list(&ct).into_iter()
+                .find(|(name, _)| name.to_lowercase() == "boundary")
+                .map(|(_, value)| email_unquote(&value)))
+            .unwrap_or_else(|| "mamba-boundary".to_string());
+        for part in args_items(payload) {
+            out.push_str("--");
+            out.push_str(&boundary);
+            out.push('\n');
+            out.push_str(&message_as_string(part));
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        out.push_str("--");
+        out.push_str(&boundary);
+        out.push_str("--\n");
+        return out;
+    }
     if needs_implicit_qp {
         match qp_body_encode(&payload_text, 76, "\n") {
             Ok(encoded) => out.push_str(&encoded),
@@ -1320,7 +1445,30 @@ fn build_message_from_text(text: &str, class_name: &str) -> MbValue {
     for (n, v) in headers {
         header_append(m, &n, new_str(v));
     }
-    field_set(m, "_payload", new_str(body));
+    if let Some(boundary) = header_get_first(m, "content-type")
+        .map(value_to_string)
+        .and_then(|ct| parse_param_list(&ct).into_iter()
+            .find(|(name, _)| name.to_lowercase() == "boundary")
+            .map(|(_, value)| email_unquote(&value)))
+    {
+        let marker = format!("--{boundary}");
+        let mut parts = Vec::new();
+        for segment in body.split(&marker).skip(1) {
+            if segment.starts_with("--") {
+                break;
+            }
+            let mut part = segment;
+            if let Some(rest) = part.strip_prefix('\n') {
+                part = rest;
+            }
+            if !part.trim().is_empty() {
+                parts.push(build_message_from_text(part, "Message"));
+            }
+        }
+        field_set(m, "_payload", new_list(parts));
+    } else {
+        field_set(m, "_payload", new_str(body));
+    }
     if defects > 0 {
         // One placeholder per collected defect; the fixture only checks
         // len(msg.defects) >= 1, and no other path inspects element types.
@@ -2361,6 +2509,11 @@ fn message_methods() -> Vec<(&'static str, *const (), bool)> {
         ("replace_header", m_replace_header as *const (), false),
         ("get_content_type", m_get_content_type as *const (), false),
         (
+            "get_content",
+            m_get_content as *const (),
+            false,
+        ),
+        (
             "get_content_maintype",
             m_get_content_maintype as *const (),
             false,
@@ -2391,6 +2544,7 @@ fn message_methods() -> Vec<(&'static str, *const (), bool)> {
         ("get_charset", m_get_charset as *const (), false),
         ("set_charset", m_set_payload as *const (), true), // not exact but rare
         ("attach", m_attach as *const (), false),
+        ("add_attachment", m_add_attachment as *const (), true),
         ("walk", m_walk as *const (), false),
         ("set_content", m_set_content as *const (), true),
         ("as_string", m_as_string as *const (), false),
