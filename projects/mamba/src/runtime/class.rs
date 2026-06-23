@@ -1345,6 +1345,7 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
     if name.is_empty() || attr.is_empty() {
         return;
     }
+    let synthesize_typeddict = attr == "__annotations__";
     // Class-body enums (`class Color(enum.Enum): RED = 1`): convert eligible
     // class-body assignments into singleton member Instances at registration
     // time (Lane-B of #1448). Non-enum classes fall through untouched.
@@ -1372,8 +1373,65 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
             }
         }
     });
+    if synthesize_typeddict {
+        synthesize_typeddict_metadata_from_annotations(&name, value);
+    }
     // Invalidate method cache — class attribute change may affect method resolution.
     invalidate_method_cache();
+}
+
+fn synthesize_typeddict_metadata_from_annotations(name: &str, annotations: MbValue) {
+    let mut keys = Vec::new();
+    if let Some(ptr) = annotations.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                for key in lock.read().unwrap().keys() {
+                    if let super::dict_ops::DictKey::Str(s) = key {
+                        keys.push(s.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    CLASS_REGISTRY.with(|reg| {
+        let mut reg = reg.borrow_mut();
+        let Some(cls) = reg.get_mut(name) else { return };
+        let is_typed_dict = cls.name == "TypedDict" || cls.mro.iter().any(|base| base == "TypedDict");
+        if !is_typed_dict {
+            return;
+        }
+
+        cls.class_attrs
+            .entry("__total__".to_string())
+            .or_insert(MbValue::from_bool(true));
+
+        let required_items = keys
+            .into_iter()
+            .map(|key| MbValue::from_ptr(MbObject::new_str(key)))
+            .collect();
+        let required = MbValue::from_ptr(MbObject::new_frozenset(required_items));
+        unsafe { super::rc::retain_if_ptr(required); }
+        match cls.class_attrs.entry("__required_keys__".to_string()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(required);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                unsafe { super::rc::release_if_ptr(required); }
+            }
+        }
+
+        let optional = MbValue::from_ptr(MbObject::new_frozenset(vec![]));
+        unsafe { super::rc::retain_if_ptr(optional); }
+        match cls.class_attrs.entry("__optional_keys__".to_string()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(optional);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                unsafe { super::rc::release_if_ptr(optional); }
+            }
+        }
+    });
 }
 
 // ── Generator Method Dispatch ──

@@ -6,7 +6,7 @@ use crate::error::MambaError;
 use crate::parser::ast::*;
 use crate::resolve::{SymbolKind, SymbolTable};
 use crate::source::span::{Span, Spanned};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Diagnostic severity for warnings vs errors (#244).
 #[derive(Debug, Clone, PartialEq)]
@@ -131,6 +131,10 @@ pub struct TypeChecker {
     pub(crate) next_type_var_id: u32,
     /// Class method signatures for protocol conformance checking (#314).
     pub(crate) class_methods: HashMap<String, HashMap<String, super::protocol::MethodSig>>,
+    /// User classes declared with `TypedDict` in their base chain. Runtime
+    /// instances of these classes are plain dict values, so a variable annotated
+    /// as the TypedDict class accepts dict literals/values.
+    pub(crate) typed_dict_classes: HashSet<String>,
     /// User classes that are BARE: no base class (other than `object`) and no
     /// methods. A bare class instance (`class _W: pass` → `_W()`) can satisfy
     /// neither a protocol (it has no dunders) nor a nominal type (it has no
@@ -184,6 +188,7 @@ impl TypeChecker {
             protocol_registry: ProtocolRegistry::new(),
             next_type_var_id: 0,
             class_methods: HashMap::new(),
+            typed_dict_classes: HashSet::new(),
             user_bare_classes: std::collections::HashSet::new(),
             current_match_subject_ty: None,
             comprehension_depth: 0,
@@ -354,6 +359,7 @@ impl TypeChecker {
 
                     let fields = self.collect_class_fields(body);
                     let match_args = self.collect_match_args(body);
+                    let is_typed_dict = bases.iter().any(|b| self.base_is_typed_dict(&b.node));
                     let class_ty = self.tcx.intern(Ty::Class {
                         name: name.clone(),
                         fields,
@@ -361,6 +367,9 @@ impl TypeChecker {
                     });
                     let sym = self.symbols.define(name.clone(), SymbolKind::Class);
                     self.set_sym_type(sym.0, class_ty);
+                    if is_typed_dict {
+                        self.typed_dict_classes.insert(name.clone());
+                    }
 
                     if !gp.is_empty() {
                         self.generic_defs.insert(name.clone(), gp);
@@ -830,6 +839,13 @@ impl TypeChecker {
                 return true;
             }
         }
+        // PEP 589: class-form TypedDict is a structural schema at type-check
+        // time but its runtime values are plain dicts.
+        if let (Ty::Class { name, .. }, Ty::Dict(_, _)) = (e, a) {
+            if self.typed_dict_classes.contains(name) {
+                return true;
+            }
+        }
         // #314: Protocol structural subtyping — if expected is a protocol class,
         // check if actual class structurally satisfies it
         if let Ty::Class {
@@ -1101,6 +1117,15 @@ impl TypeChecker {
         if !methods.is_empty() {
             self.class_methods.insert(class_name.to_string(), methods);
         }
+    }
+
+    fn base_is_typed_dict(&self, expr: &Expr) -> bool {
+        let name = match expr {
+            Expr::Ident(name) => Some(name.as_str()),
+            Expr::Attr { attr, .. } => Some(attr.as_str()),
+            _ => None,
+        };
+        name.is_some_and(|name| name == "TypedDict" || self.typed_dict_classes.contains(name))
     }
 }
 
