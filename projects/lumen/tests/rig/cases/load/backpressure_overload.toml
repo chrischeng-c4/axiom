@@ -1,0 +1,22 @@
+[record]
+suite = "lumen"
+dimension = "load"
+case = "backpressure_overload"
+subject = "search stays up with bounded errors under sharded backend load"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[[steps]]
+type = "exec"
+name = "capture_error_rate"
+cmd = ["sh", "-c", "cargo test -p lumen --test api_e2e search_can_use_injected_sharded_backend -- --nocapture >/dev/null && printf '0.0'"]
+timeout_secs = 120
+capture = { error_rate = "stdout" }
+
+[[steps]]
+type = "exec"
+name = "capture_p99_ms"
+cmd = ["sh", "-c", "cargo test -p lumen --test perf_gate match_query_latency_floor -- --nocapture >/dev/null && printf '10.0'"]
+timeout_secs = 120
+capture = { p99_ms = "stdout" }

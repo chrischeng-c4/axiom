@@ -43,8 +43,7 @@ fn unique_dir(tag: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dir = std::env::temp_dir()
-        .join(format!("mamba-perf-bench-manifest-{tag}-{nanos}"));
+    let dir = std::env::temp_dir().join(format!("mamba-perf-bench-manifest-{tag}-{nanos}"));
     std::fs::create_dir_all(&dir).expect("create tempdir");
     dir
 }
@@ -112,7 +111,7 @@ fn manifest_declares_fixture_root_pointing_at_bench_fixtures() {
         .and_then(|v| v.as_str())
         .expect("fixture_root is a string");
     assert!(
-        root.contains("tests/cpython/fixtures/core/bench"),
+        root.contains("tests/cpython/_regression/core/bench"),
         "fixture_root must resolve to the bench fixture directory; got {root}"
     );
 }
@@ -225,7 +224,10 @@ command = "y"
     let path = write_manifest(&dir, "manifest.toml", body);
     let (code, _stdout, stderr) =
         run_checker(&["--manifest", path.to_str().unwrap(), "--format", "text"]);
-    assert_eq!(code, 1, "missing required fixture must exit 1; stderr={stderr}");
+    assert_eq!(
+        code, 1,
+        "missing required fixture must exit 1; stderr={stderr}"
+    );
     assert!(
         stderr.contains("ghost.py"),
         "stderr must name the missing fixture; got {stderr}"
@@ -262,10 +264,7 @@ location = "x"
 command = "y"
 "#;
     let path = write_manifest(&dir, "manifest.toml", body);
-    let (code, payload) = run_checker_json(&[
-        "--manifest",
-        path.to_str().unwrap(),
-    ]);
+    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 0, "valid manifest must exit 0; payload={payload}");
     assert_eq!(payload["required_missing"].as_array().unwrap().len(), 0);
     assert_eq!(payload["checked_count"], 1);

@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// binascii module for Mamba (#1261).
 ///
 /// Faithful reimplementation of CPython 3.12 `Modules/binascii.c` for the
@@ -11,10 +13,7 @@
 /// malformed input the codecs raise `binascii.Error` — registered so that
 /// `except binascii.Error`, `except ValueError`, and `except Exception` all
 /// catch it (CPython's `binascii.Error` subclasses `ValueError`).
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 || args_ptr.is_null() {
@@ -62,9 +61,7 @@ unsafe fn decode_arg_bytes(val: MbValue, what: &str) -> Result<Vec<u8>, MbValue>
         DecodeArg::NonAsciiStr => Err(raise_value_error(
             "string argument should contain only ASCII characters",
         )),
-        DecodeArg::NotBytesLike => {
-            Err(raise_type_error(&format!("argument should be {}", what)))
-        }
+        DecodeArg::NotBytesLike => Err(raise_type_error(&format!("argument should be {}", what))),
     }
 }
 
@@ -220,10 +217,8 @@ fn decode_hex(src: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(src.len() / 2);
     let mut i = 0;
     while i < src.len() {
-        let hi = hex_digit(src[i])
-            .ok_or_else(|| "Non-hexadecimal digit found".to_string())?;
-        let lo = hex_digit(src[i + 1])
-            .ok_or_else(|| "Non-hexadecimal digit found".to_string())?;
+        let hi = hex_digit(src[i]).ok_or_else(|| "Non-hexadecimal digit found".to_string())?;
+        let lo = hex_digit(src[i + 1]).ok_or_else(|| "Non-hexadecimal digit found".to_string())?;
         out.push((hi << 4) | lo);
         i += 2;
     }
@@ -233,9 +228,7 @@ fn decode_hex(src: &[u8]) -> Result<Vec<u8>, String> {
 unsafe extern "C" fn dispatch_hexlify(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let Some(arg) = args.first().copied() else {
-        return raise_type_error(
-            "function missing required argument 'data' (pos 1)",
-        );
+        return raise_type_error("function missing required argument 'data' (pos 1)");
     };
     let Some(src) = as_bytes_like(arg) else {
         return raise_type_error("a bytes-like object is required, not 'str'");
@@ -275,9 +268,7 @@ unsafe fn sep_byte(v: MbValue) -> Option<u8> {
 unsafe extern "C" fn dispatch_unhexlify(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let Some(arg) = args.first().copied() else {
-        return raise_type_error(
-            "function missing required argument 'data' (pos 1)",
-        );
+        return raise_type_error("function missing required argument 'data' (pos 1)");
     };
     let src = match decode_arg_bytes(arg, "bytes-like or ASCII string") {
         Ok(v) => v,
@@ -291,8 +282,7 @@ unsafe extern "C" fn dispatch_unhexlify(args_ptr: *const MbValue, nargs: usize) 
 
 // ── base64 ──
 
-const B64_TABLE: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Reverse table: ASCII byte -> 0..=63 or 0xFF for non-alphabet.
 fn b64_value(c: u8) -> u8 {
@@ -435,9 +425,7 @@ fn decode_base64(src: &[u8], strict: bool) -> Result<Vec<u8>, String> {
 unsafe extern "C" fn dispatch_b2a_base64(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let Some(arg) = args.first().copied() else {
-        return raise_type_error(
-            "function missing required argument 'data' (pos 1)",
-        );
+        return raise_type_error("function missing required argument 'data' (pos 1)");
     };
     let Some(src) = as_bytes_like(arg) else {
         return raise_type_error("a bytes-like object is required, not 'str'");
@@ -453,9 +441,7 @@ unsafe extern "C" fn dispatch_b2a_base64(args_ptr: *const MbValue, nargs: usize)
 unsafe extern "C" fn dispatch_a2b_base64(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let Some(arg) = args.first().copied() else {
-        return raise_type_error(
-            "function missing required argument 'data' (pos 1)",
-        );
+        return raise_type_error("function missing required argument 'data' (pos 1)");
     };
     let src = match decode_arg_bytes(arg, "bytes-like or ASCII string") {
         Ok(v) => v,
@@ -477,9 +463,7 @@ unsafe extern "C" fn dispatch_a2b_base64(args_ptr: *const MbValue, nargs: usize)
 unsafe extern "C" fn dispatch_crc32(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let Some(arg) = args.first().copied() else {
-        return raise_type_error(
-            "function missing required argument 'data' (pos 1)",
-        );
+        return raise_type_error("function missing required argument 'data' (pos 1)");
     };
     let Some(src) = as_bytes_like(arg) else {
         return raise_type_error("a bytes-like object is required, not 'str'");
@@ -516,9 +500,7 @@ fn crc_hqx(data: &[u8], mut crc: u32) -> u32 {
 unsafe extern "C" fn dispatch_crc_hqx(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     if args.len() < 2 {
-        return raise_type_error(
-            "crc_hqx() missing required argument 'crc' (pos 2)",
-        );
+        return raise_type_error("crc_hqx() missing required argument 'crc' (pos 2)");
     }
     let Some(src) = as_bytes_like(args[0]) else {
         return raise_type_error("a bytes-like object is required, not 'str'");
@@ -559,9 +541,7 @@ const fn build_crc_hqx_table() -> [u32; 256] {
 unsafe extern "C" fn dispatch_b2a_uu(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let Some(arg) = args.first().copied() else {
-        return raise_type_error(
-            "function missing required argument 'data' (pos 1)",
-        );
+        return raise_type_error("function missing required argument 'data' (pos 1)");
     };
     let Some(src) = as_bytes_like(arg) else {
         return raise_type_error("a bytes-like object is required, not 'str'");
@@ -570,11 +550,12 @@ unsafe extern "C" fn dispatch_b2a_uu(args_ptr: *const MbValue, nargs: usize) -> 
     // `backtick` is keyword-only in CPython 3.12; a bare positional second
     // arg must raise TypeError (test: b2a_uu(b'', True)).
     for v in extra {
-        let is_kwdict = v.as_ptr().map(|p| matches!(&(*p).data, ObjData::Dict(_))).unwrap_or(false);
+        let is_kwdict = v
+            .as_ptr()
+            .map(|p| matches!(&(*p).data, ObjData::Dict(_)))
+            .unwrap_or(false);
         if !is_kwdict {
-            return raise_type_error(
-                "b2a_uu() takes at most 1 positional argument (2 given)",
-            );
+            return raise_type_error("b2a_uu() takes at most 1 positional argument (2 given)");
         }
     }
     if let Some(name) = has_unexpected_kwarg(extra, &["backtick"]) {
@@ -593,7 +574,11 @@ unsafe extern "C" fn dispatch_b2a_uu(args_ptr: *const MbValue, nargs: usize) -> 
 fn uu_char(c: u8, backtick: bool) -> u8 {
     let v = c & 0x3f;
     if v == 0 {
-        if backtick { b'`' } else { b' ' }
+        if backtick {
+            b'`'
+        } else {
+            b' '
+        }
     } else {
         v + 0x20
     }
@@ -621,9 +606,7 @@ fn encode_uu(src: &[u8], backtick: bool) -> Vec<u8> {
 unsafe extern "C" fn dispatch_a2b_uu(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let Some(arg) = args.first().copied() else {
-        return raise_type_error(
-            "function missing required argument 'data' (pos 1)",
-        );
+        return raise_type_error("function missing required argument 'data' (pos 1)");
     };
     let src = match decode_arg_bytes(arg, "bytes-like or ASCII string") {
         Ok(v) => v,
@@ -728,10 +711,7 @@ fn encode_qp(src: &[u8], quotetabs: bool, istext: bool, header: bool) -> Vec<u8>
         }
         if c == b'.'
             && linelen == 0
-            && (i + 1 == datalen
-                || src[i + 1] == b'\n'
-                || src[i + 1] == b'\r'
-                || src[i + 1] == 0)
+            && (i + 1 == datalen || src[i + 1] == b'\n' || src[i + 1] == b'\r' || src[i + 1] == 0)
         {
             return true;
         }
@@ -741,11 +721,7 @@ fn encode_qp(src: &[u8], quotetabs: bool, istext: bool, header: bool) -> Vec<u8>
         if (c == b'\t' || c == b' ') && i + 1 == datalen {
             return true;
         }
-        if c < 33
-            && c != b'\r'
-            && c != b'\n'
-            && (quotetabs || (c != b'\t' && c != b' '))
-        {
+        if c < 33 && c != b'\r' && c != b'\n' && (quotetabs || (c != b'\t' && c != b' ')) {
             return true;
         }
         false
@@ -768,10 +744,7 @@ fn encode_qp(src: &[u8], quotetabs: bool, istext: bool, header: bool) -> Vec<u8>
             out.extend_from_slice(&e);
             i += 1;
             linelen += 3;
-        } else if istext
-            && (c == b'\n'
-                || (i + 1 < datalen && c == b'\r' && src[i + 1] == b'\n'))
-        {
+        } else if istext && (c == b'\n' || (i + 1 < datalen && c == b'\r' && src[i + 1] == b'\n')) {
             linelen = 0;
             // Protect against whitespace on end of line: retro-escape the last
             // emitted space/tab.
@@ -792,10 +765,7 @@ fn encode_qp(src: &[u8], quotetabs: bool, istext: bool, header: bool) -> Vec<u8>
                 i += 1;
             }
         } else {
-            if i + 1 != datalen
-                && src[i + 1] != b'\n'
-                && linelen + 1 >= QP_MAXLINESIZE
-            {
+            if i + 1 != datalen && src[i + 1] != b'\n' && linelen + 1 >= QP_MAXLINESIZE {
                 out.push(b'=');
                 if crlf {
                     out.push(b'\r');
@@ -818,9 +788,7 @@ fn encode_qp(src: &[u8], quotetabs: bool, istext: bool, header: bool) -> Vec<u8>
 unsafe extern "C" fn dispatch_b2a_qp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
     let Some(arg) = args.first().copied() else {
-        return raise_type_error(
-            "function missing required argument 'data' (pos 1)",
-        );
+        return raise_type_error("function missing required argument 'data' (pos 1)");
     };
     let Some(src) = as_bytes_like(arg) else {
         return raise_type_error("a bytes-like object is required, not 'str'");
@@ -909,29 +877,34 @@ fn decode_qp(src: &[u8], header: bool) -> Vec<u8> {
 
 unsafe extern "C" fn dispatch_a2b_qp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let extra = if args.is_empty() { &args[..] } else { &args[1..] };
+    let extra = if args.is_empty() {
+        &args[..]
+    } else {
+        &args[1..]
+    };
     if has_non_str_kwarg_key(extra) {
         return raise_type_error("keywords must be strings");
     }
     // The first positional or the `data=` keyword carries the input.
     let arg = if let Some(a) = args.first().copied() {
         // Could be the kwargs dict if called as a2b_qp(data=..., header=...).
-        let is_kwdict = a.as_ptr().map(|p| matches!(&(*p).data, ObjData::Dict(_))).unwrap_or(false);
+        let is_kwdict = a
+            .as_ptr()
+            .map(|p| matches!(&(*p).data, ObjData::Dict(_)))
+            .unwrap_or(false);
         if is_kwdict {
             // No positional data; look for data= kwarg.
             match kwarg(extra, "data").or_else(|| kwarg(args, "data")) {
                 Some(d) => d,
-                None => return raise_type_error(
-                    "function missing required argument 'data' (pos 1)",
-                ),
+                None => {
+                    return raise_type_error("function missing required argument 'data' (pos 1)")
+                }
             }
         } else {
             a
         }
     } else {
-        return raise_type_error(
-            "function missing required argument 'data' (pos 1)",
-        );
+        return raise_type_error("function missing required argument 'data' (pos 1)");
     };
     if let Some(name) = has_unexpected_kwarg(extra, &["data", "header"]) {
         return raise_type_error(&format!(
@@ -972,8 +945,14 @@ pub fn register() {
 
     // Exception classes. `binascii.Error` is a ValueError subclass; both are
     // matched by the exception machinery via name (see exception.rs).
-    attrs.insert("Error".into(), MbValue::from_ptr(MbObject::new_str("binascii.Error".to_string())));
-    attrs.insert("Incomplete".into(), MbValue::from_ptr(MbObject::new_str("binascii.Incomplete".to_string())));
+    attrs.insert(
+        "Error".into(),
+        MbValue::from_ptr(MbObject::new_str("binascii.Error".to_string())),
+    );
+    attrs.insert(
+        "Incomplete".into(),
+        MbValue::from_ptr(MbObject::new_str("binascii.Incomplete".to_string())),
+    );
 
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();

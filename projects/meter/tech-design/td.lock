@@ -1,8 +1,8 @@
 version = 1
 project = "meter"
 td_path = "projects/meter/tech-design"
-generated_at = "2026-06-13T02:45:55.240439+00:00"
-digest = "sha256:50c364ebdd48a4b6f59098f79581d3d934cc0e9cfa68d031cb188741c1e5b87d"
+generated_at = "2026-06-14T08:36:29.416117+00:00"
+digest = "sha256:addb2e12c823669ec4e46a77f1d85f21d4c07d8f52230c6470a21d16275a572e"
 
 [[files]]
 path = ".gitkeep"
@@ -10,11 +10,11 @@ digest = "sha256:c99c4ccde305d3e049351d8f5099d5a1c9dbca0fff3cea6bdf1c79f8794b490
 
 [[files]]
 path = "logic/external-contracts.md"
-digest = "sha256:2f0b65b4f4d1349faab5a3120f6d431f8e3a7ab90ade77cb7fe0236f412cb795"
+digest = "sha256:7eeaa7a7c95c773d50e80ee472d63dbc30e499d90ffee81f95516c4133949a70"
 
 [[files]]
 path = "logic/single-knob-meter-toml-level-gate-l1-vitals-in-capture-until-exi.md"
-digest = "sha256:b79850ae0401374a1dc9b73b2b18e6d23c50587f7a91a9d2bcfcb3c3b553db60"
+digest = "sha256:7f507b2cc1a91e424bea29b4717bb69a0231d581f075fd31e303f458cab8e842"
 
 [[files]]
 path = "semantic/meter-build-script.md"
@@ -74,7 +74,7 @@ digest = "sha256:e899b98b63afee153c1e8de7c3e0fd78ca7295c8a78b9006fcce93c0b8581c2
 
 [[files]]
 path = "semantic/source/projects-meter-meter-cli-src-dispatch-rs.md"
-digest = "sha256:b8caeada717df00e74e3deca4ced799a27505efbf8a443019ddd5026c2ea4ff2"
+digest = "sha256:82242d6e029204bd460180a22da37e9a685d8a2038c35c4f0983f8c13973d31a"
 
 [[files]]
 path = "semantic/source/projects-meter-meter-cli-src-lib-rs.md"
@@ -82,7 +82,7 @@ digest = "sha256:1d7947b1742b658c24c65f5704f56b32fc10f879ccd195e3e1d7272de23dd2c
 
 [[files]]
 path = "semantic/source/projects-meter-scripts-ts-harness-js.md"
-digest = "sha256:2990f0744276f5121588be9c3cd3b2f9bc887e38e33bb4575e01b3cfbf4405f7"
+digest = "sha256:73660e8ac50c005256abd7c0bfe52c773b1e6496b239cd61dd0bfe5134091cb6"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-cost-rs.md"
@@ -158,23 +158,23 @@ digest = "sha256:e417213dd8373817ccbc19a4156478720f8a1a54d8bd1d9299f4231f0a0137d
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-fold-rs.md"
-digest = "sha256:a7182bff03d088ae3abec4c0bac110e85f9847e5fe3e5c912766865d5e438316"
+digest = "sha256:a8c7601e60ee0bf2263322d492979f1a0b513349c4061c4ef229a7c5ca91633e"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-mod-rs.md"
-digest = "sha256:2130d25ced182971b0ed4a80302317bd079052a4a23019476bbce876112e3a2d"
+digest = "sha256:1f2432b6397fdd0ef19a899a6431c1e4364381c27473f62e0a17448b0d8ca818"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-run-rs.md"
-digest = "sha256:f76dd34adeb8e92122bd4c04430c1210d660d081af6dc7ec49347c72da8d238e"
+digest = "sha256:b6c541427d6c85463db0c2da5b27a481c195a4dd749900d643b83a8f342fcbe7"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-sampler-rs.md"
-digest = "sha256:0a2871b94432aac0c8863e600917a2a1faf9fd7ffb4fd5fd4e06755d40f684cf"
+digest = "sha256:80706084ae72816344509ddbac80522f1790d4a4220cc5fe95f41e84586ea4d0"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-vitals-rs.md"
-digest = "sha256:0c24e9c0e2c8af585f136731917acdb8e7aaa09d1fb4cee934f20c245566f4f1"
+digest = "sha256:f2d2435c41c844894e5f911b934c431a71b61be892768e6acfd0fd788fe1993c"
 
 [[files]]
 path = "semantic/source/projects-meter-src-discovery-rs.md"
@@ -194,7 +194,7 @@ digest = "sha256:8baa5efba5aae62ae6752741a0c5b2d7ccc16a9cb295d641bac03c6a36aa36d
 
 [[files]]
 path = "semantic/source/projects-meter-src-instrument-mod-rs.md"
-digest = "sha256:18ac978260f86f090a768365292126f816d894df45df297cd451a3df97d21657"
+digest = "sha256:822de2cdac05aa991f47951b92a44fe52bc6481ad6371d99175c9f36c3855570"
 
 [[files]]
 path = "semantic/source/projects-meter-src-lib-rs.md"
@@ -234,11 +234,11 @@ digest = "sha256:3c85e1cf7d74345b7da2157925927727f7fc5dd9e93baf915535b7e28b30168
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-envelope-rs.md"
-digest = "sha256:67387b26e609c57f030cbf4d61085ada14a3d80e39ce8d3bcc8b22e617720874"
+digest = "sha256:b9a740332b7c2090cf234042e4ff20d5b05268a05af9acc6dff501117eefa734"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-finding-rs.md"
-digest = "sha256:76c5a0c284e4beaee5c2256068cf9699a55554a489a4df444895fa74b4080be1"
+digest = "sha256:f0754c5d7e6cd0e9f9efa02c4d280b0f77b5cbeff784a9509271b6cdfca4d335"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-mod-rs.md"
@@ -246,7 +246,7 @@ digest = "sha256:75a8913702cfbd265a27a5d53dd93e69dba6697e4d2ad6a74dedf80e52e4f47
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-persist-rs.md"
-digest = "sha256:bd497c430b92016057a2168eac4354da4e2cb81ef888f59dcc0e8aec60fffe19"
+digest = "sha256:26e80655b68855c176fb53dc9950f081f6b95452d3b131b0ac9d8fb0a450857f"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-producer-rs.md"
@@ -254,15 +254,15 @@ digest = "sha256:7a1b0dca7a3b3c974334dbc2681ea85d033de9d974d5eca204f6f808695d731
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-schema-rs.md"
-digest = "sha256:2de91475fd4b2d3f61eda7f0117aa240388784500c3b05b741e8582965eb7a4a"
+digest = "sha256:5763ea75e9d24ad228c36290a545869b1ddaf4aa1997d49e4dc293a02bf026e3"
 
 [[files]]
 path = "semantic/source/projects-meter-src-reporter-rs.md"
-digest = "sha256:729b19e3af800cc83bf032067d894ce9d744541c7799b00ce266428ddec3388b"
+digest = "sha256:fc703248fe7c57809d762c43af94f00902d8646a80d0877be3108b7558100d50"
 
 [[files]]
 path = "semantic/source/projects-meter-src-runner-rs.md"
-digest = "sha256:c5a139243eeef44314a5bdc17b3a1aba7356b5e3eaf609055c163d70f61f806b"
+digest = "sha256:b8f9b32664f8844dad31818c6ce7afe9e9d31b907e9db9a15618803810ab0262"
 
 [[files]]
 path = "semantic/source/projects-meter-src-rust-runner-rs.md"
@@ -270,7 +270,7 @@ digest = "sha256:e1c5916f9aa37052ce8b920d4e6b683b783d9793b6598b6695c563a66a9aa6d
 
 [[files]]
 path = "semantic/source/projects-meter-src-security-async-fuzzer-rs.md"
-digest = "sha256:a0cfc6d3680e042df7db11731fac4256af6064debc81c4ff3c4aa7e3876756f2"
+digest = "sha256:29c374330d4a31b432e42df2f94ac6ab4fe864edc761cf5633d469af816cbc35"
 
 [[files]]
 path = "semantic/source/projects-meter-src-security-fuzzer-rs.md"

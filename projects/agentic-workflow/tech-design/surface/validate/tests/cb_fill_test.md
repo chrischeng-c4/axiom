@@ -28,11 +28,11 @@ No public AST symbols.
 ````rust
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/validate/tests/cb_fill_test.md#source
 // CODEGEN-BEGIN
-//! Integration tests for `aw cb fill` (Phase 3).
+//! Integration tests for `aw td fill` (Phase 3).
 //!
 //! Smoke tests for CLI registration, brief mode envelope shape, marker
 //! enumeration, and `--apply --marker` block replacement. Full
-//! e2e integration scenarios (cb check gate + Cb-Fill trailer + phase
+//! e2e integration scenarios (code check gate + Cb-Fill trailer + phase
 //! advance) are #[ignore]d because they require a real worktree, real
 //! payload files, and the agent loop infrastructure.
 //!
@@ -69,12 +69,12 @@ fn handwrite_end() -> &'static str {
 
 // ── R1 / R14(1) ─────────────────────────────────────────────────────────
 
-/// R1: `aw cb fill` is registered as a first-class subcommand under cb.
+/// R1: `aw td fill` is registered as a first-class subcommand under td.
 #[test]
 fn test_cb_fill_registered() {
     let cmd = Cli::command();
-    let cb = cmd.find_subcommand("cb").expect("cb namespace");
-    let fill = cb.find_subcommand("fill").expect("cb fill subcommand");
+    let td = cmd.find_subcommand("td").expect("td namespace");
+    let fill = td.find_subcommand("fill").expect("td fill subcommand");
     let positionals: Vec<String> = fill
         .get_positionals()
         .map(|p: &clap::Arg| p.get_id().as_str().to_string())
@@ -86,9 +86,9 @@ fn test_cb_fill_registered() {
 fn test_cb_fill_apply_flag() {
     let cmd = Cli::command();
     let fill = cmd
-        .find_subcommand("cb")
+        .find_subcommand("td")
         .and_then(|c| c.find_subcommand("fill"))
-        .expect("cb fill");
+        .expect("td fill");
     fill.get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "apply")
         .expect("--apply flag");
@@ -101,9 +101,9 @@ fn test_cb_fill_apply_flag() {
 fn test_cb_fill_spec_path_flag() {
     let cmd = Cli::command();
     let fill = cmd
-        .find_subcommand("cb")
+        .find_subcommand("td")
         .and_then(|c| c.find_subcommand("fill"))
-        .expect("cb fill");
+        .expect("td fill");
     fill.get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "spec_path")
         .expect("--spec-path flag");
@@ -119,29 +119,6 @@ fn test_issue_phase_cb_filled_variant() {
     assert!(td_phase::is_mergeable("cb_filled"));
     assert!(td_phase::is_mergeable("cb_genned"));
     assert!(!td_phase::is_mergeable("td_reviewed"));
-}
-
-/// CB CRRR: `cb_arbitrated` phase + `Cb-Arbitrate` trailer constants exist.
-#[test]
-fn test_cb_arbitrate_constants() {
-    use agentic_workflow::issues::types::{lifecycle_trailer, td_phase};
-    assert_eq!(td_phase::CB_ARBITRATED, "cb_arbitrated");
-    assert_eq!(lifecycle_trailer::CB_ARBITRATE, "Cb-Arbitrate");
-}
-
-/// CB CRRR: `aw cb arbitrate <slug>` is registered.
-#[test]
-fn test_cb_arbitrate_registered() {
-    let cmd = Cli::command();
-    let arb = cmd
-        .find_subcommand("cb")
-        .and_then(|c| c.find_subcommand("arbitrate"))
-        .expect("cb arbitrate subcommand");
-    let positionals: Vec<String> = arb
-        .get_positionals()
-        .map(|p: &clap::Arg| p.get_id().as_str().to_string())
-        .collect();
-    assert!(positionals.iter().any(|p| p == "slug"));
 }
 
 /// R9: `Cb-Fill` trailer const exists in lifecycle_trailer module.
@@ -173,7 +150,7 @@ fn test_brief_mode_envelope_shape() {
         "agent": null,
         "slug": "demo",
         "invoke": {
-            "command": "aw cb fill",
+            "command": "aw td fill",
             "args": {
                 "slug": "demo",
                 "marker_list": [{
@@ -232,7 +209,7 @@ fn test_apply_marker_enumerates_block() {
     std::fs::create_dir_all(&src_dir).unwrap();
     let src_file = src_dir.join("x.rs");
     let body = format!(
-        "fn before() {{}}\n{}\nstub\n{}\nfn after() {{}}\n",
+        "fn before() {{}}\n{}\nTODO: hand-write content\n{}\nfn after() {{}}\n",
         handwrite_begin("gap=\"my-marker\" tracker=\"none\" reason=\"because\""),
         handwrite_end()
     );
@@ -252,7 +229,7 @@ fn test_apply_marker_no_adjacent_disturbance() {
     std::fs::create_dir_all(&src_dir).unwrap();
     let src_file = src_dir.join("x.rs");
     let body = format!(
-        "fn a() {{}}\n{}\nstub-a\n{}\nfn b() {{}}\n{}\nstub-b\n{}\nfn c() {{}}\n",
+        "fn a() {{}}\n{}\nTODO: hand-write content\n{}\nfn b() {{}}\n{}\nTODO: hand-write content\n{}\nfn c() {{}}\n",
         handwrite_begin("gap=\"first\" tracker=\"t\" reason=\"r1\""),
         handwrite_end(),
         handwrite_begin("gap=\"second\" tracker=\"t\" reason=\"r2\""),
@@ -285,7 +262,7 @@ fn test_count_matches_enumeration() {
     let src_dir = tmp.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
     let body = format!(
-        "{}\nstub\n{}\n",
+        "{}\nTODO: hand-write content\n{}\n",
         handwrite_begin("gap=\"x\" tracker=\"t\" reason=\"r\""),
         handwrite_end()
     );
@@ -300,9 +277,11 @@ fn test_count_matches_enumeration() {
 fn test_extract_change_paths_supports_changes_and_files() {
     let spec = concat!(
         "\n",
-        "#", "# Logic\n\n",
+        "#",
+        "# Logic\n\n",
         "not parsed\n\n",
-        "#", "# Changes\n\n",
+        "#",
+        "# Changes\n\n",
         "```yaml\n",
         "changes:\n",
         "  - path: ./projects/agentic-workflow/src/cli/cb_fill.rs\n",
@@ -310,7 +289,8 @@ fn test_extract_change_paths_supports_changes_and_files() {
         "files:\n",
         "  - path: ignored/by/changes.rs\n",
         "```\n\n",
-        "#", "# Test Plan\n\n",
+        "#",
+        "# Test Plan\n\n",
         "```yaml\n",
         "files:\n",
         "  - file: ignored/outside/changes.rs\n",
@@ -328,7 +308,8 @@ fn test_extract_change_paths_supports_changes_and_files() {
 
     let legacy_spec = concat!(
         "\n",
-        "#", "# Changes\n\n",
+        "#",
+        "# Changes\n\n",
         "```yaml\n",
         "files:\n",
         "  - file: ./projects/agentic-workflow/tests/cb_fill_test.rs\n",
@@ -416,7 +397,7 @@ fn test_collision_enumerate_returns_both_entries() {
     // still be present, so the enumerator must surface them all.
     let shared_id = "missing-generator:hand-written";
     let body = format!(
-        "{}\nstub\n{}\n",
+        "{}\nTODO: hand-write content\n{}\n",
         handwrite_begin(&format!("gap=\"{shared_id}\" tracker=\"t\" reason=\"r\"")),
         handwrite_end()
     );
@@ -443,7 +424,7 @@ fn test_collision_enumerate_returns_both_entries() {
 #[ignore = "requires real worktree, real payload, and the cb check pipeline"]
 fn test_apply_marker_replaces_block() {
     // Reserved: build a worktree, write a payload at
-    // .aw/payloads/<slug>/<id>.md, run `aw cb fill <slug> --apply
+    // .aw/payloads/<slug>/<id>.md, run `aw td fill <slug> --apply
     // --marker <id>`, assert source file has payload body in place of stub.
 }
 

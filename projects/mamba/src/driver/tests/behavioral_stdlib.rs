@@ -16,7 +16,6 @@
 ///
 /// Tests marked `#[ignore]` require features not yet implemented (tracked as xfail
 /// in the fixture-based harness). Remove `#[ignore]` as features land.
-
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -33,7 +32,7 @@ const TEST_TIMEOUT_SECS: u64 = 10;
 
 /// Run Python source through the full JIT pipeline, capturing stdout.
 fn jit_capture(src: &str) -> String {
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     let module = parser::parse(src, FileId(0)).expect("parse failed");
     let mut checker = TypeChecker::new();
@@ -97,7 +96,12 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
+                diff.push_str(&format!(
+                    "  line {}: expected {:?}, got {:?}\n",
+                    i + 1,
+                    e,
+                    a
+                ));
             }
         }
         panic!(

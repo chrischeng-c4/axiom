@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use crate::resolve::SymbolId;
-use crate::types::TypeId;
 use crate::source::span::Span;
+use crate::types::TypeId;
+use std::collections::HashMap;
 
 /// HIR Module — desugared, all names resolved to SymbolId, types resolved to TypeId.
 #[derive(Debug, Clone)]
@@ -19,6 +19,46 @@ pub struct HirModule {
     /// auto-create and populate the module `__annotations__` dict (CPython
     /// semantics). `type_repr` is the textual annotation (e.g. "int").
     pub module_annotations: Vec<(String, String)>,
+    /// SymbolId.0 → introspection signature metadata for each user-defined
+    /// `def` (parameter names/kinds/defaults/annotations + return annotation).
+    /// Primed into the runtime FUNC_PARAMS registry at module init so
+    /// `inspect.signature(f)` reflects the real declared signature.
+    pub func_sigs: HashMap<u32, HirFuncSig>,
+}
+
+/// Introspection signature metadata for one user-defined function.
+#[derive(Debug, Clone, Default)]
+pub struct HirFuncSig {
+    pub params: Vec<HirParamSig>,
+    /// Textual return annotation (`"int"`, `"42"`), None when undeclared.
+    pub return_annotation: Option<String>,
+}
+
+/// One parameter's introspection metadata.
+#[derive(Debug, Clone)]
+pub struct HirParamSig {
+    pub name: String,
+    /// CPython `inspect.Parameter` kind ordinal: 0 POSITIONAL_ONLY,
+    /// 1 POSITIONAL_OR_KEYWORD, 2 VAR_POSITIONAL, 3 KEYWORD_ONLY,
+    /// 4 VAR_KEYWORD.
+    pub kind: u8,
+    /// Literal default value when one is declared and representable.
+    pub default: Option<HirSigDefault>,
+    /// True when a default is declared but not a representable literal —
+    /// the runtime records "has a default" with a None placeholder.
+    pub default_opaque: bool,
+    /// Textual annotation (`"int"`), None when un-annotated.
+    pub annotation: Option<String>,
+}
+
+/// Literal default values representable without evaluating module code.
+#[derive(Debug, Clone)]
+pub enum HirSigDefault {
+    Int(i64),
+    Float(f64),
+    Str(String),
+    Bool(bool),
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +79,10 @@ pub struct HirFunction {
     /// Whether this function has a `*args` parameter.
     /// When true, the last-but-one param (before **kwargs if present) receives a packed list.
     pub has_star_args: bool,
+    /// Index into `params` of the `*args` parameter, when present. Recorded
+    /// explicitly because keyword-only params after `*args` make the position
+    /// non-derivable from `has_star_args`/`has_kwargs` alone.
+    pub star_param_pos: Option<usize>,
     /// Whether this function has a `**kwargs` parameter.
     /// When true, the last param receives a packed dict.
     pub has_kwargs: bool,
@@ -70,6 +114,18 @@ pub struct HirClass {
     /// Keyword arguments from class statement, excluding `metaclass=` (R10).
     /// e.g., `class Child(Base, registry="users")` → vec![("registry", expr)]
     pub class_kwargs: Vec<(String, HirExpr)>,
+    /// Ordered dataclass field facts collected from the class body when the
+    /// class carries a `@dataclass`-shaped decorator (PEP 557):
+    /// `(field_name, annotation_repr, default_expr)`. `default_expr` is None
+    /// for bare annotations (`x: int`); annotated assignments (`y: int = 0`,
+    /// `z: list = field(default_factory=list)`) carry the lowered value
+    /// expression. Emitted at the ClassDefPlaceholder position (before the
+    /// decorator call) so the runtime `@dataclass` synthesizer sees ordered
+    /// field facts with class-definition-time default values.
+    pub dataclass_fields: Vec<(String, String, Option<HirExpr>)>,
+    /// Class-body docstring (first bare string statement), for
+    /// `inspect.getdoc` / `Cls.__doc__`.
+    pub doc: Option<String>,
 }
 
 /// Import statement.
@@ -95,15 +151,50 @@ pub struct HirExceptHandler {
 
 #[derive(Debug, Clone)]
 pub enum HirStmt {
-    Let { target: SymbolId, ty: TypeId, value: HirExpr, span: Span },
-    Assign { target: HirLValue, value: HirExpr, span: Span },
-    Return { value: Option<HirExpr>, span: Span },
-    Expr { expr: HirExpr, span: Span },
-    If { cond: HirExpr, then_body: Vec<HirStmt>, else_body: Vec<HirStmt>, span: Span },
-    While { cond: HirExpr, body: Vec<HirStmt>, else_body: Vec<HirStmt>, span: Span },
-    For { var: SymbolId, iter: HirExpr, body: Vec<HirStmt>, else_body: Vec<HirStmt>, span: Span },
-    Break { span: Span },
-    Continue { span: Span },
+    Let {
+        target: SymbolId,
+        ty: TypeId,
+        value: HirExpr,
+        span: Span,
+    },
+    Assign {
+        target: HirLValue,
+        value: HirExpr,
+        span: Span,
+    },
+    Return {
+        value: Option<HirExpr>,
+        span: Span,
+    },
+    Expr {
+        expr: HirExpr,
+        span: Span,
+    },
+    If {
+        cond: HirExpr,
+        then_body: Vec<HirStmt>,
+        else_body: Vec<HirStmt>,
+        span: Span,
+    },
+    While {
+        cond: HirExpr,
+        body: Vec<HirStmt>,
+        else_body: Vec<HirStmt>,
+        span: Span,
+    },
+    For {
+        var: SymbolId,
+        iter: HirExpr,
+        body: Vec<HirStmt>,
+        else_body: Vec<HirStmt>,
+        span: Span,
+    },
+    Break {
+        span: Span,
+    },
+    Continue {
+        span: Span,
+    },
     /// try/except/finally (#283)
     Try {
         body: Vec<HirStmt>,
@@ -113,23 +204,51 @@ pub enum HirStmt {
         span: Span,
     },
     /// raise expression (#283)
-    Raise { value: Option<HirExpr>, from: Option<HirExpr>, span: Span },
+    Raise {
+        value: Option<HirExpr>,
+        from: Option<HirExpr>,
+        span: Span,
+    },
     /// import statement (#292)
-    Import { import: HirImport, span: Span },
+    Import {
+        import: HirImport,
+        span: Span,
+    },
     /// with statement (context manager). `is_async` is true for `async with`,
     /// which dispatches `__aenter__`/`__aexit__` and awaits the coroutine
     /// returned by each.
-    With { items: Vec<(HirExpr, Option<SymbolId>)>, body: Vec<HirStmt>, is_async: bool, span: Span },
+    With {
+        items: Vec<(HirExpr, Option<SymbolId>)>,
+        body: Vec<HirStmt>,
+        is_async: bool,
+        span: Span,
+    },
     /// assert statement
-    Assert { test: HirExpr, msg: Option<HirExpr>, span: Span },
+    Assert {
+        test: HirExpr,
+        msg: Option<HirExpr>,
+        span: Span,
+    },
     /// del statement
-    Del { target: HirLValue, span: Span },
+    Del {
+        target: HirLValue,
+        span: Span,
+    },
     /// global/nonlocal declarations
-    Global { names: Vec<SymbolId>, span: Span },
-    Nonlocal { names: Vec<SymbolId>, span: Span },
+    Global {
+        names: Vec<SymbolId>,
+        span: Span,
+    },
+    Nonlocal {
+        names: Vec<SymbolId>,
+        span: Span,
+    },
     /// Placeholder for a function definition in the top-level order.
     /// Used to emit decorator applications at the correct position (#decorder).
-    FuncDefPlaceholder { name: SymbolId, span: Span },
+    FuncDefPlaceholder {
+        name: SymbolId,
+        span: Span,
+    },
     /// Placeholder for a decorated class definition in the top-level order.
     /// Class registration itself happens at the top of the module body
     /// regardless, but decorator application runs at the textual position so
@@ -137,20 +256,36 @@ pub enum HirStmt {
     /// declared above, and (b) later top-level statements observe the
     /// post-decorator class. Only emitted for classes with decorators
     /// (#1690 — proper fix for #1686 trade-off).
-    ClassDefPlaceholder { name: SymbolId, span: Span },
+    ClassDefPlaceholder {
+        name: SymbolId,
+        span: Span,
+    },
     /// match/case statement (#309)
-    Match { subject: HirExpr, cases: Vec<HirMatchCase>, span: Span },
+    Match {
+        subject: HirExpr,
+        cases: Vec<HirMatchCase>,
+        span: Span,
+    },
 }
 
 /// L-value for assignments (variable, attribute, index, unpack).
 #[derive(Debug, Clone)]
 pub enum HirLValue {
     Var(SymbolId),
-    Attr { object: Box<HirExpr>, attr: String },
-    Index { object: Box<HirExpr>, index: Box<HirExpr> },
+    Attr {
+        object: Box<HirExpr>,
+        attr: String,
+    },
+    Index {
+        object: Box<HirExpr>,
+        index: Box<HirExpr>,
+    },
     /// Tuple unpacking: `a, b, c = ...` or `a, *rest, b = ...` (#409).
     /// `star_index` is the position of the `*rest` element, if any.
-    Unpack { targets: Vec<HirLValue>, star_index: Option<usize> },
+    Unpack {
+        targets: Vec<HirLValue>,
+        star_index: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -162,44 +297,124 @@ pub enum HirExpr {
     BoolLit(bool, TypeId),
     NoneLit(TypeId),
     Var(SymbolId, TypeId),
-    BinOp { op: HirBinOp, lhs: Box<HirExpr>, rhs: Box<HirExpr>, ty: TypeId },
-    UnaryOp { op: HirUnaryOp, operand: Box<HirExpr>, ty: TypeId },
-    Call { func: Box<HirExpr>, args: Vec<HirExpr>, ty: TypeId },
-    Attr { object: Box<HirExpr>, attr: String, ty: TypeId },
-    Index { object: Box<HirExpr>, index: Box<HirExpr>, ty: TypeId },
-    List { elements: Vec<HirExpr>, ty: TypeId },
-    Set { elements: Vec<HirExpr>, ty: TypeId },
-    Tuple { elements: Vec<HirExpr>, ty: TypeId },
-    Dict { entries: Vec<(HirExpr, HirExpr)>, ty: TypeId },
+    BinOp {
+        op: HirBinOp,
+        lhs: Box<HirExpr>,
+        rhs: Box<HirExpr>,
+        ty: TypeId,
+    },
+    UnaryOp {
+        op: HirUnaryOp,
+        operand: Box<HirExpr>,
+        ty: TypeId,
+    },
+    Call {
+        func: Box<HirExpr>,
+        args: Vec<HirExpr>,
+        ty: TypeId,
+    },
+    Attr {
+        object: Box<HirExpr>,
+        attr: String,
+        ty: TypeId,
+    },
+    Index {
+        object: Box<HirExpr>,
+        index: Box<HirExpr>,
+        ty: TypeId,
+    },
+    List {
+        elements: Vec<HirExpr>,
+        ty: TypeId,
+    },
+    Set {
+        elements: Vec<HirExpr>,
+        ty: TypeId,
+    },
+    Tuple {
+        elements: Vec<HirExpr>,
+        ty: TypeId,
+    },
+    Dict {
+        entries: Vec<(HirExpr, HirExpr)>,
+        ty: TypeId,
+    },
     /// Slice expression: obj[start:stop:step]
-    Slice { start: Option<Box<HirExpr>>, stop: Option<Box<HirExpr>>,
-            step: Option<Box<HirExpr>>, ty: TypeId },
+    Slice {
+        start: Option<Box<HirExpr>>,
+        stop: Option<Box<HirExpr>>,
+        step: Option<Box<HirExpr>>,
+        ty: TypeId,
+    },
     /// Ternary: value if cond else other
-    IfExpr { cond: Box<HirExpr>, then_val: Box<HirExpr>,
-             else_val: Box<HirExpr>, ty: TypeId },
+    IfExpr {
+        cond: Box<HirExpr>,
+        then_val: Box<HirExpr>,
+        else_val: Box<HirExpr>,
+        ty: TypeId,
+    },
     /// Lambda expression. `defaults` carries the default-arg expressions
     /// (one slot per parameter, `None` when the parameter has no default).
     /// Defaults are evaluated at closure creation time per Python semantics.
-    Lambda { params: Vec<(SymbolId, TypeId)>, defaults: Vec<Option<Box<HirExpr>>>, body: Box<HirExpr>, ty: TypeId },
+    Lambda {
+        params: Vec<(SymbolId, TypeId)>,
+        defaults: Vec<Option<Box<HirExpr>>>,
+        body: Box<HirExpr>,
+        ty: TypeId,
+        span: Span,
+    },
     /// Yield expression (#290)
-    Yield { value: Option<Box<HirExpr>>, ty: TypeId },
+    Yield {
+        value: Option<Box<HirExpr>>,
+        ty: TypeId,
+    },
     /// Yield from expression (#290)
-    YieldFrom { iter: Box<HirExpr>, ty: TypeId },
+    YieldFrom {
+        iter: Box<HirExpr>,
+        ty: TypeId,
+    },
     /// Await expression (#293)
-    Await { value: Box<HirExpr>, ty: TypeId },
+    Await {
+        value: Box<HirExpr>,
+        ty: TypeId,
+    },
     /// List comprehension (#291)
-    ListComp { element: Box<HirExpr>, generators: Vec<HirComprehension>, ty: TypeId },
+    ListComp {
+        element: Box<HirExpr>,
+        generators: Vec<HirComprehension>,
+        ty: TypeId,
+    },
     /// Lazy all()/any() over a generator expression.
-    AnyAllComp { is_all: bool, element: Box<HirExpr>, generators: Vec<HirComprehension>, ty: TypeId },
+    AnyAllComp {
+        is_all: bool,
+        element: Box<HirExpr>,
+        generators: Vec<HirComprehension>,
+        ty: TypeId,
+    },
     /// Set comprehension (#291)
-    SetComp { element: Box<HirExpr>, generators: Vec<HirComprehension>, ty: TypeId },
+    SetComp {
+        element: Box<HirExpr>,
+        generators: Vec<HirComprehension>,
+        ty: TypeId,
+    },
     /// Dict comprehension (#291)
-    DictComp { key: Box<HirExpr>, value: Box<HirExpr>,
-               generators: Vec<HirComprehension>, ty: TypeId },
+    DictComp {
+        key: Box<HirExpr>,
+        value: Box<HirExpr>,
+        generators: Vec<HirComprehension>,
+        ty: TypeId,
+    },
     /// F-string
-    FString { parts: Vec<HirFStringPart>, ty: TypeId },
+    FString {
+        parts: Vec<HirFStringPart>,
+        ty: TypeId,
+    },
     /// Walrus operator := (PEP 572)
-    Walrus { target: SymbolId, value: Box<HirExpr>, ty: TypeId },
+    Walrus {
+        target: SymbolId,
+        value: Box<HirExpr>,
+        ty: TypeId,
+    },
 }
 
 /// Comprehension clause: for var in iter if cond
@@ -239,7 +454,11 @@ pub enum HirPattern {
     /// Sequence pattern: `case [a, b, c]:`
     Sequence(Vec<HirPattern>),
     /// Class pattern: `case Point(x=0, y=0):`
-    Class { class: SymbolId, class_name: String, args: Vec<(String, HirPattern)> },
+    Class {
+        class: SymbolId,
+        class_name: String,
+        args: Vec<(String, HirPattern)>,
+    },
     /// Mapping pattern: `case {"key": val, **rest}:` (#827)
     /// Checks for each key's presence and matches the associated value pattern.
     /// `rest` binds remaining key-value pairs to a new dict variable.
@@ -261,25 +480,42 @@ pub enum HirPattern {
 #[derive(Debug, Clone)]
 pub enum HirFStringPart {
     Literal(String),
-    Expr(HirExpr, Option<String>),
+    /// Field expression with an optional format spec; the spec is a part
+    /// list so nested replacement fields evaluate at runtime. A static spec
+    /// is a single Literal part.
+    Expr(HirExpr, Option<Vec<HirFStringPart>>),
 }
 
 impl HirExpr {
     pub fn ty(&self) -> TypeId {
         match self {
-            HirExpr::IntLit(_, t) | HirExpr::FloatLit(_, t)
-            | HirExpr::StrLit(_, t) | HirExpr::BytesLit(_, t) | HirExpr::BoolLit(_, t)
-            | HirExpr::NoneLit(t) | HirExpr::Var(_, t)
-            | HirExpr::BinOp { ty: t, .. } | HirExpr::UnaryOp { ty: t, .. }
-            | HirExpr::Call { ty: t, .. } | HirExpr::Attr { ty: t, .. }
-            | HirExpr::Index { ty: t, .. } | HirExpr::List { ty: t, .. }
-            | HirExpr::Set { ty: t, .. } | HirExpr::Tuple { ty: t, .. } | HirExpr::Dict { ty: t, .. }
-            | HirExpr::Slice { ty: t, .. } | HirExpr::IfExpr { ty: t, .. }
-            | HirExpr::Lambda { ty: t, .. } | HirExpr::Yield { ty: t, .. }
-            | HirExpr::YieldFrom { ty: t, .. } | HirExpr::Await { ty: t, .. }
-            | HirExpr::ListComp { ty: t, .. } | HirExpr::AnyAllComp { ty: t, .. }
+            HirExpr::IntLit(_, t)
+            | HirExpr::FloatLit(_, t)
+            | HirExpr::StrLit(_, t)
+            | HirExpr::BytesLit(_, t)
+            | HirExpr::BoolLit(_, t)
+            | HirExpr::NoneLit(t)
+            | HirExpr::Var(_, t)
+            | HirExpr::BinOp { ty: t, .. }
+            | HirExpr::UnaryOp { ty: t, .. }
+            | HirExpr::Call { ty: t, .. }
+            | HirExpr::Attr { ty: t, .. }
+            | HirExpr::Index { ty: t, .. }
+            | HirExpr::List { ty: t, .. }
+            | HirExpr::Set { ty: t, .. }
+            | HirExpr::Tuple { ty: t, .. }
+            | HirExpr::Dict { ty: t, .. }
+            | HirExpr::Slice { ty: t, .. }
+            | HirExpr::IfExpr { ty: t, .. }
+            | HirExpr::Lambda { ty: t, .. }
+            | HirExpr::Yield { ty: t, .. }
+            | HirExpr::YieldFrom { ty: t, .. }
+            | HirExpr::Await { ty: t, .. }
+            | HirExpr::ListComp { ty: t, .. }
+            | HirExpr::AnyAllComp { ty: t, .. }
             | HirExpr::SetComp { ty: t, .. }
-            | HirExpr::DictComp { ty: t, .. } | HirExpr::FString { ty: t, .. }
+            | HirExpr::DictComp { ty: t, .. }
+            | HirExpr::FString { ty: t, .. }
             | HirExpr::Walrus { ty: t, .. } => *t,
         }
     }
@@ -287,11 +523,30 @@ impl HirExpr {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirBinOp {
-    Add, Sub, Mul, Div, FloorDiv, Mod, Pow,
-    Eq, NotEq, Lt, Gt, LtEq, GtEq,
-    And, Or,
-    BitAnd, BitOr, BitXor, LShift, RShift,
-    Is, IsNot, In, NotIn,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
+    Is,
+    IsNot,
+    In,
+    NotIn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,9 +560,9 @@ pub enum HirUnaryOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::TypeContext;
     use crate::resolve::SymbolId;
     use crate::source::span::Span;
+    use crate::types::TypeContext;
 
     fn make_tcx() -> TypeContext {
         TypeContext::new()
@@ -337,9 +592,30 @@ mod tests {
         assert_eq!(HirExpr::BoolLit(true, bool_ty).ty(), bool_ty);
         assert_eq!(HirExpr::NoneLit(none_ty).ty(), none_ty);
         assert_eq!(HirExpr::Var(SymbolId(0), int_ty).ty(), int_ty);
-        assert_eq!(HirExpr::List { elements: vec![], ty: any_ty }.ty(), any_ty);
-        assert_eq!(HirExpr::Tuple { elements: vec![], ty: any_ty }.ty(), any_ty);
-        assert_eq!(HirExpr::Dict { entries: vec![], ty: any_ty }.ty(), any_ty);
+        assert_eq!(
+            HirExpr::List {
+                elements: vec![],
+                ty: any_ty
+            }
+            .ty(),
+            any_ty
+        );
+        assert_eq!(
+            HirExpr::Tuple {
+                elements: vec![],
+                ty: any_ty
+            }
+            .ty(),
+            any_ty
+        );
+        assert_eq!(
+            HirExpr::Dict {
+                entries: vec![],
+                ty: any_ty
+            }
+            .ty(),
+            any_ty
+        );
     }
 
     #[test]
@@ -430,6 +706,7 @@ mod tests {
             sym_names: HashMap::new(),
             sym_types: HashMap::new(),
             module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
         };
         assert!(module.functions.is_empty());
         assert!(module.classes.is_empty());
@@ -452,7 +729,11 @@ mod tests {
             ],
             star_index: Some(1),
         };
-        if let HirLValue::Unpack { targets, star_index } = &lv {
+        if let HirLValue::Unpack {
+            targets,
+            star_index,
+        } = &lv
+        {
             assert_eq!(targets.len(), 3);
             assert_eq!(*star_index, Some(1));
         } else {
@@ -519,6 +800,7 @@ mod tests {
             is_generator: false,
             decorators: vec![],
             has_star_args: false,
+            star_param_pos: None,
             has_kwargs: false,
         };
         assert_eq!(func.params.len(), 2);
@@ -544,6 +826,8 @@ mod tests {
             class_attr_assigns: vec![],
             slots: None,
             class_kwargs: vec![],
+            dataclass_fields: vec![],
+            doc: None,
         };
         assert_eq!(cls.base, Some(SymbolId(1)));
         assert_eq!(cls.fields.len(), 1);

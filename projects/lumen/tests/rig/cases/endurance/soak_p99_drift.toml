@@ -1,0 +1,14 @@
+[record]
+suite = "lumen"
+dimension = "endurance"
+case = "soak_p99_drift"
+subject = "search p99 does not drift above the local latency floor"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[[steps]]
+type = "exec"
+name = "match_query_latency_floor"
+cmd = ["cargo", "test", "-p", "lumen", "--test", "perf_gate", "match_query_latency_floor", "--", "--nocapture"]
+timeout_secs = 120

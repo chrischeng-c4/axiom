@@ -1,13 +1,12 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 /// re (regular expressions) module for Mamba — backed by `regex` crate.
 ///
 /// Provides: re.search, re.match_, re.findall, re.sub, re.split, re.escape
-
 use std::cell::RefCell;
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
 use std::rc::Rc;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Regex compile cache (#2110) ──────────────────────────────────────────
 //
@@ -33,6 +32,31 @@ thread_local! {
 
 /// Look up a compiled `Regex` for `pat`, compiling+caching on miss.
 /// Returns `Err(message)` on compile failure (caller raises `re.error`).
+/// Translate Python `re` spellings the Rust `regex` crate spells
+/// differently. Today: `\Z` (Python end-of-string) → `\z` (Rust). Walks
+/// escape state so `\\Z` (literal backslash + Z) is left alone; character
+/// classes need no special casing because `\Z` is invalid inside one in
+/// both dialects.
+fn py_pattern_to_rust(pat: &str) -> String {
+    let mut out = String::with_capacity(pat.len());
+    let mut chars = pat.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('Z') => out.push_str("\\z"),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn compile_cached(pat: &str) -> Result<Rc<regex::Regex>, String> {
     // Fast path: lookup. Move the hit to the back (MRU end) so the
     // cold-eviction policy is true LRU-by-recency rather than FIFO.
@@ -50,7 +74,7 @@ fn compile_cached(pat: &str) -> Result<Rc<regex::Regex>, String> {
         return Ok(hit);
     }
     // Miss: compile, then install (evicting the LRU entry if at cap).
-    let compiled = regex::Regex::new(pat).map_err(|e| e.to_string())?;
+    let compiled = regex::Regex::new(&py_pattern_to_rust(pat)).map_err(|e| e.to_string())?;
     let rc = Rc::new(compiled);
     RE_CACHE.with(|c| {
         let mut cache = c.borrow_mut();
@@ -60,6 +84,39 @@ fn compile_cached(pat: &str) -> Result<Rc<regex::Regex>, String> {
         cache.push((pat.to_string(), rc.clone()));
     });
     Ok(rc)
+}
+
+/// Bake Python `re` flag bits into the pattern as an inline-flag prefix the
+/// Rust `regex` crate understands: IGNORECASE→`i`, MULTILINE→`m`,
+/// DOTALL→`s`, VERBOSE→`x`. Returns the original value when no translatable
+/// flag is set (ASCII/LOCALE/UNICODE have no inline equivalent and are
+/// ignored). Used by the module-level dispatchers (3rd `flags` positional)
+/// and by `re.Pattern` method dispatch (stored `flags` field).
+pub(crate) fn with_flags(pattern: MbValue, flags: MbValue) -> MbValue {
+    let f = flags.as_int().unwrap_or(0);
+    if f == 0 {
+        return pattern;
+    }
+    let Some(pat) = extract_str(pattern) else {
+        return pattern;
+    };
+    let mut inline = String::new();
+    if f & 2 != 0 {
+        inline.push('i');
+    } // re.IGNORECASE
+    if f & 8 != 0 {
+        inline.push('m');
+    } // re.MULTILINE
+    if f & 16 != 0 {
+        inline.push('s');
+    } // re.DOTALL
+    if f & 64 != 0 {
+        inline.push('x');
+    } // re.VERBOSE
+    if inline.is_empty() {
+        return pattern;
+    }
+    MbValue::from_ptr(MbObject::new_str(format!("(?{inline}){pat}")))
 }
 
 fn extract_str(val: MbValue) -> Option<String> {
@@ -72,9 +129,9 @@ fn extract_str(val: MbValue) -> Option<String> {
             // patterns (the overwhelming majority of real-world bytes regex
             // use), and silently substitutes U+FFFD for non-UTF-8 sequences.
             ObjData::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-            ObjData::ByteArray(lock) => Some(
-                String::from_utf8_lossy(&lock.read().unwrap()).into_owned(),
-            ),
+            ObjData::ByteArray(lock) => {
+                Some(String::from_utf8_lossy(&lock.read().unwrap()).into_owned())
+            }
             _ => None,
         }
     })
@@ -116,14 +173,108 @@ macro_rules! dispatch_ternary {
     };
 }
 
-dispatch_binary!(dispatch_search, mb_re_search);
-dispatch_binary!(dispatch_match, mb_re_match);
-dispatch_binary!(dispatch_fullmatch, mb_re_fullmatch);
-dispatch_binary!(dispatch_findall, mb_re_findall);
-dispatch_binary!(dispatch_finditer, mb_re_finditer);
-dispatch_ternary!(dispatch_sub, mb_re_sub);
-dispatch_ternary!(dispatch_subn, mb_re_subn);
-dispatch_binary!(dispatch_split, mb_re_split);
+/// Keyword arguments lower to a trailing kwargs Dict; pull `key` out of it
+/// when the last argument is such a dict.
+fn trailing_kwarg(a: &[MbValue], key: &str) -> Option<MbValue> {
+    use super::super::dict_ops::DictKey;
+    let last = a.last()?;
+    let ptr = last.as_ptr()?;
+    unsafe {
+        let ObjData::Dict(ref lock) = (*ptr).data else {
+            return None;
+        };
+        lock.read()
+            .unwrap()
+            .get(&DictKey::Str(key.to_string()))
+            .copied()
+    }
+}
+
+/// A positional argument that is actually the trailing kwargs dict must not
+/// be consumed as a positional value.
+fn positional(a: &[MbValue], idx: usize) -> MbValue {
+    match a.get(idx).copied() {
+        Some(v) => {
+            let is_kwargs_dict = idx == a.len() - 1
+                && v.as_ptr()
+                    .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) });
+            if is_kwargs_dict {
+                MbValue::none()
+            } else {
+                v
+            }
+        }
+        None => MbValue::none(),
+    }
+}
+
+/// Dispatcher for the `(pattern, string, flags=0)` module functions:
+/// folds the optional `flags` (3rd positional or keyword) into the pattern
+/// via `with_flags` before delegating to the 2-arg implementation.
+macro_rules! dispatch_binary_with_flags {
+    ($name:ident, $fn:ident) => {
+        unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            let pattern = a.get(0).copied().unwrap_or_else(MbValue::none);
+            let string = a.get(1).copied().unwrap_or_else(MbValue::none);
+            let flags = trailing_kwarg(a, "flags").unwrap_or_else(|| positional(a, 2));
+            $fn(with_flags(pattern, flags), string)
+        }
+    };
+}
+
+dispatch_binary_with_flags!(dispatch_search, mb_re_search);
+dispatch_binary_with_flags!(dispatch_match, mb_re_match);
+dispatch_binary_with_flags!(dispatch_fullmatch, mb_re_fullmatch);
+dispatch_binary_with_flags!(dispatch_findall, mb_re_findall);
+dispatch_binary_with_flags!(dispatch_finditer, mb_re_finditer);
+/// Dispatcher for `re.sub` / `re.subn` `(pattern, repl, string, count=0,
+/// flags=0)`: folds `flags` into the pattern and threads `count` through.
+macro_rules! dispatch_sub_like {
+    ($name:ident, $fn:ident) => {
+        unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            let pattern = a.get(0).copied().unwrap_or_else(MbValue::none);
+            let repl = a.get(1).copied().unwrap_or_else(MbValue::none);
+            let string = a.get(2).copied().unwrap_or_else(MbValue::none);
+            let count = trailing_kwarg(a, "count").unwrap_or_else(|| positional(a, 3));
+            let flags = trailing_kwarg(a, "flags").unwrap_or_else(|| positional(a, 4));
+            $fn(with_flags(pattern, flags), repl, string, count)
+        }
+    };
+}
+
+dispatch_sub_like!(dispatch_sub, mb_re_sub_count);
+dispatch_sub_like!(dispatch_subn, mb_re_subn_count);
+unsafe extern "C" fn dispatch_split(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let mut maxsplit = a.get(2).copied().unwrap_or_else(MbValue::none);
+    // kwargs dict may carry maxsplit=.
+    if let Some(last) = a.last() {
+        if let Some(p) = last.as_ptr() {
+            if matches!(unsafe { &(*p).data }, ObjData::Dict(_)) {
+                let sentinel = MbValue::from_bits(u64::MAX);
+                let v = super::super::dict_ops::mb_dict_get(
+                    *last,
+                    MbValue::from_ptr(MbObject::new_str("maxsplit".to_string())),
+                    sentinel,
+                );
+                if v.to_bits() != u64::MAX {
+                    maxsplit = v;
+                }
+            }
+        }
+    }
+    mb_re_split_max(
+        a.first().copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+        maxsplit,
+    )
+}
 dispatch_unary!(dispatch_escape, mb_re_escape);
 
 unsafe extern "C" fn dispatch_purge(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -157,8 +308,10 @@ unsafe extern "C" fn dispatch_re_error(args_ptr: *const MbValue, nargs: usize) -
     // exception's payload; the `pattern` / `pos` attributes are part of
     // CPython's `re.error` surface.
     fields.insert("message".to_string(), msg);
-    fields.insert("args".to_string(),
-        MbValue::from_ptr(MbObject::new_tuple(vec![msg])));
+    fields.insert(
+        "args".to_string(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![msg])),
+    );
     fields.insert("pattern".to_string(), pattern);
     fields.insert("pos".to_string(), pos);
     let obj = Box::new(super::super::rc::MbObject {
@@ -180,10 +333,7 @@ unsafe extern "C" fn dispatch_re_error(args_ptr: *const MbValue, nargs: usize) -
 /// method dispatch is handled in `runtime::class::mb_call_method` on actual
 /// match/pattern Instances; these stubs only have to be *callable* values so
 /// `callable(re.Match.group)` / `callable(re.Scanner)` report True.
-unsafe extern "C" fn dispatch_re_surface_stub(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_re_surface_stub(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::none()
 }
 
@@ -206,8 +356,10 @@ fn surface_func(addr: usize) -> MbValue {
 fn make_re_class_shell(name: &str, methods: &[&str]) -> MbValue {
     let stub_addr = dispatch_re_surface_stub as *const () as usize;
     let mut fields = FxHashMap::default();
-    fields.insert("__name__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(name.to_string())));
+    fields.insert(
+        "__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
     for m in methods {
         fields.insert((*m).to_string(), surface_func(stub_addr));
     }
@@ -257,20 +409,45 @@ pub fn register() {
     // dispatch on those runs in `runtime::class::mb_call_method`. Representing the
     // module-level name as a type object (not a sentinel string) keeps
     // `isinstance(x, re.Pattern)` resolving the right target name. (#2098)
-    attrs.insert("Match".to_string(),
-        make_re_class_shell("re.Match", &[
-            "group", "groups", "groupdict", "start", "end", "span",
-            "expand", "__getitem__",
-        ]));
-    attrs.insert("Pattern".to_string(),
-        make_re_class_shell("re.Pattern", &[
-            "search", "match", "fullmatch", "findall", "finditer",
-            "sub", "subn", "split", "scanner",
-        ]));
+    attrs.insert(
+        "Match".to_string(),
+        make_re_class_shell(
+            "re.Match",
+            &[
+                "group",
+                "groups",
+                "groupdict",
+                "start",
+                "end",
+                "span",
+                "expand",
+                "__getitem__",
+            ],
+        ),
+    );
+    attrs.insert(
+        "Pattern".to_string(),
+        make_re_class_shell(
+            "re.Pattern",
+            &[
+                "search",
+                "match",
+                "fullmatch",
+                "findall",
+                "finditer",
+                "sub",
+                "subn",
+                "split",
+                "scanner",
+            ],
+        ),
+    );
     // `re.RegexFlag` stays a sentinel string (it is a flag enum, not an
     // exception class, and nothing probes its dunders beyond presence).
-    attrs.insert("RegexFlag".to_string(),
-        MbValue::from_ptr(MbObject::new_str("re.RegexFlag".to_string())));
+    attrs.insert(
+        "RegexFlag".to_string(),
+        MbValue::from_ptr(MbObject::new_str("re.RegexFlag".to_string())),
+    );
 
     // `re.error` is a real exception *class* (a subclass of `Exception`),
     // mirroring the proven `urllib.error.URLError` shape: expose the name as a
@@ -287,7 +464,8 @@ pub fn register() {
         s.borrow_mut().insert(error_addr as u64);
     });
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut().insert(error_addr as u64, "re.error".to_string());
+        m.borrow_mut()
+            .insert(error_addr as u64, "re.error".to_string());
     });
     // BaseException exposes `__cause__` / `__context__` /
     // `__suppress_context__` as getset descriptors, so on the real CPython
@@ -300,8 +478,7 @@ pub fn register() {
     error_slots.insert("__cause__".to_string(), slot);
     error_slots.insert("__context__".to_string(), slot);
     error_slots.insert("__suppress_context__".to_string(), slot);
-    super::super::class::mb_class_register(
-        "re.error", vec!["Exception".to_string()], error_slots);
+    super::super::class::mb_class_register("re.error", vec!["Exception".to_string()], error_slots);
 
     // `re.template` (deprecated alias of re.compile) and `re.Scanner` — surface
     // names probed by `hasattr(re, "template")` / `callable(re.Scanner)`. Both
@@ -312,23 +489,23 @@ pub fn register() {
 
     // RegexFlag constants — match CPython's bit values so cross-runtime
     // `re.IGNORECASE == 2` etc. holds. Bits are stable across py3.x.
-    attrs.insert("A".into(),          MbValue::from_int(256));
-    attrs.insert("ASCII".into(),      MbValue::from_int(256));
-    attrs.insert("DEBUG".into(),      MbValue::from_int(128));
-    attrs.insert("I".into(),          MbValue::from_int(2));
+    attrs.insert("A".into(), MbValue::from_int(256));
+    attrs.insert("ASCII".into(), MbValue::from_int(256));
+    attrs.insert("DEBUG".into(), MbValue::from_int(128));
+    attrs.insert("I".into(), MbValue::from_int(2));
     attrs.insert("IGNORECASE".into(), MbValue::from_int(2));
-    attrs.insert("L".into(),          MbValue::from_int(4));
-    attrs.insert("LOCALE".into(),     MbValue::from_int(4));
-    attrs.insert("M".into(),          MbValue::from_int(8));
-    attrs.insert("MULTILINE".into(),  MbValue::from_int(8));
-    attrs.insert("S".into(),          MbValue::from_int(16));
-    attrs.insert("DOTALL".into(),     MbValue::from_int(16));
-    attrs.insert("X".into(),          MbValue::from_int(64));
-    attrs.insert("VERBOSE".into(),    MbValue::from_int(64));
-    attrs.insert("U".into(),          MbValue::from_int(32));
-    attrs.insert("UNICODE".into(),    MbValue::from_int(32));
+    attrs.insert("L".into(), MbValue::from_int(4));
+    attrs.insert("LOCALE".into(), MbValue::from_int(4));
+    attrs.insert("M".into(), MbValue::from_int(8));
+    attrs.insert("MULTILINE".into(), MbValue::from_int(8));
+    attrs.insert("S".into(), MbValue::from_int(16));
+    attrs.insert("DOTALL".into(), MbValue::from_int(16));
+    attrs.insert("X".into(), MbValue::from_int(64));
+    attrs.insert("VERBOSE".into(), MbValue::from_int(64));
+    attrs.insert("U".into(), MbValue::from_int(32));
+    attrs.insert("UNICODE".into(), MbValue::from_int(32));
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("NOFLAG".into(), MbValue::from_int(0));
     attrs.insert("T".into(), MbValue::from_int(1));
     attrs.insert("TEMPLATE".into(), MbValue::from_int(1));
@@ -373,8 +550,10 @@ pub(crate) fn build_match_instance_with_spans(
 ) -> MbValue {
     let mut fields = FxHashMap::default();
     // Group 0 is the full match.
-    fields.insert("group_0".to_string(),
-        MbValue::from_ptr(MbObject::new_str(matched.to_string())));
+    fields.insert(
+        "group_0".to_string(),
+        MbValue::from_ptr(MbObject::new_str(matched.to_string())),
+    );
     for (i, g) in groups.iter().enumerate() {
         let key = format!("group_{}", i + 1);
         let val = match g {
@@ -400,17 +579,25 @@ pub(crate) fn build_match_instance_with_spans(
     }
     fields.insert("_start".to_string(), MbValue::from_int(start as i64));
     fields.insert("_end".to_string(), MbValue::from_int(end as i64));
-    fields.insert("_group_count".to_string(), MbValue::from_int(groups.len() as i64));
+    fields.insert(
+        "_group_count".to_string(),
+        MbValue::from_int(groups.len() as i64),
+    );
     // CPython re.Match attributes (#1614). `lastindex` is the highest-index
     // group that participated in the match; `lastgroup` is its name when the
     // group is named, else None. `string` is the original input.
-    fields.insert("string".to_string(),
-        MbValue::from_ptr(MbObject::new_str(input_string.to_string())));
-    let group_names: Vec<MbValue> = named_groups.iter()
+    fields.insert(
+        "string".to_string(),
+        MbValue::from_ptr(MbObject::new_str(input_string.to_string())),
+    );
+    let group_names: Vec<MbValue> = named_groups
+        .iter()
         .map(|(n, _)| MbValue::from_ptr(MbObject::new_str((*n).to_string())))
         .collect();
-    fields.insert("_group_names".to_string(),
-        MbValue::from_ptr(MbObject::new_list(group_names)));
+    fields.insert(
+        "_group_names".to_string(),
+        MbValue::from_ptr(MbObject::new_list(group_names)),
+    );
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -463,15 +650,22 @@ pub fn match_repr(m: MbValue) -> String {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                if let Some(s) = f.get("_start").and_then(|v| v.as_int()) { start = s; }
-                if let Some(e) = f.get("_end").and_then(|v| v.as_int()) { end = e; }
+                if let Some(s) = f.get("_start").and_then(|v| v.as_int()) {
+                    start = s;
+                }
+                if let Some(e) = f.get("_end").and_then(|v| v.as_int()) {
+                    end = e;
+                }
                 if let Some(g0) = f.get("group_0").copied() {
                     group0_repr = repr_string(g0);
                 }
             }
         }
     }
-    format!("<re.Match object; span=({}, {}), match={}>", start, end, group0_repr)
+    format!(
+        "<re.Match object; span=({}, {}), match={}>",
+        start, end, group0_repr
+    )
 }
 
 /// CPython-compatible `repr(<re.Pattern>)`:
@@ -486,7 +680,9 @@ pub fn pattern_repr(p: MbValue) -> String {
                 if let Some(pat) = f.get("pattern").copied() {
                     pattern_repr_str = repr_string(pat);
                 }
-                if let Some(fl) = f.get("flags").and_then(|v| v.as_int()) { flags = fl; }
+                if let Some(fl) = f.get("flags").and_then(|v| v.as_int()) {
+                    flags = fl;
+                }
             }
         }
     }
@@ -501,11 +697,7 @@ pub fn pattern_repr(p: MbValue) -> String {
 
 /// Build a Match Instance from a `regex::Captures`, capturing both positional
 /// and named groups so `.group(i)` / `.group(name)` dispatch works.
-fn captures_to_match_with_input(
-    re: &regex::Regex,
-    caps: regex::Captures,
-    input: &str,
-) -> MbValue {
+fn captures_to_match_with_input(re: &regex::Regex, caps: regex::Captures, input: &str) -> MbValue {
     captures_to_match_full(re, caps, input, re.as_str())
 }
 
@@ -527,13 +719,19 @@ fn captures_to_match_full(
     let group_spans: Vec<Option<(usize, usize)>> = (1..=num_groups)
         .map(|i| caps.get(i).map(|m| (m.start(), m.end())))
         .collect();
-    let named_groups: Vec<(&str, Option<&str>)> = re.capture_names()
+    let named_groups: Vec<(&str, Option<&str>)> = re
+        .capture_names()
         .flatten()
         .map(|n| (n, caps.name(n).map(|m| m.as_str())))
         .collect();
     let m = build_match_instance_with_spans(
-        full.as_str(), input, full.start(), full.end(),
-        &groups, &group_spans, &named_groups,
+        full.as_str(),
+        input,
+        full.start(),
+        full.end(),
+        &groups,
+        &group_spans,
+        &named_groups,
     );
     // lastindex / lastgroup — highest-index participating group + its name.
     let mut last_index: Option<i64> = None;
@@ -549,11 +747,14 @@ fn captures_to_match_full(
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut g = fields.write().unwrap();
-                g.insert("lastindex".to_string(),
-                    last_index.map_or(MbValue::none(), MbValue::from_int));
-                g.insert("lastgroup".to_string(),
-                    last_group.map_or(MbValue::none(),
-                        |s| MbValue::from_ptr(MbObject::new_str(s))));
+                g.insert(
+                    "lastindex".to_string(),
+                    last_index.map_or(MbValue::none(), MbValue::from_int),
+                );
+                g.insert(
+                    "lastgroup".to_string(),
+                    last_group.map_or(MbValue::none(), |s| MbValue::from_ptr(MbObject::new_str(s))),
+                );
                 // .re — re.Pattern instance carrying the source pattern (#1622).
                 let pat_val = MbValue::from_ptr(MbObject::new_str(source_pattern.to_string()));
                 let pat_inst = mb_re_compile(pat_val, MbValue::from_int(0));
@@ -569,7 +770,8 @@ fn captures_to_match_full(
                     MbValue::from_int(full.end() as i64),
                 ])));
                 for i in 1..=num_groups {
-                    let (s, e) = caps.get(i)
+                    let (s, e) = caps
+                        .get(i)
                         .map(|m| (m.start() as i64, m.end() as i64))
                         .unwrap_or((-1, -1));
                     regs_elems.push(MbValue::from_ptr(MbObject::new_tuple(vec![
@@ -577,8 +779,10 @@ fn captures_to_match_full(
                         MbValue::from_int(e),
                     ])));
                 }
-                g.insert("regs".to_string(),
-                    MbValue::from_ptr(MbObject::new_tuple(regs_elems)));
+                g.insert(
+                    "regs".to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(regs_elems)),
+                );
             }
         }
     }
@@ -594,35 +798,88 @@ fn captures_to_match(re: &regex::Regex, caps: regex::Captures) -> MbValue {
 
 /// re.search(pattern, string) -> Match instance or None
 pub fn mb_re_search(pattern: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) { Some(s) => s, None => return MbValue::none() };
-    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
+    let pat = match extract_str(pattern) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
+    let text = match extract_str(string) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
 
     match compile_cached(&pat) {
-        Ok(re) => {
-            match re.captures(&text) {
-                Some(caps) => captures_to_match_with_input(&re, caps, &text),
-                None => MbValue::none(),
-            }
+        Ok(re) => match re.captures(&text) {
+            Some(caps) => captures_to_match_with_input(&re, caps, &text),
+            None => MbValue::none(),
+        },
+        Err(e) => {
+            raise_re_error(&e);
+            MbValue::none()
         }
-        Err(e) => { raise_re_error(&e); MbValue::none() }
     }
 }
 
 /// re.match_(pattern, string) -> Match instance or None (anchored at start)
+/// Validate the (pattern, subject) argument types like CPython.
+/// Returns true when a TypeError was raised.
+fn reject_bad_re_args(pattern: MbValue, string: MbValue) -> bool {
+    let is_bytes = |v: MbValue| -> bool {
+        v.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
+            .unwrap_or(false)
+    };
+    let is_str = |v: MbValue| -> bool {
+        v.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+            .unwrap_or(false)
+    };
+    let raise_te = |msg: &str| {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+        );
+    };
+    let pat_str = is_str(pattern);
+    let pat_bytes = is_bytes(pattern);
+    if !pat_str && !pat_bytes {
+        raise_te("first argument must be string or compiled pattern");
+        return true;
+    }
+    if pat_str && is_bytes(string) {
+        raise_te("cannot use a string pattern on a bytes-like object");
+        return true;
+    }
+    if pat_bytes && is_str(string) {
+        raise_te("cannot use a bytes pattern on a string-like object");
+        return true;
+    }
+    false
+}
+
 pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) { Some(s) => s, None => return MbValue::none() };
-    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
+    if reject_bad_re_args(pattern, string) {
+        return MbValue::none();
+    }
+    let pat = match extract_str(pattern) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
+    let text = match extract_str(string) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
 
     // Anchor at start by wrapping pattern
     let anchored = format!("^(?:{pat})");
-    match regex::Regex::new(&anchored) {
-        Ok(re) => {
-            match re.captures(&text) {
-                Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
-                None => MbValue::none(),
-            }
+    match regex::Regex::new(&py_pattern_to_rust(&anchored)) {
+        Ok(re) => match re.captures(&text) {
+            Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
+            None => MbValue::none(),
+        },
+        Err(e) => {
+            raise_re_error(&e.to_string());
+            MbValue::none()
         }
-        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
     }
 }
 
@@ -633,18 +890,25 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
 /// `re.fullmatch` callable, and by real-world fixtures that validate whole
 /// tokens (e.g. log-line schema check).
 pub fn mb_re_fullmatch(pattern: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) { Some(s) => s, None => return MbValue::none() };
-    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
+    let pat = match extract_str(pattern) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
+    let text = match extract_str(string) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
 
     let anchored = format!("^(?:{pat})$");
-    match regex::Regex::new(&anchored) {
-        Ok(re) => {
-            match re.captures(&text) {
-                Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
-                None => MbValue::none(),
-            }
+    match regex::Regex::new(&py_pattern_to_rust(&anchored)) {
+        Ok(re) => match re.captures(&text) {
+            Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
+            None => MbValue::none(),
+        },
+        Err(e) => {
+            raise_re_error(&e.to_string());
+            MbValue::none()
         }
-        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
     }
 }
 
@@ -664,35 +928,38 @@ pub fn mb_re_findall(pattern: MbValue, string: MbValue) -> MbValue {
 
     let re = match compile_cached(&pat) {
         Ok(r) => r,
-        Err(e) => { raise_re_error(&e); return MbValue::from_ptr(MbObject::new_list(vec![])); }
+        Err(e) => {
+            raise_re_error(&e);
+            return MbValue::from_ptr(MbObject::new_list(vec![]));
+        }
     };
 
     let num_groups = re.captures_len() - 1; // exclude group 0 (full match)
-    // HANDWRITE-BEGIN reason: #2110 — per-match `MbObject::new_str(s.to_string())`
-    //   allocates a fresh boxed `String` for every group of every match. The
-    //   structurally-correct fix (a refcounted `Arc<str>` borrow into the
-    //   source buffer that all `ObjData::Str` consumers can see through)
-    //   touches every string consumer in `runtime/rc.rs`, `string_ops.rs`,
-    //   `dict_ops.rs`, and the JIT — beyond a re-shim edit. Scoped wins
-    //   landed here in #2110:
-    //
-    //     1. Thread-local compile cache eliminates re-compilation on hot
-    //        loops that pass the same pattern string each call (the
-    //        `findall_hot` bench compiles the same 4-group regex 5x).
-    //     2. `results` is pre-sized using the lower-bound estimate
-    //        `text.len() / pat.len()` so the Vec doesn't repeatedly grow
-    //        during the scan (60k matches no longer trigger log2 reallocs).
-    //     3. The multi-group tuple buffer is built in-place against a
-    //        reused `CaptureLocations` to skip the per-iteration HashMap
-    //        lookup the `captures_iter` API does for named-group dispatch.
-    //
-    //   Closing the remaining gap (borrowed-substring objects) is tracked
-    //   as a follow-on in #2110 once the `Arc<str>`-backed string-storage
-    //   refactor is in.
-    // Heuristic capacity: at least one match per (pattern-length) bytes.
-    // Over-allocates harmlessly when the pattern is short or matches are
-    // sparse; the alternative — a Vec that doubles 17 times to reach 60k
-    // — is strictly worse.
+                                            // HANDWRITE-BEGIN reason: #2110 — per-match `MbObject::new_str(s.to_string())`
+                                            //   allocates a fresh boxed `String` for every group of every match. The
+                                            //   structurally-correct fix (a refcounted `Arc<str>` borrow into the
+                                            //   source buffer that all `ObjData::Str` consumers can see through)
+                                            //   touches every string consumer in `runtime/rc.rs`, `string_ops.rs`,
+                                            //   `dict_ops.rs`, and the JIT — beyond a re-shim edit. Scoped wins
+                                            //   landed here in #2110:
+                                            //
+                                            //     1. Thread-local compile cache eliminates re-compilation on hot
+                                            //        loops that pass the same pattern string each call (the
+                                            //        `findall_hot` bench compiles the same 4-group regex 5x).
+                                            //     2. `results` is pre-sized using the lower-bound estimate
+                                            //        `text.len() / pat.len()` so the Vec doesn't repeatedly grow
+                                            //        during the scan (60k matches no longer trigger log2 reallocs).
+                                            //     3. The multi-group tuple buffer is built in-place against a
+                                            //        reused `CaptureLocations` to skip the per-iteration HashMap
+                                            //        lookup the `captures_iter` API does for named-group dispatch.
+                                            //
+                                            //   Closing the remaining gap (borrowed-substring objects) is tracked
+                                            //   as a follow-on in #2110 once the `Arc<str>`-backed string-storage
+                                            //   refactor is in.
+                                            // Heuristic capacity: at least one match per (pattern-length) bytes.
+                                            // Over-allocates harmlessly when the pattern is short or matches are
+                                            // sparse; the alternative — a Vec that doubles 17 times to reach 60k
+                                            // — is strictly worse.
     let cap_hint = (text.len() / pat.len().max(8)).min(1 << 20).max(8);
     let mut results: Vec<MbValue> = Vec::with_capacity(cap_hint);
 
@@ -716,12 +983,10 @@ pub fn mb_re_findall(pattern: MbValue, string: MbValue) -> MbValue {
             // Advance: handle zero-width matches by stepping at least 1 byte
             // past `start`. `m.end()` is exclusive; matches `find_iter`'s
             // behavior on empty matches.
-            let new_start = if m.end() == start {
-                start + 1
-            } else {
-                m.end()
-            };
-            if new_start > text.len() { break; }
+            let new_start = if m.end() == start { start + 1 } else { m.end() };
+            if new_start > text.len() {
+                break;
+            }
             start = new_start;
         }
     } else {
@@ -740,12 +1005,10 @@ pub fn mb_re_findall(pattern: MbValue, string: MbValue) -> MbValue {
                 group_vals.push(MbValue::from_ptr(s_obj));
             }
             results.push(MbValue::from_ptr(MbObject::new_tuple(group_vals)));
-            let new_start = if m.end() == start {
-                start + 1
-            } else {
-                m.end()
-            };
-            if new_start > text.len() { break; }
+            let new_start = if m.end() == start { start + 1 } else { m.end() };
+            if new_start > text.len() {
+                break;
+            }
             start = new_start;
         }
     }
@@ -754,43 +1017,173 @@ pub fn mb_re_findall(pattern: MbValue, string: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(results))
 }
 
-/// re.sub(pattern, repl, string) -> string with all matches replaced
-pub fn mb_re_sub(pattern: MbValue, repl: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) { Some(s) => s, None => return string };
-    let replacement = match extract_str(repl) { Some(s) => s, None => return string };
-    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
-
-    match regex::Regex::new(&pat) {
-        Ok(re) => {
-            let result = re.replace_all(&text, replacement.as_str()).to_string();
-            MbValue::from_ptr(MbObject::new_str(result))
+/// Expand a Python replacement template against one match's captures:
+/// `\1`..`\99` numeric backreferences, `\g<name>` / `\g<N>` symbolic
+/// references, `\\` escapes, and `\n`/`\t`/`\r` literals. Unknown groups
+/// expand to the empty string (CPython raises; lenient here).
+fn expand_py_template(caps: &regex::Captures, template: &str) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut chars = template.chars().peekable();
+    let group_str = |out: &mut String, m: Option<regex::Match>| {
+        if let Some(m) = m {
+            out.push_str(m.as_str());
         }
-        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
+    };
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek().copied() {
+            Some(d) if d.is_ascii_digit() => {
+                let mut num = 0usize;
+                let mut digits = 0;
+                while digits < 2 {
+                    match chars.peek().copied() {
+                        Some(d2) if d2.is_ascii_digit() => {
+                            num = num * 10 + (d2 as usize - '0' as usize);
+                            chars.next();
+                            digits += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                group_str(&mut out, caps.get(num));
+            }
+            Some('g') => {
+                chars.next();
+                if chars.peek() == Some(&'<') {
+                    chars.next();
+                    let mut name = String::new();
+                    for nc in chars.by_ref() {
+                        if nc == '>' {
+                            break;
+                        }
+                        name.push(nc);
+                    }
+                    if let Ok(idx) = name.parse::<usize>() {
+                        group_str(&mut out, caps.get(idx));
+                    } else {
+                        group_str(&mut out, caps.name(&name));
+                    }
+                } else {
+                    out.push('\\');
+                    out.push('g');
+                }
+            }
+            Some('\\') => {
+                chars.next();
+                out.push('\\');
+            }
+            Some('n') => {
+                chars.next();
+                out.push('\n');
+            }
+            Some('t') => {
+                chars.next();
+                out.push('\t');
+            }
+            Some('r') => {
+                chars.next();
+                out.push('\r');
+            }
+            Some(other) => {
+                chars.next();
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Shared sub/subn engine. `repl` is either a template string or a callable
+/// receiving the Match instance; `count <= 0` replaces every match.
+fn sub_engine(
+    pattern: MbValue,
+    repl: MbValue,
+    string: MbValue,
+    count: MbValue,
+) -> Option<(String, i64)> {
+    let pat = extract_str(pattern)?;
+    let text = extract_str(string)?;
+    let template = extract_str(repl);
+    let max_count = count.as_int().unwrap_or(0).max(0);
+
+    let re = match compile_cached(&pat) {
+        Ok(r) => r,
+        Err(e) => {
+            raise_re_error(&e);
+            return None;
+        }
+    };
+
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0usize;
+    let mut n = 0i64;
+    for caps in re.captures_iter(&text) {
+        if max_count > 0 && n >= max_count {
+            break;
+        }
+        let m = caps.get(0).expect("group 0 always present");
+        out.push_str(&text[last..m.start()]);
+        if let Some(ref tpl) = template {
+            out.push_str(&expand_py_template(&caps, tpl));
+        } else {
+            // Callable replacement: invoke with the Match instance and
+            // splice in the returned string.
+            let match_inst = captures_to_match_with_input(&re, caps, &text);
+            let result = super::super::class::mb_call1_val(repl, match_inst);
+            if let Some(s) = extract_str(result) {
+                out.push_str(&s);
+            }
+        }
+        last = m.end();
+        n += 1;
+    }
+    out.push_str(&text[last..]);
+    Some((out, n))
+}
+
+/// re.sub(pattern, repl, string, count=0, flags=0) -> string with matches
+/// replaced. `repl` may be a template string (supporting `\1` / `\g<name>`
+/// backreferences) or a callable receiving the Match object.
+pub fn mb_re_sub(pattern: MbValue, repl: MbValue, string: MbValue) -> MbValue {
+    mb_re_sub_count(pattern, repl, string, MbValue::none())
+}
+
+/// `re.sub` with the optional `count` positional.
+pub fn mb_re_sub_count(
+    pattern: MbValue,
+    repl: MbValue,
+    string: MbValue,
+    count: MbValue,
+) -> MbValue {
+    match sub_engine(pattern, repl, string, count) {
+        Some((result, _)) => MbValue::from_ptr(MbObject::new_str(result)),
+        None => string,
     }
 }
 
-/// re.subn(pattern, repl, string) -> (new_str, count)
-///
-/// Like `re.sub`, but returns a tuple `(new_string, number_of_subs_made)`.
+/// re.subn(pattern, repl, string, count=0, flags=0) -> (new_str, count).
 pub fn mb_re_subn(pattern: MbValue, repl: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) {
-        Some(s) => s,
-        None => return MbValue::from_ptr(MbObject::new_tuple(vec![string, MbValue::from_int(0)])),
-    };
-    let replacement = match extract_str(repl) {
-        Some(s) => s,
-        None => return MbValue::from_ptr(MbObject::new_tuple(vec![string, MbValue::from_int(0)])),
-    };
-    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
+    mb_re_subn_count(pattern, repl, string, MbValue::none())
+}
 
-    match regex::Regex::new(&pat) {
-        Ok(re) => {
-            let count = re.find_iter(&text).count() as i64;
-            let result = re.replace_all(&text, replacement.as_str()).to_string();
+/// `re.subn` with the optional `count` positional.
+pub fn mb_re_subn_count(
+    pattern: MbValue,
+    repl: MbValue,
+    string: MbValue,
+    count: MbValue,
+) -> MbValue {
+    match sub_engine(pattern, repl, string, count) {
+        Some((result, n)) => {
             let new_str = MbValue::from_ptr(MbObject::new_str(result));
-            MbValue::from_ptr(MbObject::new_tuple(vec![new_str, MbValue::from_int(count)]))
+            MbValue::from_ptr(MbObject::new_tuple(vec![new_str, MbValue::from_int(n)]))
         }
-        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
+        None => MbValue::none(),
     }
 }
 
@@ -809,9 +1202,12 @@ pub fn mb_re_finditer(pattern: MbValue, string: MbValue) -> MbValue {
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
     };
 
-    let re = match regex::Regex::new(&pat) {
+    let re = match regex::Regex::new(&py_pattern_to_rust(&pat)) {
         Ok(r) => r,
-        Err(e) => { raise_re_error(&e.to_string()); return MbValue::from_ptr(MbObject::new_list(vec![])); }
+        Err(e) => {
+            raise_re_error(&e.to_string());
+            return MbValue::from_ptr(MbObject::new_list(vec![]));
+        }
     };
 
     let mut matches = Vec::new();
@@ -821,8 +1217,35 @@ pub fn mb_re_finditer(pattern: MbValue, string: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(matches))
 }
 
+/// finditer with the optional pos/endpos window (character indices); match
+/// objects are built against the windowed slice, which is what `.group()`
+/// consumers observe.
+pub fn mb_re_finditer_window(
+    pattern: MbValue,
+    string: MbValue,
+    pos: MbValue,
+    endpos: MbValue,
+) -> MbValue {
+    if pos.is_none() && endpos.is_none() {
+        return mb_re_finditer(pattern, string);
+    }
+    let text = extract_str(string).unwrap_or_default();
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len() as i64;
+    let start = pos.as_int().unwrap_or(0).clamp(0, n) as usize;
+    let stop = endpos.as_int().unwrap_or(n).clamp(0, n) as usize;
+    let window: String = chars[start..stop.max(start)].iter().collect();
+    mb_re_finditer(pattern, MbValue::from_ptr(MbObject::new_str(window)))
+}
+
 /// re.split(pattern, string) -> list of substrings
 pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
+    mb_re_split_max(pattern, string, MbValue::none())
+}
+
+/// re.split with maxsplit; captured separator groups are kept in the result
+/// (CPython semantics).
+pub fn mb_re_split_max(pattern: MbValue, string: MbValue, maxsplit: MbValue) -> MbValue {
     let pat = match extract_str(pattern) {
         Some(s) => s,
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
@@ -831,15 +1254,43 @@ pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
         Some(s) => s,
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
     };
+    let limit = maxsplit.as_int().unwrap_or(0);
 
-    match regex::Regex::new(&pat) {
+    match regex::Regex::new(&py_pattern_to_rust(&pat)) {
         Ok(re) => {
-            let parts: Vec<MbValue> = re.split(&text)
-                .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
-                .collect();
+            let has_groups = re.captures_len() > 1;
+            let mut parts: Vec<MbValue> = Vec::new();
+            let mut last = 0usize;
+            let mut splits = 0i64;
+            for caps in re.captures_iter(&text) {
+                if limit > 0 && splits >= limit {
+                    break;
+                }
+                let m = caps.get(0).unwrap();
+                parts.push(MbValue::from_ptr(MbObject::new_str(
+                    text[last..m.start()].to_string(),
+                )));
+                if has_groups {
+                    for i in 1..re.captures_len() {
+                        match caps.get(i) {
+                            Some(g) => parts
+                                .push(MbValue::from_ptr(MbObject::new_str(g.as_str().to_string()))),
+                            None => parts.push(MbValue::none()),
+                        }
+                    }
+                }
+                last = m.end();
+                splits += 1;
+            }
+            parts.push(MbValue::from_ptr(MbObject::new_str(
+                text[last..].to_string(),
+            )));
             MbValue::from_ptr(MbObject::new_list(parts))
         }
-        Err(e) => { raise_re_error(&e.to_string()); MbValue::from_ptr(MbObject::new_list(vec![])) }
+        Err(e) => {
+            raise_re_error(&e.to_string());
+            MbValue::from_ptr(MbObject::new_list(vec![]))
+        }
     }
 }
 
@@ -850,8 +1301,14 @@ pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
 /// the Match Instance's `group_N` / `group_name_NAME` fields populated by
 /// `build_match_instance_with_spans`.
 pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
-    let tmpl = match extract_str(template) { Some(s) => s, None => return MbValue::none() };
-    let inst_ptr = match match_inst.as_ptr() { Some(p) => p, None => return MbValue::none() };
+    let tmpl = match extract_str(template) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
+    let inst_ptr = match match_inst.as_ptr() {
+        Some(p) => p,
+        None => return MbValue::none(),
+    };
     let fields = unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
             fields
@@ -861,12 +1318,14 @@ pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
     };
     let guard = fields.read().unwrap();
     let lookup_numeric = |i: usize| -> Option<String> {
-        guard.get(&format!("group_{}", i))
+        guard
+            .get(&format!("group_{}", i))
             .copied()
             .and_then(extract_str)
     };
     let lookup_named = |name: &str| -> Option<String> {
-        guard.get(&format!("group_name_{}", name))
+        guard
+            .get(&format!("group_name_{}", name))
             .copied()
             .and_then(extract_str)
     };
@@ -890,7 +1349,10 @@ pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
         }
         let next = bytes[i + 1];
         match next {
-            b'\\' => { out.push('\\'); i += 2; }
+            b'\\' => {
+                out.push('\\');
+                i += 2;
+            }
             b'0'..=b'9' => {
                 let idx = (next - b'0') as usize;
                 if let Some(g) = lookup_numeric(idx) {
@@ -941,7 +1403,10 @@ pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
 
 /// re.escape(string) -> string with regex meta-characters escaped
 pub fn mb_re_escape(string: MbValue) -> MbValue {
-    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
+    let text = match extract_str(string) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
     let escaped = regex::escape(&text);
     MbValue::from_ptr(MbObject::new_str(escaped))
 }
@@ -958,16 +1423,31 @@ pub fn mb_re_compile(pattern: MbValue, flags: MbValue) -> MbValue {
         return raise_type_error("first argument must be string or compiled pattern");
     };
     // Validate the pattern eagerly so `re.compile` raises on bad regex
-    // before the user threads it through any matcher.
-    let re = match regex::Regex::new(&pat_str) {
+    // before the user threads it through any matcher. Validate the same
+    // flag-prefixed form method dispatch will execute (a VERBOSE pattern
+    // is only valid once `(?x)` is applied).
+    let validate_src = extract_str(with_flags(pattern, flags)).unwrap_or_else(|| pat_str.clone());
+    let re = match regex::Regex::new(&py_pattern_to_rust(&validate_src)) {
         Ok(r) => r,
-        Err(e) => { raise_re_error(&e.to_string()); return MbValue::none(); }
+        Err(e) => {
+            raise_re_error(&e.to_string());
+            return MbValue::none();
+        }
     };
     let flag_int = flags.as_int().unwrap_or(0);
+    // Remember whether the pattern was compiled from bytes — a bytes pattern
+    // rejects a str subject (and vice versa) at match time (CPython TypeError).
+    // The decoded `pat_str` loses this, so record it explicitly.
+    let pat_is_bytes = pattern.as_ptr().map_or(false, |p| unsafe {
+        matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+    });
     let mut fields = FxHashMap::default();
-    fields.insert("pattern".to_string(),
-        MbValue::from_ptr(MbObject::new_str(pat_str)));
+    fields.insert(
+        "pattern".to_string(),
+        MbValue::from_ptr(MbObject::new_str(pat_str)),
+    );
     fields.insert("flags".to_string(), MbValue::from_int(flag_int));
+    fields.insert("_is_bytes".to_string(), MbValue::from_bool(pat_is_bytes));
     // .groups — number of capturing groups. (#1624)
     let num_groups = re.captures_len().saturating_sub(1) as i64;
     fields.insert("groups".to_string(), MbValue::from_int(num_groups));
@@ -1006,7 +1486,11 @@ mod tests {
         let result = mb_re_search(s("w\\w+"), s("hello world"));
         unsafe {
             let ptr = result.as_ptr().expect("expected Instance");
-            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*ptr).data
+            {
                 assert_eq!(class_name, "re.Match");
                 let f = fields.read().unwrap();
                 assert_eq!(f.get("_start").and_then(|v| v.as_int()), Some(6));
@@ -1104,11 +1588,15 @@ mod tests {
             let ptr = result.as_ptr().expect("expected Instance");
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                assert_eq!(extract_str(f.get("string").copied().unwrap()).unwrap(),
-                    "alice smith");
+                assert_eq!(
+                    extract_str(f.get("string").copied().unwrap()).unwrap(),
+                    "alice smith"
+                );
                 assert_eq!(f.get("lastindex").and_then(|v| v.as_int()), Some(2));
-                assert_eq!(extract_str(f.get("lastgroup").copied().unwrap()).unwrap(),
-                    "last");
+                assert_eq!(
+                    extract_str(f.get("lastgroup").copied().unwrap()).unwrap(),
+                    "last"
+                );
             } else {
                 panic!("expected re.Match Instance");
             }
@@ -1155,8 +1643,14 @@ mod tests {
                     assert_eq!(extract_str(items[0]).unwrap(), "first");
                     assert_eq!(extract_str(items[1]).unwrap(), "last");
                 }
-                assert_eq!(extract_str(f.get("group_name_first").copied().unwrap()).unwrap(), "alice");
-                assert_eq!(extract_str(f.get("group_name_last").copied().unwrap()).unwrap(), "smith");
+                assert_eq!(
+                    extract_str(f.get("group_name_first").copied().unwrap()).unwrap(),
+                    "alice"
+                );
+                assert_eq!(
+                    extract_str(f.get("group_name_last").copied().unwrap()).unwrap(),
+                    "smith"
+                );
             } else {
                 panic!("expected re.Match Instance");
             }
@@ -1170,7 +1664,11 @@ mod tests {
         let result = mb_re_search(s(r"\d+"), s("abc123"));
         assert!(result.is_ptr());
         unsafe {
-            if let ObjData::Instance { ref class_name, ref fields } = (*result.as_ptr().unwrap()).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*result.as_ptr().unwrap()).data
+            {
                 assert_eq!(class_name, "re.Match");
                 let f = fields.read().unwrap();
                 // group_0 is the full match
@@ -1303,7 +1801,9 @@ mod tests {
             let to_len = |v: MbValue| {
                 if let ObjData::List(ref lock) = (*v.as_ptr().unwrap()).data {
                     lock.read().unwrap().len()
-                } else { 0 }
+                } else {
+                    0
+                }
             };
             assert_eq!(to_len(r1), 4);
             assert_eq!(to_len(r2), 2);
@@ -1322,16 +1822,26 @@ mod tests {
         let result = mb_re_findall(s(pat), s(text));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
+            let ObjData::List(ref lock) = (*ptr).data else {
+                panic!("list");
+            };
             let items = lock.read().unwrap();
             assert_eq!(items.len(), 4);
             // alpha: no number → ("alpha", "")
-            let ObjData::Tuple(ref t0) = (*items[0].as_ptr().unwrap()).data else { panic!() };
-            let ObjData::Str(ref g1) = (*t0[1].as_ptr().unwrap()).data else { panic!() };
+            let ObjData::Tuple(ref t0) = (*items[0].as_ptr().unwrap()).data else {
+                panic!()
+            };
+            let ObjData::Str(ref g1) = (*t0[1].as_ptr().unwrap()).data else {
+                panic!()
+            };
             assert_eq!(g1, "");
             // beta-7 → ("beta", "7")
-            let ObjData::Tuple(ref t1) = (*items[1].as_ptr().unwrap()).data else { panic!() };
-            let ObjData::Str(ref g1) = (*t1[1].as_ptr().unwrap()).data else { panic!() };
+            let ObjData::Tuple(ref t1) = (*items[1].as_ptr().unwrap()).data else {
+                panic!()
+            };
+            let ObjData::Str(ref g1) = (*t1[1].as_ptr().unwrap()).data else {
+                panic!()
+            };
             assert_eq!(g1, "7");
         }
     }
@@ -1348,15 +1858,21 @@ mod tests {
         let result = mb_re_findall(s(pat), s(text));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
+            let ObjData::List(ref lock) = (*ptr).data else {
+                panic!("list");
+            };
             let items = lock.read().unwrap();
             // regex's \w on Unicode default matches letters + combining marks.
             // Expect at least 4 items: hello, 你好, café, world.
             assert!(items.len() >= 4, "got {} items", items.len());
             // Inspect the second match — must be "你好" exactly.
-            let ObjData::Str(ref g) = (*items[1].as_ptr().unwrap()).data else { panic!() };
+            let ObjData::Str(ref g) = (*items[1].as_ptr().unwrap()).data else {
+                panic!()
+            };
             assert_eq!(g, "你好");
-            let ObjData::Str(ref g) = (*items[2].as_ptr().unwrap()).data else { panic!() };
+            let ObjData::Str(ref g) = (*items[2].as_ptr().unwrap()).data else {
+                panic!()
+            };
             assert_eq!(g, "café");
         }
     }
@@ -1377,19 +1893,32 @@ mod tests {
     fn test_re_bytes_input_no_silent_drop() {
         // search returns a Match (not None) for bytes-input
         let m = mb_re_search(b(b"\\d+"), b(b"abc 123 def"));
-        assert!(m.as_ptr().is_some(), "re.search(bytes_pat, bytes_data) returned None");
+        assert!(
+            m.as_ptr().is_some(),
+            "re.search(bytes_pat, bytes_data) returned None"
+        );
 
         // match anchored at start
         let m = mb_re_match(b(b"abc"), b(b"abc 123"));
-        assert!(m.as_ptr().is_some(), "re.match(bytes_pat, bytes_data) returned None");
+        assert!(
+            m.as_ptr().is_some(),
+            "re.match(bytes_pat, bytes_data) returned None"
+        );
 
         // findall captures all groups
         let result = mb_re_findall(b(b"(\\d+)"), b(b"a=1 b=2 c=3"));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
+            let ObjData::List(ref lock) = (*ptr).data else {
+                panic!("list");
+            };
             let items = lock.read().unwrap();
-            assert_eq!(items.len(), 3, "re.findall(bytes_pat, bytes_data) returned {} items", items.len());
+            assert_eq!(
+                items.len(),
+                3,
+                "re.findall(bytes_pat, bytes_data) returned {} items",
+                items.len()
+            );
         }
 
         // findall on bulk text — sanity check no silent drop on larger input
@@ -1397,9 +1926,15 @@ mod tests {
         let result = mb_re_findall(b(b"(\\d+)"), b(&log));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
+            let ObjData::List(ref lock) = (*ptr).data else {
+                panic!("list");
+            };
             let items = lock.read().unwrap();
-            assert!(items.len() >= 400, "expected >=400 hits, got {}", items.len());
+            assert!(
+                items.len() >= 400,
+                "expected >=400 hits, got {}",
+                items.len()
+            );
         }
     }
 
@@ -1413,12 +1948,13 @@ mod tests {
         let result = mb_re_findall(s(pat), s(text));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
+            let ObjData::List(ref lock) = (*ptr).data else {
+                panic!("list");
+            };
             let items = lock.read().unwrap();
             // Terminating is the actual gate; bound the upper count.
             assert!(items.len() <= text.len() + 1, "got {} items", items.len());
             assert!(items.len() >= 3, "expected >=3 hits, got {}", items.len());
         }
     }
-
 }

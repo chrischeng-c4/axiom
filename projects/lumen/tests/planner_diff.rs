@@ -151,7 +151,40 @@ proptest! {
             prop_assert!(w[0].1 <= w[1].1, "sort asc not ordered: {:?}", got);
         }
 
-        // 6. sort by n desc (no filter via unbounded range): full set + non-increasing.
+        // 6. sort by kw asc, filter n[5,15]: set must match, and keyword non-decreasing.
+        let got = search_ids(&e, req(
+            range(),
+            Some(vec![SortSpec { field: "kw".into(), order: SortOrder::Asc }])));
+        prop_assert_eq!(set_of(&got), bf(&|d| d.n >= 5 && d.n < 15), "keyword sort set");
+        for w in got.windows(2) {
+            let a = state.get(&w[0].0).unwrap();
+            let b = state.get(&w[1].0).unwrap();
+            prop_assert!(
+                a.kw <= b.kw,
+                "keyword sort asc not ordered: {:?}",
+                got
+            );
+        }
+
+        // 7. composite sort by kw asc, n desc: full set + lexicographic order.
+        let got = search_ids(&e, req(
+            QueryNode::Range(RangeQuery { field: "n".into(), gt: None, gte: None, lt: None, lte: None }),
+            Some(vec![
+                SortSpec { field: "kw".into(), order: SortOrder::Asc },
+                SortSpec { field: "n".into(), order: SortOrder::Desc },
+            ])));
+        prop_assert_eq!(set_of(&got), bf(&|_| true), "composite sort set");
+        for w in got.windows(2) {
+            let a = state.get(&w[0].0).unwrap();
+            let b = state.get(&w[1].0).unwrap();
+            prop_assert!(
+                a.kw < b.kw || (a.kw == b.kw && a.n >= b.n),
+                "composite keyword+number sort not ordered: {:?}",
+                got
+            );
+        }
+
+        // 8. sort by n desc (no filter via unbounded range): full set + non-increasing.
         let got = search_ids(&e, req(
             QueryNode::Range(RangeQuery { field: "n".into(), gt: None, gte: None, lt: None, lte: None }),
             Some(vec![SortSpec { field: "n".into(), order: SortOrder::Desc }])));

@@ -11,12 +11,11 @@
 /// - Any MbValue that `is_ptr()` with `ObjKind::BigInt` is a big integer.
 /// - Comparison and hashing convert both sides to `BigInt` before operating.
 /// - Mixed arithmetic (inline + big) promotes the inline operand first.
-
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 
+use super::rc::{mb_release, mb_retain, MbObject, ObjData, ObjKind};
 use super::value::MbValue;
-use super::rc::{MbObject, ObjData, ObjKind, mb_retain, mb_release};
 
 /// 48-bit signed integer bounds (inline NaN-box range).
 const INT48_MAX: i64 = (1i64 << 47) - 1;
@@ -139,8 +138,127 @@ pub unsafe fn mb_int_mul(a: MbValue, b: MbValue) -> MbValue {
     normalize_bigint(ba * bb)
 }
 
+// ── Floor division / modulo / divmod / pow ──────────────────────────────────
+
+/// Floor-division quotient and remainder for big integers, with Python sign
+/// semantics: the quotient rounds toward −∞ and the remainder takes the
+/// divisor's sign. `b` must be non-zero.
+fn floor_div_mod(a: &BigInt, b: &BigInt) -> (BigInt, BigInt) {
+    let q = a / b; // truncates toward zero
+    let r = a - &q * b; // truncated remainder (sign of `a`)
+                        // Step the quotient toward −∞ when the remainder's sign disagrees with the
+                        // divisor (matches CPython `//` / `%`).
+    if r.sign() != num_bigint::Sign::NoSign && r.sign() != b.sign() {
+        (q - 1, r + b)
+    } else {
+        (q, r)
+    }
+}
+
+/// Python floor division for integer MbValues (inline or BigInt). Returns
+/// `None` when the divisor is zero — the caller raises ZeroDivisionError.
+///
+/// # Safety
+/// Both must be valid integer MbValues.
+pub unsafe fn mb_int_floordiv(a: MbValue, b: MbValue) -> Option<MbValue> {
+    let ba = to_bigint(a)?;
+    let bb = to_bigint(b)?;
+    if bb.is_zero() {
+        return None;
+    }
+    Some(normalize_bigint(floor_div_mod(&ba, &bb).0))
+}
+
+/// Python modulo for integer MbValues (result takes the divisor's sign).
+/// Returns `None` when the divisor is zero.
+///
+/// # Safety
+/// Both must be valid integer MbValues.
+pub unsafe fn mb_int_mod(a: MbValue, b: MbValue) -> Option<MbValue> {
+    let ba = to_bigint(a)?;
+    let bb = to_bigint(b)?;
+    if bb.is_zero() {
+        return None;
+    }
+    Some(normalize_bigint(floor_div_mod(&ba, &bb).1))
+}
+
+/// Python `divmod` for integer MbValues. Returns `None` when the divisor is
+/// zero.
+///
+/// # Safety
+/// Both must be valid integer MbValues.
+pub unsafe fn mb_int_divmod(a: MbValue, b: MbValue) -> Option<(MbValue, MbValue)> {
+    let ba = to_bigint(a)?;
+    let bb = to_bigint(b)?;
+    if bb.is_zero() {
+        return None;
+    }
+    let (q, r) = floor_div_mod(&ba, &bb);
+    Some((normalize_bigint(q), normalize_bigint(r)))
+}
+
+/// Integer exponentiation for non-negative exponents. Returns `None` when the
+/// exponent is negative (the caller produces a float result) or too large to
+/// materialize (> `u32::MAX`, which is astronomically unlikely in real code).
+///
+/// # Safety
+/// Both must be valid integer MbValues.
+pub unsafe fn mb_int_pow(base: MbValue, exp: MbValue) -> Option<MbValue> {
+    let be = to_bigint(exp)?;
+    if be.sign() == num_bigint::Sign::Minus {
+        return None;
+    }
+    let e = be.to_u32()?;
+    let bb = to_bigint(base)?;
+    Some(normalize_bigint(bb.pow(e)))
+}
+
+/// Convert an integer MbValue (inline or BigInt) to `f64`, saturating to ±inf
+/// for magnitudes beyond the f64 range (CPython int→float widening). Returns
+/// `None` for non-integers.
+///
+/// # Safety
+/// `val` must be a valid MbValue.
+pub unsafe fn int_as_f64(val: MbValue) -> Option<f64> {
+    if let Some(i) = val.as_int() {
+        return Some(i as f64);
+    }
+    let big = extract_bigint(val)?;
+    Some(big.to_f64().unwrap_or_else(|| {
+        if big.sign() == num_bigint::Sign::Minus {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        }
+    }))
+}
+
+/// Make an int MbValue from an i64 — inline when it fits, heap BigInt otherwise.
+pub fn int_from_i64(v: i64) -> MbValue {
+    if fits_inline(v) {
+        MbValue::from_int(v)
+    } else {
+        bigint_from_i128(v as i128)
+    }
+}
+
+/// Make an int MbValue from a finite f64, truncating toward zero.
+/// Exact for every finite f64 magnitude via the BigInt fallback.
+/// Callers must reject NaN/infinity first (CPython raises there).
+pub fn int_from_f64_trunc(f: f64) -> MbValue {
+    if f >= INT48_MIN as f64 && f <= INT48_MAX as f64 {
+        return MbValue::from_int(f as i64);
+    }
+    use num_traits::FromPrimitive;
+    match BigInt::from_f64(f.trunc()) {
+        Some(b) => normalize_bigint(b),
+        None => MbValue::from_int(0),
+    }
+}
+
 /// Normalize a BigInt result: if it fits inline, return an inline MbValue.
-fn normalize_bigint(v: BigInt) -> MbValue {
+pub fn normalize_bigint(v: BigInt) -> MbValue {
     if let Some(small) = v.to_i64() {
         if fits_inline(small) {
             return MbValue::from_int(small);
@@ -196,7 +314,8 @@ pub unsafe fn mb_int_hash(val: MbValue) -> i64 {
             return small % HASH_MODULUS;
         }
         // For very large values, use the low 61 bits with sign.
-        let low: i64 = big.iter_u64_digits()
+        let low: i64 = big
+            .iter_u64_digits()
             .next()
             .map(|d| (d & (HASH_MODULUS as u64)) as i64)
             .unwrap_or(0);
@@ -306,9 +425,9 @@ pub extern "C" fn mb_bigint_cmp(a_bits: u64, b_bits: u64) -> i64 {
     let b = MbValue::from_bits(b_bits);
     unsafe {
         match mb_int_cmp(a, b) {
-            std::cmp::Ordering::Less    => -1,
-            std::cmp::Ordering::Equal   =>  0,
-            std::cmp::Ordering::Greater =>  1,
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
         }
     }
 }
@@ -361,7 +480,9 @@ pub extern "C" fn mb_bigint_from_i64(v: i64) -> u64 {
 mod tests {
     use super::*;
 
-    fn inline(i: i64) -> MbValue { MbValue::from_int(i) }
+    fn inline(i: i64) -> MbValue {
+        MbValue::from_int(i)
+    }
 
     #[test]
     fn test_fits_inline_boundary() {
@@ -393,7 +514,9 @@ mod tests {
             let big = extract_bigint(r).expect("should be BigInt");
             assert_eq!(big, BigInt::from(INT48_MAX) + BigInt::from(1));
             // Cleanup
-            if let Some(ptr) = r.as_ptr() { mb_release(ptr); }
+            if let Some(ptr) = r.as_ptr() {
+                mb_release(ptr);
+            }
         }
     }
 
@@ -406,7 +529,9 @@ mod tests {
             assert!(r.is_ptr());
             let big = extract_bigint(r).expect("should be BigInt");
             assert_eq!(big, BigInt::from(INT48_MIN) - BigInt::from(1));
-            if let Some(ptr) = r.as_ptr() { mb_release(ptr); }
+            if let Some(ptr) = r.as_ptr() {
+                mb_release(ptr);
+            }
         }
     }
 
@@ -419,7 +544,9 @@ mod tests {
             assert!(r.is_ptr());
             let big = extract_bigint(r).expect("BigInt");
             assert_eq!(big, BigInt::from(1_000_000_000_000_000_000i64));
-            if let Some(ptr) = r.as_ptr() { mb_release(ptr); }
+            if let Some(ptr) = r.as_ptr() {
+                mb_release(ptr);
+            }
         }
     }
 
@@ -443,7 +570,9 @@ mod tests {
             assert_eq!(extract_bigint(r).unwrap(), expected);
             mb_release(big_a);
             mb_release(big_b);
-            if let Some(ptr) = r.as_ptr() { mb_release(ptr); }
+            if let Some(ptr) = r.as_ptr() {
+                mb_release(ptr);
+            }
         }
     }
 
@@ -468,7 +597,10 @@ mod tests {
         unsafe {
             assert_eq!(mb_int_cmp(inline(3), inline(5)), std::cmp::Ordering::Less);
             assert_eq!(mb_int_cmp(inline(5), inline(5)), std::cmp::Ordering::Equal);
-            assert_eq!(mb_int_cmp(inline(7), inline(5)), std::cmp::Ordering::Greater);
+            assert_eq!(
+                mb_int_cmp(inline(7), inline(5)),
+                std::cmp::Ordering::Greater
+            );
         }
     }
 
@@ -530,8 +662,8 @@ mod tests {
         let a = MbValue::from_int(3).to_bits();
         let b = MbValue::from_int(5).to_bits();
         assert_eq!(mb_bigint_cmp(a, b), -1);
-        assert_eq!(mb_bigint_cmp(b, a),  1);
-        assert_eq!(mb_bigint_cmp(a, a),  0);
+        assert_eq!(mb_bigint_cmp(b, a), 1);
+        assert_eq!(mb_bigint_cmp(a, a), 0);
     }
 
     #[test]

@@ -160,7 +160,10 @@ mod tests {
     #[test]
     fn parses_include() {
         let r = parse_manifest_in("include README.md LICENSE").unwrap();
-        assert_eq!(r, vec![ManifestCommand::Include(s(&["README.md", "LICENSE"]))]);
+        assert_eq!(
+            r,
+            vec![ManifestCommand::Include(s(&["README.md", "LICENSE"]))]
+        );
     }
 
     #[test]
@@ -338,7 +341,10 @@ prune build
     #[test]
     fn tabs_are_treated_as_whitespace() {
         let r = parse_manifest_in("include\tREADME.md\tLICENSE").unwrap();
-        assert_eq!(r, vec![ManifestCommand::Include(s(&["README.md", "LICENSE"]))]);
+        assert_eq!(
+            r,
+            vec![ManifestCommand::Include(s(&["README.md", "LICENSE"]))]
+        );
     }
 
     #[test]

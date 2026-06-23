@@ -19,14 +19,14 @@
 //   <INDEX>/<normalized_name>/<version>/metadata.toml   # optional;
 //     requires = ["other_pkg==X.Y.Z", ...]              # transitive edges
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::pkgmanage::add::{ManifestState, atomic_write};
+use crate::pkgmanage::add::{atomic_write, ManifestState};
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";
@@ -85,8 +85,8 @@ fn resolve_index_url(sub: &ArgMatches) -> String {
 
 fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
     use crate::pkgmanage::pkgmgr::markers::{evaluate as eval_marker, MarkerEnv};
-    use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Resolver};
     use crate::pkgmanage::pkgmgr::resolver::pubgrub_glue::IndexClientProvider;
+    use crate::pkgmanage::pkgmgr::resolver::{parse_requirement, Resolver};
     use crate::pkgmanage::pkgmgr::IndexClient;
 
     let roots: Vec<crate::pkgmanage::pkgmgr::resolver::Requirement> = deps
@@ -156,7 +156,13 @@ fn resolve_via_pypi(deps: &[String], index_url: &str) -> Result<Vec<Resolved>> {
         // Look up the canonical artifact URL through the sibling client. Tick
         // 15: the URL travels with the sha so `mamba sync` can perform a
         // download_artifact() + sha-verify pass without re-resolving.
-        let url = pick_artifact_url(&url_client, &url_handle, &node.name, &node.version, &selector);
+        let url = pick_artifact_url(
+            &url_client,
+            &url_handle,
+            &node.name,
+            &node.version,
+            &selector,
+        );
         out.push(Resolved {
             pin: Pin {
                 name: node.name.clone(),
@@ -313,10 +319,7 @@ fn resolve_transitive(direct: &[Pin], index: &Path) -> Result<Vec<Resolved>> {
             continue;
         }
         let meta = load_metadata(&pin, index)?;
-        let requires: Vec<String> = meta
-            .iter()
-            .map(|p| p.key())
-            .collect();
+        let requires: Vec<String> = meta.iter().map(|p| p.key()).collect();
         let is_direct = direct_keys.contains(&key);
         seen.insert(
             key,
@@ -352,8 +355,8 @@ fn load_metadata(pin: &Pin, index: &Path) -> Result<Vec<Pin>> {
     if !meta_path.exists() {
         return Ok(vec![]);
     }
-    let raw = fs::read_to_string(&meta_path)
-        .with_context(|| format!("read {}", meta_path.display()))?;
+    let raw =
+        fs::read_to_string(&meta_path).with_context(|| format!("read {}", meta_path.display()))?;
     let doc: toml::Value = raw
         .parse()
         .with_context(|| format!("parse {}", meta_path.display()))?;
@@ -389,10 +392,7 @@ fn render_lockfile(direct_deps: &[String], resolved: &[Resolved]) -> String {
             "sha256 = \"{}\"\n",
             r.sha256.as_deref().unwrap_or("")
         ));
-        out.push_str(&format!(
-            "url = \"{}\"\n",
-            r.url.as_deref().unwrap_or("")
-        ));
+        out.push_str(&format!("url = \"{}\"\n", r.url.as_deref().unwrap_or("")));
         out.push_str(&format!(
             "source = \"pypi://{}/{}\"\n",
             r.pin.name, r.pin.version
@@ -461,14 +461,20 @@ mod tests {
     fn render_is_deterministic() {
         let resolved = vec![
             Resolved {
-                pin: Pin { name: "a".into(), version: "1.0".into() },
+                pin: Pin {
+                    name: "a".into(),
+                    version: "1.0".into(),
+                },
                 direct: true,
                 requires: vec!["b==2.0".into()],
                 sha256: None,
                 url: None,
             },
             Resolved {
-                pin: Pin { name: "b".into(), version: "2.0".into() },
+                pin: Pin {
+                    name: "b".into(),
+                    version: "2.0".into(),
+                },
                 direct: false,
                 requires: vec![],
                 sha256: None,

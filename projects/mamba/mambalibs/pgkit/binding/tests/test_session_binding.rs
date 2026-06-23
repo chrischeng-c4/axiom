@@ -25,9 +25,9 @@ use cclab_mamba_registry::MbValue;
 
 use pgkit_binding::methods::{mb_pg_close, mb_pg_connect, mb_pg_execute};
 use pgkit_binding::session::{
-    mb_pg_session_add, mb_pg_session_close, mb_pg_session_commit,
-    mb_pg_session_get, mb_pg_session_new, mb_pg_session_query_all,
-    mb_pg_session_rollback, mb_pg_session_slot_read, MbPgInsertSlot,
+    mb_pg_session_add, mb_pg_session_close, mb_pg_session_commit, mb_pg_session_get,
+    mb_pg_session_new, mb_pg_session_query_all, mb_pg_session_rollback, mb_pg_session_slot_read,
+    MbPgInsertSlot,
 };
 
 fn db_url() -> Option<String> {
@@ -137,8 +137,7 @@ fn session_add_commit_then_get_round_trips() {
     let pk_int = unsafe { mb_pg_session_slot_read([slot].as_ptr(), 1) };
     assert_eq!(pk_int.as_int(), Some(pk_after));
 
-    let got =
-        unsafe { mb_pg_session_get([sess, table, MbValue::from_int(pk_after)].as_ptr(), 3) };
+    let got = unsafe { mb_pg_session_get([sess, table, MbValue::from_int(pk_after)].as_ptr(), 3) };
     assert!(got.is_ptr(), "get returned None for committed row");
 
     let name = dict_get(got, "name").expect("name key");
@@ -177,8 +176,7 @@ fn session_rollback_discards_staging_and_clears_identity_map() {
     let _ = unsafe { mb_pg_session_rollback([sess].as_ptr(), 1) };
 
     // After rollback, the staged INSERT must not have landed.
-    let all =
-        unsafe { mb_pg_session_query_all([sess, table, empty_dict()].as_ptr(), 3) };
+    let all = unsafe { mb_pg_session_query_all([sess, table, empty_dict()].as_ptr(), 3) };
     assert!(all.is_ptr(), "query_all returned None");
     let list = unsafe {
         let addr = all.as_ptr().unwrap();

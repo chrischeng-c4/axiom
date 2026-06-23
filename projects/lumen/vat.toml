@@ -22,7 +22,32 @@ keep = "always"
 [env]
 # vat children get spec.env ONLY (no parent-env inheritance); commands
 # resolved from PATH (pgrep, python3, toxiproxy-server) need it explicit.
-PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin"
+PATH = "/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:/usr/bin:/bin:/usr/sbin"
+LUMEN_REQUIRE_DB_PEERS = "1"
+
+[[setup]]
+id = "build-rig-tests"
+cmd = [
+  "cargo",
+  "test",
+  "-p",
+  "lumen",
+  "--test",
+  "api_e2e",
+  "--test",
+  "drop_drain_e2e",
+  "--test",
+  "perf_gate",
+  "--test",
+  "planner_diff",
+  "--test",
+  "reindex_stream_e2e",
+  "--no-run",
+]
+
+[[setup]]
+id = "build-meter"
+cmd = ["cargo", "build", "-p", "meter-cli"]
 
 [[services]]
 id = "lumen"
@@ -36,28 +61,50 @@ cmd = ["toxiproxy-server", "-host", "127.0.0.1", "-port", "8474"]
 ready_http = "http://127.0.0.1:8474/version"
 timeout_s = 30
 
+# Postgres + OpenSearch EC peers for the competitive search perf gate.
+# perf_gate_vs_db self-hosts lumen in-process and creates its own corpus in both
+# peers, so they only need to be UP (pg with the `lumenbench` db; OS empty).
+# vat exports LUMEN_BENCH_PG_DSN / LUMEN_BENCH_OS_URL; perf_gate_vs_db reads them.
+[[services]]
+id = "pg"
+preset = "postgres"
+port = 5432
+seed = ["tests/ec/pg/schema.sql"]
+export = { DATABASE_URL = "LUMEN_BENCH_PG_DSN" }
+ready_cmd = ["sh", "-c", "psql -h 127.0.0.1 -p 5432 -U postgres -d lumenbench -tAc 'select 1' >/dev/null 2>&1"]
+timeout_s = 120
+
+[[services]]
+id = "opensearch"
+preset = "opensearch"
+port = 9200
+export = { OPENSEARCH_URL = "LUMEN_BENCH_OS_URL" }
+timeout_s = 120
+
 # Runner cmds use the repo-relative debug rig so no PATH entry is needed
 # for rig itself: `cargo build -p rig-cli` keeps it fresh.
 [[runners]]
 id = "rig-resilience"
 requires = ["lumen", "toxiproxy"]
-cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/scenarios/resilience"]
+cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/cases/resilience"]
 timeout_s = 600
 
 [[runners]]
 id = "rig-endurance"
 requires = ["lumen"]
-cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/scenarios/endurance"]
+cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/cases/endurance"]
 timeout_s = 900
 
 [[runners]]
 id = "rig-load"
 requires = ["lumen"]
-cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/scenarios/load", "--pins", "tests/rig/config/pins"]
+cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/cases/load", "--pins", "tests/rig/config/pins"]
 timeout_s = 300
 
-# Competitive comparison runners: vat owns the serving lumen process; arena
-# fans the workload across lumen and the external peer named by the spec.
+# Legacy competitive comparison runners: vat owns the serving lumen process;
+# arena fans the workload across lumen and the external peer named by the spec.
+# These remain compatibility helpers during arena retirement and are not the
+# production Lumen efficiency EC dispatch path.
 [[runners]]
 id = "arena-pg"
 requires = ["lumen"]
@@ -149,3 +196,20 @@ id = "meter-profile"
 requires = ["lumen"]
 cmd = ["../../target/debug/meter", "profile", "--exec", "../../target/release/lumen-bench", "--duration", "25", "--", "run", "--tiers", "s", "--types", "bool_filter", "--queries", "200000"]
 timeout_s = 300
+
+# Self-provisioned efficiency helper. The production EC dispatch path is the
+# meter-wrapped perf gate in aw.toml; this runner remains available when the
+# caller wants vat to bring up pg + OpenSearch.
+# vat brings up pg + OpenSearch (empty); perf_gate_vs_db self-hosts lumen,
+# self-seeds both peers from the env DSNs, and asserts the ratcheted floors.
+[[runners]]
+id = "ec-efficiency"
+requires = ["pg", "opensearch"]
+cmd = ["cargo", "test", "-p", "lumen", "--release", "--test", "perf_gate_vs_db", "--", "--ignored", "--test-threads=1"]
+timeout_s = 1800
+
+[[runners]]
+id = "ec-efficiency-meter"
+requires = ["pg", "opensearch"]
+cmd = ["../../target/debug/meter", "test", "--", "-p", "lumen", "--release", "--test", "perf_gate_vs_db", "competitive_perf_gate", "--", "--ignored", "--exact", "--test-threads=1", "--nocapture"]
+timeout_s = 1800

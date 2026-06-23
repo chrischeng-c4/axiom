@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("governance")
         .join("gates")
         .join("pkgmgr")
         .join("remove")
@@ -188,7 +188,8 @@ fn pkgmgr_remove_metadata_assertion_drops_dependency() {
     );
 
     assert_eq!(
-        meta.get("must_preserve_other_deps").and_then(|v| v.as_bool()),
+        meta.get("must_preserve_other_deps")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[metadata_assertion].must_preserve_other_deps` must be true — remove targets one dep"
     );
@@ -234,7 +235,8 @@ fn pkgmgr_remove_lockfile_assertion_is_deterministic() {
         "`[lockfile_assertion].deterministic` must be true (acceptance text)"
     );
     assert_eq!(
-        lock.get("byte_identical_on_replay").and_then(|v| v.as_bool()),
+        lock.get("byte_identical_on_replay")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_assertion].byte_identical_on_replay` must be true — \
          determinism implies the replay produces the same bytes"
@@ -339,11 +341,7 @@ fn pkgmgr_remove_isolation_pins_no_global_state() {
         "forbid_global_cache_writes",
     ] {
         let value = isolation.get(*flag).and_then(|v| v.as_bool());
-        assert_eq!(
-            value,
-            Some(true),
-            "`[isolation].{flag}` must be `true`"
-        );
+        assert_eq!(value, Some(true), "`[isolation].{flag}` must be `true`");
     }
 }
 
@@ -388,15 +386,13 @@ fn pkgmgr_remove_runner_contract_declares_outcome_keys() {
 #[test]
 fn pkgmgr_remove_pins_out_of_scope_per_issue_2680() {
     let doc = crate::common::load_toml(&manifest_path());
-    let oos = doc
-        .get("out_of_scope")
-        .and_then(|v| v.as_table())
-        .expect(
-            "manifest.toml missing `[out_of_scope]` block — issue #2680 \
+    let oos = doc.get("out_of_scope").and_then(|v| v.as_table()).expect(
+        "manifest.toml missing `[out_of_scope]` block — issue #2680 \
              explicitly excludes global cache GC",
-        );
+    );
     assert_eq!(
-        oos.get("global_cache_garbage_collection").and_then(|v| v.as_bool()),
+        oos.get("global_cache_garbage_collection")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].global_cache_garbage_collection` must be true \
          (issue text: \"Out of scope: garbage collection of shared global caches.\")"

@@ -21,10 +21,10 @@ pub enum AxisSlice {
 #[derive(Debug, Clone, Copy)]
 pub struct NormalizedSlice {
     pub start: usize,
-    pub stop: isize,  // isize to handle negative steps correctly
+    pub stop: isize, // isize to handle negative steps correctly
     pub step: isize,
     pub output_len: usize,
-    pub is_index: bool,  // True if this was an Index (dimension reduction)
+    pub is_index: bool, // True if this was an Index (dimension reduction)
 }
 
 impl AxisSlice {
@@ -88,7 +88,7 @@ impl AxisSlice {
                 let (default_start, default_stop) = if step > 0 {
                     (0isize, len as isize)
                 } else {
-                    ((len as isize) - 1, -1isize)  // -1 means before index 0
+                    ((len as isize) - 1, -1isize) // -1 means before index 0
                 };
 
                 let raw_start = start.unwrap_or(default_start);
@@ -105,9 +105,9 @@ impl AxisSlice {
                 // For negative step with None stop, keep -1 as-is (means "before index 0")
                 // For explicit negative stop like arr[4:-2:-1], normalize it
                 let norm_stop = if stop.is_none() && step < 0 {
-                    raw_stop  // Keep -1 as-is for default negative step stop
+                    raw_stop // Keep -1 as-is for default negative step stop
                 } else if raw_stop < 0 {
-                    (len as isize) + raw_stop  // Normalize explicit negative indices
+                    (len as isize) + raw_stop // Normalize explicit negative indices
                 } else {
                     (raw_stop as usize).min(len) as isize
                 };

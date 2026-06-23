@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("governance")
         .join("gates")
         .join("pkgmgr")
         .join("cache")
@@ -73,18 +73,25 @@ fn pkgmgr_cache_isolation_manifest_header_is_well_formed() {
 #[test]
 fn pkgmgr_cache_user_cache_guard_aborts_on_user_home_touch() {
     let doc = crate::common::load_toml(&manifest_path());
-    let guard = doc.get("user_cache_guard").and_then(|v| v.as_table()).expect(
-        "missing `[user_cache_guard]` block \
+    let guard = doc
+        .get("user_cache_guard")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[user_cache_guard]` block \
          (acceptance: \"Test fails if user home cache is used.\")",
-    );
+        );
 
     assert_eq!(
-        guard.get("abort_on_user_home_read").and_then(|v| v.as_bool()),
+        guard
+            .get("abort_on_user_home_read")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[user_cache_guard].abort_on_user_home_read` must be true"
     );
     assert_eq!(
-        guard.get("abort_on_user_home_write").and_then(|v| v.as_bool()),
+        guard
+            .get("abort_on_user_home_write")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[user_cache_guard].abort_on_user_home_write` must be true"
     );
@@ -127,10 +134,7 @@ fn pkgmgr_cache_temp_cache_lives_under_tempdir() {
         .get("cache_root_env_var")
         .and_then(|v| v.as_str())
         .expect("`[temp_cache].cache_root_env_var` must name the env var");
-    assert!(
-        !env_var.is_empty(),
-        "cache_root_env_var must be non-empty"
-    );
+    assert!(!env_var.is_empty(), "cache_root_env_var must be non-empty");
 
     for flag in &[
         "cache_root_must_be_under_tempdir",
@@ -148,10 +152,13 @@ fn pkgmgr_cache_temp_cache_lives_under_tempdir() {
 #[test]
 fn pkgmgr_cache_cleanup_assertion_is_deterministic() {
     let doc = crate::common::load_toml(&manifest_path());
-    let cleanup = doc.get("cleanup_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[cleanup_assertion]` block \
+    let cleanup = doc
+        .get("cleanup_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[cleanup_assertion]` block \
          (acceptance: \"Temp cache cleanup is deterministic.\")",
-    );
+        );
 
     assert_eq!(
         cleanup.get("deterministic").and_then(|v| v.as_bool()),
@@ -159,7 +166,9 @@ fn pkgmgr_cache_cleanup_assertion_is_deterministic() {
         "`[cleanup_assertion].deterministic` must be true"
     );
     assert_eq!(
-        cleanup.get("captures_post_run_inventory").and_then(|v| v.as_bool()),
+        cleanup
+            .get("captures_post_run_inventory")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[cleanup_assertion].captures_post_run_inventory` must be true"
     );
@@ -168,13 +177,18 @@ fn pkgmgr_cache_cleanup_assertion_is_deterministic() {
         .get("inventory_baseline_path")
         .and_then(|v| v.as_str())
         .expect("`[cleanup_assertion].inventory_baseline_path` must be set");
-    assert!(!baseline.is_empty(), "inventory_baseline_path must be non-empty");
+    assert!(
+        !baseline.is_empty(),
+        "inventory_baseline_path must be non-empty"
+    );
 
     let residue: Vec<&str> = cleanup
         .get("allowed_residue")
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_else(|| panic!("`[cleanup_assertion].allowed_residue` must be a (possibly empty) array"));
+        .unwrap_or_else(|| {
+            panic!("`[cleanup_assertion].allowed_residue` must be a (possibly empty) array")
+        });
     // Empty list is the right baseline — every leftover file must
     // be intentional and added explicitly.
     assert!(
@@ -202,17 +216,23 @@ fn pkgmgr_cache_workflow_populates_temp_not_user() {
     );
 
     assert_eq!(
-        workflow.get("expected_exit_code").and_then(|v| v.as_integer()),
+        workflow
+            .get("expected_exit_code")
+            .and_then(|v| v.as_integer()),
         Some(0),
         "`[workflow].expected_exit_code` must be 0"
     );
     assert_eq!(
-        workflow.get("must_populate_temp_cache").and_then(|v| v.as_bool()),
+        workflow
+            .get("must_populate_temp_cache")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[workflow].must_populate_temp_cache` must be true"
     );
     assert_eq!(
-        workflow.get("must_not_populate_user_cache").and_then(|v| v.as_bool()),
+        workflow
+            .get("must_not_populate_user_cache")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[workflow].must_not_populate_user_cache` must be true"
     );
@@ -308,7 +328,8 @@ fn pkgmgr_cache_pins_out_of_scope_per_issue_2685() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("global_cache_implementation_policy").and_then(|v| v.as_bool()),
+        oos.get("global_cache_implementation_policy")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].global_cache_implementation_policy` must be true \
          (issue text: \"Out of scope: global cache implementation policy.\")"

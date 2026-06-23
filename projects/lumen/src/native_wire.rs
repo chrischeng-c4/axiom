@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Native binary search wire.
 //!
@@ -34,23 +34,23 @@ const FAST_TERM_RANGE: u8 = 3;
 const FAST_RESPONSE: u8 = 0x80;
 const FAST_OK: u8 = 0;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#source
 pub struct NativeSearchRequest {
     pub collection_id: String,
     pub request: SearchRequest,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "status")]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#source
 pub enum NativeSearchResponse {
     Ok { response: SearchResponse },
     Err { message: String },
 }
 
 /// Serve native binary search on an already-bound listener.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#source
 pub async fn serve_search(listener: TcpListener, engine: Arc<Engine>) -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await.context("native accept")?;
@@ -63,8 +63,8 @@ pub async fn serve_search(listener: TcpListener, engine: Arc<Engine>) -> Result<
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[cfg(unix)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#source
 pub async fn serve_unix_search(listener: UnixListener, engine: Arc<Engine>) -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await.context("native unix accept")?;
@@ -80,7 +80,7 @@ pub async fn serve_unix_search(listener: UnixListener, engine: Arc<Engine>) -> R
 /// Encode a prepared search frame that can be written repeatedly on a persistent
 /// connection. This is the native analogue of pg's prepared statement path in
 /// the competitive gate.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#source
 pub fn encode_search_frame(collection_id: &str, request: &SearchRequest) -> Result<Vec<u8>> {
     encode_frame(&NativeSearchRequest {
         collection_id: collection_id.to_string(),
@@ -88,7 +88,7 @@ pub fn encode_search_frame(collection_id: &str, request: &SearchRequest) -> Resu
     })
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#source
 pub fn encode_term_frame(
     collection_id: &str,
     field: &str,
@@ -103,7 +103,7 @@ pub fn encode_term_frame(
     frame_payload(payload)
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#source
 pub fn encode_range_frame(
     collection_id: &str,
     field: &str,
@@ -120,7 +120,7 @@ pub fn encode_range_frame(
     frame_payload(payload)
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#source
 pub fn encode_term_range_frame(
     collection_id: &str,
     term_field: &str,
@@ -142,7 +142,7 @@ pub fn encode_term_range_frame(
 }
 
 /// Send one already-encoded native search request and decode its response.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-native_wire-rs.md#source
 pub async fn search_prepared<S>(stream: &mut S, frame: &[u8]) -> Result<SearchResponse>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -498,7 +498,18 @@ mod tests {
             )
             .unwrap();
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::AddrNotAvailable
+                ) =>
+            {
+                return;
+            }
+            Err(err) => panic!("bind native wire test listener: {err}"),
+        };
         let addr = listener.local_addr().unwrap();
         let serve_engine = engine.clone();
         tokio::spawn(async move {

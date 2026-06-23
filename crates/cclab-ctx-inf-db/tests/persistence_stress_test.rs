@@ -62,12 +62,6 @@ fn fat_entity(name: &str) -> Entity {
 /// threads × 1000 ops vs 10_000-slot channel; small ops, drops should
 /// be minimal but the identity must hold even if a few drops occur.
 #[test]
-#[ignore = "BUG-WAL-ROTATE-COLLISION: WalWriter::rotate \
-    (cclab-wal/src/writer.rs:127) uses seconds-precision archive \
-    filenames; multi-rotation-per-second silently overwrites archives \
-    via fs::rename, losing ops beyond ops_dropped_on_full. Triggered \
-    by 100k × ~150B ops crossing the 64KiB threshold ~250 times in \
-    <100ms. Fix the suffix (ms+nonce) and unpin."]
 fn test_concurrent_ingest_100_threads_1000_ops_no_data_loss() {
     let temp = TempDir::new().unwrap();
     let handle = PersistenceHandle::new(PersistenceConfig::for_testing(temp.path())).unwrap();
@@ -167,9 +161,6 @@ fn test_concurrent_ingest_exercises_channel_full_path() {
 /// 1000`. **Sizing**: 10 threads × 100 ops = 1000 ops, 10× below
 /// channel capacity; for_testing 10ms auto-flush ensures >=1 flush.
 #[test]
-#[ignore = "BUG-WAL-ROTATE-COLLISION: 1000 × ~150B ops trip ~5 \
-    rotations/sec; archive filename collision drops ~752 ops. Same \
-    root cause as test_concurrent_ingest_100_threads_1000_ops_no_data_loss."]
 fn test_concurrent_ingest_then_flush_is_durable() {
     let temp = TempDir::new().unwrap();
     let handle = PersistenceHandle::new(PersistenceConfig::for_testing(temp.path())).unwrap();
@@ -213,13 +204,9 @@ fn test_concurrent_ingest_then_flush_is_durable() {
 /// **Invariant**: concurrent log+flush → flush counter accounting holds
 /// and every logged op is durable through reopen. **Primary target**:
 /// `flushes_requested + flushes_dropped > 0`, `flushes_performed >= 1`,
-/// no panic/deadlock, post-reopen `entity_count == logged_at_stop`.
+/// no panic/deadlock, post-reopen `entity_count == admitted_at_stop`.
 /// **Sizing**: 20 threads (10 log, 10 flush) × 2s wall-clock.
 #[test]
-#[ignore = "BUG-WAL-ROTATE-COLLISION: 2s × 10 logger threads = ~1.9M \
-    small ops, crossing the 64KiB threshold thousands of times/sec; \
-    archive collisions break the post-reopen entity_count invariant \
-    until rotate filename suffix gains sub-second uniqueness."]
 fn test_concurrent_flush_coherence() {
     let temp = TempDir::new().unwrap();
     let handle =
@@ -264,13 +251,22 @@ fn test_concurrent_flush_coherence() {
         "exceeded 10s hard timeout"
     );
 
-    let logged_at_stop = logged_count.load(Ordering::Relaxed);
+    let attempted_at_stop = logged_count.load(Ordering::Relaxed);
+    assert!(
+        await_drain(&handle, Duration::from_secs(20)),
+        "drain did not complete in 20s"
+    );
     let s = handle.stats();
     assert!(
         s.flushes_requested_total + s.flushes_dropped_total > 0,
         "20 flush threads × 2s must have produced >0 flush try_sends"
     );
     assert!(s.flushes_performed_total >= 1);
+    assert_eq!(
+        s.ops_logged_total + s.ops_dropped_on_full,
+        attempted_at_stop,
+        "every log attempt must be admitted or counted as dropped"
+    );
 
     Arc::try_unwrap(handle)
         .map_err(|_| "handle has refs")
@@ -282,10 +278,19 @@ fn test_concurrent_flush_coherence() {
         CtxInfEngine::open_with_stats(PersistenceConfig::for_testing(temp.path())).unwrap();
     assert_eq!(
         engine.stats().entity_count as u64,
-        logged_at_stop,
-        "every logged op must be durable; logged={} entity_count={}",
-        logged_at_stop,
-        engine.stats().entity_count
+        s.ops_logged_total,
+        "every admitted op must be durable; admitted={} entity_count={} dropped={}",
+        s.ops_logged_total,
+        engine.stats().entity_count,
+        s.ops_dropped_on_full
+    );
+    assert_eq!(
+        engine.stats().entity_count as u64 + s.ops_dropped_on_full,
+        attempted_at_stop,
+        "no silent loss beyond counted drops; attempted={} entity_count={} dropped={}",
+        attempted_at_stop,
+        engine.stats().entity_count,
+        s.ops_dropped_on_full
     );
     engine.shutdown().unwrap();
 }

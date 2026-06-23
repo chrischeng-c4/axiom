@@ -1,0 +1,14 @@
+[record]
+suite = "lumen"
+dimension = "resilience"
+case = "partition_recovery"
+subject = "search and lifecycle APIs recover to ready state after bounded disruption"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[[steps]]
+type = "exec"
+name = "drop_drain_reindex_survival"
+cmd = ["cargo", "test", "-p", "lumen", "--test", "drop_drain_e2e", "--test", "reindex_stream_e2e", "--", "--nocapture"]
+timeout_secs = 180

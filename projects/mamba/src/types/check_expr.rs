@@ -1,9 +1,9 @@
+use super::check::TypeChecker;
+use super::generic::{check_bounds, infer_type_args};
+use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
 use crate::source::span::{Span, Spanned};
-use super::{Ty, TypeId};
-use super::check::TypeChecker;
-use super::generic::{infer_type_args, check_bounds};
 
 thread_local! {
     /// ① Type-wall PoC: when set, `check_stdlib_call` suppresses CONSTRUCTOR /
@@ -59,11 +59,35 @@ impl TypeChecker {
             Expr::IntLit(_) => self.tcx.int(),
             Expr::FloatLit(_) => self.tcx.float(),
             Expr::ComplexLit(_) => self.tcx.any(), // heap ObjData::Complex (ast_to_hir lowers to `complex(0, N)`)
-            Expr::StrLit(_) | Expr::FString(_) => self.tcx.str(),
+            Expr::StrLit(_) => self.tcx.str(),
+            Expr::FString(parts) => {
+                // Walk replacement fields for their binding side effects
+                // (walrus targets must be declared in the enclosing scope:
+                // `f"{(z := 10)}"` leaks z), but suppress any new type
+                // errors — field expressions are formatted dynamically and
+                // were historically unchecked.
+                fn walk(checker: &mut TypeChecker, parts: &[crate::parser::ast::FStringPart]) {
+                    for p in parts {
+                        if let crate::parser::ast::FStringPart::Expr(e, spec) = p {
+                            let mark = checker.errors_mark();
+                            let _ = checker.check_expr(e);
+                            checker.truncate_errors(mark);
+                            if let Some(sp) = spec {
+                                walk(checker, sp);
+                            }
+                        }
+                    }
+                }
+                walk(self, parts);
+                self.tcx.str()
+            }
             Expr::BytesLit(_) => self.tcx.any(),
             Expr::BoolLit(_) => self.tcx.bool(),
             Expr::NoneLit => self.tcx.none(),
-            Expr::Ellipsis => self.tcx.error(),
+            // `...` is a real runtime singleton (the `ellipsis` type) — type
+            // it as Any so stub bodies and Ellipsis-valued expressions
+            // compile and lower to the interned Ellipsis value.
+            Expr::Ellipsis => self.tcx.any(),
             Expr::Ident(name) => {
                 match self.symbols.lookup(name) {
                     Some(sym) => self.get_sym_type(sym.0),
@@ -92,18 +116,32 @@ impl TypeChecker {
                     UnaryOp::Pos => {
                         // Bool is a subtype of int in Python — `+True == 1`,
                         // `+False == 0`, `type(+True) is int`.
-                        if !matches!(self.tcx.get(ot), Ty::Int | Ty::Float | Ty::Bool | Ty::Error | Ty::Any) {
+                        if !matches!(
+                            self.tcx.get(ot),
+                            Ty::Int | Ty::Float | Ty::Bool | Ty::Error | Ty::Any
+                        ) {
                             self.error(operand.span, "unary `+` requires numeric type");
                         }
-                        if matches!(self.tcx.get(ot), Ty::Bool) { self.tcx.int() } else { ot }
+                        if matches!(self.tcx.get(ot), Ty::Bool) {
+                            self.tcx.int()
+                        } else {
+                            ot
+                        }
                     }
                     UnaryOp::Neg => {
                         // Bool is a subtype of int — `-True == -1`, `-False == 0`,
                         // `type(-True) is int`.
-                        if !matches!(self.tcx.get(ot), Ty::Int | Ty::Float | Ty::Bool | Ty::Error | Ty::Any) {
+                        if !matches!(
+                            self.tcx.get(ot),
+                            Ty::Int | Ty::Float | Ty::Bool | Ty::Error | Ty::Any
+                        ) {
                             self.error(operand.span, "unary `-` requires numeric type");
                         }
-                        if matches!(self.tcx.get(ot), Ty::Bool) { self.tcx.int() } else { ot }
+                        if matches!(self.tcx.get(ot), Ty::Bool) {
+                            self.tcx.int()
+                        } else {
+                            ot
+                        }
                     }
                     UnaryOp::Not => {
                         // Python `not` works on any type via truthiness testing.
@@ -124,7 +162,9 @@ impl TypeChecker {
                 let func_ty = self.tcx.get(func_ty_id).clone();
                 let func_name = if let Expr::Ident(n) = &func.node {
                     Some(n.clone())
-                } else { None };
+                } else {
+                    None
+                };
                 // ① Type-wall PoC HOOK: stdlib argument enforcement. ADDITIVE —
                 // runs before the existing `match func_ty` and never changes the
                 // Any-path return. It only *emits* the existing arg-mismatch
@@ -132,10 +172,17 @@ impl TypeChecker {
                 // concrete-scalar argument. Skip-when-unsure at every branch.
                 self.check_stdlib_call(func, args);
                 match func_ty {
-                    Ty::Fn { params, ret, variadic } => {
-                        let has_star = args.iter().any(|a| matches!(a, CallArg::StarArg(_) | CallArg::DoubleStarArg(_)));
+                    Ty::Fn {
+                        params,
+                        ret,
+                        variadic,
+                    } => {
+                        let has_star = args
+                            .iter()
+                            .any(|a| matches!(a, CallArg::StarArg(_) | CallArg::DoubleStarArg(_)));
                         let has_kwargs = args.iter().any(|a| matches!(a, CallArg::Keyword { .. }));
-                        let positional_count = args.iter()
+                        let positional_count = args
+                            .iter()
                             .filter(|a| matches!(a, CallArg::Positional(_)))
                             .count();
                         // Skip arity check when spread args, kwargs, or fewer-than-max
@@ -146,28 +193,28 @@ impl TypeChecker {
                         // genuinely-missing required args.
                         let might_have_defaults = positional_count < params.len();
                         if !has_star && !has_kwargs && !might_have_defaults {
-                        if variadic {
-                            // Variadic: only check minimum args
-                            if positional_count < params.len() {
+                            if variadic {
+                                // Variadic: only check minimum args
+                                if positional_count < params.len() {
+                                    self.error(
+                                        expr.span,
+                                        format!(
+                                            "expected at least {} arguments, got {}",
+                                            params.len(),
+                                            positional_count,
+                                        ),
+                                    );
+                                }
+                            } else if positional_count != params.len() {
                                 self.error(
                                     expr.span,
                                     format!(
-                                        "expected at least {} arguments, got {}",
+                                        "expected {} arguments, got {}",
                                         params.len(),
                                         positional_count,
                                     ),
                                 );
                             }
-                        } else if positional_count != params.len() {
-                            self.error(
-                                expr.span,
-                                format!(
-                                    "expected {} arguments, got {}",
-                                    params.len(),
-                                    positional_count,
-                                ),
-                            );
-                        }
                         }
                         let mut arg_types = Vec::new();
                         let mut param_idx = 0;
@@ -176,8 +223,10 @@ impl TypeChecker {
                                 CallArg::Positional(a) => {
                                     let at = self.check_expr(a);
                                     arg_types.push(at);
-                                    if matches!(func_name.as_deref(), Some("isinstance" | "issubclass"))
-                                        && param_idx == 1
+                                    if matches!(
+                                        func_name.as_deref(),
+                                        Some("isinstance" | "issubclass")
+                                    ) && param_idx == 1
                                         && matches!(a.node, Expr::StrLit(_))
                                     {
                                         self.error(
@@ -201,7 +250,28 @@ impl TypeChecker {
                                         );
                                     }
                                     if let Some(&expected) = params.get(param_idx) {
-                                        if !self.types_compatible(expected, at) {
+                                        // chr/hex/oct/bin accept any class
+                                        // defining __index__ (SupportsIndex
+                                        // protocol — CPython calls the dunder
+                                        // at runtime). The wall stays up for
+                                        // scalars without the protocol
+                                        // (chr(1.5) is still rejected here).
+                                        let index_protocol_ok = matches!(
+                                            func_name.as_deref(),
+                                            Some("chr" | "hex" | "oct" | "bin")
+                                        ) && matches!(
+                                            self.tcx.get(expected),
+                                            Ty::Int
+                                        ) && match self.tcx.get(at) {
+                                            Ty::Class { name, .. } => self
+                                                .class_methods
+                                                .get(name)
+                                                .is_some_and(|m| m.contains_key("__index__")),
+                                            _ => false,
+                                        };
+                                        if !index_protocol_ok
+                                            && !self.types_compatible(expected, at)
+                                        {
                                             self.error(
                                                 a.span,
                                                 format!(
@@ -225,45 +295,64 @@ impl TypeChecker {
                         // If generic function, infer type args and check bounds
                         if let Some(ref fname) = func_name {
                             if let Some(gp) = self.generic_defs.get(fname).cloned() {
-                                let (subst, conflicts) = infer_type_args(
-                                    &gp, &params, &arg_types, &self.tcx,
-                                );
+                                let (subst, conflicts) =
+                                    infer_type_args(&gp, &params, &arg_types, &self.tcx);
                                 for err in conflicts {
                                     self.error(expr.span, err);
                                 }
-                                let bound_errors = check_bounds(
-                                    &subst, &gp, &self.tcx,
-                                );
+                                let bound_errors = check_bounds(&subst, &gp, &self.tcx);
                                 for err in bound_errors {
                                     self.error(expr.span, err);
                                 }
-                                return subst.apply(ret, &mut self.tcx);
+                                let applied = subst.apply(ret, &mut self.tcx);
+                                // ABI honesty: a bare-TypeVar return crosses
+                                // the call boundary as a boxed MbValue in the
+                                // integer register (the generic callee
+                                // compiles to the boxed I64 ABI). Substituting
+                                // `float` would make codegen read an F64
+                                // register that was never written — degrade to
+                                // Any so the boxed value is handled
+                                // dynamically. Int/Bool share the I64 register
+                                // file and round-trip unchanged.
+                                if matches!(self.tcx.get(ret), Ty::TypeVar(_))
+                                    && matches!(self.tcx.get(applied), Ty::Float)
+                                {
+                                    return self.tcx.any();
+                                }
+                                return applied;
                             }
                         }
                         ret
                     }
                     // #246: calling a class constructor returns instance of that class
-                    Ty::Class { name: ref class_name, .. } => {
-                        for arg in args { self.check_call_arg(arg); }
+                    Ty::Class {
+                        name: ref class_name,
+                        ..
+                    } => {
+                        for arg in args {
+                            self.check_call_arg(arg);
+                        }
                         // If generic class, infer type params from constructor args
                         if let Some(gp) = self.generic_defs.get(class_name).cloned() {
-                            let init_methods = self.class_methods
-                                .get(class_name).cloned().unwrap_or_default();
+                            let init_methods = self
+                                .class_methods
+                                .get(class_name)
+                                .cloned()
+                                .unwrap_or_default();
                             if let Some(init_sig) = init_methods.get("__init__") {
-                                let arg_types: Vec<TypeId> = args.iter()
+                                let arg_types: Vec<TypeId> = args
+                                    .iter()
                                     .filter_map(|a| match a {
                                         CallArg::Positional(e) => Some(self.check_expr(e)),
                                         _ => None,
-                                    }).collect();
-                                let (subst, conflicts) = infer_type_args(
-                                    &gp, &init_sig.params, &arg_types, &self.tcx,
-                                );
+                                    })
+                                    .collect();
+                                let (subst, conflicts) =
+                                    infer_type_args(&gp, &init_sig.params, &arg_types, &self.tcx);
                                 for err in conflicts {
                                     self.error(expr.span, err);
                                 }
-                                let bound_errors = check_bounds(
-                                    &subst, &gp, &self.tcx,
-                                );
+                                let bound_errors = check_bounds(&subst, &gp, &self.tcx);
                                 for err in bound_errors {
                                     self.error(expr.span, err);
                                 }
@@ -272,17 +361,26 @@ impl TypeChecker {
                         func_ty_id
                     }
                     Ty::Any => {
-                        for arg in args { self.check_call_arg(arg); }
+                        for arg in args {
+                            self.check_call_arg(arg);
+                        }
                         self.tcx.any()
                     }
                     Ty::Error => self.tcx.error(),
                     // #1586: heterogeneous-callable Union. `for C in set, list, ...:`
                     // binds C to a Union of Fn/Class types. If every member is
                     // callable, accept the call and return Any (join of return types).
-                    Ty::Union(ref members) if members.iter().all(|&m| {
-                        matches!(self.tcx.get(m), Ty::Fn { .. } | Ty::Class { .. } | Ty::Any | Ty::Error)
-                    }) => {
-                        for arg in args { self.check_call_arg(arg); }
+                    Ty::Union(ref members)
+                        if members.iter().all(|&m| {
+                            matches!(
+                                self.tcx.get(m),
+                                Ty::Fn { .. } | Ty::Class { .. } | Ty::Any | Ty::Error
+                            )
+                        }) =>
+                    {
+                        for arg in args {
+                            self.check_call_arg(arg);
+                        }
                         self.tcx.any()
                     }
                     _ => {
@@ -307,9 +405,15 @@ impl TypeChecker {
                 self.resolve_subscript(obj_ty, expr.span)
             }
             Expr::Slice { start, stop, step } => {
-                if let Some(s) = start { self.check_expr(s); }
-                if let Some(s) = stop { self.check_expr(s); }
-                if let Some(s) = step { self.check_expr(s); }
+                if let Some(s) = start {
+                    self.check_expr(s);
+                }
+                if let Some(s) = stop {
+                    self.check_expr(s);
+                }
+                if let Some(s) = step {
+                    self.check_expr(s);
+                }
                 self.tcx.any()
             }
             Expr::ListLit(elems) => {
@@ -332,12 +436,15 @@ impl TypeChecker {
             }
             Expr::DictLit(pairs) => {
                 // Collect only explicit key-value pairs (skip unpack entries where key=None).
-                let kv_pairs: Vec<_> = pairs.iter()
+                let kv_pairs: Vec<_> = pairs
+                    .iter()
                     .filter_map(|(k, v)| k.as_ref().map(|key| (key, v)))
                     .collect();
                 // Also type-check unpack expressions (values where key is None).
                 for (k, v) in pairs {
-                    if k.is_none() { self.check_expr(v); }
+                    if k.is_none() {
+                        self.check_expr(v);
+                    }
                 }
                 if kv_pairs.is_empty() {
                     // Empty dict or unpack-only: return any type
@@ -364,16 +471,20 @@ impl TypeChecker {
                 }
             }
             Expr::SetLit(elems) => {
-                for elem in elems { self.check_expr(elem); }
+                for elem in elems {
+                    self.check_expr(elem);
+                }
                 self.tcx.error()
             }
             Expr::TupleLit(elems) => {
-                let types: Vec<TypeId> = elems.iter()
-                    .map(|e| self.check_expr(e))
-                    .collect();
+                let types: Vec<TypeId> = elems.iter().map(|e| self.check_expr(e)).collect();
                 self.tcx.intern(Ty::Tuple(types))
             }
-            Expr::IfExpr { body, condition, else_body } => {
+            Expr::IfExpr {
+                body,
+                condition,
+                else_body,
+            } => {
                 self.check_expr(condition);
                 let bt = self.check_expr(body);
                 self.check_expr(else_body);
@@ -381,19 +492,35 @@ impl TypeChecker {
             }
             Expr::Lambda { params, body } => {
                 self.symbols.push_scope();
-                let param_types: Vec<TypeId> = params.iter().map(|p| {
-                    let ty = self.resolve_type_expr(&p.ty);
-                    let sym = self.symbols.define(p.name.clone(), SymbolKind::Parameter);
-                    self.set_sym_type(sym.0, ty);
-                    ty
-                }).collect();
+                let param_types: Vec<TypeId> = params
+                    .iter()
+                    .map(|p| {
+                        let ty = self.resolve_type_expr(&p.ty);
+                        let sym = self.symbols.define(p.name.clone(), SymbolKind::Parameter);
+                        self.set_sym_type(sym.0, ty);
+                        ty
+                    })
+                    .collect();
                 let ret = self.check_expr(body);
                 self.symbols.pop_scope();
-                self.tcx.intern(Ty::Fn { params: param_types, ret, variadic: false })
+                self.tcx.intern(Ty::Fn {
+                    params: param_types,
+                    ret,
+                    variadic: false,
+                })
             }
-            Expr::ListComp { element, generators }
-            | Expr::SetComp { element, generators }
-            | Expr::GeneratorExpr { element, generators } => {
+            Expr::ListComp {
+                element,
+                generators,
+            }
+            | Expr::SetComp {
+                element,
+                generators,
+            }
+            | Expr::GeneratorExpr {
+                element,
+                generators,
+            } => {
                 self.symbols.push_scope();
                 self.comprehension_depth += 1;
                 for gen in generators {
@@ -407,14 +534,20 @@ impl TypeChecker {
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, elem_ty);
                     }
-                    for cond in &gen.conditions { self.check_expr(cond); }
+                    for cond in &gen.conditions {
+                        self.check_expr(cond);
+                    }
                 }
                 self.check_expr(element);
                 self.comprehension_depth -= 1;
                 self.symbols.pop_scope();
                 self.tcx.any()
             }
-            Expr::DictComp { key, value, generators } => {
+            Expr::DictComp {
+                key,
+                value,
+                generators,
+            } => {
                 self.symbols.push_scope();
                 self.comprehension_depth += 1;
                 for gen in generators {
@@ -427,7 +560,9 @@ impl TypeChecker {
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, elem_ty);
                     }
-                    for cond in &gen.conditions { self.check_expr(cond); }
+                    for cond in &gen.conditions {
+                        self.check_expr(cond);
+                    }
                 }
                 self.check_expr(key);
                 self.check_expr(value);
@@ -436,7 +571,9 @@ impl TypeChecker {
                 self.tcx.error()
             }
             Expr::Yield(val) => {
-                if let Some(v) = val { self.check_expr(v); }
+                if let Some(v) = val {
+                    self.check_expr(v);
+                }
                 self.tcx.error()
             }
             Expr::YieldFrom(expr) | Expr::Await(expr) | Expr::Starred(expr) => {
@@ -454,7 +591,8 @@ impl TypeChecker {
                 // outer variable's type (e.g. outer `i = 0` flipped from int
                 // to float when an inner `(i := i + 1)` walrus was lowered).
                 let sym = if self.comprehension_depth > 0 {
-                    self.symbols.define_in_enclosing_scope(target.clone(), SymbolKind::Variable)
+                    self.symbols
+                        .define_in_enclosing_scope(target.clone(), SymbolKind::Variable)
                 } else {
                     self.symbols.define(target.clone(), SymbolKind::Variable)
                 };
@@ -471,7 +609,9 @@ impl TypeChecker {
                 self.tcx.bool()
             }
             Expr::UnpackTarget(elems) => {
-                for elem in elems { self.check_expr(elem); }
+                for elem in elems {
+                    self.check_expr(elem);
+                }
                 self.tcx.error()
             }
         }
@@ -489,9 +629,15 @@ impl TypeChecker {
     /// Check a single call argument (helper for non-Fn call sites).
     fn check_call_arg(&mut self, arg: &CallArg) {
         match arg {
-            CallArg::Positional(a) => { self.check_expr(a); }
-            CallArg::Keyword { value, .. } => { self.check_expr(value); }
-            CallArg::StarArg(a) | CallArg::DoubleStarArg(a) => { self.check_expr(a); }
+            CallArg::Positional(a) => {
+                self.check_expr(a);
+            }
+            CallArg::Keyword { value, .. } => {
+                self.check_expr(value);
+            }
+            CallArg::StarArg(a) | CallArg::DoubleStarArg(a) => {
+                self.check_expr(a);
+            }
         }
     }
 
@@ -531,12 +677,10 @@ impl TypeChecker {
             // The `self` receiver is already stripped from `__init__` param rows,
             // so positional alignment starts at the first real argument. Names not
             // in `import_origins` (user-defined classes, locals) resolve to None.
-            Expr::Ident(name) => {
-                self.import_origins.get(name).and_then(|(module, _qual)| {
-                    super::stdlib_sigs::get(module, "", name)
-                        .or_else(|| super::stdlib_sigs::get(module, name, "__init__"))
-                })
-            }
+            Expr::Ident(name) => self.import_origins.get(name).and_then(|(module, _qual)| {
+                super::stdlib_sigs::get(module, "", name)
+                    .or_else(|| super::stdlib_sigs::get(module, name, "__init__"))
+            }),
             // Attribute access: `os.strerror(...)` (module fn) or
             // `obj.handle_entityref(...)` (instance method).
             Expr::Attr { object, attr } => {
@@ -565,9 +709,9 @@ impl TypeChecker {
                     } else if let Some(cls) = self.instance_origins.get(base).cloned() {
                         // `base` is a stdlib instance — recover its module from
                         // the class's import origin, then resolve a method sig.
-                        self.import_origins.get(&cls).and_then(|(module, _q)| {
-                            super::stdlib_sigs::get(module, &cls, attr)
-                        })
+                        self.import_origins
+                            .get(&cls)
+                            .and_then(|(module, _q)| super::stdlib_sigs::get(module, &cls, attr))
                     } else {
                         None
                     }
@@ -593,7 +737,9 @@ impl TypeChecker {
                 // not know how positional alignment continues past these.
                 break;
             };
-            let Some(param) = sig.params.get(param_idx) else { break };
+            let Some(param) = sig.params.get(param_idx) else {
+                break;
+            };
             if param.star {
                 break; // never enforce past `*args`
             }
@@ -668,7 +814,9 @@ impl TypeChecker {
         match self.tcx.get(obj_ty_id).clone() {
             Ty::Class { fields, .. } => {
                 for (name, ty) in &fields {
-                    if name == attr { return *ty; }
+                    if name == attr {
+                        return *ty;
+                    }
                 }
                 // Method lookup would go here; for now return Any
                 self.tcx.any()
@@ -684,8 +832,21 @@ impl TypeChecker {
             Ty::List(elem) => elem,
             Ty::Dict(_, v) => v,
             Ty::Tuple(ts) if !ts.is_empty() => {
-                // Static tuple index: return union of all element types
-                self.tcx.intern(Ty::Union(ts))
+                // Static tuple index: return the union of all element types,
+                // deduped like `infer_iter_element` (#1562) so a homogeneous
+                // tuple subscripts to the bare element type rather than a
+                // degenerate Union[Int, Int, ...].
+                let mut uniq: Vec<TypeId> = Vec::with_capacity(ts.len());
+                for t in ts {
+                    if !uniq.contains(&t) {
+                        uniq.push(t);
+                    }
+                }
+                if uniq.len() == 1 {
+                    uniq.into_iter().next().unwrap()
+                } else {
+                    self.tcx.intern(Ty::Union(uniq))
+                }
             }
             Ty::Str => self.tcx.str(),
             Ty::Any | Ty::Error => self.tcx.any(),
@@ -710,13 +871,18 @@ impl TypeChecker {
         }
     }
 
-    pub(crate) fn check_binop(
-        &mut self,
-        op: BinOp,
-        lt: TypeId,
-        rt: TypeId,
-        span: Span,
-    ) -> TypeId {
+    /// True when `t` is a `Union` whose members are ALL numeric
+    /// (Int/Float/Bool). Such unions arise from subscripting heterogeneous
+    /// numeric tuples; arithmetic on them is safe to defer to runtime
+    /// dispatch. Unions with any non-numeric member return false.
+    fn is_all_numeric_union(&self, t: TypeId) -> bool {
+        match self.tcx.get(t) {
+            Ty::Union(ts) => ts.iter().all(|m| self.tcx.get(*m).is_numeric()),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn check_binop(&mut self, op: BinOp, lt: TypeId, rt: TypeId, span: Span) -> TypeId {
         if self.tcx.get(lt).is_error() || self.tcx.get(rt).is_error() {
             return self.tcx.error();
         }
@@ -725,8 +891,14 @@ impl TypeChecker {
             return self.tcx.any();
         }
         match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div
-            | BinOp::FloorDiv | BinOp::Mod | BinOp::Pow | BinOp::MatMul => {
+            BinOp::Add
+            | BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::FloorDiv
+            | BinOp::Mod
+            | BinOp::Pow
+            | BinOp::MatMul => {
                 // Str + Str → Str (string concatenation): early branch before numeric guards
                 if matches!(op, BinOp::Add)
                     && matches!(self.tcx.get(lt), Ty::Str)
@@ -750,20 +922,29 @@ impl TypeChecker {
                 }
                 // List * Int or Int * List → List (repetition)
                 if matches!(op, BinOp::Mul) {
-                    if (matches!(self.tcx.get(lt), Ty::List(_)) && matches!(self.tcx.get(rt), Ty::Int))
-                        || (matches!(self.tcx.get(lt), Ty::Int) && matches!(self.tcx.get(rt), Ty::List(_)))
+                    if (matches!(self.tcx.get(lt), Ty::List(_))
+                        && matches!(self.tcx.get(rt), Ty::Int))
+                        || (matches!(self.tcx.get(lt), Ty::Int)
+                            && matches!(self.tcx.get(rt), Ty::List(_)))
                     {
-                        return if matches!(self.tcx.get(lt), Ty::List(_)) { lt } else { rt };
+                        return if matches!(self.tcx.get(lt), Ty::List(_)) {
+                            lt
+                        } else {
+                            rt
+                        };
                     }
                     // Tuple * Int or Int * Tuple → Tuple (repetition)
-                    if (matches!(self.tcx.get(lt), Ty::Tuple(_)) && matches!(self.tcx.get(rt), Ty::Int))
-                        || (matches!(self.tcx.get(lt), Ty::Int) && matches!(self.tcx.get(rt), Ty::Tuple(_)))
+                    if (matches!(self.tcx.get(lt), Ty::Tuple(_))
+                        && matches!(self.tcx.get(rt), Ty::Int))
+                        || (matches!(self.tcx.get(lt), Ty::Int)
+                            && matches!(self.tcx.get(rt), Ty::Tuple(_)))
                     {
                         return self.tcx.any();
                     }
                     // Str * Int or Int * Str → Str (repetition)
                     if (matches!(self.tcx.get(lt), Ty::Str) && matches!(self.tcx.get(rt), Ty::Int))
-                        || (matches!(self.tcx.get(lt), Ty::Int) && matches!(self.tcx.get(rt), Ty::Str))
+                        || (matches!(self.tcx.get(lt), Ty::Int)
+                            && matches!(self.tcx.get(rt), Ty::Str))
                     {
                         return self.tcx.str();
                     }
@@ -785,11 +966,28 @@ impl TypeChecker {
                 {
                     return self.tcx.any();
                 }
+                // Union-of-numerics (e.g. a subscript on a heterogeneous
+                // numeric tuple yields Union[Int, Float]): every member
+                // supports arithmetic, so defer to runtime dispatch via Any.
+                // Unions containing ANY non-numeric member do NOT qualify —
+                // those still hard-error below (force-typed policy, Option A).
+                let l_num_union = self.is_all_numeric_union(lt);
+                let r_num_union = self.is_all_numeric_union(rt);
+                if (l_num_union || r_num_union)
+                    && (l_num_union || self.tcx.get(lt).is_numeric())
+                    && (r_num_union || self.tcx.get(rt).is_numeric())
+                {
+                    return self.tcx.any();
+                }
                 if !self.types_compatible(lt, rt) {
-                    self.error(span, format!(
-                        "operand type mismatch: `{}` vs `{}`",
-                        self.ty_name(lt), self.ty_name(rt),
-                    ));
+                    self.error(
+                        span,
+                        format!(
+                            "operand type mismatch: `{}` vs `{}`",
+                            self.ty_name(lt),
+                            self.ty_name(rt),
+                        ),
+                    );
                     return self.tcx.error();
                 }
                 if !self.tcx.get(lt).is_numeric() {
@@ -811,7 +1009,9 @@ impl TypeChecker {
             }
             BinOp::LShift | BinOp::RShift => {
                 // Bool is a subtype of int — accept both
-                if !matches!(self.tcx.get(lt), Ty::Int | Ty::Bool) || !matches!(self.tcx.get(rt), Ty::Int | Ty::Bool) {
+                if !matches!(self.tcx.get(lt), Ty::Int | Ty::Bool)
+                    || !matches!(self.tcx.get(rt), Ty::Int | Ty::Bool)
+                {
                     self.error(span, "shift operators require int types");
                     return self.tcx.error();
                 }
@@ -822,21 +1022,40 @@ impl TypeChecker {
                 // Python: bool & bool → bool, bool & int → int, int & int → int
                 if matches!(self.tcx.get(lt), Ty::Bool) && matches!(self.tcx.get(rt), Ty::Bool) {
                     self.tcx.bool()
-                } else if matches!(self.tcx.get(lt), Ty::Int | Ty::Bool) && matches!(self.tcx.get(rt), Ty::Int | Ty::Bool) {
+                } else if matches!(self.tcx.get(lt), Ty::Int | Ty::Bool)
+                    && matches!(self.tcx.get(rt), Ty::Int | Ty::Bool)
+                {
                     self.tcx.int()
                 } else {
                     self.tcx.any()
                 }
             }
-            BinOp::Eq | BinOp::NotEq
-            | BinOp::Is | BinOp::IsNot => self.tcx.bool(),
+            BinOp::Eq | BinOp::NotEq | BinOp::Is | BinOp::IsNot => self.tcx.bool(),
             BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
                 // Bool is a subtype of int — accept for ordered comparisons
                 // Class instances accepted — may define __lt__/__le__/__gt__/__ge__
-                let lt_ok = matches!(self.tcx.get(lt), Ty::Int | Ty::Float | Ty::Bool | Ty::Str
-                    | Ty::List(_) | Ty::Tuple(_) | Ty::Any | Ty::Class { .. });
-                let rt_ok = matches!(self.tcx.get(rt), Ty::Int | Ty::Float | Ty::Bool | Ty::Str
-                    | Ty::List(_) | Ty::Tuple(_) | Ty::Any | Ty::Class { .. });
+                let lt_ok = matches!(
+                    self.tcx.get(lt),
+                    Ty::Int
+                        | Ty::Float
+                        | Ty::Bool
+                        | Ty::Str
+                        | Ty::List(_)
+                        | Ty::Tuple(_)
+                        | Ty::Any
+                        | Ty::Class { .. }
+                );
+                let rt_ok = matches!(
+                    self.tcx.get(rt),
+                    Ty::Int
+                        | Ty::Float
+                        | Ty::Bool
+                        | Ty::Str
+                        | Ty::List(_)
+                        | Ty::Tuple(_)
+                        | Ty::Any
+                        | Ty::Class { .. }
+                );
                 if !lt_ok || !rt_ok {
                     self.error(span, "comparison requires numeric types");
                 }
@@ -856,7 +1075,9 @@ impl TypeChecker {
             Pattern::Binding(name) => {
                 let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                 // Propagate the match subject type into the capture binding (#827).
-                let ty = self.current_match_subject_ty.unwrap_or_else(|| self.tcx.error());
+                let ty = self
+                    .current_match_subject_ty
+                    .unwrap_or_else(|| self.tcx.error());
                 self.set_sym_type(sym.0, ty);
             }
             Pattern::Constructor { fields, .. } => {
@@ -892,7 +1113,10 @@ impl TypeChecker {
                 let binding_names = collect_pattern_bindings(&patterns[0]);
                 // Check each alternative and accumulate the per-name types.
                 let mut per_name_types: std::collections::HashMap<String, Vec<TypeId>> =
-                    binding_names.iter().map(|n| (n.clone(), Vec::new())).collect();
+                    binding_names
+                        .iter()
+                        .map(|n| (n.clone(), Vec::new()))
+                        .collect();
                 for p in patterns {
                     self.check_pattern(p);
                     for name in &binding_names {
@@ -907,7 +1131,10 @@ impl TypeChecker {
                 // Re-define each binding with the merged type. If all alternatives agree
                 // on the same type, keep that type; otherwise fall back to Any (#827).
                 for name in &binding_names {
-                    let types = per_name_types.get(name).map(|v| v.as_slice()).unwrap_or(&[]);
+                    let types = per_name_types
+                        .get(name)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]);
                     let merged = if types.is_empty() {
                         self.tcx.any()
                     } else if types.iter().all(|&t| t == types[0]) {
@@ -930,7 +1157,11 @@ impl TypeChecker {
                     let elem_ty = match &subj_ty_clone {
                         Some(Ty::List(inner)) => *inner,
                         Some(Ty::Tuple(ts)) => {
-                            if i < ts.len() { ts[i] } else { self.tcx.any() }
+                            if i < ts.len() {
+                                ts[i]
+                            } else {
+                                self.tcx.any()
+                            }
                         }
                         _ => self.tcx.any(),
                     };
@@ -993,17 +1224,24 @@ impl TypeChecker {
                     self.current_match_subject_ty = prev;
                     return;
                 }
-                let (class_fields, explicit_match_args): (Vec<(String, TypeId)>, Option<Vec<String>>) =
-                    self.symbols.lookup(class_name)
-                        .map(|sym| {
-                            let ty = self.get_sym_type(sym.0);
-                            if let Ty::Class { fields, match_args, .. } = self.tcx.get(ty).clone() {
-                                (fields, match_args)
-                            } else {
-                                (Vec::new(), None)
-                            }
-                        })
-                        .unwrap_or_default();
+                let (class_fields, explicit_match_args): (
+                    Vec<(String, TypeId)>,
+                    Option<Vec<String>>,
+                ) = self
+                    .symbols
+                    .lookup(class_name)
+                    .map(|sym| {
+                        let ty = self.get_sym_type(sym.0);
+                        if let Ty::Class {
+                            fields, match_args, ..
+                        } = self.tcx.get(ty).clone()
+                        {
+                            (fields, match_args)
+                        } else {
+                            (Vec::new(), None)
+                        }
+                    })
+                    .unwrap_or_default();
 
                 // Build positional field types (#827):
                 // - explicit `__match_args__` present (even empty): use it (empty → no positional slots).
@@ -1012,9 +1250,11 @@ impl TypeChecker {
                     Some(names) => names,
                     None => class_fields.iter().map(|(n, _)| n.clone()).collect(),
                 };
-                let positional_field_types: Vec<TypeId> = positional_names.iter()
+                let positional_field_types: Vec<TypeId> = positional_names
+                    .iter()
                     .map(|arg_name| {
-                        class_fields.iter()
+                        class_fields
+                            .iter()
                             .find(|(n, _)| n == arg_name)
                             .map(|(_, t)| *t)
                             .unwrap_or_else(|| self.tcx.any())
@@ -1026,7 +1266,8 @@ impl TypeChecker {
                     let field_ty = match name {
                         Some(attr_name) => {
                             // Keyword: look up the field by name
-                            class_fields.iter()
+                            class_fields
+                                .iter()
                                 .find(|(n, _)| n == attr_name)
                                 .map(|(_, t)| *t)
                                 .unwrap_or_else(|| self.tcx.any())
@@ -1070,20 +1311,28 @@ impl TypeChecker {
                 let alias_ty = match &pattern.node {
                     Pattern::ClassPattern { cls, .. } => {
                         let class_name = cls.last().map(|s| s.as_str()).unwrap_or("");
-                        self.symbols.lookup(class_name)
+                        self.symbols
+                            .lookup(class_name)
                             .map(|s| self.get_sym_type(s.0))
-                            .filter(|&ty| matches!(self.tcx.get(ty), crate::types::Ty::Class { .. }))
+                            .filter(|&ty| {
+                                matches!(self.tcx.get(ty), crate::types::Ty::Class { .. })
+                            })
                             .unwrap_or_else(|| self.tcx.any())
                     }
                     Pattern::Constructor { path, .. } => {
                         let class_name = path.last().map(|s| s.as_str()).unwrap_or("");
-                        self.symbols.lookup(class_name)
+                        self.symbols
+                            .lookup(class_name)
                             .map(|s| self.get_sym_type(s.0))
-                            .filter(|&ty| matches!(self.tcx.get(ty), crate::types::Ty::Class { .. }))
+                            .filter(|&ty| {
+                                matches!(self.tcx.get(ty), crate::types::Ty::Class { .. })
+                            })
                             .unwrap_or_else(|| self.tcx.any())
                     }
                     // For non-class patterns, propagate the match subject type (#827).
-                    _ => self.current_match_subject_ty.unwrap_or_else(|| self.tcx.any()),
+                    _ => self
+                        .current_match_subject_ty
+                        .unwrap_or_else(|| self.tcx.any()),
                 };
                 self.set_sym_type(sym.0, alias_ty);
             }
@@ -1100,28 +1349,44 @@ fn collect_pattern_bindings(pat: &Spanned<Pattern>) -> std::collections::BTreeSe
 
 fn collect_bindings_inner(pat: &Pattern, names: &mut std::collections::BTreeSet<String>) {
     match pat {
-        Pattern::Binding(name) => { names.insert(name.clone()); }
+        Pattern::Binding(name) => {
+            names.insert(name.clone());
+        }
         Pattern::Or(alts) => {
             // Don't recurse into nested OR — validate at each level
-            for alt in alts { collect_bindings_inner(&alt.node, names); }
+            for alt in alts {
+                collect_bindings_inner(&alt.node, names);
+            }
         }
         Pattern::Sequence(pats) => {
-            for p in pats { collect_bindings_inner(&p.node, names); }
+            for p in pats {
+                collect_bindings_inner(&p.node, names);
+            }
         }
         Pattern::As { pattern, name } => {
             collect_bindings_inner(&pattern.node, names);
             names.insert(name.clone());
         }
         Pattern::ClassPattern { patterns, .. } => {
-            for (_, p) in patterns { collect_bindings_inner(&p.node, names); }
+            for (_, p) in patterns {
+                collect_bindings_inner(&p.node, names);
+            }
         }
         Pattern::Mapping { pairs, rest } => {
-            for (_, p) in pairs { collect_bindings_inner(&p.node, names); }
-            if let Some(r) = rest { names.insert(r.clone()); }
+            for (_, p) in pairs {
+                collect_bindings_inner(&p.node, names);
+            }
+            if let Some(r) = rest {
+                names.insert(r.clone());
+            }
         }
-        Pattern::Star(Some(name)) => { names.insert(name.clone()); }
+        Pattern::Star(Some(name)) => {
+            names.insert(name.clone());
+        }
         Pattern::Constructor { fields, .. } => {
-            for f in fields { names.insert(f.clone()); }
+            for f in fields {
+                names.insert(f.clone());
+            }
         }
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::Star(None) => {}
     }
@@ -1129,10 +1394,10 @@ fn collect_bindings_inner(pat: &Pattern, names: &mut std::collections::BTreeSet<
 
 #[cfg(test)]
 mod tests {
-    use crate::types::check::TypeChecker;
-    use crate::types::Ty;
     use crate::parser::ast::*;
     use crate::source::span::{Span, Spanned};
+    use crate::types::check::TypeChecker;
+    use crate::types::Ty;
 
     fn sp<T>(node: T) -> Spanned<T> {
         Spanned::new(node, Span::dummy())
@@ -1181,7 +1446,9 @@ mod tests {
     fn test_check_expr_undefined_ident_emits_error() {
         let mut checker = TypeChecker::new();
         let module = Module {
-            stmts: vec![sp(Stmt::ExprStmt(sp(Expr::Ident("undefined_xyz_999".to_string()))))],
+            stmts: vec![sp(Stmt::ExprStmt(sp(Expr::Ident(
+                "undefined_xyz_999".to_string(),
+            ))))],
         };
         let errors = checker.check_module(&module);
         assert!(!errors.is_empty());
@@ -1270,7 +1537,7 @@ mod tests {
     fn test_check_expr_ellipsis() {
         let mut checker = TypeChecker::new();
         let ty = checker.check_expr(&sp(Expr::Ellipsis));
-        assert_eq!(checker.tcx.get(ty), &Ty::Error);
+        assert_eq!(checker.tcx.get(ty), &Ty::Any);
     }
 
     // --- BinOp type mismatch ---

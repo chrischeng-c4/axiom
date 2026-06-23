@@ -11,6 +11,7 @@
 //! workspace, readiness), rig owns case orchestration + assertions + gates,
 //! meter owns resource attribution.
 
+pub mod config;
 pub mod discovery;
 pub mod engine;
 pub mod pins;

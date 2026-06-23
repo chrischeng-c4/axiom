@@ -1,7 +1,7 @@
-use crate::lexer::token::TokenKind;
-use crate::source::span::{Span, Spanned};
 use super::ast::*;
 use super::Parser;
+use crate::lexer::token::TokenKind;
+use crate::source::span::{Span, Spanned};
 
 impl<'a> Parser<'a> {
     /// Ternary: `body if condition else else_body`
@@ -57,8 +57,7 @@ impl<'a> Parser<'a> {
                 // the next call arg. Only confirm on `:` / `=`, or on `,`
                 // followed by a depth-0 body-`:` further ahead (which marks
                 // a real typed-lambda continuation `lambda x: T, y: U: body`).
-                let ty = if kind == ParamKind::Regular
-                    && self.peek_kind() == Some(TokenKind::Colon)
+                let ty = if kind == ParamKind::Regular && self.peek_kind() == Some(TokenKind::Colon)
                 {
                     let saved = self.pos;
                     self.advance(); // tentatively consume :
@@ -91,8 +90,12 @@ impl<'a> Parser<'a> {
                 };
 
                 params.push(Param {
-                    name, ty, default,
+                    name,
+                    ty,
+                    default,
                     kind,
+                    pos_only: false,
+                    kw_only: false,
                     span: self.span_from(p_start),
                 });
 
@@ -107,7 +110,13 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Colon)?;
         let body = self.parse_expr()?;
         let span = Span::new(self.file_id, start, body.span.end);
-        Ok(Spanned::new(Expr::Lambda { params, body: Box::new(body) }, span))
+        Ok(Spanned::new(
+            Expr::Lambda {
+                params,
+                body: Box::new(body),
+            },
+            span,
+        ))
     }
 
     /// Yield: `yield expr` or `yield from expr`
@@ -238,7 +247,9 @@ impl<'a> Parser<'a> {
             let mut entries: Vec<(Option<Spanned<Expr>>, Spanned<Expr>)> = vec![(None, val)];
             while self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();
-                if self.peek_kind() == Some(TokenKind::RBrace) { break; }
+                if self.peek_kind() == Some(TokenKind::RBrace) {
+                    break;
+                }
                 if self.peek_kind() == Some(TokenKind::DoubleStar) {
                     self.advance();
                     let v = self.parse_expr()?;
@@ -276,8 +287,7 @@ impl<'a> Parser<'a> {
             }
 
             // Regular dict (possibly mixed with **unpack entries)
-            let mut pairs: Vec<(Option<Spanned<Expr>>, Spanned<Expr>)> =
-                vec![(Some(first), value)];
+            let mut pairs: Vec<(Option<Spanned<Expr>>, Spanned<Expr>)> = vec![(Some(first), value)];
             while self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();
                 if self.peek_kind() == Some(TokenKind::RBrace) {
@@ -328,10 +338,11 @@ impl<'a> Parser<'a> {
     ///
     /// Supports both single-variable (`for x in …`) and tuple-target
     /// (`for k, v in …`) loop variables.
-    pub(crate) fn parse_comprehension_clauses(&mut self) -> crate::error::Result<Vec<Comprehension>> {
+    pub(crate) fn parse_comprehension_clauses(
+        &mut self,
+    ) -> crate::error::Result<Vec<Comprehension>> {
         let mut generators = Vec::new();
-        while self.peek_kind() == Some(TokenKind::For)
-            || self.peek_kind() == Some(TokenKind::Async)
+        while self.peek_kind() == Some(TokenKind::For) || self.peek_kind() == Some(TokenKind::Async)
         {
             let is_async = if self.peek_kind() == Some(TokenKind::Async) {
                 self.advance();
@@ -347,8 +358,8 @@ impl<'a> Parser<'a> {
             targets.push(self.text_at(ts, te).to_string());
             while self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance(); // consume ','
-                // Break if we've reached `in` (trailing comma not valid here,
-                // but be lenient to avoid a confusing error).
+                                // Break if we've reached `in` (trailing comma not valid here,
+                                // but be lenient to avoid a confusing error).
                 if self.peek_kind() == Some(TokenKind::In) {
                     break;
                 }
@@ -363,11 +374,15 @@ impl<'a> Parser<'a> {
                 self.advance();
                 conditions.push(self.parse_expr_bp(0)?);
             }
-            generators.push(Comprehension { targets, iter, conditions, is_async });
+            generators.push(Comprehension {
+                targets,
+                iter,
+                conditions,
+                is_async,
+            });
         }
         Ok(generators)
     }
-
 }
 
 #[cfg(test)]
@@ -376,7 +391,9 @@ mod tests {
     use crate::parser::ast::*;
     use crate::source::span::FileId;
 
-    fn fid() -> FileId { FileId(0) }
+    fn fid() -> FileId {
+        FileId(0)
+    }
     fn parse_expr(src: &str) -> Expr {
         let full = format!("{src}\n");
         let module = parser::parse(&full, fid()).expect("parse failed");
@@ -391,7 +408,11 @@ mod tests {
     #[test]
     fn test_ternary_expr() {
         match parse_expr("a if cond else b") {
-            Expr::IfExpr { body, condition, else_body } => {
+            Expr::IfExpr {
+                body,
+                condition,
+                else_body,
+            } => {
                 assert!(matches!(body.node, Expr::Ident(ref n) if n == "a"));
                 assert!(matches!(condition.node, Expr::Ident(ref n) if n == "cond"));
                 assert!(matches!(else_body.node, Expr::Ident(ref n) if n == "b"));
@@ -563,7 +584,10 @@ mod tests {
     #[test]
     fn test_list_comp() {
         match parse_expr("[x for x in items]") {
-            Expr::ListComp { element, generators } => {
+            Expr::ListComp {
+                element,
+                generators,
+            } => {
                 assert!(matches!(element.node, Expr::Ident(ref n) if n == "x"));
                 assert_eq!(generators.len(), 1);
                 assert_eq!(generators[0].targets, vec!["x"]);
@@ -604,7 +628,10 @@ mod tests {
     fn test_list_comp_async_for_currently_rejected_by_gating_gap() {
         let src = "[x async for x in aiter]\n";
         let r = crate::parser::parse(src, fid());
-        assert!(r.is_err(), "gating gap: async-for in list comp should currently error");
+        assert!(
+            r.is_err(),
+            "gating gap: async-for in list comp should currently error"
+        );
     }
 
     // --- Dict ---
@@ -663,7 +690,10 @@ mod tests {
     #[test]
     fn test_generator_in_parens() {
         match parse_expr("(x for x in items)") {
-            Expr::GeneratorExpr { element, generators } => {
+            Expr::GeneratorExpr {
+                element,
+                generators,
+            } => {
                 assert!(matches!(element.node, Expr::Ident(ref n) if n == "x"));
                 assert_eq!(generators.len(), 1);
             }

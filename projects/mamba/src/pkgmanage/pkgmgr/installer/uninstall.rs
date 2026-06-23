@@ -3,7 +3,6 @@
 // removes the dist-info directory. Errors when no dist-info matches the name.
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/installer.md#Logic
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -57,10 +56,11 @@ fn locate_dist_info(name: &str, site_packages: &Path) -> Result<Option<PathBuf>,
 /// Remove every RECORD-listed file plus the dist-info directory itself.
 /// Missing files are tolerated (PEP 376 is silent — pip ignores them too).
 pub fn run(name: &str, site_packages: &Path) -> Result<(), InstallerError> {
-    let dist_info = locate_dist_info(name, site_packages)?.ok_or_else(|| InstallerError::NotInstalled {
-        name: name.to_string(),
-        site_packages: site_packages.to_path_buf(),
-    })?;
+    let dist_info =
+        locate_dist_info(name, site_packages)?.ok_or_else(|| InstallerError::NotInstalled {
+            name: name.to_string(),
+            site_packages: site_packages.to_path_buf(),
+        })?;
 
     let record_path = dist_info.join("RECORD");
     let record_text = fs::read_to_string(&record_path).map_err(|e| {

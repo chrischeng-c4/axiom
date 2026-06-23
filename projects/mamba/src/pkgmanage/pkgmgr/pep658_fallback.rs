@@ -172,23 +172,25 @@ fn read_central_directory<F: RangeFetcher>(
 
     if eocd.cd_offset >= tail_archive_start {
         let rel = (eocd.cd_offset - tail_archive_start) as usize;
-        let end = rel.checked_add(cd_size_usize).ok_or_else(|| IndexError::ParseError {
-            url: url.to_string(),
-            detail: "Central Directory slice overflow".into(),
-        })?;
+        let end = rel
+            .checked_add(cd_size_usize)
+            .ok_or_else(|| IndexError::ParseError {
+                url: url.to_string(),
+                detail: "Central Directory slice overflow".into(),
+            })?;
         if end <= tail.len() {
             return Ok(tail[rel..end].to_vec());
         }
     }
 
     // Outside the tail window — issue a second Range request.
-    let cd_end = eocd
-        .cd_offset
-        .checked_add(eocd.cd_size)
-        .ok_or_else(|| IndexError::ParseError {
-            url: url.to_string(),
-            detail: "Central Directory absolute end overflowed u64".into(),
-        })?;
+    let cd_end =
+        eocd.cd_offset
+            .checked_add(eocd.cd_size)
+            .ok_or_else(|| IndexError::ParseError {
+                url: url.to_string(),
+                detail: "Central Directory absolute end overflowed u64".into(),
+            })?;
     let bytes = fetcher.fetch_range(
         url,
         &ByteRange::Bounded {
@@ -227,10 +229,12 @@ fn read_payload<F: RangeFetcher>(
             url: url.to_string(),
             detail: "LFH + payload range overflow".into(),
         })?;
-    let end_exclusive = start.checked_add(length).ok_or_else(|| IndexError::ParseError {
-        url: url.to_string(),
-        detail: "LFH range absolute end overflowed u64".into(),
-    })?;
+    let end_exclusive = start
+        .checked_add(length)
+        .ok_or_else(|| IndexError::ParseError {
+            url: url.to_string(),
+            detail: "LFH range absolute end overflowed u64".into(),
+        })?;
     let end_clamped = end_exclusive.min(total_size);
     if end_clamped <= start {
         return Err(IndexError::ParseError {
@@ -371,8 +375,12 @@ mod tests {
         let total = archive.len() as u64;
         let fetcher = FakeFetcher::new(archive);
 
-        let out = fetch_metadata_via_range("https://x.example/pkg-1.0-py3-none-any.whl", &fetcher, total)
-            .unwrap();
+        let out = fetch_metadata_via_range(
+            "https://x.example/pkg-1.0-py3-none-any.whl",
+            &fetcher,
+            total,
+        )
+        .unwrap();
         assert_eq!(out, metadata);
         // For a small wheel everything fits in the tail → exactly 2
         // fetches: tail, then LFH+payload (CD slice was inside tail).

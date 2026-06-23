@@ -1,0 +1,14 @@
+[record]
+suite = "lumen"
+dimension = "endurance"
+case = "fd_leak"
+subject = "bounded search runs without file descriptor or thread leak symptoms"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[[steps]]
+type = "exec"
+name = "health_and_ready"
+cmd = ["cargo", "test", "-p", "lumen", "--test", "api_e2e", "health_and_ready", "--", "--nocapture"]
+timeout_secs = 120

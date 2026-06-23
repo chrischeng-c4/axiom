@@ -1,17 +1,31 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// stat module for Mamba.
 ///
 /// Implements Python 3.12 `stat` stdlib: file type constants, permission constants,
 /// stat result field index constants, file type test functions, and permission helpers.
 /// All constant values match CPython 3.12 / POSIX exactly.
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-            $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
+            let arg = a.get(0).copied().unwrap_or_else(MbValue::none);
+            // Every stat mode helper operates on an integer mode (`mode & ...`);
+            // a non-int argument (e.g. S_ISDIR("x")) is a TypeError, not a
+            // silent 0-mode.
+            if arg.as_int_pyint().is_none() {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "unsupported operand type(s) for &: '{}' and 'int'",
+                        super::super::builtins::value_type_name(arg)
+                    ))),
+                );
+                return MbValue::none();
+            }
+            $fn(arg)
         }
     };
 }
@@ -148,20 +162,32 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("FILE_ATTRIBUTE_ARCHIVE".into(), MbValue::from_int(32));
     attrs.insert("FILE_ATTRIBUTE_COMPRESSED".into(), MbValue::from_int(2048));
     attrs.insert("FILE_ATTRIBUTE_DEVICE".into(), MbValue::from_int(64));
     attrs.insert("FILE_ATTRIBUTE_DIRECTORY".into(), MbValue::from_int(16));
     attrs.insert("FILE_ATTRIBUTE_ENCRYPTED".into(), MbValue::from_int(16384));
     attrs.insert("FILE_ATTRIBUTE_HIDDEN".into(), MbValue::from_int(2));
-    attrs.insert("FILE_ATTRIBUTE_INTEGRITY_STREAM".into(), MbValue::from_int(32768));
+    attrs.insert(
+        "FILE_ATTRIBUTE_INTEGRITY_STREAM".into(),
+        MbValue::from_int(32768),
+    );
     attrs.insert("FILE_ATTRIBUTE_NORMAL".into(), MbValue::from_int(128));
-    attrs.insert("FILE_ATTRIBUTE_NOT_CONTENT_INDEXED".into(), MbValue::from_int(8192));
-    attrs.insert("FILE_ATTRIBUTE_NO_SCRUB_DATA".into(), MbValue::from_int(131072));
+    attrs.insert(
+        "FILE_ATTRIBUTE_NOT_CONTENT_INDEXED".into(),
+        MbValue::from_int(8192),
+    );
+    attrs.insert(
+        "FILE_ATTRIBUTE_NO_SCRUB_DATA".into(),
+        MbValue::from_int(131072),
+    );
     attrs.insert("FILE_ATTRIBUTE_OFFLINE".into(), MbValue::from_int(4096));
     attrs.insert("FILE_ATTRIBUTE_READONLY".into(), MbValue::from_int(1));
-    attrs.insert("FILE_ATTRIBUTE_REPARSE_POINT".into(), MbValue::from_int(1024));
+    attrs.insert(
+        "FILE_ATTRIBUTE_REPARSE_POINT".into(),
+        MbValue::from_int(1024),
+    );
     attrs.insert("FILE_ATTRIBUTE_SPARSE_FILE".into(), MbValue::from_int(512));
     attrs.insert("FILE_ATTRIBUTE_SYSTEM".into(), MbValue::from_int(4));
     attrs.insert("FILE_ATTRIBUTE_TEMPORARY".into(), MbValue::from_int(256));
@@ -285,21 +311,29 @@ pub fn mb_stat_filemode(mode: MbValue) -> MbValue {
     // CPython renders a regular file (S_IFREG) as '-' and any *unrecognized*
     // type — including mode 0 — as '?', matching its `_filemode_table` default.
     result[0] = match m & S_IFMT {
-        x if x == S_IFDIR  => b'd',
-        x if x == S_IFLNK  => b'l',
-        x if x == S_IFCHR  => b'c',
-        x if x == S_IFBLK  => b'b',
-        x if x == S_IFIFO  => b'p',
+        x if x == S_IFDIR => b'd',
+        x if x == S_IFLNK => b'l',
+        x if x == S_IFCHR => b'c',
+        x if x == S_IFBLK => b'b',
+        x if x == S_IFIFO => b'p',
         x if x == S_IFSOCK => b's',
-        x if x == S_IFREG  => b'-',
-        _                   => b'?',
+        x if x == S_IFREG => b'-',
+        _ => b'?',
     };
 
     // Characters 1-3: owner permissions
-    if m & S_IRUSR != 0 { result[1] = b'r'; }
-    if m & S_IWUSR != 0 { result[2] = b'w'; }
+    if m & S_IRUSR != 0 {
+        result[1] = b'r';
+    }
+    if m & S_IWUSR != 0 {
+        result[2] = b'w';
+    }
     result[3] = if m & S_ISUID != 0 {
-        if m & S_IXUSR != 0 { b's' } else { b'S' }
+        if m & S_IXUSR != 0 {
+            b's'
+        } else {
+            b'S'
+        }
     } else if m & S_IXUSR != 0 {
         b'x'
     } else {
@@ -307,10 +341,18 @@ pub fn mb_stat_filemode(mode: MbValue) -> MbValue {
     };
 
     // Characters 4-6: group permissions
-    if m & S_IRGRP != 0 { result[4] = b'r'; }
-    if m & S_IWGRP != 0 { result[5] = b'w'; }
+    if m & S_IRGRP != 0 {
+        result[4] = b'r';
+    }
+    if m & S_IWGRP != 0 {
+        result[5] = b'w';
+    }
     result[6] = if m & S_ISGID != 0 {
-        if m & S_IXGRP != 0 { b's' } else { b'S' }
+        if m & S_IXGRP != 0 {
+            b's'
+        } else {
+            b'S'
+        }
     } else if m & S_IXGRP != 0 {
         b'x'
     } else {
@@ -318,10 +360,18 @@ pub fn mb_stat_filemode(mode: MbValue) -> MbValue {
     };
 
     // Characters 7-9: other permissions
-    if m & S_IROTH != 0 { result[7] = b'r'; }
-    if m & S_IWOTH != 0 { result[8] = b'w'; }
+    if m & S_IROTH != 0 {
+        result[7] = b'r';
+    }
+    if m & S_IWOTH != 0 {
+        result[8] = b'w';
+    }
     result[9] = if m & S_ISVTX != 0 {
-        if m & S_IXOTH != 0 { b't' } else { b'T' }
+        if m & S_IXOTH != 0 {
+            b't'
+        } else {
+            b'T'
+        }
     } else if m & S_IXOTH != 0 {
         b'x'
     } else {
@@ -359,7 +409,7 @@ mod tests {
         assert_eq!(S_IFDIR, 0o040000, "S_IFDIR must be 0o040000");
         assert_eq!(S_IFREG, 0o100000, "S_IFREG must be 0o100000");
         assert_eq!(S_IFLNK, 0o120000, "S_IFLNK must be 0o120000");
-        assert_eq!(S_IFMT,  0o170000, "S_IFMT must be 0o170000");
+        assert_eq!(S_IFMT, 0o170000, "S_IFMT must be 0o170000");
         // Spot-check permission constants.
         assert_eq!(S_IRUSR, 0o400, "S_IRUSR must be 0o400");
         assert_eq!(S_IWUSR, 0o200, "S_IWUSR must be 0o200");

@@ -1,13 +1,12 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// os module for Mamba (#310 R2).
 ///
 /// Provides: os.getcwd(), os.listdir(), os.environ, os.path.join(),
 ///           os.path.exists(), os.path.isfile(), os.path.isdir(),
 ///           os.path.basename(), os.path.dirname(), os.mkdir(),
 ///           os.remove(), os.rename()
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 // ── Dispatch wrappers: native ABI ──
 
@@ -69,9 +68,7 @@ fn is_str(val: MbValue) -> bool {
 /// True for a Mamba `bytes`/`bytearray` value.
 fn is_bytes_like(val: MbValue) -> bool {
     val.as_ptr()
-        .map(|ptr| unsafe {
-            matches!((*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
-        })
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) })
         .unwrap_or(false)
 }
 
@@ -113,6 +110,9 @@ dispatch_varargs!(dispatch_strerror, mb_os_strerror);
 dispatch_varargs!(dispatch_get_terminal_size, mb_os_get_terminal_size);
 dispatch_varargs!(dispatch_uname, mb_os_uname);
 dispatch_varargs!(dispatch_noop_none, mb_os_noop_none);
+dispatch_varargs!(dispatch_symlink, mb_os_symlink_v);
+dispatch_varargs!(dispatch_readlink, mb_os_readlink_v);
+dispatch_varargs!(dispatch_mkfifo, mb_os_mkfifo_v);
 dispatch_varargs!(dispatch_w_predicate_false, mb_os_w_predicate_false);
 dispatch_varargs!(dispatch_w_zero, mb_os_w_zero);
 dispatch_varargs!(dispatch_get_exec_path, mb_os_get_exec_path);
@@ -150,11 +150,17 @@ unsafe extern "C" fn dispatch_PathLike(_args_ptr: *const MbValue, _nargs: usize)
 // through mb_call_method's generic Instance path (no class.rs edit needed).
 unsafe extern "C" fn method_direntry_is_file(self_v: MbValue, _args: MbValue) -> MbValue {
     let path = direntry_field_str(self_v, "_path");
-    MbValue::from_bool(path.map(|p| std::path::Path::new(&p).is_file()).unwrap_or(false))
+    MbValue::from_bool(
+        path.map(|p| std::path::Path::new(&p).is_file())
+            .unwrap_or(false),
+    )
 }
 unsafe extern "C" fn method_direntry_is_dir(self_v: MbValue, _args: MbValue) -> MbValue {
     let path = direntry_field_str(self_v, "_path");
-    MbValue::from_bool(path.map(|p| std::path::Path::new(&p).is_dir()).unwrap_or(false))
+    MbValue::from_bool(
+        path.map(|p| std::path::Path::new(&p).is_dir())
+            .unwrap_or(false),
+    )
 }
 unsafe extern "C" fn method_direntry_is_symlink(self_v: MbValue, _args: MbValue) -> MbValue {
     let path = direntry_field_str(self_v, "_path");
@@ -177,7 +183,10 @@ unsafe extern "C" fn method_direntry_inode(self_v: MbValue, _args: MbValue) -> M
             std::fs::symlink_metadata(&p).ok().map(|m| m.ino() as i64)
         }
         #[cfg(not(unix))]
-        { let _ = p; Some(0i64) }
+        {
+            let _ = p;
+            Some(0i64)
+        }
     });
     safe_int(ino.unwrap_or(0))
 }
@@ -213,7 +222,11 @@ fn make_direntry(name: String, full_path: String) -> MbValue {
     );
     // Private copy used by the predicate/stat methods so they don't depend on a
     // user-mutated `path` field.
-    set_instance_field(inst, "_path", MbValue::from_ptr(MbObject::new_str(full_path)));
+    set_instance_field(
+        inst,
+        "_path",
+        MbValue::from_ptr(MbObject::new_str(full_path)),
+    );
     inst
 }
 
@@ -290,44 +303,75 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     // os.name
-    let name = if cfg!(target_os = "windows") { "nt" } else { "posix" };
-    attrs.insert("name".to_string(),
-        MbValue::from_ptr(MbObject::new_str(name.to_string())));
+    let name = if cfg!(target_os = "windows") {
+        "nt"
+    } else {
+        "posix"
+    };
+    attrs.insert(
+        "name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())),
+    );
 
     // os.sep
     let sep = std::path::MAIN_SEPARATOR.to_string();
-    attrs.insert("sep".to_string(),
-        MbValue::from_ptr(MbObject::new_str(sep)));
+    attrs.insert("sep".to_string(), MbValue::from_ptr(MbObject::new_str(sep)));
 
     // os.linesep
-    let linesep = if cfg!(target_os = "windows") { "\r\n" } else { "\n" };
-    attrs.insert("linesep".to_string(),
-        MbValue::from_ptr(MbObject::new_str(linesep.to_string())));
+    let linesep = if cfg!(target_os = "windows") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    attrs.insert(
+        "linesep".to_string(),
+        MbValue::from_ptr(MbObject::new_str(linesep.to_string())),
+    );
 
     // os.curdir / os.pardir
-    attrs.insert("curdir".to_string(),
-        MbValue::from_ptr(MbObject::new_str(".".to_string())));
-    attrs.insert("pardir".to_string(),
-        MbValue::from_ptr(MbObject::new_str("..".to_string())));
+    attrs.insert(
+        "curdir".to_string(),
+        MbValue::from_ptr(MbObject::new_str(".".to_string())),
+    );
+    attrs.insert(
+        "pardir".to_string(),
+        MbValue::from_ptr(MbObject::new_str("..".to_string())),
+    );
 
     // os.environ (stub dict)
     let environ = MbObject::new_dict();
     attrs.insert("environ".to_string(), MbValue::from_ptr(environ));
 
     // os.pathsep / os.extsep / os.altsep / os.devnull (#1261).
-    let pathsep = if cfg!(target_os = "windows") { ";" } else { ":" };
-    attrs.insert("pathsep".to_string(),
-        MbValue::from_ptr(MbObject::new_str(pathsep.to_string())));
-    attrs.insert("extsep".to_string(),
-        MbValue::from_ptr(MbObject::new_str(".".to_string())));
+    let pathsep = if cfg!(target_os = "windows") {
+        ";"
+    } else {
+        ":"
+    };
+    attrs.insert(
+        "pathsep".to_string(),
+        MbValue::from_ptr(MbObject::new_str(pathsep.to_string())),
+    );
+    attrs.insert(
+        "extsep".to_string(),
+        MbValue::from_ptr(MbObject::new_str(".".to_string())),
+    );
     // altsep is '/' on Windows, None elsewhere — but we always provide
     // a string (Python code commonly does `os.altsep or os.sep`).
     let altsep = if cfg!(target_os = "windows") { "/" } else { "" };
-    attrs.insert("altsep".to_string(),
-        MbValue::from_ptr(MbObject::new_str(altsep.to_string())));
-    let devnull = if cfg!(target_os = "windows") { "nul" } else { "/dev/null" };
-    attrs.insert("devnull".to_string(),
-        MbValue::from_ptr(MbObject::new_str(devnull.to_string())));
+    attrs.insert(
+        "altsep".to_string(),
+        MbValue::from_ptr(MbObject::new_str(altsep.to_string())),
+    );
+    let devnull = if cfg!(target_os = "windows") {
+        "nul"
+    } else {
+        "/dev/null"
+    };
+    attrs.insert(
+        "devnull".to_string(),
+        MbValue::from_ptr(MbObject::new_str(devnull.to_string())),
+    );
 
     // os.F_OK / R_OK / W_OK / X_OK — access() mode constants.
     attrs.insert("F_OK".to_string(), MbValue::from_int(0));
@@ -339,59 +383,125 @@ pub fn register() {
     // what most surface tests assert; values match macOS where they matter. ──
     let int_consts: &[(&str, i64)] = &[
         // open() flags
-        ("O_RDONLY", 0x0000), ("O_WRONLY", 0x0001), ("O_RDWR", 0x0002),
-        ("O_ACCMODE", 0x0003), ("O_NONBLOCK", 0x0004), ("O_APPEND", 0x0008),
-        ("O_SHLOCK", 0x0010), ("O_EXLOCK", 0x0020), ("O_ASYNC", 0x0040),
-        ("O_FSYNC", 0x0080), ("O_SYNC", 0x0080), ("O_NOFOLLOW", 0x0100),
-        ("O_CREAT", 0x0200), ("O_TRUNC", 0x0400), ("O_EXCL", 0x0800),
-        ("O_EVTONLY", 0x8000), ("O_NOCTTY", 0x20000), ("O_DIRECTORY", 0x100000),
-        ("O_SYMLINK", 0x200000), ("O_DSYNC", 0x400000), ("O_CLOEXEC", 0x1000000),
-        ("O_NOFOLLOW_ANY", 0x20000000), ("O_NDELAY", 0x0004),
-        ("O_EXEC", 0x40000000), ("O_SEARCH", 0x40100000),
+        ("O_RDONLY", 0x0000),
+        ("O_WRONLY", 0x0001),
+        ("O_RDWR", 0x0002),
+        ("O_ACCMODE", 0x0003),
+        ("O_NONBLOCK", 0x0004),
+        ("O_APPEND", 0x0008),
+        ("O_SHLOCK", 0x0010),
+        ("O_EXLOCK", 0x0020),
+        ("O_ASYNC", 0x0040),
+        ("O_FSYNC", 0x0080),
+        ("O_SYNC", 0x0080),
+        ("O_NOFOLLOW", 0x0100),
+        ("O_CREAT", 0x0200),
+        ("O_TRUNC", 0x0400),
+        ("O_EXCL", 0x0800),
+        ("O_EVTONLY", 0x8000),
+        ("O_NOCTTY", 0x20000),
+        ("O_DIRECTORY", 0x100000),
+        ("O_SYMLINK", 0x200000),
+        ("O_DSYNC", 0x400000),
+        ("O_CLOEXEC", 0x1000000),
+        ("O_NOFOLLOW_ANY", 0x20000000),
+        ("O_NDELAY", 0x0004),
+        ("O_EXEC", 0x40000000),
+        ("O_SEARCH", 0x40100000),
         // lseek() whence
-        ("SEEK_SET", 0), ("SEEK_CUR", 1), ("SEEK_END", 2),
-        ("SEEK_HOLE", 3), ("SEEK_DATA", 4),
+        ("SEEK_SET", 0),
+        ("SEEK_CUR", 1),
+        ("SEEK_END", 2),
+        ("SEEK_HOLE", 3),
+        ("SEEK_DATA", 4),
         // sysexits.h
-        ("EX_OK", 0), ("EX_USAGE", 64), ("EX_DATAERR", 65), ("EX_NOINPUT", 66),
-        ("EX_NOUSER", 67), ("EX_NOHOST", 68), ("EX_UNAVAILABLE", 69),
-        ("EX_SOFTWARE", 70), ("EX_OSERR", 71), ("EX_OSFILE", 72),
-        ("EX_CANTCREAT", 73), ("EX_IOERR", 74), ("EX_TEMPFAIL", 75),
-        ("EX_PROTOCOL", 76), ("EX_NOPERM", 77), ("EX_CONFIG", 78),
+        ("EX_OK", 0),
+        ("EX_USAGE", 64),
+        ("EX_DATAERR", 65),
+        ("EX_NOINPUT", 66),
+        ("EX_NOUSER", 67),
+        ("EX_NOHOST", 68),
+        ("EX_UNAVAILABLE", 69),
+        ("EX_SOFTWARE", 70),
+        ("EX_OSERR", 71),
+        ("EX_OSFILE", 72),
+        ("EX_CANTCREAT", 73),
+        ("EX_IOERR", 74),
+        ("EX_TEMPFAIL", 75),
+        ("EX_PROTOCOL", 76),
+        ("EX_NOPERM", 77),
+        ("EX_CONFIG", 78),
         // lockf()
-        ("F_LOCK", 1), ("F_TLOCK", 2), ("F_ULOCK", 0), ("F_TEST", 3),
+        ("F_LOCK", 1),
+        ("F_TLOCK", 2),
+        ("F_ULOCK", 0),
+        ("F_TEST", 3),
         // waitpid()/spawn() options
-        ("WNOHANG", 1), ("WUNTRACED", 2), ("WCONTINUED", 0x10),
-        ("WEXITED", 4), ("WSTOPPED", 8), ("WNOWAIT", 0x20),
-        ("P_ALL", 0), ("P_PID", 1), ("P_PGID", 2),
-        ("P_WAIT", 0), ("P_NOWAIT", 1), ("P_NOWAITO", 1),
+        ("WNOHANG", 1),
+        ("WUNTRACED", 2),
+        ("WCONTINUED", 0x10),
+        ("WEXITED", 4),
+        ("WSTOPPED", 8),
+        ("WNOWAIT", 0x20),
+        ("P_ALL", 0),
+        ("P_PID", 1),
+        ("P_PGID", 2),
+        ("P_WAIT", 0),
+        ("P_NOWAIT", 1),
+        ("P_NOWAITO", 1),
         // wait() status macro inputs (CLD_*)
-        ("CLD_EXITED", 1), ("CLD_KILLED", 2), ("CLD_DUMPED", 3),
-        ("CLD_TRAPPED", 4), ("CLD_STOPPED", 5), ("CLD_CONTINUED", 6),
+        ("CLD_EXITED", 1),
+        ("CLD_KILLED", 2),
+        ("CLD_DUMPED", 3),
+        ("CLD_TRAPPED", 4),
+        ("CLD_STOPPED", 5),
+        ("CLD_CONTINUED", 6),
         // scheduling priority
-        ("PRIO_PROCESS", 0), ("PRIO_PGRP", 1), ("PRIO_USER", 2),
-        ("PRIO_DARWIN_THREAD", 1), ("PRIO_DARWIN_PROCESS", 4),
-        ("PRIO_DARWIN_BG", 0x1000), ("PRIO_DARWIN_NONUI", 0x1001),
+        ("PRIO_PROCESS", 0),
+        ("PRIO_PGRP", 1),
+        ("PRIO_USER", 2),
+        ("PRIO_DARWIN_THREAD", 1),
+        ("PRIO_DARWIN_PROCESS", 4),
+        ("PRIO_DARWIN_BG", 0x1000),
+        ("PRIO_DARWIN_NONUI", 0x1001),
         // sched policies
-        ("SCHED_OTHER", 1), ("SCHED_FIFO", 4), ("SCHED_RR", 2),
+        ("SCHED_OTHER", 1),
+        ("SCHED_FIFO", 4),
+        ("SCHED_RR", 2),
         // dlopen() flags
-        ("RTLD_LAZY", 0x1), ("RTLD_NOW", 0x2), ("RTLD_LOCAL", 0x4),
-        ("RTLD_GLOBAL", 0x8), ("RTLD_NOLOAD", 0x10), ("RTLD_NODELETE", 0x80),
+        ("RTLD_LAZY", 0x1),
+        ("RTLD_NOW", 0x2),
+        ("RTLD_LOCAL", 0x4),
+        ("RTLD_GLOBAL", 0x8),
+        ("RTLD_NOLOAD", 0x10),
+        ("RTLD_NODELETE", 0x80),
         // statvfs ST_* flags
-        ("ST_RDONLY", 1), ("ST_NOSUID", 2),
+        ("ST_RDONLY", 1),
+        ("ST_NOSUID", 2),
         // posix_spawn file-action selectors
-        ("POSIX_SPAWN_OPEN", 0), ("POSIX_SPAWN_CLOSE", 1), ("POSIX_SPAWN_DUP2", 2),
+        ("POSIX_SPAWN_OPEN", 0),
+        ("POSIX_SPAWN_CLOSE", 1),
+        ("POSIX_SPAWN_DUP2", 2),
         // misc
-        ("NGROUPS_MAX", 16), ("TMP_MAX", 308915776),
+        ("NGROUPS_MAX", 16),
+        ("TMP_MAX", 308915776),
     ];
     for (k, v) in int_consts {
-        attrs.entry(k.to_string()).or_insert_with(|| MbValue::from_int(*v));
+        attrs
+            .entry(k.to_string())
+            .or_insert_with(|| MbValue::from_int(*v));
     }
 
     // os.defpath — default PATH search list.
     attrs.insert(
         "defpath".to_string(),
         MbValue::from_ptr(MbObject::new_str(
-            if cfg!(target_os = "windows") { ".;C:\\bin" } else { ":/bin:/usr/bin" }.to_string(),
+            if cfg!(target_os = "windows") {
+                ".;C:\\bin"
+            } else {
+                ":/bin:/usr/bin"
+            }
+            .to_string(),
         )),
     );
     // os.supports_bytes_environ — POSIX True, Windows False.
@@ -401,11 +511,23 @@ pub fn register() {
     );
     // os.environb — bytes view of environ; expose an (empty) dict so presence
     // and dict-protocol probes succeed.
-    attrs.insert("environb".to_string(), MbValue::from_ptr(MbObject::new_dict()));
+    attrs.insert(
+        "environb".to_string(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
     // os.confstr_names / pathconf_names / sysconf_names — name→int maps.
-    attrs.insert("confstr_names".to_string(), MbValue::from_ptr(MbObject::new_dict()));
-    attrs.insert("pathconf_names".to_string(), MbValue::from_ptr(MbObject::new_dict()));
-    attrs.insert("sysconf_names".to_string(), MbValue::from_ptr(MbObject::new_dict()));
+    attrs.insert(
+        "confstr_names".to_string(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
+    attrs.insert(
+        "pathconf_names".to_string(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
+    attrs.insert(
+        "sysconf_names".to_string(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
 
     // os.error is an alias for the builtin OSError.
     attrs.insert(
@@ -414,7 +536,10 @@ pub fn register() {
     );
 
     // os.__all__ — a list with __len__ (surface only checks length protocol).
-    attrs.insert("__all__".to_string(), MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    attrs.insert(
+        "__all__".to_string(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
 
     // Callable functions via native ABI dispatchers + NATIVE_FUNC_ADDRS registration
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -472,7 +597,10 @@ pub fn register() {
         ("fsencode", dispatch_fsencode as *const () as usize),
         ("fsdecode", dispatch_fsdecode as *const () as usize),
         ("strerror", dispatch_strerror as *const () as usize),
-        ("get_terminal_size", dispatch_get_terminal_size as *const () as usize),
+        (
+            "get_terminal_size",
+            dispatch_get_terminal_size as *const () as usize,
+        ),
         ("uname", dispatch_uname as *const () as usize),
         // Presence-only surface stubs — callable, no-op semantics.
         ("abort", dispatch_noop_none as *const () as usize),
@@ -494,8 +622,8 @@ pub fn register() {
         ("ftruncate", dispatch_noop_none as *const () as usize),
         ("truncate", dispatch_noop_none as *const () as usize),
         ("link", dispatch_noop_none as *const () as usize),
-        ("symlink", dispatch_noop_none as *const () as usize),
-        ("readlink", dispatch_noop_none as *const () as usize),
+        ("symlink", dispatch_symlink as *const () as usize),
+        ("readlink", dispatch_readlink as *const () as usize),
         ("putenv", dispatch_noop_none as *const () as usize),
         ("unsetenv", dispatch_noop_none as *const () as usize),
         ("setpgid", dispatch_noop_none as *const () as usize),
@@ -514,7 +642,7 @@ pub fn register() {
         ("set_blocking", dispatch_noop_none as *const () as usize),
         ("set_inheritable", dispatch_noop_none as *const () as usize),
         ("register_at_fork", dispatch_noop_none as *const () as usize),
-        ("mkfifo", dispatch_noop_none as *const () as usize),
+        ("mkfifo", dispatch_mkfifo as *const () as usize),
         ("mknod", dispatch_noop_none as *const () as usize),
         ("makedev", dispatch_w_zero as *const () as usize),
         ("sched_yield", dispatch_noop_none as *const () as usize),
@@ -531,9 +659,18 @@ pub fn register() {
         ("pipe", dispatch_noop_none as *const () as usize),
         ("openpty", dispatch_noop_none as *const () as usize),
         ("device_encoding", dispatch_noop_none as *const () as usize),
-        ("get_blocking", dispatch_w_predicate_false as *const () as usize),
-        ("get_inheritable", dispatch_w_predicate_false as *const () as usize),
-        ("get_exec_path", dispatch_get_exec_path as *const () as usize),
+        (
+            "get_blocking",
+            dispatch_w_predicate_false as *const () as usize,
+        ),
+        (
+            "get_inheritable",
+            dispatch_w_predicate_false as *const () as usize,
+        ),
+        (
+            "get_exec_path",
+            dispatch_get_exec_path as *const () as usize,
+        ),
         ("getpgid", dispatch_w_zero as *const () as usize),
         ("getpgrp", dispatch_w_zero as *const () as usize),
         ("getsid", dispatch_w_zero as *const () as usize),
@@ -556,19 +693,43 @@ pub fn register() {
         ("wait3", dispatch_noop_none as *const () as usize),
         ("wait4", dispatch_noop_none as *const () as usize),
         ("waitpid", dispatch_noop_none as *const () as usize),
-        ("waitstatus_to_exitcode", dispatch_w_zero as *const () as usize),
+        (
+            "waitstatus_to_exitcode",
+            dispatch_w_zero as *const () as usize,
+        ),
         ("WEXITSTATUS", dispatch_w_zero as *const () as usize),
         ("WSTOPSIG", dispatch_w_zero as *const () as usize),
         ("WTERMSIG", dispatch_w_zero as *const () as usize),
-        ("WIFEXITED", dispatch_w_predicate_false as *const () as usize),
-        ("WIFSIGNALED", dispatch_w_predicate_false as *const () as usize),
-        ("WIFSTOPPED", dispatch_w_predicate_false as *const () as usize),
-        ("WIFCONTINUED", dispatch_w_predicate_false as *const () as usize),
-        ("WCOREDUMP", dispatch_w_predicate_false as *const () as usize),
+        (
+            "WIFEXITED",
+            dispatch_w_predicate_false as *const () as usize,
+        ),
+        (
+            "WIFSIGNALED",
+            dispatch_w_predicate_false as *const () as usize,
+        ),
+        (
+            "WIFSTOPPED",
+            dispatch_w_predicate_false as *const () as usize,
+        ),
+        (
+            "WIFCONTINUED",
+            dispatch_w_predicate_false as *const () as usize,
+        ),
+        (
+            "WCOREDUMP",
+            dispatch_w_predicate_false as *const () as usize,
+        ),
         ("major", dispatch_w_zero as *const () as usize),
         ("minor", dispatch_w_zero as *const () as usize),
-        ("sched_get_priority_max", dispatch_w_zero as *const () as usize),
-        ("sched_get_priority_min", dispatch_w_zero as *const () as usize),
+        (
+            "sched_get_priority_max",
+            dispatch_w_zero as *const () as usize,
+        ),
+        (
+            "sched_get_priority_min",
+            dispatch_w_zero as *const () as usize,
+        ),
         ("sendfile", dispatch_w_zero as *const () as usize),
         ("posix_spawn", dispatch_w_zero as *const () as usize),
         ("posix_spawnp", dispatch_w_zero as *const () as usize),
@@ -593,7 +754,10 @@ pub fn register() {
         ("PathLike", dispatch_PathLike as *const () as usize),
         ("stat_result", dispatch_stat_v as *const () as usize),
         ("statvfs_result", dispatch_stat_v as *const () as usize),
-        ("terminal_size", dispatch_get_terminal_size as *const () as usize),
+        (
+            "terminal_size",
+            dispatch_get_terminal_size as *const () as usize,
+        ),
         ("uname_result", dispatch_uname as *const () as usize),
         ("times_result", dispatch_noop_none as *const () as usize),
         ("times", dispatch_noop_none as *const () as usize),
@@ -606,10 +770,14 @@ pub fn register() {
     }
     // os.DirEntry / os.PathLike resolve as types for isinstance().
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
-        m.borrow_mut()
-            .insert(dispatch_DirEntry as *const () as usize as u64, DIRENTRY_CLASS.to_string());
-        m.borrow_mut()
-            .insert(dispatch_PathLike as *const () as usize as u64, "os.PathLike".to_string());
+        m.borrow_mut().insert(
+            dispatch_DirEntry as *const () as usize as u64,
+            DIRENTRY_CLASS.to_string(),
+        );
+        m.borrow_mut().insert(
+            dispatch_PathLike as *const () as usize as u64,
+            "os.PathLike".to_string(),
+        );
     });
 
     // Register the os.DirEntry runtime class so scandir-produced instances
@@ -661,7 +829,10 @@ pub fn register() {
         ("relpath", dispatch_path_relpath as *const () as usize),
         ("samefile", dispatch_path_samefile as *const () as usize),
         ("commonpath", dispatch_path_commonpath as *const () as usize),
-        ("commonprefix", dispatch_path_commonprefix as *const () as usize),
+        (
+            "commonprefix",
+            dispatch_path_commonprefix as *const () as usize,
+        ),
         // Presence-only callables (surface fixtures probe hasattr/callable).
         ("isjunction", dispatch_path_isfile as *const () as usize),
         ("samestat", dispatch_noop_none as *const () as usize),
@@ -677,25 +848,38 @@ pub fn register() {
     }
     // os.path.sep constant
     let sep = std::path::MAIN_SEPARATOR.to_string();
-    path_attrs.insert("sep".to_string(),
-        MbValue::from_ptr(MbObject::new_str(sep)));
+    path_attrs.insert("sep".to_string(), MbValue::from_ptr(MbObject::new_str(sep)));
     // os.path string/bool/None constants (POSIX values; surface fixtures
     // probe hasattr only, so exact platform variance is not asserted).
-    path_attrs.insert("curdir".to_string(),
-        MbValue::from_ptr(MbObject::new_str(".".to_string())));
-    path_attrs.insert("pardir".to_string(),
-        MbValue::from_ptr(MbObject::new_str("..".to_string())));
-    path_attrs.insert("extsep".to_string(),
-        MbValue::from_ptr(MbObject::new_str(".".to_string())));
-    path_attrs.insert("pathsep".to_string(),
-        MbValue::from_ptr(MbObject::new_str(":".to_string())));
-    path_attrs.insert("defpath".to_string(),
-        MbValue::from_ptr(MbObject::new_str("/bin:/usr/bin".to_string())));
-    path_attrs.insert("devnull".to_string(),
-        MbValue::from_ptr(MbObject::new_str("/dev/null".to_string())));
+    path_attrs.insert(
+        "curdir".to_string(),
+        MbValue::from_ptr(MbObject::new_str(".".to_string())),
+    );
+    path_attrs.insert(
+        "pardir".to_string(),
+        MbValue::from_ptr(MbObject::new_str("..".to_string())),
+    );
+    path_attrs.insert(
+        "extsep".to_string(),
+        MbValue::from_ptr(MbObject::new_str(".".to_string())),
+    );
+    path_attrs.insert(
+        "pathsep".to_string(),
+        MbValue::from_ptr(MbObject::new_str(":".to_string())),
+    );
+    path_attrs.insert(
+        "defpath".to_string(),
+        MbValue::from_ptr(MbObject::new_str("/bin:/usr/bin".to_string())),
+    );
+    path_attrs.insert(
+        "devnull".to_string(),
+        MbValue::from_ptr(MbObject::new_str("/dev/null".to_string())),
+    );
     path_attrs.insert("altsep".to_string(), MbValue::none());
-    path_attrs.insert("supports_unicode_filenames".to_string(),
-        MbValue::from_bool(false));
+    path_attrs.insert(
+        "supports_unicode_filenames".to_string(),
+        MbValue::from_bool(false),
+    );
     // ALLOW_MISSING: corpus marker probed by the surface present-fixture; not a
     // real CPython os.path attr, registered as a sentinel so hasattr() holds.
     path_attrs.insert("ALLOW_MISSING".to_string(), MbValue::none());
@@ -731,13 +915,15 @@ pub fn mb_os_listdir(path: MbValue) -> MbValue {
     let dir = extract_str(path).unwrap_or_else(|| ".".to_string());
     match std::fs::read_dir(&dir) {
         Ok(entries) => {
-            let items: Vec<MbValue> = entries.filter_map(|e| {
-                e.ok().map(|entry| {
-                    MbValue::from_ptr(MbObject::new_str(
-                        entry.file_name().to_string_lossy().to_string()
-                    ))
+            let items: Vec<MbValue> = entries
+                .filter_map(|e| {
+                    e.ok().map(|entry| {
+                        MbValue::from_ptr(MbObject::new_str(
+                            entry.file_name().to_string_lossy().to_string(),
+                        ))
+                    })
                 })
-            }).collect();
+                .collect();
             MbValue::from_ptr(MbObject::new_list(items))
         }
         Err(_) => MbValue::from_ptr(MbObject::new_list(Vec::new())),
@@ -801,12 +987,93 @@ pub fn mb_os_cpu_count() -> MbValue {
 
 // ── os.path functions ──
 
+/// fspath contract: a path component must be str (our join models str-only;
+/// bytes mixing has its own message). Raises the CPython TypeError and
+/// returns true when `val` is not path-like.
+fn raise_bad_path_component(val: MbValue) -> bool {
+    if extract_str(val).is_some() {
+        return false;
+    }
+    // None stays lenient (no raise): `__file__` is still None in mamba, and
+    // the `os.path.join(os.path.dirname(__file__), ...)` idiom must keep
+    // flowing None through rather than hard-failing the whole script.
+    if val.is_none() {
+        return false;
+    }
+    let tn = if val.is_none() {
+        "NoneType"
+    } else if val.as_bool().is_some() {
+        "bool"
+    } else if val.as_int().is_some() {
+        "int"
+    } else if val.is_float() {
+        "float"
+    } else if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            match (*ptr).data {
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "Can't mix strings and bytes in path components".to_string(),
+                        )),
+                    );
+                    return true;
+                }
+                ObjData::List(_) => "list",
+                ObjData::Tuple(_) => "tuple",
+                ObjData::Dict(_) => "dict",
+                _ => "object",
+            }
+        }
+    } else {
+        "object"
+    };
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "expected str, bytes or os.PathLike object, not {tn}"
+        ))),
+    );
+    true
+}
+
+fn raise_file_not_found(path: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "[Errno 2] No such file or directory: '{path}'"
+        ))),
+    );
+    MbValue::none()
+}
+
 /// os.path.join(a, b) → string
 pub fn mb_os_path_join(a: MbValue, b: MbValue) -> MbValue {
+    // CPython: components must be uniformly str or uniformly bytes.
+    let is_bytes = |v: MbValue| {
+        v.as_ptr().is_some_and(|p| unsafe {
+            matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+        })
+    };
+    if is_bytes(a) != is_bytes(b) && extract_str(a).is_some() && extract_str(b).is_some() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "Can't mix strings and bytes in path components".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     if let (Some(sa), Some(sb)) = (extract_str(a), extract_str(b)) {
         let path = std::path::Path::new(&sa).join(&sb);
         MbValue::from_ptr(MbObject::new_str(path.display().to_string()))
     } else {
+        for v in [a, b] {
+            if raise_bad_path_component(v) {
+                return MbValue::none();
+            }
+        }
         MbValue::none()
     }
 }
@@ -880,7 +1147,8 @@ pub fn mb_os_path_abspath(path: MbValue) -> MbValue {
 pub fn mb_os_path_splitext(path: MbValue) -> MbValue {
     if let Some(p) = extract_str(path) {
         let path = std::path::Path::new(&p);
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .map(|e| format!(".{}", e.to_string_lossy()))
             .unwrap_or_default();
         let stem = p.strip_suffix(&ext).unwrap_or(&p).to_string();
@@ -897,8 +1165,14 @@ pub fn mb_os_path_splitext(path: MbValue) -> MbValue {
 pub fn mb_os_path_split(path: MbValue) -> MbValue {
     if let Some(p) = extract_str(path) {
         let path = std::path::Path::new(&p);
-        let dir = path.parent().map(|d| d.display().to_string()).unwrap_or_default();
-        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let dir = path
+            .parent()
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
         MbValue::from_ptr(MbObject::new_tuple(vec![
             MbValue::from_ptr(MbObject::new_str(dir)),
             MbValue::from_ptr(MbObject::new_str(name)),
@@ -912,7 +1186,10 @@ pub fn mb_os_path_split(path: MbValue) -> MbValue {
 pub fn mb_os_path_expanduser(path: MbValue) -> MbValue {
     if let Some(p) = extract_str(path) {
         if p.starts_with('~') {
-            if let Some(home) = std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()) {
+            if let Some(home) = std::env::var("HOME")
+                .ok()
+                .or_else(|| std::env::var("USERPROFILE").ok())
+            {
                 let expanded = p.replacen('~', &home, 1);
                 return MbValue::from_ptr(MbObject::new_str(expanded));
             }
@@ -928,7 +1205,8 @@ pub fn mb_os_path_getsize(path: MbValue) -> MbValue {
     if let Some(p) = extract_str(path) {
         match std::fs::metadata(&p) {
             Ok(meta) => MbValue::from_int(meta.len() as i64),
-            Err(_) => MbValue::from_int(-1),
+            // CPython surfaces the OS error (missing file → FileNotFoundError).
+            Err(_) => raise_file_not_found(&p),
         }
     } else {
         MbValue::from_int(-1)
@@ -951,13 +1229,19 @@ pub fn mb_os_path_normpath(path: MbValue) -> MbValue {
         for c in p.split('/') {
             match c {
                 "" | "." => {}
-                ".." => { components.pop(); }
+                ".." => {
+                    components.pop();
+                }
                 other => components.push(other),
             }
         }
         let mut result = components.join("/");
-        if p.starts_with('/') { result.insert(0, '/'); }
-        if result.is_empty() { result = ".".to_string(); }
+        if p.starts_with('/') {
+            result.insert(0, '/');
+        }
+        if result.is_empty() {
+            result = ".".to_string();
+        }
         MbValue::from_ptr(MbObject::new_str(result))
     } else {
         MbValue::none()
@@ -965,7 +1249,9 @@ pub fn mb_os_path_normpath(path: MbValue) -> MbValue {
 }
 
 /// os.path.normcase(path) → path with case normalized (no-op on POSIX).
-pub fn mb_os_path_normcase(path: MbValue) -> MbValue { path }
+pub fn mb_os_path_normcase(path: MbValue) -> MbValue {
+    path
+}
 
 /// os.path.expandvars(path) → string with $VAR expanded.
 pub fn mb_os_path_expandvars(path: MbValue) -> MbValue {
@@ -977,14 +1263,20 @@ pub fn mb_os_path_expandvars(path: MbValue) -> MbValue {
             if c == '$' {
                 let mut name = String::new();
                 let braced = matches!(chars.peek(), Some('{'));
-                if braced { chars.next(); }
+                if braced {
+                    chars.next();
+                }
                 while let Some(&nc) = chars.peek() {
                     if nc.is_alphanumeric() || nc == '_' {
                         name.push(nc);
                         chars.next();
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
-                if braced && matches!(chars.peek(), Some('}')) { chars.next(); }
+                if braced && matches!(chars.peek(), Some('}')) {
+                    chars.next();
+                }
                 if let Ok(v) = std::env::var(&name) {
                     out.push_str(&v);
                 } else if braced {
@@ -1006,7 +1298,53 @@ pub fn mb_os_path_expandvars(path: MbValue) -> MbValue {
 }
 
 /// os.path.relpath(path, start) → string
-pub fn mb_os_path_relpath(path: MbValue, _start: MbValue) -> MbValue { path }
+/// os.path.relpath(path, start=os.curdir) — relative path from `start` to
+/// `path`, computed lexically over abspath'd components (CPython posixpath).
+pub fn mb_os_path_relpath(path: MbValue, start: MbValue) -> MbValue {
+    let Some(p) = extract_str(path) else {
+        return path;
+    };
+    let s = extract_str(start).unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|_| ".".to_string())
+    });
+    let absify = |raw: &str| -> Vec<String> {
+        let joined = if raw.starts_with('/') {
+            raw.to_string()
+        } else {
+            let cwd = std::env::current_dir()
+                .map(|d| d.display().to_string())
+                .unwrap_or_default();
+            format!("{cwd}/{raw}")
+        };
+        let mut comps: Vec<String> = Vec::new();
+        for c in joined.split('/') {
+            match c {
+                "" | "." => {}
+                ".." => {
+                    comps.pop();
+                }
+                other => comps.push(other.to_string()),
+            }
+        }
+        comps
+    };
+    let pc = absify(&p);
+    let sc = absify(&s);
+    let common = pc.iter().zip(sc.iter()).take_while(|(a, b)| a == b).count();
+    let mut parts: Vec<String> = Vec::new();
+    for _ in common..sc.len() {
+        parts.push("..".to_string());
+    }
+    parts.extend(pc[common..].iter().cloned());
+    let rel = if parts.is_empty() {
+        ".".to_string()
+    } else {
+        parts.join("/")
+    };
+    MbValue::from_ptr(MbObject::new_str(rel))
+}
 
 fn collect_path_sequence(args: &[MbValue]) -> Vec<String> {
     if args.len() == 1 {
@@ -1049,7 +1387,11 @@ fn commonpath_strs(paths: &[String]) -> Result<String, &'static str> {
                 .collect()
         })
         .collect();
-    let min_len = split_paths.iter().map(|parts| parts.len()).min().unwrap_or(0);
+    let min_len = split_paths
+        .iter()
+        .map(|parts| parts.len())
+        .min()
+        .unwrap_or(0);
     let mut common = Vec::new();
     for index in 0..min_len {
         let part = split_paths[0][index];
@@ -1076,12 +1418,79 @@ fn commonpath_strs(paths: &[String]) -> Result<String, &'static str> {
 pub fn mb_os_path_samefile(p1: MbValue, p2: MbValue) -> MbValue {
     match (extract_str(p1), extract_str(p2)) {
         (Some(a), Some(b)) => {
-            let ca = std::fs::canonicalize(&a).ok();
-            let cb = std::fs::canonicalize(&b).ok();
-            MbValue::from_bool(ca.is_some() && ca == cb)
+            // CPython os.stat()s both paths — a missing one raises
+            // FileNotFoundError rather than returning False.
+            let ca = match std::fs::canonicalize(&a) {
+                Ok(c) => c,
+                Err(_) => return raise_file_not_found(&a),
+            };
+            let cb = match std::fs::canonicalize(&b) {
+                Ok(c) => c,
+                Err(_) => return raise_file_not_found(&b),
+            };
+            MbValue::from_bool(ca == cb)
         }
         _ => MbValue::from_bool(false),
     }
+}
+
+/// os.symlink(src, dst) — create a symbolic link dst → src (POSIX).
+pub fn mb_os_symlink_v(args: &[MbValue]) -> MbValue {
+    let (Some(src), Some(dst)) = (
+        args.first().copied().and_then(extract_str),
+        args.get(1).copied().and_then(extract_str),
+    ) else {
+        return MbValue::none();
+    };
+    #[cfg(unix)]
+    if let Err(e) = std::os::unix::fs::symlink(&src, &dst) {
+        let kind = if e.kind() == std::io::ErrorKind::AlreadyExists {
+            "FileExistsError"
+        } else {
+            "OSError"
+        };
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str(kind.to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "[Errno 17] File exists: '{src}' -> '{dst}'"
+            ))),
+        );
+    }
+    MbValue::none()
+}
+
+/// os.readlink(path) — the target a symlink points at.
+pub fn mb_os_readlink_v(args: &[MbValue]) -> MbValue {
+    let Some(p) = args.first().copied().and_then(extract_str) else {
+        return MbValue::none();
+    };
+    match std::fs::read_link(&p) {
+        Ok(t) => MbValue::from_ptr(MbObject::new_str(t.display().to_string())),
+        Err(_) => raise_file_not_found(&p),
+    }
+}
+
+/// os.mkfifo(path, mode=0o666) — create a FIFO (POSIX).
+pub fn mb_os_mkfifo_v(args: &[MbValue]) -> MbValue {
+    let Some(p) = args.first().copied().and_then(extract_str) else {
+        return MbValue::none();
+    };
+    let mode = args.get(1).and_then(|v| v.as_int()).unwrap_or(0o666) as libc::mode_t;
+    #[cfg(unix)]
+    {
+        let c_path = match std::ffi::CString::new(p.clone()) {
+            Ok(c) => c,
+            Err(_) => return MbValue::none(),
+        };
+        let rc = unsafe { libc::mkfifo(c_path.as_ptr(), mode) };
+        if rc != 0 {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!("mkfifo failed: '{p}'"))),
+            );
+        }
+    }
+    MbValue::none()
 }
 
 /// os.makedirs(path) — create directory and all parents.
@@ -1120,12 +1529,17 @@ fn walk_recursive(dir: &str, result: MbValue) {
                 files.push(name);
             }
         }
-        let dir_list = MbObject::new_list(dirs.iter().map(|d|
-            MbValue::from_ptr(MbObject::new_str(d.clone()))
-        ).collect());
-        let file_list = MbObject::new_list(files.iter().map(|f|
-            MbValue::from_ptr(MbObject::new_str(f.clone()))
-        ).collect());
+        let dir_list = MbObject::new_list(
+            dirs.iter()
+                .map(|d| MbValue::from_ptr(MbObject::new_str(d.clone())))
+                .collect(),
+        );
+        let file_list = MbObject::new_list(
+            files
+                .iter()
+                .map(|f| MbValue::from_ptr(MbObject::new_str(f.clone())))
+                .collect(),
+        );
         let tuple = MbObject::new_tuple(vec![
             MbValue::from_ptr(MbObject::new_str(dir.to_string())),
             MbValue::from_ptr(dir_list),
@@ -1176,7 +1590,8 @@ pub fn mb_os_stat(path: MbValue) -> MbValue {
             let (mode, size, mtime) = if let Some(m) = meta {
                 let mode = if m.is_dir() { 0o040000 } else { 0o100000 } | 0o644;
                 let size = m.len() as i64;
-                let mtime = m.modified()
+                let mtime = m
+                    .modified()
                     .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs() as i64)
@@ -1233,11 +1648,21 @@ pub fn mb_os_urandom(n: MbValue) -> MbValue {
 
 /// os.getuid() / geteuid() / getgid() / getegid() / getppid() — stub 0.
 /// Mamba doesn't expose real POSIX IDs to Python yet.
-pub fn mb_os_getuid()  -> MbValue { MbValue::from_int(0) }
-pub fn mb_os_geteuid() -> MbValue { MbValue::from_int(0) }
-pub fn mb_os_getgid()  -> MbValue { MbValue::from_int(0) }
-pub fn mb_os_getegid() -> MbValue { MbValue::from_int(0) }
-pub fn mb_os_getppid() -> MbValue { MbValue::from_int(1) }
+pub fn mb_os_getuid() -> MbValue {
+    MbValue::from_int(0)
+}
+pub fn mb_os_geteuid() -> MbValue {
+    MbValue::from_int(0)
+}
+pub fn mb_os_getgid() -> MbValue {
+    MbValue::from_int(0)
+}
+pub fn mb_os_getegid() -> MbValue {
+    MbValue::from_int(0)
+}
+pub fn mb_os_getppid() -> MbValue {
+    MbValue::from_int(1)
+}
 
 /// os.getlogin() → user name string (from USER / USERNAME env, else 'mamba').
 pub fn mb_os_getlogin() -> MbValue {
@@ -1278,16 +1703,23 @@ fn atty(fd: i32) -> bool {
     // Avoid pulling in a crate; on unix, libc::isatty is one syscall.
     #[cfg(unix)]
     unsafe {
-        extern "C" { fn isatty(fd: i32) -> i32; }
+        extern "C" {
+            fn isatty(fd: i32) -> i32;
+        }
         isatty(fd) != 0
     }
     #[cfg(not(unix))]
-    { let _ = fd; false }
+    {
+        let _ = fd;
+        false
+    }
 }
 
 /// os.system(cmd) — run command via std::process; return exit status.
 pub fn mb_os_system(cmd: MbValue) -> MbValue {
-    let Some(c) = extract_str(cmd) else { return MbValue::from_int(-1); };
+    let Some(c) = extract_str(cmd) else {
+        return MbValue::from_int(-1);
+    };
     let status = std::process::Command::new("sh").arg("-c").arg(&c).status();
     match status {
         Ok(s) => MbValue::from_int(s.code().unwrap_or(-1) as i64),
@@ -1305,7 +1737,9 @@ pub fn mb_os_chmod(path: MbValue, mode: MbValue) -> MbValue {
         }
     }
     #[cfg(not(unix))]
-    { let _ = (path, mode); }
+    {
+        let _ = (path, mode);
+    }
     MbValue::none()
 }
 
@@ -1489,7 +1923,10 @@ fn mb_os_scandir(args: &[MbValue]) -> MbValue {
             } else {
                 "OSError"
             };
-            raise(exc, format!("[Errno 2] No such file or directory: '{}'", dir))
+            raise(
+                exc,
+                format!("[Errno 2] No such file or directory: '{}'", dir),
+            )
         }
     }
 }
@@ -1497,7 +1934,9 @@ fn mb_os_scandir(args: &[MbValue]) -> MbValue {
 /// os.remove(path)/unlink(path) — raise FileNotFoundError on missing file.
 fn mb_os_remove_v(args: &[MbValue]) -> MbValue {
     let arg = args.first().copied().unwrap_or_else(MbValue::none);
-    let Some(p) = path_arg_or_typeerror(arg, "remove") else { return MbValue::none(); };
+    let Some(p) = path_arg_or_typeerror(arg, "remove") else {
+        return MbValue::none();
+    };
     match std::fs::remove_file(&p) {
         Ok(_) => MbValue::none(),
         Err(e) => map_io_error(&e, &p),
@@ -1507,7 +1946,9 @@ fn mb_os_remove_v(args: &[MbValue]) -> MbValue {
 /// os.rmdir(path) — raise on missing/non-empty directory.
 fn mb_os_rmdir_v(args: &[MbValue]) -> MbValue {
     let arg = args.first().copied().unwrap_or_else(MbValue::none);
-    let Some(p) = path_arg_or_typeerror(arg, "rmdir") else { return MbValue::none(); };
+    let Some(p) = path_arg_or_typeerror(arg, "rmdir") else {
+        return MbValue::none();
+    };
     match std::fs::remove_dir(&p) {
         Ok(_) => MbValue::none(),
         Err(e) => map_io_error(&e, &p),
@@ -1517,7 +1958,9 @@ fn mb_os_rmdir_v(args: &[MbValue]) -> MbValue {
 /// os.stat(path)/lstat(path) — raise FileNotFoundError on a missing path.
 fn mb_os_stat_v(args: &[MbValue]) -> MbValue {
     let arg = args.first().copied().unwrap_or_else(MbValue::none);
-    let Some(p) = path_arg_or_typeerror(arg, "stat") else { return MbValue::none(); };
+    let Some(p) = path_arg_or_typeerror(arg, "stat") else {
+        return MbValue::none();
+    };
     stat_result_for(&p)
 }
 
@@ -1525,8 +1968,12 @@ fn mb_os_stat_v(args: &[MbValue]) -> MbValue {
 fn mb_os_rename_v(args: &[MbValue]) -> MbValue {
     let src = args.first().copied().unwrap_or_else(MbValue::none);
     let dst = args.get(1).copied().unwrap_or_else(MbValue::none);
-    let Some(s) = path_arg_or_typeerror(src, "rename") else { return MbValue::none(); };
-    let Some(d) = path_arg_or_typeerror(dst, "rename") else { return MbValue::none(); };
+    let Some(s) = path_arg_or_typeerror(src, "rename") else {
+        return MbValue::none();
+    };
+    let Some(d) = path_arg_or_typeerror(dst, "rename") else {
+        return MbValue::none();
+    };
     match std::fs::rename(&s, &d) {
         Ok(_) => MbValue::none(),
         Err(e) => map_io_error(&e, &s),
@@ -1557,7 +2004,9 @@ fn map_io_error(e: &std::io::Error, path: &str) -> MbValue {
 fn mb_os_fspath_v(args: &[MbValue]) -> MbValue {
     let val = args.first().copied().unwrap_or_else(MbValue::none);
     if is_str(val) || is_bytes_like(val) {
-        unsafe { super::super::rc::retain_if_ptr(val); }
+        unsafe {
+            super::super::rc::retain_if_ptr(val);
+        }
         return val;
     }
     if let Some(ptr) = val.as_ptr() {
@@ -1607,7 +2056,10 @@ fn mb_os_kill(args: &[MbValue]) -> MbValue {
     #[cfg(not(unix))]
     {
         let _ = (pid, sig);
-        raise("ProcessLookupError", "[Errno 3] No such process".to_string())
+        raise(
+            "ProcessLookupError",
+            "[Errno 3] No such process".to_string(),
+        )
     }
 }
 
@@ -1637,7 +2089,10 @@ fn mb_os_umask_v(args: &[MbValue]) -> MbValue {
     if mask.as_int().is_none() {
         return raise(
             "TypeError",
-            format!("'{}' object cannot be interpreted as an integer", type_name_of(mask)),
+            format!(
+                "'{}' object cannot be interpreted as an integer",
+                type_name_of(mask)
+            ),
         );
     }
     MbValue::from_int(0)
@@ -1721,7 +2176,9 @@ fn seq_len(val: MbValue) -> Option<usize> {
 fn mb_os_fsencode(args: &[MbValue]) -> MbValue {
     let val = args.first().copied().unwrap_or_else(MbValue::none);
     if is_bytes_like(val) {
-        unsafe { super::super::rc::retain_if_ptr(val); }
+        unsafe {
+            super::super::rc::retain_if_ptr(val);
+        }
         return val;
     }
     if let Some(ptr) = val.as_ptr() {
@@ -1736,7 +2193,10 @@ fn mb_os_fsencode(args: &[MbValue]) -> MbValue {
     }
     raise(
         "TypeError",
-        format!("expected str, bytes or os.PathLike object, not {}", type_name_of(val)),
+        format!(
+            "expected str, bytes or os.PathLike object, not {}",
+            type_name_of(val)
+        ),
     )
 }
 
@@ -1744,7 +2204,9 @@ fn mb_os_fsencode(args: &[MbValue]) -> MbValue {
 fn mb_os_fsdecode(args: &[MbValue]) -> MbValue {
     let val = args.first().copied().unwrap_or_else(MbValue::none);
     if is_str(val) {
-        unsafe { super::super::rc::retain_if_ptr(val); }
+        unsafe {
+            super::super::rc::retain_if_ptr(val);
+        }
         return val;
     }
     if let Some(ptr) = val.as_ptr() {
@@ -1769,16 +2231,17 @@ fn mb_os_fsdecode(args: &[MbValue]) -> MbValue {
     }
     raise(
         "TypeError",
-        format!("expected str, bytes or os.PathLike object, not {}", type_name_of(val)),
+        format!(
+            "expected str, bytes or os.PathLike object, not {}",
+            type_name_of(val)
+        ),
     )
 }
 
 /// os.getcwdb() → bytes (UTF-8 of getcwd()).
 fn mb_os_getcwdb() -> MbValue {
     match std::env::current_dir() {
-        Ok(path) => MbValue::from_ptr(MbObject::new_bytes(
-            path.display().to_string().into_bytes(),
-        )),
+        Ok(path) => MbValue::from_ptr(MbObject::new_bytes(path.display().to_string().into_bytes())),
         Err(_) => MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
     }
 }
@@ -1793,8 +2256,14 @@ fn mb_os_strerror(args: &[MbValue]) -> MbValue {
 /// os.get_terminal_size() → an object with .columns and .lines (we model as a
 /// 2-tuple, which supports indexing; many callers use [0]/[1]).
 fn mb_os_get_terminal_size(_args: &[MbValue]) -> MbValue {
-    let cols = std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok()).unwrap_or(80);
-    let lines = std::env::var("LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
+    let cols = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(80);
+    let lines = std::env::var("LINES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(24);
     MbValue::from_ptr(MbObject::new_tuple(vec![
         MbValue::from_int(cols),
         MbValue::from_int(lines),
@@ -1825,7 +2294,11 @@ fn mb_os_uname(_args: &[MbValue]) -> MbValue {
 fn mb_os_get_exec_path(_args: &[MbValue]) -> MbValue {
     let path = std::env::var("PATH").unwrap_or_default();
     let items: Vec<MbValue> = path
-        .split(if cfg!(target_os = "windows") { ';' } else { ':' })
+        .split(if cfg!(target_os = "windows") {
+            ';'
+        } else {
+            ':'
+        })
         .map(|p| MbValue::from_ptr(MbObject::new_str(p.to_string())))
         .collect();
     MbValue::from_ptr(MbObject::new_list(items))
@@ -1859,7 +2332,9 @@ fn kwarg_truthy(kwargs: &Option<MbValue>, key: &str) -> bool {
 fn mb_os_makedirs_v(args: &[MbValue]) -> MbValue {
     let (pos, kwargs) = split_kwargs(args);
     let path_arg = pos.first().copied().unwrap_or_else(MbValue::none);
-    let Some(p) = path_arg_or_typeerror(path_arg, "makedirs") else { return MbValue::none(); };
+    let Some(p) = path_arg_or_typeerror(path_arg, "makedirs") else {
+        return MbValue::none();
+    };
     let exist_ok = kwarg_truthy(&kwargs, "exist_ok");
     let target = std::path::Path::new(&p);
     let already = target.exists();
@@ -1882,7 +2357,9 @@ fn mb_os_makedirs_v(args: &[MbValue]) -> MbValue {
 /// stopping at the first non-empty (or non-removable) parent.
 fn mb_os_removedirs_v(args: &[MbValue]) -> MbValue {
     let arg = args.first().copied().unwrap_or_else(MbValue::none);
-    let Some(p) = path_arg_or_typeerror(arg, "removedirs") else { return MbValue::none(); };
+    let Some(p) = path_arg_or_typeerror(arg, "removedirs") else {
+        return MbValue::none();
+    };
     // Remove the leaf first; surface its error like rmdir does.
     if let Err(e) = std::fs::remove_dir(&p) {
         return map_io_error(&e, &p);
@@ -1914,7 +2391,9 @@ thread_local! {
 fn mb_os_open_fd(args: &[MbValue]) -> MbValue {
     let (pos, _kw) = split_kwargs(args);
     let path_arg = pos.first().copied().unwrap_or_else(MbValue::none);
-    let Some(p) = path_arg_or_typeerror(path_arg, "open") else { return MbValue::none(); };
+    let Some(p) = path_arg_or_typeerror(path_arg, "open") else {
+        return MbValue::none();
+    };
     let flags = pos.get(1).and_then(|v| v.as_int()).unwrap_or(0);
 
     // Decode the subset of O_* flags we set above.
@@ -1926,14 +2405,28 @@ fn mb_os_open_fd(args: &[MbValue]) -> MbValue {
 
     let mut opts = std::fs::OpenOptions::new();
     match accmode {
-        0x1 => { opts.write(true); }           // O_WRONLY
-        0x2 => { opts.read(true).write(true); } // O_RDWR
-        _ => { opts.read(true); }               // O_RDONLY
+        0x1 => {
+            opts.write(true);
+        } // O_WRONLY
+        0x2 => {
+            opts.read(true).write(true);
+        } // O_RDWR
+        _ => {
+            opts.read(true);
+        } // O_RDONLY
     }
-    if create { opts.create(true); }
-    if excl { opts.create_new(true); }
-    if trunc { opts.truncate(true); }
-    if append { opts.append(true); }
+    if create {
+        opts.create(true);
+    }
+    if excl {
+        opts.create_new(true);
+    }
+    if trunc {
+        opts.truncate(true);
+    }
+    if append {
+        opts.append(true);
+    }
 
     match opts.open(&p) {
         Ok(file) => {
@@ -1958,7 +2451,10 @@ fn mb_os_write_fd(args: &[MbValue]) -> MbValue {
         None => {
             return raise(
                 "TypeError",
-                format!("a bytes-like object is required, not '{}'", type_name_of(data)),
+                format!(
+                    "a bytes-like object is required, not '{}'",
+                    type_name_of(data)
+                ),
             );
         }
     };
@@ -2056,11 +2552,15 @@ fn mb_os_access_v(args: &[MbValue]) -> MbValue {
         use std::os::unix::fs::PermissionsExt;
         let perm = meta.permissions().mode();
         let uid = unsafe {
-            extern "C" { fn geteuid() -> u32; }
+            extern "C" {
+                fn geteuid() -> u32;
+            }
             geteuid()
         } as u64;
         let gid = unsafe {
-            extern "C" { fn getegid() -> u32; }
+            extern "C" {
+                fn getegid() -> u32;
+            }
             getegid()
         } as u64;
         // Choose the permission triad that applies to the caller.
@@ -2124,9 +2624,9 @@ fn extract_str(val: MbValue) -> Option<String> {
             // os.path.exists(b"/tmp") returns False silently — accept bytes
             // via lossy UTF-8 (paths on macOS/Linux are typically utf-8).
             ObjData::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-            ObjData::ByteArray(lock) => Some(
-                String::from_utf8_lossy(&lock.read().unwrap()).into_owned(),
-            ),
+            ObjData::ByteArray(lock) => {
+                Some(String::from_utf8_lossy(&lock.read().unwrap()).into_owned())
+            }
             _ => None,
         }
     })
@@ -2245,8 +2745,15 @@ mod tests {
 
     #[test]
     fn test_os_path_getsize_nonexistent() {
+        // CPython contract: a missing path raises FileNotFoundError (the
+        // dispatcher returns none after raising).
         let path = s("/nonexistent_xyz_abc_123");
-        assert_eq!(mb_os_path_getsize(path).as_int(), Some(-1));
+        let result = mb_os_path_getsize(path);
+        assert!(
+            result.is_none(),
+            "missing path should raise, got {result:?}"
+        );
+        super::super::super::exception::mb_clear_exception();
     }
 
     #[test]
@@ -2335,11 +2842,15 @@ mod tests {
         // returned False. Verify bytes input now produces real results.
         let bytes_root = MbValue::from_ptr(MbObject::new_bytes(b"/".to_vec()));
         let exists = mb_os_path_exists(bytes_root);
-        assert_eq!(exists.as_bool(), Some(true),
-            "os.path.exists(b'/') must return True — silent-drop on bytes input");
+        assert_eq!(
+            exists.as_bool(),
+            Some(true),
+            "os.path.exists(b'/') must return True — silent-drop on bytes input"
+        );
 
-        let bytes_nonexistent = MbValue::from_ptr(
-            MbObject::new_bytes(b"/this/path/does/not/exist/anywhere".to_vec()));
+        let bytes_nonexistent = MbValue::from_ptr(MbObject::new_bytes(
+            b"/this/path/does/not/exist/anywhere".to_vec(),
+        ));
         let exists = mb_os_path_exists(bytes_nonexistent);
         assert_eq!(exists.as_bool(), Some(false));
     }

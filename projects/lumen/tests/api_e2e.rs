@@ -32,6 +32,23 @@ async fn health_and_ready() {
 }
 
 #[tokio::test]
+async fn version_reports_build_provenance() {
+    let s = server();
+    let resp = s.get("/version").await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    // version is the crate version, stamped via env!("CARGO_PKG_VERSION").
+    assert_eq!(
+        body["version"].as_str(),
+        Some(env!("CARGO_PKG_VERSION")),
+        "GET /version must report the crate version; body = {body}"
+    );
+    // git_sha + built_at are always present (degrading to "unknown" off-git).
+    assert!(body["git_sha"].is_string(), "git_sha missing in {body}");
+    assert!(body["built_at"].is_string(), "built_at missing in {body}");
+}
+
+#[tokio::test]
 async fn create_collection_and_index_keyword_then_search() {
     let s = server();
 
@@ -387,6 +404,38 @@ async fn type_mismatch_422() {
         ]}))
         .await;
     resp.assert_status(axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn unsupported_sort_shape_returns_400() {
+    let s = server();
+    s.put("/collections/posts")
+        .json(&json!({ "fields": { "body": { "type": "text" } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/posts/index")
+        .json(&json!({ "items": [
+            { "external_id": "p1", "field": "body", "value": "rust search" }
+        ]}))
+        .await
+        .assert_status_ok();
+    let resp = s
+        .post("/collections/posts/search")
+        .json(&json!({
+            "query": { "match": { "field": "body", "text": "rust" } },
+            "sort": [{ "field": "body", "order": "asc" }],
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    let body: Value = resp.json();
+    assert_eq!(body["error"], "unsupported_sort");
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("not sortable")),
+        "body = {body}"
+    );
 }
 
 #[tokio::test]

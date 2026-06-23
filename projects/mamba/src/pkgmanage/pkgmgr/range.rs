@@ -364,8 +364,7 @@ mod tests {
         let req = build_range(&ByteRange::From { start: 1_000_000 }).unwrap();
         assert_eq!(req, "bytes=1000000-");
 
-        let resp =
-            parse_content_range("bytes 1000000-5242879/5242880").unwrap();
+        let resp = parse_content_range("bytes 1000000-5242879/5242880").unwrap();
         assert_eq!(resp.length(), Some(4_242_880));
     }
 }

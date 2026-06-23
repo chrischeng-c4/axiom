@@ -21,7 +21,7 @@
 //
 // No partial state on failure: lockfile is never rewritten by sync.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -47,8 +47,8 @@ pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
         );
     }
 
-    let lock_src = fs::read_to_string(&lock_path)
-        .with_context(|| format!("read {}", lock_path.display()))?;
+    let lock_src =
+        fs::read_to_string(&lock_path).with_context(|| format!("read {}", lock_path.display()))?;
     let packages = parse_locked_packages(&lock_src)?;
 
     let venv_dir = project_dir.join(VENV_DIR);
@@ -60,8 +60,7 @@ pub fn cmd_sync(sub: &ArgMatches) -> Result<()> {
         return Ok(());
     }
 
-    fs::create_dir_all(&site)
-        .with_context(|| format!("create {}", site.display()))?;
+    fs::create_dir_all(&site).with_context(|| format!("create {}", site.display()))?;
     write_venv_marker(&venv_dir, &project_dir)?;
 
     // Tick 15: when the lockfile carries `url` + `sha256` for a package, fetch
@@ -188,8 +187,7 @@ fn download_and_verify_parallel(plan: &[LockedPkg], max_concurrent: usize) -> Re
         .context("build tokio runtime for sync download")?;
 
     let cache_dir = sync_cache_dir();
-    let cache_str: Arc<String> =
-        Arc::new(cache_dir.to_string_lossy().into_owned());
+    let cache_str: Arc<String> = Arc::new(cache_dir.to_string_lossy().into_owned());
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
     rt.block_on(async {
@@ -252,9 +250,7 @@ fn download_and_verify_parallel(plan: &[LockedPkg], max_concurrent: usize) -> Re
                 }
                 Err(join_err) => {
                     set.abort_all();
-                    return Err(anyhow::anyhow!(
-                        "download task panicked: {join_err}"
-                    ));
+                    return Err(anyhow::anyhow!("download task panicked: {join_err}"));
                 }
             }
         }
@@ -323,7 +319,8 @@ fn plan_install(packages: &[LockedPkg], site: &Path) -> Vec<LockedPkg> {
 
 fn is_installed(site: &Path, pkg: &LockedPkg) -> bool {
     let dir = site.join(normalize_module_name(&pkg.name));
-    dir.join("__init__.py").exists() && dir.join("INSTALLER").exists()
+    dir.join("__init__.py").exists()
+        && dir.join("INSTALLER").exists()
         && fs::read_to_string(dir.join("VERSION"))
             .ok()
             .map(|v| v.trim() == pkg.version)
@@ -332,8 +329,7 @@ fn is_installed(site: &Path, pkg: &LockedPkg) -> bool {
 
 fn materialize_stub(site: &Path, pkg: &LockedPkg) -> Result<()> {
     let dir = site.join(normalize_module_name(&pkg.name));
-    fs::create_dir_all(&dir)
-        .with_context(|| format!("create {}", dir.display()))?;
+    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let init_body = format!(
         "# stub-installed by `mamba sync` from a frozen local index\n\
          __mamba_pkg__ = {:?}\n\
@@ -361,8 +357,7 @@ fn write_venv_marker(venv_dir: &Path, project_dir: &Path) -> Result<()> {
          version = mamba\n",
         home = project_dir.display()
     );
-    fs::write(&cfg_path, body)
-        .with_context(|| format!("write {}", cfg_path.display()))?;
+    fs::write(&cfg_path, body).with_context(|| format!("write {}", cfg_path.display()))?;
     Ok(())
 }
 

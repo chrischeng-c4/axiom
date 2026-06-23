@@ -162,11 +162,13 @@ mod tests {
 
     #[test]
     fn test_sample_frames() {
-        let frames: Vec<Frame> = (0..10).map(|i| {
-            let mut f = Frame::blank(2, 2);
-            f.index = i;
-            f
-        }).collect();
+        let frames: Vec<Frame> = (0..10)
+            .map(|i| {
+                let mut f = Frame::blank(2, 2);
+                f.index = i;
+                f
+            })
+            .collect();
         let sampled = sample_frames(&frames, 3);
         assert_eq!(sampled.len(), 3);
     }

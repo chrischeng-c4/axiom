@@ -91,6 +91,15 @@ semantic_domain:
           - name: "RetentionPolicy"
             kind: "enum"
             public: true
+          - name: "ClusterBackend"
+            kind: "enum"
+            public: true
+          - name: "validate_cluster_service"
+            kind: "function"
+            public: false
+          - name: "validate_firebase_service"
+            kind: "function"
+            public: false
           - name: "SetupStep"
             kind: "struct"
             public: true
@@ -150,10 +159,16 @@ semantic_domain:
         ownership_state: "codegen"
         generator_primitives: ["config_surface"]
         symbols:
+          - name: "cluster"
+            kind: "module"
+            public: true
           - name: "commands"
             kind: "module"
             public: true
           - name: "config"
+            kind: "module"
+            public: true
+          - name: "emulator"
             kind: "module"
             public: true
           - name: "event"
@@ -207,6 +222,12 @@ semantic_domain:
             kind: "function"
             public: true
           - name: "vat_dir"
+            kind: "function"
+            public: true
+          - name: "clusters_dir"
+            kind: "function"
+            public: true
+          - name: "cluster_dir"
             kind: "function"
             public: true
           - name: "file"
@@ -364,6 +385,9 @@ semantic_domain:
           - name: "ConfigRef"
             kind: "struct"
             public: true
+          - name: "ClusterRunRecord"
+            kind: "struct"
+            public: true
           - name: "ServiceRunRecord"
             kind: "struct"
             public: true
@@ -460,6 +484,12 @@ semantic_domain:
           - name: "Cmd"
             kind: "enum"
             public: false
+          - name: "ClusterCmd"
+            kind: "enum"
+            public: false
+          - name: "EmulatorKind"
+            kind: "enum"
+            public: true
           - name: "run"
             kind: "function"
             public: true
@@ -469,6 +499,433 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/vat/src"
+      - path: "projects/vat/src/cluster.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "ResolvedBackend"
+            kind: "enum"
+            public: true
+          - name: "ClusterSpec"
+            kind: "struct"
+            public: true
+          - name: "ClusterInfo"
+            kind: "struct"
+            public: true
+          - name: "BackendUnavailable"
+            kind: "struct"
+            public: true
+          - name: "backend_token"
+            kind: "function"
+            public: true
+          - name: "resolve_backend"
+            kind: "function"
+            public: true
+          - name: "pick_backend"
+            kind: "function"
+            public: false
+          - name: "cluster_name"
+            kind: "function"
+            public: true
+          - name: "kind_multinode_config"
+            kind: "function"
+            public: false
+          - name: "run_capture"
+            kind: "function"
+            public: false
+          - name: "docker_daemon_up"
+            kind: "function"
+            public: false
+          - name: "which"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src"
+      - path: "projects/vat/build.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "main"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat"
+      - path: "projects/vat/src/emulator/mod.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "enum_model"]
+        symbols:
+          - name: "auth"
+            kind: "module"
+            public: true
+          - name: "pubsub"
+            kind: "module"
+            public: true
+          - name: "Kind"
+            kind: "enum"
+            public: true
+          - name: "serve"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/auth.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "sign_up"
+            kind: "function"
+            public: false
+          - name: "sign_in"
+            kind: "function"
+            public: false
+          - name: "lookup"
+            kind: "function"
+            public: false
+          - name: "mint"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/pubsub.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "pb"
+            kind: "module"
+            public: true
+          - name: "PubsubEmulator"
+            kind: "struct"
+            public: false
+          - name: "serve"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/dispatch.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "Target"
+            kind: "struct"
+            public: true
+          - name: "Oidc"
+            kind: "struct"
+            public: true
+          - name: "DispatchResult"
+            kind: "struct"
+            public: true
+          - name: "dispatch_collect"
+            kind: "function"
+            public: true
+          - name: "dispatch_http"
+            kind: "function"
+            public: true
+          - name: "mint_oidc"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/tasks.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "create_task"
+            kind: "function"
+            public: false
+          - name: "deliver"
+            kind: "function"
+            public: false
+          - name: "task_target"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/scheduler.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "create_job"
+            kind: "function"
+            public: false
+          - name: "job_action"
+            kind: "function"
+            public: false
+          - name: "fire"
+            kind: "function"
+            public: false
+          - name: "tick"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/workflows/mod.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "expr"
+            kind: "module"
+            public: true
+          - name: "interp"
+            kind: "module"
+            public: true
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "create_workflow"
+            kind: "function"
+            public: false
+          - name: "create_execution"
+            kind: "function"
+            public: false
+          - name: "get_execution"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/workflows"
+      - path: "projects/vat/src/emulator/workflows/expr.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "Scope"
+            kind: "type"
+            public: true
+          - name: "eval_value"
+            kind: "function"
+            public: true
+          - name: "eval_expr"
+            kind: "function"
+            public: true
+          - name: "to_text"
+            kind: "function"
+            public: true
+          - name: "tokenize"
+            kind: "function"
+            public: false
+          - name: "Parser"
+            kind: "struct"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/workflows"
+      - path: "projects/vat/src/emulator/workflows/interp.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "run"
+            kind: "function"
+            public: true
+          - name: "Interp"
+            kind: "struct"
+            public: false
+          - name: "main_args"
+            kind: "function"
+            public: false
+          - name: "parse_steps"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/workflows"
+      - path: "projects/vat/src/emulator/storage.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "serve"
+            kind: "function"
+            public: true
+          - name: "store_object"
+            kind: "function"
+            public: false
+          - name: "upload_object"
+            kind: "function"
+            public: false
+          - name: "get_object"
+            kind: "function"
+            public: false
+          - name: "parse_multipart"
+            kind: "function"
+            public: false
+          - name: "object_resource"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
+      - path: "projects/vat/src/emulator/httpmock/mod.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "ca"
+            kind: "module"
+            public: true
+          - name: "cassette"
+            kind: "module"
+            public: true
+          - name: "stub"
+            kind: "module"
+            public: true
+          - name: "Proxy"
+            kind: "struct"
+            public: false
+          - name: "serve"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/httpmock"
+      - path: "projects/vat/src/emulator/httpmock/ca.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "CaStore"
+            kind: "struct"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/httpmock"
+      - path: "projects/vat/src/emulator/httpmock/cassette.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "Recording"
+            kind: "struct"
+            public: true
+          - name: "Cassettes"
+            kind: "struct"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/httpmock"
+      - path: "projects/vat/src/emulator/httpmock/stub.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "Matcher"
+            kind: "struct"
+            public: true
+          - name: "StubResponse"
+            kind: "struct"
+            public: true
+          - name: "Stub"
+            kind: "struct"
+            public: true
+          - name: "Registry"
+            kind: "struct"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator/httpmock"
+      - path: "projects/vat/src/emulator/openapi.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method", "data_model"]
+        symbols:
+          - name: "MockResponse"
+            kind: "struct"
+            public: true
+          - name: "OpenApiSpec"
+            kind: "struct"
+            public: true
+          - name: "SpecRegistry"
+            kind: "struct"
+            public: true
+          - name: "Registration"
+            kind: "struct"
+            public: true
+          - name: "serve"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/emulator"
 ```
 
 ## Changes

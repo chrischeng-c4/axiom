@@ -16,6 +16,94 @@ use crate::parser;
 use crate::source::{FileId, SourceMap};
 use crate::types::TypeChecker;
 
+/// True iff `line` carries a PEP 484 `# type: ignore` comment (optionally
+/// `# type: ignore[code]`, optional space after the colon).
+fn line_has_type_ignore(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(pos) = rest.find('#') {
+        let comment = rest[pos + 1..].trim_start();
+        if let Some(after) = comment.strip_prefix("type:") {
+            let after = after.trim_start();
+            if let Some(tail) = after.strip_prefix("ignore") {
+                let ok = tail.is_empty()
+                    || tail.starts_with('[')
+                    || tail.starts_with(char::is_whitespace)
+                    || tail.starts_with('#');
+                if ok {
+                    return true;
+                }
+            }
+        }
+        rest = &rest[pos + 1..];
+    }
+    false
+}
+
+/// PEP 484 `# type: ignore` — drop static type/name errors whose span touches
+/// a source line carrying the comment. A bare comment-only `# type: ignore`
+/// before any code suppresses the whole module (mypy file-level semantics).
+/// Fixtures use this to exercise RUNTIME error behavior the static checker
+/// would otherwise reject at compile time.
+fn filter_type_ignored(errors: Vec<MambaError>, source: &str) -> Vec<MambaError> {
+    if errors.is_empty() {
+        return errors;
+    }
+    // Strict-type fixtures (`# mamba-strict-type:`) opt INTO compile-time
+    // enforcement — their `# type: ignore` comments document the CPython
+    // divergence and must not silence the very error being asserted.
+    if source
+        .lines()
+        .any(|l| l.trim_start().starts_with("# mamba-strict-type:"))
+    {
+        return errors;
+    }
+    let mut ignore_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut file_level = false;
+    let mut seen_code = false;
+    for (i, line) in source.lines().enumerate() {
+        if line_has_type_ignore(line) {
+            ignore_lines.insert(i + 1);
+            if !seen_code && line.trim_start().starts_with('#') {
+                file_level = true;
+            }
+        }
+        let t = line.trim_start();
+        if !t.is_empty() && !t.starts_with('#') {
+            seen_code = true;
+        }
+    }
+    if file_level {
+        return Vec::new();
+    }
+    if ignore_lines.is_empty() {
+        return errors;
+    }
+    let line_starts: Vec<usize> = std::iter::once(0)
+        .chain(
+            source
+                .bytes()
+                .enumerate()
+                .filter(|(_, b)| *b == b'\n')
+                .map(|(i, _)| i + 1),
+        )
+        .collect();
+    let line_of = |off: usize| -> usize {
+        match line_starts.binary_search(&off) {
+            Ok(i) => i + 1,
+            Err(i) => i,
+        }
+    };
+    errors
+        .into_iter()
+        .filter(|e| {
+            let Some(span) = e.span() else { return true };
+            let first = line_of(span.start as usize);
+            let last = line_of((span.end as usize).max(span.start as usize));
+            !(first..=last).any(|ln| ignore_lines.contains(&ln))
+        })
+        .collect()
+}
+
 /// The main compiler session driving the pipeline.
 pub struct CompilerSession {
     pub config: CompilerConfig,
@@ -53,7 +141,9 @@ impl CompilerSession {
     pub fn check(&mut self, path: &str) -> crate::error::Result<()> {
         let file_id = self.load_file(path)?;
         let source = self.source_map.get_file(file_id).source.clone();
-        let module = parser::parse(&source, file_id)?;
+        let mut module = parser::parse(&source, file_id)?;
+        crate::lower::pep695::desugar_module(&mut module);
+        let module = module;
 
         if let Some(EmitMode::Ast) = self.config.emit {
             println!("{module:#?}");
@@ -61,7 +151,7 @@ impl CompilerSession {
 
         // Type check
         let mut checker = TypeChecker::new();
-        let errors = checker.check_module(&module);
+        let errors = filter_type_ignored(checker.check_module(&module), &source);
         if !errors.is_empty() {
             for err in &errors[1..] {
                 eprintln!("{}", diagnostic::render_error(err, &self.source_map));
@@ -89,7 +179,9 @@ impl CompilerSession {
 
         let file_id = self.load_file(path)?;
         let source = self.source_map.get_file(file_id).source.clone();
-        let module = parser::parse(&source, file_id)?;
+        let mut module = parser::parse(&source, file_id)?;
+        crate::lower::pep695::desugar_module(&mut module);
+        let module = module;
 
         if let Some(EmitMode::Ast) = self.config.emit {
             println!("{module:#?}");
@@ -100,7 +192,7 @@ impl CompilerSession {
         // first so the shared TypeChecker accumulates cross-module type info.
         let mut checker = TypeChecker::new();
         self.check_dependencies(path, &mut checker);
-        let errors = checker.check_module(&module);
+        let errors = filter_type_ignored(checker.check_module(&module), &source);
         if !errors.is_empty() {
             for err in &errors[1..] {
                 eprintln!("{}", diagnostic::render_error(err, &self.source_map));
@@ -118,7 +210,12 @@ impl CompilerSession {
         }
 
         // Lower HIR → MIR (with builtin resolution)
-        let mir_module = lower::lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
+        let mir_module = lower::lower_hir_to_mir_with_symbols_src(
+            &hir,
+            &checker.tcx,
+            &checker.symbols,
+            Some((path, source.as_str())),
+        );
 
         if let Some(EmitMode::Mir) = self.config.emit {
             println!("{mir_module:#?}");
@@ -197,7 +294,9 @@ impl CompilerSession {
             .source_map
             .add_file(display_name.to_string(), source.to_string());
         let src = self.source_map.get_file(file_id).source.clone();
-        let module = parser::parse(&src, file_id)?;
+        let mut module = parser::parse(&src, file_id)?;
+        crate::lower::pep695::desugar_module(&mut module);
+        let module = module;
 
         // Enforce expose filtering for native-module imports when a project config is active.
         if let Some(proj) = &self.config.project_config {
@@ -206,7 +305,7 @@ impl CompilerSession {
 
         let mut checker = TypeChecker::new();
         // No check_dependencies — stdin source has no associated file path.
-        let errors = checker.check_module(&module);
+        let errors = filter_type_ignored(checker.check_module(&module), &src);
         if !errors.is_empty() {
             for err in &errors[1..] {
                 eprintln!("{}", diagnostic::render_error(err, &self.source_map));
@@ -216,7 +315,12 @@ impl CompilerSession {
 
         let hir = lower::lower_module(&module, &checker)
             .map_err(|errs| errs.into_iter().next().unwrap())?;
-        let mir_module = lower::lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
+        let mir_module = lower::lower_hir_to_mir_with_symbols_src(
+            &hir,
+            &checker.tcx,
+            &checker.symbols,
+            Some((display_name, src.as_str())),
+        );
 
         let mut backend = CraneliftJitBackend::new_with_externals(&ext_syms)
             .map_err(|e| MambaError::codegen(e.to_string()))?;
@@ -288,7 +392,9 @@ impl CompilerSession {
 
         let file_id = self.load_file(path)?;
         let source = self.source_map.get_file(file_id).source.clone();
-        let module = parser::parse(&source, file_id)?;
+        let mut module = parser::parse(&source, file_id)?;
+        crate::lower::pep695::desugar_module(&mut module);
+        let module = module;
 
         // Type check — resolve and pre-check all imported dependency modules
         // first so the shared TypeChecker accumulates cross-module type info.
@@ -301,7 +407,7 @@ impl CompilerSession {
             self.check_native_imports(&module, proj)?;
         }
 
-        let errors = checker.check_module(&module);
+        let errors = filter_type_ignored(checker.check_module(&module), &source);
         if !errors.is_empty() {
             for err in &errors[1..] {
                 eprintln!("{}", diagnostic::render_error(err, &self.source_map));
@@ -312,7 +418,12 @@ impl CompilerSession {
         // Lower
         let hir = lower::lower_module(&module, &checker)
             .map_err(|errs| errs.into_iter().next().unwrap())?;
-        let mir_module = lower::lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
+        let mir_module = lower::lower_hir_to_mir_with_symbols_src(
+            &hir,
+            &checker.tcx,
+            &checker.symbols,
+            Some((path, source.as_str())),
+        );
 
         // Collect external crate symbols when in project mode (R2).
         let ext_syms = register_external_modules(self.config.project_config.as_ref());
@@ -766,7 +877,10 @@ mod tests {
             MbValue::from_ptr(MbObject::new_str("mambalibs.http".to_string())),
             MbValue::from_ptr(MbObject::new_str("App".to_string())),
         );
-        assert!(ctor.as_func().is_some(), "App must import as a function pointer");
+        assert!(
+            ctor.as_func().is_some(),
+            "App must import as a function pointer"
+        );
 
         let app = crate::runtime::class::mb_call0(ctor);
         let app_reg = cclab_mamba_registry::MbValue::from_bits(app.to_bits());
@@ -1316,8 +1430,14 @@ print(CatalogItem.model_json_schema())
             schema_doc["properties"]["quantity"]["multipleOf"].as_i64(),
             Some(5)
         );
-        assert_eq!(schema_doc["properties"]["tags"]["minItems"].as_i64(), Some(1));
-        assert_eq!(schema_doc["properties"]["tags"]["maxItems"].as_i64(), Some(2));
+        assert_eq!(
+            schema_doc["properties"]["tags"]["minItems"].as_i64(),
+            Some(1)
+        );
+        assert_eq!(
+            schema_doc["properties"]["tags"]["maxItems"].as_i64(),
+            Some(2)
+        );
         assert_eq!(
             schema_doc["properties"]["tags"]["writeOnly"].as_bool(),
             Some(true)
@@ -1498,9 +1618,11 @@ print(app.preflight("POST", "/items", {"name": "al", "age": "two", "tags": [1]},
         let invalid_doc: serde_json::Value =
             serde_json::from_str(invalid).expect("invalid preflight output should be JSON");
         assert_eq!(invalid_doc["status_code"].as_i64(), Some(422));
-        assert!(invalid_doc["errors"].as_array().is_some_and(|errors| errors
-            .iter()
-            .any(|error| error.as_str().is_some_and(|msg| msg.contains("ValidationError")))));
+        assert!(invalid_doc["errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|error| error
+                .as_str()
+                .is_some_and(|msg| msg.contains("ValidationError")))));
     }
 
     #[cfg(feature = "native-modules")]
@@ -1535,16 +1657,21 @@ print(Item.model_dump_json({"name": "al", "age": "two"}))
         let report_doc: serde_json::Value =
             serde_json::from_str(report).expect("preflight output should be JSON");
         assert_eq!(report_doc["status_code"].as_i64(), Some(422));
-        assert!(report_doc["errors"].as_array().is_some_and(|errors| errors
-            .iter()
-            .any(|error| error.as_str().is_some_and(|msg| msg.contains("ValidationError")))));
-        assert!(report_doc["detail"].as_array().is_some_and(|details| details
-            .iter()
-            .any(|detail| detail["loc"] == serde_json::json!(["body", "age"])
-                && detail["type"].as_str() == Some("type_error"))));
-        assert!(report_doc["detail"].as_array().is_some_and(|details| details
-            .iter()
-            .any(|detail| detail["loc"] == serde_json::json!(["body", "name"])
+        assert!(report_doc["errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|error| error
+                .as_str()
+                .is_some_and(|msg| msg.contains("ValidationError")))));
+        assert!(report_doc["detail"]
+            .as_array()
+            .is_some_and(|details| details
+                .iter()
+                .any(|detail| detail["loc"] == serde_json::json!(["body", "age"])
+                    && detail["type"].as_str() == Some("type_error"))));
+        assert!(report_doc["detail"]
+            .as_array()
+            .is_some_and(|details| details.iter().any(|detail| detail["loc"]
+                == serde_json::json!(["body", "name"])
                 && detail["msg"]
                     .as_str()
                     .is_some_and(|msg| msg.contains("at least")))));
@@ -1610,10 +1737,12 @@ print(app.preflight("GET", "/search", {}, None))
         let missing_doc: serde_json::Value =
             serde_json::from_str(missing).expect("missing preflight output should be JSON");
         assert_eq!(missing_doc["status_code"].as_i64(), Some(422));
-        assert!(missing_doc["detail"].as_array().is_some_and(|details| details
-            .iter()
-            .any(|detail| detail["loc"] == serde_json::json!(["query", "q"])
-                && detail["type"].as_str() == Some("missing"))));
+        assert!(missing_doc["detail"]
+            .as_array()
+            .is_some_and(|details| details
+                .iter()
+                .any(|detail| detail["loc"] == serde_json::json!(["query", "q"])
+                    && detail["type"].as_str() == Some("missing"))));
     }
 
     #[cfg(feature = "native-modules")]

@@ -1,7 +1,7 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// locale module for Mamba (mamba-stdlib).
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -75,8 +75,7 @@ fn locale_name_is_valid_looking(s: &str) -> bool {
     }
     // Optional single country segment: 2-3 ASCII alphanumerics.
     if let Some(country) = parts.next() {
-        if !(2..=3).contains(&country.len())
-            || !country.bytes().all(|b| b.is_ascii_alphanumeric())
+        if !(2..=3).contains(&country.len()) || !country.bytes().all(|b| b.is_ascii_alphanumeric())
         {
             return false;
         }
@@ -171,7 +170,7 @@ pub fn register() {
     attrs.insert("LC_CTYPE".to_string(), mb_locale_LC_CTYPE());
     attrs.insert("LC_TIME".to_string(), mb_locale_LC_TIME());
     attrs.insert("LC_NUMERIC".to_string(), mb_locale_LC_NUMERIC());
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("ABDAY_1".into(), MbValue::from_int(14));
     attrs.insert("ABDAY_2".into(), MbValue::from_int(15));
     attrs.insert("ABDAY_3".into(), MbValue::from_int(16));
@@ -236,7 +235,11 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -256,6 +259,29 @@ pub fn mb_locale_setlocale(cat: MbValue, locale_str: MbValue) -> MbValue {
         if !(0..=6).contains(&c) {
             return raise_named("Error", &format!("unsupported locale category {c}"));
         }
+    } else if !cat.is_none() {
+        // A non-int category (e.g. a string) is a TypeError per CPython.
+        return raise_named("TypeError", "an integer is required (got type str)");
+    }
+    // bytes (or a tuple containing bytes) can never name a locale.
+    let has_bytes = |v: MbValue| -> bool {
+        v.as_ptr().is_some_and(|p| unsafe {
+            match &(*p).data {
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => true,
+                ObjData::Tuple(items) => items.iter().any(|it| {
+                    it.as_ptr().is_some_and(|q| {
+                        matches!((*q).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+                    })
+                }),
+                _ => false,
+            }
+        })
+    };
+    if has_bytes(locale_str) {
+        return raise_named(
+            "TypeError",
+            "locale must be a string or iterable of strings",
+        );
     }
     if let Some(s) = extract_str(locale_str) {
         // Unknown locale: CPython raises `locale.Error` when the requested locale
@@ -323,7 +349,7 @@ pub fn mb_locale_strxfrm(val: MbValue) -> MbValue {
 /// locale collation reduces to byte ordering, returning <0 / 0 / >0.
 pub fn mb_locale_strcoll(a: MbValue, b: MbValue) -> MbValue {
     let (Some(sa), Some(sb)) = (extract_str(a), extract_str(b)) else {
-        return MbValue::from_int(0);
+        return raise_named("TypeError", "strcoll arguments must be strings");
     };
     if sa.contains('\0') || sb.contains('\0') {
         return raise_named("ValueError", "embedded null character");
@@ -342,36 +368,56 @@ pub fn mb_locale_format_string(fmt: MbValue, val: MbValue) -> MbValue {
         f.replacen("%d", &i.to_string(), 1)
     } else if let Some(fl) = val.as_float() {
         f.replacen("%f", &format!("{:.6}", fl), 1)
-    } else { f };
+    } else {
+        f
+    };
     MbValue::from_ptr(MbObject::new_str(result))
 }
 
-pub fn mb_locale_LC_ALL() -> MbValue { MbValue::from_int(6) }
-pub fn mb_locale_LC_CTYPE() -> MbValue { MbValue::from_int(0) }
-pub fn mb_locale_LC_TIME() -> MbValue { MbValue::from_int(2) }
-pub fn mb_locale_LC_NUMERIC() -> MbValue { MbValue::from_int(1) }
+pub fn mb_locale_LC_ALL() -> MbValue {
+    MbValue::from_int(6)
+}
+pub fn mb_locale_LC_CTYPE() -> MbValue {
+    MbValue::from_int(0)
+}
+pub fn mb_locale_LC_TIME() -> MbValue {
+    MbValue::from_int(2)
+}
+pub fn mb_locale_LC_NUMERIC() -> MbValue {
+    MbValue::from_int(1)
+}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::super::value::MbValue;
     use super::super::super::rc::{MbObject, ObjData};
+    use super::super::super::value::MbValue;
+    use super::*;
 
     fn tuple_str_at(val: MbValue, idx: usize) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::Tuple(ref items) = (*ptr).data {
                 items.get(idx).and_then(|v| {
                     v.as_ptr().and_then(|p| {
-                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                        if let ObjData::Str(ref s) = (*p).data {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
                     })
                 })
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
     fn get_str_val(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
     }
 

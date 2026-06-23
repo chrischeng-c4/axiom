@@ -1,24 +1,32 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-14T04:24:29.140288+00:00"
-digest = "sha256:4c37f6a348c5ee9bb5e5876f0b5ad9c4e92df3d5127255a8117fe0d1acaf1525"
+generated_at = "2026-06-17T17:46:09.946695+00:00"
+digest = "sha256:12fe24be3bfa4cd0935f5f438fe779546eceedebab40cdff7c153da275147f7d"
 
 [[files]]
 path = "logic/cap-hook-auto-command-optimizer-whitelist.md"
-digest = "sha256:e5bc48c68b002067744ec2bd4ed4e948b2f49928ff6dd9050e6daa0eb2a4d2b2"
+digest = "sha256:646c91520fdcf634f139e1170e7f72d52db14d8a160ecb94eb5095495d7122b6"
 
 [[files]]
 path = "logic/external-contracts.md"
-digest = "sha256:599dd2dbb9e3aca539a57ab7d4dfe8023ae2b8febc57a0b0485d163703498075"
+digest = "sha256:3315f1717899a0b6733cfba78b45e6e811a9a03186a028ada0c30e6be239e5c9"
 
 [[files]]
 path = "semantic/cap-benches.md"
 digest = "sha256:4e4177698b62759b4992eb00975845389a6b1d5ca5faf4da98a969ac515e5819"
 
 [[files]]
+path = "semantic/cap-build-script.md"
+digest = "sha256:f2dd849b501e5ef5bae4d871a1c69085b64c6ab5b87ea9a02a0535cd173af412"
+
+[[files]]
+path = "semantic/cap-install-script.md"
+digest = "sha256:e885508afb302a67436050c737d649298dd8f331105bd5c5bd71dda9dca4035b"
+
+[[files]]
 path = "semantic/cap-projects-cap.md"
-digest = "sha256:2fec1e14f065fe4b91393c537377a408d6fa9b1bc86b8862e695ee92957c3580"
+digest = "sha256:8d75f95a24f0e99e6a25e53f684bf24a1e64afc95c4636e31e3144bb277e7c34"
 
 [[files]]
 path = "semantic/cap-src.md"
@@ -59,6 +67,14 @@ digest = "sha256:33d1908aa95f27f24fe2abc71235acf9102781c3aed18f84923389937020728
 [[files]]
 path = "semantic/source/lib.md"
 digest = "sha256:b8b4a989151eb2c5464f1095fa478a9e96b6d10a8dad7e225954658d9056fb5b"
+
+[[files]]
+path = "semantic/source/projects-cap-benches-command_resources-rs.md"
+digest = "sha256:f98fd97eefcdd5a1d43a2485ddaf0d5ec7078cc38d002a714aefa619a916e480"
+
+[[files]]
+path = "semantic/source/projects-cap-tests-behavior-cap-command-replacement-parity-rs.md"
+digest = "sha256:6f3473296330abc0d9c1a94cfc5dcdb4f3b6ecdef21e7a09ac531d9385bcb3a4"
 
 [[files]]
 path = "semantic/source/reap.md"

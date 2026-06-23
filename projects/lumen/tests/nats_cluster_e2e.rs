@@ -1,10 +1,11 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
-//! The full-stack proof: two independent lumen serving nodes backed by
+//! Legacy full-stack proof: two independent lumen serving nodes backed by
 //! the SAME NATS write log. Write through node A's HTTP API; read it
 //! back through node B's HTTP API. This exercises the entire data plane
 //! end to end — write handler → coordinator → NATS publish → both nodes'
-//! apply loops → B's local index → B's read handler.
+//! apply loops → B's local index → B's read handler. RelayWal is the current
+//! deployment default; this preserves compatibility coverage for `--wal nats`.
 //!
 //! Run a JetStream server first: `nats-server -js` (or point
 //! `LUMEN_TEST_NATS_URL` at one). Skips if unavailable.
@@ -20,20 +21,28 @@ use lumen::auth::AuthConfig;
 use lumen::coordinator::WriteCoordinator;
 use lumen::storage::Engine;
 use lumen::wal::SharedWal;
-use lumen::wal_nats::NatsWal;
+use lumen::wal_nats::{NatsWal, NatsWalConfig};
 
 fn nats_url() -> String {
     std::env::var("LUMEN_TEST_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into())
 }
 
+fn test_config(name: &str) -> NatsWalConfig {
+    NatsWalConfig::new(
+        format!("lumen_wal_cluster_{name}"),
+        format!("lumen.wal.cluster.{name}"),
+    )
+    .expect("valid test NATS WAL config")
+}
+
 /// Probe JetStream + reset the stream; `None` → skip.
-async fn reset() -> Option<()> {
+async fn reset(config: &NatsWalConfig) -> Option<()> {
     let client = async_nats::connect(&nats_url()).await.ok()?;
     let js = async_nats::jetstream::new(client);
     let stream = js
         .get_or_create_stream(async_nats::jetstream::stream::Config {
-            name: "lumen_wal".into(),
-            subjects: vec!["lumen.wal".into()],
+            name: config.stream_name.clone(),
+            subjects: vec![config.subject.clone()],
             ..Default::default()
         })
         .await
@@ -74,14 +83,23 @@ async fn wait_total(s: &TestServer, field: &str, value: &str, want: u64) -> bool
 
 #[tokio::test]
 async fn write_on_node_a_is_readable_on_node_b() {
-    if reset().await.is_none() {
+    let config = test_config("write_read");
+    if reset(&config).await.is_none() {
         eprintln!("skipping: no JetStream NATS at {}", nats_url());
         return;
     }
 
-    // Two nodes, one shared NATS log.
-    let wal_a: SharedWal = Arc::new(NatsWal::connect(&nats_url()).await.unwrap());
-    let wal_b: SharedWal = Arc::new(NatsWal::connect(&nats_url()).await.unwrap());
+    // Two nodes, one shared legacy NATS log.
+    let wal_a: SharedWal = Arc::new(
+        NatsWal::connect_with_config(&nats_url(), config.clone())
+            .await
+            .unwrap(),
+    );
+    let wal_b: SharedWal = Arc::new(
+        NatsWal::connect_with_config(&nats_url(), config.clone())
+            .await
+            .unwrap(),
+    );
     let node_a = node(wal_a).await;
     let node_b = node(wal_b).await;
 
@@ -106,7 +124,7 @@ async fn write_on_node_a_is_readable_on_node_b() {
     assert_eq!(search_total(&node_a, "email", "a@x.com").await, 2);
 
     // Node B — a DIFFERENT process-equivalent with its own engine —
-    // converges by tailing the same NATS log. THIS is the payoff.
+    // converges by tailing the same legacy NATS log.
     assert!(
         wait_total(&node_b, "email", "a@x.com", 2).await,
         "node B did not converge from the shared NATS log"
@@ -116,12 +134,23 @@ async fn write_on_node_a_is_readable_on_node_b() {
 
 #[tokio::test]
 async fn delete_on_one_node_propagates_to_the_other() {
-    if reset().await.is_none() {
+    let config = test_config("delete");
+    if reset(&config).await.is_none() {
         eprintln!("skipping: no JetStream NATS at {}", nats_url());
         return;
     }
-    let node_a = node(Arc::new(NatsWal::connect(&nats_url()).await.unwrap())).await;
-    let node_b = node(Arc::new(NatsWal::connect(&nats_url()).await.unwrap())).await;
+    let node_a = node(Arc::new(
+        NatsWal::connect_with_config(&nats_url(), config.clone())
+            .await
+            .unwrap(),
+    ))
+    .await;
+    let node_b = node(Arc::new(
+        NatsWal::connect_with_config(&nats_url(), config.clone())
+            .await
+            .unwrap(),
+    ))
+    .await;
 
     node_a
         .put("/collections/users")

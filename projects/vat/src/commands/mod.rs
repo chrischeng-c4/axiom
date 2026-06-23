@@ -7,7 +7,9 @@
 //! so the binary can propagate a meaningful status (notably: `vat run`
 //! forwards the child's exit code).
 
+pub mod cluster;
 pub mod diff;
+pub mod emulator;
 pub mod gpu;
 pub mod llm;
 pub mod logs;

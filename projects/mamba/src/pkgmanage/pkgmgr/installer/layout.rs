@@ -4,7 +4,6 @@
 // equality (R9 P3 optimisation).
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/installer.md#Logic
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -113,14 +112,12 @@ fn place_one(src: &Path, dest: &Path) -> Result<(), InstallerError> {
     // Try hardlink first (same-device fast path); fall back to copy on cross-device.
     match fs::hard_link(src, dest) {
         Ok(()) => Ok(()),
-        Err(_) => {
-            fs::copy(src, dest)
-                .map_err(|e| InstallerError::Io {
-                    path: Some(dest.to_path_buf()),
-                    detail: e.to_string(),
-                })
-                .map(|_| ())
-        }
+        Err(_) => fs::copy(src, dest)
+            .map_err(|e| InstallerError::Io {
+                path: Some(dest.to_path_buf()),
+                detail: e.to_string(),
+            })
+            .map(|_| ()),
     }
 }
 

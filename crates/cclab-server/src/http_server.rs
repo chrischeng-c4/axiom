@@ -105,10 +105,21 @@ pub async fn start_server(port: u16, registry: Registry) -> Result<()> {
         lens_pool.initialize_projects_background(project_paths);
     }
 
-    let state = UnifiedAppState::new(registry.clone(), lens_pool);
+    let app = build_router(registry.clone(), lens_pool);
 
-    // Build HTTP router
-    let app = Router::new()
+    let listener = tokio::net::TcpListener::bind(&http_addr).await?;
+    println!("Server listening on http://{}", http_addr);
+    println!("  Dashboard: http://{}/", http_addr);
+
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Build the unified HTTP router without binding a socket.
+pub fn build_router(registry: Registry, lens_pool: LensHandlerPool) -> Router {
+    let state = UnifiedAppState::new(registry, lens_pool);
+
+    Router::new()
         // Dashboard at root
         .route("/", get(handle_dashboard))
         .route("/api/dashboard", get(api_dashboard))
@@ -135,14 +146,7 @@ pub async fn start_server(port: u16, registry: Registry) -> Result<()> {
         // Health check
         .route("/health", get(health_check))
         .layer(CorsLayer::permissive())
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind(&http_addr).await?;
-    println!("Server listening on http://{}", http_addr);
-    println!("  Dashboard: http://{}/", http_addr);
-
-    axum::serve(listener, app).await?;
-    Ok(())
+        .with_state(state)
 }
 
 /// Health check endpoint

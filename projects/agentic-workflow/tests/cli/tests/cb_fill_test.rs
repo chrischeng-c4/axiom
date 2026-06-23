@@ -1,10 +1,10 @@
 // SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/validate/tests/cb_fill_test.md#source
 // CODEGEN-BEGIN
-//! Integration tests for `aw cb fill` (Phase 3).
+//! Integration tests for `aw td fill` (Phase 3).
 //!
 //! Smoke tests for CLI registration, brief mode envelope shape, marker
 //! enumeration, and `--apply --marker` block replacement. Full
-//! e2e integration scenarios (cb check gate + Cb-Fill trailer + phase
+//! e2e integration scenarios (code check gate + Cb-Fill trailer + phase
 //! advance) are #[ignore]d because they require a real worktree, real
 //! payload files, and the agent loop infrastructure.
 //!
@@ -41,12 +41,12 @@ fn handwrite_end() -> &'static str {
 
 // ── R1 / R14(1) ─────────────────────────────────────────────────────────
 
-/// R1: `aw cb fill` is registered as a first-class subcommand under cb.
+/// R1: `aw td fill` is registered as a first-class subcommand under td.
 #[test]
 fn test_cb_fill_registered() {
     let cmd = Cli::command();
-    let cb = cmd.find_subcommand("cb").expect("cb namespace");
-    let fill = cb.find_subcommand("fill").expect("cb fill subcommand");
+    let td = cmd.find_subcommand("td").expect("td namespace");
+    let fill = td.find_subcommand("fill").expect("td fill subcommand");
     let positionals: Vec<String> = fill
         .get_positionals()
         .map(|p: &clap::Arg| p.get_id().as_str().to_string())
@@ -58,9 +58,9 @@ fn test_cb_fill_registered() {
 fn test_cb_fill_apply_flag() {
     let cmd = Cli::command();
     let fill = cmd
-        .find_subcommand("cb")
+        .find_subcommand("td")
         .and_then(|c| c.find_subcommand("fill"))
-        .expect("cb fill");
+        .expect("td fill");
     fill.get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "apply")
         .expect("--apply flag");
@@ -73,9 +73,9 @@ fn test_cb_fill_apply_flag() {
 fn test_cb_fill_spec_path_flag() {
     let cmd = Cli::command();
     let fill = cmd
-        .find_subcommand("cb")
+        .find_subcommand("td")
         .and_then(|c| c.find_subcommand("fill"))
-        .expect("cb fill");
+        .expect("td fill");
     fill.get_arguments()
         .find(|a: &&clap::Arg| a.get_id().as_str() == "spec_path")
         .expect("--spec-path flag");
@@ -91,29 +91,6 @@ fn test_issue_phase_cb_filled_variant() {
     assert!(td_phase::is_mergeable("cb_filled"));
     assert!(td_phase::is_mergeable("cb_genned"));
     assert!(!td_phase::is_mergeable("td_reviewed"));
-}
-
-/// CB CRRR: `cb_arbitrated` phase + `Cb-Arbitrate` trailer constants exist.
-#[test]
-fn test_cb_arbitrate_constants() {
-    use agentic_workflow::issues::types::{lifecycle_trailer, td_phase};
-    assert_eq!(td_phase::CB_ARBITRATED, "cb_arbitrated");
-    assert_eq!(lifecycle_trailer::CB_ARBITRATE, "Cb-Arbitrate");
-}
-
-/// CB CRRR: `aw cb arbitrate <slug>` is registered.
-#[test]
-fn test_cb_arbitrate_registered() {
-    let cmd = Cli::command();
-    let arb = cmd
-        .find_subcommand("cb")
-        .and_then(|c| c.find_subcommand("arbitrate"))
-        .expect("cb arbitrate subcommand");
-    let positionals: Vec<String> = arb
-        .get_positionals()
-        .map(|p: &clap::Arg| p.get_id().as_str().to_string())
-        .collect();
-    assert!(positionals.iter().any(|p| p == "slug"));
 }
 
 /// R9: `Cb-Fill` trailer const exists in lifecycle_trailer module.
@@ -145,7 +122,7 @@ fn test_brief_mode_envelope_shape() {
         "agent": null,
         "slug": "demo",
         "invoke": {
-            "command": "aw cb fill",
+            "command": "aw td fill",
             "args": {
                 "slug": "demo",
                 "marker_list": [{
@@ -419,7 +396,7 @@ fn test_collision_enumerate_returns_both_entries() {
 #[ignore = "requires real worktree, real payload, and the cb check pipeline"]
 fn test_apply_marker_replaces_block() {
     // Reserved: build a worktree, write a payload at
-    // .aw/payloads/<slug>/<id>.md, run `aw cb fill <slug> --apply
+    // .aw/payloads/<slug>/<id>.md, run `aw td fill <slug> --apply
     // --marker <id>`, assert source file has payload body in place of stub.
 }
 

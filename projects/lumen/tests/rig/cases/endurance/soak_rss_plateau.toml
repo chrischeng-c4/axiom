@@ -1,0 +1,14 @@
+[record]
+suite = "lumen"
+dimension = "endurance"
+case = "soak_rss_plateau"
+subject = "bounded soak keeps the engine ready and latency floor stable"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[[steps]]
+type = "exec"
+name = "term_query_latency_floor"
+cmd = ["cargo", "test", "-p", "lumen", "--test", "perf_gate", "term_query_latency_floor", "--", "--nocapture"]
+timeout_secs = 120

@@ -24,17 +24,11 @@ fn manifest() -> Value {
 fn header_is_well_formed() {
     let m = manifest();
     assert_eq!(m["version"].as_integer(), Some(1));
-    assert_eq!(
-        m["fixture"].as_str(),
-        Some("string_concat_perf_gate")
-    );
+    assert_eq!(m["fixture"].as_str(), Some("string_concat_perf_gate"));
     assert_eq!(m["issue"].as_integer(), Some(2512));
     assert_eq!(m["parent_issue"].as_integer(), Some(2458));
     assert_eq!(m["profile"].as_str(), Some("conformance"));
-    assert_eq!(
-        m["family"].as_str(),
-        Some("string_concat_perf_gate")
-    );
+    assert_eq!(m["family"].as_str(), Some("string_concat_perf_gate"));
     assert_eq!(m["network"].as_str(), Some("offline"));
 }
 
@@ -169,18 +163,12 @@ fn r2_no_other_accepted_bench_regresses() {
         c["per_bench_regression_failure_kind"].as_str(),
         Some("perf_string_concat_caused_per_bench_regression")
     );
-    assert_eq!(
-        c["per_bench_regression_exit_code"].as_integer(),
-        Some(443)
-    );
+    assert_eq!(c["per_bench_regression_exit_code"].as_integer(), Some(443));
     assert_eq!(
         c["geomean_only_check_failure_kind"].as_str(),
         Some("perf_string_concat_used_geomean_only_check")
     );
-    assert_eq!(
-        c["geomean_only_check_exit_code"].as_integer(),
-        Some(444)
-    );
+    assert_eq!(c["geomean_only_check_exit_code"].as_integer(), Some(444));
     assert_eq!(
         c["regression_threshold_widened_failure_kind"].as_str(),
         Some("perf_string_concat_regression_threshold_silently_widened")
@@ -226,10 +214,7 @@ fn r3_starting_deficit_recorded() {
             "warmup_iters",
         ]
     );
-    assert_eq!(
-        c["expected_starting_mamba_ns"].as_integer(),
-        Some(420776)
-    );
+    assert_eq!(c["expected_starting_mamba_ns"].as_integer(), Some(420776));
     assert_eq!(c["expected_starting_cpython_ns"].as_integer(), Some(143));
     assert_eq!(c["expected_starting_ratio"].as_str(), Some("0.0003x"));
     assert_eq!(

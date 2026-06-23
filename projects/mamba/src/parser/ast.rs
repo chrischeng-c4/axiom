@@ -2,6 +2,40 @@ use crate::source::span::{Span, Spanned};
 
 pub type Name = String;
 
+/// PEP 695 type-parameter kind: `T`, `*Ts`, `**P`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeParamKind {
+    TypeVar,
+    TypeVarTuple,
+    ParamSpec,
+}
+
+/// PEP 695 type parameter: `T`, `T: bound`, `T: (c1, c2)`, `*Ts`, `**P`.
+///
+/// The bound / constraint expressions are kept as ordinary expressions so the
+/// runtime can evaluate them lazily (CPython semantics).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeParam {
+    pub name: Name,
+    pub kind: TypeParamKind,
+    /// `T: bound` — single (non-tuple) bound expression.
+    pub bound: Option<Spanned<Expr>>,
+    /// `T: (c1, c2, ...)` — tuple of constraint expressions.
+    pub constraints: Option<Vec<Spanned<Expr>>>,
+}
+
+impl TypeParam {
+    /// Plain unbounded type parameter (used by tests / desugared nodes).
+    pub fn plain(name: impl Into<Name>) -> Self {
+        TypeParam {
+            name: name.into(),
+            kind: TypeParamKind::TypeVar,
+            bound: None,
+            constraints: None,
+        }
+    }
+}
+
 /// Top-level module: a sequence of statements.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Module {
@@ -32,7 +66,7 @@ pub enum Stmt {
     FnDef {
         decorators: Vec<Spanned<Expr>>,
         name: Name,
-        type_params: Vec<Name>,
+        type_params: Vec<TypeParam>,
         params: Vec<Param>,
         return_ty: Option<Spanned<TypeExpr>>,
         body: Vec<Spanned<Stmt>>,
@@ -41,7 +75,7 @@ pub enum Stmt {
     AsyncFnDef {
         decorators: Vec<Spanned<Expr>>,
         name: Name,
-        type_params: Vec<Name>,
+        type_params: Vec<TypeParam>,
         params: Vec<Param>,
         return_ty: Option<Spanned<TypeExpr>>,
         body: Vec<Spanned<Stmt>>,
@@ -50,7 +84,7 @@ pub enum Stmt {
     ClassDef {
         decorators: Vec<Spanned<Expr>>,
         name: Name,
-        type_params: Vec<Name>,
+        type_params: Vec<TypeParam>,
         bases: Vec<Spanned<Expr>>,
         /// Keyword arguments in the class declaration (e.g. `metaclass=Meta`, `name="alpha"`).
         keyword_args: Vec<(Name, Spanned<Expr>)>,
@@ -59,7 +93,7 @@ pub enum Stmt {
     /// `enum Shape: Circle(r: float) | Rectangle(w: float, h: float) | Point`
     EnumDef {
         name: Name,
-        type_params: Vec<Name>,
+        type_params: Vec<TypeParam>,
         variants: Vec<Variant>,
     },
     /// `if cond: ... elif cond: ... else: ...`
@@ -116,10 +150,7 @@ pub enum Stmt {
     /// Bare type annotation without a value: `x: int` (#1014).
     ///
     /// Used in class bodies and module scope (e.g. ORM field declarations).
-    BareAnnotation {
-        name: Name,
-        ty: Spanned<TypeExpr>,
-    },
+    BareAnnotation { name: Name, ty: Spanned<TypeExpr> },
     /// `try: ... except E as e: ... finally: ...` (#225)
     Try {
         body: Vec<Spanned<Stmt>>,
@@ -154,10 +185,14 @@ pub enum Stmt {
     /// `nonlocal x, y` (#231)
     Nonlocal(Vec<Name>),
     /// `type X = int | str` (PEP 695, #233)
+    ///
+    /// The value is kept as a general expression (CPython allows any
+    /// expression, e.g. `type Lazy[T] = lambda: T`) and is evaluated lazily
+    /// at runtime by the TypeAliasType object built during desugaring.
     TypeAlias {
         name: Name,
-        type_params: Vec<Name>,
-        value: Spanned<TypeExpr>,
+        type_params: Vec<TypeParam>,
+        value: Spanned<Expr>,
     },
     /// Expression used as statement
     ExprStmt(Spanned<Expr>),
@@ -166,8 +201,18 @@ pub enum Stmt {
 /// Augmented assignment operator (#221).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AugOp {
-    Add, Sub, Mul, Div, FloorDiv, Mod, Pow,
-    BitAnd, BitOr, BitXor, LShift, RShift,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
     MatMul,
 }
 
@@ -196,6 +241,12 @@ pub struct Param {
     pub ty: Spanned<TypeExpr>,
     pub default: Option<Spanned<Expr>>,
     pub kind: ParamKind,
+    /// Declared before a `/` separator (PEP 570 positional-only).
+    /// Introspection metadata only — call binding is unaffected.
+    pub pos_only: bool,
+    /// Declared after a bare `*` separator or `*args` (keyword-only).
+    /// Introspection metadata only — call binding is unaffected.
+    pub kw_only: bool,
     pub span: Span,
 }
 
@@ -203,7 +254,7 @@ pub struct Param {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamKind {
     Regular,
-    Star,      // *args
+    Star,       // *args
     DoubleStar, // **kwargs
 }
 
@@ -232,10 +283,7 @@ pub enum Pattern {
     /// Binding: `x`
     Binding(Name),
     /// Enum constructor: `Shape.Circle(r)`
-    Constructor {
-        path: Vec<Name>,
-        fields: Vec<Name>,
-    },
+    Constructor { path: Vec<Name>, fields: Vec<Name> },
     /// Literal pattern
     Literal(Expr),
     /// OR pattern: `p1 | p2` (#237)
@@ -409,29 +457,52 @@ pub struct Comprehension {
 #[derive(Debug, Clone, PartialEq)]
 pub enum FStringPart {
     Literal(String),
-    /// Expression with optional format spec (e.g., `{x:.2f}` → spec = Some(".2f"))
-    Expr(Spanned<Expr>, Option<String>),
+    /// Expression with optional format spec. The spec is itself a part list
+    /// so nested replacement fields (`{value:{width}}`) evaluate at runtime;
+    /// a static spec is a single `Literal` part (e.g. `{x:.2f}` →
+    /// `Some(vec![Literal(".2f")])`).
+    Expr(Spanned<Expr>, Option<Vec<FStringPart>>),
 }
 
 /// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
     // Arithmetic
-    Add, Sub, Mul, Div, FloorDiv, Mod, Pow, MatMul,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    MatMul,
     // Comparison
-    Eq, NotEq, Lt, Gt, LtEq, GtEq,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
     // Logical
-    And, Or,
+    And,
+    Or,
     // Bitwise (#209)
-    BitAnd, BitOr, BitXor, LShift, RShift,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LShift,
+    RShift,
     // Identity / Membership (#212)
-    Is, IsNot, In, NotIn,
+    Is,
+    IsNot,
+    In,
+    NotIn,
 }
 
 /// Unary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
-    Pos,    // + (unary positive)
+    Pos, // + (unary positive)
     Neg,
     Not,
     BitNot, // ~ (#209)
@@ -443,13 +514,19 @@ pub enum TypeExpr {
     /// Simple type name: `int`, `float`, `MyClass`
     Named(Name),
     /// Generic type: `list[int]`, `dict[str, int]`
-    Generic { name: Name, args: Vec<Spanned<TypeExpr>> },
+    Generic {
+        name: Name,
+        args: Vec<Spanned<TypeExpr>>,
+    },
     /// Optional shorthand: `T?` => `T | None`
     Optional(Box<Spanned<TypeExpr>>),
     /// Union type: `int | str`
     Union(Vec<Spanned<TypeExpr>>),
     /// Function type: `(int, int) -> int`
-    Fn { params: Vec<Spanned<TypeExpr>>, ret: Box<Spanned<TypeExpr>> },
+    Fn {
+        params: Vec<Spanned<TypeExpr>>,
+        ret: Box<Spanned<TypeExpr>>,
+    },
     /// Tuple type: `tuple[int, str]`
     Tuple(Vec<Spanned<TypeExpr>>),
 }

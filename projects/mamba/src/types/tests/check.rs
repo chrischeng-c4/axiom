@@ -1,8 +1,8 @@
 #![cfg(test)]
 
 use crate::parser;
-use crate::types::TypeChecker;
 use crate::source::span::FileId;
+use crate::types::TypeChecker;
 
 fn check(src: &str) -> Vec<String> {
     let module = parser::parse(src, FileId(0)).expect("parse failed");
@@ -25,7 +25,11 @@ fn check_warnings(src: &str) -> Vec<String> {
     let module = parser::parse(src, FileId(0)).expect("parse failed");
     let mut checker = TypeChecker::new();
     let _ = checker.check_module(&module);
-    checker.diagnostics.iter().map(|d| d.message.clone()).collect()
+    checker
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect()
 }
 
 #[test]
@@ -40,7 +44,7 @@ fn test_valid_fibonacci() {
          \x20       b = a + b\n\
          \x20       a = temp\n\
          \x20       i = i + 1\n\
-         \x20   return a\n"
+         \x20   return a\n",
     );
     assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
 }
@@ -59,7 +63,7 @@ fn test_return_type_mismatch() {
     // `int`-annotated function is correctly accepted now.
     let errors = check(
         "def bad() -> int:\n\
-         \x20   return \"hi\"\n"
+         \x20   return \"hi\"\n",
     );
     assert!(!errors.is_empty());
     assert!(errors[0].contains("return type mismatch"));
@@ -79,7 +83,7 @@ fn test_valid_arithmetic() {
          \x20   a: int = 1\n\
          \x20   b: int = 2\n\
          \x20   c: int = a + b * a\n\
-         \x20   return c\n"
+         \x20   return c\n",
     );
     assert!(errors.is_empty(), "got: {errors:?}");
 }
@@ -99,9 +103,12 @@ fn test_bool_condition_accepts_int() {
     let errors = check(
         "x: int = 1\n\
          if x:\n\
-         \x20   pass\n"
+         \x20   pass\n",
     );
-    assert!(errors.is_empty(), "int condition should be accepted, got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "int condition should be accepted, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -114,17 +121,19 @@ fn test_function_call_arg_count_underflow_skipped() {
     let errors = check(
         "def add(a: int, b: int) -> int:\n\
          \x20   return a + b\n\
-         add(1)\n"
+         add(1)\n",
     );
     assert!(errors.is_empty(),
         "underflow arity is intentionally skipped to avoid false positives on default params, got: {errors:?}");
     let errors = check(
         "def add(a: int, b: int) -> int:\n\
          \x20   return a + b\n\
-         add()\n"
+         add()\n",
     );
-    assert!(errors.is_empty(),
-        "zero-arg underflow is also skipped (#1600), got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "zero-arg underflow is also skipped (#1600), got: {errors:?}"
+    );
 }
 
 #[test]
@@ -132,7 +141,7 @@ fn test_valid_boolean_ops() {
     let errors = check(
         "x: bool = True\n\
          y: bool = False\n\
-         z: bool = x and y\n"
+         z: bool = x and y\n",
     );
     assert!(errors.is_empty(), "got: {errors:?}");
 }
@@ -142,7 +151,7 @@ fn test_comparison_returns_bool() {
     let errors = check(
         "a: int = 1\n\
          b: int = 2\n\
-         c: bool = a < b\n"
+         c: bool = a < b\n",
     );
     assert!(errors.is_empty(), "got: {errors:?}");
 }
@@ -160,7 +169,7 @@ fn test_multiple_functions() {
          \x20   return n * n\n\
          def main() -> int:\n\
          \x20   result: int = square(5)\n\
-         \x20   return result\n"
+         \x20   return result\n",
     );
     assert!(errors.is_empty(), "got: {errors:?}");
 }
@@ -173,7 +182,7 @@ fn test_any_type_annotation() {
     let errors = check(
         "x: Any = 42\n\
          y: Any = \"hello\"\n\
-         z: int = x\n"
+         z: int = x\n",
     );
     assert!(errors.is_empty(), "Any should be compatible: {errors:?}");
 }
@@ -184,9 +193,12 @@ fn test_any_unannotated_return() {
     let errors = check(
         "def greet(name: str):\n\
          \x20   return name\n\
-         x: int = greet(\"hi\")\n"
+         x: int = greet(\"hi\")\n",
     );
-    assert!(errors.is_empty(), "unannotated return should be Any: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "unannotated return should be Any: {errors:?}"
+    );
 }
 
 #[test]
@@ -195,9 +207,12 @@ fn test_any_compatible_both_directions() {
         "a: Any = 42\n\
          b: int = a\n\
          c: str = a\n\
-         d: Any = b\n"
+         d: Any = b\n",
     );
-    assert!(errors.is_empty(), "Any should be compatible both ways: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "Any should be compatible both ways: {errors:?}"
+    );
 }
 
 #[test]
@@ -205,9 +220,12 @@ fn test_any_in_binop() {
     let errors = check(
         "a: Any = 42\n\
          b: int = 10\n\
-         c: Any = a + b\n"
+         c: Any = a + b\n",
     );
-    assert!(errors.is_empty(), "Any in binop should propagate: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "Any in binop should propagate: {errors:?}"
+    );
 }
 
 // --- #241: Type alias support ---
@@ -216,7 +234,7 @@ fn test_any_in_binop() {
 fn test_type_alias_simple() {
     let errors = check(
         "type Num = int\n\
-         x: Num = 42\n"
+         x: Num = 42\n",
     );
     assert!(errors.is_empty(), "type alias should resolve: {errors:?}");
 }
@@ -225,7 +243,7 @@ fn test_type_alias_simple() {
 fn test_type_alias_tuple() {
     let errors = check(
         "type Point = tuple[int, int]\n\
-         p: Point = (1, 2)\n"
+         p: Point = (1, 2)\n",
     );
     assert!(errors.is_empty(), "tuple alias should resolve: {errors:?}");
 }
@@ -244,15 +262,21 @@ fn test_builtin_isinstance() {
     let errors = check(
         "class MyType:\n\
          \x20   pass\n\
-         x: bool = isinstance(42, MyType)\n"
+         x: bool = isinstance(42, MyType)\n",
     );
-    assert!(errors.is_empty(), "isinstance should return bool: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "isinstance should return bool: {errors:?}"
+    );
 }
 
 #[test]
 fn test_builtin_abs() {
     let errors = check("x: int = abs(-5)\n");
-    assert!(errors.is_empty(), "abs should work with Any param: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "abs should work with Any param: {errors:?}"
+    );
 }
 
 #[test]
@@ -268,7 +292,7 @@ fn test_class_field_access() {
     let errors = check(
         "class Point:\n\
          \x20   x: int = 0\n\
-         \x20   y: int = 0\n"
+         \x20   y: int = 0\n",
     );
     assert!(errors.is_empty(), "class def should type-check: {errors:?}");
 }
@@ -279,7 +303,7 @@ fn test_class_field_access() {
 fn test_list_index_type() {
     let errors = check(
         "def get_first(items: list[int]) -> int:\n\
-         \x20   return items[0]\n"
+         \x20   return items[0]\n",
     );
     assert!(errors.is_empty(), "list[int][0] should be int: {errors:?}");
 }
@@ -288,16 +312,19 @@ fn test_list_index_type() {
 fn test_dict_index_type() {
     let errors = check(
         "def get_val(d: dict[str, int]) -> int:\n\
-         \x20   return d[\"key\"]\n"
+         \x20   return d[\"key\"]\n",
     );
-    assert!(errors.is_empty(), "dict[str,int][key] should be int: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "dict[str,int][key] should be int: {errors:?}"
+    );
 }
 
 #[test]
 fn test_str_index_type() {
     let errors = check(
         "def first_char(s: str) -> str:\n\
-         \x20   return s[0]\n"
+         \x20   return s[0]\n",
     );
     assert!(errors.is_empty(), "str[0] should be str: {errors:?}");
 }
@@ -311,9 +338,12 @@ fn test_exception_classes_exist() {
         "try:\n\
          \x20   pass\n\
          except ValueError as e:\n\
-         \x20   pass\n"
+         \x20   pass\n",
     );
-    assert!(errors.is_empty(), "ValueError should be in scope: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "ValueError should be in scope: {errors:?}"
+    );
 }
 
 // --- #314: Generics and Protocols ---
@@ -323,9 +353,12 @@ fn test_generic_function_type_params() {
     // Generic function with type params should type-check
     let errors = check(
         "def first[T](items: list[T]) -> T:\n\
-         \x20   return items[0]\n"
+         \x20   return items[0]\n",
     );
-    assert!(errors.is_empty(), "generic function should type-check: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "generic function should type-check: {errors:?}"
+    );
 }
 
 #[test]
@@ -334,9 +367,12 @@ fn test_generic_function_call_inference() {
     let errors = check(
         "def identity[T](x: T) -> T:\n\
          \x20   return x\n\
-         result: int = identity(42)\n"
+         result: int = identity(42)\n",
     );
-    assert!(errors.is_empty(), "generic call should infer T=int: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "generic call should infer T=int: {errors:?}"
+    );
 }
 
 #[test]
@@ -344,9 +380,12 @@ fn test_generic_class_definition() {
     // Generic class with type params should type-check
     let errors = check(
         "class Box[T]:\n\
-         \x20   pass\n"
+         \x20   pass\n",
     );
-    assert!(errors.is_empty(), "generic class should type-check: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "generic class should type-check: {errors:?}"
+    );
 }
 
 #[test]
@@ -356,9 +395,12 @@ fn test_generic_class_as_type() {
         "class Container[T]:\n\
          \x20   pass\n\
          def use_container(c: Container[int]) -> None:\n\
-         \x20   pass\n"
+         \x20   pass\n",
     );
-    assert!(errors.is_empty(), "Container[int] should resolve: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "Container[int] should resolve: {errors:?}"
+    );
 }
 
 #[test]
@@ -367,9 +409,12 @@ fn test_protocol_registration() {
     let errors = check(
         "class Drawable(Protocol):\n\
          \x20   def draw(self) -> None:\n\
-         \x20       pass\n"
+         \x20       pass\n",
     );
-    assert!(errors.is_empty(), "Protocol definition should work: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "Protocol definition should work: {errors:?}"
+    );
 }
 
 #[test]
@@ -384,9 +429,12 @@ fn test_protocol_structural_matching() {
          \x20       pass\n\
          def render(obj: Drawable) -> None:\n\
          \x20   pass\n\
-         render(Circle())\n"
+         render(Circle())\n",
     );
-    assert!(errors.is_empty(), "Circle should satisfy Drawable protocol: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "Circle should satisfy Drawable protocol: {errors:?}"
+    );
 }
 
 #[test]
@@ -396,7 +444,7 @@ fn test_generic_type_param_scoping() {
         "def first[T](items: list[T]) -> T:\n\
          \x20   return items[0]\n\
          def second(x: int) -> int:\n\
-         \x20   return x\n"
+         \x20   return x\n",
     );
     assert!(errors.is_empty(), "T should not leak: {errors:?}");
 }
@@ -407,7 +455,7 @@ fn test_generic_inference_conflict() {
     let errors = check(
         "def same[T](x: T, y: T) -> T:\n\
          \x20   return x\n\
-         same(1, \"hello\")\n"
+         same(1, \"hello\")\n",
     );
     assert!(!errors.is_empty(), "conflicting T should error");
 }
@@ -420,9 +468,12 @@ fn test_generic_class_constraint_via_function() {
          \x20   pass\n\
          def unbox[T](b: Box[T], default: T) -> T:\n\
          \x20   return default\n\
-         unbox(Box(), 42)\n"
+         unbox(Box(), 42)\n",
     );
-    assert!(errors.is_empty(), "generic function with Box[T] should work: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "generic function with Box[T] should work: {errors:?}"
+    );
 }
 
 #[test]
@@ -432,9 +483,12 @@ fn test_generic_class_rejects_wrong_type_arg() {
         "class Box[T]:\n\
          \x20   value: T = None\n\
          def get_value(b: Box[int]) -> str:\n\
-         \x20   return b.value\n"
+         \x20   return b.value\n",
     );
-    assert!(!errors.is_empty(), "Box[int].value is int, should reject str return");
+    assert!(
+        !errors.is_empty(),
+        "Box[int].value is int, should reject str return"
+    );
 }
 
 // --- #827: Match/case type narrowing ---
@@ -451,9 +505,12 @@ fn test_match_class_pattern_narrows_type() {
          \x20   match p:\n\
          \x20       case Point():\n\
          \x20           return p.x\n\
-         \x20   return 0\n"
+         \x20   return 0\n",
     );
-    assert!(errors.is_empty(), "class pattern body should type-check cleanly: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "class pattern body should type-check cleanly: {errors:?}"
+    );
 }
 
 #[test]
@@ -465,9 +522,12 @@ fn test_match_guard_type_checks() {
          \x20   case n if n > 0:\n\
          \x20       y: int = n\n\
          \x20   case _:\n\
-         \x20       y: int = 0\n"
+         \x20       y: int = 0\n",
     );
-    assert!(errors.is_empty(), "match guard should type-check cleanly: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "match guard should type-check cleanly: {errors:?}"
+    );
 }
 
 #[test]
@@ -477,9 +537,12 @@ fn test_match_class_capture_types() {
          p = Point()\n\
          match p:\n\
          \x20   case Point(x=a):\n\
-         \x20       z: int = a\n"  // a should be typed as int
+         \x20       z: int = a\n", // a should be typed as int
     );
-    assert!(errors.is_empty(), "class pattern capture should be typed as field type: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "class pattern capture should be typed as field type: {errors:?}"
+    );
 }
 
 #[test]
@@ -492,9 +555,12 @@ fn test_match_class_positional_follows_match_args() {
          match p:\n\
          \x20   case Point(a, b):\n\
          \x20       s: str = a\n\
-         \x20       i: int = b\n"
+         \x20       i: int = b\n",
     );
-    assert!(errors.is_empty(), "__match_args__ reordering should type-check: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "__match_args__ reordering should type-check: {errors:?}"
+    );
 }
 
 #[test]
@@ -506,9 +572,12 @@ fn test_match_sequence_capture_element_type() {
          \x20       case [x]:\n\
          \x20           y: int = x\n\
          \x20           return y\n\
-         \x20   return 0\n"
+         \x20   return 0\n",
     );
-    assert!(errors.is_empty(), "sequence element capture should be int: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "sequence element capture should be int: {errors:?}"
+    );
 }
 
 #[test]
@@ -519,9 +588,12 @@ fn test_match_tuple_sequence_capture() {
          \x20   match (1, 2):\n\
          \x20       case (n, _):\n\
          \x20           return n + 1\n\
-         \x20   return 0\n"
+         \x20   return 0\n",
     );
-    assert!(errors.is_empty(), "tuple capture slot should be int for arithmetic: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "tuple capture slot should be int for arithmetic: {errors:?}"
+    );
 }
 
 #[test]
@@ -532,9 +604,12 @@ fn test_match_bool_class_pattern_narrows_to_bool() {
          \x20   match x:\n\
          \x20       case bool(b):\n\
          \x20           return b\n\
-         \x20   return False\n"
+         \x20   return False\n",
     );
-    assert!(errors.is_empty(), "bool class pattern should narrow capture to bool: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "bool class pattern should narrow capture to bool: {errors:?}"
+    );
 }
 
 #[test]
@@ -549,7 +624,7 @@ fn test_match_explicit_empty_match_args_no_positional() {
          \x20   match c:\n\
          \x20       case C(v):\n\
          \x20           return 0\n\
-         \x20   return 0\n"
+         \x20   return 0\n",
     );
     // Should not produce a crash; the type checker is consistent (no panic).
     let _ = errors;
@@ -563,9 +638,12 @@ fn test_str_add_str_no_type_error() {
     let errors = check(
         "a: str = \"hello\"\n\
          b: str = \" world\"\n\
-         c: str = a + b\n"
+         c: str = a + b\n",
     );
-    assert!(errors.is_empty(), "str + str should typecheck without errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "str + str should typecheck without errors: {errors:?}"
+    );
 }
 
 #[test]
@@ -573,9 +651,12 @@ fn test_str_concat_return_type() {
     // str + str result is assignable to str; function return type is accepted
     let errors = check(
         "def greet(first: str, last: str) -> str:\n\
-         \x20   return first + last\n"
+         \x20   return first + last\n",
     );
-    assert!(errors.is_empty(), "str + str return should be accepted as str: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "str + str return should be accepted as str: {errors:?}"
+    );
 }
 
 #[test]
@@ -584,7 +665,7 @@ fn test_str_add_int_is_type_error() {
     let errors = check(
         "a: str = \"x\"\n\
          b: int = 1\n\
-         c: str = a + b\n"
+         c: str = a + b\n",
     );
     assert!(!errors.is_empty(), "str + int should produce a type error");
 }
@@ -596,10 +677,12 @@ fn test_str_add_int_is_type_error() {
 fn test_next_two_arg_form_accepted() {
     let errors = check(
         "it = iter([])\n\
-         result = next(it, 42)\n"
+         result = next(it, 42)\n",
     );
-    assert!(errors.is_empty(),
-        "next(it, default) 2-arg form should be accepted: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "next(it, default) 2-arg form should be accepted: {errors:?}"
+    );
 }
 
 // R9.1: next(iterator) 1-argument form must still be accepted
@@ -607,10 +690,12 @@ fn test_next_two_arg_form_accepted() {
 fn test_next_one_arg_form_accepted() {
     let errors = check(
         "it = iter([])\n\
-         result = next(it)\n"
+         result = next(it)\n",
     );
-    assert!(errors.is_empty(),
-        "next(it) 1-arg form should be accepted: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "next(it) 1-arg form should be accepted: {errors:?}"
+    );
 }
 
 // #1574: unary + and - must accept bool (Python: +True == 1, -True == -1).
@@ -619,10 +704,12 @@ fn test_unary_plus_minus_on_bool() {
     let errors = check(
         "x: bool = True\n\
          a = +x\n\
-         b = -x\n"
+         b = -x\n",
     );
-    assert!(errors.is_empty(),
-        "unary +/- on bool should type-check (bool is int subtype): {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "unary +/- on bool should type-check (bool is int subtype): {errors:?}"
+    );
 }
 
 // #1562: for-loop over a homogeneous tuple of strings must yield a Str
@@ -632,10 +719,12 @@ fn test_unary_plus_minus_on_bool() {
 fn test_for_over_homogeneous_str_tuple_concats() {
     let errors = check(
         "for sign in \"\", \"+\", \"-\":\n\
-         \x20   ss = sign + sign\n"
+         \x20   ss = sign + sign\n",
     );
-    assert!(errors.is_empty(),
-        "for over homogeneous str-tuple should allow Str+Str in body: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "for over homogeneous str-tuple should allow Str+Str in body: {errors:?}"
+    );
 }
 
 // #1578: dotted-path generics (`typing.Iterable[int]`) and freeform
@@ -648,7 +737,7 @@ fn test_dotted_generic_and_freeform_string_annotation() {
          def f(a: 'This is a new annotation') -> int:\n\
          \x20   return 1\n\
          def g(x: typing.Iterable[int]) -> typing.Union[int, str]:\n\
-         \x20   return 0\n"
+         \x20   return 0\n",
     );
     assert!(errors.is_empty(),
         "freeform string-literal + dotted-path generic annotations should resolve to Any: {errors:?}");
@@ -662,10 +751,12 @@ fn test_dotted_path_annotation_resolves_to_any() {
         "def f(arg: collections.abc.Mapping) -> int:\n\
          \x20   return 1\n\
          def g(arg: int) -> collections.abc.Mapping:\n\
-         \x20   return arg\n"
+         \x20   return arg\n",
     );
-    assert!(errors.is_empty(),
-        "dotted-path annotations should type-check as Any: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "dotted-path annotations should type-check as Any: {errors:?}"
+    );
 }
 
 // R9.1: iter() is variadic (accepts 1 or 2 args)
@@ -674,10 +765,12 @@ fn test_iter_two_arg_form_accepted() {
     let errors = check(
         "def sentinel() -> int:\n\
          \x20   return -1\n\
-         it = iter(sentinel, -1)\n"
+         it = iter(sentinel, -1)\n",
     );
-    assert!(errors.is_empty(),
-        "iter(callable, sentinel) 2-arg form should be accepted: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "iter(callable, sentinel) 2-arg form should be accepted: {errors:?}"
+    );
 }
 
 // R9.3: getattr() with default (3-arg form) must be accepted
@@ -687,20 +780,22 @@ fn test_getattr_three_arg_form_accepted() {
         "class Foo:\n\
          \x20   x: int = 1\n\
          obj = Foo()\n\
-         val = getattr(obj, \"x\", 0)\n"
+         val = getattr(obj, \"x\", 0)\n",
     );
-    assert!(errors.is_empty(),
-        "getattr(obj, name, default) 3-arg form should be accepted: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "getattr(obj, name, default) 3-arg form should be accepted: {errors:?}"
+    );
 }
 
 // R9: open() with mode and additional kwargs — variadic builtin
 #[test]
 fn test_open_variadic_form_accepted() {
-    let errors = check(
-        "f = open(\"path.txt\", \"r\")\n"
+    let errors = check("f = open(\"path.txt\", \"r\")\n");
+    assert!(
+        errors.is_empty(),
+        "open(path, mode) 2-arg form should be accepted: {errors:?}"
     );
-    assert!(errors.is_empty(),
-        "open(path, mode) 2-arg form should be accepted: {errors:?}");
 }
 
 // #1586: heterogeneous-callable Union — for-target binding to a tuple of
@@ -710,10 +805,12 @@ fn test_union_of_callables_is_callable() {
     let errors = check(
         "for C in set, frozenset, str, list, tuple:\n\
          \x20   x = C('a')\n\
-         \x20   y = C('b')\n"
+         \x20   y = C('b')\n",
     );
-    assert!(errors.is_empty(),
-        "Union of Fn/Class types must be callable, got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "Union of Fn/Class types must be callable, got: {errors:?}"
+    );
 }
 
 // #1588: free names inside function bodies should defer to runtime (Any)
@@ -724,17 +821,21 @@ fn test_free_name_in_fn_body_is_lazy() {
     let errors = check(
         "class C:\n\
          \x20   def m(self):\n\
-         \x20       return undefined_name\n"
+         \x20       return undefined_name\n",
     );
-    assert!(errors.is_empty(),
-        "free name in method body should be deferred to runtime, got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "free name in method body should be deferred to runtime, got: {errors:?}"
+    );
 }
 
 #[test]
 fn test_free_name_at_module_level_still_errors() {
     let errors = check("print(undefined_name)\n");
-    assert!(errors.iter().any(|e| e.contains("undefined name")),
-        "module-level free name should still error, got: {errors:?}");
+    assert!(
+        errors.iter().any(|e| e.contains("undefined name")),
+        "module-level free name should still error, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -744,13 +845,15 @@ fn test_zero_arg_call_to_default_param_fn() {
     // Defaults aren't surfaced through `Ty::Fn`, so this is the only way to
     // accept all-defaults calls without breaking down the type structure.
     let errors = check("def f(x=1):\n    return x\n\np = f()\n");
-    assert!(errors.is_empty(),
-        "zero-arg call to default-param fn should type-check, got: {errors:?}");
-    let errors = check(
-        "def g(a=1, b=2, c=3):\n    return a + b + c\n\nq = g()\n"
+    assert!(
+        errors.is_empty(),
+        "zero-arg call to default-param fn should type-check, got: {errors:?}"
     );
-    assert!(errors.is_empty(),
-        "zero-arg call to all-default fn should type-check, got: {errors:?}");
+    let errors = check("def g(a=1, b=2, c=3):\n    return a + b + c\n\nq = g()\n");
+    assert!(
+        errors.is_empty(),
+        "zero-arg call to all-default fn should type-check, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -758,11 +861,15 @@ fn test_property_zero_arg_is_callable() {
     // CPython: property(fget=None, fset=None, fdel=None, doc=None) — all
     // params optional. Mamba's stub must accept 0..=4 args, not require fget.
     let errors = check("p = property()\n");
-    assert!(errors.is_empty(),
-        "property() with no args should type-check (variadic stub), got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "property() with no args should type-check (variadic stub), got: {errors:?}"
+    );
     let errors = check("p = property(lambda self: 1)\n");
-    assert!(errors.is_empty(),
-        "property(fget) should still type-check, got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "property(fget) should still type-check, got: {errors:?}"
+    );
 }
 
 // ── ① Type-wall PoC: stdlib argument enforcement ─────────────────────────────
@@ -771,40 +878,58 @@ fn test_property_zero_arg_is_callable() {
 fn test_stdlib_module_fn_wrong_scalar_rejected() {
     // os.strerror(code: int) called with a str literal — must be rejected.
     let errors = check("from os import strerror\nstrerror(\"x\")\n");
-    assert!(errors.iter().any(|e| e.contains("argument type mismatch")),
-        "strerror(str) should be rejected, got: {errors:?}");
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "strerror(str) should be rejected, got: {errors:?}"
+    );
     // os.getenv(key: str) called with an int literal — must be rejected.
     let errors = check("from os import getenv\ngetenv(123)\n");
-    assert!(errors.iter().any(|e| e.contains("argument type mismatch")),
-        "getenv(int) should be rejected, got: {errors:?}");
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "getenv(int) should be rejected, got: {errors:?}"
+    );
     // multiprocessing.reduction.duplicate(handle: int) with str — rejected.
-    let errors = check(
-        "from multiprocessing.reduction import duplicate\nduplicate(\"x\")\n");
-    assert!(errors.iter().any(|e| e.contains("argument type mismatch")),
-        "duplicate(str) should be rejected, got: {errors:?}");
+    let errors = check("from multiprocessing.reduction import duplicate\nduplicate(\"x\")\n");
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "duplicate(str) should be rejected, got: {errors:?}"
+    );
 }
 
 #[test]
 fn test_stdlib_module_fn_correct_scalar_clean() {
     // Correct calls must NOT be rejected (the ② behavior oracle).
     let errors = check("from os import strerror\nstrerror(2)\n");
-    assert!(errors.is_empty(), "strerror(int) must be clean, got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "strerror(int) must be clean, got: {errors:?}"
+    );
     let errors = check("from os import getenv\ngetenv(\"PATH\")\n");
-    assert!(errors.is_empty(), "getenv(str) must be clean, got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "getenv(str) must be clean, got: {errors:?}"
+    );
     // Bool->int and int->float coercions must be allowed.
     let errors = check("from os import strerror\nstrerror(True)\n");
-    assert!(errors.is_empty(), "strerror(bool) must be clean, got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "strerror(bool) must be clean, got: {errors:?}"
+    );
 }
 
 #[test]
 fn test_stdlib_module_fn_via_module_attr() {
     // `import os; os.strerror("x")` — attr path through module binding.
     let errors = check("import os\nos.strerror(\"x\")\n");
-    assert!(errors.iter().any(|e| e.contains("argument type mismatch")),
-        "os.strerror(str) attr-path should be rejected, got: {errors:?}");
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "os.strerror(str) attr-path should be rejected, got: {errors:?}"
+    );
     let errors = check("import os\nos.strerror(2)\n");
-    assert!(errors.is_empty(),
-        "os.strerror(int) attr-path must be clean, got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "os.strerror(int) attr-path must be clean, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -813,16 +938,22 @@ fn test_stdlib_method_wrong_scalar_rejected() {
     let errors = check(
         "from html.parser import HTMLParser\n\
          obj = object.__new__(HTMLParser)\n\
-         obj.handle_entityref(12345)\n");
-    assert!(errors.iter().any(|e| e.contains("argument type mismatch")),
-        "handle_entityref(int) should be rejected, got: {errors:?}");
+         obj.handle_entityref(12345)\n",
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("argument type mismatch")),
+        "handle_entityref(int) should be rejected, got: {errors:?}"
+    );
     // Correct call is clean.
     let errors = check(
         "from html.parser import HTMLParser\n\
          obj = object.__new__(HTMLParser)\n\
-         obj.handle_entityref(\"amp\")\n");
-    assert!(errors.is_empty(),
-        "handle_entityref(str) must be clean, got: {errors:?}");
+         obj.handle_entityref(\"amp\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "handle_entityref(str) must be clean, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -830,26 +961,32 @@ fn test_stdlib_unenforceable_never_rejected() {
     // base64.b64encode(s: ReadableBuffer) -> Unknown: NOT enforceable. Even a
     // blatantly wrong int must NOT be rejected.
     let errors = check("from base64 import b64encode\nb64encode(123)\n");
-    assert!(errors.is_empty(),
-        "b64encode(int) must NOT be rejected (ReadableBuffer->Unknown), got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "b64encode(int) must NOT be rejected (ReadableBuffer->Unknown), got: {errors:?}"
+    );
     // math.factorial(x: SupportsIndex) -> Unknown: NOT enforceable.
     let errors = check("from math import factorial\nfactorial(3.0)\n");
-    assert!(errors.is_empty(),
-        "factorial(float) must NOT be rejected (SupportsIndex->Unknown), got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "factorial(float) must NOT be rejected (SupportsIndex->Unknown), got: {errors:?}"
+    );
 }
 
 #[test]
 fn test_stdlib_skip_when_arg_not_concrete_scalar() {
     // Argument is a variable of unknown type -> skip (Any actual).
-    let errors = check(
-        "from os import strerror\ndef f(v):\n    return strerror(v)\n");
-    assert!(errors.is_empty(),
-        "strerror(unknown-var) must be skipped, got: {errors:?}");
+    let errors = check("from os import strerror\ndef f(v):\n    return strerror(v)\n");
+    assert!(
+        errors.is_empty(),
+        "strerror(unknown-var) must be skipped, got: {errors:?}"
+    );
     // Star-arg present -> stop enforcement.
-    let errors = check(
-        "from os import strerror\nargs = [\"x\"]\nstrerror(*args)\n");
-    assert!(errors.is_empty(),
-        "strerror(*args) must be skipped, got: {errors:?}");
+    let errors = check("from os import strerror\nargs = [\"x\"]\nstrerror(*args)\n");
+    assert!(
+        errors.is_empty(),
+        "strerror(*args) must be skipped, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -857,6 +994,8 @@ fn test_stdlib_non_stdlib_call_untouched() {
     // A user fn that happens to share a stdlib name is not in import_origins,
     // so the hook never touches it.
     let errors = check("def strerror(x):\n    return x\nstrerror(\"x\")\n");
-    assert!(errors.is_empty(),
-        "user strerror must be untouched, got: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "user strerror must be untouched, got: {errors:?}"
+    );
 }

@@ -1,11 +1,11 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 /// ast module for Mamba (#668).
 ///
 /// Exposes Mamba's parser AST to Python userspace.
 /// Provides parse(), dump(), literal_eval(), NodeVisitor, NodeTransformer.
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
 
 // ── Variadic dispatchers (callable from module-attr context) ──
 
@@ -63,14 +63,20 @@ pub fn register() {
         ("dump", d_dump as *const () as usize),
         ("literal_eval", d_literal_eval as *const () as usize),
         ("get_docstring", d_get_docstring as *const () as usize),
-        ("fix_missing_locations", d_fix_missing_locations as *const () as usize),
+        (
+            "fix_missing_locations",
+            d_fix_missing_locations as *const () as usize,
+        ),
         ("increment_lineno", d_increment_lineno as *const () as usize),
         ("copy_location", d_copy_location as *const () as usize),
         ("walk", d_walk as *const () as usize),
         ("unparse", d_unparse as *const () as usize),
         ("iter_fields", d_iter_fields as *const () as usize),
         ("iter_child_nodes", d_iter_child_nodes as *const () as usize),
-        ("get_source_segment", d_get_source_segment as *const () as usize),
+        (
+            "get_source_segment",
+            d_get_source_segment as *const () as usize,
+        ),
         ("main", d_main as *const () as usize),
         // Type classes (as stub callables)
         ("NodeVisitor", d_NodeVisitor as *const () as usize),
@@ -85,40 +91,146 @@ pub fn register() {
 
     // AST node type constants (top-level)
     for node_type in &[
-        "Module", "Interactive", "Expression", "FunctionDef", "AsyncFunctionDef",
-        "ClassDef", "Return", "Delete", "Assign", "TypeAlias", "AugAssign",
-        "AnnAssign", "For", "AsyncFor", "While", "If", "With", "AsyncWith",
-        "Match", "Raise", "Try", "TryStar", "Assert", "Import", "ImportFrom",
-        "Global", "Nonlocal", "Expr", "Pass", "Break", "Continue",
-        "BoolOp", "NamedExpr", "BinOp", "UnaryOp", "Lambda", "IfExp",
-        "Dict", "Set", "ListComp", "SetComp", "DictComp", "GeneratorExp",
-        "Await", "Yield", "YieldFrom", "Compare", "Call", "FormattedValue",
-        "JoinedStr", "Constant", "Attribute", "Subscript", "Starred",
-        "Name", "List", "Tuple", "Slice",
-        "Load", "Store", "Del",
-        "And", "Or", "Add", "Sub", "Mult", "MatMult", "Div", "Mod",
-        "Pow", "LShift", "RShift", "BitOr", "BitXor", "BitAnd", "FloorDiv",
-        "Invert", "Not", "UAdd", "USub",
-        "Eq", "NotEq", "Lt", "LtE", "Gt", "GtE", "Is", "IsNot", "In", "NotIn",
-        "arg", "arguments", "keyword", "alias", "withitem", "match_case",
-        "MatchValue", "MatchSingleton", "MatchSequence", "MatchMapping",
-        "MatchClass", "MatchStar", "MatchAs", "MatchOr",
-        "ExceptHandler", "TypeVar", "ParamSpec", "TypeVarTuple",
+        "Module",
+        "Interactive",
+        "Expression",
+        "FunctionDef",
+        "AsyncFunctionDef",
+        "ClassDef",
+        "Return",
+        "Delete",
+        "Assign",
+        "TypeAlias",
+        "AugAssign",
+        "AnnAssign",
+        "For",
+        "AsyncFor",
+        "While",
+        "If",
+        "With",
+        "AsyncWith",
+        "Match",
+        "Raise",
+        "Try",
+        "TryStar",
+        "Assert",
+        "Import",
+        "ImportFrom",
+        "Global",
+        "Nonlocal",
+        "Expr",
+        "Pass",
+        "Break",
+        "Continue",
+        "BoolOp",
+        "NamedExpr",
+        "BinOp",
+        "UnaryOp",
+        "Lambda",
+        "IfExp",
+        "Dict",
+        "Set",
+        "ListComp",
+        "SetComp",
+        "DictComp",
+        "GeneratorExp",
+        "Await",
+        "Yield",
+        "YieldFrom",
+        "Compare",
+        "Call",
+        "FormattedValue",
+        "JoinedStr",
+        "Constant",
+        "Attribute",
+        "Subscript",
+        "Starred",
+        "Name",
+        "List",
+        "Tuple",
+        "Slice",
+        "Load",
+        "Store",
+        "Del",
+        "And",
+        "Or",
+        "Add",
+        "Sub",
+        "Mult",
+        "MatMult",
+        "Div",
+        "Mod",
+        "Pow",
+        "LShift",
+        "RShift",
+        "BitOr",
+        "BitXor",
+        "BitAnd",
+        "FloorDiv",
+        "Invert",
+        "Not",
+        "UAdd",
+        "USub",
+        "Eq",
+        "NotEq",
+        "Lt",
+        "LtE",
+        "Gt",
+        "GtE",
+        "Is",
+        "IsNot",
+        "In",
+        "NotIn",
+        "arg",
+        "arguments",
+        "keyword",
+        "alias",
+        "withitem",
+        "match_case",
+        "MatchValue",
+        "MatchSingleton",
+        "MatchSequence",
+        "MatchMapping",
+        "MatchClass",
+        "MatchStar",
+        "MatchAs",
+        "MatchOr",
+        "ExceptHandler",
+        "TypeVar",
+        "ParamSpec",
+        "TypeVarTuple",
         "comprehension",
         // Base AST class
         "AST",
         // Deprecated / legacy node classes still exported by CPython 3.12
-        "AugLoad", "AugStore", "ExtSlice", "Index", "Param", "Suite",
+        "AugLoad",
+        "AugStore",
+        "ExtSlice",
+        "Index",
+        "Param",
+        "Suite",
         // Additional concrete node classes
-        "FunctionType", "TypeIgnore",
+        "FunctionType",
+        "TypeIgnore",
         // Abstract base classes (lowercase grammar groups)
-        "mod", "stmt", "expr", "expr_context", "boolop", "operator",
-        "unaryop", "cmpop", "excepthandler", "pattern", "slice",
-        "type_ignore", "type_param",
+        "mod",
+        "stmt",
+        "expr",
+        "expr_context",
+        "boolop",
+        "operator",
+        "unaryop",
+        "cmpop",
+        "excepthandler",
+        "pattern",
+        "slice",
+        "type_ignore",
+        "type_param",
     ] {
-        attrs.insert(node_type.to_string(),
-            MbValue::from_ptr(MbObject::new_str(
-                format!("mb_ast_node_{}", node_type))));
+        attrs.insert(
+            node_type.to_string(),
+            MbValue::from_ptr(MbObject::new_str(format!("mb_ast_node_{}", node_type))),
+        );
     }
 
     // Names that CPython's ast module pulls into its namespace from other
@@ -130,21 +242,28 @@ pub fn register() {
     // self-contained here avoids any cross-module init-order coupling.
     for reexport in &[
         // from enum
-        "IntEnum", "auto",
+        "IntEnum",
+        "auto",
         // from contextlib
-        "contextmanager", "nullcontext",
+        "contextmanager",
+        "nullcontext",
         // bare imports visible on the module object
-        "sys", "re",
+        "sys",
+        "re",
     ] {
-        attrs.insert(reexport.to_string(),
-            MbValue::from_ptr(MbObject::new_str(
-                format!("mb_ast_reexport_{}", reexport))));
+        attrs.insert(
+            reexport.to_string(),
+            MbValue::from_ptr(MbObject::new_str(format!("mb_ast_reexport_{}", reexport))),
+        );
     }
 
     // Mode constants
     attrs.insert("PyCF_ONLY_AST".to_string(), MbValue::from_int(1024));
     attrs.insert("PyCF_TYPE_COMMENTS".to_string(), MbValue::from_int(4096));
-    attrs.insert("PyCF_ALLOW_TOP_LEVEL_AWAIT".to_string(), MbValue::from_int(8192));
+    attrs.insert(
+        "PyCF_ALLOW_TOP_LEVEL_AWAIT".to_string(),
+        MbValue::from_int(8192),
+    );
 
     super::register_module("ast", attrs);
 }
@@ -154,7 +273,11 @@ pub fn register() {
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
         use super::super::rc::ObjData;
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -162,8 +285,10 @@ fn extract_str(val: MbValue) -> Option<String> {
 fn make_ast_node(node_type: &str, fields: FxHashMap<String, MbValue>) -> MbValue {
     use super::super::rc::{MbObject, MbObjectHeader, ObjData};
     let mut all_fields = fields;
-    all_fields.insert("_type".to_string(),
-        MbValue::from_ptr(MbObject::new_str(node_type.to_string())));
+    all_fields.insert(
+        "_type".to_string(),
+        MbValue::from_ptr(MbObject::new_str(node_type.to_string())),
+    );
     all_fields.insert("lineno".to_string(), MbValue::from_int(1));
     all_fields.insert("col_offset".to_string(), MbValue::from_int(0));
     all_fields.insert("end_lineno".to_string(), MbValue::from_int(1));
@@ -188,12 +313,51 @@ fn make_ast_node(node_type: &str, fields: FxHashMap<String, MbValue>) -> MbValue
 pub fn mb_ast_parse(source: MbValue) -> MbValue {
     let src = extract_str(source).unwrap_or_default();
     let mut fields = FxHashMap::default();
-    fields.insert("body".to_string(),
-        MbValue::from_ptr(MbObject::new_list(vec![])));
-    fields.insert("type_ignores".to_string(),
-        MbValue::from_ptr(MbObject::new_list(vec![])));
-    fields.insert("_source".to_string(),
-        MbValue::from_ptr(MbObject::new_str(src)));
+    // One stub statement node per top-level statement, typed by its leading
+    // keyword, each carrying an empty body of its own. Not a real AST — just
+    // enough shape that `module.body[0]` resolves to a node (since list
+    // subscripts now raise IndexError instead of silently yielding None).
+    let mut body_nodes: Vec<MbValue> = Vec::new();
+    for line in src.lines() {
+        let t = line.trim_start();
+        if t.is_empty() || line.starts_with(|c: char| c.is_whitespace()) {
+            continue; // nested lines belong to the previous statement
+        }
+        if t.starts_with('#') {
+            continue;
+        }
+        let kind = if t.starts_with("def ") {
+            "FunctionDef"
+        } else if t.starts_with("async def ") {
+            "AsyncFunctionDef"
+        } else if t.starts_with("class ") {
+            "ClassDef"
+        } else if t.starts_with("import ") || t.starts_with("from ") {
+            "Import"
+        } else if t.contains('=') && !t.starts_with("if ") {
+            "Assign"
+        } else {
+            "Expr"
+        };
+        let mut nf = FxHashMap::default();
+        nf.insert(
+            "body".to_string(),
+            MbValue::from_ptr(MbObject::new_list(vec![])),
+        );
+        body_nodes.push(make_ast_node(kind, nf));
+    }
+    fields.insert(
+        "body".to_string(),
+        MbValue::from_ptr(MbObject::new_list(body_nodes)),
+    );
+    fields.insert(
+        "type_ignores".to_string(),
+        MbValue::from_ptr(MbObject::new_list(vec![])),
+    );
+    fields.insert(
+        "_source".to_string(),
+        MbValue::from_ptr(MbObject::new_str(src)),
+    );
     make_ast_node("Module", fields)
 }
 
@@ -201,13 +365,16 @@ pub fn mb_ast_parse(source: MbValue) -> MbValue {
 ///          indent=None) -> str
 pub fn mb_ast_dump(node: MbValue) -> MbValue {
     use super::super::rc::ObjData;
-    let type_name = node.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-            Some(class_name.clone())
-        } else {
-            None
-        }
-    }).unwrap_or_else(|| "AST".to_string());
+    let type_name = node
+        .as_ptr()
+        .and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "AST".to_string());
     let dump = format!("{}()", type_name);
     MbValue::from_ptr(MbObject::new_str(dump))
 }
@@ -220,6 +387,20 @@ pub fn mb_ast_literal_eval(expr: MbValue) -> MbValue {
         None => return MbValue::none(),
     };
     let trimmed = s.trim();
+    // f-strings are dynamic expressions, never literals: CPython raises
+    // ValueError("malformed node or string ...").
+    let lower = trimmed.to_ascii_lowercase();
+    for pfx in ["f'", "f\"", "rf'", "rf\"", "fr'", "fr\""] {
+        if lower.starts_with(pfx) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "malformed node or string: f-string".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
     // Try integer
     if let Ok(n) = trimmed.parse::<i64>() {
         return MbValue::from_int(n);
@@ -230,16 +411,16 @@ pub fn mb_ast_literal_eval(expr: MbValue) -> MbValue {
     }
     // True/False/None
     match trimmed {
-        "True"  => return MbValue::from_bool(true),
+        "True" => return MbValue::from_bool(true),
         "False" => return MbValue::from_bool(false),
-        "None"  => return MbValue::none(),
+        "None" => return MbValue::none(),
         _ => {}
     }
     // String literal (simple: strip quotes)
     if (trimmed.starts_with('"') && trimmed.ends_with('"'))
         || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
     {
-        let inner = &trimmed[1..trimmed.len()-1];
+        let inner = &trimmed[1..trimmed.len() - 1];
         return MbValue::from_ptr(MbObject::new_str(inner.to_string()));
     }
     MbValue::none()
@@ -251,13 +432,19 @@ pub fn mb_ast_get_docstring(_node: MbValue) -> MbValue {
 }
 
 /// ast.fix_missing_locations(node) -> node
-pub fn mb_ast_fix_missing_locations(node: MbValue) -> MbValue { node }
+pub fn mb_ast_fix_missing_locations(node: MbValue) -> MbValue {
+    node
+}
 
 /// ast.increment_lineno(node, n=1) -> node
-pub fn mb_ast_increment_lineno(node: MbValue, _n: MbValue) -> MbValue { node }
+pub fn mb_ast_increment_lineno(node: MbValue, _n: MbValue) -> MbValue {
+    node
+}
 
 /// ast.copy_location(new_node, old_node) -> new_node
-pub fn mb_ast_copy_location(new_node: MbValue, _old_node: MbValue) -> MbValue { new_node }
+pub fn mb_ast_copy_location(new_node: MbValue, _old_node: MbValue) -> MbValue {
+    new_node
+}
 
 /// ast.walk(node) -> iterator of all nodes
 pub fn mb_ast_walk(node: MbValue) -> MbValue {
@@ -291,11 +478,7 @@ pub fn mb_ast_NodeTransformer() -> MbValue {
 fn is_internal_field(name: &str) -> bool {
     matches!(
         name,
-        "_type" | "_source"
-            | "lineno"
-            | "col_offset"
-            | "end_lineno"
-            | "end_col_offset"
+        "_type" | "_source" | "lineno" | "col_offset" | "end_lineno" | "end_col_offset"
     )
 }
 
@@ -533,7 +716,9 @@ mod tests {
 
     #[test]
     fn test_get_source_segment_single_line() {
-        use super::super::super::rc::{MbObject as RcObj, MbObjectHeader, ObjData, ObjKind, MbRwLock};
+        use super::super::super::rc::{
+            MbObject as RcObj, MbObjectHeader, MbRwLock, ObjData, ObjKind,
+        };
         // Build a node spanning columns 4..9 of line 1 -> "value".
         // (make_ast_node would overwrite location attrs with defaults, so build
         // the Instance directly to control col_offset / end_col_offset.)
@@ -568,7 +753,9 @@ mod tests {
     #[test]
     fn test_get_source_segment_missing_location_is_none() {
         // A bare string node with no location attributes -> None.
-        use super::super::super::rc::{MbObject as RcObj, MbObjectHeader, ObjData, ObjKind, MbRwLock};
+        use super::super::super::rc::{
+            MbObject as RcObj, MbObjectHeader, MbRwLock, ObjData, ObjKind,
+        };
         let empty = FxHashMap::default();
         let obj = Box::new(RcObj {
             header: MbObjectHeader {

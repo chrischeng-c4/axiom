@@ -1,21 +1,36 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
 /// colorsys module for Mamba (mamba-stdlib).
 ///
 /// Pure-math color-space conversion functions mirroring CPython 3.12
 /// Lib/colorsys.py. All inputs and outputs are floats in [0.0, 1.0]
 /// (except YIQ i/q channels which may exceed that range).
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::MbObject;
+
+/// A colorsys channel must be a real number (int / bool / float). None, str,
+/// etc. are rejected so the conversion raises TypeError instead of coercing to
+/// 0.0.
+fn is_real_number(val: MbValue) -> bool {
+    val.as_float().is_some() || val.as_int_pyint().is_some()
+}
 
 macro_rules! dispatch_ternary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-            $fn(
-                a.get(0).copied().unwrap_or_else(MbValue::none),
-                a.get(1).copied().unwrap_or_else(MbValue::none),
-                a.get(2).copied().unwrap_or_else(MbValue::none),
-            )
+            // CPython's colorsys conversions are 3-arg Python functions over
+            // real numbers: a wrong arity or a non-numeric channel (None/str)
+            // is a TypeError, not a silent coercion to 0.0.
+            if nargs != 3 || !a.iter().all(|v| is_real_number(*v)) {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "colorsys conversion takes three real-number arguments".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+            $fn(a[0], a[1], a[2])
         }
     };
 }
@@ -254,8 +269,8 @@ pub fn mb_colorsys_yiq_to_rgb(y: MbValue, i: MbValue, q: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::rc::ObjData;
+    use super::*;
 
     fn f(v: f64) -> MbValue {
         MbValue::from_float(v)
@@ -349,6 +364,9 @@ mod tests {
         register();
         use super::super::super::module::MODULES;
         let present = MODULES.with(|m| m.borrow().contains_key("colorsys"));
-        assert!(present, "colorsys module should be in the registry after register()");
+        assert!(
+            present,
+            "colorsys module should be in the registry after register()"
+        );
     }
 }

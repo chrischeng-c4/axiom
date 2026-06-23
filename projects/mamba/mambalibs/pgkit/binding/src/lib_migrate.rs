@@ -4,7 +4,7 @@
 //! (Alembic equivalent) — `MigrationRunner` with 7 verbs plus the
 //! `Migration` value-object constructor.
 
-use cclab_mamba_registry::{MAMBA_MODULES, MambaModule, ModuleRegistrar, rt_sym};
+use cclab_mamba_registry::{rt_sym, MambaModule, ModuleRegistrar, MAMBA_MODULES};
 use linkme::distributed_slice;
 
 /// Migrate surface mounted under `mambalibs.pg.migrate`.

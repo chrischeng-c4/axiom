@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-operator.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-lease-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Minimal Lease-based leader election (coordination.k8s.io/v1).
 //!
@@ -27,13 +27,13 @@ const RENEW_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Shared leadership flag, flipped by the background election task and read by
 /// the reconcile loop.
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-lease-rs.md#source
 pub struct Election {
     pub is_leader: AtomicBool,
     pub identity: String,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-lease-rs.md#source
 impl Election {
     pub fn new(identity: String) -> Arc<Self> {
         Arc::new(Self {
@@ -113,7 +113,7 @@ async fn acquire_or_renew(api: &Api<Lease>, identity: &str) -> bool {
 /// Spawn the background election loop. The returned [`Election`] is shared with
 /// the reconcile context; its `is_leader` flag tracks whether this replica
 /// currently holds the lease. The Lease lives in `namespace`.
-/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-operator-lease-rs.md#source
 pub fn spawn(client: Client, namespace: String, election: Arc<Election>) {
     tokio::spawn(async move {
         let api: Api<Lease> = Api::namespaced(client, &namespace);

@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Vector index backends for `FieldType::Vector`.
 //!
@@ -33,6 +33,7 @@ use crate::types::{VectorMetric, VectorQuantize, VectorSpec};
 /// Common backend contract — every concrete index implementation
 /// (HNSW, flat CPU brute force) goes through this trait so the storage
 /// layer doesn't care which one is in use.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 pub trait VectorIndex: Send + Sync {
     /// Insert (or overwrite) the vector associated with `external_id`.
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()>;
@@ -133,15 +134,15 @@ pub trait VectorIndex: Send + Sync {
 /// at the codebook's edges. In practice this is fine because callers
 /// L2-normalize embeddings before insertion, which bounds the input
 /// range tightly.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 pub struct ScalarCodebook {
     pub min: f32,
     pub max: f32,
     pub dim: usize,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl ScalarCodebook {
     /// Empty codebook — the next `widen` call defines the range.
     pub fn empty(dim: usize) -> Self {
@@ -177,7 +178,7 @@ impl ScalarCodebook {
 
 /// Encode a vector to one byte per dimension using `cb`. Out-of-range
 /// values saturate at `0` / `255`.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 pub fn encode_sq(vec: &[f32], cb: &ScalarCodebook) -> Vec<u8> {
     let span = cb.range();
     vec.iter()
@@ -189,7 +190,7 @@ pub fn encode_sq(vec: &[f32], cb: &ScalarCodebook) -> Vec<u8> {
 }
 
 /// Decode a u8-encoded vector back to f32 using `cb`.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 pub fn decode_sq(bytes: &[u8], cb: &ScalarCodebook) -> Vec<f32> {
     let span = cb.range();
     bytes
@@ -273,7 +274,7 @@ struct VectorStore {
     codebook: Option<ScalarCodebook>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl VectorStore {
     fn new(spec: VectorSpec) -> Self {
         let codebook = match spec.quantize {
@@ -360,7 +361,7 @@ impl VectorStore {
 /// Because `hnsw_rs::Hnsw` is parameterised by a concrete distance
 /// type, we keep three internal variants in `HnswInner` and dispatch
 /// on the field's metric at construction time.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 pub struct HnswCpuIndex {
     inner: RwLock<HnswCpuInner>,
 }
@@ -421,7 +422,7 @@ fn hnsw_search_ef() -> usize {
         .unwrap_or(HNSW_SEARCH_EF_DEFAULT)
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl HnswBackend {
     fn new(metric: VectorMetric, max_elements: usize) -> Self {
         match metric {
@@ -472,7 +473,7 @@ impl HnswBackend {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl HnswCpuIndex {
     /// Construct a fresh, empty CPU HNSW index for the given spec.
     pub fn new(spec: VectorSpec) -> Self {
@@ -498,7 +499,10 @@ impl HnswCpuIndex {
     ) -> Result<Self> {
         let idx = Self::new(spec);
         {
-            let mut inner = idx.inner.write().map_err(|_| anyhow!("hnsw lock poisoned"))?;
+            let mut inner = idx
+                .inner
+                .write()
+                .map_err(|_| anyhow!("hnsw lock poisoned"))?;
             // Override the freshly-initialized codebook with the one
             // that was actually used to encode the persisted bytes.
             // Required so decode_sq() round-trips exactly.
@@ -522,10 +526,13 @@ impl HnswCpuIndex {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl VectorIndex for HnswCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
-        let mut inner = self.inner.write().map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
         if vector.len() != inner.store.spec.dim as usize {
             bail!(
                 "vector dim mismatch on add: expected {}, got {}",
@@ -560,7 +567,10 @@ impl VectorIndex for HnswCpuIndex {
     }
 
     fn remove(&self, external_id: &str) -> Result<bool> {
-        let mut inner = self.inner.write().map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
         let removed = inner.store.drop(external_id);
         if let Some(id) = inner.eid_to_id.remove(external_id) {
             inner.id_to_eid.remove(&id);
@@ -574,7 +584,10 @@ impl VectorIndex for HnswCpuIndex {
         k: usize,
         allow: &dyn Fn(&str) -> bool,
     ) -> Result<Vec<(String, f32)>> {
-        let inner = self.inner.read().map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
         if query.len() != inner.store.spec.dim as usize {
             bail!(
                 "kNN query dim mismatch: expected {}, got {}",
@@ -620,20 +633,20 @@ impl VectorIndex for HnswCpuIndex {
     }
 
     fn len(&self) -> usize {
-        self.inner
-            .read()
-            .map(|i| i.store.len())
-            .unwrap_or(0)
+        self.inner.read().map(|i| i.store.len()).unwrap_or(0)
     }
 
     fn dump_for_snapshot(&self) -> Result<(Vec<(String, Vec<f32>)>, Option<ScalarCodebook>)> {
-        let inner = self.inner.read().map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
         let vectors: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
         Ok((vectors, inner.store.codebook))
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl std::fmt::Debug for HnswCpuIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HnswCpuIndex")
@@ -652,7 +665,7 @@ impl std::fmt::Debug for HnswCpuIndex {
 /// moderate N this beats both an approximate index's build cost and a
 /// single-threaded exact scan (e.g. pgvector's `seqscan`), while giving 100%
 /// recall. The flat buffer is cached and rebuilt lazily after a mutation.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 pub struct FlatCpuIndex {
     inner: Mutex<FlatInner>,
 }
@@ -695,7 +708,7 @@ struct FlatVecs {
     eid_to_row: HashMap<String, u32>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl FlatVecs {
     /// Row `i`'s `dim`-long vector slice. BASE rows (`i < n_base`) come off the
     /// segment mmap (zero-copy); TAIL rows come from the in-RAM `data` buffer at
@@ -721,10 +734,15 @@ impl FlatVecs {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl FlatCpuIndex {
     pub fn new(spec: VectorSpec) -> Self {
-        Self { inner: Mutex::new(FlatInner { store: VectorStore::new(spec), flat: None }) }
+        Self {
+            inner: Mutex::new(FlatInner {
+                store: VectorStore::new(spec),
+                flat: None,
+            }),
+        }
     }
 
     /// Restore from a snapshot (re-store the saved vectors).
@@ -735,7 +753,10 @@ impl FlatCpuIndex {
     ) -> Result<Self> {
         let idx = Self::new(spec);
         {
-            let mut inner = idx.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+            let mut inner = idx
+                .inner
+                .lock()
+                .map_err(|_| anyhow!("flat lock poisoned"))?;
             if codebook.is_some() {
                 inner.store.codebook = codebook;
             }
@@ -809,7 +830,10 @@ impl FlatCpuIndex {
     /// row→eid mapping. Mirrors `__seal_flat_to_segment` but is reachable from
     /// production code and surfaces the row eids.
     fn seal_to_segment_prod(&self, path: &std::path::Path) -> Result<Option<Vec<String>>> {
-        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
         Self::ensure_flat(&mut inner);
         let flat = inner.flat.as_mut().expect("flat built");
         let dim = flat.dim;
@@ -835,8 +859,7 @@ impl FlatCpuIndex {
             row_eids.push(flat.eids[i].clone());
         }
         let n = owned.len();
-        let vectors: Vec<Option<&[f32]>> =
-            owned.iter().map(|v| Some(v.as_slice())).collect();
+        let vectors: Vec<Option<&[f32]>> = owned.iter().map(|v| Some(v.as_slice())).collect();
         crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
         let reader = crate::segment::SegmentReader::open(path)?;
         debug_assert_eq!(reader.n_docs() as usize, n);
@@ -876,7 +899,10 @@ impl FlatCpuIndex {
         // the kNN scan, snapshot, remove, and len all read the base off `seg`.
         let idx = Self::new(spec);
         {
-            let mut inner = idx.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+            let mut inner = idx
+                .inner
+                .lock()
+                .map_err(|_| anyhow!("flat lock poisoned"))?;
             // Identity-level eid → base-row map (O(N) Strings + u32s, NOT vectors)
             // for remove + tail de-dup. The actual `dim`-wide rows stay on the mmap.
             let mut eid_to_row = HashMap::with_capacity(n);
@@ -910,14 +936,19 @@ impl FlatCpuIndex {
             cand.truncate(want);
         }
         cand.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        cand.into_iter().map(|(i, s)| (eids[i].clone(), s)).collect()
+        cand.into_iter()
+            .map(|(i, s)| (eids[i].clone(), s))
+            .collect()
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl VectorIndex for FlatCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
-        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
         // Phase 2k-1: when a SEGMENT is attached the base rows live ONLY on the
         // mmap (not in `store`), so we CANNOT invalidate `flat` and rebuild from
         // `store` — that would drop the base. Instead append the new vector as a
@@ -928,7 +959,11 @@ impl VectorIndex for FlatCpuIndex {
         if inner.flat.as_ref().is_some_and(|f| f.seg.is_some()) {
             let dim = inner.store.spec.dim as usize;
             if vector.len() != dim {
-                bail!("vector dim mismatch: expected {}, got {}", dim, vector.len());
+                bail!(
+                    "vector dim mismatch: expected {}, got {}",
+                    dim,
+                    vector.len()
+                );
             }
             // Decode-normalize through the store so SQ tail rows round-trip like
             // the base did, then read the (possibly re-quantized) f32 view back.
@@ -958,7 +993,10 @@ impl VectorIndex for FlatCpuIndex {
     }
 
     fn remove(&self, external_id: &str) -> Result<bool> {
-        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
         // Phase 2k-1: when a SEGMENT is attached, TOMBSTONE the row (look up via
         // the eid → row map) so the scan skips it and `len` excludes it — WITHOUT
         // mutating the immutable base segment or rebuilding from `store`. This is
@@ -988,10 +1026,17 @@ impl VectorIndex for FlatCpuIndex {
         allow: &dyn Fn(&str) -> bool,
     ) -> Result<Vec<(String, f32)>> {
         use rayon::prelude::*;
-        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
         let dim = inner.store.spec.dim as usize;
         if query.len() != dim {
-            bail!("kNN query dim mismatch: expected {}, got {}", dim, query.len());
+            bail!(
+                "kNN query dim mismatch: expected {}, got {}",
+                dim,
+                query.len()
+            );
         }
         if Self::live_len(&inner) == 0 || k == 0 {
             return Ok(Vec::new());
@@ -1019,7 +1064,10 @@ impl VectorIndex for FlatCpuIndex {
 
     fn search_knn_batch(&self, queries: &[Vec<f32>], k: usize) -> Result<Vec<Vec<(String, f32)>>> {
         use rayon::prelude::*;
-        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
         let dim = inner.store.spec.dim as usize;
         for q in queries {
             if q.len() != dim {
@@ -1053,7 +1101,10 @@ impl VectorIndex for FlatCpuIndex {
     }
 
     fn dump_for_snapshot(&self) -> Result<(Vec<(String, Vec<f32>)>, Option<ScalarCodebook>)> {
-        let inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
         // Phase 2k-1: when a segment is attached the base vectors are NOT in
         // `store` (they live on the mmap), so a CBOR snapshot must read every LIVE
         // (non-tombstoned) row through the composed `flat` — base off the mmap,
@@ -1081,7 +1132,10 @@ impl VectorIndex for FlatCpuIndex {
 
     #[cfg(test)]
     fn __seal_flat_to_segment(&self, path: &std::path::Path) -> Result<Option<u32>> {
-        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("flat lock poisoned"))?;
         // Build (or reuse) the cached flat buffer; this fixes the eid↔row order
         // for the lifetime of the cache, so the sealed segment's row order and
         // the live `eids` agree exactly.
@@ -1091,8 +1145,9 @@ impl VectorIndex for FlatCpuIndex {
         let n = flat.eids.len();
         // Dense, decoded f32[n*dim] in the SAME row order as `eids` — every row
         // is present (the flat buffer holds only stored vectors).
-        let vectors: Vec<Option<&[f32]>> =
-            (0..n).map(|i| Some(&flat.data[i * dim..(i + 1) * dim])).collect();
+        let vectors: Vec<Option<&[f32]>> = (0..n)
+            .map(|i| Some(&flat.data[i * dim..(i + 1) * dim]))
+            .collect();
         crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
         let reader = crate::segment::SegmentReader::open(path)?;
         debug_assert_eq!(reader.n_docs() as usize, n);
@@ -1113,10 +1168,12 @@ impl VectorIndex for FlatCpuIndex {
     }
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 impl std::fmt::Debug for FlatCpuIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FlatCpuIndex").field("len", &self.len()).finish()
+        f.debug_struct("FlatCpuIndex")
+            .field("len", &self.len())
+            .finish()
     }
 }
 
@@ -1127,7 +1184,7 @@ impl std::fmt::Debug for FlatCpuIndex {
 /// Construct the backend implied by `spec.backend`. This version ships
 /// CPU backends only (HNSW + flat brute-force); GPU-native vector search
 /// is a future chapter.
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-vector_index-rs.md#source
 pub fn open_backend(spec: VectorSpec) -> Box<dyn VectorIndex> {
     match spec.backend {
         crate::types::VectorBackend::HnswCpu => Box::new(HnswCpuIndex::new(spec)),
@@ -1201,7 +1258,10 @@ mod tests {
         let d_high = distance(VectorMetric::Dot, &q, &high);
         let d_low = distance(VectorMetric::Dot, &q, &low);
         // distance = -dot ; higher dot ⇒ smaller (more negative) distance
-        assert!(d_high < d_low, "higher dot product must be closer (smaller distance)");
+        assert!(
+            d_high < d_low,
+            "higher dot product must be closer (smaller distance)"
+        );
         assert!((d_high + 4.0).abs() < 1e-5, "dot distance == -dot");
     }
 
@@ -1225,7 +1285,10 @@ mod tests {
                 );
             }
             // the exact-match query vector ("near") must be the top hit.
-            assert_eq!(hits[0].0, "near", "metric {metric:?}: nearest is the query itself");
+            assert_eq!(
+                hits[0].0, "near",
+                "metric {metric:?}: nearest is the query itself"
+            );
         }
     }
 
@@ -1242,9 +1305,8 @@ mod tests {
             idx.add(&format!("v{i:02}"), &[i as f32, 0.0, 0.0]).unwrap();
         }
         let query = [0.0_f32, 0.0, 0.0];
-        let allowed_from = |eid: &str| -> bool {
-            eid.trim_start_matches('v').parse::<usize>().unwrap() >= 20
-        };
+        let allowed_from =
+            |eid: &str| -> bool { eid.trim_start_matches('v').parse::<usize>().unwrap() >= 20 };
 
         // Baseline: unfiltered nearest is v00.
         let all = idx.search_knn(&query, 3).unwrap();
@@ -1393,8 +1455,12 @@ mod tests {
         let back = decode_sq(&bytes, &cb);
         let span = cb.max - cb.min;
         let tol = span / 255.0;
-        let mean_err: f32 =
-            v.iter().zip(back.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() / dim as f32;
+        let mean_err: f32 = v
+            .iter()
+            .zip(back.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>()
+            / dim as f32;
         assert!(
             mean_err <= tol,
             "mean SQ error {mean_err} > 1/255 of range {tol}"
@@ -1449,7 +1515,10 @@ mod tests {
         let mut b: Vec<_> = vecs2.iter().map(|(e, v)| (e.clone(), v.clone())).collect();
         a.sort_by(|x, y| x.0.cmp(&y.0));
         b.sort_by(|x, y| x.0.cmp(&y.0));
-        assert_eq!(a, b, "snapshot→restore must preserve every (eid, vector) exactly");
+        assert_eq!(
+            a, b,
+            "snapshot→restore must preserve every (eid, vector) exactly"
+        );
 
         // Invariant 2 (robust): the exact-match query still tops kNN
         // after restore.
@@ -1470,7 +1539,12 @@ mod tests {
         use rand::SeedableRng;
 
         fn flat_spec(dim: u32, metric: VectorMetric) -> VectorSpec {
-            VectorSpec { dim, metric, backend: crate::types::VectorBackend::FlatCpu, quantize: None }
+            VectorSpec {
+                dim,
+                metric,
+                backend: crate::types::VectorBackend::FlatCpu,
+                quantize: None,
+            }
         }
 
         for metric in [VectorMetric::L2, VectorMetric::Cosine, VectorMetric::Dot] {
@@ -1481,7 +1555,11 @@ mod tests {
             // 30 BASE vectors. (Dot wants unit-norm inputs.)
             let mk = |rng: &mut rand::rngs::StdRng| -> Vec<f32> {
                 let raw = rand_vec(rng, dim as usize);
-                if matches!(metric, VectorMetric::Dot) { normalize(raw) } else { raw }
+                if matches!(metric, VectorMetric::Dot) {
+                    normalize(raw)
+                } else {
+                    raw
+                }
             };
             let base_idx = FlatCpuIndex::new(s);
             let mut all: Vec<(String, Vec<f32>)> = Vec::new();
@@ -1499,14 +1577,19 @@ mod tests {
                 .seal_to_segment_prod(&seg_path)
                 .unwrap()
                 .expect("flat-cpu seal returns row eids");
-            let reader = std::sync::Arc::new(crate::segment::SegmentReader::open(&seg_path).unwrap());
+            let reader =
+                std::sync::Arc::new(crate::segment::SegmentReader::open(&seg_path).unwrap());
             let reopened = FlatCpuIndex::open_from_segment(s, reader, row_eids).unwrap();
 
             // The store must NOT hold the base vectors (they live on the mmap) —
             // this is the RAM-bound invariant. `len` still reports all 30 (live).
             {
                 let inner = reopened.inner.lock().unwrap();
-                assert_eq!(inner.store.len(), 0, "{metric:?}: reopen must NOT re-store base vectors");
+                assert_eq!(
+                    inner.store.len(),
+                    0,
+                    "{metric:?}: reopen must NOT re-store base vectors"
+                );
                 let flat = inner.flat.as_ref().unwrap();
                 assert!(flat.seg.is_some(), "{metric:?}: segment attached");
                 assert_eq!(flat.n_base, 30, "{metric:?}: all 30 rows are base");
@@ -1534,13 +1617,17 @@ mod tests {
                 assert!(oracle.remove(eid).unwrap());
             }
             // Double-remove of a base id is a no-op (already tombstoned).
-            assert!(!reopened.remove("b3").unwrap(), "{metric:?}: double-remove is no-op");
+            assert!(
+                !reopened.remove("b3").unwrap(),
+                "{metric:?}: double-remove is no-op"
+            );
             assert_eq!(reopened.len(), 35, "{metric:?}: 40 - 5 deleted");
 
             // kNN must be BYTE-IDENTICAL to the in-RAM oracle: same eids, same order,
             // same f32 score bits — across a battery of probes (including exact-match
             // probes that land on base, tail, and deleted rows).
-            let mut probes: Vec<Vec<f32>> = vec![all[5].1.clone(), all[35].1.clone(), all[3].1.clone()];
+            let mut probes: Vec<Vec<f32>> =
+                vec![all[5].1.clone(), all[35].1.clone(), all[3].1.clone()];
             for _ in 0..6 {
                 probes.push(mk(&mut rng));
             }
@@ -1548,16 +1635,20 @@ mod tests {
                 for k in [1usize, 5, 12, 40] {
                     let a = reopened.search_knn(q, k).unwrap();
                     let b = oracle.search_knn(q, k).unwrap();
-                    let ab: Vec<(String, u32)> = a.iter().map(|(e, s)| (e.clone(), s.to_bits())).collect();
-                    let bb: Vec<(String, u32)> = b.iter().map(|(e, s)| (e.clone(), s.to_bits())).collect();
+                    let ab: Vec<(String, u32)> =
+                        a.iter().map(|(e, s)| (e.clone(), s.to_bits())).collect();
+                    let bb: Vec<(String, u32)> =
+                        b.iter().map(|(e, s)| (e.clone(), s.to_bits())).collect();
                     assert_eq!(
                         ab, bb,
                         "{metric:?}: probe {pi} k={k} kNN diverged from in-RAM oracle (base-seg + tail + tombstone compose broke)"
                     );
                     // A deleted id must never appear.
                     for (e, _) in &a {
-                        assert!(!["b3", "b17", "b29", "t0", "t7"].contains(&e.as_str()),
-                            "{metric:?}: deleted id {e} leaked into kNN");
+                        assert!(
+                            !["b3", "b17", "b29", "t0", "t7"].contains(&e.as_str()),
+                            "{metric:?}: deleted id {e} leaked into kNN"
+                        );
                     }
                 }
             }
@@ -1568,7 +1659,10 @@ mod tests {
             let (mut osnap, _) = oracle.dump_for_snapshot().unwrap();
             snap.sort_by(|a, b| a.0.cmp(&b.0));
             osnap.sort_by(|a, b| a.0.cmp(&b.0));
-            assert_eq!(snap, osnap, "{metric:?}: snapshot of reopened index must match oracle live set");
+            assert_eq!(
+                snap, osnap,
+                "{metric:?}: snapshot of reopened index must match oracle live set"
+            );
         }
     }
 
@@ -1584,13 +1678,7 @@ mod tests {
         // The vector at e7 is its own top neighbour; remove it.
         let q_idx = 7;
         let q_eid = format!("e{q_idx}");
-        let q = idx
-            .inner
-            .read()
-            .unwrap()
-            .store
-            .get_decoded(&q_eid)
-            .unwrap();
+        let q = idx.inner.read().unwrap().store.get_decoded(&q_eid).unwrap();
         assert!(idx.remove(&q_eid).unwrap());
         let hits = idx.search_knn(&q, 5).unwrap();
         assert!(
@@ -1598,6 +1686,5 @@ mod tests {
             "removed eid {q_eid} still in {hits:?}"
         );
     }
-
 }
 // CODEGEN-END

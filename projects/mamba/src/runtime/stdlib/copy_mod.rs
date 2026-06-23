@@ -1,3 +1,6 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use rustc_hash::FxHashMap;
 /// copy module for Mamba (#414).
 ///
 /// Provides:
@@ -20,11 +23,7 @@
 ///   * deepcopy threads a memo keyed on the source object's identity so a
 ///     repeated reference (or a self-referential cycle) is reconstructed as a
 ///     single shared object that points at the copy, not the original.
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 /// True when a user method we just invoked left a pending exception (so the
 /// copy must abort and let the runtime re-raise it).
@@ -45,7 +44,11 @@ fn raise_exc(kind: &str, msg: &str) -> MbValue {
 #[allow(dead_code)]
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -85,7 +88,8 @@ fn is_atomic(obj: MbValue) -> bool {
                 ObjData::Instance { class_name, .. } => {
                     matches!(
                         class_name.as_str(),
-                        "range" | "slice" | "ReferenceType" | "weakref"
+                        // "code": CPython's _deepcopy_atomic covers CodeType.
+                        "range" | "slice" | "ReferenceType" | "weakref" | "code"
                     )
                 }
                 _ => false,
@@ -100,7 +104,9 @@ fn is_atomic(obj: MbValue) -> bool {
 /// Return `obj`, retaining if it is a heap pointer so the JIT can release both
 /// the argument and the result VRegs.
 fn return_identity(obj: MbValue) -> MbValue {
-    unsafe { super::super::rc::retain_if_ptr(obj); }
+    unsafe {
+        super::super::rc::retain_if_ptr(obj);
+    }
     obj
 }
 
@@ -108,7 +114,9 @@ fn return_identity(obj: MbValue) -> MbValue {
 
 /// Dispatcher for copy.copy — unpacks args and calls mb_copy_copy.
 unsafe extern "C" fn dispatch_copy(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+    if nargs == 0 {
+        return MbValue::none();
+    }
     let arg = unsafe { *args_ptr };
     mb_copy_copy(arg)
 }
@@ -175,7 +183,7 @@ unsafe fn copy_instance(obj: MbValue, class_name: &str) -> MbValue {
     match reduce(obj, class_name) {
         ReduceOutcome::Identity => return return_identity(obj),
         ReduceOutcome::Tuple(rv) => {
-            return reconstruct(rv, /*deep=*/false, &mut FxHashMap::default());
+            return reconstruct(rv, /*deep=*/ false, &mut FxHashMap::default());
         }
         ReduceOutcome::TypeError => {
             return raise_exc("TypeError", "copy._reconstruct() takes no state_setter");
@@ -203,7 +211,12 @@ unsafe fn copy_instance(obj: MbValue, class_name: &str) -> MbValue {
     // user __getstate__ when defined. Invoke it so any exception it raises
     // propagates (e.g. test_getstate_exc) and so an explicit __setstate__ runs.
     if has_method(class_name, "__getstate__") {
-        if let Some(inst) = default_via_getstate(obj, class_name, /*deep=*/false, &mut FxHashMap::default()) {
+        if let Some(inst) = default_via_getstate(
+            obj,
+            class_name,
+            /*deep=*/ false,
+            &mut FxHashMap::default(),
+        ) {
             return inst;
         }
         // Exception pending (e.g. ValueError from __getstate__): bail with the
@@ -214,7 +227,11 @@ unsafe fn copy_instance(obj: MbValue, class_name: &str) -> MbValue {
     }
     let fields = read_fields(obj);
     let new_inst = MbObject::new_instance(class_name.to_string());
-    if let ObjData::Instance { fields: ref new_lock, .. } = (*new_inst).data {
+    if let ObjData::Instance {
+        fields: ref new_lock,
+        ..
+    } = (*new_inst).data
+    {
         let mut nf = new_lock.write().unwrap();
         for (k, v) in fields.iter() {
             super::super::rc::retain_if_ptr(*v);
@@ -244,7 +261,9 @@ unsafe fn default_via_getstate(
         // No state to restore; fall back to the plain field copy.
         return None;
     }
-    let applied = if deep { deepcopy_memo(state, memo) } else {
+    let applied = if deep {
+        deepcopy_memo(state, memo)
+    } else {
         super::super::rc::retain_if_ptr(state);
         state
     };
@@ -262,12 +281,17 @@ unsafe fn default_via_getstate(
 /// memoized object plus the `memo[id(memo)]` keep-alive list) are mirrored
 /// into it. Immutable atoms are deliberately NOT memoized, matching CPython.
 unsafe extern "C" fn dispatch_deepcopy(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs == 0 { return MbValue::none(); }
+    if nargs == 0 {
+        return MbValue::none();
+    }
     let arg = unsafe { *args_ptr };
     let caller_memo = if nargs >= 2 {
         let m = unsafe { *args_ptr.add(1) };
         // Only a real dict participates; None / other values are ignored.
-        if m.as_ptr().map(|p| matches!((*p).data, ObjData::Dict(_))).unwrap_or(false) {
+        if m.as_ptr()
+            .map(|p| matches!((*p).data, ObjData::Dict(_)))
+            .unwrap_or(false)
+        {
             Some(m)
         } else {
             None
@@ -301,7 +325,9 @@ pub fn mb_copy_deepcopy_with_memo(obj: MbValue, caller_memo: Option<MbValue>) ->
     let mut order: Vec<(MbValue, MbValue)> = Vec::new();
     let result = deepcopy_memo_tracked(obj, &mut memo, &mut order);
     if let Some(cm) = caller_memo {
-        unsafe { populate_caller_memo(cm, &order); }
+        unsafe {
+            populate_caller_memo(cm, &order);
+        }
     }
     result
 }
@@ -310,12 +336,18 @@ pub fn mb_copy_deepcopy_with_memo(obj: MbValue, caller_memo: Option<MbValue>) ->
 /// layout: `memo[id(orig)] = copy` for every memoized object, then a keep-alive
 /// list under `id(memo)` holding the originals (so they outlive the copy).
 unsafe fn populate_caller_memo(cm: MbValue, order: &[(MbValue, MbValue)]) {
-    let cm_ptr = match cm.as_ptr() { Some(p) => p, None => return };
+    let cm_ptr = match cm.as_ptr() {
+        Some(p) => p,
+        None => return,
+    };
     // Build the keep-alive list of originals.
-    let keepalive_items: Vec<MbValue> = order.iter().map(|(orig, _)| {
-        super::super::rc::retain_if_ptr(*orig);
-        *orig
-    }).collect();
+    let keepalive_items: Vec<MbValue> = order
+        .iter()
+        .map(|(orig, _)| {
+            super::super::rc::retain_if_ptr(*orig);
+            *orig
+        })
+        .collect();
     let keepalive = MbValue::from_ptr(MbObject::new_list(keepalive_items));
     if let ObjData::Dict(ref lock) = (*cm_ptr).data {
         let mut map = lock.write().unwrap();
@@ -381,7 +413,9 @@ fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
     if let Some(existing) = memo.get(&key) {
         // Repeated reference / cycle — share the already-built copy.
         let v = *existing;
-        unsafe { super::super::rc::retain_if_ptr(v); }
+        unsafe {
+            super::super::rc::retain_if_ptr(v);
+        }
         return v;
     }
     unsafe {
@@ -397,15 +431,21 @@ fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
                 if let Some(existing) = memo.get(&key) {
                     let v = *existing;
                     super::super::rc::retain_if_ptr(v);
-                    for d in &deep { super::super::rc::release_if_ptr(*d); }
+                    for d in &deep {
+                        super::super::rc::release_if_ptr(*d);
+                    }
                     return v;
                 }
-                let all_same = src.iter().zip(deep.iter())
+                let all_same = src
+                    .iter()
+                    .zip(deep.iter())
                     .all(|(a, b)| a.to_bits() == b.to_bits());
                 if all_same {
                     // No inner copy was needed: return the original tuple, and
                     // release the (identical) recursively-produced refs.
-                    for d in &deep { super::super::rc::release_if_ptr(*d); }
+                    for d in &deep {
+                        super::super::rc::release_if_ptr(*d);
+                    }
                     return return_identity(obj);
                 }
                 let new_t = MbObject::new_tuple(deep);
@@ -434,8 +474,12 @@ fn deepcopy_memo(obj: MbValue, memo: &mut FxHashMap<u64, MbValue>) -> MbValue {
                 let result = MbValue::from_ptr(new_d);
                 memo.insert(key, result);
                 record_memoized(obj, result);
-                let pairs: Vec<(super::super::dict_ops::DictKey, MbValue)> =
-                    lock.read().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+                let pairs: Vec<(super::super::dict_ops::DictKey, MbValue)> = lock
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), *v))
+                    .collect();
                 for (k, v) in pairs {
                     let dv = deepcopy_memo(v, memo);
                     if let ObjData::Dict(ref nl) = (*new_d).data {
@@ -483,7 +527,9 @@ unsafe fn deepcopy_instance(
         let result = call_method(obj, "__deepcopy__", args);
         memo.insert(key, result);
         record_memoized(obj, result);
-        unsafe { super::super::rc::retain_if_ptr(result); }
+        unsafe {
+            super::super::rc::retain_if_ptr(result);
+        }
         return result;
     }
     // 2. __reduce_ex__ / __reduce__ reconstruction.
@@ -522,7 +568,7 @@ unsafe fn deepcopy_instance(
     // CPython default reductor calls a user __getstate__ when defined; mirror it
     // so its exception propagates and an explicit __setstate__ runs on a copy.
     if has_method(class_name, "__getstate__") {
-        if let Some(inst) = default_via_getstate(obj, class_name, /*deep=*/true, memo) {
+        if let Some(inst) = default_via_getstate(obj, class_name, /*deep=*/ true, memo) {
             memo.insert(key, inst);
             record_memoized(obj, inst);
             super::super::rc::retain_if_ptr(inst);
@@ -589,7 +635,11 @@ unsafe fn reduce(obj: MbValue, class_name: &str) -> ReduceOutcome {
         return ReduceOutcome::None;
     };
     // A bare string result means "return self by name" — return identity.
-    if rv.as_ptr().map(|p| matches!((*p).data, ObjData::Str(_))).unwrap_or(false) {
+    if rv
+        .as_ptr()
+        .map(|p| matches!((*p).data, ObjData::Str(_)))
+        .unwrap_or(false)
+    {
         return ReduceOutcome::Identity;
     }
     let tuple_items: Vec<MbValue> = match rv.as_ptr() {
@@ -625,7 +675,11 @@ unsafe fn reduce(obj: MbValue, class_name: &str) -> ReduceOutcome {
     } else {
         None
     };
-    ReduceOutcome::Tuple(Reduced { callable, args, state })
+    ReduceOutcome::Tuple(Reduced {
+        callable,
+        args,
+        state,
+    })
 }
 
 /// Reconstruct an object from a Reduced for copy.copy (shallow state apply).
@@ -633,7 +687,9 @@ unsafe fn reconstruct(rv: Reduced, deep: bool, memo: &mut FxHashMap<u64, MbValue
     let args_list = MbValue::from_ptr(MbObject::new_list(rv.args.clone()));
     let inst = super::super::builtins::mb_call_spread(rv.callable, args_list);
     if let Some(state) = rv.state {
-        let applied = if deep { deepcopy_memo(state, memo) } else {
+        let applied = if deep {
+            deepcopy_memo(state, memo)
+        } else {
             super::super::rc::retain_if_ptr(state);
             state
         };
@@ -675,10 +731,17 @@ unsafe fn apply_state(inst: MbValue, state: MbValue) {
     // Default: state is a dict of attributes to set on the instance.
     if let Some(p) = state.as_ptr() {
         if let ObjData::Dict(ref lock) = (*p).data {
-            let pairs: Vec<(super::super::dict_ops::DictKey, MbValue)> =
-                lock.read().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+            let pairs: Vec<(super::super::dict_ops::DictKey, MbValue)> = lock
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
             if let Some(ip) = inst.as_ptr() {
-                if let ObjData::Instance { fields: ref flock, .. } = (*ip).data {
+                if let ObjData::Instance {
+                    fields: ref flock, ..
+                } = (*ip).data
+                {
                     let mut f = flock.write().unwrap();
                     for (k, v) in pairs {
                         if let super::super::dict_ops::DictKey::Str(ref ks) = k {
@@ -711,9 +774,9 @@ unsafe fn reducer_blocked_by_getattribute(obj: MbValue, class_name: &str) -> boo
         return false;
     }
     let probe = |name: &str| -> bool {
-        let args = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_ptr(MbObject::new_str(name.to_string())),
-        ]));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+            MbObject::new_str(name.to_string()),
+        )]));
         super::super::exception::mb_clear_exception();
         call_method(obj, "__getattribute__", args);
         let raised = exception_pending();
@@ -784,7 +847,9 @@ pub fn register() {
     // (one `new_str` allocation, retained once for the alias) makes the two
     // module attributes bit-identical, so the `is` identity check holds.
     let error_cls = MbValue::from_ptr(MbObject::new_str("copy.Error".to_string()));
-    unsafe { super::super::rc::retain_if_ptr(error_cls); }
+    unsafe {
+        super::super::rc::retain_if_ptr(error_cls);
+    }
     attrs.insert("Error".to_string(), error_cls);
     // PEP-deprecated lowercase alias `copy.error` IS the same class object.
     attrs.insert("error".to_string(), error_cls);
@@ -823,7 +888,8 @@ mod tests {
     fn test_copy_tuple_identity() {
         // tuple is immutable: shallow copy returns identity.
         let t = MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
         ]));
         let copied = mb_copy_copy(t);
         assert_eq!(t.to_bits(), copied.to_bits());
@@ -848,19 +914,24 @@ mod tests {
 
     #[test]
     fn test_deepcopy_nested_list() {
-        let inner_list = MbValue::from_ptr(
-            MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(2)]),
-        );
+        let inner_list = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1),
+            MbValue::from_int(2),
+        ]));
         let outer = MbValue::from_ptr(MbObject::new_list(vec![inner_list]));
         let deep = mb_copy_deepcopy(outer);
         assert_ne!(outer.as_ptr(), deep.as_ptr());
         unsafe {
             let outer_items = if let ObjData::List(ref lock) = (*outer.as_ptr().unwrap()).data {
                 lock.read().unwrap()[0].as_ptr().unwrap()
-            } else { panic!("expected list") };
+            } else {
+                panic!("expected list")
+            };
             let deep_items = if let ObjData::List(ref lock) = (*deep.as_ptr().unwrap()).data {
                 lock.read().unwrap()[0].as_ptr().unwrap()
-            } else { panic!("expected list") };
+            } else {
+                panic!("expected list")
+            };
             assert_ne!(outer_items, deep_items);
         }
     }
@@ -876,7 +947,9 @@ mod tests {
                 let items = lock.read().unwrap();
                 assert_eq!(items[0].to_bits(), items[1].to_bits(), "shared ref kept");
                 assert_ne!(items[0].to_bits(), shared.to_bits(), "fresh copy");
-            } else { panic!("expected list") }
+            } else {
+                panic!("expected list")
+            }
         }
     }
 
@@ -896,24 +969,34 @@ mod tests {
             if let ObjData::List(ref lock) = (*deep.as_ptr().unwrap()).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items[2].to_bits(), deep.to_bits(), "cycle rebuilt to copy");
-                assert_ne!(items[2].to_bits(), cyclic_val.to_bits(), "no leak to original");
-            } else { panic!("expected list") }
+                assert_ne!(
+                    items[2].to_bits(),
+                    cyclic_val.to_bits(),
+                    "no leak to original"
+                );
+            } else {
+                panic!("expected list")
+            }
         }
     }
 
     #[test]
     fn test_deepcopy_primitives() {
         assert_eq!(mb_copy_deepcopy(MbValue::from_int(7)).as_int(), Some(7));
-        assert_eq!(mb_copy_deepcopy(MbValue::from_float(2.5)).as_float(), Some(2.5));
+        assert_eq!(
+            mb_copy_deepcopy(MbValue::from_float(2.5)).as_float(),
+            Some(2.5)
+        );
         assert!(mb_copy_deepcopy(MbValue::none()).is_none());
-        assert_eq!(mb_copy_deepcopy(MbValue::from_bool(false)).as_bool(), Some(false));
+        assert_eq!(
+            mb_copy_deepcopy(MbValue::from_bool(false)).as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
     fn test_deepcopy_dict() {
-        let inner_list = MbValue::from_ptr(
-            MbObject::new_list(vec![MbValue::from_int(10)]),
-        );
+        let inner_list = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(10)]));
         let d = MbObject::new_dict();
         unsafe {
             if let ObjData::Dict(ref lock) = (*d).data {
@@ -926,10 +1009,14 @@ mod tests {
         unsafe {
             let orig_list = if let ObjData::Dict(ref lock) = (*original.as_ptr().unwrap()).data {
                 lock.read().unwrap().get("lst").unwrap().as_ptr().unwrap()
-            } else { panic!("expected Dict") };
+            } else {
+                panic!("expected Dict")
+            };
             let deep_list = if let ObjData::Dict(ref lock) = (*deep.as_ptr().unwrap()).data {
                 lock.read().unwrap().get("lst").unwrap().as_ptr().unwrap()
-            } else { panic!("expected Dict") };
+            } else {
+                panic!("expected Dict")
+            };
             assert_ne!(orig_list, deep_list);
         }
     }
@@ -937,10 +1024,15 @@ mod tests {
     #[test]
     fn test_deepcopy_tuple_of_immutables_identity() {
         let t = MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
         ]));
         let deep = mb_copy_deepcopy(t);
-        assert_eq!(t.to_bits(), deep.to_bits(), "tuple of immutables -> identity");
+        assert_eq!(
+            t.to_bits(),
+            deep.to_bits(),
+            "tuple of immutables -> identity"
+        );
     }
 
     #[test]
@@ -952,14 +1044,17 @@ mod tests {
         unsafe {
             if let ObjData::Tuple(ref items) = (*deep.as_ptr().unwrap()).data {
                 assert_ne!(items[1].as_ptr(), inner.as_ptr(), "inner list rebuilt");
-            } else { panic!("expected tuple") }
+            } else {
+                panic!("expected tuple")
+            }
         }
     }
 
     #[test]
     fn test_copy_set() {
         let s = MbValue::from_ptr(MbObject::new_set(vec![
-            MbValue::from_int(1), MbValue::from_int(2),
+            MbValue::from_int(1),
+            MbValue::from_int(2),
         ]));
         let copied = mb_copy_copy(s);
         assert_ne!(s.as_ptr(), copied.as_ptr());

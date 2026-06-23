@@ -33,13 +33,13 @@
 
 //! @codegen-skip: handwrite-pre-standardize
 
-use std::collections::HashMap;
-use flate2::Compression;
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::collections::HashMap;
 use std::io::{Read, Write};
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -82,8 +82,65 @@ unsafe extern "C" fn dispatch_decompress(args_ptr: *const MbValue, nargs: usize)
     mb_gzip_decompress(args.first().copied().unwrap_or_else(MbValue::none))
 }
 
-dispatch_unary!(dispatch_open, mb_gzip_open);
-dispatch_unary!(dispatch_gzip_file, mb_gzip_file);
+/// gzip.open(filename, mode="rb", ...) / gzip.GzipFile(filename, mode="rb",
+/// *, fileobj=None) — real streaming files over the shared compressed-file
+/// layer. The keyword form `GzipFile(fileobj=...)` lowers to a trailing
+/// kwargs dict; resolve the source and mode from it when present.
+unsafe extern "C" fn dispatch_gzip_ctor(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let mut source = args.first().copied().unwrap_or_else(MbValue::none);
+    let mut mode = "r".to_string();
+    if let Some(m) = args.get(1).filter(|v| !is_kwargs_dict(**v)).and_then(|v| {
+        v.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+    }) {
+        mode = m;
+    }
+    let mut encoding = None;
+    let mut errors = None;
+    if let Some(last) = args.last() {
+        if let Some(p) = last.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*p).data {
+                    use super::super::dict_ops::DictKey;
+                    let map = lock.read().unwrap();
+                    let get_str = |key: &str| -> Option<String> {
+                        map.get(&DictKey::Str(key.to_string())).and_then(|v| {
+                            v.as_ptr().and_then(|sp| {
+                                if let ObjData::Str(ref s) = (*sp).data {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                    };
+                    if let Some(fo) = map.get(&DictKey::Str("fileobj".to_string())) {
+                        source = *fo;
+                    }
+                    if let Some(m) = get_str("mode") {
+                        mode = m;
+                    }
+                    encoding = get_str("encoding");
+                    errors = get_str("errors");
+                }
+            }
+        }
+    }
+    super::compressed_file::make_file_opts(
+        "GzipFile",
+        super::compressed_file::Codec::Gzip,
+        source,
+        &mode,
+        encoding,
+        errors,
+    )
+}
 
 /// Register the gzip module with mamba's stdlib registry.
 pub fn register() {
@@ -91,17 +148,12 @@ pub fn register() {
 
     // Real callables.
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("compress",   dispatch_compress   as usize),
+        ("compress", dispatch_compress as usize),
         ("decompress", dispatch_decompress as usize),
-        // `open` and `GzipFile` are func stubs so that `callable(gzip.open)`
-        // and `callable(gzip.GzipFile)` are True — surface fixtures
-        // (open_is_callable / gzipfile_is_callable) only assert callability,
-        // and a `from_ptr` class-shell / string sentinel is NOT callable,
-        // so a `from_func` entry is the correct shape. Sibling of bz2.open.
-        // The streaming file layer is not yet implemented; these return a
-        // benign sentinel value.
-        ("open",       dispatch_open       as usize),
-        ("GzipFile",   dispatch_gzip_file  as usize),
+        // `open` and `GzipFile` construct real streaming files through the
+        // shared compressed-file layer (Codec::Gzip).
+        ("open", dispatch_gzip_ctor as usize),
+        ("GzipFile", dispatch_gzip_ctor as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -136,7 +188,7 @@ pub fn register() {
     let bad_gzip_file = MbValue::from_ptr(MbObject::new_str("BadGzipFile".to_string()));
     attrs.insert("BadGzipFile".to_string(), bad_gzip_file);
 
-        // surface: missing CPython module constants (auto-added)
+    // surface: missing CPython module constants (auto-added)
     attrs.insert("FCOMMENT".into(), MbValue::from_int(16));
     attrs.insert("FEXTRA".into(), MbValue::from_int(4));
     attrs.insert("FHCRC".into(), MbValue::from_int(2));
@@ -145,28 +197,10 @@ pub fn register() {
     attrs.insert("READ".into(), MbValue::from_int(1));
     attrs.insert("READ_BUFFER_SIZE".into(), MbValue::from_int(131072));
     attrs.insert("WRITE".into(), MbValue::from_int(2));
+    // Streaming method table shared with bz2.BZ2File / lzma.LZMAFile.
+    super::compressed_file::register_class("GzipFile");
+
     super::register_module("gzip", attrs);
-}
-
-/// gzip.open(filename, mode="rb", ...) -> file object.
-///
-/// Func stub: surface fixtures only assert `callable(gzip.open)`. The
-/// streaming file layer (GzipFile) is not yet implemented, so this returns
-/// a benign sentinel value. `from_func` is what makes `callable()` report
-/// True; the return value is unused by surface tests. Sibling of mb_bz2_open.
-pub fn mb_gzip_open(_filename: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str("gzip.open".to_string()))
-}
-
-/// gzip.GzipFile(filename=None, mode=None, ...) -> file object.
-///
-/// Func stub: surface fixtures only assert `callable(gzip.GzipFile)`. A
-/// class-shell / string sentinel value is NOT callable, so this is a
-/// `from_func` entry. The streaming file object itself is not implemented;
-/// bulk callers use compress/decompress. The return value is unused by
-/// surface tests.
-pub fn mb_gzip_file(_filename: MbValue) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str("GzipFile".to_string()))
 }
 
 /// Borrow the byte payload of `val` as `&[u8]` for the duration of `f`.
@@ -367,14 +401,21 @@ mod tests {
 
     fn get_bytes_val(val: MbValue) -> Option<Vec<u8>> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
+            if let ObjData::Bytes(ref b) = (*ptr).data {
+                Some(b.clone())
+            } else {
+                None
+            }
         })
     }
 
     #[test]
     fn test_with_bytes_variants() {
         let bytes_val = MbValue::from_ptr(MbObject::new_bytes(vec![1u8, 2, 3]));
-        assert_eq!(super::with_bytes(bytes_val, |b| b.to_vec()), vec![1u8, 2, 3]);
+        assert_eq!(
+            super::with_bytes(bytes_val, |b| b.to_vec()),
+            vec![1u8, 2, 3]
+        );
 
         let ba = MbValue::from_ptr(MbObject::new_bytearray(vec![4u8, 5, 6]));
         assert_eq!(super::with_bytes(ba, |b| b.to_vec()), vec![4u8, 5, 6]);
@@ -382,7 +423,10 @@ mod tests {
         let s = MbValue::from_ptr(MbObject::new_str("abc".to_string()));
         assert_eq!(super::with_bytes(s, |b| b.to_vec()), vec![97u8, 98, 99]);
 
-        assert_eq!(super::with_bytes(MbValue::none(), |b| b.to_vec()), Vec::<u8>::new());
+        assert_eq!(
+            super::with_bytes(MbValue::none(), |b| b.to_vec()),
+            Vec::<u8>::new()
+        );
     }
 
     #[test]
@@ -391,10 +435,26 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec()));
         let result = mb_gzip_compress(input);
         let b = get_bytes_val(result).expect("compressed bytes");
-        assert!(b.len() >= 10, "gzip output too short to contain header: {} bytes", b.len());
-        assert_eq!(b[0], 0x1F, "gzip magic byte 0 should be 0x1F, got {:#x}", b[0]);
-        assert_eq!(b[1], 0x8B, "gzip magic byte 1 should be 0x8B, got {:#x}", b[1]);
-        assert_eq!(b[2], 0x08, "gzip CM byte (compression method DEFLATE=8), got {:#x}", b[2]);
+        assert!(
+            b.len() >= 10,
+            "gzip output too short to contain header: {} bytes",
+            b.len()
+        );
+        assert_eq!(
+            b[0], 0x1F,
+            "gzip magic byte 0 should be 0x1F, got {:#x}",
+            b[0]
+        );
+        assert_eq!(
+            b[1], 0x8B,
+            "gzip magic byte 1 should be 0x8B, got {:#x}",
+            b[1]
+        );
+        assert_eq!(
+            b[2], 0x08,
+            "gzip CM byte (compression method DEFLATE=8), got {:#x}",
+            b[2]
+        );
     }
 
     #[test]
@@ -415,7 +475,12 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(payload.clone()));
         let compressed = mb_gzip_compress(input);
         let cb = get_bytes_val(compressed).expect("compressed bytes");
-        assert!(cb.len() < payload.len(), "compressed >= payload: {} >= {}", cb.len(), payload.len());
+        assert!(
+            cb.len() < payload.len(),
+            "compressed >= payload: {} >= {}",
+            cb.len(),
+            payload.len()
+        );
         let dec = mb_gzip_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
         assert_eq!(get_bytes_val(dec), Some(payload));
     }
@@ -450,12 +515,17 @@ mod tests {
         // well below the 256 MiB sanity cap. The capacity hint must
         // round-trip that exact value.
         let payload: Vec<u8> = (0u8..200).cycle().take(8192).collect();
-        let compressed_mb = mb_gzip_compress(MbValue::from_ptr(MbObject::new_bytes(payload.clone())));
+        let compressed_mb =
+            mb_gzip_compress(MbValue::from_ptr(MbObject::new_bytes(payload.clone())));
         let compressed_bytes = get_bytes_val(compressed_mb).expect("compressed bytes");
         let hint = super::decompress_capacity_hint(&compressed_bytes);
-        assert_eq!(hint, payload.len(),
+        assert_eq!(
+            hint,
+            payload.len(),
             "ISIZE-derived hint should equal uncompressed length, got {} expected {}",
-            hint, payload.len());
+            hint,
+            payload.len()
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ kind: Kustomization
 
 namespace: lumen
 
-# Base spans two components (serving Deployment + NATS broker), so the
+# Base spans two components (serving Deployment + Relay broker), so the
 # shared label is the app name only; per-component identity comes from the
 # `role:` label already on each resource. includeSelectors:false keeps these
 # common labels out of the immutable workload/Service selectors (which are
@@ -21,9 +21,8 @@ resources:
   - serviceaccount.yaml
   - configmap.yaml
   # Write log / broker (the only stateful component).
-  - nats-config.yaml
-  - nats-statefulset.yaml
-  - nats-service.yaml
+  - relay-statefulset.yaml
+  - relay-service.yaml
   # Serving nodes (stateless, autoscaled cattle).
   - deployment.yaml
   - service.yaml

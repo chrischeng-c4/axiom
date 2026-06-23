@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Single-node local dev. Embedded in-process write log — NO NATS, NO
-# external dependency. The simplest way to poke lumen.
+# Single-node local dev. Embedded in-process write log — NO external broker.
+# The simplest way to poke lumen.
 #
 #   ./scripts/dev-single.sh                    # :7373, pretty logs
 #   LUMEN_PORT=17373 ./scripts/dev-single.sh   # different port

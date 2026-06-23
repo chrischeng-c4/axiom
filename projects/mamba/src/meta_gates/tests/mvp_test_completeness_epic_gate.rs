@@ -117,10 +117,7 @@ fn r1_seven_parent_gates_wired() {
         c["parent_gate_missing_failure_kind"].as_str(),
         Some("mvp_test_completeness_parent_gate_missing")
     );
-    assert_eq!(
-        c["parent_gate_missing_exit_code"].as_integer(),
-        Some(353)
-    );
+    assert_eq!(c["parent_gate_missing_exit_code"].as_integer(), Some(353));
     assert_eq!(
         c["parent_gates_collapsed_failure_kind"].as_str(),
         Some("mvp_test_completeness_parent_gates_collapsed_to_fewer")
@@ -207,10 +204,7 @@ fn r3_default_offline_and_deterministic() {
         c["silent_nondeterminism_failure_kind"].as_str(),
         Some("mvp_test_completeness_silent_nondeterminism")
     );
-    assert_eq!(
-        c["silent_nondeterminism_exit_code"].as_integer(),
-        Some(358)
-    );
+    assert_eq!(c["silent_nondeterminism_exit_code"].as_integer(), Some(358));
 }
 
 #[test]

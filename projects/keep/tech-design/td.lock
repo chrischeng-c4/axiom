@@ -1,0 +1,9 @@
+version = 1
+project = "keep"
+td_path = "projects/keep/tech-design"
+generated_at = "2026-06-20T14:26:51.387792+00:00"
+digest = "sha256:6976bb0d1a90491192284f0cd2eb2dacb739f3682fb700ef5b61ffab06366b9c"
+
+[[files]]
+path = "semantic/keep-runtime.md"
+digest = "sha256:ec19bd2568250d06ad1a9b1388b4c1d2ca124681221268b16c1ed5495e7ae92e"

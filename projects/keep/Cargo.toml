@@ -1,0 +1,83 @@
+[package]
+name = "keep"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "keep — cloud-native, multi-core key-value / claim-check store (HTTP/2 + OpenAPI)"
+
+[lib]
+name = "keep"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "keep"
+path = "src/bin/keep.rs"
+
+[dependencies]
+# Async runtime + core
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true
+# Lock-free read of the persistence handle on the write hot path.
+arc-swap = "1"
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+futures.workspace = true
+
+# High-precision numeric (KvValue::Decimal)
+rust_decimal = { version = "1.36", features = ["serde"] }
+
+# Persistence (WAL / snapshot / recovery)
+bincode = "1.3"
+crc32fast = "1.4"
+crossbeam-channel = "0.5"
+sha2 = "0.10"
+
+# HTTP/2 + OpenAPI surface
+axum.workspace = true
+tower = { workspace = true, features = ["util"] }
+tower-http.workspace = true
+utoipa = { workspace = true, features = ["axum_extras"] }
+# Explicit hyper auto-server so we serve HTTP/2 cleartext (h2c) + HTTP/1.1 on
+# one port — axum::serve alone is HTTP/1-only.
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio"] }
+# HTTP client for in-tree Rust consumers (behind the `client` feature).
+reqwest = { workspace = true, optional = true }
+# Error glue for the raft module (behind the `raft` feature).
+anyhow = { workspace = true, optional = true }
+# Shared Raft consensus engine (libs/raftcore, serde-only) — replaces openraft.
+raftcore = { path = "../../libs/raftcore", optional = true }
+
+# Config
+clap = { workspace = true, features = ["env"] }
+
+[features]
+default = []
+# keep::client — a convenience HTTP/2 client for in-tree Rust callers migrating
+# off the raw-TCP cclab-kv client (e.g. queuekit's ion backend).
+client = ["dep:reqwest"]
+# raft — raftcore-backed consensus (HA phase C; see HA.md).
+raft = ["dep:raftcore", "dep:anyhow"]
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.12"
+# Competitor perf comparison (examples/bench_compare.rs, issue #126).
+redis = { version = "0.27", features = ["tokio-comp"] }
+reqwest = { workspace = true }
+# Engine perf-gate benchmark (meter bench, issue #126).
+criterion = "0.5"
+
+[[example]]
+name = "bench_compare"
+path = "examples/bench_compare.rs"
+
+[[bench]]
+name = "engine_bench"
+harness = false

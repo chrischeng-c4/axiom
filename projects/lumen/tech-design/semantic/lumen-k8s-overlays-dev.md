@@ -2,7 +2,7 @@
 id: semantic-lumen-k8s-overlays-dev
 summary: Semantic coverage for "projects/lumen/k8s/overlays/dev"
 capability_refs:
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     claim: "kustomize-base-overlays-hpa"
     coverage: partial
@@ -41,6 +41,8 @@ deployment:
     - path: "projects/lumen/k8s/overlays/dev/kustomization.yaml"
       kind: "kustomization"
       content: |
+        # SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-overlays-dev.md#deployment
+        # CODEGEN-BEGIN
         apiVersion: kustomize.config.k8s.io/v1beta1
         kind: Kustomization
         
@@ -49,7 +51,7 @@ deployment:
         resources:
           - ../../base
         
-        # dev: a single serving node, a single NATS broker, smallest viable
+        # dev: a single serving node, a single Relay broker, smallest viable
         # footprint, auth off, human-readable logs. The ConfigMap is a static
         # base resource (stable name, no hash suffix), so overlays patch its data
         # in place rather than using a configMapGenerator merge.
@@ -57,7 +59,7 @@ deployment:
         replicas:
           - name: lumen
             count: 1
-          - name: lumen-nats
+          - name: lumen-relay
             count: 1
         
         patches:
@@ -81,7 +83,7 @@ deployment:
               name: lumen
             patch: |-
               # apply_raft_entry is a synchronous CPU-bound op (bulk index + BM25);
-              # too tight a CPU limit lets it starve the tokio runtime / NATS client
+              # too tight a CPU limit lets it starve the tokio runtime / broker client
               # I/O under load. 1 core keeps a 10k-doc index e2e responsive.
               - op: replace
                 path: /spec/template/spec/containers/0/resources/requests/cpu
@@ -119,10 +121,10 @@ deployment:
               - op: replace
                 path: /spec/maxReplicas
                 value: 2
-          # Tiny NATS footprint + small JetStream volume.
+          # Tiny Relay footprint + small broker volume.
           - target:
               kind: StatefulSet
-              name: lumen-nats
+              name: lumen-relay
             patch: |-
               - op: replace
                 path: /spec/template/spec/containers/0/resources/requests/cpu
@@ -139,6 +141,8 @@ deployment:
               - op: replace
                 path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
                 value: "2Gi"
+        # CODEGEN-END
+
 ```
 
 ## Changes

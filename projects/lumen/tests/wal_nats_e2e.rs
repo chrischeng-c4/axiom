@@ -1,16 +1,16 @@
 // SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 // CODEGEN-BEGIN
-//! End-to-end fan-out proof against a real NATS JetStream server.
+//! Legacy end-to-end fan-out proof against a real NATS JetStream server.
 //!
-//! Spin one up with: `nats-server -js` (the project's standard test
+//! Spin one up with: `nats-server -js` (the legacy WAL backend test
 //! broker; `brew services start nats-server` also works). The test
 //! skips gracefully if no server is reachable, per the repo's
 //! "real services, skip if unavailable" pattern.
 //!
 //! What it proves: publish a mutation stream once; two INDEPENDENT
 //! consumers (simulating two serving nodes) each tail the full stream
-//! and build identical indexes. That is fan-out — the property GCP
-//! Pub/Sub can't give cheaply and the whole data-plane design rests on.
+//! and build identical indexes. RelayWal is the current deployment default;
+//! this keeps the older NATS backend honest while it remains available.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,10 +25,15 @@ use lumen::types::{
     QueryNode, SearchRequest, TermQuery,
 };
 use lumen::wal::{WalLog, WalRecord};
-use lumen::wal_nats::NatsWal;
+use lumen::wal_nats::{NatsWal, NatsWalConfig};
 
 fn nats_url() -> String {
     std::env::var("LUMEN_TEST_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into())
+}
+
+fn test_config(name: &str) -> NatsWalConfig {
+    NatsWalConfig::new(format!("lumen_wal_{name}"), format!("lumen.wal.{name}"))
+        .expect("valid test NATS WAL config")
 }
 
 fn users_schema() -> CreateCollectionRequest {
@@ -78,7 +83,7 @@ fn index_one(coll: &str, eid: &str, field: &str, val: FieldValue) -> RaftLogEntr
 /// Returns `None` (→ test skips) if no server is reachable OR the
 /// server doesn't have JetStream enabled (e.g. a plain `nats-server`
 /// without `-js`).
-async fn reset_stream() -> Option<()> {
+async fn reset_stream(config: &NatsWalConfig) -> Option<()> {
     let client = async_nats::connect(&nats_url()).await.ok()?;
     let js = async_nats::jetstream::new(client);
     // get_or_create_stream fails when JetStream isn't enabled (a plain
@@ -86,8 +91,8 @@ async fn reset_stream() -> Option<()> {
     // rather than a failure. Doubles as the clean-slate reset via purge.
     let stream = js
         .get_or_create_stream(async_nats::jetstream::stream::Config {
-            name: "lumen_wal".into(),
-            subjects: vec!["lumen.wal".into()],
+            name: config.stream_name.clone(),
+            subjects: vec![config.subject.clone()],
             ..Default::default()
         })
         .await
@@ -147,8 +152,9 @@ async fn wait_for_total(engine: &Engine, field: &str, value: &str, expected: u64
 
 #[tokio::test]
 async fn two_nodes_fan_out_from_one_published_stream() {
+    let config = test_config("fan_out");
     // Skip if no NATS reachable.
-    if reset_stream().await.is_none() {
+    if reset_stream(&config).await.is_none() {
         eprintln!(
             "skipping: no NATS server at {} (run nats-server -js)",
             nats_url()
@@ -157,16 +163,20 @@ async fn two_nodes_fan_out_from_one_published_stream() {
     }
 
     // Producer side.
-    let producer = NatsWal::connect(&nats_url())
+    let producer = NatsWal::connect_with_config(&nats_url(), config.clone())
         .await
         .expect("connect producer");
 
     // Two independent "serving nodes", each its own consumer + engine.
     let node_a = spawn_node(Arc::new(
-        NatsWal::connect(&nats_url()).await.expect("connect node A"),
+        NatsWal::connect_with_config(&nats_url(), config.clone())
+            .await
+            .expect("connect node A"),
     ));
     let node_b = spawn_node(Arc::new(
-        NatsWal::connect(&nats_url()).await.expect("connect node B"),
+        NatsWal::connect_with_config(&nats_url(), config.clone())
+            .await
+            .expect("connect node B"),
     ));
 
     // Publish the mutation stream ONCE.
@@ -209,11 +219,14 @@ async fn two_nodes_fan_out_from_one_published_stream() {
 
 #[tokio::test]
 async fn late_node_replays_backlog_then_sees_live() {
-    if reset_stream().await.is_none() {
+    let config = test_config("late_replay");
+    if reset_stream(&config).await.is_none() {
         eprintln!("skipping: no NATS server at {}", nats_url());
         return;
     }
-    let producer = NatsWal::connect(&nats_url()).await.expect("connect");
+    let producer = NatsWal::connect_with_config(&nats_url(), config.clone())
+        .await
+        .expect("connect");
 
     // Publish a backlog BEFORE the node subscribes.
     producer
@@ -234,7 +247,11 @@ async fn late_node_replays_backlog_then_sees_live() {
         .unwrap();
 
     // Node starts late — must replay the backlog from seq 0.
-    let node = spawn_node(Arc::new(NatsWal::connect(&nats_url()).await.unwrap()));
+    let node = spawn_node(Arc::new(
+        NatsWal::connect_with_config(&nats_url(), config.clone())
+            .await
+            .unwrap(),
+    ));
     assert!(
         wait_for_total(&node, "email", "a@x.com", 1).await,
         "late node did not replay backlog"

@@ -15,6 +15,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands;
+use crate::config::ClusterBackend;
 use crate::spec::{GpuRequest, Isolation};
 
 #[derive(Parser)]
@@ -100,6 +101,86 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Manage standalone local Kubernetes clusters (independent of runs).
+    Cluster {
+        #[command(subcommand)]
+        cmd: ClusterCmd,
+    },
+    /// Internal: run a built-in emulator. vat spawns itself for an emulator
+    /// preset service; not intended for direct human use.
+    #[command(hide = true)]
+    Emulator {
+        #[arg(value_enum)]
+        kind: EmulatorKind,
+        /// host:port to bind, e.g. 127.0.0.1:8085.
+        #[arg(long)]
+        host_port: String,
+        /// CA pem path (http-mock only).
+        #[arg(long)]
+        ca_path: Option<String>,
+        /// Cassette dir (http-mock only).
+        #[arg(long)]
+        cassette_dir: Option<String>,
+        /// OpenAPI spec path (openapi only).
+        #[arg(long)]
+        spec: Option<String>,
+    },
+}
+
+/// Which built-in emulator to run.
+/// @spec projects/vat/tech-design/logic/built-in-rust-emulators-pub-sub-firebase-auth.md#cli
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum EmulatorKind {
+    Pubsub,
+    FirebaseAuth,
+    CloudTasks,
+    CloudScheduler,
+    CloudWorkflows,
+    CloudStorage,
+    HttpMock,
+    Openapi,
+}
+
+/// Standalone `vat cluster` verbs. Clusters created here outlive a single run;
+/// vat creates/lists/deletes them on explicit command but does not supervise
+/// them.
+/// @spec projects/vat/tech-design/logic/kind-like-local-kubernetes-clusters.md#cli
+#[derive(Subcommand)]
+enum ClusterCmd {
+    /// Create a local Kubernetes cluster.
+    Create {
+        /// Cluster name (auto-generated when omitted).
+        #[arg(long)]
+        name: Option<String>,
+        /// Backend to use; `auto` prefers kind → k3d → minikube.
+        #[arg(long, value_enum, default_value = "auto")]
+        backend: ClusterBackend,
+        /// Kubernetes version for the node image (e.g. 1.30).
+        #[arg(long)]
+        k8s_version: Option<String>,
+        /// Node count.
+        #[arg(long, default_value_t = 1)]
+        nodes: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List vat-managed clusters.
+    Ls {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the kubeconfig path (or record) for a cluster.
+    Kubeconfig {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a cluster by name.
+    Delete {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Parse argv and dispatch. Returns the process exit code (notably, `run`
@@ -148,6 +229,25 @@ pub fn run() -> Result<ExitCode> {
         Cmd::Logs { id, source } => commands::logs::exec(id, source),
         Cmd::Llm => commands::llm::exec(),
         Cmd::Gpu { json } => commands::gpu::exec(json),
+        Cmd::Cluster { cmd } => match cmd {
+            ClusterCmd::Create {
+                name,
+                backend,
+                k8s_version,
+                nodes,
+                json,
+            } => commands::cluster::create(name, backend, k8s_version, nodes, json),
+            ClusterCmd::Ls { json } => commands::cluster::ls(json),
+            ClusterCmd::Kubeconfig { name, json } => commands::cluster::kubeconfig(name, json),
+            ClusterCmd::Delete { name, json } => commands::cluster::delete(name, json),
+        },
+        Cmd::Emulator {
+            kind,
+            host_port,
+            ca_path,
+            cassette_dir,
+            spec,
+        } => commands::emulator::exec(kind, host_port, ca_path, cassette_dir, spec),
     }
 }
 // CODEGEN-END

@@ -1,6 +1,6 @@
 [package]
 name = "vat"
-version = "0.3.61"
+version = "0.3.62"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -13,6 +13,13 @@ path = "src/lib.rs"
 [[bin]]
 name = "vat"
 path = "src/main.rs"
+
+[features]
+# Built-in Rust emulators (Pub/Sub gRPC + Firebase Auth REST). Default-on so the
+# shipped binary always has them; `--no-default-features` drops the async stack
+# for a lean build (the `vat emulator` verb then errors cleanly).
+default = ["emulator"]
+emulator = ["dep:tokio", "dep:axum", "dep:jsonwebtoken", "dep:tonic", "dep:prost", "dep:prost-types", "dep:async-trait", "dep:tokio-stream", "dep:async-stream", "dep:reqwest", "dep:cron", "dep:base64", "dep:serde_yaml", "dep:percent-encoding", "dep:md-5", "dep:rcgen", "dep:rustls", "dep:tokio-rustls", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 
 [dependencies]
 clap = { workspace = true, features = ["derive", "color"] }
@@ -27,5 +34,69 @@ dirs = "5"
 toml = "0.8"
 libc = "0.2"
 
+# Emulator stack (feature-gated).
+tokio = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+jsonwebtoken = { workspace = true, optional = true }
+tonic = { version = "0.12", optional = true }
+prost = { version = "0.13", optional = true }
+prost-types = { version = "0.13", optional = true }
+async-trait = { version = "0.1", optional = true }
+tokio-stream = { version = "0.1", optional = true }
+async-stream = { version = "0.3", optional = true }
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls", "json"] }
+cron = { version = "0.12", optional = true }
+base64 = { version = "0.22", optional = true }
+serde_yaml = { version = "0.9", optional = true }
+percent-encoding = { version = "2", optional = true }
+md-5 = { version = "0.10", optional = true }
+rcgen = { version = "0.13", optional = true }
+rustls = { version = "0.23", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+hyper = { version = "1", optional = true, features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", optional = true, features = ["tokio"] }
+http-body-util = { version = "0.1", optional = true }
+
+[build-dependencies]
+tonic-build = "0.12"
+protoc-bin-vendored = "3"
+
 [dev-dependencies]
 tempfile = "3"
+tokio = { workspace = true }
+tonic = "0.12"
+tokio-stream = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Emulator integration tests need the emulator feature (skipped in a lean build).
+[[test]]
+name = "vat_emulator_auth"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_pubsub"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_tasks"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_scheduler"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_workflows"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_storage"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_httpmock"
+required-features = ["emulator"]
+
+[[test]]
+name = "vat_emulator_openapi"
+required-features = ["emulator"]

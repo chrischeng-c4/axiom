@@ -6,9 +6,10 @@ use async_trait::async_trait;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
-use cclab_kv::client::{KvClient, KvValue};
-use crate::{TaskError, TaskId, TaskResult, TaskState};
 use super::ResultBackend;
+use crate::{TaskError, TaskId, TaskResult, TaskState};
+use keep::client::KvClient;
+use keep::KvValue;
 
 /// Configuration for Ion backend
 #[derive(Debug, Clone)]
@@ -73,8 +74,8 @@ impl IonBackend {
 impl ResultBackend for IonBackend {
     async fn set_state(&self, task_id: &TaskId, state: TaskState) -> Result<(), TaskError> {
         let key = self.state_key(task_id);
-        let value = serde_json::to_vec(&state)
-            .map_err(|e| TaskError::Serialization(e.to_string()))?;
+        let value =
+            serde_json::to_vec(&state).map_err(|e| TaskError::Serialization(e.to_string()))?;
 
         let mut client = self.client.lock().await;
         client
@@ -97,7 +98,10 @@ impl ResultBackend for IonBackend {
                 Ok(Some(state))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(TaskError::Backend(format!("Failed to get state from Ion: {}", e))),
+            Err(e) => Err(TaskError::Backend(format!(
+                "Failed to get state from Ion: {}",
+                e
+            ))),
         }
     }
 
@@ -108,8 +112,8 @@ impl ResultBackend for IonBackend {
         ttl: Option<Duration>,
     ) -> Result<(), TaskError> {
         let key = self.result_key(task_id);
-        let value = serde_json::to_vec(&result)
-            .map_err(|e| TaskError::Serialization(e.to_string()))?;
+        let value =
+            serde_json::to_vec(&result).map_err(|e| TaskError::Serialization(e.to_string()))?;
 
         let ttl = ttl.or(self.config.default_ttl);
 
@@ -139,7 +143,10 @@ impl ResultBackend for IonBackend {
                 Ok(Some(result))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(TaskError::Backend(format!("Failed to get result from Ion: {}", e))),
+            Err(e) => Err(TaskError::Backend(format!(
+                "Failed to get result from Ion: {}",
+                e
+            ))),
         }
     }
 
@@ -237,8 +244,8 @@ impl ResultBackend for IonBackend {
         ttl: Option<Duration>,
     ) -> Result<(), TaskError> {
         let full_key = format!("{}:meta:{}", self.config.key_prefix, key);
-        let bytes = serde_json::to_vec(&value)
-            .map_err(|e| TaskError::Serialization(e.to_string()))?;
+        let bytes =
+            serde_json::to_vec(&value).map_err(|e| TaskError::Serialization(e.to_string()))?;
 
         let ttl = ttl.or(self.config.default_ttl);
         let mut client = self.client.lock().await;
@@ -273,10 +280,9 @@ impl ResultBackend for IonBackend {
         let full_key = format!("{}:meta:{}", self.config.key_prefix, key);
 
         let mut client = self.client.lock().await;
-        client
-            .delete(&full_key)
-            .await
-            .map_err(|e| TaskError::Backend(format!("Failed to delete metadata from Ion: {}", e)))?;
+        client.delete(&full_key).await.map_err(|e| {
+            TaskError::Backend(format!("Failed to delete metadata from Ion: {}", e))
+        })?;
 
         Ok(())
     }
@@ -343,9 +349,18 @@ mod tests {
     fn config_debug() {
         let config = IonBackendConfig::default();
         let debug_str = format!("{:?}", config);
-        assert!(debug_str.contains("url"), "debug output should contain 'url'");
-        assert!(debug_str.contains("key_prefix"), "debug output should contain 'key_prefix'");
-        assert!(debug_str.contains("default_ttl"), "debug output should contain 'default_ttl'");
+        assert!(
+            debug_str.contains("url"),
+            "debug output should contain 'url'"
+        );
+        assert!(
+            debug_str.contains("key_prefix"),
+            "debug output should contain 'key_prefix'"
+        );
+        assert!(
+            debug_str.contains("default_ttl"),
+            "debug output should contain 'default_ttl'"
+        );
         assert!(
             debug_str.contains("connect_timeout"),
             "debug output should contain 'connect_timeout'"
@@ -427,7 +442,10 @@ mod tests {
     async fn set_get_state_round_trip() {
         let backend = make_backend().await;
         let task_id = TaskId::new();
-        backend.set_state(&task_id, TaskState::Started).await.unwrap();
+        backend
+            .set_state(&task_id, TaskState::Started)
+            .await
+            .unwrap();
         let got = backend.get_state(&task_id).await.unwrap();
         assert_eq!(got, Some(TaskState::Started));
         backend.delete(&task_id).await.unwrap();
@@ -450,9 +468,18 @@ mod tests {
     async fn set_state_overwrites() {
         let backend = make_backend().await;
         let task_id = TaskId::new();
-        backend.set_state(&task_id, TaskState::Pending).await.unwrap();
-        backend.set_state(&task_id, TaskState::Started).await.unwrap();
-        assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Started));
+        backend
+            .set_state(&task_id, TaskState::Pending)
+            .await
+            .unwrap();
+        backend
+            .set_state(&task_id, TaskState::Started)
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.get_state(&task_id).await.unwrap(),
+            Some(TaskState::Started)
+        );
         backend.delete(&task_id).await.unwrap();
     }
 
@@ -464,7 +491,10 @@ mod tests {
         let backend = make_backend().await;
         let task_id = TaskId::new();
         let result = TaskResult::success(task_id.clone(), serde_json::json!({"key": "value"}));
-        backend.set_result(&task_id, result.clone(), None).await.unwrap();
+        backend
+            .set_result(&task_id, result.clone(), None)
+            .await
+            .unwrap();
         let got = backend.get_result(&task_id).await.unwrap().unwrap();
         assert_eq!(got.task_id, task_id);
         assert_eq!(got.state, TaskState::Success);
@@ -505,7 +535,10 @@ mod tests {
         let backend = make_backend().await;
         let task_id = TaskId::new();
         let result = TaskResult::success(task_id.clone(), serde_json::json!({"v": 1}));
-        backend.set_result(&task_id, result, Some(Duration::from_secs(10))).await.unwrap();
+        backend
+            .set_result(&task_id, result, Some(Duration::from_secs(10)))
+            .await
+            .unwrap();
         let got = backend.get_result(&task_id).await.unwrap();
         assert!(got.is_some());
         backend.delete(&task_id).await.unwrap();
@@ -536,7 +569,11 @@ mod tests {
         let result = TaskResult::success(task_id.clone(), serde_json::json!({"fast": true}));
         backend.set_result(&task_id, result, None).await.unwrap();
         let got = backend
-            .wait_for_result(&task_id, Some(Duration::from_secs(5)), Duration::from_millis(50))
+            .wait_for_result(
+                &task_id,
+                Some(Duration::from_secs(5)),
+                Duration::from_millis(50),
+            )
             .await
             .unwrap();
         assert_eq!(got.state, TaskState::Success);
@@ -553,7 +590,11 @@ mod tests {
         let task_id = TaskId::new();
         // No result set → wait should timeout
         let err = backend
-            .wait_for_result(&task_id, Some(Duration::from_millis(200)), Duration::from_millis(50))
+            .wait_for_result(
+                &task_id,
+                Some(Duration::from_millis(200)),
+                Duration::from_millis(50),
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, TaskError::Timeout(_)));
@@ -571,11 +612,19 @@ mod tests {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let writer = make_backend().await;
-            let result = TaskResult::success(task_id_clone.clone(), serde_json::json!({"delayed": true}));
-            writer.set_result(&task_id_clone, result, None).await.unwrap();
+            let result =
+                TaskResult::success(task_id_clone.clone(), serde_json::json!({"delayed": true}));
+            writer
+                .set_result(&task_id_clone, result, None)
+                .await
+                .unwrap();
         });
         let got = backend
-            .wait_for_result(&task_id, Some(Duration::from_secs(5)), Duration::from_millis(50))
+            .wait_for_result(
+                &task_id,
+                Some(Duration::from_secs(5)),
+                Duration::from_millis(50),
+            )
             .await
             .unwrap();
         assert_eq!(got.state, TaskState::Success);
@@ -591,9 +640,16 @@ mod tests {
         let backend = make_backend().await;
         let task_id = TaskId::new();
         // Only set state (no result key) → Ion polls get_result, never finds it
-        backend.set_state(&task_id, TaskState::Success).await.unwrap();
+        backend
+            .set_state(&task_id, TaskState::Success)
+            .await
+            .unwrap();
         let err = backend
-            .wait_for_result(&task_id, Some(Duration::from_millis(200)), Duration::from_millis(50))
+            .wait_for_result(
+                &task_id,
+                Some(Duration::from_millis(200)),
+                Duration::from_millis(50),
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, TaskError::Timeout(_)));
@@ -637,7 +693,10 @@ mod tests {
         let r2 = TaskResult::success(id2.clone(), serde_json::json!({"id": 2}));
         backend.set_result(&id1, r1, None).await.unwrap();
         backend.set_result(&id2, r2, None).await.unwrap();
-        let results = backend.get_many(&[id1.clone(), id2.clone(), id3]).await.unwrap();
+        let results = backend
+            .get_many(&[id1.clone(), id2.clone(), id3])
+            .await
+            .unwrap();
         assert_eq!(results.len(), 3);
         assert!(results[0].is_some());
         assert!(results[1].is_some());
@@ -675,7 +734,10 @@ mod tests {
         let backend = make_backend().await;
         let key = format!("test-meta-{}", uuid::Uuid::now_v7());
         let value = serde_json::json!({"chain_id": "abc", "step": 3});
-        backend.set_metadata(&key, value.clone(), None).await.unwrap();
+        backend
+            .set_metadata(&key, value.clone(), None)
+            .await
+            .unwrap();
         let got = backend.get_metadata(&key).await.unwrap();
         assert_eq!(got, Some(value));
         backend.delete_metadata(&key).await.unwrap();
@@ -699,7 +761,10 @@ mod tests {
         let backend = make_backend().await;
         let key = format!("test-meta-ttl-{}", uuid::Uuid::now_v7());
         let value = serde_json::json!({"ttl_test": true});
-        backend.set_metadata(&key, value.clone(), Some(Duration::from_secs(10))).await.unwrap();
+        backend
+            .set_metadata(&key, value.clone(), Some(Duration::from_secs(10)))
+            .await
+            .unwrap();
         let got = backend.get_metadata(&key).await.unwrap();
         assert_eq!(got, Some(value));
         backend.delete_metadata(&key).await.unwrap();
@@ -712,7 +777,10 @@ mod tests {
     async fn delete_metadata_removes_key() {
         let backend = make_backend().await;
         let key = format!("test-meta-del-{}", uuid::Uuid::now_v7());
-        backend.set_metadata(&key, serde_json::json!("val"), None).await.unwrap();
+        backend
+            .set_metadata(&key, serde_json::json!("val"), None)
+            .await
+            .unwrap();
         backend.delete_metadata(&key).await.unwrap();
         let got = backend.get_metadata(&key).await.unwrap();
         assert_eq!(got, None);

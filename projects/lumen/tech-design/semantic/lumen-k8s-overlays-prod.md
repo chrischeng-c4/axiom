@@ -2,7 +2,7 @@
 id: semantic-lumen-k8s-overlays-prod
 summary: Semantic coverage for "projects/lumen/k8s/overlays/prod"
 capability_refs:
-  - id: "k8s-deployment"
+  - id: "long-running-stability"
     role: primary
     claim: "kustomize-base-overlays-hpa"
     coverage: partial
@@ -41,6 +41,8 @@ deployment:
     - path: "projects/lumen/k8s/overlays/prod/kustomization.yaml"
       kind: "kustomization"
       content: |
+        # SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-overlays-prod.md#deployment
+        # CODEGEN-BEGIN
         apiVersion: kustomize.config.k8s.io/v1beta1
         kind: Kustomization
         
@@ -54,14 +56,15 @@ deployment:
         components:
           - ../../components/observability
         
-        # prod: 6+ serving nodes (HPA floor 6, ceiling 12), a 3-node clustered
-        # JetStream broker for HA, strict auth, json logs, full resources.
+        # prod: 6+ serving nodes (HPA floor 6, ceiling 12), strict auth, json logs,
+        # full resources. Managed Relay is a single broker; production HA should patch
+        # LUMEN_RELAY_URL to an external Relay until relay-raft exposes subscribe/len.
         
         replicas:
           - name: lumen
             count: 6
-          - name: lumen-nats
-            count: 3
+          - name: lumen-relay
+            count: 1
         
         patches:
           # Prod ConfigMap values: 6 shards, json logs, strict auth.
@@ -119,28 +122,12 @@ deployment:
               - op: replace
                 path: /spec/maxReplicas
                 value: 12
-          # Clustered JetStream: enable routes so the 3 brokers form one RAFT
-          # meta-group. Routes resolve via the headless service per-pod DNS.
+          # Managed Relay broker resources. Do not scale relay-server above 1 here:
+          # multiple relay-server pods are independent logs, not HA.
           - target:
               kind: StatefulSet
-              name: lumen-nats
+              name: lumen-relay
             patch: |-
-              - op: replace
-                path: /spec/template/spec/containers/0/args
-                value:
-                  - "-c"
-                  - "/etc/nats/nats.conf"
-                  - "-js"
-                  - "-sd"
-                  - "/data"
-                  - "-m"
-                  - "8222"
-                  - "--cluster_name"
-                  - "lumen"
-                  - "--cluster"
-                  - "nats://0.0.0.0:6222"
-                  - "--routes"
-                  - "nats://lumen-nats-0.lumen-nats-headless:6222,nats://lumen-nats-1.lumen-nats-headless:6222,nats://lumen-nats-2.lumen-nats-headless:6222"
               - op: replace
                 path: /spec/template/spec/containers/0/resources/requests/cpu
                 value: "2"
@@ -160,6 +147,8 @@ deployment:
               - op: replace
                 path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
                 value: "100Gi"
+        # CODEGEN-END
+
 ```
 
 ## Changes

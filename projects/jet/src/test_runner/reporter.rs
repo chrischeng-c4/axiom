@@ -64,6 +64,21 @@ pub struct TestError {
     pub source_location: Option<SourceLocation>,
 }
 
+/// Author-authored `test.step(...)` evidence attached to a test report.
+/// The field is optional at the report level so older workers still render
+/// through the existing single-step E2E fallback.
+#[derive(Debug, Clone, Serialize)]
+pub struct TestStepReport {
+    pub id: String,
+    pub title: String,
+    pub outcome: Outcome,
+    pub duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_step_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<TestError>,
+}
+
 /// @spec .aw/tech-design/projects/jet/semantic/jet-test-runner.md#schema
 impl SourceLocation {
     /// Parse a V8/Node stack frame string and extract the first user-visible
@@ -161,6 +176,9 @@ pub struct TestReport {
     // @spec .aw/tech-design/projects/jet/logic/auto-artifacts.md#A1
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<PathBuf>,
+    /// Author-authored Playwright-compatible `test.step(...)` records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<TestStepReport>,
 }
 
 /// Stable schema tag for browser sessions captured by the native test runner.
@@ -219,11 +237,39 @@ pub struct BrowserSessionReport {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-test-runner.md#schema
 impl BrowserSessionReport {
     pub fn launching(spec_file: PathBuf, headless: bool, started_at_ms: u64) -> Self {
+        Self::launching_with_driver(spec_file, headless, started_at_ms, "chromium")
+    }
+
+    pub fn launching_with_driver(
+        spec_file: PathBuf,
+        headless: bool,
+        started_at_ms: u64,
+        driver: &str,
+    ) -> Self {
+        Self::starting_with_driver(spec_file, headless, started_at_ms, driver, "launched")
+    }
+
+    pub fn connecting_with_driver(
+        spec_file: PathBuf,
+        headless: bool,
+        started_at_ms: u64,
+        driver: &str,
+    ) -> Self {
+        Self::starting_with_driver(spec_file, headless, started_at_ms, driver, "connected")
+    }
+
+    fn starting_with_driver(
+        spec_file: PathBuf,
+        headless: bool,
+        started_at_ms: u64,
+        driver: &str,
+        anchor: &str,
+    ) -> Self {
         Self {
             schema_version: BROWSER_SESSION_SCHEMA_VERSION.to_string(),
-            session_id: format!("chromium-{}-{started_at_ms}", std::process::id()),
-            driver: "chromium".to_string(),
-            anchor: "launched".to_string(),
+            session_id: format!("{driver}-{}-{started_at_ms}", std::process::id()),
+            driver: driver.to_string(),
+            anchor: anchor.to_string(),
             headless,
             spec_file,
             state: BrowserSessionState::Launching,
@@ -566,6 +612,7 @@ mod tests {
                 shard_index: None,
                 shard_total: None,
                 artifacts: Vec::new(),
+                steps: Vec::new(),
             }],
             coverage: None,
             browser_sessions: Vec::new(),
@@ -623,6 +670,7 @@ mod tests {
             shard_index: None,
             shard_total: None,
             artifacts: Vec::new(),
+            steps: Vec::new(),
         };
         let root = std::path::Path::new("/abs/root");
         let hint = Summary::rerun_hint(&report, root);
@@ -642,6 +690,7 @@ mod tests {
             shard_index: None,
             shard_total: None,
             artifacts: Vec::new(),
+            steps: Vec::new(),
         };
         let root = std::path::Path::new("/abs/root");
         let hint = Summary::rerun_hint(&report, root);

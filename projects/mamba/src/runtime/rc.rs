@@ -1,3 +1,8 @@
+use super::dict_ops::DictKey;
+use indexmap::IndexMap;
+use num_bigint::BigInt;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 /// Reference-counted heap objects (#280) — thread-safe, no-GIL.
 ///
 /// Every heap-allocated Mamba object starts with a MbObjectHeader containing
@@ -65,13 +70,7 @@
 /// ## NON-POINTER (returns NaN-boxed i64/f64/bool — retain_if_ptr is no-op)
 ///
 ///   mb_len, mb_is_truthy, mb_hash, mb_id, mb_bool
-
 use std::sync::atomic::{AtomicU32, Ordering};
-use indexmap::IndexMap;
-use num_bigint::BigInt;
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
-use super::dict_ops::DictKey;
 
 #[inline]
 fn is_typed_native_wrapper(val: super::value::MbValue) -> bool {
@@ -395,8 +394,12 @@ pub type InstanceFields = FxHashMap<String, super::value::MbValue>;
 /// (CPython's "untracked tuple" optimization). Strs/bytes/numerics can't form
 /// cycles so they're skipped here.
 fn value_is_cycle_capable(v: super::value::MbValue) -> bool {
-    let Some(ptr) = v.as_ptr() else { return false; };
-    if ptr.is_null() { return false; }
+    let Some(ptr) = v.as_ptr() else {
+        return false;
+    };
+    if ptr.is_null() {
+        return false;
+    }
     let kind = unsafe { (*ptr).header.kind };
     matches!(
         kind,
@@ -527,7 +530,10 @@ fn atomic_rc(val: u32) -> AtomicU32 {
 impl MbObject {
     pub fn new_str(s: String) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Str },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Str,
+            },
             data: ObjData::Str(s),
         });
         Box::into_raw(obj)
@@ -537,7 +543,10 @@ impl MbObject {
     /// `mb_retain`/`mb_release` are no-ops. Used for compile-time constants.
     pub fn new_str_immortal(s: String) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(IMMORTAL_REFCOUNT), kind: ObjKind::Str },
+            header: MbObjectHeader {
+                rc: atomic_rc(IMMORTAL_REFCOUNT),
+                kind: ObjKind::Str,
+            },
             data: ObjData::Str(s),
         });
         Box::into_raw(obj)
@@ -560,7 +569,10 @@ impl MbObject {
             MbList::from_vec(elements)
         };
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::List },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::List,
+            },
             data: ObjData::List(MbRwLock::new(buf)),
         });
         let ptr = Box::into_raw(obj);
@@ -576,7 +588,10 @@ impl MbObject {
     /// allocation. #2517.
     pub fn new_list_inline(buf: MbList) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::List },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::List,
+            },
             data: ObjData::List(MbRwLock::new(buf)),
         });
         let ptr = Box::into_raw(obj);
@@ -598,7 +613,10 @@ impl MbObject {
 
     pub fn new_dict() -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Dict },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Dict,
+            },
             data: ObjData::Dict(MbRwLock::new(IndexMap::new())),
         });
         let ptr = Box::into_raw(obj);
@@ -610,7 +628,10 @@ impl MbObject {
     /// Used when the number of entries is known or estimated.
     pub fn new_dict_with_capacity(capacity: usize) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Dict },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Dict,
+            },
             data: ObjData::Dict(MbRwLock::new(IndexMap::with_capacity(capacity))),
         });
         let ptr = Box::into_raw(obj);
@@ -621,7 +642,10 @@ impl MbObject {
     pub fn new_tuple(elements: Vec<super::value::MbValue>) -> *mut Self {
         let needs_tracking = elements.iter().any(|v| value_is_cycle_capable(*v));
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Tuple },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Tuple,
+            },
             data: ObjData::Tuple(elements),
         });
         let ptr = Box::into_raw(obj);
@@ -644,7 +668,10 @@ impl MbObject {
     pub fn new_set(elements: Vec<super::value::MbValue>) -> *mut Self {
         let set = MbSet::from_elements(elements);
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Set },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Set,
+            },
             data: ObjData::Set(MbRwLock::new(set)),
         });
         let ptr = Box::into_raw(obj);
@@ -701,7 +728,10 @@ impl MbObject {
             data.shrink_to_fit();
         }
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Bytes },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Bytes,
+            },
             data: ObjData::Bytes(data),
         });
         Box::into_raw(obj)
@@ -714,7 +744,10 @@ impl MbObject {
             data.shrink_to_fit();
         }
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(IMMORTAL_REFCOUNT), kind: ObjKind::Bytes },
+            header: MbObjectHeader {
+                rc: atomic_rc(IMMORTAL_REFCOUNT),
+                kind: ObjKind::Bytes,
+            },
             data: ObjData::Bytes(data),
         });
         Box::into_raw(obj)
@@ -722,7 +755,10 @@ impl MbObject {
 
     pub fn new_bytearray(data: Vec<u8>) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::ByteArray },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::ByteArray,
+            },
             data: ObjData::ByteArray(MbRwLock::new(data)),
         });
         Box::into_raw(obj)
@@ -731,7 +767,10 @@ impl MbObject {
     pub fn new_frozenset(elements: Vec<super::value::MbValue>) -> *mut Self {
         let needs_tracking = elements.iter().any(|v| value_is_cycle_capable(*v));
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::FrozenSet },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::FrozenSet,
+            },
             data: ObjData::FrozenSet(elements),
         });
         let ptr = Box::into_raw(obj);
@@ -744,7 +783,10 @@ impl MbObject {
     /// Allocate a BigInt heap object (#833).
     pub fn new_bigint(value: BigInt) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::BigInt },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::BigInt,
+            },
             data: ObjData::BigInt(value),
         });
         Box::into_raw(obj)
@@ -753,7 +795,10 @@ impl MbObject {
     /// Allocate a Complex heap object (R3 CPython 3.12 conformance).
     pub fn new_complex(real: f64, imag: f64) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Complex },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Complex,
+            },
             data: ObjData::Complex(real, imag),
         });
         Box::into_raw(obj)
@@ -771,7 +816,10 @@ impl MbObject {
         ast: crate::parser::ast::Module,
     ) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::CodeObject },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::CodeObject,
+            },
             data: ObjData::CodeObject {
                 source,
                 filename,
@@ -784,7 +832,10 @@ impl MbObject {
 
     pub fn new_instance(class_name: String) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Instance },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Instance,
+            },
             data: ObjData::Instance {
                 class_name,
                 fields: MbRwLock::new(InstanceFields::default()),
@@ -800,7 +851,10 @@ impl MbObject {
     /// during field assignment in __init__.
     pub fn new_instance_with_capacity(class_name: String, capacity: usize) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Instance },
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Instance,
+            },
             data: ObjData::Instance {
                 class_name,
                 fields: MbRwLock::new(InstanceFields::with_capacity_and_hasher(
@@ -1029,9 +1083,7 @@ pub unsafe extern "C" fn mb_release_value(val: u64) {
                 // would abort the entire process.  Skipping the release
                 // leaks memory but avoids a double-free crash.
                 #[cfg(debug_assertions)]
-                eprintln!(
-                    "mb_release_value: UAF detected (kind={kind_byte}), skipping release"
-                );
+                eprintln!("mb_release_value: UAF detected (kind={kind_byte}), skipping release");
                 return;
             }
         }
@@ -1050,8 +1102,8 @@ pub unsafe extern "C" fn mb_release_value(val: u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::value::MbValue;
+    use super::*;
 
     #[test]
     fn test_str_object_lifecycle() {
@@ -1073,10 +1125,7 @@ mod tests {
     #[test]
     fn test_list_object() {
         unsafe {
-            let list = MbObject::new_list(vec![
-                MbValue::from_int(1),
-                MbValue::from_int(2),
-            ]);
+            let list = MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(2)]);
             assert_eq!((*list).header.kind, ObjKind::List);
             if let ObjData::List(ref lock) = (*list).data {
                 let items = lock.read().unwrap();
@@ -1103,7 +1152,9 @@ mod tests {
 
         let obj = MbObject::new_str("shared".into());
         // Bump refcount so it survives all threads
-        unsafe { (*obj).header.rc.store(1001, Ordering::Relaxed); }
+        unsafe {
+            (*obj).header.rc.store(1001, Ordering::Relaxed);
+        }
         let addr = obj as usize;
 
         let handles: Vec<_> = (0..10)
@@ -1159,10 +1210,7 @@ mod tests {
     #[test]
     fn test_set_object() {
         unsafe {
-            let set = MbObject::new_set(vec![
-                MbValue::from_int(1),
-                MbValue::from_int(2),
-            ]);
+            let set = MbObject::new_set(vec![MbValue::from_int(1), MbValue::from_int(2)]);
             assert_eq!((*set).header.kind, ObjKind::Set);
             if let ObjData::Set(ref lock) = (*set).data {
                 let items = lock.read().unwrap();
@@ -1207,9 +1255,7 @@ mod tests {
     #[test]
     fn test_frozenset_object() {
         unsafe {
-            let fs = MbObject::new_frozenset(vec![
-                MbValue::from_int(10),
-            ]);
+            let fs = MbObject::new_frozenset(vec![MbValue::from_int(10)]);
             assert_eq!((*fs).header.kind, ObjKind::FrozenSet);
             if let ObjData::FrozenSet(ref items) = (*fs).data {
                 assert_eq!(items.len(), 1);
@@ -1227,7 +1273,11 @@ mod tests {
             let inst = MbObject::new_instance("MyClass".to_string());
             assert_eq!((*inst).header.kind, ObjKind::Instance);
             assert_eq!(mb_refcount(inst), 1);
-            if let ObjData::Instance { ref class_name, ref fields } = (*inst).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*inst).data
+            {
                 assert_eq!(class_name, "MyClass");
                 assert!(fields.read().unwrap().is_empty());
             } else {
@@ -1239,13 +1289,17 @@ mod tests {
 
     #[test]
     fn test_retain_null_is_safe() {
-        unsafe { mb_retain(std::ptr::null_mut()); }
+        unsafe {
+            mb_retain(std::ptr::null_mut());
+        }
         // Should not panic
     }
 
     #[test]
     fn test_release_null_is_safe() {
-        unsafe { mb_release(std::ptr::null_mut()); }
+        unsafe {
+            mb_release(std::ptr::null_mut());
+        }
         // Should not panic
     }
 
@@ -1371,7 +1425,11 @@ mod tests {
             let obj = MbObject::new_bytes(data);
             // Same pointer ⇒ no memcpy of payload occurred during materialization.
             if let ObjData::Bytes(ref stored) = (*obj).data {
-                assert_eq!(stored.as_ptr(), src_ptr, "new_bytes must not memcpy payload (#2107)");
+                assert_eq!(
+                    stored.as_ptr(),
+                    src_ptr,
+                    "new_bytes must not memcpy payload (#2107)"
+                );
                 assert_eq!(stored.len(), src_len);
                 assert_eq!(stored.capacity(), src_cap);
                 assert_eq!(stored[0], 0x5A);

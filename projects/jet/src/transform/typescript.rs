@@ -61,6 +61,8 @@ fn visit_node<'a>(
             | "type_arguments"
             | "type_parameters"
             | "type_predicate_annotation"
+            | "accessibility_modifier"
+            | "readonly"
             | "interface_declaration"
             | "type_alias_declaration"
             | "function_signature"
@@ -68,6 +70,19 @@ fn visit_node<'a>(
                 if *last_pos < child.start_byte() {
                     result.push_str(&source[*last_pos..child.start_byte()]);
                 }
+                *last_pos = child.end_byte();
+            }
+
+            // TypeScript parameter properties compile to instance assignments.
+            // e.g. `constructor(private readonly page: Page) {}` →
+            // `constructor(page) { this.page = page; }`
+            "method_definition"
+                if method_name(source, &child).as_deref() == Some("constructor") =>
+            {
+                if *last_pos < child.start_byte() {
+                    result.push_str(&source[*last_pos..child.start_byte()]);
+                }
+                result.push_str(&emit_constructor_method(source, &child)?);
                 *last_pos = child.end_byte();
             }
 
@@ -172,6 +187,153 @@ fn visit_node<'a>(
     }
 
     Ok(())
+}
+
+fn method_name(source: &str, node: &Node) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "property_identifier" || child.kind() == "private_property_identifier" {
+            return Some(source[child.byte_range()].to_string());
+        }
+    }
+    None
+}
+
+fn emit_constructor_method(source: &str, node: &Node) -> Result<String> {
+    let mut cursor = node.walk();
+    let mut params = None;
+    let mut body = None;
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "formal_parameters" => params = Some(child),
+            "statement_block" => body = Some(child),
+            _ => {}
+        }
+    }
+    let Some(params) = params else {
+        return Ok(source[node.byte_range()].to_string());
+    };
+    let Some(body) = body else {
+        return Ok(source[node.byte_range()].to_string());
+    };
+
+    let assignments = constructor_parameter_property_assignments(source, &params);
+    let params_text = emit_formal_parameters(source, &params)?;
+    let mut out = String::new();
+    out.push_str(&source[node.start_byte()..params.start_byte()]);
+    out.push_str(&params_text);
+    if params.end_byte() < body.start_byte() {
+        out.push_str(&source[params.end_byte()..body.start_byte()]);
+    }
+    out.push_str(&emit_constructor_body_with_assignments(
+        source,
+        &body,
+        &assignments,
+    )?);
+    Ok(out)
+}
+
+fn constructor_parameter_property_assignments(source: &str, params: &Node) -> Vec<String> {
+    let mut assignments = Vec::new();
+    let mut cursor = params.walk();
+    for child in params.children(&mut cursor) {
+        if !is_parameter_node(&child) || !has_parameter_property_modifier(&child) {
+            continue;
+        }
+        if let Some(name) = parameter_identifier(source, &child) {
+            assignments.push(format!("this.{name} = {name};"));
+        }
+    }
+    assignments
+}
+
+fn emit_formal_parameters(source: &str, params: &Node) -> Result<String> {
+    let mut out = String::new();
+    let mut cursor = params.walk();
+    for child in params.children(&mut cursor) {
+        match child.kind() {
+            "(" | ")" => out.push_str(&source[child.byte_range()]),
+            "," => {
+                if !out.ends_with(' ') {
+                    out.push(' ');
+                }
+                out.push(',');
+                out.push(' ');
+            }
+            kind if is_parameter_kind(kind) => {
+                out.push_str(&emit_parameter(source, &child)?);
+            }
+            _ => out.push_str(&source[child.byte_range()]),
+        }
+    }
+    Ok(out)
+}
+
+fn emit_parameter(source: &str, node: &Node) -> Result<String> {
+    let mut result = String::new();
+    let mut last_pos = node.start_byte();
+    let mut cursor = node.walk();
+    visit_node(source, node, &mut last_pos, &mut result, &mut cursor)?;
+    if last_pos < node.end_byte() {
+        result.push_str(&source[last_pos..node.end_byte()]);
+    }
+    let text = result.trim().replace('?', "");
+    Ok(text)
+}
+
+fn emit_constructor_body_with_assignments(
+    source: &str,
+    body: &Node,
+    assignments: &[String],
+) -> Result<String> {
+    if assignments.is_empty() {
+        let mut result = String::new();
+        let mut last_pos = body.start_byte();
+        let mut cursor = body.walk();
+        visit_node(source, body, &mut last_pos, &mut result, &mut cursor)?;
+        if last_pos < body.end_byte() {
+            result.push_str(&source[last_pos..body.end_byte()]);
+        }
+        return Ok(result);
+    }
+    let body_text = &source[body.byte_range()];
+    let joined = assignments.join(" ");
+    if let Some(rest) = body_text.strip_prefix('{') {
+        Ok(format!("{{ {joined} {rest}"))
+    } else {
+        Ok(body_text.to_string())
+    }
+}
+
+fn has_parameter_property_modifier(node: &Node) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "accessibility_modifier" || child.kind() == "readonly" {
+            return true;
+        }
+    }
+    false
+}
+
+fn parameter_identifier(source: &str, node: &Node) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" {
+            return Some(source[child.byte_range()].to_string());
+        }
+    }
+    None
+}
+
+fn is_parameter_node(node: &Node) -> bool {
+    is_parameter_kind(node.kind())
+}
+
+fn is_parameter_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "required_parameter" | "optional_parameter" | "rest_parameter" | "assignment_pattern"
+    )
 }
 
 /// Check if an export_statement only exports type-only declarations.
@@ -587,6 +749,49 @@ export const value = ThemeContext"#;
         assert!(
             result.code.contains("export function createElement"),
             "missing export: {:?}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_private_readonly_class_field_stripped() {
+        let source = r#"class ManualRecorder {
+  private readonly steps: ManualStep[] = [];
+}"#;
+        let options = TransformOptions::default();
+        let result = transform_typescript(source, &options).unwrap();
+
+        assert!(
+            !result.code.contains("private") && !result.code.contains("readonly"),
+            "must strip TypeScript-only class field modifiers: {}",
+            result.code
+        );
+        assert!(
+            result.code.contains("steps = []"),
+            "must preserve runtime class field initializer: {}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_constructor_parameter_property_initializes_this() {
+        let source = r#"class TaskEventRecorder {
+  constructor(private readonly page: Page) {}
+  install() { return this.page; }
+}"#;
+        let options = TransformOptions::default();
+        let result = transform_typescript(source, &options).unwrap();
+
+        assert!(
+            !result.code.contains("private")
+                && !result.code.contains("readonly")
+                && !result.code.contains(": Page"),
+            "must strip parameter property syntax: {}",
+            result.code
+        );
+        assert!(
+            result.code.contains("constructor(page)") && result.code.contains("this.page = page;"),
+            "must compile constructor parameter property to an instance assignment: {}",
             result.code
         );
     }

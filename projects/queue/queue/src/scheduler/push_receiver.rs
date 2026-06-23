@@ -36,8 +36,7 @@ const HMAC_SIGNATURE_HEADER: &str = "x-scheduler-signature";
 const DEFAULT_OIDC_ISSUER: &str = "https://accounts.google.com";
 
 /// Default Google JWKS endpoint
-const DEFAULT_OIDC_JWKS_URL: &str =
-    "https://www.googleapis.com/oauth2/v3/certs";
+const DEFAULT_OIDC_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
 
 /// Default JWKS cache TTL (1 hour)
 const DEFAULT_JWKS_CACHE_TTL_SECS: u64 = 3600;
@@ -229,13 +228,9 @@ impl PushReceiver {
     }
 
     /// Build the authenticator from config.
-    fn build_authenticator(
-        config: &PushReceiverConfig,
-    ) -> Result<PushAuthenticator, TaskError> {
-        let oidc_enabled =
-            config.enabled_auth_methods.contains(&AuthMethod::Oidc);
-        let hmac_enabled =
-            config.enabled_auth_methods.contains(&AuthMethod::Hmac);
+    fn build_authenticator(config: &PushReceiverConfig) -> Result<PushAuthenticator, TaskError> {
+        let oidc_enabled = config.enabled_auth_methods.contains(&AuthMethod::Oidc);
+        let hmac_enabled = config.enabled_auth_methods.contains(&AuthMethod::Hmac);
 
         let oidc_validator = if oidc_enabled {
             config.oidc_audience.as_ref().map(|audience| {
@@ -295,12 +290,7 @@ impl PushReceiver {
 
         // Check body size limit
         if body.len() > receiver.config.max_body_size {
-            receiver.record_metrics(
-                &task_name,
-                "unknown",
-                "parse_error",
-                start,
-            );
+            receiver.record_metrics(&task_name, "unknown", "parse_error", start);
             return PushErrorResponse::new(format!(
                 "Request body exceeds maximum size of {} bytes",
                 receiver.config.max_body_size
@@ -312,30 +302,19 @@ impl PushReceiver {
         let auth_method = match receiver.authenticate(&headers, &body).await {
             Ok(method) => method,
             Err(resp) => {
-                receiver.record_metrics(
-                    &task_name,
-                    "unknown",
-                    "auth_failed",
-                    start,
-                );
+                receiver.record_metrics(&task_name, "unknown", "auth_failed", start);
                 return resp;
             }
         };
 
         let auth_method_str = auth_method.to_string();
-        tracing::Span::current()
-            .record("auth_method", auth_method_str.as_str());
+        tracing::Span::current().record("auth_method", auth_method_str.as_str());
 
         // Resolve queue
         let queue = match receiver.resolve_queue(&task_name) {
             Ok(q) => q,
             Err(resp) => {
-                receiver.record_metrics(
-                    &task_name,
-                    &auth_method_str,
-                    "parse_error",
-                    start,
-                );
+                receiver.record_metrics(&task_name, &auth_method_str, "parse_error", start);
                 return resp;
             }
         };
@@ -344,12 +323,7 @@ impl PushReceiver {
         let task_message = match Self::parse_task_message(&body) {
             Ok(msg) => msg,
             Err(resp) => {
-                receiver.record_metrics(
-                    &task_name,
-                    &auth_method_str,
-                    "parse_error",
-                    start,
-                );
+                receiver.record_metrics(&task_name, &auth_method_str, "parse_error", start);
                 return resp;
             }
         };
@@ -357,9 +331,7 @@ impl PushReceiver {
         // Record trigger in schedule monitor (best-effort, R8)
         #[cfg(feature = "scheduler")]
         if let Some(monitor) = &receiver.monitor {
-            if let Err(e) =
-                monitor.record_trigger(&task_name, chrono::Utc::now())
-            {
+            if let Err(e) = monitor.record_trigger(&task_name, chrono::Utc::now()) {
                 tracing::warn!(
                     task_name = %task_name,
                     error = %e,
@@ -370,17 +342,9 @@ impl PushReceiver {
 
         // Publish to broker
         if let Err(e) = receiver.broker.publish(&queue, task_message).await {
-            receiver.record_metrics(
-                &task_name,
-                &auth_method_str,
-                "publish_error",
-                start,
-            );
-            return PushErrorResponse::new(format!(
-                "Failed to publish task: {}",
-                e
-            ))
-            .into_resp(StatusCode::INTERNAL_SERVER_ERROR);
+            receiver.record_metrics(&task_name, &auth_method_str, "publish_error", start);
+            return PushErrorResponse::new(format!("Failed to publish task: {}", e))
+                .into_resp(StatusCode::INTERNAL_SERVER_ERROR);
         }
 
         // Success
@@ -394,11 +358,7 @@ impl PushReceiver {
     /// - `X-Scheduler-Signature` → HMAC path
     /// - Both present → OIDC takes precedence
     /// - Neither present → 401
-    async fn authenticate(
-        &self,
-        headers: &HeaderMap,
-        body: &[u8],
-    ) -> Result<AuthMethod, Response> {
+    async fn authenticate(&self, headers: &HeaderMap, body: &[u8]) -> Result<AuthMethod, Response> {
         let has_bearer = headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
@@ -418,26 +378,18 @@ impl PushReceiver {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.strip_prefix("Bearer "))
                 .ok_or_else(|| {
-                    PushErrorResponse::new(
-                        "Invalid Authorization header format",
-                    )
-                    .into_resp(StatusCode::UNAUTHORIZED)
+                    PushErrorResponse::new("Invalid Authorization header format")
+                        .into_resp(StatusCode::UNAUTHORIZED)
                 })?;
 
-            let validator =
-                self.authenticator.oidc_validator.as_ref().ok_or_else(|| {
-                    PushErrorResponse::new(
-                        "OIDC authentication is enabled but no audience configured",
-                    )
+            let validator = self.authenticator.oidc_validator.as_ref().ok_or_else(|| {
+                PushErrorResponse::new("OIDC authentication is enabled but no audience configured")
                     .into_resp(StatusCode::UNAUTHORIZED)
-                })?;
+            })?;
 
             validator.validate_token(token).await.map_err(|e| {
-                PushErrorResponse::new(format!(
-                    "OIDC token validation failed: {}",
-                    e
-                ))
-                .into_resp(StatusCode::UNAUTHORIZED)
+                PushErrorResponse::new(format!("OIDC token validation failed: {}", e))
+                    .into_resp(StatusCode::UNAUTHORIZED)
             })?;
 
             return Ok(AuthMethod::Oidc);
@@ -453,19 +405,14 @@ impl PushReceiver {
                 .get(HMAC_SIGNATURE_HEADER)
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| {
-                    PushErrorResponse::new(
-                        "Invalid X-Scheduler-Signature header",
-                    )
-                    .into_resp(StatusCode::UNAUTHORIZED)
+                    PushErrorResponse::new("Invalid X-Scheduler-Signature header")
+                        .into_resp(StatusCode::UNAUTHORIZED)
                 })?;
 
-            let validator =
-                self.authenticator.hmac_validator.as_ref().ok_or_else(|| {
-                    PushErrorResponse::new(
-                        "HMAC authentication is enabled but no secret configured",
-                    )
+            let validator = self.authenticator.hmac_validator.as_ref().ok_or_else(|| {
+                PushErrorResponse::new("HMAC authentication is enabled but no secret configured")
                     .into_resp(StatusCode::UNAUTHORIZED)
-                })?;
+            })?;
 
             validator.validate_signature(body, signature).map_err(|_| {
                 PushErrorResponse::new("HMAC signature validation failed")
@@ -510,23 +457,19 @@ impl PushReceiver {
             Ok(msg) => Ok(msg),
             Err(direct_err) => {
                 // Try base64 decode then JSON parse (Cloud Scheduler httpTarget)
-                if let Ok(decoded) = base64::Engine::decode(
-                    &base64::engine::general_purpose::STANDARD,
-                    body,
-                ) {
-                    if let Ok(msg) =
-                        serde_json::from_slice::<TaskMessage>(&decoded)
-                    {
+                if let Ok(decoded) =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, body)
+                {
+                    if let Ok(msg) = serde_json::from_slice::<TaskMessage>(&decoded) {
                         return Ok(msg);
                     }
                 }
 
                 // Both attempts failed — report the direct parse error
-                Err(PushErrorResponse::new(format!(
-                    "Failed to parse TaskMessage: {}",
-                    direct_err
-                ))
-                .into_resp(StatusCode::BAD_REQUEST))
+                Err(
+                    PushErrorResponse::new(format!("Failed to parse TaskMessage: {}", direct_err))
+                        .into_resp(StatusCode::BAD_REQUEST),
+                )
             }
         }
     }
@@ -587,29 +530,17 @@ impl PushMetrics {
             ),
             &["task_name", "auth_method", "status"]
         )
-        .map_err(|e| {
-            TaskError::Configuration(format!(
-                "Failed to register push metrics: {}",
-                e
-            ))
-        })?;
+        .map_err(|e| TaskError::Configuration(format!("Failed to register push metrics: {}", e)))?;
 
         let duration_seconds = prometheus::register_histogram_vec!(
             prometheus::HistogramOpts::new(
                 "scheduler_push_duration_seconds",
                 "Push receiver request processing latency in seconds"
             )
-            .buckets(vec![
-                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0,
-            ]),
+            .buckets(vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0,]),
             &["task_name"]
         )
-        .map_err(|e| {
-            TaskError::Configuration(format!(
-                "Failed to register push metrics: {}",
-                e
-            ))
-        })?;
+        .map_err(|e| TaskError::Configuration(format!("Failed to register push metrics: {}", e)))?;
 
         Ok(Self {
             received_total,
@@ -674,11 +605,7 @@ mod tests {
         async fn disconnect(&self) -> Result<(), TaskError> {
             Ok(())
         }
-        async fn publish(
-            &self,
-            queue: &str,
-            message: TaskMessage,
-        ) -> Result<(), TaskError> {
+        async fn publish(&self, queue: &str, message: TaskMessage) -> Result<(), TaskError> {
             if self.fail_publish.load(Ordering::SeqCst) {
                 return Err(TaskError::Connection(
                     "mock broker connection error".to_string(),
@@ -765,13 +692,11 @@ mod tests {
         use sha2::Sha256;
         type HmacSha256 = Hmac<Sha256>;
 
-        let mut mac =
-            HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(body);
         let result = mac.finalize();
         let bytes = result.into_bytes();
-        let hex: String =
-            bytes.iter().map(|b| format!("{:02x}", b)).collect();
+        let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
         format!("sha256={hex}")
     }
 
@@ -823,8 +748,7 @@ mod tests {
     fn config_serde_roundtrip() {
         let config = PushReceiverConfig::default();
         let json = serde_json::to_string(&config).unwrap();
-        let parsed: PushReceiverConfig =
-            serde_json::from_str(&json).unwrap();
+        let parsed: PushReceiverConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.oidc_issuer, config.oidc_issuer);
         assert_eq!(parsed.max_body_size, config.max_body_size);
     }
@@ -841,15 +765,12 @@ mod tests {
 
     #[test]
     fn auth_method_serde_roundtrip() {
-        let oidc_json =
-            serde_json::to_string(&AuthMethod::Oidc).unwrap();
+        let oidc_json = serde_json::to_string(&AuthMethod::Oidc).unwrap();
         assert_eq!(oidc_json, "\"oidc\"");
-        let hmac_json =
-            serde_json::to_string(&AuthMethod::Hmac).unwrap();
+        let hmac_json = serde_json::to_string(&AuthMethod::Hmac).unwrap();
         assert_eq!(hmac_json, "\"hmac\"");
 
-        let parsed: AuthMethod =
-            serde_json::from_str(&oidc_json).unwrap();
+        let parsed: AuthMethod = serde_json::from_str(&oidc_json).unwrap();
         assert_eq!(parsed, AuthMethod::Oidc);
     }
 
@@ -924,24 +845,19 @@ mod tests {
     #[test]
     fn s7_resolve_queue_mapped_task() {
         let mut config = test_config();
-        config.task_queue_map.insert(
-            "daily-cleanup".to_string(),
-            "maintenance".to_string(),
-        );
-        config.task_queue_map.insert(
-            "hourly-sync".to_string(),
-            "sync".to_string(),
-        );
+        config
+            .task_queue_map
+            .insert("daily-cleanup".to_string(), "maintenance".to_string());
+        config
+            .task_queue_map
+            .insert("hourly-sync".to_string(), "sync".to_string());
         let receiver = make_receiver(config);
 
         assert_eq!(
             receiver.resolve_queue("daily-cleanup").unwrap(),
             "maintenance"
         );
-        assert_eq!(
-            receiver.resolve_queue("hourly-sync").unwrap(),
-            "sync"
-        );
+        assert_eq!(receiver.resolve_queue("hourly-sync").unwrap(), "sync");
     }
 
     #[test]
@@ -954,10 +870,7 @@ mod tests {
         };
         let receiver = make_receiver(config);
 
-        assert_eq!(
-            receiver.resolve_queue("unknown-task").unwrap(),
-            "default"
-        );
+        assert_eq!(receiver.resolve_queue("unknown-task").unwrap(), "default");
     }
 
     // S8: Unknown task with no default queue returns 404
@@ -967,10 +880,7 @@ mod tests {
             default_queue: None,
             task_queue_map: {
                 let mut m = HashMap::new();
-                m.insert(
-                    "daily-cleanup".to_string(),
-                    "maintenance".to_string(),
-                );
+                m.insert("daily-cleanup".to_string(), "maintenance".to_string());
                 m
             },
             hmac_secret: Some(TEST_HMAC_SECRET.to_string()),
@@ -1005,11 +915,9 @@ mod tests {
         let json_bytes = serde_json::to_vec(&msg).unwrap();
 
         use base64::Engine;
-        let encoded = base64::engine::general_purpose::STANDARD
-            .encode(&json_bytes);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&json_bytes);
 
-        let parsed =
-            PushReceiver::parse_task_message(encoded.as_bytes()).unwrap();
+        let parsed = PushReceiver::parse_task_message(encoded.as_bytes()).unwrap();
         assert_eq!(parsed.task_name, "b64-task");
     }
 
@@ -1053,10 +961,7 @@ mod tests {
     async fn s2_valid_hmac_request_succeeds() {
         let broker = Arc::new(MockBroker::new());
         let broker_clone = broker.clone();
-        let receiver = make_receiver_with_broker(
-            test_config(),
-            broker_clone as Arc<dyn Broker>,
-        );
+        let receiver = make_receiver_with_broker(test_config(), broker_clone as Arc<dyn Broker>);
         let app = receiver.router();
 
         let body = make_task_message_body("daily-cleanup");
@@ -1091,8 +996,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
         let bytes = body_bytes(resp).await;
-        let error: serde_json::Value =
-            serde_json::from_slice(&bytes).unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(
             error["error"]
                 .as_str()
@@ -1121,8 +1025,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
         let bytes = body_bytes(resp).await;
-        let error: serde_json::Value =
-            serde_json::from_slice(&bytes).unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             error["error"].as_str().unwrap(),
             "No authentication credentials provided"
@@ -1136,8 +1039,7 @@ mod tests {
         let app = receiver.router();
 
         let body = make_task_message_body("task1");
-        let signature =
-            compute_hmac_signature(TEST_HMAC_SECRET, &body);
+        let signature = compute_hmac_signature(TEST_HMAC_SECRET, &body);
         let req = Request::builder()
             .method("POST")
             .uri("/scheduler/push/task1")
@@ -1147,11 +1049,7 @@ mod tests {
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(
-            resp.status(),
-            StatusCode::OK,
-            "HMAC auth should succeed"
-        );
+        assert_eq!(resp.status(), StatusCode::OK, "HMAC auth should succeed");
     }
 
     // S6: Both headers present → OIDC takes precedence
@@ -1163,8 +1061,7 @@ mod tests {
         let app = receiver.router();
 
         let body = make_task_message_body("task1");
-        let hmac_sig =
-            compute_hmac_signature(TEST_HMAC_SECRET, &body);
+        let hmac_sig = compute_hmac_signature(TEST_HMAC_SECRET, &body);
 
         // Both auth headers present: Bearer (invalid) + HMAC (valid)
         // Since Bearer takes precedence, OIDC validation is attempted
@@ -1184,13 +1081,9 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
         let bytes = body_bytes(resp).await;
-        let error: serde_json::Value =
-            serde_json::from_slice(&bytes).unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(
-            error["error"]
-                .as_str()
-                .unwrap()
-                .contains("OIDC"),
+            error["error"].as_str().unwrap().contains("OIDC"),
             "Should fail via OIDC path, not HMAC. Error: {:?}",
             error
         );
@@ -1201,14 +1094,10 @@ mod tests {
     async fn s7_handler_routes_to_configured_queue() {
         let broker = Arc::new(MockBroker::new());
         let mut config = test_config();
-        config.task_queue_map.insert(
-            "daily-cleanup".to_string(),
-            "maintenance".to_string(),
-        );
-        let receiver = make_receiver_with_broker(
-            config,
-            broker.clone() as Arc<dyn Broker>,
-        );
+        config
+            .task_queue_map
+            .insert("daily-cleanup".to_string(), "maintenance".to_string());
+        let receiver = make_receiver_with_broker(config, broker.clone() as Arc<dyn Broker>);
         let app = receiver.router();
 
         let body = make_task_message_body("daily-cleanup");
@@ -1229,10 +1118,7 @@ mod tests {
     #[tokio::test]
     async fn s7_handler_falls_back_to_default_queue() {
         let broker = Arc::new(MockBroker::new());
-        let receiver = make_receiver_with_broker(
-            test_config(),
-            broker.clone() as Arc<dyn Broker>,
-        );
+        let receiver = make_receiver_with_broker(test_config(), broker.clone() as Arc<dyn Broker>);
         let app = receiver.router();
 
         let body = make_task_message_body("unknown-task");
@@ -1268,8 +1154,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         let bytes = body_bytes(resp).await;
-        let error: serde_json::Value =
-            serde_json::from_slice(&bytes).unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             error["error"].as_str().unwrap(),
             "Unknown task: unknown-task"
@@ -1298,8 +1183,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         let bytes = body_bytes(resp).await;
-        let error: serde_json::Value =
-            serde_json::from_slice(&bytes).unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(
             error["error"]
                 .as_str()
@@ -1314,10 +1198,7 @@ mod tests {
     #[tokio::test]
     async fn s10_broker_publish_failure_returns_500() {
         let broker = Arc::new(MockBroker::failing());
-        let receiver = make_receiver_with_broker(
-            test_config(),
-            broker as Arc<dyn Broker>,
-        );
+        let receiver = make_receiver_with_broker(test_config(), broker as Arc<dyn Broker>);
         let app = receiver.router();
 
         let body = make_task_message_body("task1");
@@ -1327,8 +1208,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
         let bytes = body_bytes(resp).await;
-        let error: serde_json::Value =
-            serde_json::from_slice(&bytes).unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(
             error["error"]
                 .as_str()
@@ -1372,16 +1252,10 @@ mod tests {
     #[tokio::test]
     async fn s2_full_hmac_flow_publishes_correct_message() {
         let broker = Arc::new(MockBroker::new());
-        let receiver = make_receiver_with_broker(
-            test_config(),
-            broker.clone() as Arc<dyn Broker>,
-        );
+        let receiver = make_receiver_with_broker(test_config(), broker.clone() as Arc<dyn Broker>);
         let app = receiver.router();
 
-        let msg = TaskMessage::new(
-            "hourly-sync",
-            serde_json::json!({"key": "value"}),
-        );
+        let msg = TaskMessage::new("hourly-sync", serde_json::json!({"key": "value"}));
         let body = serde_json::to_vec(&msg).unwrap();
         let req = hmac_request("hourly-sync", &body);
 
@@ -1393,20 +1267,14 @@ mod tests {
         let (queue, published_msg) = &messages[0];
         assert_eq!(queue, "default");
         assert_eq!(published_msg.task_name, "hourly-sync");
-        assert_eq!(
-            published_msg.args,
-            serde_json::json!({"key": "value"})
-        );
+        assert_eq!(published_msg.args, serde_json::json!({"key": "value"}));
     }
 
     // S10: broker.publish is NOT called when auth fails
     #[tokio::test]
     async fn s4_broker_not_called_on_auth_failure() {
         let broker = Arc::new(MockBroker::new());
-        let receiver = make_receiver_with_broker(
-            test_config(),
-            broker.clone() as Arc<dyn Broker>,
-        );
+        let receiver = make_receiver_with_broker(test_config(), broker.clone() as Arc<dyn Broker>);
         let app = receiver.router();
 
         let body = make_task_message_body("task1");
@@ -1432,10 +1300,7 @@ mod tests {
     #[tokio::test]
     async fn s9_broker_not_called_on_parse_failure() {
         let broker = Arc::new(MockBroker::new());
-        let receiver = make_receiver_with_broker(
-            test_config(),
-            broker.clone() as Arc<dyn Broker>,
-        );
+        let receiver = make_receiver_with_broker(test_config(), broker.clone() as Arc<dyn Broker>);
         let app = receiver.router();
 
         let body = b"invalid json";
@@ -1465,19 +1330,14 @@ mod tests {
     async fn multiple_tasks_route_correctly() {
         let broker = Arc::new(MockBroker::new());
         let mut config = test_config();
-        config.task_queue_map.insert(
-            "task-a".to_string(),
-            "queue-a".to_string(),
-        );
-        config.task_queue_map.insert(
-            "task-b".to_string(),
-            "queue-b".to_string(),
-        );
+        config
+            .task_queue_map
+            .insert("task-a".to_string(), "queue-a".to_string());
+        config
+            .task_queue_map
+            .insert("task-b".to_string(), "queue-b".to_string());
 
-        let receiver = make_receiver_with_broker(
-            config,
-            broker.clone() as Arc<dyn Broker>,
-        );
+        let receiver = make_receiver_with_broker(config, broker.clone() as Arc<dyn Broker>);
 
         // First request
         let body_a = make_task_message_body("task-a");
@@ -1523,8 +1383,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
         let bytes = body_bytes(resp).await;
-        let error: serde_json::Value =
-            serde_json::from_slice(&bytes).unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(
             error["error"]
                 .as_str()
@@ -1547,8 +1406,7 @@ mod tests {
         let app = receiver.router();
 
         let body = make_task_message_body("task1");
-        let signature =
-            compute_hmac_signature(TEST_HMAC_SECRET, &body);
+        let signature = compute_hmac_signature(TEST_HMAC_SECRET, &body);
         let req = Request::builder()
             .method("POST")
             .uri("/scheduler/push/task1")

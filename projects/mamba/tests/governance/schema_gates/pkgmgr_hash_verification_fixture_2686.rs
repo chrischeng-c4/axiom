@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("governance")
         .join("gates")
         .join("pkgmgr")
         .join("hash")
@@ -103,19 +103,19 @@ fn pkgmgr_hash_package_block_pins_algorithm_and_length() {
         .get("expected_hash_hex_length")
         .and_then(|v| v.as_integer())
         .expect("`[package].expected_hash_hex_length` must be set");
-    assert_eq!(
-        length, 64,
-        "sha256 hex length must be 64; got {length}"
-    );
+    assert_eq!(length, 64, "sha256 hex length must be 64; got {length}");
 }
 
 #[test]
 fn pkgmgr_hash_correct_hash_case_installs_and_imports() {
     let doc = crate::common::load_toml(&manifest_path());
-    let case = doc.get("correct_hash_case").and_then(|v| v.as_table()).expect(
-        "missing `[correct_hash_case]` block \
+    let case = doc
+        .get("correct_hash_case")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[correct_hash_case]` block \
          (acceptance: \"Correct hash path still installs and imports.\")",
-    );
+        );
 
     assert_eq!(
         case.get("hash_matches").and_then(|v| v.as_bool()),
@@ -157,10 +157,13 @@ fn pkgmgr_hash_correct_hash_case_installs_and_imports() {
 #[test]
 fn pkgmgr_hash_tampered_hash_case_fails_before_install() {
     let doc = crate::common::load_toml(&manifest_path());
-    let case = doc.get("tampered_hash_case").and_then(|v| v.as_table()).expect(
-        "missing `[tampered_hash_case]` block \
+    let case = doc
+        .get("tampered_hash_case")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[tampered_hash_case]` block \
          (acceptance: \"Hash mismatch fails before installation is accepted.\")",
-    );
+        );
 
     assert_eq!(
         case.get("hash_matches").and_then(|v| v.as_bool()),
@@ -175,13 +178,15 @@ fn pkgmgr_hash_tampered_hash_case_fails_before_install() {
     assert_ne!(exit, 0, "tampered hash case must NOT exit 0; got {exit}");
 
     assert_eq!(
-        case.get("must_fail_before_install").and_then(|v| v.as_bool()),
+        case.get("must_fail_before_install")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[tampered_hash_case].must_fail_before_install` must be true — \
          the verifier rejects before any wheel is extracted"
     );
     assert_eq!(
-        case.get("must_not_install_package").and_then(|v| v.as_bool()),
+        case.get("must_not_install_package")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[tampered_hash_case].must_not_install_package` must be true"
     );
@@ -196,11 +201,14 @@ fn pkgmgr_hash_tampered_hash_case_fails_before_install() {
 #[test]
 fn pkgmgr_hash_diagnostic_assertion_names_pkg_version_and_hashes() {
     let doc = crate::common::load_toml(&manifest_path());
-    let diag = doc.get("diagnostic_assertion").and_then(|v| v.as_table()).expect(
-        "missing `[diagnostic_assertion]` block \
+    let diag = doc
+        .get("diagnostic_assertion")
+        .and_then(|v| v.as_table())
+        .expect(
+            "missing `[diagnostic_assertion]` block \
          (acceptance: \"Diagnostic names package, version, expected hash, \
          and observed hash shape.\")",
-    );
+        );
 
     for flag in &[
         "must_name_package",
@@ -297,7 +305,8 @@ fn pkgmgr_hash_pins_out_of_scope_per_issue_2686() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("remote_download_transport").and_then(|v| v.as_bool()),
+        oos.get("remote_download_transport")
+            .and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].remote_download_transport` must be true \
          (issue text: \"Out of scope: remote download transport.\")"

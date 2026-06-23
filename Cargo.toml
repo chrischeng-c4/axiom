@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "projects/relay",
     "projects/mamba/mambalibs/mongokit",
     "projects/mamba/mambalibs/mongokit/binding",
     "projects/mamba/mambalibs/pgkit/pg",
@@ -12,7 +13,6 @@ members = [
     "projects/guard",
     "projects/guard/guard-cli",
     "crates/cclab-core",
-    "crates/cclab-kv",
     "projects/mamba/mambalibs/queuekit",
     "crates/cclab-schema",
     "crates/cclab-grid",
@@ -29,6 +29,7 @@ members = [
     "projects/jet/wasm",
     "projects/agentic-workflow",
     "libs/compass",
+    "libs/raftcore",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",
@@ -70,8 +71,11 @@ members = [
     "crates/cclab-cli-registry",
     "crates/cclab-tqdm",
     "crates/cclab-log",
+    "crates/cclab-aurora",
     "crates/cclab-ctx-inf-db",
     "projects/lumen",
+    "projects/keep",
+    "projects/queue/queue",
 ]
 resolver = "2"
 
@@ -92,6 +96,7 @@ once_cell = "1.20"  # For static initialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde_yaml = "0.9"
+pythonize = "0.29.0"
 
 # Error handling
 anyhow = "1.0"
@@ -175,6 +180,15 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# Dev builds keep workspace code at opt-level 0 (fast incremental builds)
+# but compile DEPENDENCIES optimized: the mamba conformance suite spends
+# most of its wall time inside cranelift (JIT codegen per fixture), logos,
+# regex, and flate2 — all dependency crates. Optimizing only deps cuts the
+# conformance/lib suite wall time roughly in half at a one-time dependency
+# rebuild cost, with no change to incremental rebuilds of our own crates.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release.package.cap]
 opt-level = "z"

@@ -53,7 +53,13 @@ pub fn aes_gcm_encrypt(
     let nonce = aes_gcm::Nonce::from_slice(nonce);
     match aad {
         Some(aad) => cipher
-            .encrypt(nonce, Payload { msg: plaintext, aad })
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: plaintext,
+                    aad,
+                },
+            )
             .map_err(|e| CryptoError::Encryption(e.to_string())),
         None => cipher
             .encrypt(nonce, plaintext)
@@ -103,7 +109,10 @@ pub fn chacha20_encrypt(
         Some(aad) => cipher
             .encrypt(
                 nonce,
-                chacha20poly1305::aead::Payload { msg: plaintext, aad },
+                chacha20poly1305::aead::Payload {
+                    msg: plaintext,
+                    aad,
+                },
             )
             .map_err(|e| CryptoError::Encryption(e.to_string())),
         None => cipher

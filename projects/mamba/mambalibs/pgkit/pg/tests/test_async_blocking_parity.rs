@@ -44,19 +44,39 @@ const EXEMPT_ASYNC_ONLY: &[(&str, &str, &str)] = &[
 /// owned runtime, getters that expose the runtime/inner handle, and
 /// borrow helpers used by the binding layer.
 const EXEMPT_BLOCKING_ONLY: &[(&str, &str, &str)] = &[
-    ("Connection", "from_parts", "facade ctor: wrap an existing async handle + Runtime"),
-    ("Connection", "as_async", "facade escape hatch: borrow the inner async handle"),
-    ("Connection", "runtime", "facade getter: share the owned Runtime across derived handles"),
-    ("Transaction", "as_mut_transaction", "facade borrow helper: lend the inner sqlx Transaction"),
-    ("MigrationRunner", "connect", "facade convenience ctor: takes a URL, builds a Connection + Runner in one step"),
+    (
+        "Connection",
+        "from_parts",
+        "facade ctor: wrap an existing async handle + Runtime",
+    ),
+    (
+        "Connection",
+        "as_async",
+        "facade escape hatch: borrow the inner async handle",
+    ),
+    (
+        "Connection",
+        "runtime",
+        "facade getter: share the owned Runtime across derived handles",
+    ),
+    (
+        "Transaction",
+        "as_mut_transaction",
+        "facade borrow helper: lend the inner sqlx Transaction",
+    ),
+    (
+        "MigrationRunner",
+        "connect",
+        "facade convenience ctor: takes a URL, builds a Connection + Runner in one step",
+    ),
 ];
 
 /// Methods that look IO-bearing in name but are pure getters /
 /// borrow helpers (no `block_on`). These do not require a blocking
 /// counterpart and are excluded from the parity check entirely.
 const ASYNC_SIDE_NON_IO: &[(&str, &str)] = &[
-    ("Connection", "pool"),                  // sync getter on async side too
-    ("Transaction", "as_mut_transaction"),   // sync borrow on async side too
+    ("Connection", "pool"),                // sync getter on async side too
+    ("Transaction", "as_mut_transaction"), // sync borrow on async side too
 ];
 
 /// Files under the scanned subtrees that are deliberately OUTSIDE the
@@ -157,8 +177,7 @@ fn collect_blocking_surface(dir: &Path) -> BTreeSet<Pair> {
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| {
-            e.file_type().is_file()
-                && e.path().extension().and_then(|s| s.to_str()) == Some("rs")
+            e.file_type().is_file() && e.path().extension().and_then(|s| s.to_str()) == Some("rs")
         })
     {
         let src = std::fs::read_to_string(entry.path())
@@ -338,9 +357,7 @@ fn parity_blocking_surface_has_async_sibling() {
 
     let missing: Vec<&Pair> = blocking_surface
         .iter()
-        .filter(|p| {
-            !async_side_all.contains(*p) && !exempt.contains(*p) && !non_io.contains(*p)
-        })
+        .filter(|p| !async_side_all.contains(*p) && !exempt.contains(*p) && !non_io.contains(*p))
         .collect();
 
     assert!(

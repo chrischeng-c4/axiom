@@ -186,7 +186,10 @@ impl K8sJobExecutor {
             "meteor.cclab.io/task-name".to_string(),
             message.task_name.clone(),
         );
-        labels.insert("app.kubernetes.io/managed-by".to_string(), "meteor".to_string());
+        labels.insert(
+            "app.kubernetes.io/managed-by".to_string(),
+            "meteor".to_string(),
+        );
 
         // Build the Job
         let job = Job {
@@ -236,7 +239,10 @@ impl K8sJobExecutor {
                 );
             }
             Err(e) => {
-                return Err(TaskError::Backend(format!("Failed to create K8s Job: {}", e)));
+                return Err(TaskError::Backend(format!(
+                    "Failed to create K8s Job: {}",
+                    e
+                )));
             }
         }
 
@@ -252,8 +258,8 @@ impl K8sJobExecutor {
         };
 
         let meta_key = format!("offloaded:{}", task_id);
-        let info_value = serde_json::to_value(&info)
-            .map_err(|e| TaskError::Serialization(e.to_string()))?;
+        let info_value =
+            serde_json::to_value(&info).map_err(|e| TaskError::Serialization(e.to_string()))?;
         backend.set_metadata(&meta_key, info_value, None).await?;
 
         Ok(info)

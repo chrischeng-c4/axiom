@@ -14,7 +14,7 @@
 
 pub mod migrate;
 
-pub use migrate::{MigrateAction, run_migrate};
+pub use migrate::{run_migrate, MigrateAction};
 
 use cclab_cli_registry::{CliModule, CLI_MODULES};
 use clap::{ArgMatches, Command, FromArgMatches, Subcommand};

@@ -94,9 +94,7 @@ impl ProjectTable {
             .ok_or_else(|| parse_err("[project] is missing required field `name`"))?;
         let name = pep503_normalize(&raw_name);
         if name.is_empty() {
-            return Err(parse_err(
-                "[project].name normalizes to an empty string",
-            ));
+            return Err(parse_err("[project].name normalizes to an empty string"));
         }
 
         let dynamic = take_string_array(table, "dynamic")?;
@@ -163,10 +161,7 @@ fn parse_err(detail: impl Into<String>) -> IndexError {
     }
 }
 
-fn take_string(
-    table: &toml::value::Table,
-    key: &str,
-) -> Result<Option<String>, IndexError> {
+fn take_string(table: &toml::value::Table, key: &str) -> Result<Option<String>, IndexError> {
     match table.get(key) {
         None => Ok(None),
         Some(toml::Value::String(s)) => Ok(Some(s.clone())),
@@ -177,10 +172,7 @@ fn take_string(
     }
 }
 
-fn take_string_array(
-    table: &toml::value::Table,
-    key: &str,
-) -> Result<Vec<String>, IndexError> {
+fn take_string_array(table: &toml::value::Table, key: &str) -> Result<Vec<String>, IndexError> {
     match table.get(key) {
         None => Ok(Vec::new()),
         Some(toml::Value::Array(arr)) => {
@@ -221,9 +213,9 @@ fn take_optional_dependencies(
     let Some(value) = table.get("optional-dependencies") else {
         return Ok(BTreeMap::new());
     };
-    let inner = value.as_table().ok_or_else(|| {
-        parse_err("[project.optional-dependencies] must be a table")
-    })?;
+    let inner = value
+        .as_table()
+        .ok_or_else(|| parse_err("[project.optional-dependencies] must be a table"))?;
     let mut out = BTreeMap::new();
     for (group, deps_value) in inner.iter() {
         let arr = deps_value.as_array().ok_or_else(|| {
@@ -245,16 +237,13 @@ fn take_optional_dependencies(
     Ok(out)
 }
 
-fn take_person_array(
-    table: &toml::value::Table,
-    key: &str,
-) -> Result<Vec<Person>, IndexError> {
+fn take_person_array(table: &toml::value::Table, key: &str) -> Result<Vec<Person>, IndexError> {
     let Some(value) = table.get(key) else {
         return Ok(Vec::new());
     };
-    let arr = value.as_array().ok_or_else(|| {
-        parse_err(format!("[project].{key} must be an array"))
-    })?;
+    let arr = value
+        .as_array()
+        .ok_or_else(|| parse_err(format!("[project].{key} must be an array")))?;
     let mut out = Vec::with_capacity(arr.len());
     for (i, v) in arr.iter().enumerate() {
         let person = match v {
@@ -263,8 +252,14 @@ fn take_person_array(
                 email: None,
             },
             toml::Value::Table(t) => {
-                let name = t.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let email = t.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let name = t
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let email = t
+                    .get("email")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 if name.is_none() && email.is_none() {
                     return Err(parse_err(format!(
                         "[project].{key}[{i}] must have at least `name` or `email`"
@@ -294,19 +289,19 @@ fn take_license(table: &toml::value::Table) -> Result<Option<License>, IndexErro
             let has_file = t.contains_key("file");
             let has_text = t.contains_key("text");
             match (has_file, has_text) {
-                (true, true) => Err(parse_err(
-                    "[project].license sets both `file` and `text`",
-                )),
+                (true, true) => Err(parse_err("[project].license sets both `file` and `text`")),
                 (true, false) => {
-                    let file = t.get("file").and_then(|v| v.as_str()).ok_or_else(|| {
-                        parse_err("[project].license.file must be a string")
-                    })?;
+                    let file = t
+                        .get("file")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| parse_err("[project].license.file must be a string"))?;
                     Ok(Some(License::File(file.to_string())))
                 }
                 (false, true) => {
-                    let text = t.get("text").and_then(|v| v.as_str()).ok_or_else(|| {
-                        parse_err("[project].license.text must be a string")
-                    })?;
+                    let text = t
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| parse_err("[project].license.text must be a string"))?;
                     Ok(Some(License::Text(text.to_string())))
                 }
                 (false, false) => Err(parse_err(
@@ -328,8 +323,14 @@ fn take_readme(table: &toml::value::Table) -> Result<Option<Readme>, IndexError>
     match value {
         toml::Value::String(s) => Ok(Some(Readme::File(s.clone()))),
         toml::Value::Table(t) => {
-            let file = t.get("file").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let text = t.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let file = t
+                .get("file")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let text = t
+                .get("text")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let content_type = t
                 .get("content-type")
                 .and_then(|v| v.as_str())
@@ -340,12 +341,12 @@ fn take_readme(table: &toml::value::Table) -> Result<Option<Readme>, IndexError>
                     text: t,
                     content_type: ct,
                 })),
-                (None, Some(_), None) => Err(parse_err(
-                    "[project].readme.text requires `content-type`",
-                )),
-                (Some(_), Some(_), _) => Err(parse_err(
-                    "[project].readme sets both `file` and `text`",
-                )),
+                (None, Some(_), None) => {
+                    Err(parse_err("[project].readme.text requires `content-type`"))
+                }
+                (Some(_), Some(_), _) => {
+                    Err(parse_err("[project].readme sets both `file` and `text`"))
+                }
                 (None, None, _) => Err(parse_err(
                     "[project].readme table must set `file` or `text`",
                 )),
@@ -413,29 +414,35 @@ version = "1"
 
     #[test]
     fn missing_project_table_errors() {
-        let err = ProjectTable::parse(r#"[build-system]
-requires = ["setuptools"]"#)
-            .unwrap_err();
+        let err = ProjectTable::parse(
+            r#"[build-system]
+requires = ["setuptools"]"#,
+        )
+        .unwrap_err();
         let msg = format!("{err:?}");
         assert!(msg.contains("[project] table"));
     }
 
     #[test]
     fn missing_name_errors() {
-        let err = ProjectTable::parse(r#"[project]
+        let err = ProjectTable::parse(
+            r#"[project]
 version = "1.0"
-"#)
-            .unwrap_err();
+"#,
+        )
+        .unwrap_err();
         let msg = format!("{err:?}");
         assert!(msg.contains("name"));
     }
 
     #[test]
     fn missing_version_errors_when_not_dynamic() {
-        let err = ProjectTable::parse(r#"[project]
+        let err = ProjectTable::parse(
+            r#"[project]
 name = "x"
-"#)
-            .unwrap_err();
+"#,
+        )
+        .unwrap_err();
         let msg = format!("{err:?}");
         assert!(msg.contains("version"));
     }

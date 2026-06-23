@@ -1,0 +1,162 @@
+[project]
+name = "agentic-workflow"
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "agentic-workflow"
+generated_from_td_digest = "sha256:96ccefd59c8ec08254b518fd2b17edf57cf499a9f0f7cf365eb92810c8e03b87"
+
+[[aw.ec.generated.cases]]
+id = "artifact-quality-fixture-roundtrip"
+capability_id = "unmapped"
+claim_id = "artifact-quality-fixture-roundtrip"
+contract_id = "artifact-quality-fixture-roundtrip"
+category = "behavior"
+td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-artifact-quality-profile.md#artifact-quality-fixture-roundtrip"
+test_path = "projects/agentic-workflow/tests/behavior_artifact_quality_fixture_roundtrip.rs"
+command = "cargo test -p agentic-workflow artifact_quality -- --nocapture"
+required_for_production = true
+assertions = []
+
+[[aw.ec.generated.cases]]
+id = "completeness-placeholder-unit-command"
+capability_id = "unmapped"
+claim_id = "completeness-placeholder-unit-command"
+contract_id = "completeness-placeholder-unit-command"
+category = "behavior"
+td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-completeness-placeholder-gate.md#completeness-placeholder-unit-command"
+test_path = "projects/agentic-workflow/tests/behavior_completeness_placeholder_unit_command.rs"
+command = "cargo test -p agentic-workflow completeness_placeholder -- --nocapture"
+required_for_production = true
+assertions = [
+    "placeholder code is rejected",
+    "omitted prose is rejected",
+    "future_work_allowed TODO is accepted",
+]
+
+[[aw.ec.generated.cases]]
+id = "demo-contract"
+capability_id = "unmapped"
+claim_id = "demo-contract"
+contract_id = "demo-contract"
+category = "behavior"
+td_ref = "projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#demo-contract"
+test_path = "projects/agentic-workflow/tests/behavior_demo_contract.rs"
+command = "cargo test -p demo demo_contract"
+required_for_production = true
+assertions = []
+
+[[aw.ec.generated.cases]]
+id = "demo-ec-smoke"
+capability_id = "demo-capability"
+claim_id = "demo-ec-smoke"
+contract_id = "demo-closure"
+category = "behavior"
+td_ref = "projects/agentic-workflow/tech-design/surface/validate/tests/standardize_test.md#demo-ec-smoke"
+test_path = "projects/agentic-workflow/tests/behavior_demo_ec_smoke.rs"
+command = "true"
+required_for_production = true
+assertions = ["demo behavior remains available"]
+
+[[aw.ec.generated.cases]]
+id = "project-capability-define"
+capability_id = "capability-control-plane"
+claim_id = "project-capability-define"
+contract_id = "capability-define-onboarding"
+category = "product-journey"
+td_ref = "projects/agentic-workflow/tech-design/core/tools/common_change_spec/preamble.md#project-capability-define"
+test_path = "projects/agentic-workflow/tests/product-journey_project_capability_define.rs"
+command = "vat run manual --gpu none"
+required_for_production = false
+assertions = [
+    "user can complete the capability definition journey",
+    "visual evidence captures the primary UI states",
+    "agent evaluation report has no blocking violations",
+]
+
+[[aw.ec.generated.cases.evidence]]
+kind = "screenshot"
+path = "e2e-results/user-manual/images/capability-setup.png"
+label = "Capability setup"
+locator = "[data-testid=capability-setup]"
+
+[[aw.ec.generated.cases.evidence]]
+kind = "agent-eval"
+path = "e2e-results/agent-eval/project-capability-define.json"
+label = "Agent evaluation report"
+
+[[aw.ec.generated.cases.evidence]]
+kind = "generated-manual"
+path = "docs/aw-ec-manual.md"
+label = "Generated product manual"
+format = "markdown"
+command = "aw ec --project agentic-workflow doc gen"
+
+[[aw.ec.generated.cases.evaluators]]
+id = "capability-agent-eval"
+tool = "codex"
+command = "codex exec --json --output e2e-results/agent-eval/project-capability-define.json"
+report_path = "e2e-results/agent-eval/project-capability-define.json"
+rubric = [
+    "agent response reflects the user-created project goal",
+    "agent asks for missing capability details instead of inventing commitments",
+    "agent produces no blocking contradiction with the README capability contract",
+]
+pass_criteria = [
+    "score >= 4",
+    "blocking_violations is empty",
+]
+
+[[aw.ec.generated.cases]]
+id = "wi-create-help-command"
+capability_id = "unmapped"
+claim_id = "wi-create-help-command"
+contract_id = "wi-create-help-command"
+category = "behavior"
+td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-wi-create-remove-remote-flag.md#wi-create-help-command"
+test_path = "projects/agentic-workflow/tests/behavior_wi_create_help_command.rs"
+command = "./target/debug/aw wi create --help"
+required_for_production = true
+assertions = ["help output does not list --remote"]
+
+[[aw.ec.generated.cases]]
+id = "wi-create-remote-unit-command"
+capability_id = "unmapped"
+claim_id = "wi-create-remote-unit-command"
+contract_id = "wi-create-remote-unit-command"
+category = "behavior"
+td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-wi-create-remove-remote-flag.md#wi-create-remote-unit-command"
+test_path = "projects/agentic-workflow/tests/behavior_wi_create_remote_unit_command.rs"
+command = "cargo test -p agentic-workflow wi_create_remote -- --nocapture"
+required_for_production = true
+assertions = [
+    "help hides deprecated remote flag",
+    "compatibility flag parses",
+    "backend decision is config-driven",
+]
+
+[[aw.ec.generated.cases]]
+id = "wi-remove-agent-estimate-build"
+capability_id = "unmapped"
+claim_id = "wi-remove-agent-estimate-build"
+contract_id = "wi-remove-agent-estimate-build"
+category = "behavior"
+td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md#wi-remove-agent-estimate-build"
+test_path = "projects/agentic-workflow/tests/behavior_wi_remove_agent_estimate_build.rs"
+command = "cargo build -p agentic-workflow --bin aw"
+required_for_production = true
+assertions = ["the aw binary builds after removing estimate helpers"]
+
+[[aw.ec.generated.cases]]
+id = "wi-remove-agent-estimate-spec-check"
+capability_id = "unmapped"
+claim_id = "wi-remove-agent-estimate-spec-check"
+contract_id = "wi-remove-agent-estimate-spec-check"
+category = "behavior"
+td_ref = "projects/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md#wi-remove-agent-estimate-spec-check"
+test_path = "projects/agentic-workflow/tests/behavior_wi_remove_agent_estimate_spec_check.rs"
+command = "./target/debug/aw td check projects/agentic-workflow/tech-design/surface/specs/aw-wi-remove-agent-estimate.md"
+required_for_production = true
+assertions = ["the canonical contract remains parseable by td check"]
+# AW-EC-END

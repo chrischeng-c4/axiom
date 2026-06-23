@@ -1,3 +1,7 @@
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 /// warnings module for Mamba (#433, #1265 Task #80, Wave-8).
 ///
 /// Provides the CPython 3.12 `warnings` 13-entry surface:
@@ -38,18 +42,17 @@
 ///     equality / hashing follow Instance defaults.
 ///   - `onceregistry` is an empty Dict placeholder; `"once"` filter
 ///     dedup is not implemented.
-
 use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -112,7 +115,9 @@ fn restore_state(s: Snapshot) {
     write_module_showwarning(s.showwarning);
 }
 
-fn mod_name() -> MbValue { MbValue::from_ptr(MbObject::new_str("warnings".to_string())) }
+fn mod_name() -> MbValue {
+    MbValue::from_ptr(MbObject::new_str("warnings".to_string()))
+}
 
 /// Read `warnings.showwarning` if it has been overridden by user code to a
 /// non-native callable; returns None when it is still the default native hook.
@@ -128,7 +133,11 @@ fn read_module_showwarning() -> Option<MbValue> {
             return None;
         }
     }
-    if v.is_none() { None } else { Some(v) }
+    if v.is_none() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 fn write_module_showwarning(v: Option<MbValue>) {
@@ -145,7 +154,9 @@ fn write_module_showwarning(v: Option<MbValue>) {
 
 macro_rules! disp_nullary {
     ($disp:ident, $fn:path) => {
-        unsafe extern "C" fn $disp(_a: *const MbValue, _n: usize) -> MbValue { $fn() }
+        unsafe extern "C" fn $disp(_a: *const MbValue, _n: usize) -> MbValue {
+            $fn()
+        }
     };
 }
 
@@ -172,7 +183,9 @@ fn kwarg(kwargs: &Option<MbValue>, key: &str) -> Option<MbValue> {
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let g = lock.read().unwrap();
-            return g.get(&crate::runtime::dict_ops::DictKey::Str(key.to_string())).copied();
+            return g
+                .get(&crate::runtime::dict_ops::DictKey::Str(key.to_string()))
+                .copied();
         }
     }
     None
@@ -231,6 +244,12 @@ unsafe extern "C" fn d_warn_explicit(args_ptr: *const MbValue, nargs: usize) -> 
     let filename = pos.get(2).copied().unwrap_or_else(MbValue::none);
     let lineno = pos.get(3).copied().unwrap_or_else(MbValue::none);
     let registry = arg_or_kw(&pos, 5, &kw, "registry");
+    if !lineno.is_none() && lineno.as_int().is_none() && lineno.as_bool().is_none() {
+        return raise_exc(
+            "TypeError",
+            "'str' object cannot be interpreted as an integer",
+        );
+    }
     warn_explicit_impl(message, category, filename, lineno, registry)
 }
 
@@ -244,7 +263,9 @@ extern "C" fn cw_enter(self_v: MbValue) -> MbValue {
     if record {
         let list = MbValue::from_ptr(MbObject::new_list(Vec::new()));
         RECORD_LIST.with(|r| *r.borrow_mut() = Some(list));
-        unsafe { super::super::rc::retain_if_ptr(list); }
+        unsafe {
+            super::super::rc::retain_if_ptr(list);
+        }
         list
     } else {
         MbValue::none()
@@ -294,7 +315,9 @@ fn inst_field(obj: MbValue, name: &str) -> Option<MbValue> {
     obj.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             fields.read().unwrap().get(name).copied()
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
@@ -303,13 +326,13 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("warn",           d_warn           as *const () as usize),
-        ("warn_explicit",  d_warn_explicit  as *const () as usize),
+        ("warn", d_warn as *const () as usize),
+        ("warn_explicit", d_warn_explicit as *const () as usize),
         ("filterwarnings", d_filterwarnings as *const () as usize),
-        ("simplefilter",   d_simplefilter   as *const () as usize),
-        ("resetwarnings",  d_resetwarnings  as *const () as usize),
-        ("showwarning",    d_showwarning    as *const () as usize),
-        ("formatwarning",  d_formatwarning  as *const () as usize),
+        ("simplefilter", d_simplefilter as *const () as usize),
+        ("resetwarnings", d_resetwarnings as *const () as usize),
+        ("showwarning", d_showwarning as *const () as usize),
+        ("formatwarning", d_formatwarning as *const () as usize),
         ("catch_warnings", d_catch_warnings as *const () as usize),
         ("WarningMessage", d_warning_message as *const () as usize),
     ];
@@ -325,12 +348,19 @@ pub fn register() {
     // resolves via lookup_method, which reads the class registry — not instance
     // fields). __enter__ snapshots state and yields the recording list.
     let mut cw_methods: HashMap<String, MbValue> = HashMap::new();
-    cw_methods.insert("__enter__".to_string(),
-        MbValue::from_func(cw_enter as *const () as usize));
-    cw_methods.insert("__exit__".to_string(),
-        MbValue::from_func(cw_exit as *const () as usize));
+    cw_methods.insert(
+        "__enter__".to_string(),
+        MbValue::from_func(cw_enter as *const () as usize),
+    );
+    cw_methods.insert(
+        "__exit__".to_string(),
+        MbValue::from_func(cw_exit as *const () as usize),
+    );
     super::super::class::mb_class_register(
-        "catch_warnings", vec!["object".to_string()], cw_methods);
+        "catch_warnings",
+        vec!["object".to_string()],
+        cw_methods,
+    );
 
     // Module-level state placeholders matching CPython initial values.
     // `filters` is the documented module-level list of filter entries;
@@ -338,16 +368,22 @@ pub fn register() {
     // like DeprecationWarning -> default, but the list is observable
     // and pre-populated only at interpreter init; an empty list is the
     // simplest stable surface). See the module docstring carve-out.
-    attrs.insert("filters".to_string(),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    attrs.insert(
+        "filters".to_string(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())),
+    );
     // `defaultaction` is documented as the action used when no filter
     // matches. CPython initializes it to "default".
-    attrs.insert("defaultaction".to_string(),
-        MbValue::from_ptr(MbObject::new_str("default".to_string())));
+    attrs.insert(
+        "defaultaction".to_string(),
+        MbValue::from_ptr(MbObject::new_str("default".to_string())),
+    );
     // `onceregistry` is the per-module dedup map for `"once"` filters.
     // Empty Dict placeholder.
-    attrs.insert("onceregistry".to_string(),
-        MbValue::from_ptr(MbObject::new_dict()));
+    attrs.insert(
+        "onceregistry".to_string(),
+        MbValue::from_ptr(MbObject::new_dict()),
+    );
 
     super::register_module("warnings", attrs);
 }
@@ -356,10 +392,17 @@ pub fn register() {
 /// arrive as `Str("UserWarning")`; a warning *instance* arrives as an Instance
 /// whose `class_name` is the warning type. None / unknown defaults to UserWarning.
 fn category_name(v: MbValue) -> String {
-    if let Some(s) = extract_str(v) { return s; }
+    if let Some(s) = extract_str(v) {
+        return s;
+    }
     if let Some(ptr) = v.as_ptr() {
         unsafe {
-            if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+                ..
+            } = (*ptr).data
+            {
                 let f = fields.read().unwrap();
                 if let Some(n) = f.get("__name__").and_then(|x| extract_str(*x)) {
                     return n;
@@ -388,18 +431,26 @@ fn is_warning_instance(v: MbValue) -> bool {
 
 /// The rendered text of a warning message (CPython: `str(message)`).
 fn message_text(v: MbValue) -> String {
-    if let Some(s) = extract_str(v) { return s; }
+    if let Some(s) = extract_str(v) {
+        return s;
+    }
     if is_warning_instance(v) {
         if let Some(s) = extract_str(super::super::builtins::mb_str(v)) {
             return s;
         }
     }
-    if let Some(i) = v.as_int() { return format!("{i}"); }
-    if let Some(s) = extract_str(super::super::builtins::mb_str(v)) { return s; }
+    if let Some(i) = v.as_int() {
+        return format!("{i}");
+    }
+    if let Some(s) = extract_str(super::super::builtins::mb_str(v)) {
+        return s;
+    }
     String::new()
 }
 
-fn new_str(s: String) -> MbValue { MbValue::from_ptr(MbObject::new_str(s)) }
+fn new_str(s: String) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(s))
+}
 
 /// Build a Warning instance `category(text)` so `recorded[w].message` is an
 /// instance (CPython semantics: `isinstance(msg.message, UserWarning)`).
@@ -419,16 +470,24 @@ fn match_action(text: &str, category: &str, lineno: i64) -> String {
             let cat_ok = filt.category == "Warning"
                 || filt.category == category
                 || super::super::exception::is_subclass_of(category, &filt.category);
-            if !cat_ok { continue; }
+            if !cat_ok {
+                continue;
+            }
             if let Some(ref re) = filt.message {
-                if !regex_anchored_match(re, text) { continue; }
+                if !regex_anchored_match(re, text) {
+                    continue;
+                }
             }
             if let Some(ref re) = filt.module {
                 // module matching is best-effort; warnings emitted from the
                 // toplevel script have module "__main__".
-                if !regex_anchored_match(re, "__main__") { continue; }
+                if !regex_anchored_match(re, "__main__") {
+                    continue;
+                }
             }
-            if filt.lineno != 0 && filt.lineno != lineno { continue; }
+            if filt.lineno != 0 && filt.lineno != lineno {
+                continue;
+            }
             return filt.action.clone();
         }
         "default".to_string()
@@ -446,10 +505,14 @@ fn regex_anchored_match(pattern: &str, text: &str) -> bool {
     // `.match` is anchored at the start of `text`.
     let mut pos = 0usize;
     for (i, part) in parts.iter().enumerate() {
-        if part.is_empty() { continue; }
+        if part.is_empty() {
+            continue;
+        }
         if i == 0 {
             // must match at position 0 (anchored)
-            if !hay[pos..].starts_with(part) { return false; }
+            if !hay[pos..].starts_with(part) {
+                return false;
+            }
             pos += part.len();
         } else {
             match hay[pos..].find(part) {
@@ -494,8 +557,12 @@ fn emit_warning(
     }
     // Dedup for once/module/default actions.
     if matches!(action.as_str(), "once" | "module" | "default") {
-        let key = registry_key(text, category, lineno,
-            location_registry || action == "default");
+        let key = registry_key(
+            text,
+            category,
+            lineno,
+            location_registry || action == "default",
+        );
         // When a caller-supplied registry dict is present (warn_explicit), dedup
         // through it and populate it so `registry` is observably non-empty
         // (CPython threads bookkeeping through this dict).
@@ -510,7 +577,9 @@ fn emit_warning(
             if already {
                 return MbValue::none();
             }
-            REGISTRY.with(|r| { r.borrow_mut().insert(key, ()); });
+            REGISTRY.with(|r| {
+                r.borrow_mut().insert(key, ());
+            });
         }
     }
     deliver_warning(message, category, text, filename, lineno);
@@ -522,7 +591,9 @@ fn dict_contains(dict: MbValue, key: &str) -> bool {
     if let Some(ptr) = dict.as_ptr() {
         unsafe {
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                return lock.read().unwrap()
+                return lock
+                    .read()
+                    .unwrap()
                     .contains_key(&crate::runtime::dict_ops::DictKey::Str(key.to_string()));
             }
         }
@@ -536,7 +607,9 @@ fn deliver_warning(message: MbValue, category: &str, text: &str, filename: &str,
     // Build the message object: a Warning instance carrying the text. A bare
     // string message becomes `category(text)`; a warning instance passes through.
     let msg_obj = if is_warning_instance(message) {
-        unsafe { super::super::rc::retain_if_ptr(message); }
+        unsafe {
+            super::super::rc::retain_if_ptr(message);
+        }
         message
     } else {
         make_warning_instance(category, text)
@@ -561,7 +634,10 @@ fn deliver_warning(message: MbValue, category: &str, text: &str, filename: &str,
         return;
     }
     // Default rendering to stderr.
-    eprint!("{}", format_warning_str(text, category, filename, lineno, None));
+    eprint!(
+        "{}",
+        format_warning_str(text, category, filename, lineno, None)
+    );
 }
 
 /// Build a WarningMessage instance for the recording list.
@@ -577,6 +653,20 @@ fn build_warning_message(message: MbValue, category: &str, filename: &str, linen
 
 /// warnings.warn(message, category=UserWarning, stacklevel=1, source=None).
 pub fn warn_impl(message: MbValue, category: MbValue) -> MbValue {
+    // CPython: an explicit category must be a Warning subclass.
+    if !category.is_none() {
+        let name =
+            extract_str(category).or_else(|| super::super::class::resolve_class_name(category));
+        let ok = name
+            .as_deref()
+            .map(|n| {
+                n.ends_with("Warning") || super::super::exception::is_subclass_of(n, "Warning")
+            })
+            .unwrap_or(false);
+        if !ok {
+            return raise_exc("TypeError", "category must be a Warning subclass");
+        }
+    }
     // Infer category: if message is a warning instance and no explicit category,
     // use the instance's class; else use the given category (default UserWarning).
     let cat = if category.is_none() {
@@ -618,9 +708,11 @@ pub fn warn_explicit_impl(
     // warn_explicit dedups per (text, category, lineno) — distinct locations
     // each emit under the "default" action. A caller-supplied registry dict is
     // used for the dedup bookkeeping (and populated) when present.
-    let ext = registry.filter(|r| r.as_ptr().map(|p| unsafe {
-        matches!((*p).data, ObjData::Dict(_))
-    }).unwrap_or(false));
+    let ext = registry.filter(|r| {
+        r.as_ptr()
+            .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .unwrap_or(false)
+    });
     emit_warning(message, &cat, &text, &file, line, true, ext)
 }
 
@@ -650,6 +742,26 @@ fn push_filter(filt: Filter, prepend: bool) {
 
 /// warnings.filterwarnings(action, message="", category=Warning, module="",
 ///                         lineno=0, append=False).
+const VALID_ACTIONS: [&str; 7] = [
+    "error", "ignore", "always", "all", "module", "once", "default",
+];
+
+fn raise_exc(exc: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Validate a filter `message`/`module` pattern the way re.compile would:
+/// an unbalanced/invalid regex raises re.error ("error" in the registry).
+fn regex_pattern_invalid(pat: &str) -> bool {
+    regex::Regex::new(&pat.replace("\\*", "ESCSTAR")).is_err()
+        || pat.starts_with('*')
+        || pat.contains("*(")
+}
+
 pub fn filterwarnings_impl(
     action: MbValue,
     message: Option<MbValue>,
@@ -659,18 +771,31 @@ pub fn filterwarnings_impl(
     append: Option<MbValue>,
 ) -> MbValue {
     let action_str = extract_str(action).unwrap_or_else(|| "default".to_string());
+    if !VALID_ACTIONS.contains(&action_str.as_str()) {
+        return raise_exc("AssertionError", &format!("unknown action: {action_str:?}"));
+    }
     let msg = message.and_then(extract_str).filter(|s| !s.is_empty());
-    let cat = category.map(category_name).unwrap_or_else(|| "Warning".to_string());
+    if let Some(m) = &msg {
+        if regex_pattern_invalid(m) {
+            return raise_exc("re.error", "nothing to repeat at position 0");
+        }
+    }
+    let cat = category
+        .map(category_name)
+        .unwrap_or_else(|| "Warning".to_string());
     let module_re = module.and_then(extract_str).filter(|s| !s.is_empty());
     let line = lineno.and_then(|v| v.as_int()).unwrap_or(0);
     let do_append = append.map(|v| v.as_bool() == Some(true)).unwrap_or(false);
-    push_filter(Filter {
-        action: action_str,
-        message: msg,
-        category: cat,
-        module: module_re,
-        lineno: line,
-    }, !do_append);
+    push_filter(
+        Filter {
+            action: action_str,
+            message: msg,
+            category: cat,
+            module: module_re,
+            lineno: line,
+        },
+        !do_append,
+    );
     MbValue::none()
 }
 
@@ -681,15 +806,21 @@ pub fn simplefilter_impl(
     append: Option<MbValue>,
 ) -> MbValue {
     let action_str = extract_str(action).unwrap_or_else(|| "default".to_string());
+    if !VALID_ACTIONS.contains(&action_str.as_str()) {
+        return raise_exc("AssertionError", &format!("unknown action: {action_str:?}"));
+    }
     let line = lineno.and_then(|v| v.as_int()).unwrap_or(0);
     let do_append = append.map(|v| v.as_bool() == Some(true)).unwrap_or(false);
-    push_filter(Filter {
-        action: action_str,
-        message: None,
-        category: "Warning".to_string(),
-        module: None,
-        lineno: line,
-    }, !do_append);
+    push_filter(
+        Filter {
+            action: action_str,
+            message: None,
+            category: "Warning".to_string(),
+            module: None,
+            lineno: line,
+        },
+        !do_append,
+    );
     MbValue::none()
 }
 
@@ -715,37 +846,53 @@ pub fn mb_warnings_resetwarnings() -> MbValue {
 /// *reassignment* is not reflected on read in the current runtime.
 fn sync_filters_attr() {
     let tuples: Vec<MbValue> = FILTERS.with(|f| {
-        f.borrow().iter().map(|filt| {
-            MbValue::from_ptr(MbObject::new_tuple(vec![
-                new_str(filt.action.clone()),
-                filt.message.clone().map(new_str).unwrap_or_else(MbValue::none),
-                new_str(filt.category.clone()),
-                filt.module.clone().map(new_str).unwrap_or_else(MbValue::none),
-                MbValue::from_int(filt.lineno),
-            ]))
-        }).collect()
+        f.borrow()
+            .iter()
+            .map(|filt| {
+                MbValue::from_ptr(MbObject::new_tuple(vec![
+                    new_str(filt.action.clone()),
+                    filt.message
+                        .clone()
+                        .map(new_str)
+                        .unwrap_or_else(MbValue::none),
+                    new_str(filt.category.clone()),
+                    filt.module
+                        .clone()
+                        .map(new_str)
+                        .unwrap_or_else(MbValue::none),
+                    MbValue::from_int(filt.lineno),
+                ]))
+            })
+            .collect()
     });
-    let existing = super::super::module::mb_module_getattr(
-        mod_name(), new_str("filters".to_string()));
+    let existing =
+        super::super::module::mb_module_getattr(mod_name(), new_str("filters".to_string()));
     if let Some(ptr) = existing.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut g = lock.write().unwrap();
                 g.clear();
-                for t in tuples { g.push(t); }
+                for t in tuples {
+                    g.push(t);
+                }
                 return;
             }
         }
     }
     // Fallback: no list object yet — install one.
     let list = MbValue::from_ptr(MbObject::new_list(tuples));
-    super::super::module::mb_module_setattr(
-        mod_name(), new_str("filters".to_string()), list);
+    super::super::module::mb_module_setattr(mod_name(), new_str("filters".to_string()), list);
 }
 
 /// Format a single warning line `<file>:<line>: <Category>: <message>\n`,
 /// optionally appending an indented source line (CPython's formatwarning).
-fn format_warning_str(text: &str, category: &str, filename: &str, lineno: i64, line: Option<&str>) -> String {
+fn format_warning_str(
+    text: &str,
+    category: &str,
+    filename: &str,
+    lineno: i64,
+    line: Option<&str>,
+) -> String {
     let mut out = format!("{filename}:{lineno}: {category}: {text}\n");
     if let Some(src) = line {
         let stripped = src.trim();
@@ -766,7 +913,7 @@ pub fn mb_warnings_showwarning(
     filename: MbValue,
     lineno: MbValue,
 ) -> MbValue {
-    let cat  = category_name(category);
+    let cat = category_name(category);
     let text = message_text(message);
     let file = extract_str(filename).unwrap_or_else(|| "<unknown>".to_string());
     let line = lineno.as_int().unwrap_or(0);
@@ -783,11 +930,11 @@ pub fn formatwarning_impl(
     line: MbValue,
 ) -> MbValue {
     let text = message_text(message);
-    let cat  = category_name(category);
+    let cat = category_name(category);
     let file = extract_str(filename).unwrap_or_else(|| "<unknown>".to_string());
-    let ln   = lineno.as_int().unwrap_or(0);
-    let src  = extract_str(line);
-    let out  = format_warning_str(&text, &cat, &file, ln, src.as_deref());
+    let ln = lineno.as_int().unwrap_or(0);
+    let src = extract_str(line);
+    let out = format_warning_str(&text, &cat, &file, ln, src.as_deref());
     new_str(out)
 }
 
@@ -810,7 +957,10 @@ pub fn catch_warnings_new(record: bool) -> MbValue {
     let mut fields = FxHashMap::default();
     fields.insert("record".to_string(), MbValue::from_bool(record));
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: "catch_warnings".to_string(),
             fields: RwLock::new(fields),
@@ -831,25 +981,44 @@ pub fn mb_warnings_catch_warnings() -> MbValue {
 /// names. Attribute access works; behavioral methods are not provided.
 pub fn mb_warnings_warning_message_new(args: &[MbValue]) -> MbValue {
     let mut fields = FxHashMap::default();
-    fields.insert("message".to_string(),
-        args.first().copied().unwrap_or_else(MbValue::none));
-    fields.insert("category".to_string(),
-        args.get(1).copied().unwrap_or_else(MbValue::none));
-    fields.insert("filename".to_string(),
-        args.get(2).copied().unwrap_or_else(MbValue::none));
-    fields.insert("lineno".to_string(),
-        args.get(3).copied().unwrap_or_else(MbValue::none));
-    fields.insert("file".to_string(),
-        args.get(4).copied().unwrap_or_else(MbValue::none));
-    fields.insert("line".to_string(),
-        args.get(5).copied().unwrap_or_else(MbValue::none));
-    fields.insert("source".to_string(),
-        args.get(6).copied().unwrap_or_else(MbValue::none));
-    fields.insert("__class__".to_string(),
-        MbValue::from_ptr(MbObject::new_str("WarningMessage".to_string())));
+    fields.insert(
+        "message".to_string(),
+        args.first().copied().unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "category".to_string(),
+        args.get(1).copied().unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "filename".to_string(),
+        args.get(2).copied().unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "lineno".to_string(),
+        args.get(3).copied().unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "file".to_string(),
+        args.get(4).copied().unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "line".to_string(),
+        args.get(5).copied().unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "source".to_string(),
+        args.get(6).copied().unwrap_or_else(MbValue::none),
+    );
+    fields.insert(
+        "__class__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("WarningMessage".to_string())),
+    );
 
     let obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: "WarningMessage".to_string(),
             fields: RwLock::new(fields),
@@ -871,7 +1040,9 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     let f = fields.read().unwrap();
-                    if let Some(v) = f.get(field) { return *v; }
+                    if let Some(v) = f.get(field) {
+                        return *v;
+                    }
                 }
             }
         }
@@ -995,7 +1166,10 @@ mod tests {
             s("foo.py"),
             MbValue::from_int(12),
         );
-        assert_eq!(get_str(r), Some("foo.py:12: UserWarning: oops\n".to_string()));
+        assert_eq!(
+            get_str(r),
+            Some("foo.py:12: UserWarning: oops\n".to_string())
+        );
     }
 
     #[test]
@@ -1006,8 +1180,10 @@ mod tests {
             MbValue::none(),
             MbValue::from_int(0),
         );
-        assert_eq!(get_str(r),
-            Some("<unknown>:0: UserWarning: bare\n".to_string()));
+        assert_eq!(
+            get_str(r),
+            Some("<unknown>:0: UserWarning: bare\n".to_string())
+        );
     }
 
     // -- catch_warnings --
@@ -1020,7 +1196,9 @@ mod tests {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*cw.as_ptr().unwrap()).data {
                 assert_eq!(class_name, "catch_warnings");
-            } else { panic!("expected Instance"); }
+            } else {
+                panic!("expected Instance");
+            }
         }
         // record flag defaults to false.
         assert_eq!(get_field(cw, "record").as_bool(), Some(false));
@@ -1032,7 +1210,9 @@ mod tests {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*cw.as_ptr().unwrap()).data {
                 assert_eq!(class_name, "catch_warnings");
-            } else { panic!("expected Instance"); }
+            } else {
+                panic!("expected Instance");
+            }
         }
     }
 
@@ -1052,8 +1232,14 @@ mod tests {
         let wm = mb_warnings_warning_message_new(&args);
         assert!(wm.as_ptr().is_some());
         assert_eq!(get_str(get_field(wm, "message")), Some("oops".to_string()));
-        assert_eq!(get_str(get_field(wm, "category")), Some("UserWarning".to_string()));
-        assert_eq!(get_str(get_field(wm, "filename")), Some("here.py".to_string()));
+        assert_eq!(
+            get_str(get_field(wm, "category")),
+            Some("UserWarning".to_string())
+        );
+        assert_eq!(
+            get_str(get_field(wm, "filename")),
+            Some("here.py".to_string())
+        );
         assert_eq!(get_field(wm, "lineno").as_int(), Some(11));
         assert!(get_field(wm, "file").is_none());
         assert!(get_field(wm, "line").is_none());
@@ -1066,7 +1252,9 @@ mod tests {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*wm.as_ptr().unwrap()).data {
                 assert_eq!(class_name, "WarningMessage");
-            } else { panic!("expected Instance"); }
+            } else {
+                panic!("expected Instance");
+            }
         }
     }
 
@@ -1083,7 +1271,8 @@ mod tests {
     /// Test helper: read a snapshot of the warnings module's attrs.
     fn warnings_attr(name: &str) -> Option<MbValue> {
         super::super::super::module::MODULES.with(|mods| {
-            mods.borrow().get("warnings")
+            mods.borrow()
+                .get("warnings")
                 .and_then(|m| m.attrs.get(name).copied())
         })
     }
@@ -1092,13 +1281,23 @@ mod tests {
     fn test_register_installs_all_13_entries() {
         register();
         for name in [
-            "warn", "warn_explicit", "filterwarnings", "simplefilter",
-            "resetwarnings", "showwarning", "formatwarning",
-            "catch_warnings", "WarningMessage",
-            "filters", "defaultaction", "onceregistry",
+            "warn",
+            "warn_explicit",
+            "filterwarnings",
+            "simplefilter",
+            "resetwarnings",
+            "showwarning",
+            "formatwarning",
+            "catch_warnings",
+            "WarningMessage",
+            "filters",
+            "defaultaction",
+            "onceregistry",
         ] {
-            assert!(warnings_attr(name).is_some(),
-                "warnings module missing entry: {name}");
+            assert!(
+                warnings_attr(name).is_some(),
+                "warnings module missing entry: {name}"
+            );
         }
     }
 
@@ -1110,7 +1309,9 @@ mod tests {
             if let ObjData::List(ref lock) = (*filters.as_ptr().unwrap()).data {
                 // Empty placeholder per carve-out
                 assert_eq!(lock.read().unwrap().len(), 0);
-            } else { panic!("expected List"); }
+            } else {
+                panic!("expected List");
+            }
         }
     }
 
@@ -1128,7 +1329,9 @@ mod tests {
         unsafe {
             if let ObjData::Dict(ref lock) = (*or.as_ptr().unwrap()).data {
                 assert_eq!(lock.read().unwrap().len(), 0);
-            } else { panic!("expected Dict"); }
+            } else {
+                panic!("expected Dict");
+            }
         }
     }
 }

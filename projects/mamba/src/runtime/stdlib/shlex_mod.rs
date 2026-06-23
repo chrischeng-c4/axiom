@@ -1,7 +1,7 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// shlex module for Mamba (mamba-stdlib).
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -20,10 +20,7 @@ dispatch_unary!(dispatch_join, mb_shlex_join);
 /// True. Registered as a native func (same mechanism as `split`/`quote`/
 /// `join`) because an Instance/class-shell value is not callable. Behavior
 /// (lexer construction) is out of scope for the surface dimension.
-unsafe extern "C" fn dispatch_shlex_class(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_shlex_class(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::none()
 }
 
@@ -46,7 +43,11 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -54,7 +55,9 @@ fn extract_list(val: MbValue) -> Option<Vec<MbValue>> {
     val.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::List(ref lock) = (*ptr).data {
             Some(lock.read().unwrap().to_vec())
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
@@ -72,6 +75,15 @@ fn raise_value_error(msg: &str) -> MbValue {
 fn raise_attribute_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Raise `TypeError(msg)` and return `MbValue::none()`.
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
         MbValue::from_ptr(MbObject::new_str(msg.to_string())),
     );
     MbValue::none()
@@ -183,9 +195,7 @@ pub fn mb_shlex_split(s: MbValue) -> MbValue {
             if s.is_none() {
                 return raise_value_error("shlex.split requires a string, not None");
             }
-            return raise_attribute_error(
-                "'int' object has no attribute 'read'",
-            );
+            return raise_attribute_error("'int' object has no attribute 'read'");
         }
     };
     let parsed = match split_posix(&text) {
@@ -219,8 +229,20 @@ fn quote_str(text: &str) -> String {
 }
 
 pub fn mb_shlex_quote(s: MbValue) -> MbValue {
-    let text = extract_str(s).unwrap_or_default();
-    MbValue::from_ptr(MbObject::new_str(quote_str(&text)))
+    match extract_str(s) {
+        Some(text) => MbValue::from_ptr(MbObject::new_str(quote_str(&text))),
+        None => {
+            // CPython shlex.quote: `if not s: return "''"`, otherwise
+            // `_find_unsafe(s)` runs a str regex over the argument. A falsy
+            // non-str (0, None, [], "") short-circuits to "''"; a truthy
+            // non-str hits the regex → TypeError.
+            if super::super::builtins::mb_is_truthy(s) == 0 {
+                MbValue::from_ptr(MbObject::new_str("''".to_string()))
+            } else {
+                raise_type_error("expected string or bytes-like object")
+            }
+        }
+    }
 }
 
 pub fn mb_shlex_join(tokens: MbValue) -> MbValue {
@@ -235,9 +257,9 @@ pub fn mb_shlex_join(tokens: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::super::value::MbValue;
     use super::super::super::rc::{MbObject, ObjData};
+    use super::super::super::value::MbValue;
+    use super::*;
 
     fn make_str(s: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(s.to_string()))
@@ -245,28 +267,39 @@ mod tests {
 
     fn get_str_val(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+            if let ObjData::Str(ref s) = (*ptr).data {
+                Some(s.clone())
+            } else {
+                None
+            }
         })
     }
 
     fn list_len(val: MbValue) -> usize {
-        val.as_ptr().map(|ptr| unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().len()
-            } else { 0 }
-        }).unwrap_or(0)
+        val.as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    lock.read().unwrap().len()
+                } else {
+                    0
+                }
+            })
+            .unwrap_or(0)
     }
 
     fn list_str_at(val: MbValue, idx: usize) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 lock.read().unwrap().get(idx).copied().and_then(get_str_val)
-            } else { None }
+            } else {
+                None
+            }
         })
     }
 
     fn make_str_list(items: &[&str]) -> MbValue {
-        let vals: Vec<MbValue> = items.iter()
+        let vals: Vec<MbValue> = items
+            .iter()
             .map(|&s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
             .collect();
         MbValue::from_ptr(MbObject::new_list(vals))

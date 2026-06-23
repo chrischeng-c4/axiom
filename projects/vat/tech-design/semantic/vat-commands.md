@@ -93,6 +93,42 @@ semantic_domain:
           - name: "run_configured"
             kind: "function"
             public: false
+          - name: "prepare_cluster_service"
+            kind: "function"
+            public: false
+          - name: "should_delete_clusters"
+            kind: "function"
+            public: false
+          - name: "prepare_firebase_service"
+            kind: "function"
+            public: false
+          - name: "firebase_emulator_host_var"
+            kind: "function"
+            public: false
+          - name: "prepare_builtin_service"
+            kind: "function"
+            public: false
+          - name: "builtin_emulator_info"
+            kind: "function"
+            public: false
+          - name: "gcloud_component"
+            kind: "function"
+            public: false
+          - name: "installed_gcloud_components"
+            kind: "function"
+            public: false
+          - name: "native_available"
+            kind: "function"
+            public: false
+          - name: "preset_native_available"
+            kind: "function"
+            public: false
+          - name: "preset_docker_command"
+            kind: "function"
+            public: false
+          - name: "gcloud_emulator_command"
+            kind: "function"
+            public: false
           - name: "run_setup_step"
             kind: "function"
             public: false
@@ -158,7 +194,13 @@ semantic_domain:
         ownership_state: "codegen"
         generator_primitives: ["service_method"]
         symbols:
+          - name: "cluster"
+            kind: "module"
+            public: true
           - name: "diff"
+            kind: "module"
+            public: true
+          - name: "emulator"
             kind: "module"
             public: true
           - name: "gpu"
@@ -270,6 +312,55 @@ semantic_domain:
           - name: "print_file"
             kind: "function"
             public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/commands"
+      - path: "projects/vat/src/commands/cluster.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "ClusterRecord"
+            kind: "struct"
+            public: true
+          - name: "create"
+            kind: "function"
+            public: true
+          - name: "ls"
+            kind: "function"
+            public: true
+          - name: "kubeconfig"
+            kind: "function"
+            public: true
+          - name: "delete"
+            kind: "function"
+            public: true
+          - name: "default_cluster_name"
+            kind: "function"
+            public: false
+          - name: "read_registry"
+            kind: "function"
+            public: false
+          - name: "load_record"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/vat/src/commands"
+      - path: "projects/vat/src/commands/emulator.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "exec"
+            kind: "function"
+            public: true
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"

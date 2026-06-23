@@ -1,8 +1,8 @@
+use super::ast::*;
+use super::Parser;
 use crate::error::MambaError;
 use crate::lexer::token::TokenKind;
 use crate::source::span::{Span, Spanned};
-use super::ast::*;
-use super::Parser;
 
 impl<'a> Parser<'a> {
     /// Parse a single statement.
@@ -14,9 +14,9 @@ impl<'a> Parser<'a> {
             return Ok(pending);
         }
         self.skip_newlines();
-        let token = self.peek().ok_or_else(|| {
-            MambaError::syntax(Span::dummy(), "unexpected end of input")
-        })?;
+        let token = self
+            .peek()
+            .ok_or_else(|| MambaError::syntax(Span::dummy(), "unexpected end of input"))?;
         let start = token.start;
 
         match &token.kind {
@@ -88,9 +88,7 @@ impl<'a> Parser<'a> {
             // parser via parse_ident_stmt(). Explicit arms prevent accidental
             // capture by future match arms and clarify that LBrace/LParen/
             // LBracket are valid statement-leading tokens (#1112).
-            TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => {
-                self.parse_ident_stmt()
-            }
+            TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => self.parse_ident_stmt(),
             // Any other expression-starting token: handles assignment, augassign,
             // tuple unpacking, var decl, and bare expression statements.
             _ => self.parse_ident_stmt(),
@@ -150,13 +148,21 @@ impl<'a> Parser<'a> {
                 None
             };
             extra.push(Spanned::new(
-                Stmt::Import { module: m, names: None, module_alias: m_alias },
+                Stmt::Import {
+                    module: m,
+                    names: None,
+                    module_alias: m_alias,
+                },
                 self.span_from(start),
             ));
         }
         self.skip_newlines();
         let first = Spanned::new(
-            Stmt::Import { module, names: None, module_alias },
+            Stmt::Import {
+                module,
+                names: None,
+                module_alias,
+            },
             self.span_from(start),
         );
         if !extra.is_empty() {
@@ -219,16 +225,24 @@ impl<'a> Parser<'a> {
             self.advance();
             self.skip_newlines();
             return Ok(Spanned::new(
-                Stmt::Import { module, names: Some(vec![("*".to_string(), None)]), module_alias: None },
+                Stmt::Import {
+                    module,
+                    names: Some(vec![("*".to_string(), None)]),
+                    module_alias: None,
+                },
                 self.span_from(start),
             ));
         }
         // Handle `from x import (a, b, c)`
         let paren = self.peek_kind() == Some(TokenKind::LParen);
-        if paren { self.advance(); }
+        if paren {
+            self.advance();
+        }
         let mut names = Vec::new();
         loop {
-            if paren && self.peek_kind() == Some(TokenKind::RParen) { break; }
+            if paren && self.peek_kind() == Some(TokenKind::RParen) {
+                break;
+            }
             self.skip_newlines();
             let (s, e) = self.expect_name()?;
             let name = self.text_at(s, e).to_string();
@@ -240,14 +254,22 @@ impl<'a> Parser<'a> {
                 None
             };
             names.push((name, alias));
-            if self.peek_kind() != Some(TokenKind::Comma) { break; }
+            if self.peek_kind() != Some(TokenKind::Comma) {
+                break;
+            }
             self.advance();
             self.skip_newlines();
         }
-        if paren { self.expect(TokenKind::RParen)?; }
+        if paren {
+            self.expect(TokenKind::RParen)?;
+        }
         self.skip_newlines();
         Ok(Spanned::new(
-            Stmt::Import { module, names: Some(names), module_alias: None },
+            Stmt::Import {
+                module,
+                names: Some(names),
+                module_alias: None,
+            },
             self.span_from(start),
         ))
     }
@@ -266,11 +288,17 @@ impl<'a> Parser<'a> {
         let span = target.span;
         match target.node {
             Expr::ListLit(elems) => {
-                let elems = elems.into_iter().map(Self::normalize_assign_target).collect();
+                let elems = elems
+                    .into_iter()
+                    .map(Self::normalize_assign_target)
+                    .collect();
                 Spanned::new(Expr::TupleLit(elems), span)
             }
             Expr::TupleLit(elems) => {
-                let elems = elems.into_iter().map(Self::normalize_assign_target).collect();
+                let elems = elems
+                    .into_iter()
+                    .map(Self::normalize_assign_target)
+                    .collect();
                 Spanned::new(Expr::TupleLit(elems), span)
             }
             Expr::Starred(inner) => {
@@ -320,16 +348,16 @@ impl<'a> Parser<'a> {
                     let value = self.parse_expr()?;
                     self.skip_newlines();
                     return Ok(Spanned::new(
-                        Stmt::Assign { target: expr, value },
+                        Stmt::Assign {
+                            target: expr,
+                            value,
+                        },
                         self.span_from(start),
                     ));
                 } else {
                     // Bare attr annotation: `self.x: int`
                     self.skip_newlines();
-                    return Ok(Spanned::new(
-                        Stmt::ExprStmt(expr),
-                        self.span_from(start),
-                    ));
+                    return Ok(Spanned::new(Stmt::ExprStmt(expr), self.span_from(start)));
                 }
             }
         }
@@ -339,7 +367,9 @@ impl<'a> Parser<'a> {
             let mut tuple_elems = vec![expr];
             while self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();
-                if self.peek_kind() == Some(TokenKind::Eq) { break; }
+                if self.peek_kind() == Some(TokenKind::Eq) {
+                    break;
+                }
                 tuple_elems.push(self.parse_expr()?);
             }
             if self.peek_kind() == Some(TokenKind::Eq) {
@@ -347,8 +377,10 @@ impl<'a> Parser<'a> {
                 let span = self.span_from(start);
                 // List displays among the comma-separated targets are
                 // sequence-unpack targets (`[a, b], c = ...`); normalize them.
-                let tuple_elems: Vec<_> =
-                    tuple_elems.into_iter().map(Self::normalize_assign_target).collect();
+                let tuple_elems: Vec<_> = tuple_elems
+                    .into_iter()
+                    .map(Self::normalize_assign_target)
+                    .collect();
                 let tuple_target = Spanned::new(Expr::TupleLit(tuple_elems), span);
                 let mut value = self.parse_tuple_or_expr()?;
                 // Chained: `a, b = c = val` — reuse the simple-chain desugar
@@ -363,7 +395,10 @@ impl<'a> Parser<'a> {
                 self.skip_newlines();
                 if targets.len() == 1 {
                     return Ok(Spanned::new(
-                        Stmt::Assign { target: targets.into_iter().next().unwrap(), value },
+                        Stmt::Assign {
+                            target: targets.into_iter().next().unwrap(),
+                            value,
+                        },
                         span,
                     ));
                 }
@@ -371,12 +406,18 @@ impl<'a> Parser<'a> {
                 let tmp_ident = Spanned::new(Expr::Ident(tmp_name), span);
                 let mut all_stmts: Vec<Spanned<Stmt>> = Vec::with_capacity(targets.len() + 1);
                 all_stmts.push(Spanned::new(
-                    Stmt::Assign { target: tmp_ident.clone(), value },
+                    Stmt::Assign {
+                        target: tmp_ident.clone(),
+                        value,
+                    },
                     span,
                 ));
                 for target in targets.into_iter() {
                     all_stmts.push(Spanned::new(
-                        Stmt::Assign { target, value: tmp_ident.clone() },
+                        Stmt::Assign {
+                            target,
+                            value: tmp_ident.clone(),
+                        },
                         span,
                     ));
                 }
@@ -398,7 +439,11 @@ impl<'a> Parser<'a> {
             let value = self.parse_tuple_or_expr()?;
             self.skip_newlines();
             return Ok(Spanned::new(
-                Stmt::AugAssign { target: expr, op: aug_op, value },
+                Stmt::AugAssign {
+                    target: expr,
+                    op: aug_op,
+                    value,
+                },
                 self.span_from(start),
             ));
         }
@@ -417,13 +462,18 @@ impl<'a> Parser<'a> {
             }
             // A list display in target position (`[*a, b] = xs`) is a
             // sequence-unpack target; normalize every target to a tuple form.
-            let targets: Vec<_> =
-                targets.into_iter().map(Self::normalize_assign_target).collect();
+            let targets: Vec<_> = targets
+                .into_iter()
+                .map(Self::normalize_assign_target)
+                .collect();
             self.skip_newlines();
             let span = self.span_from(start);
             if targets.len() == 1 {
                 return Ok(Spanned::new(
-                    Stmt::Assign { target: targets.into_iter().next().unwrap(), value },
+                    Stmt::Assign {
+                        target: targets.into_iter().next().unwrap(),
+                        value,
+                    },
                     span,
                 ));
             }
@@ -443,12 +493,18 @@ impl<'a> Parser<'a> {
             let tmp_ident = Spanned::new(Expr::Ident(tmp_name.clone()), span);
             let mut all_stmts: Vec<Spanned<Stmt>> = Vec::with_capacity(targets.len() + 1);
             all_stmts.push(Spanned::new(
-                Stmt::Assign { target: tmp_ident.clone(), value },
+                Stmt::Assign {
+                    target: tmp_ident.clone(),
+                    value,
+                },
                 span,
             ));
             for target in targets.into_iter() {
                 all_stmts.push(Spanned::new(
-                    Stmt::Assign { target, value: tmp_ident.clone() },
+                    Stmt::Assign {
+                        target,
+                        value: tmp_ident.clone(),
+                    },
                     span,
                 ));
             }
@@ -516,6 +572,10 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn parse_params(&mut self) -> crate::error::Result<Vec<Param>> {
         let mut params = Vec::new();
+        // PEP 570/3102 introspection markers: after a bare `*` or `*args`,
+        // every regular param is keyword-only; a `/` retroactively marks all
+        // params parsed so far as positional-only.
+        let mut seen_star = false;
         while self.peek_kind() != Some(TokenKind::RParen)
             && self.peek_kind() != Some(TokenKind::Eof)
         {
@@ -525,12 +585,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 params.push(Param {
                     name: "self".to_string(),
-                    ty: Spanned::new(
-                        TypeExpr::Named("Self".to_string()),
-                        self.span_from(p_start),
-                    ),
+                    ty: Spanned::new(TypeExpr::Named("Self".to_string()), self.span_from(p_start)),
                     default: None,
                     kind: ParamKind::Regular,
+                    pos_only: false,
+                    kw_only: false,
                     span: self.span_from(p_start),
                 });
             } else if self.peek_kind() == Some(TokenKind::DoubleStar) {
@@ -545,12 +604,23 @@ impl<'a> Parser<'a> {
                     Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start))
                 };
                 params.push(Param {
-                    name, ty, default: None,
-                    kind: ParamKind::DoubleStar, span: self.span_from(p_start),
+                    name,
+                    ty,
+                    default: None,
+                    kind: ParamKind::DoubleStar,
+                    pos_only: false,
+                    kw_only: false,
+                    span: self.span_from(p_start),
                 });
             } else if self.peek_kind() == Some(TokenKind::Slash) {
-                // `/` positional-only separator — skip
+                // `/` positional-only separator — everything before it is
+                // positional-only (introspection metadata; binding unchanged).
                 self.advance();
+                for p in params.iter_mut() {
+                    if p.kind == ParamKind::Regular {
+                        p.pos_only = true;
+                    }
+                }
             } else if self.peek_kind() == Some(TokenKind::Star) {
                 // bare `*` (keyword-only separator) vs `*args`
                 self.advance();
@@ -558,6 +628,7 @@ impl<'a> Parser<'a> {
                     // bare `*` — keyword-only separator, no param.
                     // Consume the trailing comma so the loop can continue to
                     // the keyword-only parameters that follow.
+                    seen_star = true;
                     if self.peek_kind() == Some(TokenKind::Comma) {
                         self.advance();
                     }
@@ -571,9 +642,15 @@ impl<'a> Parser<'a> {
                 } else {
                     Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start))
                 };
+                seen_star = true;
                 params.push(Param {
-                    name, ty, default: None,
-                    kind: ParamKind::Star, span: self.span_from(p_start),
+                    name,
+                    ty,
+                    default: None,
+                    kind: ParamKind::Star,
+                    pos_only: false,
+                    kw_only: false,
+                    span: self.span_from(p_start),
                 });
             } else if self.peek_kind().as_ref().map_or(false, Self::is_name_token) {
                 let (ns, ne) = self.expect_name()?;
@@ -591,8 +668,13 @@ impl<'a> Parser<'a> {
                     None
                 };
                 params.push(Param {
-                    name, ty, default,
-                    kind: ParamKind::Regular, span: self.span_from(p_start),
+                    name,
+                    ty,
+                    default,
+                    kind: ParamKind::Regular,
+                    pos_only: false,
+                    kw_only: seen_star,
+                    span: self.span_from(p_start),
                 });
             } else {
                 break;
@@ -604,7 +686,10 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    pub(crate) fn parse_optional_type_params(&mut self) -> crate::error::Result<Vec<Name>> {
+    pub(crate) fn parse_optional_type_params(
+        &mut self,
+    ) -> crate::error::Result<Vec<crate::parser::ast::TypeParam>> {
+        use crate::parser::ast::{TypeParam, TypeParamKind};
         if self.peek_kind() != Some(TokenKind::LBracket) {
             return Ok(Vec::new());
         }
@@ -617,38 +702,58 @@ impl<'a> Parser<'a> {
             if self.peek_kind() == Some(TokenKind::DoubleStar) {
                 self.advance(); // consume **
                 let (s, e) = self.expect_name()?;
-                params.push(self.text_at(s, e).to_string());
+                params.push(TypeParam {
+                    name: self.text_at(s, e).to_string(),
+                    kind: TypeParamKind::ParamSpec,
+                    bound: None,
+                    constraints: None,
+                });
             }
             // TypeVarTuple: *Ts
             else if self.peek_kind() == Some(TokenKind::Star) {
                 self.advance(); // consume *
                 let (s, e) = self.expect_name()?;
-                params.push(self.text_at(s, e).to_string());
+                params.push(TypeParam {
+                    name: self.text_at(s, e).to_string(),
+                    kind: TypeParamKind::TypeVarTuple,
+                    bound: None,
+                    constraints: None,
+                });
             }
             // Regular type param: T  or  T: bound  or  T: (c1, c2, ...)
             else {
                 let (s, e) = self.expect_name()?;
-                params.push(self.text_at(s, e).to_string());
-                // Optional bound: T: type  or  T: (type1, type2, ...)
+                let name = self.text_at(s, e).to_string();
+                let mut bound = None;
+                let mut constraints = None;
+                // Optional bound: T: expr  or  T: (expr1, expr2, ...)
                 if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance(); // consume :
                     if self.peek_kind() == Some(TokenKind::LParen) {
                         // Constrained: T: (int, float, str)
                         self.advance(); // consume (
+                        let mut items = Vec::new();
                         while self.peek_kind() != Some(TokenKind::RParen)
                             && self.peek_kind() != Some(TokenKind::Eof)
                         {
-                            self.parse_type_expr()?;
+                            items.push(self.parse_expr()?);
                             if self.peek_kind() == Some(TokenKind::Comma) {
                                 self.advance();
                             }
                         }
                         self.expect(TokenKind::RParen)?;
+                        constraints = Some(items);
                     } else {
-                        // Bounded: T: int
-                        self.parse_type_expr()?;
+                        // Bounded: T: int  (any non-tuple expression)
+                        bound = Some(self.parse_expr()?);
                     }
                 }
+                params.push(TypeParam {
+                    name,
+                    kind: TypeParamKind::TypeVar,
+                    bound,
+                    constraints,
+                });
             }
             if self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();
@@ -731,7 +836,9 @@ mod tests {
     use crate::parser::ast::*;
     use crate::source::span::FileId;
 
-    fn fid() -> FileId { FileId(0) }
+    fn fid() -> FileId {
+        FileId(0)
+    }
     fn parse_stmt(src: &str) -> Stmt {
         let module = parser::parse(src, fid()).expect("parse failed");
         module.stmts.into_iter().next().unwrap().node
@@ -789,7 +896,11 @@ mod tests {
     #[test]
     fn test_import_simple() {
         match parse_stmt("import os\n") {
-            Stmt::Import { module, names, module_alias } => {
+            Stmt::Import {
+                module,
+                names,
+                module_alias,
+            } => {
                 assert_eq!(module, vec!["os"]);
                 assert!(names.is_none());
                 assert!(module_alias.is_none());
@@ -812,7 +923,11 @@ mod tests {
     #[test]
     fn test_import_alias() {
         match parse_stmt("import sys as system\n") {
-            Stmt::Import { module, names, module_alias } => {
+            Stmt::Import {
+                module,
+                names,
+                module_alias,
+            } => {
                 assert_eq!(module, vec!["sys"]);
                 assert!(names.is_none());
                 assert_eq!(module_alias.as_deref(), Some("system"));
@@ -1266,12 +1381,10 @@ mod tests {
     fn test_dict_literal_assign() {
         // Dict literal assignment with entries
         match parse_stmt("d = {'a': 1, 'b': 2}\n") {
-            Stmt::Assign { value, .. } => {
-                match value.node {
-                    Expr::DictLit(entries) => assert_eq!(entries.len(), 2),
-                    other => panic!("expected DictLit, got {other:?}"),
-                }
-            }
+            Stmt::Assign { value, .. } => match value.node {
+                Expr::DictLit(entries) => assert_eq!(entries.len(), 2),
+                other => panic!("expected DictLit, got {other:?}"),
+            },
             other => panic!("expected Assign, got {other:?}"),
         }
     }

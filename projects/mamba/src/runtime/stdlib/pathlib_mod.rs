@@ -26,8 +26,8 @@
 //!     `is_reserved`, and the concrete fs ops `exists`, `is_file`, `is_dir`,
 //!     `iterdir`, `mkdir`, `rmdir`, `unlink`, `read_text`, `write_text`,
 //!     `touch`, `resolve`, `glob`, `stat`) and dunders (`__str__`,
-//!     `__repr__`, `__fspath__`, `__hash__`, `__eq__`, `__ne__`, `__lt__`,
-//!     `__le__`, `__gt__`, `__ge__`, `__truediv__`, `__rtruediv__`) are
+//!     `__repr__`, `__fspath__`, `__bytes__`, `__hash__`, `__eq__`, `__ne__`,
+//!     `__lt__`, `__le__`, `__gt__`, `__ge__`, `__truediv__`, `__rtruediv__`) are
 //!     registered via `mb_class_register`, so `/`, `==`, `str()`,
 //!     `sorted()`, `isinstance(p, Path)` etc. all dispatch through the
 //!     generic runtime machinery (no class.rs edit). Concrete fs methods
@@ -66,16 +66,16 @@
 //!     `MbValue::none()` — same pattern as glob_mod. Mamba does not yet
 //!     model module-aliased attribute access (`pathlib.os.getcwd()`).
 
-use std::collections::HashMap;
-use rustc_hash::FxHashMap;
-use crate::runtime::rc::MbRwLock as RwLock;
-use std::sync::atomic::AtomicU32;
-use super::super::value::MbValue;
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use super::super::value::MbValue;
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU32;
 
 // -- POSIX file-type bitmask constants (stat.S_IF*) --
 
-const S_IFMT:  i64 = 0o170000;
+const S_IFMT: i64 = 0o170000;
 const S_IFBLK: i64 = 0o060000;
 const S_IFCHR: i64 = 0o020000;
 const S_IFDIR: i64 = 0o040000;
@@ -86,9 +86,9 @@ const S_IFSOCK: i64 = 0o140000;
 
 // -- errno constants (POSIX / macOS) --
 
-const E_BADF:   i64 = 9;
-const E_LOOP:   i64 = 62;
-const E_NOENT:  i64 = 2;
+const E_BADF: i64 = 9;
+const E_LOOP: i64 = 62;
+const E_NOENT: i64 = 2;
 const E_NOTDIR: i64 = 20;
 
 // -- Dispatchers (new shape: extern "C" fn(*const MbValue, usize)) --
@@ -160,12 +160,12 @@ unsafe extern "C" fn dispatch_purewindowspath(args_ptr: *const MbValue, nargs: u
     mb_pathlib_path_class("PureWindowsPath", unsafe { arg_slice(args_ptr, nargs) })
 }
 
-disp_unary!(dispatch_s_isblk,  mb_pathlib_s_isblk);
-disp_unary!(dispatch_s_ischr,  mb_pathlib_s_ischr);
-disp_unary!(dispatch_s_isdir,  mb_pathlib_s_isdir);
+disp_unary!(dispatch_s_isblk, mb_pathlib_s_isblk);
+disp_unary!(dispatch_s_ischr, mb_pathlib_s_ischr);
+disp_unary!(dispatch_s_isdir, mb_pathlib_s_isdir);
 disp_unary!(dispatch_s_isfifo, mb_pathlib_s_isfifo);
-disp_unary!(dispatch_s_islnk,  mb_pathlib_s_islnk);
-disp_unary!(dispatch_s_isreg,  mb_pathlib_s_isreg);
+disp_unary!(dispatch_s_islnk, mb_pathlib_s_islnk);
+disp_unary!(dispatch_s_isreg, mb_pathlib_s_isreg);
 disp_unary!(dispatch_s_issock, mb_pathlib_s_issock);
 
 disp_binary!(dispatch_urlquote, mb_pathlib_urlquote_from_bytes);
@@ -259,12 +259,18 @@ pub fn register() {
 
     // Class constructors (CPython surface).
     let class_disp: Vec<(&str, usize)> = vec![
-        ("Path",            dispatch_path            as *const () as usize),
-        ("PurePath",        dispatch_purepath        as *const () as usize),
-        ("PosixPath",       dispatch_posixpath       as *const () as usize),
-        ("WindowsPath",     dispatch_windowspath     as *const () as usize),
-        ("PurePosixPath",   dispatch_pureposixpath   as *const () as usize),
-        ("PureWindowsPath", dispatch_purewindowspath as *const () as usize),
+        ("Path", dispatch_path as *const () as usize),
+        ("PurePath", dispatch_purepath as *const () as usize),
+        ("PosixPath", dispatch_posixpath as *const () as usize),
+        ("WindowsPath", dispatch_windowspath as *const () as usize),
+        (
+            "PurePosixPath",
+            dispatch_pureposixpath as *const () as usize,
+        ),
+        (
+            "PureWindowsPath",
+            dispatch_purewindowspath as *const () as usize,
+        ),
     ];
     for (name, addr) in class_disp {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -275,12 +281,12 @@ pub fn register() {
 
     // S_IS* predicates.
     let stat_disp: Vec<(&str, usize)> = vec![
-        ("S_ISBLK",  dispatch_s_isblk  as *const () as usize),
-        ("S_ISCHR",  dispatch_s_ischr  as *const () as usize),
-        ("S_ISDIR",  dispatch_s_isdir  as *const () as usize),
+        ("S_ISBLK", dispatch_s_isblk as *const () as usize),
+        ("S_ISCHR", dispatch_s_ischr as *const () as usize),
+        ("S_ISDIR", dispatch_s_isdir as *const () as usize),
         ("S_ISFIFO", dispatch_s_isfifo as *const () as usize),
-        ("S_ISLNK",  dispatch_s_islnk  as *const () as usize),
-        ("S_ISREG",  dispatch_s_isreg  as *const () as usize),
+        ("S_ISLNK", dispatch_s_islnk as *const () as usize),
+        ("S_ISREG", dispatch_s_isreg as *const () as usize),
         ("S_ISSOCK", dispatch_s_issock as *const () as usize),
     ];
     for (name, addr) in stat_disp {
@@ -292,37 +298,59 @@ pub fn register() {
 
     // urlquote_from_bytes helper.
     let urlq_addr = dispatch_urlquote as *const () as usize;
-    attrs.insert("urlquote_from_bytes".to_string(), MbValue::from_func(urlq_addr));
+    attrs.insert(
+        "urlquote_from_bytes".to_string(),
+        MbValue::from_func(urlq_addr),
+    );
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(urlq_addr as u64);
     });
 
     // errno integer constants.
-    attrs.insert("EBADF".to_string(),   MbValue::from_int(E_BADF));
-    attrs.insert("ELOOP".to_string(),   MbValue::from_int(E_LOOP));
-    attrs.insert("ENOENT".to_string(),  MbValue::from_int(E_NOENT));
+    attrs.insert("EBADF".to_string(), MbValue::from_int(E_BADF));
+    attrs.insert("ELOOP".to_string(), MbValue::from_int(E_LOOP));
+    attrs.insert("ENOENT".to_string(), MbValue::from_int(E_NOENT));
     attrs.insert("ENOTDIR".to_string(), MbValue::from_int(E_NOTDIR));
 
     // Sequence sentinel (passive Instance — see carve-outs).
     let seq_obj = Box::new(MbObject {
-        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        header: MbObjectHeader {
+            rc: AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
         data: ObjData::Instance {
             class_name: "Sequence".to_string(),
             fields: RwLock::new({
                 let mut f = FxHashMap::default();
-                f.insert("__name__".to_string(),
-                    MbValue::from_ptr(MbObject::new_str("Sequence".to_string())));
-                f.insert("__module__".to_string(),
-                    MbValue::from_ptr(MbObject::new_str("collections.abc".to_string())));
+                f.insert(
+                    "__name__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str("Sequence".to_string())),
+                );
+                f.insert(
+                    "__module__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str("collections.abc".to_string())),
+                );
                 f
             }),
         },
     });
-    attrs.insert("Sequence".to_string(), MbValue::from_ptr(Box::into_raw(seq_obj)));
+    attrs.insert(
+        "Sequence".to_string(),
+        MbValue::from_ptr(Box::into_raw(seq_obj)),
+    );
 
     // Submodule placeholders.
-    for sub in ["fnmatch", "functools", "io", "ntpath", "os", "posixpath",
-                "re", "sys", "warnings"] {
+    for sub in [
+        "fnmatch",
+        "functools",
+        "io",
+        "ntpath",
+        "os",
+        "posixpath",
+        "re",
+        "sys",
+        "warnings",
+    ] {
         attrs.insert(sub.to_string(), MbValue::none());
     }
 
@@ -336,41 +364,83 @@ pub fn register() {
     // isinstance(obj, pathlib.Path) resolves the func value to a type name.
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         let mut map = m.borrow_mut();
-        map.insert(dispatch_path as *const () as usize as u64, "Path".to_string());
-        map.insert(dispatch_purepath as *const () as usize as u64, "PurePath".to_string());
-        map.insert(dispatch_posixpath as *const () as usize as u64, "PosixPath".to_string());
-        map.insert(dispatch_windowspath as *const () as usize as u64, "WindowsPath".to_string());
-        map.insert(dispatch_pureposixpath as *const () as usize as u64, "PurePosixPath".to_string());
-        map.insert(dispatch_purewindowspath as *const () as usize as u64, "PureWindowsPath".to_string());
+        map.insert(
+            dispatch_path as *const () as usize as u64,
+            "Path".to_string(),
+        );
+        map.insert(
+            dispatch_purepath as *const () as usize as u64,
+            "PurePath".to_string(),
+        );
+        map.insert(
+            dispatch_posixpath as *const () as usize as u64,
+            "PosixPath".to_string(),
+        );
+        map.insert(
+            dispatch_windowspath as *const () as usize as u64,
+            "WindowsPath".to_string(),
+        );
+        map.insert(
+            dispatch_pureposixpath as *const () as usize as u64,
+            "PurePosixPath".to_string(),
+        );
+        map.insert(
+            dispatch_purewindowspath as *const () as usize as u64,
+            "PureWindowsPath".to_string(),
+        );
     });
 
     // Legacy mamba-only free-function surface. Kept under the same module
     // namespace so older mamba programs that called `pathlib.exists(p)`
     // and `pathlib.read_text(p)` continue to work post-Wave-9.
-    attrs.insert("exists".to_string(),
-        MbValue::from_func(dispatch_exists as *const () as usize));
-    attrs.insert("is_file".to_string(),
-        MbValue::from_func(dispatch_is_file as *const () as usize));
-    attrs.insert("is_dir".to_string(),
-        MbValue::from_func(dispatch_is_dir as *const () as usize));
-    attrs.insert("name".to_string(),
-        MbValue::from_func(dispatch_name as *const () as usize));
-    attrs.insert("stem".to_string(),
-        MbValue::from_func(dispatch_stem as *const () as usize));
-    attrs.insert("suffix".to_string(),
-        MbValue::from_func(dispatch_suffix as *const () as usize));
-    attrs.insert("parent".to_string(),
-        MbValue::from_func(dispatch_parent as *const () as usize));
-    attrs.insert("joinpath".to_string(),
-        MbValue::from_func(dispatch_joinpath as *const () as usize));
-    attrs.insert("read_text".to_string(),
-        MbValue::from_func(dispatch_read_text as *const () as usize));
-    attrs.insert("write_text".to_string(),
-        MbValue::from_func(dispatch_write_text as *const () as usize));
-    attrs.insert("mkdir".to_string(),
-        MbValue::from_func(dispatch_mkdir as *const () as usize));
-    attrs.insert("resolve".to_string(),
-        MbValue::from_func(dispatch_resolve as *const () as usize));
+    attrs.insert(
+        "exists".to_string(),
+        MbValue::from_func(dispatch_exists as *const () as usize),
+    );
+    attrs.insert(
+        "is_file".to_string(),
+        MbValue::from_func(dispatch_is_file as *const () as usize),
+    );
+    attrs.insert(
+        "is_dir".to_string(),
+        MbValue::from_func(dispatch_is_dir as *const () as usize),
+    );
+    attrs.insert(
+        "name".to_string(),
+        MbValue::from_func(dispatch_name as *const () as usize),
+    );
+    attrs.insert(
+        "stem".to_string(),
+        MbValue::from_func(dispatch_stem as *const () as usize),
+    );
+    attrs.insert(
+        "suffix".to_string(),
+        MbValue::from_func(dispatch_suffix as *const () as usize),
+    );
+    attrs.insert(
+        "parent".to_string(),
+        MbValue::from_func(dispatch_parent as *const () as usize),
+    );
+    attrs.insert(
+        "joinpath".to_string(),
+        MbValue::from_func(dispatch_joinpath as *const () as usize),
+    );
+    attrs.insert(
+        "read_text".to_string(),
+        MbValue::from_func(dispatch_read_text as *const () as usize),
+    );
+    attrs.insert(
+        "write_text".to_string(),
+        MbValue::from_func(dispatch_write_text as *const () as usize),
+    );
+    attrs.insert(
+        "mkdir".to_string(),
+        MbValue::from_func(dispatch_mkdir as *const () as usize),
+    );
+    attrs.insert(
+        "resolve".to_string(),
+        MbValue::from_func(dispatch_resolve as *const () as usize),
+    );
 
     super::register_module("pathlib", attrs);
 }
@@ -422,6 +492,7 @@ fn register_path_classes() {
         ("__str__", method_str as usize, false),
         ("__repr__", method_repr as usize, false),
         ("__fspath__", method_fspath as usize, false),
+        ("__bytes__", method_bytes as usize, false),
         ("__hash__", method_hash as usize, false),
         ("__eq__", dunder_eq as usize, false),
         ("__ne__", dunder_ne as usize, false),
@@ -468,7 +539,11 @@ fn register_path_classes() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
     })
 }
 
@@ -538,10 +613,19 @@ struct Parsed {
 
 impl Parsed {
     fn sep(&self) -> char {
-        if self.windows { '\\' } else { '/' }
+        if self.windows {
+            '\\'
+        } else {
+            '/'
+        }
     }
     fn empty(windows: bool) -> Parsed {
-        Parsed { drive: String::new(), root: String::new(), parts: Vec::new(), windows }
+        Parsed {
+            drive: String::new(),
+            root: String::new(),
+            parts: Vec::new(),
+            windows,
+        }
     }
 }
 
@@ -563,7 +647,12 @@ fn parse_posix(s: &str) -> Parsed {
         }
         parts.push(comp.to_string());
     }
-    Parsed { drive: String::new(), root, parts, windows: false }
+    Parsed {
+        drive: String::new(),
+        root,
+        parts,
+        windows: false,
+    }
 }
 
 /// Parse a single Windows path string (CPython 3.12 `ntpath`/PureWindowsPath
@@ -593,7 +682,7 @@ fn parse_windows(s: &str) -> Parsed {
             let consumed = 2 + host.len() + 1 + share.len();
             rest_start = consumed;
             root_present = true; // UNC paths are absolute
-            // skip trailing separators that form the root
+                                 // skip trailing separators that form the root
             while rest_start < bytes.len() && bytes[rest_start] == b'\\' {
                 rest_start += 1;
             }
@@ -617,7 +706,11 @@ fn parse_windows(s: &str) -> Parsed {
         }
     }
 
-    let root = if root_present { "\\".to_string() } else { String::new() };
+    let root = if root_present {
+        "\\".to_string()
+    } else {
+        String::new()
+    };
     let mut parts = Vec::new();
     for comp in norm[rest_start..].split('\\') {
         if comp.is_empty() || comp == "." {
@@ -625,7 +718,12 @@ fn parse_windows(s: &str) -> Parsed {
         }
         parts.push(comp.to_string());
     }
-    Parsed { drive, root, parts, windows: true }
+    Parsed {
+        drive,
+        root,
+        parts,
+        windows: true,
+    }
 }
 
 /// Flavour-aware parse: PureWindowsPath/WindowsPath parse with Windows rules.
@@ -714,7 +812,12 @@ fn name_suffixes(name: &str) -> Vec<String> {
 fn parsed_parent(p: &Parsed) -> Parsed {
     let mut parts = p.parts.clone();
     parts.pop();
-    Parsed { drive: p.drive.clone(), root: p.root.clone(), parts, windows: p.windows }
+    Parsed {
+        drive: p.drive.clone(),
+        root: p.root.clone(),
+        parts,
+        windows: p.windows,
+    }
 }
 
 /// Join semantics (flavour-aware). CPython 3.12 `_make_child` rules:
@@ -723,7 +826,11 @@ fn parsed_parent(p: &Parsed) -> Parsed {
 ///   - segment with a drive (Windows) => replaces drive (and root/parts);
 ///   - otherwise append the segment's parts.
 fn parsed_join(base: &Parsed, seg: &str) -> Parsed {
-    let segp = if base.windows { parse_windows(seg) } else { parse_posix(seg) };
+    let segp = if base.windows {
+        parse_windows(seg)
+    } else {
+        parse_posix(seg)
+    };
     if !segp.drive.is_empty() {
         // Segment carries its own drive => fully replaces the base.
         return segp;
@@ -740,7 +847,12 @@ fn parsed_join(base: &Parsed, seg: &str) -> Parsed {
     }
     let mut parts = base.parts.clone();
     parts.extend(segp.parts);
-    Parsed { drive: base.drive.clone(), root: base.root.clone(), parts, windows: base.windows }
+    Parsed {
+        drive: base.drive.clone(),
+        root: base.root.clone(),
+        parts,
+        windows: base.windows,
+    }
 }
 
 // -- Class constructors --
@@ -764,7 +876,10 @@ fn build_scalar_instance(class_name: &str, parsed: &Parsed) -> MbValue {
     set("stem", sstr(name_stem(&name)));
     set("suffix", sstr(name_suffix(&name)));
     let suffixes_vals: Vec<MbValue> = name_suffixes(&name).into_iter().map(sstr).collect();
-    set("suffixes", MbValue::from_ptr(MbObject::new_list(suffixes_vals)));
+    set(
+        "suffixes",
+        MbValue::from_ptr(MbObject::new_list(suffixes_vals)),
+    );
 
     set("anchor", sstr(parsed_anchor(parsed)));
     set("root", sstr(parsed.root.clone()));
@@ -835,7 +950,11 @@ fn build_path_instance(class_name: &str, parsed: &Parsed) -> MbValue {
     let n = scalars.len();
     for i in 0..n {
         // parent: next level, or self when already at the floor.
-        let parent_inst = if i + 1 < n { scalars[i + 1] } else { scalars[i] };
+        let parent_inst = if i + 1 < n {
+            scalars[i + 1]
+        } else {
+            scalars[i]
+        };
         set_field(scalars[i], "parent", parent_inst);
         // parents: tuple of ancestors strictly above this level.
         let ancestors: Vec<MbValue> = scalars[i + 1..].to_vec();
@@ -893,17 +1012,39 @@ fn is_windows_flavour(class_name: &str) -> bool {
     matches!(class_name, "WindowsPath" | "PureWindowsPath")
 }
 
-/// True when a value is a str argument; rejects bytes (CPython raises
-/// TypeError for bytes path components).
-fn require_str_seg(val: MbValue) -> Result<String, ()> {
+/// Shared os.fspath-style coercion of a value to a path string:
+///   1. exact `str` → its payload;
+///   2. a pathlib instance carrying the canonical `_path` field → that path
+///      (fast path, avoids a dunder call);
+///   3. any Instance whose class registers `__fspath__` → call it and
+///      require a `str` result.
+/// Returns `None` when the value is not path-like (the caller raises its
+/// boundary-appropriate TypeError) or when `__fspath__` itself raised — in
+/// the latter case the pending exception is preserved, so callers should
+/// check `mb_has_exception` before raising their own.
+pub fn coerce_fspath(val: MbValue) -> Option<String> {
     if let Some(s) = extract_str(val) {
-        return Ok(s);
+        return Some(s);
     }
-    // Accept Path-like instances carrying `_path`.
     if let Some(s) = inst_field_str(val, "_path") {
-        return Ok(s);
+        return Some(s);
     }
-    Err(())
+    if let Some(cls) = inst_class_name(val) {
+        if !super::super::class::lookup_method(&cls, "__fspath__").is_none() {
+            let method = MbValue::from_ptr(MbObject::new_str("__fspath__".to_string()));
+            let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+            let r = super::super::class::mb_call_method(val, method, args);
+            return extract_str(r);
+        }
+    }
+    None
+}
+
+/// True when a value coerces to a str path segment (str, pathlib instance,
+/// or `__fspath__` provider); rejects bytes (CPython raises TypeError for
+/// bytes path components — the constructor checks that before calling this).
+fn require_str_seg(val: MbValue) -> Result<String, ()> {
+    coerce_fspath(val).ok_or(())
 }
 
 /// Join all positional args into a single path string and wrap in an
@@ -925,10 +1066,15 @@ pub fn mb_pathlib_path_class(class_name: &str, args: &[MbValue]) -> MbValue {
         let mut seg = match require_str_seg(*arg) {
             Ok(s) => s,
             Err(()) => {
+                // A failing user `__fspath__` already left its own exception
+                // pending — propagate that instead of masking it.
+                if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+                    return MbValue::none();
+                }
                 return raise_type_error(
                     "argument should be a str or an os.PathLike object where \
                      __fspath__ returns a str",
-                )
+                );
             }
         };
         // CPython carries a foreign-flavour PurePath's components across by
@@ -995,9 +1141,9 @@ fn args_items(args: MbValue) -> Vec<MbValue> {
 unsafe extern "C" fn method_reduce(self_v: MbValue, _args: MbValue) -> MbValue {
     let cls = inst_class_name(self_v).unwrap_or_else(|| "PurePosixPath".to_string());
     let s = inst_field_str(self_v, "_path").unwrap_or_else(|| ".".to_string());
-    let args_tuple = MbValue::from_ptr(MbObject::new_tuple(vec![
-        MbValue::from_ptr(MbObject::new_str(s)),
-    ]));
+    let args_tuple = MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
+        MbObject::new_str(s),
+    )]));
     MbValue::from_ptr(MbObject::new_tuple(vec![
         MbValue::from_ptr(MbObject::new_str(cls)),
         args_tuple,
@@ -1009,7 +1155,11 @@ unsafe extern "C" fn method_init(self_v: MbValue, args: MbValue) -> MbValue {
     // every computed field of a fully-built instance onto `self`.
     let cls = inst_class_name(self_v).unwrap_or_else(|| "PosixPath".to_string());
     let items = args_items(args);
-    let s = items.first().copied().and_then(extract_str).unwrap_or_else(|| ".".to_string());
+    let s = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_else(|| ".".to_string());
     let parsed = parse_flavour(&cls, &s);
     let template = build_path_instance(&cls, &parsed);
     // Copy all fields from the template onto self.
@@ -1047,6 +1197,13 @@ unsafe extern "C" fn method_repr(self_v: MbValue, _args: MbValue) -> MbValue {
 unsafe extern "C" fn method_fspath(self_v: MbValue, _args: MbValue) -> MbValue {
     let s = inst_field_str(self_v, "_path").unwrap_or_else(|| ".".to_string());
     MbValue::from_ptr(MbObject::new_str(s))
+}
+
+/// `bytes(p)` — CPython `PurePath.__bytes__` is `os.fsencode(str(self))`,
+/// which is the UTF-8 encoding of the path string on POSIX hosts.
+unsafe extern "C" fn method_bytes(self_v: MbValue, _args: MbValue) -> MbValue {
+    let s = inst_field_str(self_v, "_path").unwrap_or_else(|| ".".to_string());
+    MbValue::from_ptr(MbObject::new_bytes(s.into_bytes()))
 }
 
 unsafe extern "C" fn method_hash(self_v: MbValue, _args: MbValue) -> MbValue {
@@ -1126,7 +1283,10 @@ unsafe extern "C" fn method_joinpath(self_v: MbValue, args: MbValue) -> MbValue 
     let mut parsed = parsed_of(self_v);
     for it in items {
         if extract_bytes(it).is_some() && extract_str(it).is_none() {
-            return raise("TypeError", "argument should be a str, not bytes".to_string());
+            return raise(
+                "TypeError",
+                "argument should be a str, not bytes".to_string(),
+            );
         }
         let seg = match require_str_seg(it) {
             Ok(s) => s,
@@ -1142,7 +1302,10 @@ unsafe extern "C" fn method_with_name(self_v: MbValue, args: MbValue) -> MbValue
     let new_name = match items.first().copied() {
         Some(v) => {
             if extract_bytes(v).is_some() && extract_str(v).is_none() {
-                return raise("TypeError", "argument should be a str, not bytes".to_string());
+                return raise(
+                    "TypeError",
+                    "argument should be a str, not bytes".to_string(),
+                );
             }
             match extract_str(v) {
                 Some(s) => s,
@@ -1153,7 +1316,10 @@ unsafe extern "C" fn method_with_name(self_v: MbValue, args: MbValue) -> MbValue
     };
     let mut parsed = parsed_of(self_v);
     if parsed.parts.is_empty() {
-        return raise("ValueError", format!("{:?} has an empty name", parsed_str(&parsed)));
+        return raise(
+            "ValueError",
+            format!("{:?} has an empty name", parsed_str(&parsed)),
+        );
     }
     let bad_sep = if parsed.windows {
         new_name.contains('/') || new_name.contains('\\')
@@ -1179,9 +1345,9 @@ unsafe extern "C" fn method_with_stem(self_v: MbValue, args: MbValue) -> MbValue
     let suffix = name_suffix(&name);
     let new_name = format!("{new_stem}{suffix}");
     // Reuse with_name validation via a fresh args list.
-    let arg_list = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_ptr(MbObject::new_str(new_name)),
-    ]));
+    let arg_list = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
+        MbObject::new_str(new_name),
+    )]));
     method_with_name(self_v, arg_list)
 }
 
@@ -1190,7 +1356,10 @@ unsafe extern "C" fn method_with_suffix(self_v: MbValue, args: MbValue) -> MbVal
     let new_suffix = match items.first().copied() {
         Some(v) => {
             if extract_bytes(v).is_some() && extract_str(v).is_none() {
-                return raise("TypeError", "argument should be a str, not bytes".to_string());
+                return raise(
+                    "TypeError",
+                    "argument should be a str, not bytes".to_string(),
+                );
             }
             match extract_str(v) {
                 Some(s) => s,
@@ -1222,7 +1391,10 @@ unsafe extern "C" fn method_with_suffix(self_v: MbValue, args: MbValue) -> MbVal
     }
     let mut parsed = parsed_of(self_v);
     if parsed.parts.is_empty() {
-        return raise("ValueError", format!("{:?} has an empty name", parsed_str(&parsed)));
+        return raise(
+            "ValueError",
+            format!("{:?} has an empty name", parsed_str(&parsed)),
+        );
     }
     let last = parsed.parts.len() - 1;
     let name = parsed.parts[last].clone();
@@ -1235,7 +1407,10 @@ unsafe extern "C" fn method_with_suffix(self_v: MbValue, args: MbValue) -> MbVal
 unsafe extern "C" fn method_relative_to(self_v: MbValue, args: MbValue) -> MbValue {
     let items = args_items(args);
     if items.is_empty() {
-        return raise("TypeError", "relative_to() missing 1 required positional argument".to_string());
+        return raise(
+            "TypeError",
+            "relative_to() missing 1 required positional argument".to_string(),
+        );
     }
     let cls = inst_class_name(self_v).unwrap_or_else(|| "PosixPath".to_string());
     let windows = is_windows_flavour(&cls);
@@ -1247,8 +1422,12 @@ unsafe extern "C" fn method_relative_to(self_v: MbValue, args: MbValue) -> MbVal
             Ok(s) => s,
             Err(()) => return raise("TypeError", "argument should be a str".to_string()),
         };
-        if first { other = parse_flavour(&cls, &seg); first = false; }
-        else { other = parsed_join(&other, &seg); }
+        if first {
+            other = parse_flavour(&cls, &seg);
+            first = false;
+        } else {
+            other = parsed_join(&other, &seg);
+        }
     }
     let me = parsed_of(self_v);
     let my_parts = parsed_parts(&me);
@@ -1301,8 +1480,12 @@ unsafe extern "C" fn method_is_relative_to(self_v: MbValue, args: MbValue) -> Mb
             Ok(s) => s,
             Err(()) => return MbValue::from_bool(false),
         };
-        if first { other = parse_flavour(&cls, &seg); first = false; }
-        else { other = parsed_join(&other, &seg); }
+        if first {
+            other = parse_flavour(&cls, &seg);
+            first = false;
+        } else {
+            other = parsed_join(&other, &seg);
+        }
     }
     let me = parsed_of(self_v);
     let my_parts = parsed_parts(&me);
@@ -1313,7 +1496,10 @@ unsafe extern "C" fn method_is_relative_to(self_v: MbValue, args: MbValue) -> Mb
 unsafe extern "C" fn method_as_uri(self_v: MbValue, _args: MbValue) -> MbValue {
     let root = inst_field_str(self_v, "_root").unwrap_or_default();
     if root.is_empty() {
-        return raise("ValueError", "relative path can't be expressed as a file URI".to_string());
+        return raise(
+            "ValueError",
+            "relative path can't be expressed as a file URI".to_string(),
+        );
     }
     let s = inst_field_str(self_v, "_path").unwrap_or_default();
     // Percent-encode everything except unreserved + '/'.
@@ -1337,7 +1523,10 @@ unsafe extern "C" fn method_match(self_v: MbValue, args: MbValue) -> MbValue {
     let pat = match items.first().copied() {
         Some(v) => {
             if extract_bytes(v).is_some() && extract_str(v).is_none() {
-                return raise("TypeError", "argument should be a str, not bytes".to_string());
+                return raise(
+                    "TypeError",
+                    "argument should be a str, not bytes".to_string(),
+                );
             }
             match extract_str(v) {
                 Some(s) => s,
@@ -1463,7 +1652,11 @@ unsafe extern "C" fn method_read_text(self_v: MbValue, _args: MbValue) -> MbValu
 unsafe extern "C" fn method_write_text(self_v: MbValue, args: MbValue) -> MbValue {
     let s = inst_field_str(self_v, "_path").unwrap_or_default();
     let items = args_items(args);
-    let text = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let text = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let n = text.as_bytes().len() as i64;
     match std::fs::write(&s, &text) {
         Ok(()) => MbValue::from_int(n),
@@ -1473,7 +1666,11 @@ unsafe extern "C" fn method_write_text(self_v: MbValue, args: MbValue) -> MbValu
 
 unsafe extern "C" fn method_touch(self_v: MbValue, _args: MbValue) -> MbValue {
     let s = inst_field_str(self_v, "_path").unwrap_or_default();
-    match std::fs::OpenOptions::new().create(true).write(true).open(&s) {
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&s)
+    {
         Ok(_) => MbValue::none(),
         Err(e) => fs_err(e, &s),
     }
@@ -1543,7 +1740,11 @@ unsafe extern "C" fn method_cwd(self_v: MbValue, _args: MbValue) -> MbValue {
 unsafe extern "C" fn method_glob(self_v: MbValue, args: MbValue) -> MbValue {
     let base = inst_field_str(self_v, "_path").unwrap_or_default();
     let items = args_items(args);
-    let pattern = items.first().copied().and_then(extract_str).unwrap_or_default();
+    let pattern = items
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&base) {
         for entry in rd.flatten() {
@@ -1601,10 +1802,18 @@ fn fs_err(e: std::io::Error, path: &str) -> MbValue {
             // Directory-not-empty and is-a-directory surface via raw os error.
             if let Some(code) = e.raw_os_error() {
                 match code {
-                    20 => return raise("NotADirectoryError",
-                        format!("[Errno 20] Not a directory: '{path}'")),
-                    21 => return raise("IsADirectoryError",
-                        format!("[Errno 21] Is a directory: '{path}'")),
+                    20 => {
+                        return raise(
+                            "NotADirectoryError",
+                            format!("[Errno 20] Not a directory: '{path}'"),
+                        )
+                    }
+                    21 => {
+                        return raise(
+                            "IsADirectoryError",
+                            format!("[Errno 21] Is a directory: '{path}'"),
+                        )
+                    }
                     _ => {}
                 }
             }
@@ -1682,14 +1891,25 @@ fn richcmp(self_v: MbValue, other: MbValue, op: u8) -> MbValue {
     MbValue::from_bool(res)
 }
 
-unsafe extern "C" fn dunder_lt(self_v: MbValue, other: MbValue) -> MbValue { richcmp(self_v, other, 0) }
-unsafe extern "C" fn dunder_le(self_v: MbValue, other: MbValue) -> MbValue { richcmp(self_v, other, 1) }
-unsafe extern "C" fn dunder_gt(self_v: MbValue, other: MbValue) -> MbValue { richcmp(self_v, other, 2) }
-unsafe extern "C" fn dunder_ge(self_v: MbValue, other: MbValue) -> MbValue { richcmp(self_v, other, 3) }
+unsafe extern "C" fn dunder_lt(self_v: MbValue, other: MbValue) -> MbValue {
+    richcmp(self_v, other, 0)
+}
+unsafe extern "C" fn dunder_le(self_v: MbValue, other: MbValue) -> MbValue {
+    richcmp(self_v, other, 1)
+}
+unsafe extern "C" fn dunder_gt(self_v: MbValue, other: MbValue) -> MbValue {
+    richcmp(self_v, other, 2)
+}
+unsafe extern "C" fn dunder_ge(self_v: MbValue, other: MbValue) -> MbValue {
+    richcmp(self_v, other, 3)
+}
 
 unsafe extern "C" fn dunder_truediv(self_v: MbValue, other: MbValue) -> MbValue {
     if extract_bytes(other).is_some() && extract_str(other).is_none() {
-        return raise("TypeError", "argument should be a str, not bytes".to_string());
+        return raise(
+            "TypeError",
+            "argument should be a str, not bytes".to_string(),
+        );
     }
     let seg = match require_str_seg(other) {
         Ok(s) => s,
@@ -1702,7 +1922,10 @@ unsafe extern "C" fn dunder_truediv(self_v: MbValue, other: MbValue) -> MbValue 
 unsafe extern "C" fn dunder_rtruediv(self_v: MbValue, other: MbValue) -> MbValue {
     // other / self  where self is the Path. other must be str/path-like.
     if extract_bytes(other).is_some() && extract_str(other).is_none() {
-        return raise("TypeError", "argument should be a str, not bytes".to_string());
+        return raise(
+            "TypeError",
+            "argument should be a str, not bytes".to_string(),
+        );
     }
     let lhs = match require_str_seg(other) {
         Ok(s) => s,
@@ -1719,7 +1942,11 @@ unsafe extern "C" fn dunder_rtruediv(self_v: MbValue, other: MbValue) -> MbValue
 /// Translate a single glob segment to a regex-free matcher predicate.
 fn seg_matches(pat: &str, text: &str, case_sensitive: bool) -> bool {
     fn norm(s: &str, cs: bool) -> Vec<char> {
-        if cs { s.chars().collect() } else { s.to_lowercase().chars().collect() }
+        if cs {
+            s.chars().collect()
+        } else {
+            s.to_lowercase().chars().collect()
+        }
     }
     let p: Vec<char> = norm(pat, case_sensitive);
     let t: Vec<char> = norm(text, case_sensitive);
@@ -1813,19 +2040,33 @@ fn s_is(mode: MbValue, mask: i64) -> MbValue {
 }
 
 /// stat.S_ISBLK(mode) -> bool
-pub fn mb_pathlib_s_isblk(mode: MbValue)  -> MbValue { s_is(mode, S_IFBLK) }
+pub fn mb_pathlib_s_isblk(mode: MbValue) -> MbValue {
+    s_is(mode, S_IFBLK)
+}
 /// stat.S_ISCHR(mode) -> bool
-pub fn mb_pathlib_s_ischr(mode: MbValue)  -> MbValue { s_is(mode, S_IFCHR) }
+pub fn mb_pathlib_s_ischr(mode: MbValue) -> MbValue {
+    s_is(mode, S_IFCHR)
+}
 /// stat.S_ISDIR(mode) -> bool
-pub fn mb_pathlib_s_isdir(mode: MbValue)  -> MbValue { s_is(mode, S_IFDIR) }
+pub fn mb_pathlib_s_isdir(mode: MbValue) -> MbValue {
+    s_is(mode, S_IFDIR)
+}
 /// stat.S_ISFIFO(mode) -> bool
-pub fn mb_pathlib_s_isfifo(mode: MbValue) -> MbValue { s_is(mode, S_IFIFO) }
+pub fn mb_pathlib_s_isfifo(mode: MbValue) -> MbValue {
+    s_is(mode, S_IFIFO)
+}
 /// stat.S_ISLNK(mode) -> bool
-pub fn mb_pathlib_s_islnk(mode: MbValue)  -> MbValue { s_is(mode, S_IFLNK) }
+pub fn mb_pathlib_s_islnk(mode: MbValue) -> MbValue {
+    s_is(mode, S_IFLNK)
+}
 /// stat.S_ISREG(mode) -> bool
-pub fn mb_pathlib_s_isreg(mode: MbValue)  -> MbValue { s_is(mode, S_IFREG) }
+pub fn mb_pathlib_s_isreg(mode: MbValue) -> MbValue {
+    s_is(mode, S_IFREG)
+}
 /// stat.S_ISSOCK(mode) -> bool
-pub fn mb_pathlib_s_issock(mode: MbValue) -> MbValue { s_is(mode, S_IFSOCK) }
+pub fn mb_pathlib_s_issock(mode: MbValue) -> MbValue {
+    s_is(mode, S_IFSOCK)
+}
 
 // -- urlquote_from_bytes --
 
@@ -1899,7 +2140,8 @@ pub fn mb_pathlib_name(path: MbValue) -> MbValue {
     match path_str_of(path) {
         Some(s) => {
             let p = std::path::Path::new(&s);
-            let name = p.file_name()
+            let name = p
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
@@ -1914,7 +2156,8 @@ pub fn mb_pathlib_stem(path: MbValue) -> MbValue {
     match path_str_of(path) {
         Some(s) => {
             let p = std::path::Path::new(&s);
-            let stem = p.file_stem()
+            let stem = p
+                .file_stem()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
@@ -1929,7 +2172,8 @@ pub fn mb_pathlib_suffix(path: MbValue) -> MbValue {
     match path_str_of(path) {
         Some(s) => {
             let p = std::path::Path::new(&s);
-            let ext = p.extension()
+            let ext = p
+                .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| format!(".{e}"))
                 .unwrap_or_default();
@@ -1944,7 +2188,8 @@ pub fn mb_pathlib_parent(path: MbValue) -> MbValue {
     match path_str_of(path) {
         Some(s) => {
             let p = std::path::Path::new(&s);
-            let parent = p.parent()
+            let parent = p
+                .parent()
                 .and_then(|pp| pp.to_str())
                 .unwrap_or("")
                 .to_string();
@@ -1956,8 +2201,14 @@ pub fn mb_pathlib_parent(path: MbValue) -> MbValue {
 
 /// pathlib.joinpath(path, other) -> str (joined path)
 pub fn mb_pathlib_joinpath(path: MbValue, other: MbValue) -> MbValue {
-    let base = match path_str_of(path) { Some(s) => s, None => return MbValue::none() };
-    let part = match path_str_of(other) { Some(s) => s, None => return MbValue::none() };
+    let base = match path_str_of(path) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
+    let part = match path_str_of(other) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
     let joined = std::path::Path::new(&base).join(&part);
     let result = joined.to_str().unwrap_or("").to_string();
     MbValue::from_ptr(MbObject::new_str(result))
@@ -1976,8 +2227,14 @@ pub fn mb_pathlib_read_text(path: MbValue) -> MbValue {
 
 /// pathlib.write_text(path, text) -> None
 pub fn mb_pathlib_write_text(path: MbValue, text: MbValue) -> MbValue {
-    let p = match path_str_of(path) { Some(s) => s, None => return MbValue::none() };
-    let t = match extract_str(text) { Some(s) => s, None => return MbValue::none() };
+    let p = match path_str_of(path) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
+    let t = match extract_str(text) {
+        Some(s) => s,
+        None => return MbValue::none(),
+    };
     let _ = std::fs::write(&p, &t);
     MbValue::none()
 }
@@ -2009,7 +2266,9 @@ pub fn mb_pathlib_resolve(path: MbValue) -> MbValue {
 /// free-function surface keep working after callers migrate to the
 /// new `Path(...)` constructor.
 fn path_str_of(val: MbValue) -> Option<String> {
-    if let Some(s) = extract_str(val) { return Some(s); }
+    if let Some(s) = extract_str(val) {
+        return Some(s);
+    }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
@@ -2040,7 +2299,9 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     let f = fields.read().unwrap();
-                    if let Some(v) = f.get(field) { return *v; }
+                    if let Some(v) = f.get(field) {
+                        return *v;
+                    }
                 }
             }
         }
@@ -2140,7 +2401,10 @@ mod tests {
     #[test]
     fn test_resolve_nonexistent() {
         let path = s("/nonexistent_xyz_resolve_test");
-        assert_eq!(get_str(mb_pathlib_resolve(path)), "/nonexistent_xyz_resolve_test");
+        assert_eq!(
+            get_str(mb_pathlib_resolve(path)),
+            "/nonexistent_xyz_resolve_test"
+        );
     }
 
     #[test]
@@ -2198,7 +2462,10 @@ mod tests {
         assert_eq!(parse_posix("a/b").root, "");
         assert_eq!(parsed_str(&parse_posix("")), ".");
         assert_eq!(parsed_str(&parse_posix("/")), "/");
-        assert_eq!(parsed_parts(&parse_posix("/a/b/c")), vec!["/", "a", "b", "c"]);
+        assert_eq!(
+            parsed_parts(&parse_posix("/a/b/c")),
+            vec!["/", "a", "b", "c"]
+        );
         assert_eq!(parsed_parts(&parse_posix("/a/b/.")), vec!["/", "a", "b"]);
     }
 
@@ -2242,8 +2509,14 @@ mod tests {
 
     #[test]
     fn test_all_six_classes_distinct_class_names() {
-        for cls in &["Path", "PurePath", "PosixPath", "WindowsPath",
-                     "PurePosixPath", "PureWindowsPath"] {
+        for cls in &[
+            "Path",
+            "PurePath",
+            "PosixPath",
+            "WindowsPath",
+            "PurePosixPath",
+            "PureWindowsPath",
+        ] {
             let p = mb_pathlib_path_class(cls, &[s("/x")]);
             assert_eq!(class_name_of(p).as_deref(), Some(*cls));
         }
@@ -2279,18 +2552,22 @@ mod tests {
     #[test]
     fn test_s_is_all_kinds() {
         let cases: &[(i64, fn(MbValue) -> MbValue)] = &[
-            (S_IFBLK,  mb_pathlib_s_isblk),
-            (S_IFCHR,  mb_pathlib_s_ischr),
-            (S_IFDIR,  mb_pathlib_s_isdir),
+            (S_IFBLK, mb_pathlib_s_isblk),
+            (S_IFCHR, mb_pathlib_s_ischr),
+            (S_IFDIR, mb_pathlib_s_isdir),
             (S_IFIFO, mb_pathlib_s_isfifo),
-            (S_IFLNK,  mb_pathlib_s_islnk),
-            (S_IFREG,  mb_pathlib_s_isreg),
+            (S_IFLNK, mb_pathlib_s_islnk),
+            (S_IFREG, mb_pathlib_s_isreg),
             (S_IFSOCK, mb_pathlib_s_issock),
         ];
         for (mask, predicate) in cases {
             let m = MbValue::from_int(*mask | 0o600);
-            assert_eq!(predicate(m).as_bool(), Some(true),
-                "predicate for mask {:o} should be true", mask);
+            assert_eq!(
+                predicate(m).as_bool(),
+                Some(true),
+                "predicate for mask {:o} should be true",
+                mask
+            );
         }
     }
 
@@ -2351,22 +2628,40 @@ mod tests {
         // attrs HashMap shape. Surface coverage is enforced by the
         // exhaustive list below.
         let expected: &[&str] = &[
-            "EBADF", "ELOOP", "ENOENT", "ENOTDIR",
-            "Path", "PosixPath", "PurePath", "PurePosixPath",
-            "PureWindowsPath", "WindowsPath",
-            "S_ISBLK", "S_ISCHR", "S_ISDIR", "S_ISFIFO",
-            "S_ISLNK", "S_ISREG", "S_ISSOCK",
+            "EBADF",
+            "ELOOP",
+            "ENOENT",
+            "ENOTDIR",
+            "Path",
+            "PosixPath",
+            "PurePath",
+            "PurePosixPath",
+            "PureWindowsPath",
+            "WindowsPath",
+            "S_ISBLK",
+            "S_ISCHR",
+            "S_ISDIR",
+            "S_ISFIFO",
+            "S_ISLNK",
+            "S_ISREG",
+            "S_ISSOCK",
             "Sequence",
-            "fnmatch", "functools", "io", "ntpath", "os",
-            "posixpath", "re", "sys", "warnings",
+            "fnmatch",
+            "functools",
+            "io",
+            "ntpath",
+            "os",
+            "posixpath",
+            "re",
+            "sys",
+            "warnings",
             "urlquote_from_bytes",
         ];
         assert_eq!(expected.len(), 28);
         // Snapshot the native func address registry; should be non-zero.
         // Note: NATIVE_FUNC_ADDRS dedupes by function pointer, so the count
         // is bounded by unique dispatchers, not by attrs entries.
-        let snap = super::super::super::module::NATIVE_FUNC_ADDRS
-            .with(|s| s.borrow().len());
+        let snap = super::super::super::module::NATIVE_FUNC_ADDRS.with(|s| s.borrow().len());
         assert!(snap > 0, "expected nonzero native func addrs, got {}", snap);
     }
 
@@ -2380,7 +2675,7 @@ mod tests {
 
     #[test]
     fn test_s_ifmt_constants() {
-        assert_eq!(S_IFMT,  0o170000);
+        assert_eq!(S_IFMT, 0o170000);
         assert_eq!(S_IFBLK, 0o060000);
         assert_eq!(S_IFCHR, 0o020000);
         assert_eq!(S_IFDIR, 0o040000);

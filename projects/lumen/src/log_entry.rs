@@ -1,13 +1,13 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-log_entry-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! The write-log entry vocabulary: the committed-mutation enum that flows
-//! through the active write path (NATS/embedded WAL → `WriteCoordinator` →
+//! through the active write path (broker/embedded WAL → `WriteCoordinator` →
 //! `Engine::apply_raft_entry`) and the apply-step response marker.
 //!
 //! These are pure serde data types with no consensus dependency. They live in
 //! their own always-compiled module so the load-bearing write path stays free of
-//! any heavier replication machinery (NATS JetStream is the replication
-//! substrate). The `RaftLogEntry` name is retained for historical continuity —
+//! any heavier replication machinery. The `RaftLogEntry` name is retained for
+//! historical continuity —
 //! every variant still maps 1:1 to an `Engine::*` method.
 
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,8 @@ use crate::types::{CreateCollectionRequest, FieldSpec, IndexRequest};
 ///
 /// Every variant maps 1:1 to the matching `Engine::*` method; see
 /// [`crate::storage::Engine::apply_raft_entry`].
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-log_entry-rs.md#source
 pub enum RaftLogEntry {
     CreateCollection {
         collection_id: String,
@@ -53,7 +53,7 @@ pub enum RaftLogEntry {
 /// Response type returned by the state-machine apply step. The engine's RwLock
 /// makes a write visible to subsequent reads, so nothing needs to come back —
 /// this is a unit-shaped marker (the `R` of the consensus type config).
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-log_entry-rs.md#source
 pub struct RaftLogResponse;
 // CODEGEN-END

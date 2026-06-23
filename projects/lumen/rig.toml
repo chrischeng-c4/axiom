@@ -1,0 +1,9 @@
+# SPEC-MANAGED: projects/lumen/external-contracts/long-running-stability/stability/resilience-survival.md#lumen-rig-resilience
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+project = "lumen"
+scenarios_dir = "projects/lumen/tests/rig/cases/resilience"
+source_contract = "lumen-long-running-stability-resilience-survival"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END

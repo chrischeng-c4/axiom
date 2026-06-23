@@ -111,6 +111,30 @@ fn method_router_for(method: &str) -> axum::routing::MethodRouter {
     }
 }
 
+fn router_from_route_table(mb_router: Option<&MbRouter>) -> axum::Router {
+    let mut axum_router = axum::Router::new();
+
+    if let Some(mb_router) = mb_router {
+        for route in &mb_router.routes {
+            let full_path = if mb_router.prefix.is_empty() {
+                route.path.clone()
+            } else {
+                format!("{}{}", mb_router.prefix, route.path)
+            };
+            let full_path = if full_path.starts_with('/') {
+                full_path
+            } else {
+                format!("/{full_path}")
+            };
+
+            let method = route.method.to_ascii_uppercase();
+            axum_router = axum_router.route(&full_path, method_router_for(&method));
+        }
+    }
+
+    axum_router
+}
+
 // ── mb_runtime_serve ──────────────────────────────────────────────────────────
 
 /// Start an HTTP server from an [`MbRouter`] definition.
@@ -139,33 +163,13 @@ pub unsafe extern "C" fn mb_runtime_serve(args: *const MbValue, nargs: usize) ->
     let host = read_str(host_val).unwrap_or_else(|| "0.0.0.0".to_string());
     let port = port_val.as_int().unwrap_or(8000) as u16;
 
-    // Build the Axum router from the MbRouter route table.
-    let mut axum_router = axum::Router::new();
-
-    if let Some(router_addr) = router_val.as_ptr() {
-        if router_addr != 0 {
-            let mb_router = unsafe { &*(router_addr as *const MbRouter) };
-
-            for route in &mb_router.routes {
-                let full_path = if mb_router.prefix.is_empty() {
-                    route.path.clone()
-                } else {
-                    format!("{}{}", mb_router.prefix, route.path)
-                };
-                // Normalize path: ensure it starts with "/"
-                let full_path = if full_path.starts_with('/') {
-                    full_path
-                } else {
-                    format!("/{full_path}")
-                };
-
-                let method_router = method_router_for(&route.method);
-                axum_router = axum_router.route(&full_path, method_router);
-            }
-        }
-    }
-
     let router_ptr = router_val.as_ptr().unwrap_or(0);
+    let mb_router = if router_ptr == 0 {
+        None
+    } else {
+        Some(unsafe { &*(router_ptr as *const MbRouter) })
+    };
+    let axum_router = router_from_route_table(mb_router);
     let addr = format!("{host}:{port}");
 
     TOKIO_RT.block_on(async move {
@@ -281,6 +285,10 @@ pub unsafe extern "C" fn mb_runtime_gather(_args: *const MbValue, _nargs: usize)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::MbRouteEntry;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use tower::ServiceExt;
 
     #[test]
     fn test_sleep_zero() {
@@ -328,5 +336,64 @@ mod tests {
         let id2 = unsafe { &*(t2.as_ptr().unwrap() as *const MbTask) }.task_id;
 
         assert_ne!(id1, id2, "each spawn should get a unique task ID");
+    }
+
+    #[tokio::test]
+    async fn serve_route_table_maps_prefix_paths_and_methods_to_axum_router() {
+        let mb_router = MbRouter {
+            prefix: "/api".to_string(),
+            routes: vec![
+                MbRouteEntry {
+                    method: "GET".to_string(),
+                    path: "/health".to_string(),
+                    handler_fn_ptr: 0x1,
+                },
+                MbRouteEntry {
+                    method: "post".to_string(),
+                    path: "/items".to_string(),
+                    handler_fn_ptr: 0x2,
+                },
+            ],
+        };
+
+        let router = router_from_route_table(Some(&mb_router));
+
+        let health = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/items")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+
+        let missing = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 }

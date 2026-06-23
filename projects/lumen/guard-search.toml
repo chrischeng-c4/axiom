@@ -1,0 +1,9 @@
+# SPEC-MANAGED: projects/lumen/external-contracts/security-hardening/security/access-control.md#lumen-guard-search-security
+# CODEGEN-BEGIN
+# AW-EC-TOOL-BEGIN
+project = "lumen"
+source_contract = "lumen-security-hardening-access-control"
+target = "projects/lumen"
+version = 1
+# AW-EC-TOOL-END
+# CODEGEN-END

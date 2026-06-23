@@ -46,12 +46,7 @@ const EXPECTED_PROFILE_ISSUE: &[(&str, i64)] = &[
     ("smoke", 2819),
 ];
 
-const EXPECTED_OBJECTIVES: &[&str] = &[
-    "compatibility",
-    "distribution",
-    "ecosystem",
-    "performance",
-];
+const EXPECTED_OBJECTIVES: &[&str] = &["compatibility", "distribution", "ecosystem", "performance"];
 
 const CANONICAL_BUCKETS: &[&str] = &["required", "optional", "xfail", "blocker"];
 
@@ -106,11 +101,7 @@ fn require_bool(table: &toml::value::Table, key: &str, ctx: &str) -> bool {
         .unwrap_or_else(|| panic!("{ctx}: missing required bool `{key}`"))
 }
 
-fn require_array<'a>(
-    table: &'a toml::value::Table,
-    key: &str,
-    ctx: &str,
-) -> &'a Vec<toml::Value> {
+fn require_array<'a>(table: &'a toml::value::Table, key: &str, ctx: &str) -> &'a Vec<toml::Value> {
     table
         .get(key)
         .and_then(|v| v.as_array())
@@ -159,7 +150,8 @@ fn release_gate_manifest_lists_exactly_the_six_release_blocking_profiles() {
     let got: BTreeSet<&str> = profiles.keys().map(|s| s.as_str()).collect();
     let want: BTreeSet<&str> = EXPECTED_PROFILES.iter().copied().collect();
     assert_eq!(
-        got, want,
+        got,
+        want,
         "release_gate.toml `[profiles.*]` must be exactly the six \
          release-blocking profiles. Missing: {:?}. Extra: {:?}.",
         want.difference(&got).collect::<Vec<_>>(),
@@ -203,7 +195,8 @@ fn each_referenced_profile_manifest_file_exists_and_points_back_to_2775() {
                 )
             });
         assert_eq!(
-            child_parent, UMBRELLA_ISSUE,
+            child_parent,
+            UMBRELLA_ISSUE,
             "child manifest {} `parent_issue` = {child_parent}, must be {UMBRELLA_ISSUE}",
             manifest_abs.display()
         );
@@ -339,8 +332,7 @@ fn policy_bans_skip_xfail_stub_and_importpass_as_pass() {
         require_array(policy, "canonical_buckets", "[policy]"),
         "[policy].canonical_buckets",
     );
-    let want_buckets: BTreeSet<String> =
-        CANONICAL_BUCKETS.iter().map(|s| s.to_string()).collect();
+    let want_buckets: BTreeSet<String> = CANONICAL_BUCKETS.iter().map(|s| s.to_string()).collect();
     assert_eq!(
         canonical, want_buckets,
         "[policy].canonical_buckets must equal {:?}",
@@ -414,7 +406,8 @@ fn summary_blocker_record_required_fields_are_pinned() {
         .map(|s| s.to_string())
         .collect();
     assert_eq!(
-        required, want,
+        required,
+        want,
         "[summary.blocker_record].required_fields must be exactly {:?}",
         ["profile", "id", "outcome"]
     );
@@ -432,7 +425,8 @@ fn summary_blocker_record_required_fields_are_pinned() {
         .map(|s| s.to_string())
         .collect();
     assert_eq!(
-        pr_required, pr_want,
+        pr_required,
+        pr_want,
         "[summary.profile_record].required_fields must be exactly {:?}",
         ["profile", "objective", "passed", "blockers"]
     );
@@ -453,7 +447,8 @@ fn summary_carries_objective_grouping_fields() {
         .map(|s| s.to_string())
         .collect();
     assert_eq!(
-        fields, want,
+        fields,
+        want,
         "[summary].fields must be exactly {:?}",
         ["objective", "profile_ids", "blocker_count", "blockers"]
     );
@@ -500,11 +495,7 @@ fn references_block_links_to_dependent_release_gate_issues() {
         .and_then(|v| v.as_table())
         .expect("[references.release_summary_schema] missing");
     assert_eq!(
-        require_int(
-            summary_ref,
-            "issue",
-            "[references.release_summary_schema]",
-        ),
+        require_int(summary_ref, "issue", "[references.release_summary_schema]",),
         2820,
         "release_summary_schema reference must point at #2820"
     );
@@ -522,11 +513,7 @@ fn references_block_links_to_dependent_release_gate_issues() {
         .and_then(|v| v.as_table())
         .expect("[references.baseline_update_policy] missing");
     assert_eq!(
-        require_int(
-            baseline_ref,
-            "issue",
-            "[references.baseline_update_policy]",
-        ),
+        require_int(baseline_ref, "issue", "[references.baseline_update_policy]",),
         2823,
         "baseline_update_policy reference must point at #2823"
     );

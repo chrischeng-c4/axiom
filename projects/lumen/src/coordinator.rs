@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#rust-source-unit
 // CODEGEN-BEGIN
 //! Write coordinator — the seam between the HTTP write handlers and the
 //! log-driven apply loop.
@@ -61,16 +61,17 @@ struct CompletionState {
 /// `None` on the default / non-AOF path, so `start_from` is byte-identical to
 /// today. The everysec fsync runs off the hot path via `maybe_sync` (driven by
 /// the loop after each batch), so an append never blocks on the disk.
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 pub type SharedAof = Arc<Mutex<crate::aof::AofWriter>>;
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 pub struct WriteCoordinator {
     wal: SharedWal,
     applied: AtomicU64,
     completions: Mutex<CompletionState>,
 }
 
-/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+/// @spec projects/lumen/tech-design/semantic/source/projects-lumen-src-coordinator-rs.md#source
 impl WriteCoordinator {
     /// Spawn the apply loop and return the coordinator. The loop tails
     /// the log from the beginning and folds it into `engine`.
@@ -121,10 +122,10 @@ impl WriteCoordinator {
         tokio::spawn(async move {
             let mut backoff = std::time::Duration::from_millis(100);
             // Outer loop: re-subscribe from the last-applied sequence whenever
-            // the stream ends or the subscribe fails. A NATS broker restart
-            // tears down our ephemeral consumer, so the apply loop MUST
-            // recreate it and resume tailing — otherwise writes silently stop
-            // applying after a broker blip. Resuming from `applied` is safe:
+            // the stream ends or the subscribe fails. A broker restart can tear
+            // down our ephemeral subscription, so the apply loop MUST recreate
+            // it and resume tailing — otherwise writes silently stop applying
+            // after a broker blip. Resuming from `applied` is safe:
             // redelivery is skipped idempotently below.
             loop {
                 let from = loop_coord.applied.load(Ordering::Acquire);
@@ -182,7 +183,7 @@ impl WriteCoordinator {
                             }
                             // apply_raft_entry is synchronous and CPU-bound (a bulk index folds
                             // thousands of items + BM25 stats). Run ready records in one blocking
-                            // task to keep NATS I/O moving without paying a thread handoff per WAL
+                            // task to keep broker I/O moving without paying a thread handoff per WAL
                             // record.
                             let eng = engine.clone();
                             let seqs: Vec<u64> = batch.iter().map(|pending| pending.seq).collect();

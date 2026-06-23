@@ -1,8 +1,8 @@
+use super::check::TypeChecker;
+use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
 use crate::source::span::Spanned;
-use super::{Ty, TypeId};
-use super::check::TypeChecker;
 
 /// Statement type checking, function body checking, and helpers.
 impl TypeChecker {
@@ -26,9 +26,7 @@ impl TypeChecker {
         let owns_method = |s: &super::stdlib_sigs::StdlibSig| {
             matches!(s.kind, SigKind::Method) && s.module == module && s.qualifier == cls
         };
-        if STDLIB_SIGS.iter().any(owns_method)
-            || STDLIB_SIGS_GENERATED.iter().any(owns_method)
-        {
+        if STDLIB_SIGS.iter().any(owns_method) || STDLIB_SIGS_GENERATED.iter().any(owns_method) {
             Some(cls.to_string())
         } else {
             None
@@ -40,7 +38,9 @@ impl TypeChecker {
     /// `object.__new__(Cls)` and `Cls(...)` where `Cls` is a from-imported stdlib
     /// class with a `Method` signature in the sig table.
     fn stdlib_instance_class(&self, value: &Spanned<Expr>) -> Option<String> {
-        let Expr::Call { func, args } = &value.node else { return None };
+        let Expr::Call { func, args } = &value.node else {
+            return None;
+        };
         // `Cls(...)` — direct constructor call.
         if let Expr::Ident(cls) = &func.node {
             return self.stdlib_method_class(cls);
@@ -146,14 +146,17 @@ impl TypeChecker {
                         match expr {
                             Expr::Ident(name) => {
                                 if checker.symbols.lookup(name).is_none() {
-                                    let sym = checker.symbols.define(name.clone(), SymbolKind::Variable);
+                                    let sym =
+                                        checker.symbols.define(name.clone(), SymbolKind::Variable);
                                     let any_ty = checker.tcx.any();
                                     checker.set_sym_type(sym.0, any_ty);
                                 }
                             }
                             Expr::Starred(inner) => define_unpack_targets(checker, &inner.node),
                             Expr::TupleLit(elems) | Expr::UnpackTarget(elems) => {
-                                for elem in elems { define_unpack_targets(checker, &elem.node); }
+                                for elem in elems {
+                                    define_unpack_targets(checker, &elem.node);
+                                }
                             }
                             _ => {}
                         }
@@ -186,57 +189,135 @@ impl TypeChecker {
                     );
                 }
             }
-            Stmt::FnDef { name, type_params, params, return_ty, body, .. }
-            | Stmt::AsyncFnDef { name, type_params, params, return_ty, body, .. } => {
+            Stmt::FnDef {
+                name,
+                type_params,
+                params,
+                return_ty,
+                body,
+                ..
+            }
+            | Stmt::AsyncFnDef {
+                name,
+                type_params,
+                params,
+                return_ty,
+                body,
+                ..
+            } => {
                 // Re-register type params for body checking scope
                 let _gp = self.register_type_params(type_params);
                 self.check_fn_body(name, params, return_ty.as_ref(), body);
                 self.unregister_type_params(type_params);
             }
-            Stmt::If { condition, body, elif_clauses, else_body } => {
+            Stmt::If {
+                condition,
+                body,
+                elif_clauses,
+                else_body,
+            } => {
                 let _cond_ty = self.check_expr(condition);
                 // Python: any type can be used in a condition (truthiness via __bool__/__len__)
-                for s in body { self.check_stmt(s); }
+                for s in body {
+                    self.check_stmt(s);
+                }
 
                 for (cond, elif_body) in elif_clauses {
                     let _ct = self.check_expr(cond);
-                    for s in elif_body { self.check_stmt(s); }
+                    for s in elif_body {
+                        self.check_stmt(s);
+                    }
                 }
 
                 if let Some(eb) = else_body {
-                    for s in eb { self.check_stmt(s); }
+                    for s in eb {
+                        self.check_stmt(s);
+                    }
                 }
             }
-            Stmt::While { condition, body, else_body } => {
+            Stmt::While {
+                condition,
+                body,
+                else_body,
+            } => {
                 let _cond_ty = self.check_expr(condition);
                 // Python: any type can be used in a while condition
-                self.symbols.push_scope();
-                for s in body { self.check_stmt(s); }
-                self.symbols.pop_scope();
+                //
+                // Python has no block scope: assignments inside a `while` body
+                // (or its `else`) bind in the enclosing scope and remain
+                // visible after the loop. Mirror the `Stmt::Try` handling —
+                // do NOT push a scope here, or post-loop reads of body-assigned
+                // names raise bogus "undefined name" type errors.
+                for s in body {
+                    self.check_stmt(s);
+                }
                 if let Some(eb) = else_body {
-                    self.symbols.push_scope();
-                    for s in eb { self.check_stmt(s); }
-                    self.symbols.pop_scope();
+                    for s in eb {
+                        self.check_stmt(s);
+                    }
                 }
             }
-            Stmt::For { targets, var_ty, iter, body, else_body }
-            | Stmt::AsyncFor { targets, var_ty, iter, body, else_body } => {
-                self.symbols.push_scope();
-                let ty = var_ty.as_ref()
+            Stmt::For {
+                targets,
+                var_ty,
+                iter,
+                body,
+                else_body,
+            }
+            | Stmt::AsyncFor {
+                targets,
+                var_ty,
+                iter,
+                body,
+                else_body,
+            } => {
+                // Python has no block scope: loop targets and body assignments
+                // bind in the enclosing scope and persist after the loop (the
+                // very common read-loop-var-after-loop idiom). Mirror the
+                // `Stmt::Try` handling and the resolver pass — do NOT push a
+                // scope here. Comprehensions DO scope their variables; that is
+                // handled separately in `check_expr` and stays scoped.
+                let ty = var_ty
+                    .as_ref()
                     .map(|t| self.resolve_type_expr(t))
                     .unwrap_or_else(|| self.infer_iter_element(iter));
-                for var in targets {
-                    let sym = self.symbols.define(var.clone(), SymbolKind::Variable);
-                    self.set_sym_type(sym.0, ty);
+                if targets.len() > 1 {
+                    // Tuple-destructuring targets: `for a, b in [(17, 5)]`
+                    // binds each target to the corresponding tuple ELEMENT
+                    // type, not the whole element type (which made `a // b`
+                    // a bogus tuple//tuple hard error). On shape mismatch or
+                    // a non-tuple element type, fall back to Any and defer
+                    // to runtime unpacking.
+                    let elem_tys: Option<Vec<TypeId>> = match self.tcx.get(ty) {
+                        Ty::Tuple(ts) if ts.len() == targets.len() => Some(ts.clone()),
+                        _ => None,
+                    };
+                    for (i, var) in targets.iter().enumerate() {
+                        let t = elem_tys
+                            .as_ref()
+                            .map(|ts| ts[i])
+                            .unwrap_or_else(|| self.tcx.any());
+                        let sym = self.symbols.define(var.clone(), SymbolKind::Variable);
+                        self.set_sym_type(sym.0, t);
+                    }
+                } else {
+                    for var in targets {
+                        let sym = self.symbols.define(var.clone(), SymbolKind::Variable);
+                        self.set_sym_type(sym.0, ty);
+                    }
                 }
-                for s in body { self.check_stmt(s); }
+                for s in body {
+                    self.check_stmt(s);
+                }
                 if let Some(eb) = else_body {
-                    for s in eb { self.check_stmt(s); }
+                    for s in eb {
+                        self.check_stmt(s);
+                    }
                 }
-                self.symbols.pop_scope();
             }
             Stmt::Return(value) => {
-                let val_ty = value.as_ref()
+                let val_ty = value
+                    .as_ref()
                     .map(|v| self.check_expr(v))
                     .unwrap_or(self.tcx.none());
                 if let Some(expected) = self.current_return_ty {
@@ -258,17 +339,33 @@ impl TypeChecker {
             }
             Stmt::Match { expr, arms } => {
                 let subject_ty = self.check_expr(expr);
+                // Python has no block scope: pattern captures (incl. AS
+                // aliases) and case-body assignments bind in the enclosing
+                // scope and remain visible after the match. Mirror the
+                // `Stmt::Try` handling — do NOT push a per-arm scope.
+                //
+                // Per-arm class-pattern narrowing of the subject (#827, R4)
+                // must stay arm-local, so snapshot the subject's binding type
+                // before narrowing and restore it after the arm body when (and
+                // only when) narrowing actually re-bound it.
+                let subject_name = match &expr.node {
+                    Expr::Ident(n) => Some(n.clone()),
+                    _ => None,
+                };
                 for arm in arms {
-                    self.symbols.push_scope();
+                    let saved_subject_ty = subject_name
+                        .as_ref()
+                        .and_then(|n| self.symbols.lookup(n))
+                        .map(|s| self.get_sym_type(s.0));
                     // R4: flow-sensitive type narrowing (#827)
                     // When a case branch uses a class pattern, narrow the matched
-                    // variable's type to the class type within the branch scope.
-                    self.narrow_match_subject(expr, &arm.pattern);
+                    // variable's type to the class type within the branch body.
+                    let narrowed = self.narrow_match_subject(expr, &arm.pattern);
                     // Propagate subject type into capture/star/AS bindings (#827).
                     let prev_subject_ty = self.current_match_subject_ty.replace(subject_ty);
                     self.check_pattern(&arm.pattern);
                     self.current_match_subject_ty = prev_subject_ty;
-                    // Type-check guard expression within the arm's scope (#827)
+                    // Type-check guard expression (#827)
                     // Guard must be boolean (same semantics as if/while conditions)
                     if let Some(guard) = &arm.guard {
                         let guard_ty = self.check_expr(guard);
@@ -276,15 +373,33 @@ impl TypeChecker {
                             self.error(guard.span, "match guard condition must be bool");
                         }
                     }
-                    for s in &arm.body { self.check_stmt(s); }
-                    self.symbols.pop_scope();
+                    for s in &arm.body {
+                        self.check_stmt(s);
+                    }
+                    // Un-narrow: restore the subject's pre-arm type so the
+                    // narrowing does not leak into later arms or past the match.
+                    if narrowed {
+                        if let (Some(name), Some(orig_ty)) =
+                            (subject_name.as_ref(), saved_subject_ty)
+                        {
+                            let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
+                            self.set_sym_type(sym.0, orig_ty);
+                        }
+                    }
                 }
             }
-            Stmt::ClassDef { name, type_params, body, .. } => {
+            Stmt::ClassDef {
+                name,
+                type_params,
+                body,
+                ..
+            } => {
                 let _gp = self.register_type_params(type_params);
                 let prev_class = self.current_class.replace(name.clone());
                 self.symbols.push_scope();
-                for s in body { self.check_stmt(s); }
+                for s in body {
+                    self.check_stmt(s);
+                }
                 self.symbols.pop_scope();
                 self.current_class = prev_class;
                 self.unregister_type_params(type_params);
@@ -294,7 +409,12 @@ impl TypeChecker {
                 self.check_expr(target);
                 self.check_expr(value);
             }
-            Stmt::Try { body, handlers, else_body, finally_body } => {
+            Stmt::Try {
+                body,
+                handlers,
+                else_body,
+                finally_body,
+            } => {
                 // Python semantics: variables assigned inside try/except/else/finally
                 // are visible in the enclosing scope after the block — no new scope
                 // is pushed for the block bodies themselves.
@@ -314,18 +434,28 @@ impl TypeChecker {
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, any_ty);
                     }
-                    for s in &handler.body { self.check_stmt(s); }
+                    for s in &handler.body {
+                        self.check_stmt(s);
+                    }
                 }
                 if let Some(eb) = else_body {
-                    for s in eb { self.check_stmt(s); }
+                    for s in eb {
+                        self.check_stmt(s);
+                    }
                 }
                 if let Some(fb) = finally_body {
-                    for s in fb { self.check_stmt(s); }
+                    for s in fb {
+                        self.check_stmt(s);
+                    }
                 }
             }
             Stmt::Raise { value, from } => {
-                if let Some(v) = value { self.check_expr(v); }
-                if let Some(f) = from { self.check_expr(f); }
+                if let Some(v) = value {
+                    self.check_expr(v);
+                }
+                if let Some(f) = from {
+                    self.check_expr(f);
+                }
             }
             Stmt::With { items, body } | Stmt::AsyncWith { items, body } => {
                 // Python's `with` is NOT a scope — `as v` aliases bind in the
@@ -340,13 +470,19 @@ impl TypeChecker {
                         self.set_sym_type(sym.0, self.tcx.any());
                     }
                 }
-                for s in body { self.check_stmt(s); }
+                for s in body {
+                    self.check_stmt(s);
+                }
             }
             Stmt::Assert { test, msg } => {
                 self.check_expr(test);
-                if let Some(m) = msg { self.check_expr(m); }
+                if let Some(m) = msg {
+                    self.check_expr(m);
+                }
             }
-            Stmt::Del(expr) => { self.check_expr(expr); }
+            Stmt::Del(expr) => {
+                self.check_expr(expr);
+            }
             Stmt::Global(names) => {
                 use crate::resolve::VariableClass;
                 for name in names {
@@ -367,7 +503,9 @@ impl TypeChecker {
                     while let Some(si) = scope_idx {
                         if let Some(outer_id) = self.symbols.lookup_in_scope(si, name) {
                             self.symbols.set_var_class(outer_id, VariableClass::Cell);
-                            let inner_id = if let Some(existing) = self.symbols.lookup_in_scope(current, name) {
+                            let inner_id = if let Some(existing) =
+                                self.symbols.lookup_in_scope(current, name)
+                            {
                                 existing
                             } else {
                                 self.symbols.define(name.clone(), SymbolKind::Variable)
@@ -386,7 +524,11 @@ impl TypeChecker {
             }
             Stmt::TypeAlias { .. } => { /* handled in first pass */ }
             Stmt::Pass | Stmt::Break | Stmt::Continue => {}
-            Stmt::Import { names, module_alias, module } => {
+            Stmt::Import {
+                names,
+                module_alias,
+                module,
+            } => {
                 // Imported names get type Any — external modules are not resolved.
                 // This prevents false "undefined name" errors for third-party imports.
                 let any_ty = self.tcx.any();
@@ -453,7 +595,9 @@ impl TypeChecker {
         self.symbols.push_scope();
         for param in params {
             let ty = self.resolve_type_expr(&param.ty);
-            let sym = self.symbols.define(param.name.clone(), SymbolKind::Parameter);
+            let sym = self
+                .symbols
+                .define(param.name.clone(), SymbolKind::Parameter);
             self.set_sym_type(sym.0, ty);
         }
         // Python scoping rule: any name assigned anywhere in the body is
@@ -467,8 +611,12 @@ impl TypeChecker {
         crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut assigned);
         let any_ty = self.tcx.any();
         for n in &assigned {
-            if declared.iter().any(|d| d == n) { continue; }
-            if params.iter().any(|p| &p.name == n) { continue; }
+            if declared.iter().any(|d| d == n) {
+                continue;
+            }
+            if params.iter().any(|p| &p.name == n) {
+                continue;
+            }
             let sym = self.symbols.define(n.clone(), SymbolKind::Variable);
             self.set_sym_type(sym.0, any_ty);
         }
@@ -485,14 +633,24 @@ impl TypeChecker {
         self.symbols.pop_scope();
         if self.symbols.lookup(name).is_none() {
             // Detect *args variadic and only include pre-star positional params in type.
-            let star_pos = params.iter().position(|p| p.kind == crate::parser::ast::ParamKind::Star);
-            let is_variadic = star_pos.is_some() || params.iter().any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
+            let star_pos = params
+                .iter()
+                .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
+            let is_variadic = star_pos.is_some()
+                || params
+                    .iter()
+                    .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
             let effective_params = star_pos.map_or(params, |pos| &params[..pos]);
-            let param_types: Vec<TypeId> = effective_params.iter()
+            let param_types: Vec<TypeId> = effective_params
+                .iter()
                 .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
                 .map(|p| self.resolve_type_expr(&p.ty))
                 .collect();
-            let fn_ty = self.tcx.intern(Ty::Fn { params: param_types, ret: ret_ty, variadic: is_variadic });
+            let fn_ty = self.tcx.intern(Ty::Fn {
+                params: param_types,
+                ret: ret_ty,
+                variadic: is_variadic,
+            });
             let sym = self.symbols.define(name.to_string(), SymbolKind::Function);
             self.set_sym_type(sym.0, fn_ty);
         }
@@ -621,22 +779,32 @@ impl TypeChecker {
     ///
     /// If `pattern` is a `ClassPattern` (or an `As` pattern wrapping one) and
     /// `subject` is a simple identifier, re-defines that identifier in the
-    /// current (already-pushed) scope with the class's registered type.
+    /// current scope with the class's registered type.
+    ///
+    /// Returns `true` when the subject binding was actually re-bound, so the
+    /// caller can restore the original type after the arm body (match arms are
+    /// not a scope, but narrowing must stay arm-local).
     pub(crate) fn narrow_match_subject(
         &mut self,
         subject: &Spanned<Expr>,
         pattern: &Spanned<Pattern>,
-    ) {
+    ) -> bool {
         // Unwrap outer AS layer if present
         let (inner_pat, alias_name) = match &pattern.node {
-            Pattern::As { pattern: inner, name: alias } => (inner.as_ref(), Some(alias.clone())),
+            Pattern::As {
+                pattern: inner,
+                name: alias,
+            } => (inner.as_ref(), Some(alias.clone())),
             other_pat => {
                 // Wrap in a temporary spanned shell so we can recurse uniformly
-                let tmp = Spanned { node: other_pat.clone(), span: pattern.span };
+                let tmp = Spanned {
+                    node: other_pat.clone(),
+                    span: pattern.span,
+                };
                 return self.narrow_match_subject_pat(subject, &tmp, None);
             }
         };
-        self.narrow_match_subject_pat(subject, inner_pat, alias_name);
+        self.narrow_match_subject_pat(subject, inner_pat, alias_name)
     }
 
     fn narrow_match_subject_pat(
@@ -644,15 +812,19 @@ impl TypeChecker {
         subject: &Spanned<Expr>,
         pattern: &Spanned<Pattern>,
         alias_name: Option<String>,
-    ) {
-        let Expr::Ident(subject_name) = &subject.node else { return };
+    ) -> bool {
+        let Expr::Ident(subject_name) = &subject.node else {
+            return false;
+        };
         // Extract class name from either ClassPattern or Constructor (#827 R4)
         let class_name = match &pattern.node {
             Pattern::ClassPattern { cls, .. } => cls.last().map(|s| s.as_str()).unwrap_or(""),
             Pattern::Constructor { path, .. } => path.last().map(|s| s.as_str()).unwrap_or(""),
-            _ => return,
+            _ => return false,
         };
-        if class_name.is_empty() { return; }
+        if class_name.is_empty() {
+            return false;
+        }
 
         // Built-in self-subject patterns: narrow to the built-in type directly.
         let builtin_narrow_ty = match class_name {
@@ -666,28 +838,40 @@ impl TypeChecker {
             _ => None,
         };
         if let Some(narrow_ty) = builtin_narrow_ty {
-            let sym = self.symbols.define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
+            let sym = self
+                .symbols
+                .define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
             self.set_sym_type(sym.0, narrow_ty);
             if let Some(alias) = alias_name {
-                let alias_sym = self.symbols.define(alias, crate::resolve::SymbolKind::Variable);
+                let alias_sym = self
+                    .symbols
+                    .define(alias, crate::resolve::SymbolKind::Variable);
                 self.set_sym_type(alias_sym.0, narrow_ty);
             }
-            return;
+            return true;
         }
 
-        let Some(class_sym) = self.symbols.lookup(class_name) else { return };
+        let Some(class_sym) = self.symbols.lookup(class_name) else {
+            return false;
+        };
         let class_ty = self.get_sym_type(class_sym.0);
         // Only narrow if the looked-up type is actually a class (not error/any)
         if matches!(self.tcx.get(class_ty), super::Ty::Class { .. }) {
             // Re-define the subject variable in the current scope with the narrowed type
-            let sym = self.symbols.define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
+            let sym = self
+                .symbols
+                .define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
             self.set_sym_type(sym.0, class_ty);
             // Also narrow the AS-alias to the same class type (#827)
             if let Some(alias) = alias_name {
-                let alias_sym = self.symbols.define(alias, crate::resolve::SymbolKind::Variable);
+                let alias_sym = self
+                    .symbols
+                    .define(alias, crate::resolve::SymbolKind::Variable);
                 self.set_sym_type(alias_sym.0, class_ty);
             }
+            return true;
         }
+        false
     }
 
     /// Collect class fields from a class body for type resolution (#246).
@@ -710,22 +894,25 @@ impl TypeChecker {
     /// Returns:
     /// - `Some(names)` when explicit `__match_args__` found (even `Some(vec![])` for `= ()`).
     /// - `None` when not found; callers fall back to `__init__` param order or field order.
-    pub(crate) fn collect_match_args(
-        &self,
-        body: &[Spanned<Stmt>],
-    ) -> Option<Vec<String>> {
+    pub(crate) fn collect_match_args(&self, body: &[Spanned<Stmt>]) -> Option<Vec<String>> {
         for stmt in body {
             match &stmt.node {
                 // `__match_args__ = ("x", "y")` — bare assignment
                 Stmt::Assign { target, value } => {
-                    if let (Expr::Ident(name), Expr::TupleLit(elems)) = (&target.node, &value.node) {
+                    if let (Expr::Ident(name), Expr::TupleLit(elems)) = (&target.node, &value.node)
+                    {
                         if name == "__match_args__" {
-                            let names: Vec<String> = elems.iter()
+                            let names: Vec<String> = elems
+                                .iter()
                                 .filter_map(|e| {
-                                    if let Expr::StrLit(s) = &e.node { Some(s.clone()) } else { None }
+                                    if let Expr::StrLit(s) = &e.node {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
                                 })
                                 .collect();
-                            return Some(names);  // authoritative even if empty
+                            return Some(names); // authoritative even if empty
                         }
                     }
                 }
@@ -733,19 +920,24 @@ impl TypeChecker {
                 Stmt::VarDecl { name, value, .. } => {
                     if name == "__match_args__" {
                         if let Expr::TupleLit(elems) = &value.node {
-                            let names: Vec<String> = elems.iter()
+                            let names: Vec<String> = elems
+                                .iter()
                                 .filter_map(|e| {
-                                    if let Expr::StrLit(s) = &e.node { Some(s.clone()) } else { None }
+                                    if let Expr::StrLit(s) = &e.node {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
                                 })
                                 .collect();
-                            return Some(names);  // authoritative even if empty
+                            return Some(names); // authoritative even if empty
                         }
                     }
                 }
                 _ => {}
             }
         }
-        None  // no explicit __match_args__
+        None // no explicit __match_args__
     }
 
     /// Infer element type from an iterable expression (#248).

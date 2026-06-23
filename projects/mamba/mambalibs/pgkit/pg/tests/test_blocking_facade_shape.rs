@@ -76,8 +76,7 @@ fn blocking_facade_bodies_have_no_control_flow() {
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| {
-            e.file_type().is_file()
-                && e.path().extension().and_then(|s| s.to_str()) == Some("rs")
+            e.file_type().is_file() && e.path().extension().and_then(|s| s.to_str()) == Some("rs")
         })
     {
         let path = entry.path();
@@ -114,8 +113,7 @@ fn blocking_facade_io_fns_use_block_on() {
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| {
-            e.file_type().is_file()
-                && e.path().extension().and_then(|s| s.to_str()) == Some("rs")
+            e.file_type().is_file() && e.path().extension().and_then(|s| s.to_str()) == Some("rs")
         })
     {
         let path = entry.path();
@@ -207,12 +205,7 @@ fn audit_block_on(
                 let mut walker = BlockOnFinder::default();
                 walker.visit_block(&f.block);
                 if !walker.found {
-                    missing.push(format!(
-                        "  - {}::{} ({})",
-                        ty,
-                        f.sig.ident,
-                        path.display(),
-                    ));
+                    missing.push(format!("  - {}::{} ({})", ty, f.sig.ident, path.display(),));
                 }
             }
         }

@@ -1,3 +1,5 @@
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
 /// posixpath module for Mamba (#1261 long-tail).
 ///
 /// Real implementation of CPython 3.12 `Lib/posixpath.py`. Previously
@@ -15,10 +17,7 @@
 ///
 /// Also registered under the name `genericpath` since CPython exposes
 /// the same FS-existence/size/time surface there.
-
 use std::collections::HashMap;
-use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 || args_ptr.is_null() {
@@ -197,7 +196,10 @@ fn posix_normpath(path: &str) -> String {
         0
     };
 
-    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    let parts: Vec<&str> = path
+        .split('/')
+        .filter(|p| !p.is_empty() && *p != ".")
+        .collect();
     let mut comps: Vec<&str> = Vec::new();
     for part in parts {
         if part == ".." {
@@ -255,8 +257,13 @@ fn posix_commonpath_strs(strs: &[String]) -> Option<String> {
             return None; // mixing absolute and relative — CPython raises ValueError
         }
     }
-    let split_parts: Vec<Vec<&str>> = strs.iter()
-        .map(|p| p.split('/').filter(|s| !s.is_empty() && *s != ".").collect())
+    let split_parts: Vec<Vec<&str>> = strs
+        .iter()
+        .map(|p| {
+            p.split('/')
+                .filter(|s| !s.is_empty() && *s != ".")
+                .collect()
+        })
         .collect();
     let min_len = split_parts.iter().map(|v| v.len()).min().unwrap_or(0);
     let mut common: Vec<&str> = Vec::new();
@@ -293,7 +300,10 @@ fn expand_user(path: &str) -> String {
     let user_part = &path[..split_idx];
     let rest = &path[split_idx..];
     if user_part == "~" {
-        if let Some(home) = std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()) {
+        if let Some(home) = std::env::var("HOME")
+            .ok()
+            .or_else(|| std::env::var("USERPROFILE").ok())
+        {
             return format!("{}{}", home, rest);
         }
     }
@@ -344,8 +354,12 @@ fn metadata_time<F>(p: &str, getter: F) -> f64
 where
     F: Fn(&std::fs::Metadata) -> std::io::Result<std::time::SystemTime>,
 {
-    let Ok(meta) = std::fs::metadata(p) else { return 0.0; };
-    let Ok(t) = getter(&meta) else { return 0.0; };
+    let Ok(meta) = std::fs::metadata(p) else {
+        return 0.0;
+    };
+    let Ok(t) = getter(&meta) else {
+        return 0.0;
+    };
     match t.duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => d.as_secs_f64(),
         Err(_) => 0.0,
@@ -418,45 +432,73 @@ unsafe extern "C" fn dispatch_split(args_ptr: *const MbValue, nargs: usize) -> M
 
 unsafe extern "C" fn dispatch_basename(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     mk_str(posix_basename(&s))
 }
 
 unsafe extern "C" fn dispatch_dirname(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     mk_str(posix_dirname(&s))
 }
 
 unsafe extern "C" fn dispatch_splitext(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let (a, b) = posix_splitext(&s);
     mk_tuple2(a, b)
 }
 
 unsafe extern "C" fn dispatch_splitdrive(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let (a, b) = posix_splitdrive(&s);
     mk_tuple2(a, b)
 }
 
 unsafe extern "C" fn dispatch_isabs(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     MbValue::from_bool(posix_isabs(&s))
 }
 
 unsafe extern "C" fn dispatch_normpath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     mk_str(posix_normpath(&s))
 }
 
 unsafe extern "C" fn dispatch_normcase(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     mk_str(posix_normcase(&s))
 }
 
@@ -467,13 +509,20 @@ unsafe extern "C" fn dispatch_commonprefix(args_ptr: *const MbValue, nargs: usiz
         if let Some(p) = args[0].as_ptr() {
             unsafe {
                 match &(*p).data {
-                    ObjData::List(lock) => lock.read().unwrap().iter().filter_map(|v| extract_str(*v)).collect(),
+                    ObjData::List(lock) => lock
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|v| extract_str(*v))
+                        .collect(),
                     ObjData::Tuple(items) => items.iter().filter_map(|v| extract_str(*v)).collect(),
                     ObjData::Str(_) => vec![extract_str(args[0]).unwrap()],
                     _ => Vec::new(),
                 }
             }
-        } else { Vec::new() }
+        } else {
+            Vec::new()
+        }
     } else {
         args.iter().filter_map(|v| extract_str(*v)).collect()
     };
@@ -486,13 +535,20 @@ unsafe extern "C" fn dispatch_commonpath(args_ptr: *const MbValue, nargs: usize)
         if let Some(p) = args[0].as_ptr() {
             unsafe {
                 match &(*p).data {
-                    ObjData::List(lock) => lock.read().unwrap().iter().filter_map(|v| extract_str(*v)).collect(),
+                    ObjData::List(lock) => lock
+                        .read()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|v| extract_str(*v))
+                        .collect(),
                     ObjData::Tuple(items) => items.iter().filter_map(|v| extract_str(*v)).collect(),
                     ObjData::Str(_) => vec![extract_str(args[0]).unwrap()],
                     _ => Vec::new(),
                 }
             }
-        } else { Vec::new() }
+        } else {
+            Vec::new()
+        }
     } else {
         args.iter().filter_map(|v| extract_str(*v)).collect()
     };
@@ -512,25 +568,41 @@ unsafe extern "C" fn dispatch_commonpath(args_ptr: *const MbValue, nargs: usize)
 
 unsafe extern "C" fn dispatch_exists(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     MbValue::from_bool(std::path::Path::new(&s).exists())
 }
 
 unsafe extern "C" fn dispatch_isfile(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     MbValue::from_bool(std::path::Path::new(&s).is_file())
 }
 
 unsafe extern "C" fn dispatch_isdir(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     MbValue::from_bool(std::path::Path::new(&s).is_dir())
 }
 
 unsafe extern "C" fn dispatch_islink(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let is_link = std::fs::symlink_metadata(&s)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false);
@@ -539,7 +611,11 @@ unsafe extern "C" fn dispatch_islink(args_ptr: *const MbValue, nargs: usize) -> 
 
 unsafe extern "C" fn dispatch_ismount(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     // True mount detection requires libc::stat dev comparison. Use a
     // cheap proxy: `/` is a mount point, plus paths whose canonical
     // form equals their parent's (root of a filesystem).
@@ -573,7 +649,11 @@ unsafe extern "C" fn dispatch_ismount(args_ptr: *const MbValue, nargs: usize) ->
 
 unsafe extern "C" fn dispatch_getsize(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     match std::fs::metadata(&s) {
         Ok(m) => MbValue::from_int(m.len() as i64),
         Err(_) => MbValue::from_int(-1),
@@ -582,19 +662,31 @@ unsafe extern "C" fn dispatch_getsize(args_ptr: *const MbValue, nargs: usize) ->
 
 unsafe extern "C" fn dispatch_getmtime(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     MbValue::from_float(metadata_time(&s, |m| m.modified()))
 }
 
 unsafe extern "C" fn dispatch_getatime(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     MbValue::from_float(metadata_time(&s, |m| m.accessed()))
 }
 
 unsafe extern "C" fn dispatch_getctime(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     MbValue::from_float(metadata_time(&s, |m| m.created()))
 }
 
@@ -623,11 +715,18 @@ unsafe extern "C" fn dispatch_samefile(args_ptr: *const MbValue, nargs: usize) -
 
 unsafe extern "C" fn dispatch_abspath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     let resolved = if std::path::Path::new(&s).is_absolute() {
         posix_normpath(&s)
     } else {
-        let cwd = std::env::current_dir().ok().map(|p| p.display().to_string()).unwrap_or_else(|| ".".to_string());
+        let cwd = std::env::current_dir()
+            .ok()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| ".".to_string());
         posix_normpath(&format!("{}/{}", cwd, s))
     };
     mk_str(resolved)
@@ -635,7 +734,11 @@ unsafe extern "C" fn dispatch_abspath(args_ptr: *const MbValue, nargs: usize) ->
 
 unsafe extern "C" fn dispatch_realpath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     match std::fs::canonicalize(&s) {
         Ok(p) => mk_str(p.display().to_string()),
         Err(_) => {
@@ -644,7 +747,10 @@ unsafe extern "C" fn dispatch_realpath(args_ptr: *const MbValue, nargs: usize) -
             let resolved = if std::path::Path::new(&s).is_absolute() {
                 posix_normpath(&s)
             } else {
-                let cwd = std::env::current_dir().ok().map(|p| p.display().to_string()).unwrap_or_else(|| ".".to_string());
+                let cwd = std::env::current_dir()
+                    .ok()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| ".".to_string());
                 posix_normpath(&format!("{}/{}", cwd, s))
             };
             mk_str(resolved)
@@ -654,21 +760,41 @@ unsafe extern "C" fn dispatch_realpath(args_ptr: *const MbValue, nargs: usize) -
 
 unsafe extern "C" fn dispatch_relpath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let target = args.first().copied().and_then(extract_str).unwrap_or_default();
-    let start = args.get(1).copied().and_then(extract_str)
-        .unwrap_or_else(|| std::env::current_dir().ok().map(|p| p.display().to_string()).unwrap_or_else(|| ".".to_string()));
+    let target = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let start = args
+        .get(1)
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| ".".to_string())
+        });
     mk_str(relpath(&start, &target))
 }
 
 unsafe extern "C" fn dispatch_expanduser(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     mk_str(expand_user(&s))
 }
 
 unsafe extern "C" fn dispatch_expandvars(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let s = args
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
     mk_str(expand_vars(&s))
 }
 
@@ -679,35 +805,35 @@ unsafe extern "C" fn dispatch_clear_cache(_a: *const MbValue, _n: usize) -> MbVa
 fn build_attrs() -> HashMap<String, MbValue> {
     let mut attrs = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("join",         dispatch_join         as *const () as usize),
-        ("split",        dispatch_split        as *const () as usize),
-        ("splitext",     dispatch_splitext     as *const () as usize),
-        ("splitdrive",   dispatch_splitdrive   as *const () as usize),
-        ("basename",     dispatch_basename     as *const () as usize),
-        ("dirname",      dispatch_dirname      as *const () as usize),
-        ("isabs",        dispatch_isabs        as *const () as usize),
-        ("normpath",     dispatch_normpath     as *const () as usize),
-        ("normcase",     dispatch_normcase     as *const () as usize),
+        ("join", dispatch_join as *const () as usize),
+        ("split", dispatch_split as *const () as usize),
+        ("splitext", dispatch_splitext as *const () as usize),
+        ("splitdrive", dispatch_splitdrive as *const () as usize),
+        ("basename", dispatch_basename as *const () as usize),
+        ("dirname", dispatch_dirname as *const () as usize),
+        ("isabs", dispatch_isabs as *const () as usize),
+        ("normpath", dispatch_normpath as *const () as usize),
+        ("normcase", dispatch_normcase as *const () as usize),
         ("commonprefix", dispatch_commonprefix as *const () as usize),
-        ("commonpath",   dispatch_commonpath   as *const () as usize),
-        ("exists",       dispatch_exists       as *const () as usize),
-        ("lexists",      dispatch_exists       as *const () as usize),
-        ("isfile",       dispatch_isfile       as *const () as usize),
-        ("isdir",        dispatch_isdir        as *const () as usize),
-        ("islink",       dispatch_islink       as *const () as usize),
-        ("ismount",      dispatch_ismount      as *const () as usize),
-        ("getsize",      dispatch_getsize      as *const () as usize),
-        ("getmtime",     dispatch_getmtime     as *const () as usize),
-        ("getatime",     dispatch_getatime     as *const () as usize),
-        ("getctime",     dispatch_getctime     as *const () as usize),
-        ("samefile",     dispatch_samefile     as *const () as usize),
-        ("abspath",      dispatch_abspath      as *const () as usize),
-        ("realpath",     dispatch_realpath     as *const () as usize),
-        ("relpath",      dispatch_relpath      as *const () as usize),
-        ("expanduser",   dispatch_expanduser   as *const () as usize),
-        ("expandvars",   dispatch_expandvars   as *const () as usize),
+        ("commonpath", dispatch_commonpath as *const () as usize),
+        ("exists", dispatch_exists as *const () as usize),
+        ("lexists", dispatch_exists as *const () as usize),
+        ("isfile", dispatch_isfile as *const () as usize),
+        ("isdir", dispatch_isdir as *const () as usize),
+        ("islink", dispatch_islink as *const () as usize),
+        ("ismount", dispatch_ismount as *const () as usize),
+        ("getsize", dispatch_getsize as *const () as usize),
+        ("getmtime", dispatch_getmtime as *const () as usize),
+        ("getatime", dispatch_getatime as *const () as usize),
+        ("getctime", dispatch_getctime as *const () as usize),
+        ("samefile", dispatch_samefile as *const () as usize),
+        ("abspath", dispatch_abspath as *const () as usize),
+        ("realpath", dispatch_realpath as *const () as usize),
+        ("relpath", dispatch_relpath as *const () as usize),
+        ("expanduser", dispatch_expanduser as *const () as usize),
+        ("expandvars", dispatch_expandvars as *const () as usize),
         // genericpath caching helper (no-op for us).
-        ("_clear_cache", dispatch_clear_cache  as *const () as usize),
+        ("_clear_cache", dispatch_clear_cache as *const () as usize),
     ];
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
@@ -727,12 +853,17 @@ fn build_attrs() -> HashMap<String, MbValue> {
     attrs.insert("curdir".to_string(), mk_str(".".to_string()));
     attrs.insert("pardir".to_string(), mk_str("..".to_string()));
     attrs.insert("devnull".to_string(), mk_str("/dev/null".to_string()));
-    attrs.insert("supports_unicode_filenames".to_string(), MbValue::from_bool(true));
+    attrs.insert(
+        "supports_unicode_filenames".to_string(),
+        MbValue::from_bool(true),
+    );
     // genericpath.ALLOW_MISSING sentinel singleton (re-exported through
     // posixpath). CPython exposes it as a unique sentinel object whose repr is
     // "os.path.ALLOW_MISSING"; surface only needs the name present.
-    attrs.insert("ALLOW_MISSING".to_string(),
-        MbValue::from_ptr(MbObject::new_str("os.path.ALLOW_MISSING".to_string())));
+    attrs.insert(
+        "ALLOW_MISSING".to_string(),
+        MbValue::from_ptr(MbObject::new_str("os.path.ALLOW_MISSING".to_string())),
+    );
     attrs
 }
 
@@ -743,8 +874,18 @@ pub fn register() {
     // posixpath/ntpath; the trimmed surface is enough for the common
     // `from genericpath import *` consumers.
     let mut g = HashMap::new();
-    for k in ["exists", "isfile", "isdir", "getsize", "getmtime", "getatime",
-              "getctime", "samefile", "commonprefix", "_clear_cache"] {
+    for k in [
+        "exists",
+        "isfile",
+        "isdir",
+        "getsize",
+        "getmtime",
+        "getatime",
+        "getctime",
+        "samefile",
+        "commonprefix",
+        "_clear_cache",
+    ] {
         if let Some(v) = build_attrs().remove(k) {
             g.insert(k.to_string(), v);
         }
@@ -761,7 +902,10 @@ mod tests {
         assert_eq!(posix_join_strs(&["a".to_string(), "b".to_string()]), "a/b");
         assert_eq!(posix_join_strs(&["a/".to_string(), "b".to_string()]), "a/b");
         assert_eq!(posix_join_strs(&["a".to_string(), "/b".to_string()]), "/b");
-        assert_eq!(posix_join_strs(&["/a".to_string(), "b".to_string(), "c".to_string()]), "/a/b/c");
+        assert_eq!(
+            posix_join_strs(&["/a".to_string(), "b".to_string(), "c".to_string()]),
+            "/a/b/c"
+        );
         assert_eq!(posix_join_strs(&[]), "");
     }
 
@@ -769,15 +913,27 @@ mod tests {
     fn split_basic() {
         assert_eq!(posix_split("a/b/c"), ("a/b".to_string(), "c".to_string()));
         assert_eq!(posix_split("/a"), ("/".to_string(), "a".to_string()));
-        assert_eq!(posix_split("noslash"), ("".to_string(), "noslash".to_string()));
+        assert_eq!(
+            posix_split("noslash"),
+            ("".to_string(), "noslash".to_string())
+        );
     }
 
     #[test]
     fn splitext_basic() {
-        assert_eq!(posix_splitext("foo.tar.gz"), ("foo.tar".to_string(), ".gz".to_string()));
+        assert_eq!(
+            posix_splitext("foo.tar.gz"),
+            ("foo.tar".to_string(), ".gz".to_string())
+        );
         assert_eq!(posix_splitext("foo"), ("foo".to_string(), "".to_string()));
-        assert_eq!(posix_splitext(".bashrc"), (".bashrc".to_string(), "".to_string()));
-        assert_eq!(posix_splitext("dir/.hidden.txt"), ("dir/.hidden".to_string(), ".txt".to_string()));
+        assert_eq!(
+            posix_splitext(".bashrc"),
+            (".bashrc".to_string(), "".to_string())
+        );
+        assert_eq!(
+            posix_splitext("dir/.hidden.txt"),
+            ("dir/.hidden".to_string(), ".txt".to_string())
+        );
     }
 
     #[test]

@@ -1,11 +1,10 @@
+use super::context::TypeContext;
+use super::ty::{Ty, TypeId, TypeVarId};
 /// Generics support for Mamba (#314 R1, R3).
 ///
 /// Implements PEP 695 type parameter syntax and generic type resolution.
 /// Tracks type variables, bounds, and constraints for generic classes and functions.
-
 use std::collections::HashMap;
-use super::ty::{TypeId, TypeVarId, Ty};
-use super::context::TypeContext;
 
 /// A type variable with optional bound and constraints.
 #[derive(Debug, Clone)]
@@ -55,7 +54,9 @@ pub struct Substitution {
 
 impl Substitution {
     pub fn new() -> Self {
-        Self { map: HashMap::new() }
+        Self {
+            map: HashMap::new(),
+        }
     }
 
     pub fn insert(&mut self, var: TypeVarId, ty: TypeId) {
@@ -75,40 +76,57 @@ impl Substitution {
     pub fn apply(&self, ty: TypeId, tcx: &mut TypeContext) -> TypeId {
         let ty_val = tcx.get(ty).clone();
         match ty_val {
-            Ty::TypeVar(var_id) => {
-                self.map.get(&var_id).copied().unwrap_or(ty)
-            }
+            Ty::TypeVar(var_id) => self.map.get(&var_id).copied().unwrap_or(ty),
             Ty::List(elem) => {
                 let new_elem = self.apply(elem, tcx);
-                if new_elem == elem { ty } else { tcx.intern(Ty::List(new_elem)) }
+                if new_elem == elem {
+                    ty
+                } else {
+                    tcx.intern(Ty::List(new_elem))
+                }
             }
             Ty::Dict(k, v) => {
                 let new_k = self.apply(k, tcx);
                 let new_v = self.apply(v, tcx);
-                if new_k == k && new_v == v { ty }
-                else { tcx.intern(Ty::Dict(new_k, new_v)) }
+                if new_k == k && new_v == v {
+                    ty
+                } else {
+                    tcx.intern(Ty::Dict(new_k, new_v))
+                }
             }
             Ty::Tuple(ref elems) => {
-                let new_elems: Vec<TypeId> = elems.iter()
-                    .map(|e| self.apply(*e, tcx))
-                    .collect();
-                if new_elems == *elems { ty }
-                else { tcx.intern(Ty::Tuple(new_elems)) }
+                let new_elems: Vec<TypeId> = elems.iter().map(|e| self.apply(*e, tcx)).collect();
+                if new_elems == *elems {
+                    ty
+                } else {
+                    tcx.intern(Ty::Tuple(new_elems))
+                }
             }
-            Ty::Fn { ref params, ret, variadic } => {
-                let new_params: Vec<TypeId> = params.iter()
-                    .map(|p| self.apply(*p, tcx))
-                    .collect();
+            Ty::Fn {
+                ref params,
+                ret,
+                variadic,
+            } => {
+                let new_params: Vec<TypeId> = params.iter().map(|p| self.apply(*p, tcx)).collect();
                 let new_ret = self.apply(ret, tcx);
-                if new_params == *params && new_ret == ret { ty }
-                else { tcx.intern(Ty::Fn { params: new_params, ret: new_ret, variadic }) }
+                if new_params == *params && new_ret == ret {
+                    ty
+                } else {
+                    tcx.intern(Ty::Fn {
+                        params: new_params,
+                        ret: new_ret,
+                        variadic,
+                    })
+                }
             }
             Ty::Union(ref variants) => {
-                let new_variants: Vec<TypeId> = variants.iter()
-                    .map(|v| self.apply(*v, tcx))
-                    .collect();
-                if new_variants == *variants { ty }
-                else { tcx.intern(Ty::Union(new_variants)) }
+                let new_variants: Vec<TypeId> =
+                    variants.iter().map(|v| self.apply(*v, tcx)).collect();
+                if new_variants == *variants {
+                    ty
+                } else {
+                    tcx.intern(Ty::Union(new_variants))
+                }
             }
             // Primitive types are unchanged
             _ => ty,
@@ -133,8 +151,12 @@ pub fn infer_type_args(
 
     for (param_ty, arg_ty) in param_types.iter().zip(arg_types.iter()) {
         unify_for_inference(
-            *param_ty, *arg_ty, &generic_params.params,
-            &mut subst, &mut conflicts, tcx,
+            *param_ty,
+            *arg_ty,
+            &generic_params.params,
+            &mut subst,
+            &mut conflicts,
+            tcx,
         );
     }
 
@@ -158,13 +180,12 @@ fn unify_for_inference(
                 if let Some(existing) = subst.get(var_id) {
                     // Already inferred — verify consistency
                     if existing != arg {
-                        let tv_name = type_vars.iter()
+                        let tv_name = type_vars
+                            .iter()
                             .find(|tv| tv.id == var_id)
                             .map(|tv| tv.name.as_str())
                             .unwrap_or("?");
-                        conflicts.push(format!(
-                            "conflicting types for type parameter '{tv_name}'"
-                        ));
+                        conflicts.push(format!("conflicting types for type parameter '{tv_name}'"));
                     }
                 } else {
                     subst.insert(var_id, arg);
@@ -213,7 +234,8 @@ pub fn check_bounds(
                 if !tcx.is_subtype(concrete, bound) {
                     errors.push(format!(
                         "Type parameter '{}' bound violation: expected subtype of {:?}",
-                        tv.name, tcx.get(bound)
+                        tv.name,
+                        tcx.get(bound)
                     ));
                 }
             }
@@ -345,7 +367,7 @@ mod tests {
         let var_id = TypeVarId(99);
         let var_ty = tcx.intern(Ty::TypeVar(var_id));
         let subst = Substitution::new(); // no mapping for var_id
-        // Unbound typevar stays unchanged
+                                         // Unbound typevar stays unchanged
         assert_eq!(subst.apply(var_ty, &mut tcx), var_ty);
     }
 
@@ -388,14 +410,25 @@ mod tests {
         let mut tcx = TypeContext::new();
         let var_id = TypeVarId(0);
         let var_ty = tcx.intern(Ty::TypeVar(var_id));
-        let fn_ty = tcx.intern(Ty::Fn { params: vec![var_ty], ret: var_ty, variadic: false });
+        let fn_ty = tcx.intern(Ty::Fn {
+            params: vec![var_ty],
+            ret: var_ty,
+            variadic: false,
+        });
 
         let mut subst = Substitution::new();
         subst.insert(var_id, tcx.int());
 
         let result = subst.apply(fn_ty, &mut tcx);
         let int_ty = tcx.int();
-        assert_eq!(*tcx.get(result), Ty::Fn { params: vec![int_ty], ret: int_ty, variadic: false });
+        assert_eq!(
+            *tcx.get(result),
+            Ty::Fn {
+                params: vec![int_ty],
+                ret: int_ty,
+                variadic: false
+            }
+        );
     }
 
     #[test]

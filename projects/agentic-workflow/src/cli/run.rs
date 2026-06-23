@@ -1476,6 +1476,9 @@ fn capability_action_envelope_with_planning_base(
         CapabilityActionKind::CreateWi | CapabilityActionKind::LinkClaimVerification => {
             ("epicize", format!("aw wi epicize --project {project}"))
         }
+        CapabilityActionKind::ReconcileWiRefs => {
+            ("reconcile_wi_refs", agent_command(&action.command))
+        }
         CapabilityActionKind::AtomizeWi => {
             ("atomize", format!("aw wi atomize --project {project}"))
         }
@@ -1483,15 +1486,20 @@ fn capability_action_envelope_with_planning_base(
             ("execute_change", agent_command(&action.command))
         }
         CapabilityActionKind::RunVerify => ("verify", agent_command(&action.command)),
-        CapabilityActionKind::HumanConfirmRequired
+        CapabilityActionKind::DefineCapabilityMap
+        | CapabilityActionKind::HumanConfirmRequired
         | CapabilityActionKind::UpdateCapabilityStatus
         | CapabilityActionKind::EnvBlocked
-        | CapabilityActionKind::DefineVerificationContract => {
-            ("hitl", agent_command(&action.command))
-        }
+        | CapabilityActionKind::StaleProjectConfig
+        | CapabilityActionKind::DefineVerificationContract
+        | CapabilityActionKind::AssignCapabilityType => ("hitl", agent_command(&action.command)),
         CapabilityActionKind::None => ("inspect_parent", String::new()),
     };
-    let blocked = action.requires_hitl || matches!(action.kind, CapabilityActionKind::EnvBlocked);
+    let blocked = action.requires_hitl
+        || matches!(
+            action.kind,
+            CapabilityActionKind::EnvBlocked | CapabilityActionKind::StaleProjectConfig
+        );
     WorkflowEnvelope {
         action: if blocked { "blocked" } else { "dispatch" }.to_string(),
         root,
@@ -2594,12 +2602,9 @@ mod tests {
             optional_quality_warnings: Vec::new(),
             managed_percent: 100.0,
             semantic_percent: 100.0,
-            regenerable_percent: 100.0,
             codegen_percent: 100.0,
-            full_codegen_percent: 100.0,
             codegen_eligible_files: 1,
             codegen_files: 1,
-            fully_codegen_files: 1,
             cb_ownership: crate::cli::project::CbOwnershipSummary {
                 eligible_files: 1,
                 codegen_files: 1,
@@ -3531,6 +3536,40 @@ review_status: pending
     }
 
     #[test]
+    fn reconcile_wi_refs_dispatches_capability_plan_not_epicize() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = WorkflowNode {
+            kind: "project".to_string(),
+            id: "jet".to_string(),
+        };
+        let action = CapabilityAction {
+            kind: CapabilityActionKind::ReconcileWiRefs,
+            capability_id: Some("package-manager".to_string()),
+            gap_id: Some("lockfile-parity".to_string()),
+            claim_id: None,
+            target: "Package Manager".to_string(),
+            command: "aw wi plan --project jet".to_string(),
+            reason: "active WI reference is not present in project issue inventory".to_string(),
+            requires_hitl: false,
+            hitl_question: None,
+        };
+
+        let envelope = capability_action_envelope_with_planning_base(
+            root.clone(),
+            root,
+            "jet",
+            &action,
+            project_completion(false, vec![action.reason.clone()]),
+            tmp.path(),
+        );
+
+        assert_eq!(envelope.action, "dispatch");
+        assert_eq!(envelope.next.kind, "reconcile_wi_refs");
+        assert_eq!(envelope.next.command, "aw wi plan --project jet");
+        assert!(!envelope.requires_hitl);
+    }
+
+    #[test]
     fn hitl_capability_action_propagates_question() {
         let root = WorkflowNode {
             kind: "project".to_string(),
@@ -3667,7 +3706,7 @@ review_status: pending
     #[test]
     fn artifact_quality_gate_injects_frontend_profile_and_prompt() {
         let mut envelope = test_envelope(
-            "aw cb gen --project cue frontend/src/App.tsx",
+            "aw td gen --project cue frontend/src/App.tsx",
             "generate frontend page component under frontend/src/App.tsx",
         );
 

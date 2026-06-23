@@ -1,6 +1,13 @@
 ---
 id: projects-vat-tests-vat_concurrent_runners-rs
 fill_sections: [overview, source, changes]
+capability_refs:
+  - id: agent-native-gpu-native-dev-containers
+    role: primary
+    gap: local-agent-test-runner-protocol
+    claim: local-agent-test-runner-protocol
+    coverage: full
+    rationale: "This source replay TD preserves the concurrent-runner contract of the local agent test runner protocol: a shared workspace and service union, side-by-side runner execution, and worst-wins exit folding."
 ---
 
 # Standardized projects/vat/tests/vat_concurrent_runners.rs
