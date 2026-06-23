@@ -73,6 +73,19 @@ pub enum Completion {
     Failed { node: NodeId },
 }
 
+/// Wire form of a worker completion: published to the loom completions subject
+/// by a worker and consumed by the controller to advance the DAG.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompletionMsg {
+    pub run_id: String,
+    pub node_id: String,
+    pub attempt: u32,
+    #[serde(default)]
+    pub result_ref: Option<String>,
+    #[serde(default)]
+    pub failed: bool,
+}
+
 /// Publish every currently-ready node of `run` to `dispatcher` (routed by its
 /// runner class) and mark it dispatched. Returns the number dispatched.
 pub async fn dispatch_ready(

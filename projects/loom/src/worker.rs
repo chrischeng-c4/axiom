@@ -125,13 +125,37 @@ pub async fn run_once(
     Ok(true)
 }
 
-/// Entry point for `loom worker` / `loom run-task`.
+/// Entry point for `loom worker` — a resident pull loop over real relay + keep.
+/// Env: `LOOM_RELAY` (relay base), `LOOM_KEEP` (keep base), `LOOM_RUNNER`
+/// (subject/runner class to lease; default `resident`). Registers a built-in
+/// `echo` handler; real deployments register their task handlers.
 pub fn run() -> anyhow::Result<()> {
-    anyhow::bail!(
-        "loom worker: harness loop implemented and tested; real relay/keep wiring \
-         is blocked on #166 (relay lease must return message identity + payload) \
-         and #167 (keep claim-check input/result API)"
-    )
+    let relay = std::env::var("LOOM_RELAY")
+        .map_err(|_| anyhow::anyhow!("loom worker requires LOOM_RELAY (relay base url)"))?;
+    let keep_base = std::env::var("LOOM_KEEP")
+        .map_err(|_| anyhow::anyhow!("loom worker requires LOOM_KEEP (keep base url)"))?;
+    let subject = std::env::var("LOOM_RUNNER").unwrap_or_else(|_| "resident".to_string());
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async move {
+        let consumer = crate::relay_client::RelayWorkConsumer::new(&relay, &subject)?;
+        let keep = crate::keep_client::KeepHttp::new(&keep_base)?;
+        let sink = crate::relay_client::RelayCompletionSink::new(&relay, "loom.completions")?;
+        let mut registry = Registry::new();
+        registry.register("echo", Arc::new(|input: Vec<u8>| Ok(input)));
+
+        eprintln!("loom worker: leasing `{subject}` from relay {relay}, keep {keep_base}");
+        loop {
+            match run_once("loom-worker", &consumer, &keep, &sink, &registry).await {
+                Ok(true) => {}
+                Ok(false) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+                Err(e) => {
+                    eprintln!("loom worker: tick error: {e}");
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]

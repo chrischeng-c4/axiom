@@ -18,7 +18,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{KeepRef, Node, NodeId, RunStatus, StageId, TaskSpec, WorkflowRun, WorkflowRunId};
 use crate::runner::RunnerClass;
-use crate::scheduler::{apply_completion, dispatch_ready, Completion, Dispatcher, MemDispatcher};
+use crate::scheduler::{
+    apply_completion, dispatch_ready, Completion, CompletionMsg, Dispatcher, MemDispatcher,
+};
 use crate::store::{MemStore, RunStore};
 
 /// Shared control-plane state.
@@ -226,19 +228,92 @@ pub fn run() -> anyhow::Result<()> {
     let store: Arc<dyn RunStore> = Arc::new(MemStore::new());
     // Dispatch to a real relay when LOOM_RELAY is set; otherwise the in-memory
     // dispatcher records dispatches (dev/test) without a broker.
-    let dispatcher: Arc<dyn Dispatcher> = match std::env::var("LOOM_RELAY") {
-        Ok(base) => {
+    let relay_base = std::env::var("LOOM_RELAY").ok();
+    let dispatcher: Arc<dyn Dispatcher> = match &relay_base {
+        Some(base) => {
             eprintln!("loom: dispatching to relay at {base}");
-            Arc::new(crate::relay_client::RelayDispatcher::new(base)?)
+            Arc::new(crate::relay_client::RelayDispatcher::new(base.clone())?)
         }
-        Err(_) => {
+        None => {
             eprintln!("loom: LOOM_RELAY unset — using in-memory dispatcher (no broker)");
             Arc::new(MemDispatcher::new())
         }
     };
-    let app = router(store, dispatcher);
+    let app = router(store.clone(), dispatcher.clone());
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(serve(&addr, app))
+    rt.block_on(async move {
+        // With a real relay, consume worker completions and advance the DAG.
+        if let Some(base) = relay_base {
+            tokio::spawn(completion_consumer(base, store, dispatcher));
+        }
+        serve(&addr, app).await
+    })
+}
+
+/// Background loop: lease worker completions from the `loom.completions` relay
+/// subject and fold them into the DAG (which dispatches newly-ready nodes).
+async fn completion_consumer(
+    relay_base: String,
+    store: Arc<dyn RunStore>,
+    dispatcher: Arc<dyn Dispatcher>,
+) {
+    let client = match reqwest::Client::builder().http2_prior_knowledge().build() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("loom completion consumer: client init failed: {e}");
+            return;
+        }
+    };
+    let lease_url = format!("{relay_base}/v1/loom.completions/lease");
+    let ack_url = format!("{relay_base}/v1/loom.completions/ack");
+    let idle = std::time::Duration::from_millis(200);
+    eprintln!("loom: consuming completions from {lease_url}");
+    loop {
+        let leased = client
+            .post(&lease_url)
+            .json(&serde_json::json!({ "consumer_id": "loom-controller" }))
+            .send()
+            .await;
+        let body: serde_json::Value = match leased {
+            Ok(r) => r.json().await.unwrap_or(serde_json::Value::Null),
+            Err(_) => {
+                tokio::time::sleep(idle).await;
+                continue;
+            }
+        };
+        let lease = body.get("lease").filter(|v| !v.is_null());
+        let entry = body.get("entry").filter(|v| !v.is_null());
+        let (Some(lease), Some(entry)) = (lease, entry) else {
+            tokio::time::sleep(idle).await;
+            continue;
+        };
+        let lease_id = lease.get("lease_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let epoch = lease.get("epoch").and_then(|v| v.as_u64()).unwrap_or(0);
+        let payload = entry.get("payload").cloned().unwrap_or(serde_json::Value::Null);
+        if let Ok(cm) = serde_json::from_value::<CompletionMsg>(payload) {
+            apply_completion_msg(&store, dispatcher.as_ref(), cm).await;
+        }
+        let _ = client
+            .post(&ack_url)
+            .json(&serde_json::json!({ "lease_id": lease_id, "epoch": epoch }))
+            .send()
+            .await;
+    }
+}
+
+async fn apply_completion_msg(store: &Arc<dyn RunStore>, dispatcher: &dyn Dispatcher, cm: CompletionMsg) {
+    let run_id = WorkflowRunId::new(&cm.run_id);
+    let Ok(Some(mut run)) = store.get(&run_id) else {
+        return;
+    };
+    let completion = if cm.failed {
+        Completion::Failed { node: NodeId::new(&cm.node_id) }
+    } else {
+        Completion::Ok { node: NodeId::new(&cm.node_id), result: cm.result_ref.map(KeepRef) }
+    };
+    if apply_completion(&mut run, dispatcher, completion).await.is_ok() {
+        let _ = store.put(run);
+    }
 }
 
 async fn serve(addr: &str, app: Router) -> anyhow::Result<()> {
