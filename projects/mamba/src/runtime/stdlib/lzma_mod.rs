@@ -617,6 +617,7 @@ unsafe extern "C" fn dispatch_lzma_open(args_ptr: *const MbValue, nargs: usize) 
         &mode,
         kw_str("encoding"),
         kw_str("errors"),
+        kw_str("newline"),
     )
 }
 
