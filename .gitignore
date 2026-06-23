@@ -11,8 +11,9 @@
 .meter/
 
 # guard per-run report cache (.guard/last-report.json); process output, never
-# source.
-.guard/
+# source. Waiver config (.guard/waivers.json) IS source — keep it tracked.
+.guard/*
+!.guard/waivers.json
 
 # Tool-local runtime state such as GH device ids; process-local, never source.
 .local/

@@ -1,6 +1,9 @@
 // SPEC-MANAGED: projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#rust-source-unit
 // CODEGEN-BEGIN
+use std::fs;
 use std::path::Path;
+
+use serde::Deserialize;
 
 use cclab_compass::checker::{check_paths, LintConfig};
 use cclab_compass::diagnostic::{DiagnosticCategory, DiagnosticSeverity};
@@ -76,6 +79,63 @@ pub fn default_languages() -> Vec<Language> {
     ]
 }
 
+// A reviewed-and-accepted finding waiver, loaded from
+// `<target>/.guard/waivers.json`. Opt-in: with no waiver file present, scanning
+// behaves exactly as before. A waiver never invents a pass — it only suppresses
+// a finding whose rule (and optional path) a maintainer has documented.
+#[derive(Debug, Clone, Deserialize)]
+/// @spec projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#source
+pub struct Waiver {
+    pub rule: String,
+    #[serde(default)]
+    pub path_contains: Option<String>,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+/// @spec projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#source
+struct WaiverFile {
+    #[serde(default)]
+    waivers: Vec<Waiver>,
+}
+
+// Load `<dir>/.guard/waivers.json`. Fail-safe: a missing file or any parse error
+// yields no waivers, so a broken waiver file keeps the scan strict rather than
+// silently passing.
+/// @spec projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#source
+fn load_waivers(target: &Path) -> Vec<Waiver> {
+    let dir = if target.is_dir() {
+        target.to_path_buf()
+    } else {
+        match target.parent() {
+            Some(parent) => parent.to_path_buf(),
+            None => return Vec::new(),
+        }
+    };
+    let path = dir.join(".guard").join("waivers.json");
+    let Ok(text) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<WaiverFile>(&text)
+        .map(|file| file.waivers)
+        .unwrap_or_default()
+}
+
+// `true` when `finding` matches a waiver: identical rule code, and — when the
+// waiver pins `path_contains` — the finding path contains that substring.
+/// @spec projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#source
+fn finding_is_waived(finding: &Finding, waivers: &[Waiver]) -> bool {
+    waivers.iter().any(|waiver| {
+        waiver.rule == finding.rule
+            && waiver
+                .path_contains
+                .as_deref()
+                .map(|needle| finding.location.path.contains(needle))
+                .unwrap_or(true)
+    })
+}
+
 /// @spec projects/guard/tech-design/semantic/source/projects-guard-src-scan-rs.md#source
 pub fn scan_path(path: impl AsRef<Path>) -> GuardReport {
     scan_path_with_options(path, ScanOptions::default())
@@ -143,6 +203,11 @@ pub fn scan_path_with_options(path: impl AsRef<Path>, options: ScanOptions) -> G
                 }),
             });
         }
+    }
+
+    let waivers = load_waivers(target);
+    if !waivers.is_empty() {
+        findings.retain(|finding| !finding_is_waived(finding, &waivers));
     }
 
     let evidence = run_evidence_commands(&options.evidence_commands);
@@ -305,6 +370,30 @@ mod tests {
             .findings
             .iter()
             .any(|finding| finding.rule == "RIG-EVIDENCE"));
+    }
+
+    #[test]
+    fn waiver_file_suppresses_matching_finding() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("query.py"),
+            "uid = 1\nq = f\"SELECT * FROM users WHERE id = {uid}\"\n",
+        )
+        .expect("write fixture");
+
+        // Without a waiver the SQL-INJ finding is present and fails the scan.
+        let strict = scan_path(dir.path());
+        assert!(strict.findings.iter().any(|finding| finding.rule == "SQL-INJ"));
+
+        // A documented waiver for the rule clears it; nothing else is touched.
+        std::fs::create_dir_all(dir.path().join(".guard")).expect("mkdir .guard");
+        std::fs::write(
+            dir.path().join(".guard").join("waivers.json"),
+            r#"{"waivers":[{"rule":"SQL-INJ","reason":"benchmark-only query, not production"}]}"#,
+        )
+        .expect("write waivers");
+        let waived = scan_path(dir.path());
+        assert!(!waived.findings.iter().any(|finding| finding.rule == "SQL-INJ"));
     }
 }
 // CODEGEN-END
