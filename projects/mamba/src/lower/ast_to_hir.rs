@@ -1080,9 +1080,10 @@ fn infer_return_type_from_ast(
     None
 }
 
-/// Collect the names of unannotated params that are used in a value-comparing
-/// position in the body — i.e. as a direct operand of `==`, `!=`, `in`, or
-/// `not in` (including chained comparisons).
+/// Collect the names of unannotated params that must keep boxed value semantics:
+/// direct operands of `==`, `!=`, `in`, or `not in` (including chained
+/// comparisons), and direct arguments to runtime type checks such as
+/// `isinstance` / `issubclass`.
 ///
 /// Unannotated params default to the raw-int (`int_ty`) calling convention so
 /// genuine integer params keep the fast native ABI. But when a param is the
@@ -1093,11 +1094,11 @@ fn infer_return_type_from_ast(
 /// just those params to `any` routes their `==`/`in` through the NaN-aware
 /// runtime so value comparison is correct.
 ///
-/// This is intentionally narrow: only equality/membership *operand* positions
-/// trigger promotion. Params used only in arithmetic, indexing, or as kwargs to
-/// native calls (e.g. `datetime(..., hour=h)`, `int(x, base=16)`,
-/// `round(x, ndigits=2)`) keep `int_ty`, preserving both the raw-int fast path
-/// and the native kwargs ABI.
+/// This is intentionally narrow: only equality/membership operand positions
+/// and runtime type-check arguments trigger promotion. Params used only in
+/// arithmetic, indexing, or as kwargs to native calls (e.g.
+/// `datetime(..., hour=h)`, `int(x, base=16)`, `round(x, ndigits=2)`) keep
+/// `int_ty`, preserving both the raw-int fast path and the native kwargs ABI.
 fn collect_value_compared_params(
     body: &[Spanned<ast::Stmt>],
     param_names: &std::collections::HashSet<String>,
@@ -1266,6 +1267,19 @@ fn expr_collect_value_compared_params(
                 }
                 if let Some(r) = operands.get(i + 1) {
                     mark(r, out);
+                }
+            }
+        }
+    }
+    if let Call { func, args } = expr {
+        let is_runtime_type_check = matches!(
+            &func.node,
+            ast::Expr::Ident(name) if name == "isinstance" || name == "issubclass"
+        );
+        if is_runtime_type_check {
+            for arg in args.iter().take(2) {
+                if let ast::CallArg::Positional(e) = arg {
+                    mark(e, out);
                 }
             }
         }
