@@ -197,7 +197,12 @@ pub async fn lease(
         .relay
         .lease(&subject, &req.consumer_id, now)
         .unwrap_or(None);
-    encode_body(cbor, StatusCode::OK, &LeaseResponse { lease })
+    // Attach the leased entry body so the consumer knows what it leased (#166).
+    let entry = match &lease {
+        Some(l) => st.relay.entry(&l.subject, l.shard, l.seq).unwrap_or(None),
+        None => None,
+    };
+    encode_body(cbor, StatusCode::OK, &LeaseResponse { lease, entry })
 }
 
 /// `POST /v1/{subject}/ack` — acknowledge a lease (CBOR fast path).

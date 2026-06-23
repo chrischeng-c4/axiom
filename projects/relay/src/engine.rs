@@ -297,6 +297,17 @@ impl Relay {
         Ok(None)
     }
 
+    /// Read a leased entry's stored body (`message_id` + `payload` + `headers`)
+    /// by its `(subject, shard, seq)`, so a work-queue consumer knows what it
+    /// leased and can fetch claim-check input / dispatch on the task (#166).
+    ///
+    /// @spec projects/relay/tech-design/interfaces/rest/work-queue-api-lease-ack-heartbeat.md#logic
+    pub fn entry(&self, subject: &str, shard: ShardId, seq: Seq) -> io::Result<Option<LogEntry>> {
+        let ss = self.shard_state(subject, shard)?;
+        let g = ss.lock().expect("subject mutex");
+        g.log.entry(seq)
+    }
+
     /// Lease up to `max` entries, accumulating across shards.
     ///
     /// @spec projects/relay/tech-design/logic/multi-shard-per-subject-server-side-sharding-horizontal-scale.md#logic
