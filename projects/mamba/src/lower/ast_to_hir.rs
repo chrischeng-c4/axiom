@@ -2206,7 +2206,8 @@ struct AstLowerer<'a> {
     dataclass_init_params:
         HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
     /// PEP 557: local names bound to `dataclasses.dataclass` / `field` /
-    /// `replace` by a `from dataclasses import ...` statement. Bare-Ident
+    /// `replace` / `make_dataclass` by a `from dataclasses import ...`
+    /// statement. Bare-Ident
     /// calls to these names pack keyword args into a trailing dict (the
     /// native-dispatcher kwargs convention) instead of flattening them to
     /// positionals — `dataclass(frozen=True)` / `field(default_factory=list)`
@@ -4285,12 +4286,15 @@ impl<'a> AstLowerer<'a> {
                 module_alias,
             } => {
                 // PEP 557: track local bindings of dataclasses.{dataclass,
-                // field, replace} so bare-Ident calls to them keep keyword
+                // field, replace, make_dataclass} so bare-Ident calls keep keyword
                 // names (trailing-kwargs-dict convention) at the call site.
                 if module.len() == 1 && module[0] == "dataclasses" {
                     if let Some(names) = names {
                         for (orig, alias) in names {
-                            if matches!(orig.as_str(), "dataclass" | "field" | "replace") {
+                            if matches!(
+                                orig.as_str(),
+                                "dataclass" | "field" | "replace" | "make_dataclass"
+                            ) {
                                 self.dataclasses_kwarg_idents
                                     .insert(alias.clone().unwrap_or_else(|| orig.clone()));
                             }

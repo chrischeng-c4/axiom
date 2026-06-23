@@ -21,9 +21,7 @@ use super::super::value::MbValue;
 ///   `FrozenInstanceError`.
 ///
 /// Helpers (`fields`, `asdict`, `astuple`, `replace`, `is_dataclass`,
-/// `field`) operate on the same registry. `make_dataclass` stays a stub:
-/// runtime class synthesis (registering a brand-new class with compiled
-/// methods at runtime) is not yet supported by the class system.
+/// `field`, `make_dataclass`) operate on the same registry.
 use std::collections::HashMap;
 
 fn extract_str(val: MbValue) -> Option<String> {
@@ -1358,10 +1356,73 @@ unsafe extern "C" fn dispatch_replace(args_ptr: *const MbValue, nargs: usize) ->
     new_inst
 }
 
-/// make_dataclass(cls_name, fields, ...) — STUB. Building a working class at
-/// runtime needs runtime class synthesis (a registered class with no compiled
-/// body), which the class system does not support yet. Returns the first
-/// argument unchanged so the surface fixture (presence + callability) passes.
+fn get_kwarg(kwargs: MbValue, key: &str) -> Option<MbValue> {
+    let ptr = kwargs.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .unwrap()
+                .get(&super::super::dict_ops::DictKey::Str(key.to_string()))
+                .copied()
+        } else {
+            None
+        }
+    }
+}
+
+fn runtime_type_repr(val: MbValue) -> String {
+    super::super::class::resolve_class_name(val)
+        .or_else(|| extract_str(val))
+        .unwrap_or_else(|| "typing.Any".to_string())
+}
+
+fn parse_make_dataclass_field_spec(spec: MbValue) -> Option<(String, String, Option<MbValue>)> {
+    if let Some(name) = extract_str(spec) {
+        return Some((name, "typing.Any".to_string(), None));
+    }
+    let ptr = spec.as_ptr()?;
+    unsafe {
+        if let ObjData::Tuple(items) = &(*ptr).data {
+            let name = items.first().and_then(|v| extract_str(*v))?;
+            let ty = items
+                .get(1)
+                .map(|v| runtime_type_repr(*v))
+                .unwrap_or_else(|| "typing.Any".to_string());
+            let default = items.get(2).copied();
+            if let Some(v) = default {
+                retain_if_ptr(v);
+            }
+            Some((name, ty, default))
+        } else {
+            None
+        }
+    }
+}
+
+fn parse_make_dataclass_fields(fields_v: MbValue) -> Vec<(String, String, Option<MbValue>)> {
+    let Some(ptr) = fields_v.as_ptr() else {
+        return Vec::new();
+    };
+    unsafe {
+        match &(*ptr).data {
+            ObjData::List(lock) => lock
+                .read()
+                .unwrap()
+                .iter()
+                .filter_map(|v| parse_make_dataclass_field_spec(*v))
+                .collect(),
+            ObjData::Tuple(items) => items
+                .iter()
+                .filter_map(|v| parse_make_dataclass_field_spec(*v))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// make_dataclass(cls_name, fields, ...) — synthesize a registered runtime
+/// class, then feed generated field facts through the same dataclass registry
+/// path used by the `@dataclass` decorator.
 unsafe extern "C" fn dispatch_make_dataclass(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let Some(name_v) = a.first().copied() else {
@@ -1371,22 +1432,28 @@ unsafe extern "C" fn dispatch_make_dataclass(args_ptr: *const MbValue, nargs: us
         return name_v;
     };
     let fields_v = a.get(1).copied().unwrap_or_else(MbValue::none);
-    let is_empty_fields = fields_v.as_ptr().is_some_and(|p| unsafe {
-        matches!(&(*p).data, ObjData::Tuple(items) if items.is_empty())
-            || matches!(&(*p).data, ObjData::List(lock) if lock.read().unwrap().is_empty())
+    let kwargs = a
+        .iter()
+        .rev()
+        .find(|v| {
+            v.as_ptr()
+                .is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+        })
+        .copied()
+        .unwrap_or_else(MbValue::none);
+    let bases = get_kwarg(kwargs, "bases")
+        .or_else(|| a.get(2).copied())
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_tuple(Vec::new())));
+    let namespace = get_kwarg(kwargs, "namespace")
+        .or_else(|| get_kwarg(kwargs, "ns"))
+        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
+    let _type_obj = super::super::builtins::mb_type3(name_v, bases, namespace);
+
+    let field_specs = parse_make_dataclass_fields(fields_v);
+    PENDING_FIELDS.with(|reg| {
+        reg.borrow_mut().insert(name.clone(), field_specs);
     });
-    if is_empty_fields {
-        super::super::class::mb_class_register(&name, vec![], HashMap::new());
-        DC_REGISTRY.with(|reg| {
-            reg.borrow_mut().insert(
-                name.clone(),
-                DcClass {
-                    fields: Vec::new(),
-                    opts: DcOptions::default(),
-                },
-            );
-        });
-    }
+    decorate_class(&name, parse_options(kwargs));
     name_v
 }
 
