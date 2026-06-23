@@ -101,6 +101,9 @@ pub struct HirClass {
     /// All base classes for multiple inheritance (P1 OOP conformance).
     /// When non-empty, takes priority over `base` for MRO computation.
     pub all_bases: Vec<SymbolId>,
+    /// Base expressions that must be evaluated at the class statement's
+    /// runtime position before the class registry's MRO is final.
+    pub runtime_base_exprs: Vec<HirExpr>,
     /// Literal `namedtuple("T", [...])` base metadata for namedtuple subclasses.
     pub namedtuple_base: Option<NamedTupleBaseSpec>,
     pub fields: Vec<(SymbolId, TypeId)>,
@@ -827,6 +830,7 @@ mod tests {
             name: SymbolId(0),
             base: Some(SymbolId(1)),
             all_bases: vec![SymbolId(1)],
+            runtime_base_exprs: Vec::new(),
             namedtuple_base: None,
             fields: vec![(SymbolId(2), int_ty)],
             methods: vec![],
