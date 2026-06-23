@@ -81,6 +81,11 @@ pub struct FanOutSpec {
     pub task_name: String,
     #[serde(default)]
     pub input_refs: Vec<KeepRef>,
+    /// Inline child input the worker writes to keep before reporting, then
+    /// replaces with an `input_refs` entry — so chunk bytes never enter the
+    /// control plane (claim-check). Worker-local; never serialized.
+    #[serde(skip)]
+    pub input_data: Option<Vec<u8>>,
 }
 
 /// Wire form of a worker completion: published to the loom completions subject
