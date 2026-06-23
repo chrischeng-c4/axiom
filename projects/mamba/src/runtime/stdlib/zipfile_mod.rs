@@ -1328,7 +1328,15 @@ fn register_zip_classes() {
         s.borrow_mut()
             .insert(d_zipinfo_from_file as *const () as usize as u64);
     });
-    super::super::class::mb_class_register(ZIPINFO_CLASS, vec![], zi);
+    // ZipInfo instances historically use the short internal class name for
+    // stable reprs, while the exported constructor is typed as
+    // `zipfile.ZipInfo`. Link the two nominally so isinstance(getinfo(...),
+    // zipfile.ZipInfo) succeeds.
+    super::super::class::mb_class_register(
+        ZIPINFO_CLASS,
+        vec!["zipfile.ZipInfo".into()],
+        zi,
+    );
     // The qualified name is what NATIVE_TYPE_NAMES maps to for the gate.
     let mut zi2: Map<String, MbValue> = Map::new();
     zi2.insert(
