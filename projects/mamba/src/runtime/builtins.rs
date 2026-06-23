@@ -9640,6 +9640,59 @@ fn eval_pending() -> bool {
     super::exception::mb_has_exception().as_bool() == Some(true)
 }
 
+fn eval_dotted_path(expr: &crate::parser::ast::Expr) -> Option<Vec<String>> {
+    use crate::parser::ast::Expr;
+    match expr {
+        Expr::Ident(name) => Some(vec![name.clone()]),
+        Expr::Attr { object, attr } => {
+            let mut parts = eval_dotted_path(&object.node)?;
+            parts.push(attr.clone());
+            Some(parts)
+        }
+        _ => None,
+    }
+}
+
+fn eval_str_value(val: MbValue) -> Option<String> {
+    val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+    })
+}
+
+fn eval_call_values(args: &[crate::parser::ast::CallArg]) -> Option<(Vec<MbValue>, bool)> {
+    use crate::parser::ast::CallArg;
+    let mut vals = Vec::new();
+    let kwargs = super::dict_ops::mb_dict_new();
+    let mut has_kwargs = false;
+    for arg in args {
+        match arg {
+            CallArg::Positional(e) => {
+                vals.push(eval_expr(&e.node));
+                if eval_pending() {
+                    return None;
+                }
+            }
+            CallArg::Keyword { name, value } => {
+                let v = eval_expr(&value.node);
+                if eval_pending() {
+                    return None;
+                }
+                super::dict_ops::mb_dict_setitem(
+                    kwargs,
+                    MbValue::from_ptr(MbObject::new_str(name.clone())),
+                    v,
+                );
+                has_kwargs = true;
+            }
+            CallArg::StarArg(_) | CallArg::DoubleStarArg(_) => return None,
+        }
+    }
+    if has_kwargs {
+        vals.push(kwargs);
+    }
+    Some((vals, has_kwargs))
+}
+
 fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
     use crate::parser::ast::Expr;
     match expr {
@@ -9799,7 +9852,36 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
             // Narrow constructor support so `eval(repr(x))` round-trips for
             // the stdlib numeric handle types (Decimal('0.3'),
             // Fraction(3, 4)). Only positional literal-ish args evaluate.
-            if let Expr::Ident(name) = &func.node {
+            if let Some(path) = eval_dotted_path(&func.node) {
+                let (vals, has_kwargs) = match eval_call_values(args) {
+                    Some(v) => v,
+                    None => return MbValue::none(),
+                };
+                match path.as_slice() {
+                    [name] if name == "Decimal" && !has_kwargs && vals.len() == 1 => {
+                        return super::stdlib::decimal_mod::mb_decimal_new(vals[0]);
+                    }
+                    [name] if name == "Fraction" && !has_kwargs && (1..=2).contains(&vals.len()) => {
+                        return super::stdlib::fractions_mod::mb_fraction_new(
+                            vals[0],
+                            vals.get(1).copied().unwrap_or_else(MbValue::none),
+                        );
+                    }
+                    [name] if name == "repr" && !has_kwargs && vals.len() == 1 => return mb_repr(vals[0]),
+                    [name] if name == "str" && !has_kwargs && vals.len() == 1 => return mb_str(vals[0]),
+                    [module, ctor] if module == "datetime" && ctor == "timedelta" => {
+                        return super::stdlib::datetime_mod::mb_timedelta_new(
+                            MbValue::from_ptr(MbObject::new_list(vals)),
+                        );
+                    }
+                    [module, ctor] if module == "datetime" && ctor == "timezone" && !has_kwargs => {
+                        let offset = vals.first().copied().unwrap_or_else(MbValue::none);
+                        let name = vals.get(1).copied().and_then(eval_str_value);
+                        return super::stdlib::datetime_mod::timezone_from_offset(offset, name);
+                    }
+                    _ => {}
+                }
+            } else if let Expr::Ident(name) = &func.node {
                 let vals: Vec<MbValue> = args
                     .iter()
                     .filter_map(|a| match a {
@@ -9841,6 +9923,22 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
                     MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(format!("'{tn}' object is not callable"))),
                 );
+            }
+            MbValue::none()
+        }
+        Expr::Attr { .. } => {
+            if let Some(path) = eval_dotted_path(expr) {
+                match path.as_slice() {
+                    [module, class, attr]
+                        if module == "datetime"
+                            && class == "timezone"
+                            && matches!(attr.as_str(), "utc" | "min" | "max") =>
+                    {
+                        return super::stdlib::datetime_mod::timezone_class_attr(attr)
+                            .unwrap_or_else(MbValue::none);
+                    }
+                    _ => {}
+                }
             }
             MbValue::none()
         }
