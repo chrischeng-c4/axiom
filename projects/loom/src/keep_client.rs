@@ -38,6 +38,18 @@ impl KeepStore for KeepHttp {
         Ok(Some(resp.bytes().await?.to_vec()))
     }
 
+    async fn put_input(&self, id: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
+        let resp = self
+            .client
+            .put(format!("{}/v1/inputs/{}", self.base, id))
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(bytes)
+            .send()
+            .await?;
+        anyhow::ensure!(resp.status().is_success(), "keep put_input: {}", resp.status());
+        Ok(())
+    }
+
     async fn put_result(&self, id: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
         let resp = self
             .client

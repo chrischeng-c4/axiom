@@ -40,6 +40,7 @@ pub trait RelayConsumer: Send + Sync {
 #[async_trait]
 pub trait KeepStore: Send + Sync {
     async fn get_input(&self, id: &str) -> anyhow::Result<Option<Vec<u8>>>;
+    async fn put_input(&self, id: &str, bytes: Vec<u8>) -> anyhow::Result<()>;
     async fn put_result(&self, id: &str, bytes: Vec<u8>) -> anyhow::Result<()>;
 }
 
@@ -124,9 +125,18 @@ pub async fn run_once(
     };
 
     match outcome {
-        Ok(out) => {
+        Ok(mut out) => {
             let result_id = format!("{}:{}:result", m.run_id, m.node_id);
             keep.put_result(&result_id, out.result).await?;
+            // Persist any inline child inputs to keep (claim-check) and replace
+            // them with an input ref, so chunk bytes never enter the control plane.
+            for child in &mut out.fan_out {
+                if let Some(data) = child.input_data.take() {
+                    let in_id = format!("{}:{}:in", m.run_id, child.id);
+                    keep.put_input(&in_id, data).await?;
+                    child.input_refs = vec![KeepRef(in_id)];
+                }
+            }
             consumer.ack(&task.lease_id, task.epoch).await?;
             sink.report(
                 &m.run_id,
@@ -166,8 +176,7 @@ pub fn run() -> anyhow::Result<()> {
         let sink = crate::relay_client::RelayCompletionSink::new(&relay, "loom.completions")?;
         let mut registry = Registry::new();
         registry.register("echo", Arc::new(|input: Vec<u8>| Ok(input.into())));
-        // demo: `split` reads its input as a chunk count and fans out one `echo`
-        // child per chunk at runtime (#116) — the shape a CSV reader uses (#111).
+        // `split` reads its input as a chunk count and fans out N echo children.
         registry.register(
             "split",
             Arc::new(|input: Vec<u8>| {
@@ -180,9 +189,42 @@ pub fn run() -> anyhow::Result<()> {
                         id: format!("chunk-{i}"),
                         task_name: "echo".to_string(),
                         input_refs: Vec::new(),
+                        input_data: None,
                     })
                     .collect();
                 Ok(TaskOutput { result: Vec::new(), fan_out })
+            }),
+        );
+        // `csv-split` (#111): split CSV input into row-chunks and fan out one
+        // `csv-process` per chunk, each carrying its chunk as claim-check input
+        // (the worker writes it to keep before the children run).
+        registry.register(
+            "csv-split",
+            Arc::new(|input: Vec<u8>| {
+                let text = String::from_utf8_lossy(&input).into_owned();
+                let rows: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+                let fan_out = rows
+                    .chunks(2)
+                    .enumerate()
+                    .map(|(i, chunk)| FanOutSpec {
+                        id: format!("rows-{i}"),
+                        task_name: "csv-process".to_string(),
+                        input_refs: Vec::new(),
+                        input_data: Some(chunk.join("\n").into_bytes()),
+                    })
+                    .collect();
+                Ok(TaskOutput { result: Vec::new(), fan_out })
+            }),
+        );
+        // `csv-process` (#111): process one chunk — here, count its rows.
+        registry.register(
+            "csv-process",
+            Arc::new(|input: Vec<u8>| {
+                let n = String::from_utf8_lossy(&input)
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .count();
+                Ok(format!("{n}").into_bytes().into())
             }),
         );
 
@@ -241,11 +283,16 @@ mod tests {
     #[derive(Default)]
     struct FakeKeep {
         results: Mutex<HashMap<String, Vec<u8>>>,
+        inputs: Mutex<HashMap<String, Vec<u8>>>,
     }
     #[async_trait]
     impl KeepStore for FakeKeep {
         async fn get_input(&self, _id: &str) -> anyhow::Result<Option<Vec<u8>>> {
             Ok(Some(b"hello".to_vec()))
+        }
+        async fn put_input(&self, id: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
+            self.inputs.lock().unwrap().insert(id.to_string(), bytes);
+            Ok(())
         }
         async fn put_result(&self, id: &str, bytes: Vec<u8>) -> anyhow::Result<()> {
             self.results.lock().unwrap().insert(id.to_string(), bytes);
@@ -301,8 +348,8 @@ mod tests {
                 Ok(TaskOutput {
                     result: Vec::new(),
                     fan_out: vec![
-                        FanOutSpec { id: "c0".into(), task_name: "echo".into(), input_refs: vec![] },
-                        FanOutSpec { id: "c1".into(), task_name: "echo".into(), input_refs: vec![] },
+                        FanOutSpec { id: "c0".into(), task_name: "echo".into(), input_refs: vec![], input_data: None },
+                        FanOutSpec { id: "c1".into(), task_name: "echo".into(), input_refs: vec![], input_data: None },
                     ],
                 })
             }),
