@@ -1976,6 +1976,26 @@ fn decorator_is_dataclass(expr: &ast::Expr) -> bool {
     }
 }
 
+fn decorator_is_typing_overload(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(n) => n == "overload",
+        ast::Expr::Attr { attr, .. } => attr == "overload",
+        ast::Expr::Call { func, .. } => decorator_is_typing_overload(&func.node),
+        _ => false,
+    }
+}
+
+fn erase_param_annotations(params: &[ast::Param]) -> Vec<ast::Param> {
+    params
+        .iter()
+        .cloned()
+        .map(|mut p| {
+            p.ty = Spanned::new(ast::TypeExpr::Named("Any".to_string()), p.ty.span);
+            p
+        })
+        .collect()
+}
+
 fn decorator_preserves_call_signature(expr: &ast::Expr) -> bool {
     match expr {
         ast::Expr::Ident(n) => matches!(n.as_str(), "contextmanager" | "asynccontextmanager"),
@@ -2528,6 +2548,22 @@ impl<'a> AstLowerer<'a> {
                         self.arg_bind_sigs.remove(name);
                     }
                     let is_decorated = !decorators.is_empty();
+                    let overload_decorated = decorators
+                        .iter()
+                        .any(|d| decorator_is_typing_overload(&d.node));
+                    let erased_params;
+                    let params_for_lower: &[ast::Param] = if overload_decorated {
+                        erased_params = erase_param_annotations(params);
+                        &erased_params
+                    } else {
+                        params
+                    };
+                    let erased_return: Option<Spanned<ast::TypeExpr>> = None;
+                    let return_for_lower = if overload_decorated {
+                        &erased_return
+                    } else {
+                        return_ty
+                    };
                     // PEP 695: make this def's type-param names visible to the
                     // param/return type lowering (TypeVar-annotated values are
                     // boxed `any`, never raw ints).
@@ -2536,7 +2572,7 @@ impl<'a> AstLowerer<'a> {
                         type_params.iter().map(|p| p.name.clone()).collect(),
                     );
                     let lowered = if is_decorated {
-                        self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
+                        self.lower_decorated_fn(name, params_for_lower, return_for_lower, body, stmt.span)
                     } else {
                         self.lower_fn(name, params, return_ty, body, stmt.span)
                     };
@@ -2586,6 +2622,22 @@ impl<'a> AstLowerer<'a> {
                     ..
                 } => {
                     let is_decorated = !decorators.is_empty();
+                    let overload_decorated = decorators
+                        .iter()
+                        .any(|d| decorator_is_typing_overload(&d.node));
+                    let erased_params;
+                    let params_for_lower: &[ast::Param] = if overload_decorated {
+                        erased_params = erase_param_annotations(params);
+                        &erased_params
+                    } else {
+                        params
+                    };
+                    let erased_return: Option<Spanned<ast::TypeExpr>> = None;
+                    let return_for_lower = if overload_decorated {
+                        &erased_return
+                    } else {
+                        return_ty
+                    };
                     // PEP 695: make this def's type-param names visible to the
                     // param/return type lowering (TypeVar-annotated values are
                     // boxed `any`, never raw ints).
@@ -2594,7 +2646,7 @@ impl<'a> AstLowerer<'a> {
                         type_params.iter().map(|p| p.name.clone()).collect(),
                     );
                     let lowered = if is_decorated {
-                        self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
+                        self.lower_decorated_fn(name, params_for_lower, return_for_lower, body, stmt.span)
                     } else {
                         self.lower_fn(name, params, return_ty, body, stmt.span)
                     };
@@ -4180,6 +4232,22 @@ impl<'a> AstLowerer<'a> {
                 // outer function body can call it, and so resolve_name works inside lower_fn.
                 let fn_sym = self.define_local(name, self.checker.tcx.any());
                 let is_decorated = !decorators.is_empty();
+                let overload_decorated = decorators
+                    .iter()
+                    .any(|d| decorator_is_typing_overload(&d.node));
+                let erased_params;
+                let params_for_lower: &[ast::Param] = if overload_decorated {
+                    erased_params = erase_param_annotations(params);
+                    &erased_params
+                } else {
+                    params
+                };
+                let erased_return: Option<Spanned<ast::TypeExpr>> = None;
+                let return_for_lower = if overload_decorated {
+                    &erased_return
+                } else {
+                    return_ty
+                };
                 // PEP 695: see the module-level FnDef arm — type-param names
                 // must reach the param/return type lowering.
                 let saved_tps = std::mem::replace(
@@ -4187,7 +4255,7 @@ impl<'a> AstLowerer<'a> {
                     type_params.iter().map(|p| p.name.clone()).collect(),
                 );
                 let lowered = if is_decorated {
-                    self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
+                    self.lower_decorated_fn(name, params_for_lower, return_for_lower, body, stmt.span)
                 } else {
                     self.lower_fn(name, params, return_ty, body, stmt.span)
                 };

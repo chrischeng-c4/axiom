@@ -39,6 +39,15 @@ fn is_type_var_factory_call(e: &Expr) -> bool {
     matches!(fname, "TypeVar" | "ParamSpec" | "TypeVarTuple")
 }
 
+fn is_typing_overload_decorator(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(n) => n == "overload",
+        Expr::Attr { attr, .. } => attr == "overload",
+        Expr::Call { func, .. } => is_typing_overload_decorator(&func.node),
+        _ => false,
+    }
+}
+
 fn is_exception_class_name(name: &str) -> bool {
     matches!(
         name,
@@ -278,6 +287,7 @@ impl TypeChecker {
                     type_params,
                     params,
                     return_ty,
+                    decorators,
                     ..
                 }
                 | Stmt::AsyncFnDef {
@@ -285,31 +295,40 @@ impl TypeChecker {
                     type_params,
                     params,
                     return_ty,
+                    decorators,
                     ..
                 } => {
                     // Register generic type params before resolving param/ret types
                     let gp = self.register_type_params(type_params);
 
                     let sym = self.symbols.define(name.clone(), SymbolKind::Function);
-                    // Detect *args variadic parameter and exclude it from param_types.
-                    // Only positional params before the *args are required at call sites.
-                    let star_pos = params
+                    let overload_decorated = decorators
                         .iter()
-                        .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
-                    let is_variadic = star_pos.is_some()
-                        || params
+                        .any(|d| is_typing_overload_decorator(&d.node));
+                    let (param_types, ret, is_variadic) = if overload_decorated {
+                        (Vec::new(), self.tcx.any(), true)
+                    } else {
+                        // Detect *args variadic parameter and exclude it from param_types.
+                        // Only positional params before the *args are required at call sites.
+                        let star_pos = params
                             .iter()
-                            .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
-                    let effective_params = star_pos.map_or(params.as_slice(), |pos| &params[..pos]);
-                    let param_types: Vec<TypeId> = effective_params
-                        .iter()
-                        .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
-                        .map(|p| self.resolve_type_expr(&p.ty))
-                        .collect();
-                    let ret = return_ty
-                        .as_ref()
-                        .map(|t| self.resolve_type_expr(t))
-                        .unwrap_or(self.tcx.any());
+                            .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
+                        let is_variadic = star_pos.is_some()
+                            || params
+                                .iter()
+                                .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
+                        let effective_params = star_pos.map_or(params.as_slice(), |pos| &params[..pos]);
+                        let param_types: Vec<TypeId> = effective_params
+                            .iter()
+                            .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
+                            .map(|p| self.resolve_type_expr(&p.ty))
+                            .collect();
+                        let ret = return_ty
+                            .as_ref()
+                            .map(|t| self.resolve_type_expr(t))
+                            .unwrap_or(self.tcx.any());
+                        (param_types, ret, is_variadic)
+                    };
                     let fn_ty = self.tcx.intern(Ty::Fn {
                         params: param_types,
                         ret,
