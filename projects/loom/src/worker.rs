@@ -195,13 +195,20 @@ pub fn default_registry() -> Registry {
             Ok(TaskOutput { result: Vec::new(), fan_out })
         }),
     );
+    // Chunk size is configurable (LOOM_CSV_CHUNK_ROWS, default 2 for demos) so a
+    // 1M-row CSV fans out into ~100 chunks (10k rows each), not 500k nodes.
+    let chunk_rows = std::env::var("LOOM_CSV_CHUNK_ROWS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(2)
+        .max(1);
     registry.register(
         "csv-split",
-        Arc::new(|input: Vec<u8>| {
+        Arc::new(move |input: Vec<u8>| {
             let text = String::from_utf8_lossy(&input).into_owned();
             let rows: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
             let fan_out = rows
-                .chunks(2)
+                .chunks(chunk_rows)
                 .enumerate()
                 .map(|(i, chunk)| FanOutSpec {
                     id: format!("rows-{i}"),
