@@ -230,6 +230,28 @@ fn build_timezone_instance(offset_seconds: i64, name: Option<String>) -> MbValue
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+pub(crate) fn timezone_from_offset(offset: MbValue, name: Option<String>) -> MbValue {
+    let (days, secs) = offset.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if class_name == "datetime.timedelta" {
+                let f = fields.read().ok()?;
+                return Some((
+                    f.get("days").and_then(|v| v.as_int()).unwrap_or(0),
+                    f.get("seconds").and_then(|v| v.as_int()).unwrap_or(0),
+                ));
+            }
+        }
+        None
+    }).unwrap_or((0, 0));
+    let total_seconds = days * 86_400 + secs;
+    if total_seconds <= -86_400 || total_seconds >= 86_400 {
+        return raise_value_error(
+            "offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24)",
+        );
+    }
+    build_timezone_instance(total_seconds, name)
+}
+
 // ── Dispatch wrappers: native ABI ──
 
 unsafe extern "C" fn dispatch_now(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -383,34 +405,8 @@ pub unsafe extern "C" fn dispatch_time(args_ptr: *const MbValue, nargs: usize) -
 unsafe extern "C" fn dispatch_timezone(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let offset = a.first().copied().unwrap_or_else(MbValue::none);
-    // Pull days/seconds out of a timedelta Instance argument.
-    let (days, secs) = offset
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
-                if class_name == "datetime.timedelta" {
-                    let f = fields.read().ok()?;
-                    return Some((
-                        f.get("days").and_then(|v| v.as_int()).unwrap_or(0),
-                        f.get("seconds").and_then(|v| v.as_int()).unwrap_or(0),
-                    ));
-                }
-            }
-            None
-        })
-        .unwrap_or((0, 0));
-    let total_seconds = days * 86_400 + secs;
-    if total_seconds <= -86_400 || total_seconds >= 86_400 {
-        return raise_value_error(
-            "offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24)",
-        );
-    }
     let name = a.get(1).copied().and_then(extract_str);
-    build_timezone_instance(total_seconds, name)
+    timezone_from_offset(offset, name)
 }
 
 /// `datetime.tzinfo()` — bare abstract base. Constructed instances exist but
