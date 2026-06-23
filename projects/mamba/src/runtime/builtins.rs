@@ -1328,6 +1328,39 @@ fn int_enum_like_value(val: MbValue) -> Option<MbValue> {
         .or_else(|| super::stdlib::http_mod::http_status_member_value(val))
 }
 
+fn int_subclass_payload_for_dunder(val: MbValue, dunder: &str) -> Option<MbValue> {
+    val.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*p).data {
+            if !super::class::check_class_hierarchy(class_name, "int")
+                || super::class::class_defines_own_method(class_name, dunder)
+            {
+                return None;
+            }
+            fields
+                .read()
+                .unwrap()
+                .get(super::class::INT_SUBCLASS_VALUE_FIELD)
+                .copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn int_subclass_numeric_operands(
+    a: MbValue,
+    b: MbValue,
+    dunder: &str,
+) -> Option<(MbValue, MbValue)> {
+    let av = int_subclass_payload_for_dunder(a, dunder);
+    let bv = int_subclass_payload_for_dunder(b, dunder);
+    if av.is_some() || bv.is_some() {
+        Some((av.unwrap_or(a), bv.unwrap_or(b)))
+    } else {
+        None
+    }
+}
+
 /// int(value) — convert to integer.
 pub fn mb_int(val: MbValue) -> MbValue {
     let val = int_enum_like_value(val).unwrap_or(val);
@@ -4138,6 +4171,9 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     {
         return super::stdlib::decimal_mod::mb_numeric_handle_eq(a, b).unwrap_or(false);
     }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__eq__") {
+        return mb_values_eq(na, nb);
+    }
     // NaN check: Python float NaN != NaN (IEEE 754). Must check before bit comparison.
     if let (Some(fa), Some(fb)) = (a.as_float(), b.as_float()) {
         return fa == fb; // IEEE 754: NaN == NaN is false
@@ -4656,6 +4692,36 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
     if a.to_bits() == b.to_bits() {
         return true;
     }
+    if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
+        unsafe {
+            let str_value = |v: MbValue| -> Option<String> {
+                v.as_ptr().and_then(|p| {
+                    if let ObjData::Str(ref s) = (*p).data {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+            };
+            let unbound_key = |p: *mut MbObject| -> Option<(String, String)> {
+                if let ObjData::Instance { ref class_name, ref fields } = (*p).data {
+                    if class_name == "__unbound_method__" {
+                        let f = fields.read().unwrap();
+                        return Some((
+                            str_value(f.get("__type__").copied().unwrap_or(MbValue::none()))?,
+                            str_value(f.get("__method__").copied().unwrap_or(MbValue::none()))?,
+                        ));
+                    }
+                }
+                None
+            };
+            if let (Some((ta, ma)), Some((tb, mb))) = (unbound_key(pa), unbound_key(pb)) {
+                if ta == tb && ma == mb {
+                    return true;
+                }
+            }
+        }
+    }
     // Class identity: a class is represented at runtime as its (uniquely-naming)
     // class-name string, so two distinct string allocations that both name the
     // same registered class refer to the same class object. This makes
@@ -4865,6 +4931,9 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
         if let Some(r) = super::stdlib::functools_mod::mb_functools_cmp_to_key_richcmp(a, b, "lt") {
             return r;
         }
+    }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__lt__") {
+        return mb_values_lt(na, nb);
     }
     // functools.total_ordering: derive __lt__ from the class's seed op.
     if super::stdlib::functools_mod::is_total_ordering_instance(a) {
@@ -9117,6 +9186,9 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
     if enum_ordering_guard(a, b, ">") {
         return MbValue::from_bool(false);
     }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__gt__") {
+        return mb_lt(nb, na);
+    }
     // Try __gt__ dunder on a first
     if let Some(pa) = a.as_ptr() {
         unsafe {
@@ -9166,6 +9238,13 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
     if enum_ordering_guard(a, b, "<=") {
         return MbValue::from_bool(false);
     }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__le__") {
+        let lt_result = mb_lt(na, nb);
+        let eq_result = mb_eq(na, nb);
+        return MbValue::from_bool(
+            lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false),
+        );
+    }
     // Try __le__ dunder on a first
     if let Some(pa) = a.as_ptr() {
         unsafe {
@@ -9212,6 +9291,13 @@ pub fn mb_ge(a: MbValue, b: MbValue) -> MbValue {
     }
     if enum_ordering_guard(a, b, ">=") {
         return MbValue::from_bool(false);
+    }
+    if let Some((na, nb)) = int_subclass_numeric_operands(a, b, "__ge__") {
+        let lt_result = mb_lt(nb, na);
+        let eq_result = mb_eq(na, nb);
+        return MbValue::from_bool(
+            lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false),
+        );
     }
     // Try __ge__ dunder on a first
     if let Some(pa) = a.as_ptr() {
