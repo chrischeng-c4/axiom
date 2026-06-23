@@ -219,6 +219,14 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
             I64
         ),
         rt_sym!(
+            "mb_type3_kwargs",
+            builtins::mb_type3_kwargs
+                as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue)
+                    -> super::MbValue,
+            [I64, I64, I64, I64],
+            I64
+        ),
+        rt_sym!(
             "mb_builtin_type_obj",
             builtins::mb_builtin_type_obj as fn(super::MbValue) -> super::MbValue,
             [I64],

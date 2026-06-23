@@ -7425,6 +7425,15 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
+                    if extern_name == "mb_type" && boxed_args.len() == 4 {
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_type3_kwargs".to_string(),
+                            args: boxed_args,
+                            ty: *ty,
+                        });
+                        return dest;
+                    }
                     // Special case: pow(base, exp, mod) → mb_pow_mod(base, exp, mod).
                     if extern_name == "mb_pow" && boxed_args.len() == 3 {
                         self.current_stmts.push(MirInst::CallExtern {

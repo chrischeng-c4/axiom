@@ -598,6 +598,9 @@ pub fn mb_weakref_proxy(obj: MbValue, _callback: MbValue) -> MbValue {
     if reject_non_weakreferenceable(obj) {
         return MbValue::none();
     }
+    // The proxy carve-out returns the referent itself. The argument cleanup and
+    // returned alias each consume an owned slot, so keep both references alive.
+    unsafe { super::super::rc::retain_if_ptr(obj); }
     unsafe { super::super::rc::retain_if_ptr(obj); }
     obj
 }
