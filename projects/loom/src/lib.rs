@@ -17,6 +17,7 @@
 pub mod model;
 pub mod runner;
 pub mod canvas;
+pub mod fairness;
 pub mod scheduler;
 pub mod store;
 pub mod relay_client;
