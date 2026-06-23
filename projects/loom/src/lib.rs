@@ -19,6 +19,7 @@ pub mod runner;
 pub mod canvas;
 pub mod scheduler;
 pub mod store;
+pub mod relay_client;
 
 pub mod controller;
 pub mod worker;

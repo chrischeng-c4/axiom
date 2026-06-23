@@ -135,7 +135,7 @@ async fn submit(
     };
     // Dispatch the root nodes immediately (loom → relay); the run advances as
     // completions arrive at `/runs/{id}/nodes/{node}/complete`.
-    if let Err(e) = dispatch_ready(&mut run, state.dispatcher.as_ref()) {
+    if let Err(e) = dispatch_ready(&mut run, state.dispatcher.as_ref()).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
             .into_response();
     }
@@ -186,7 +186,7 @@ async fn complete_node(
     } else {
         Completion::Ok { node: NodeId::new(&node), result: req.result_ref.map(KeepRef) }
     };
-    if let Err(e) = apply_completion(&mut run, state.dispatcher.as_ref(), completion) {
+    if let Err(e) = apply_completion(&mut run, state.dispatcher.as_ref(), completion).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
             .into_response();
     }
@@ -224,7 +224,18 @@ pub fn router(store: Arc<dyn RunStore>, dispatcher: Arc<dyn Dispatcher>) -> Rout
 pub fn run() -> anyhow::Result<()> {
     let addr = std::env::var("LOOM_ADDR").unwrap_or_else(|_| "0.0.0.0:7474".to_string());
     let store: Arc<dyn RunStore> = Arc::new(MemStore::new());
-    let dispatcher: Arc<dyn Dispatcher> = Arc::new(MemDispatcher::new());
+    // Dispatch to a real relay when LOOM_RELAY is set; otherwise the in-memory
+    // dispatcher records dispatches (dev/test) without a broker.
+    let dispatcher: Arc<dyn Dispatcher> = match std::env::var("LOOM_RELAY") {
+        Ok(base) => {
+            eprintln!("loom: dispatching to relay at {base}");
+            Arc::new(crate::relay_client::RelayDispatcher::new(base)?)
+        }
+        Err(_) => {
+            eprintln!("loom: LOOM_RELAY unset — using in-memory dispatcher (no broker)");
+            Arc::new(MemDispatcher::new())
+        }
+    };
     let app = router(store, dispatcher);
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(serve(&addr, app))
