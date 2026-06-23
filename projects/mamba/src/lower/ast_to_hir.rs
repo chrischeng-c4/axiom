@@ -5851,6 +5851,12 @@ impl<'a> AstLowerer<'a> {
                             // builtins.open(file, mode=..., encoding=..., closefd=...)
                             // reads a trailing kwargs dict in its native dispatcher.
                             | "open"
+                            // xml.etree.ElementTree constructors use **extra
+                            // keyword attributes as element attrib entries.
+                            | "Element" | "SubElement"
+                            // xml.etree.ElementTree.indent reads space=/level=
+                            // from the trailing kwargs dict.
+                            | "indent"
                     ) || self.dataclasses_kwarg_idents.contains(name.as_str())
                 );
                 let is_type_metaclass_kwargs = matches!(
