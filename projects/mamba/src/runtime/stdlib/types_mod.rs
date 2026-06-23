@@ -244,6 +244,11 @@ pub fn register() {
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
+        if name == "SimpleNamespace" {
+            super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+                m.borrow_mut().insert(addr as u64, "SimpleNamespace".to_string());
+            });
+        }
     }
 
     super::register_module("types", attrs);
