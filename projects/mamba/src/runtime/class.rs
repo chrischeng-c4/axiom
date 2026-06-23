@@ -7447,7 +7447,7 @@ pub(crate) fn class_replace_method(class_name: &str, method_name: &str, value: M
             }
         }
     });
-    METHOD_CACHE_GEN.with(|g| g.set(g.get().wrapping_add(1)));
+    invalidate_method_cache();
 }
 
 pub(crate) fn lookup_method(class_name: &str, method_name: &str) -> MbValue {
@@ -14850,6 +14850,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         } else {
                             method
                         };
+                        if let Some(mp) = call_method.as_ptr() {
+                            if let ObjData::Instance { class_name: ref method_class, .. } = (*mp).data {
+                                if super::stdlib::unittest_mock_mod::is_mock_class(method_class) {
+                                    return super::stdlib::unittest_mock_mod::mock_record_call(call_method, args);
+                                }
+                            }
+                        }
                         let addr = extract_func_addr(call_method);
                         if addr != 0 {
                             let is_reg = CALLABLE_REGISTRY.with(|r| r.borrow().contains(&addr));
