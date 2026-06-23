@@ -21,3 +21,9 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+# Explicit hyper auto-server for HTTP/2 cleartext (h2c) + HTTP/1.1 on one port —
+# axum::serve alone is HTTP/1-only. (Same as keep/lumen.)
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }

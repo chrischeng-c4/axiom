@@ -1,12 +1,268 @@
-//! `loom controller` — the scheduler + sharded, strongly-consistent DAG state.
+//! `loom controller` — the control plane: a thin HTTP/2 API (#165) over the
+//! [`RunStore`], plus (later) the scheduler loop that drives dispatch over
+//! relay and folds in completions.
 //!
-//! Picks the next ready node, assembles input refs from keep, publishes the
-//! task to relay, observes acks, advances DAG state, and counts fan-in
-//! barriers. Also serves the thin client control API (`POST /runs`,
-//! `GET /runs/{id}`, `GET /runs/{id}/result-ref`). Implemented in P2 (#106);
-//! state durability per #110 / #123.
+//! API surface (#165): clients submit and query runs here; payload bytes never
+//! traverse loom (claim-check via keep). Served h2c (HTTP/2 cleartext) + HTTP/1
+//! on one port, like keep/lumen.
 
-/// Entry point for `loom controller`.
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Json};
+use axum::routing::{get, post};
+use axum::Router;
+use serde::{Deserialize, Serialize};
+
+use crate::model::{KeepRef, Node, NodeId, RunStatus, StageId, TaskSpec, WorkflowRun, WorkflowRunId};
+use crate::runner::RunnerClass;
+use crate::store::{MemStore, RunStore};
+
+/// Shared control-plane state.
+#[derive(Clone)]
+pub struct AppState {
+    pub store: Arc<dyn RunStore>,
+}
+
+/// One node in a submitted workflow.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NodeSpec {
+    pub id: String,
+    pub task_name: String,
+    #[serde(default)]
+    pub deps: Vec<String>,
+    #[serde(default)]
+    pub runner: RunnerClass,
+    #[serde(default)]
+    pub input_refs: Vec<KeepRef>,
+}
+
+/// `POST /runs` body: a client-supplied run id (idempotency key) + the DAG nodes.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubmitRequest {
+    pub run_id: String,
+    pub nodes: Vec<NodeSpec>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SubmitResponse {
+    pub run_id: String,
+    pub status: RunStatus,
+    pub node_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeView {
+    pub id: String,
+    pub state: crate::model::NodeState,
+    pub attempt: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunView {
+    pub run_id: String,
+    pub status: RunStatus,
+    pub nodes: Vec<NodeView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ApiError {
+    error: String,
+}
+
+fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<ApiError>) {
+    (StatusCode::BAD_REQUEST, Json(ApiError { error: msg.into() }))
+}
+
+/// Build a [`WorkflowRun`] from a submit request, validating that every `deps`
+/// edge references a node declared in the same request.
+fn build_run(req: &SubmitRequest) -> Result<WorkflowRun, String> {
+    if req.nodes.is_empty() {
+        return Err("a workflow must have at least one node".into());
+    }
+    let ids: BTreeSet<&str> = req.nodes.iter().map(|n| n.id.as_str()).collect();
+    if ids.len() != req.nodes.len() {
+        return Err("duplicate node id".into());
+    }
+    let mut run = WorkflowRun::new(WorkflowRunId::new(&req.run_id));
+    for spec in &req.nodes {
+        for dep in &spec.deps {
+            if !ids.contains(dep.as_str()) {
+                return Err(format!("node `{}` depends on unknown node `{}`", spec.id, dep));
+            }
+        }
+        let mut task = TaskSpec::new(&spec.task_name);
+        task.runner = spec.runner;
+        task.input_refs = spec.input_refs.clone();
+        let deps: BTreeSet<NodeId> = spec.deps.iter().map(NodeId::new).collect();
+        run.add_node(Node::new(
+            NodeId::new(&spec.id),
+            StageId::new(&spec.id),
+            task,
+            deps,
+        ));
+    }
+    Ok(run)
+}
+
+fn view(run: &WorkflowRun) -> RunView {
+    RunView {
+        run_id: run.id.0.clone(),
+        status: run.status,
+        nodes: run
+            .nodes
+            .values()
+            .map(|n| NodeView { id: n.id.0.clone(), state: n.state, attempt: n.attempt })
+            .collect(),
+    }
+}
+
+async fn healthz() -> &'static str {
+    "ok"
+}
+
+async fn submit(
+    State(state): State<AppState>,
+    Json(req): Json<SubmitRequest>,
+) -> impl IntoResponse {
+    let run = match build_run(&req) {
+        Ok(run) => run,
+        Err(e) => return bad_request(e).into_response(),
+    };
+    let resp = SubmitResponse {
+        run_id: run.id.0.clone(),
+        status: run.status,
+        node_count: run.nodes.len(),
+    };
+    if let Err(e) = state.store.put(run) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+            .into_response();
+    }
+    (StatusCode::CREATED, Json(resp)).into_response()
+}
+
+async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    match state.store.get(&WorkflowRunId::new(&id)) {
+        Ok(Some(run)) => (StatusCode::OK, Json(view(&run))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(ApiError { error: "run not found".into() }))
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: e.to_string() }))
+            .into_response(),
+    }
+}
+
+/// The control-plane router over a [`RunStore`].
+pub fn router(store: Arc<dyn RunStore>) -> Router {
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/runs", post(submit))
+        .route("/runs/{id}", get(get_run))
+        .with_state(AppState { store })
+}
+
+/// Entry point for `loom controller`. Serves the control API h2c on `LOOM_ADDR`
+/// (default `0.0.0.0:7474`). The scheduler loop (relay dispatch + completion
+/// fold) wires in once relay/keep transport lands.
 pub fn run() -> anyhow::Result<()> {
-    anyhow::bail!("loom controller: not yet implemented (epic #106, P2 scheduler loop)")
+    let addr = std::env::var("LOOM_ADDR").unwrap_or_else(|_| "0.0.0.0:7474".to_string());
+    let store: Arc<dyn RunStore> = Arc::new(MemStore::new());
+    let app = router(store);
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(serve(&addr, app))
+}
+
+async fn serve(addr: &str, app: Router) -> anyhow::Result<()> {
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::server::conn::auto;
+    use tokio::net::TcpListener;
+    use tower::ServiceExt;
+
+    let listener = TcpListener::bind(addr).await?;
+    eprintln!("loom controller listening (h2c) on {addr}");
+    let mut builder = auto::Builder::new(TokioExecutor::new());
+    builder.http2().max_concurrent_streams(4096);
+    loop {
+        let (stream, _peer) = listener.accept().await?;
+        let io = TokioIo::new(stream);
+        let app = app.clone();
+        let svc = hyper::service::service_fn(move |req| app.clone().oneshot(req));
+        let conn = builder.serve_connection_with_upgrades(io, svc).into_owned();
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::{to_bytes, Body};
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    fn test_router() -> Router {
+        router(Arc::new(MemStore::new()))
+    }
+
+    async fn body_json(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn healthz_ok() {
+        let resp = test_router()
+            .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn submit_then_query_roundtrip() {
+        let app = test_router();
+        let req = Request::post("/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"run_id":"r1","nodes":[{"id":"a","task_name":"t"},{"id":"b","task_name":"t","deps":["a"]}]}"#,
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let body = body_json(resp).await;
+        assert_eq!(body["run_id"], "r1");
+        assert_eq!(body["node_count"], 2);
+
+        let resp = app
+            .oneshot(Request::get("/runs/r1").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(body["run_id"], "r1");
+        assert_eq!(body["nodes"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn submit_rejects_unknown_dep() {
+        let req = Request::post("/runs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"run_id":"r2","nodes":[{"id":"a","task_name":"t","deps":["ghost"]}]}"#,
+            ))
+            .unwrap();
+        let resp = test_router().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn missing_run_is_404() {
+        let resp = test_router()
+            .oneshot(Request::get("/runs/nope").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
 }
