@@ -2221,6 +2221,19 @@ pub fn mb_type2(_name: MbValue, _bases: MbValue) -> MbValue {
     mb_type_no_args()
 }
 
+pub(crate) fn reject_non_constructible_type_object(name: &str) -> Option<MbValue> {
+    if !matches!(name, "list_iterator") {
+        return None;
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "cannot create '{name}' instances"
+        ))),
+    );
+    Some(MbValue::none())
+}
+
 // ── Type object singleton cache ────────────────────────────────────────────────
 //
 // Per-thread cache of `type(x)` results keyed by type-name string.
@@ -8334,6 +8347,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                 // SAME instance (CPython). no_cache() bypasses this.
                                 return super::stdlib::long_tail3_mod::zoneinfo_cached(&key);
                             }
+                        }
+                        if let Some(result) = reject_non_constructible_type_object(&name) {
+                            return result;
                         }
                         // If `name` is a registered native class that has a
                         // registered `__init__`, run the REAL constructor so

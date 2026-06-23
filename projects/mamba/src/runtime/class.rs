@@ -10860,6 +10860,11 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                             "NotImplementedType" => return MbValue::not_implemented(),
                             _ => {}
                         }
+                        if let Some(result) =
+                            super::builtins::reject_non_constructible_type_object(&type_name)
+                        {
+                            return result;
+                        }
                         let name_val = MbValue::from_ptr(MbObject::new_str(type_name));
                         let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
                         return mb_instance_new_with_init(name_val, args_list);
