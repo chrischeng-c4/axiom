@@ -5776,6 +5776,9 @@ impl<'a> AstLowerer<'a> {
                             | "MagicMock" | "Mock" | "AsyncMock" | "PropertyMock"
                             | "NonCallableMock" | "NonCallableMagicMock"
                             | "patch" | "mock_open" | "call"
+                            // operator.methodcaller(name, *args, **kwargs)
+                            // stores call-time kwargs for the later method call.
+                            | "methodcaller"
                             // urllib.parse functions with behavioral kwargs
                             | "parse_qs" | "parse_qsl" | "urlencode"
                             // quote/unquote take safe= / encoding= / errors=;

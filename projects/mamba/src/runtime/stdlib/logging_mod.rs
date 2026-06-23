@@ -1080,6 +1080,44 @@ fn logger_emit(logger: MbValue, level: i64, msg: MbValue) {
     }
 }
 
+fn logger_enabled_for(logger: MbValue, level: i64) -> bool {
+    let disable = MANAGER_DISABLE.with(|c| c.get());
+    level > disable && level >= logger_effective_level(logger)
+}
+
+fn logger_call_custom_log(logger: MbValue, level: i64, msg: MbValue) -> bool {
+    let Some(class_name) = instance_class_name(logger) else {
+        return false;
+    };
+    if class_name == "Logger" {
+        return false;
+    }
+    let method = super::super::class::lookup_method(&class_name, "_log");
+    if method.is_none() {
+        return false;
+    }
+    let args_tuple = MbValue::from_ptr(MbObject::new_tuple(vec![]));
+    let pos_args = MbValue::from_ptr(MbObject::new_list(vec![
+        logger,
+        MbValue::from_int(level),
+        msg,
+        args_tuple,
+    ]));
+    let kwargs = MbValue::from_ptr(MbObject::new_dict());
+    super::super::builtins::mb_call_spread_kwargs(method, pos_args, kwargs);
+    true
+}
+
+fn logger_log_or_emit(logger: MbValue, level: i64, msg: MbValue) {
+    if !logger_enabled_for(logger, level) {
+        return;
+    }
+    if logger_call_custom_log(logger, level, msg) {
+        return;
+    }
+    logger_emit(logger, level, msg);
+}
+
 fn format_record(handler: MbValue, levelname: &str, message: &str, name: &str) -> String {
     let fmt = field_get(handler, "formatter");
     if fmt.is_none() {
@@ -1224,27 +1262,27 @@ fn write_to_handler_stream(handler: MbValue, text: &str) {
 
 // Logger.debug/info/warning/error/critical/exception/log
 extern "C" fn m_logger_debug(this: MbValue, msg: MbValue) -> MbValue {
-    logger_emit(this, 10, msg);
+    logger_log_or_emit(this, 10, msg);
     MbValue::none()
 }
 extern "C" fn m_logger_info(this: MbValue, msg: MbValue) -> MbValue {
-    logger_emit(this, 20, msg);
+    logger_log_or_emit(this, 20, msg);
     MbValue::none()
 }
 extern "C" fn m_logger_warning(this: MbValue, msg: MbValue) -> MbValue {
-    logger_emit(this, 30, msg);
+    logger_log_or_emit(this, 30, msg);
     MbValue::none()
 }
 extern "C" fn m_logger_error(this: MbValue, msg: MbValue) -> MbValue {
-    logger_emit(this, 40, msg);
+    logger_log_or_emit(this, 40, msg);
     MbValue::none()
 }
 extern "C" fn m_logger_critical(this: MbValue, msg: MbValue) -> MbValue {
-    logger_emit(this, 50, msg);
+    logger_log_or_emit(this, 50, msg);
     MbValue::none()
 }
 extern "C" fn m_logger_warn(this: MbValue, msg: MbValue) -> MbValue {
-    logger_emit(this, 30, msg);
+    logger_log_or_emit(this, 30, msg);
     MbValue::none()
 }
 
@@ -1261,12 +1299,12 @@ extern "C" fn m_logger_exception(this: MbValue, msg: MbValue) -> MbValue {
     } else {
         format!("{base}\nTraceback (most recent call last):\n{exc_type}")
     };
-    logger_emit(this, 40, new_str(combined));
+    logger_log_or_emit(this, 40, new_str(combined));
     MbValue::none()
 }
 
 extern "C" fn m_logger_log(this: MbValue, level: MbValue, msg: MbValue) -> MbValue {
-    logger_emit(this, level.as_int().unwrap_or(0), msg);
+    logger_log_or_emit(this, level.as_int().unwrap_or(0), msg);
     MbValue::none()
 }
 
