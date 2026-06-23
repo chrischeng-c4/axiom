@@ -21,6 +21,15 @@ pub enum MethodDecorKind {
     CachedProperty,
 }
 
+type MethodEntry = (
+    String,
+    SymbolId,
+    MethodDecorKind,
+    Option<SymbolId>,
+    Option<SymbolId>,
+    Vec<&'static str>,
+);
+
 fn method_decorator_marker_attr_name(name: &str) -> Option<&'static str> {
     match name {
         "override" => Some("__override__"),
@@ -725,14 +734,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
         // should be combined with the existing property (not registered as a
         // separate entry). We collapse them here so the per-property entry has
         // an optional setter/deleter symbol.
-        let methods: Vec<(
-            String,
-            SymbolId,
-            MethodDecorKind,
-            Option<SymbolId>,
-            Option<SymbolId>,
-            Vec<&'static str>,
-        )> = {
+        let methods: Vec<MethodEntry> = {
             // Per-method: (name, sym, base_kind, is_setter_for, is_deleter_for, marker_attrs)
             struct Raw {
                 sym: SymbolId,
@@ -823,14 +825,7 @@ pub fn lower_hir_to_mir_with_symbols_src(
                 raw.push((name, r));
             }
             // Second pass: fold setters/deleters into their target property.
-            let mut out: Vec<(
-                String,
-                SymbolId,
-                MethodDecorKind,
-                Option<SymbolId>,
-                Option<SymbolId>,
-                Vec<&'static str>,
-            )> = Vec::new();
+            let mut out: Vec<MethodEntry> = Vec::new();
             for (name, r) in &raw {
                 if r.setter_target.is_some() || r.deleter_target.is_some() {
                     // Skip — the target property entry will reference this sym.
@@ -885,6 +880,13 @@ pub fn lower_hir_to_mir_with_symbols_src(
             cls.slots.clone(),
             cls.class_kwargs.clone(),
         ));
+        if !cls.runtime_base_exprs.is_empty() {
+            lowerer.pending_runtime_class_bases.push((
+                class_name.clone(),
+                cls.name,
+                cls.runtime_base_exprs.clone(),
+            ));
+        }
         // P2-R3: Store class-level attribute assignments for emission at the
         // class's ClassDefPlaceholder (its textual position in the module).
         for (attr_name, val_expr) in &cls.class_attr_assigns {
@@ -1081,24 +1083,20 @@ struct HirToMir<'a> {
     /// VReg of the caught exception inside an except handler body (for implicit chaining).
     active_except_vreg: Option<VReg>,
     /// Classes to register at the start of top-level code.
-    /// (class_name, all_base_names, namedtuple_base, [(method_name, method_symbol_id, decor_kind, setter_sym, deleter_sym, marker_attrs)], match_args, metaclass, slots, class_kwargs)
+    /// (class_name, all_base_names, namedtuple_base, methods, match_args, metaclass, slots, class_kwargs)
     pending_classes: Vec<(
         String,
         Vec<String>,
         Option<NamedTupleBaseSpec>,
-        Vec<(
-            String,
-            SymbolId,
-            MethodDecorKind,
-            Option<SymbolId>,
-            Option<SymbolId>,
-            Vec<&'static str>,
-        )>,
+        Vec<MethodEntry>,
         Vec<String>,
         Option<String>,
         Option<Vec<String>>,
         Vec<(String, HirExpr)>,
     )>,
+    /// Class base expressions that must be evaluated at the class statement's
+    /// textual runtime position, e.g. `class Derived(base):` inside a loop.
+    pending_runtime_class_bases: Vec<(String, SymbolId, Vec<HirExpr>)>,
     /// P2-R3: Class-level attribute assignments to emit after class registration.
     /// (class_name, class_symbol_id, attr_name, value_expr)
     /// Emitted at the class's ClassDefPlaceholder position (textual order) so
@@ -1264,6 +1262,7 @@ impl<'a> HirToMir<'a> {
             class_syms: HashMap::new(),
             active_except_vreg: None,
             pending_classes: Vec::new(),
+            pending_runtime_class_bases: Vec::new(),
             pending_class_attrs: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
@@ -1325,6 +1324,7 @@ impl<'a> HirToMir<'a> {
             class_syms: HashMap::new(),
             active_except_vreg: None,
             pending_classes: Vec::new(),
+            pending_runtime_class_bases: Vec::new(),
             pending_class_attrs: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
@@ -4167,6 +4167,7 @@ impl<'a> HirToMir<'a> {
                 self.lower_match(subject, cases);
             }
             HirStmt::ClassDefPlaceholder { name: cls_sym, .. } => {
+                self.emit_runtime_class_bases_for(Some(*cls_sym));
                 // P2-R3: emit class-level attribute assignments at the class's
                 // textual position so initializer expressions resolve imports
                 // and bindings established by preceding statements (#1686
@@ -4280,6 +4281,35 @@ impl<'a> HirToMir<'a> {
             } else {
                 i += 1;
             }
+        }
+    }
+
+    fn emit_runtime_class_bases_for(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_runtime_class_bases.len() {
+            if !cls_sym.map_or(true, |s| self.pending_runtime_class_bases[i].1 == s) {
+                i += 1;
+                continue;
+            }
+            let (class_name, _, base_exprs) = self.pending_runtime_class_bases.remove(i);
+            let cls_vreg = self.emit_str_const(&class_name);
+            let mut base_vregs = Vec::new();
+            for expr in &base_exprs {
+                let raw = self.lower_expr(expr);
+                base_vregs.push(self.box_operand(raw, expr.ty()));
+            }
+            let bases_list = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: bases_list,
+                elements: base_vregs,
+                ty: self.tcx.any(),
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_update_bases".to_string(),
+                args: vec![cls_vreg, bases_list],
+                ty: self.tcx.none(),
+            });
         }
     }
 

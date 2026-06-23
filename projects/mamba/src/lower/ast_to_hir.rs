@@ -2243,6 +2243,9 @@ struct AstLowerer<'a> {
     /// Names declared `global` / `nonlocal` in the enclosing function — kept
     /// separate so Assign arms can skip the local-definition promotion.
     local_declared_names: Vec<String>,
+    /// Active `for` target names. A class base that references one of these
+    /// names must be evaluated at the class statement position.
+    runtime_class_base_names: Vec<String>,
     /// Per-function call-site argument float hints: function name → vec of
     /// per-positional-param FloatHint, merged over every call seen in the module.
     /// Used to soundly monomorphize an unannotated param as `float` when it is
@@ -2290,6 +2293,7 @@ impl<'a> AstLowerer<'a> {
             errors: Vec::new(),
             local_assigned_names: Vec::new(),
             local_declared_names: Vec::new(),
+            runtime_class_base_names: Vec::new(),
             active_type_params: std::collections::HashSet::new(),
             local_names: HashMap::new(),
             local_types: HashMap::new(),
@@ -3291,6 +3295,12 @@ impl<'a> AstLowerer<'a> {
                     }
                 })
                 .collect();
+            let has_runtime_bases = bases
+                .iter()
+                .any(|b| self.class_base_needs_runtime_eval(&b.node));
+            if has_runtime_bases {
+                cls.runtime_base_exprs = bases.iter().filter_map(|b| self.lower_expr(b)).collect();
+            }
             cls.namedtuple_base = bases
                 .iter()
                 .find_map(|b| literal_namedtuple_base_spec(&b.node));
@@ -3346,7 +3356,10 @@ impl<'a> AstLowerer<'a> {
             // `X = enum.auto()` must evaluate at the class's
             // textual position, after preceding imports/bindings
             // have run (P2-R3 ordering, #1686 motivation).
-            if !cls.decorators.is_empty() || !cls.class_attr_assigns.is_empty() {
+            if !cls.decorators.is_empty()
+                || !cls.class_attr_assigns.is_empty()
+                || !cls.runtime_base_exprs.is_empty()
+            {
                 if placeholder_to_top {
                     self.result.top_level.push(HirStmt::ClassDefPlaceholder {
                         name: cls.name,
@@ -3358,6 +3371,13 @@ impl<'a> AstLowerer<'a> {
             self.result.classes.push(cls);
         }
         placeholder_sym.get()
+    }
+
+    fn class_base_needs_runtime_eval(&mut self, expr: &ast::Expr) -> bool {
+        match expr {
+            ast::Expr::Ident(name) => self.runtime_class_base_names.iter().any(|n| n == name),
+            _ => false,
+        }
     }
 
     fn lower_class(
@@ -3683,6 +3703,7 @@ impl<'a> AstLowerer<'a> {
             name: name_id,
             base: None,
             all_bases: Vec::new(),
+            runtime_base_exprs: Vec::new(),
             namedtuple_base: None,
             fields,
             methods,
@@ -4137,6 +4158,8 @@ impl<'a> AstLowerer<'a> {
                         value: HirExpr::Var(tmp_sym, any_ty),
                         span,
                     };
+                    let base_stack_len = self.runtime_class_base_names.len();
+                    self.runtime_class_base_names.extend(targets.iter().cloned());
                     let mut b: Vec<HirStmt> = vec![unpack_stmt];
                     b.extend(body.iter().filter_map(|s| self.lower_stmt(s)));
                     let eb: Vec<HirStmt> = else_body
@@ -4144,6 +4167,7 @@ impl<'a> AstLowerer<'a> {
                         .flat_map(|stmts| stmts.iter())
                         .filter_map(|s| self.lower_stmt(s))
                         .collect();
+                    self.runtime_class_base_names.truncate(base_stack_len);
                     Some(HirStmt::For {
                         var: tmp_sym,
                         iter: it,
@@ -4153,12 +4177,15 @@ impl<'a> AstLowerer<'a> {
                     })
                 } else {
                     let var_id = self.define_local(&targets[0], elem_ty);
+                    let base_stack_len = self.runtime_class_base_names.len();
+                    self.runtime_class_base_names.push(targets[0].clone());
                     let b: Vec<HirStmt> = body.iter().filter_map(|s| self.lower_stmt(s)).collect();
                     let eb: Vec<HirStmt> = else_body
                         .iter()
                         .flat_map(|stmts| stmts.iter())
                         .filter_map(|s| self.lower_stmt(s))
                         .collect();
+                    self.runtime_class_base_names.truncate(base_stack_len);
                     Some(HirStmt::For {
                         var: var_id,
                         iter: it,
