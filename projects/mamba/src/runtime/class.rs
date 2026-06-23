@@ -17,6 +17,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
+pub(crate) const INT_SUBCLASS_VALUE_FIELD: &str = "__mamba_int_value__";
+
 /// A class definition stored at runtime.
 pub struct MbClass {
     pub name: String,
@@ -2017,6 +2019,11 @@ fn instance_new_with_init_impl(
         name.clone(),
         field_capacity,
     ));
+    if check_class_hierarchy(&name, "int")
+        && !seed_int_subclass_value(instance, args_list)
+    {
+        return MbValue::none();
+    }
 
     // PEP 557: dataclasses without their own `__init__` route through the
     // synthesized init (positional binding in declaration order, defaults,
@@ -2187,6 +2194,39 @@ fn instance_new_with_init_impl(
     }
 
     instance
+}
+
+fn seed_int_subclass_value(instance: MbValue, args_list: MbValue) -> bool {
+    let args = super::builtins::extract_items(args_list);
+    let value = match args.len() {
+        0 => MbValue::from_int(0),
+        1 => super::builtins::mb_int(args[0]),
+        2 => super::builtins::mb_int_base(args[0], args[1]),
+        _ => {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "int() takes at most 2 arguments ({} given)",
+                    args.len()
+                ))),
+            );
+            return false;
+        }
+    };
+    if super::exception::mb_has_exception().as_bool() == Some(true) {
+        return false;
+    }
+    if let Some(ptr) = instance.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields
+                    .write()
+                    .unwrap()
+                    .insert(INT_SUBCLASS_VALUE_FIELD.to_string(), value);
+            }
+        }
+    }
+    true
 }
 
 /// The `message` field of an exception instance as display text. CPython's
