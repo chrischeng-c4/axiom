@@ -3378,6 +3378,11 @@ impl<'a> AstLowerer<'a> {
     fn class_base_needs_runtime_eval(&mut self, expr: &ast::Expr) -> bool {
         match expr {
             ast::Expr::Ident(name) => self.runtime_class_base_names.iter().any(|n| n == name),
+            ast::Expr::Index { object, .. } => match &object.node {
+                ast::Expr::Ident(name) => name == "Generic",
+                ast::Expr::Attr { attr, .. } => attr == "Generic",
+                _ => false,
+            },
             _ => false,
         }
     }
