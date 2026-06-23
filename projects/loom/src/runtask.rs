@@ -44,7 +44,15 @@ pub fn run() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
         let keep = crate::keep_client::KeepHttp::new(&keep_base)?;
-        let sink = crate::relay_client::RelayCompletionSink::new(&relay, "loom.completions")?;
+        let shards = std::env::var("LOOM_COMPLETION_SHARDS")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(8);
+        let sink = crate::relay_client::RelayCompletionSink::new_sharded(
+            &relay,
+            "loom.completions",
+            shards,
+        )?;
         let registry = crate::worker::default_registry();
         eprintln!(
             "loom run-task: {}::{} (attempt {}) → relay {relay}, keep {keep_base}",

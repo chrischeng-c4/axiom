@@ -237,7 +237,12 @@ pub fn run() -> anyhow::Result<()> {
     rt.block_on(async move {
         let consumer = crate::relay_client::RelayWorkConsumer::new(&relay, &subject)?;
         let keep = crate::keep_client::KeepHttp::new(&keep_base)?;
-        let sink = crate::relay_client::RelayCompletionSink::new(&relay, "loom.completions")?;
+        let shards = std::env::var("LOOM_COMPLETION_SHARDS")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(8);
+        let sink =
+            crate::relay_client::RelayCompletionSink::new_sharded(&relay, "loom.completions", shards)?;
         let registry = default_registry();
 
         eprintln!("loom worker: leasing `{subject}` from relay {relay}, keep {keep_base}");

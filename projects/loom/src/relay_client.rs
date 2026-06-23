@@ -129,14 +129,43 @@ pub struct RelayCompletionSink {
     client: reqwest::Client,
     base: String,
     subject: String,
+    shards: u32,
+}
+
+/// Stable FNV-1a hash of a run id → shard index. Identical in the worker (which
+/// publishes) and the controller (which consumes), so a run's completions always
+/// land on the same shard and fold serially (#127 sharded fold).
+pub fn shard_of(run_id: &str, shards: u32) -> u32 {
+    if shards <= 1 {
+        return 0;
+    }
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in run_id.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    (h % shards as u64) as u32
 }
 
 impl RelayCompletionSink {
+    /// Single-subject sink (no sharding) — used by tests and the in-Job run-task.
     pub fn new(base: impl Into<String>, subject: impl Into<String>) -> anyhow::Result<Self> {
+        Self::new_sharded(base, subject, 1)
+    }
+
+    /// Sharded sink: completions publish to `{subject}.{shard_of(run_id)}` when
+    /// `shards > 1` (else the plain `{subject}`), so the controller can fold them
+    /// in parallel without same-run races.
+    pub fn new_sharded(
+        base: impl Into<String>,
+        subject: impl Into<String>,
+        shards: u32,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             client: reqwest::Client::builder().http2_prior_knowledge().build()?,
             base: base.into(),
             subject: subject.into(),
+            shards: shards.max(1),
         })
     }
 }
@@ -160,7 +189,12 @@ impl CompletionSink for RelayCompletionSink {
             failed,
             fan_out: fan_out.to_vec(),
         };
-        let url = format!("{}/v1/{}/publish", self.base, self.subject);
+        let subject = if self.shards <= 1 {
+            self.subject.clone()
+        } else {
+            format!("{}.{}", self.subject, shard_of(run_id, self.shards))
+        };
+        let url = format!("{}/v1/{}/publish", self.base, subject);
         let body = serde_json::json!({
             "message_id": format!("{run_id}:{node_id}:{attempt}:done"),
             "payload": msg,
