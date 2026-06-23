@@ -14,24 +14,23 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/raft.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/raft.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `RaftRole` | projects/lumen/src/raft.rs | enum | pub |
-| `ReadConsistency` | projects/lumen/src/raft.rs | enum | pub |
-| `from_header` | projects/lumen/src/raft.rs | function | pub |
-| `RaftGroup` | projects/lumen/src/raft.rs | struct | pub |
-| `PeerAddr` | projects/lumen/src/raft.rs | struct | pub |
-| `from_config` | projects/lumen/src/raft.rs | function | pub |
-| `leader` | projects/lumen/src/raft.rs | function | pub |
-| `ClusterState` | projects/lumen/src/raft.rs | struct | pub |
-| `new` | projects/lumen/src/raft.rs | function | pub |
-| `snapshot` | projects/lumen/src/raft.rs | function | pub |
-| `ClusterStateView` | projects/lumen/src/raft.rs | struct | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ClusterState` | projects/lumen/src/raft.rs | struct | pub | 163 |  |
+| `ClusterStateView` | projects/lumen/src/raft.rs | struct | pub | 214 |  |
+| `PeerAddr` | projects/lumen/src/raft.rs | struct | pub | 83 |  |
+| `RaftGroup` | projects/lumen/src/raft.rs | struct | pub | 76 |  |
+| `RaftRole` | projects/lumen/src/raft.rs | enum | pub | 25 |  |
+| `ReadConsistency` | projects/lumen/src/raft.rs | enum | pub | 37 |  |
+| `from_config` | projects/lumen/src/raft.rs | function | pub | 93 | from_config(         cfg: &ClusterConfig,         prefix: &str,         headless_service: &str,         raft_port: u16,         client_port: u16,     ) -> anyhow::Result<Self> |
+| `from_header` | projects/lumen/src/raft.rs | function | pub | 49 | from_header(raw: Option<&str>) -> Self |
+| `leader` | projects/lumen/src/raft.rs | function | pub | 154 | leader(&self) -> Option<&PeerAddr> |
+| `new` | projects/lumen/src/raft.rs | function | pub | 176 | new(cfg: &ClusterConfig, group: RaftGroup) -> anyhow::Result<Self> |
+| `snapshot` | projects/lumen/src/raft.rs | function | pub | 198 | snapshot(&self) -> ClusterStateView |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

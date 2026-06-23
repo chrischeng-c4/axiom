@@ -14,26 +14,25 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/routing.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/routing.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `shard_index` | projects/lumen/src/routing.rs | function | pub |
-| `document_shard_index` | projects/lumen/src/routing.rs | function | pub |
-| `shard_host` | projects/lumen/src/routing.rs | function | pub |
-| `EngineShardSearch` | projects/lumen/src/routing.rs | struct | pub |
-| `new` | projects/lumen/src/routing.rs | function | pub |
-| `len` | projects/lumen/src/routing.rs | function | pub |
-| `is_empty` | projects/lumen/src/routing.rs | function | pub |
-| `EngineShardWrite` | projects/lumen/src/routing.rs | struct | pub |
-| `new` | projects/lumen/src/routing.rs | function | pub |
-| `len` | projects/lumen/src/routing.rs | function | pub |
-| `is_empty` | projects/lumen/src/routing.rs | function | pub |
-| `search_shards_parallel` | projects/lumen/src/routing.rs | function | pub |
-| `merge_shard_search_responses` | projects/lumen/src/routing.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `EngineShardSearch` | projects/lumen/src/routing.rs | struct | pub | 63 |  |
+| `EngineShardWrite` | projects/lumen/src/routing.rs | struct | pub | 106 |  |
+| `document_shard_index` | projects/lumen/src/routing.rs | function | pub | 45 | document_shard_index(collection_id: &str, external_id: &str, shard_count: usize) -> usize |
+| `is_empty` | projects/lumen/src/routing.rs | function | pub | 79 | is_empty(&self) -> bool |
+| `is_empty` | projects/lumen/src/routing.rs | function | pub | 122 | is_empty(&self) -> bool |
+| `len` | projects/lumen/src/routing.rs | function | pub | 75 | len(&self) -> usize |
+| `len` | projects/lumen/src/routing.rs | function | pub | 118 | len(&self) -> usize |
+| `merge_shard_search_responses` | projects/lumen/src/routing.rs | function | pub | 363 | merge_shard_search_responses(     req: &SearchRequest,     responses: impl IntoIterator<Item = SearchResponse>,     took_us: u64,     sort_value: K, ) -> SearchResponse |
+| `new` | projects/lumen/src/routing.rs | function | pub | 69 | new(shards: Vec<Arc<Engine>>) -> Self |
+| `new` | projects/lumen/src/routing.rs | function | pub | 112 | new(writers: Vec<Arc<WriteCoordinator>>) -> Self |
+| `search_shards_parallel` | projects/lumen/src/routing.rs | function | pub | 325 | search_shards_parallel(     collection_id: &str,     req: SearchRequest,     shards: &[S],     search: F,     sort_value: K, ) -> Result<SearchResponse> |
+| `shard_host` | projects/lumen/src/routing.rs | function | pub | 57 | shard_host(prefix: &str, shard: u32, headless_service: &str) -> String |
+| `shard_index` | projects/lumen/src/routing.rs | function | pub | 32 | shard_index(collection_id: &str, shard_count: u32) -> u32 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

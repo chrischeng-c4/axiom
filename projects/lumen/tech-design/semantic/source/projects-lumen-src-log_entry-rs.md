@@ -14,15 +14,14 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/log_entry.rs` captured as a per-file rust-source-unit during lumen td_ast standardization.
+Public API manifest for `projects/lumen/src/log_entry.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility | Signature |
-|------|--------|------|------------|-----------|
-| `RaftLogEntry` | projects/lumen/src/log_entry.rs | enum | pub | |
-| `RaftLogResponse` | projects/lumen/src/log_entry.rs | struct | pub | |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `RaftLogEntry` | projects/lumen/src/log_entry.rs | enum | pub | 23 |  |
+| `RaftLogResponse` | projects/lumen/src/log_entry.rs | struct | pub | 58 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

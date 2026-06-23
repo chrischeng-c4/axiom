@@ -21,25 +21,24 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/api.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/api.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `AppState` | projects/lumen/src/api.rs | struct | pub |
-| `with_wal` | projects/lumen/src/api.rs | function | pub |
-| `with_components` | projects/lumen/src/api.rs | function | pub |
-| `new` | projects/lumen/src/api.rs | function | pub |
-| `with_cluster` | projects/lumen/src/api.rs | function | pub |
-| `with_search_backend` | projects/lumen/src/api.rs | function | pub |
-| `with_write_backend` | projects/lumen/src/api.rs | function | pub |
-| `open` | projects/lumen/src/api.rs | function | pub |
-| `ApiDoc` | projects/lumen/src/api.rs | struct | pub |
-| `router` | projects/lumen/src/api.rs | function | pub |
-| `openapi` | projects/lumen/src/api.rs | function | pub |
-| `ApiErr` | projects/lumen/src/api.rs | struct | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ApiDoc` | projects/lumen/src/api.rs | struct | pub | 332 |  |
+| `ApiErr` | projects/lumen/src/api.rs | struct | pub | 1081 |  |
+| `AppState` | projects/lumen/src/api.rs | struct | pub | 48 |  |
+| `new` | projects/lumen/src/api.rs | function | pub | 228 | new(engine: Arc<Engine>, auth: Arc<AuthConfig>) -> Self |
+| `open` | projects/lumen/src/api.rs | function | pub | 249 | open(engine: Arc<Engine>) -> Self |
+| `openapi` | projects/lumen/src/api.rs | function | pub | 1035 | openapi() -> utoipa::openapi::OpenApi |
+| `router` | projects/lumen/src/api.rs | function | pub | 335 | router(state: AppState) -> Router |
+| `with_cluster` | projects/lumen/src/api.rs | function | pub | 232 | with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self |
+| `with_components` | projects/lumen/src/api.rs | function | pub | 207 | with_components(         engine: Arc<Engine>,         auth: Arc<AuthConfig>,         writer: Arc<WriteCoordinator>,     ) -> Self |
+| `with_search_backend` | projects/lumen/src/api.rs | function | pub | 237 | with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self |
+| `with_wal` | projects/lumen/src/api.rs | function | pub | 199 | with_wal(engine: Arc<Engine>, auth: Arc<AuthConfig>, wal: SharedWal) -> Self |
+| `with_write_backend` | projects/lumen/src/api.rs | function | pub | 242 | with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

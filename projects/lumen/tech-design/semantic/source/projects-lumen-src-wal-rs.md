@@ -14,23 +14,21 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/wal.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/wal.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `WAL_FORMAT_VERSION` | projects/lumen/src/wal.rs | const | pub |
-| `WalRecord` | projects/lumen/src/wal.rs | struct | pub |
-| `new` | projects/lumen/src/wal.rs | function | pub |
-| `encode` | projects/lumen/src/wal.rs | function | pub |
-| `decode` | projects/lumen/src/wal.rs | function | pub |
-| `WalStream` | projects/lumen/src/wal.rs | type | pub |
-| `WalLog` | projects/lumen/src/wal.rs | trait | pub |
-| `SharedWal` | projects/lumen/src/wal.rs | type | pub |
-| `MemWal` | projects/lumen/src/wal.rs | struct | pub |
-| `new` | projects/lumen/src/wal.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `MemWal` | projects/lumen/src/wal.rs | struct | pub | 360 |  |
+| `SharedWal` | projects/lumen/src/wal.rs | type | pub | 339 |  |
+| `WAL_FORMAT_VERSION` | projects/lumen/src/wal.rs | constant | pub | 45 |  |
+| `WalRecord` | projects/lumen/src/wal.rs | struct | pub | 59 |  |
+| `WalStream` | projects/lumen/src/wal.rs | type | pub | 319 |  |
+| `decode` | projects/lumen/src/wal.rs | function | pub | 84 | decode(bytes: &[u8]) -> Result<Self> |
+| `encode` | projects/lumen/src/wal.rs | function | pub | 74 | encode(&self) -> Result<Vec<u8>> |
+| `new` | projects/lumen/src/wal.rs | function | pub | 66 | new(entry: RaftLogEntry) -> Self |
+| `new` | projects/lumen/src/wal.rs | function | pub | 415 | new() -> Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

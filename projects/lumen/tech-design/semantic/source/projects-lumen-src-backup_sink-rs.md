@@ -14,16 +14,14 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/backup_sink.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/backup_sink.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `BackupSink` | projects/lumen/src/backup_sink.rs | trait | pub |
-| `LocalFsSink` | projects/lumen/src/backup_sink.rs | struct | pub |
-| `new` | projects/lumen/src/backup_sink.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `LocalFsSink` | projects/lumen/src/backup_sink.rs | struct | pub | 48 |  |
+| `new` | projects/lumen/src/backup_sink.rs | function | pub | 55 | new(root: impl Into<PathBuf>, prefix: impl Into<String>) -> Result<Self> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

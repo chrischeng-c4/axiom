@@ -14,15 +14,14 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/operator/reconcile.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/operator/reconcile.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `Error` | projects/lumen/src/operator/reconcile.rs | enum | pub |
-| `run` | projects/lumen/src/operator/reconcile.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Error` | projects/lumen/src/operator/reconcile.rs | enum | pub | 36 |  |
+| `run` | projects/lumen/src/operator/reconcile.rs | function | pub | 67 | run() -> anyhow::Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

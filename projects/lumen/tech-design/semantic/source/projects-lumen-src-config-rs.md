@@ -14,19 +14,18 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/config.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/config.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `ClusterConfig` | projects/lumen/src/config.rs | struct | pub |
-| `from_env` | projects/lumen/src/config.rs | function | pub |
-| `pod_ordinal` | projects/lumen/src/config.rs | function | pub |
-| `shard_index` | projects/lumen/src/config.rs | function | pub |
-| `replica_index` | projects/lumen/src/config.rs | function | pub |
-| `is_voter` | projects/lumen/src/config.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ClusterConfig` | projects/lumen/src/config.rs | struct | pub | 19 |  |
+| `from_env` | projects/lumen/src/config.rs | function | pub | 28 | from_env() -> Result<Self> |
+| `is_voter` | projects/lumen/src/config.rs | function | pub | 55 | is_voter(&self) -> Result<bool> |
+| `pod_ordinal` | projects/lumen/src/config.rs | function | pub | 37 | pod_ordinal(&self) -> Result<u32> |
+| `replica_index` | projects/lumen/src/config.rs | function | pub | 51 | replica_index(&self) -> Result<u32> |
+| `shard_index` | projects/lumen/src/config.rs | function | pub | 47 | shard_index(&self) -> Result<u32> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

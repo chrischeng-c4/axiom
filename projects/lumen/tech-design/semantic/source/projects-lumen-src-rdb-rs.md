@@ -14,21 +14,19 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/rdb.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/rdb.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `RdbSnapshot` | projects/lumen/src/rdb.rs | struct | pub |
-| `capture` | projects/lumen/src/rdb.rs | function | pub |
-| `restore_into` | projects/lumen/src/rdb.rs | function | pub |
-| `encode` | projects/lumen/src/rdb.rs | function | pub |
-| `decode` | projects/lumen/src/rdb.rs | function | pub |
-| `RdbStore` | projects/lumen/src/rdb.rs | trait | pub |
-| `LocalFsRdbStore` | projects/lumen/src/rdb.rs | struct | pub |
-| `new` | projects/lumen/src/rdb.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `LocalFsRdbStore` | projects/lumen/src/rdb.rs | struct | pub | 88 |  |
+| `RdbSnapshot` | projects/lumen/src/rdb.rs | struct | pub | 29 |  |
+| `capture` | projects/lumen/src/rdb.rs | function | pub | 41 | capture(engine: &Engine, up_to_seq: u64) -> Result<Self> |
+| `decode` | projects/lumen/src/rdb.rs | function | pub | 62 | decode(bytes: &[u8]) -> Result<Self> |
+| `encode` | projects/lumen/src/rdb.rs | function | pub | 55 | encode(&self) -> Result<Vec<u8>> |
+| `new` | projects/lumen/src/rdb.rs | function | pub | 94 | new(root: impl Into<PathBuf>) -> Result<Self> |
+| `restore_into` | projects/lumen/src/rdb.rs | function | pub | 49 | restore_into(self, engine: &Engine) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

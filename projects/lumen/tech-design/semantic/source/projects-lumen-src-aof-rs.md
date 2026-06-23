@@ -14,25 +14,24 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/aof.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/aof.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `FsyncPolicy` | projects/lumen/src/aof.rs | enum | pub |
-| `AofWriter` | projects/lumen/src/aof.rs | struct | pub |
-| `open` | projects/lumen/src/aof.rs | function | pub |
-| `open_with_policy` | projects/lumen/src/aof.rs | function | pub |
-| `append` | projects/lumen/src/aof.rs | function | pub |
-| `flush` | projects/lumen/src/aof.rs | function | pub |
-| `sync` | projects/lumen/src/aof.rs | function | pub |
-| `maybe_sync` | projects/lumen/src/aof.rs | function | pub |
-| `truncate_through` | projects/lumen/src/aof.rs | function | pub |
-| `AofReader` | projects/lumen/src/aof.rs | struct | pub |
-| `replay` | projects/lumen/src/aof.rs | function | pub |
-| `replay_aof_into` | projects/lumen/src/aof.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `AofReader` | projects/lumen/src/aof.rs | struct | pub | 337 |  |
+| `AofWriter` | projects/lumen/src/aof.rs | struct | pub | 97 |  |
+| `FsyncPolicy` | projects/lumen/src/aof.rs | enum | pub | 79 |  |
+| `append` | projects/lumen/src/aof.rs | function | pub | 198 | append(&mut self, seq: u64, record: &WalRecord) -> Result<()> |
+| `flush` | projects/lumen/src/aof.rs | function | pub | 220 | flush(&mut self) -> Result<()> |
+| `maybe_sync` | projects/lumen/src/aof.rs | function | pub | 238 | maybe_sync(&mut self) -> Result<()> |
+| `open` | projects/lumen/src/aof.rs | function | pub | 113 | open(path: impl Into<PathBuf>) -> Result<Self> |
+| `open_with_policy` | projects/lumen/src/aof.rs | function | pub | 120 | open_with_policy(path: impl Into<PathBuf>, policy: FsyncPolicy) -> Result<Self> |
+| `replay` | projects/lumen/src/aof.rs | function | pub | 349 | replay(         path: impl AsRef<Path>,         from_seq: u64,         mut apply: impl FnMut(u64, WalRecord),     ) -> Result<u64> |
+| `replay_aof_into` | projects/lumen/src/aof.rs | function | pub | 410 | replay_aof_into(     engine: &std::sync::Arc<crate::storage::Engine>,     path: impl AsRef<Path>,     from_seq: u64, ) -> Result<u64> |
+| `sync` | projects/lumen/src/aof.rs | function | pub | 226 | sync(&mut self) -> Result<()> |
+| `truncate_through` | projects/lumen/src/aof.rs | function | pub | 257 | truncate_through(&mut self, through: u64) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

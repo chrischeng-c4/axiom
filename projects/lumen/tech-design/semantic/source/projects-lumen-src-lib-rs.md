@@ -14,36 +14,36 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/lib.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/lib.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `aof` | projects/lumen/src/lib.rs | module | pub |
-| `api` | projects/lumen/src/lib.rs | module | pub |
-| `auth` | projects/lumen/src/lib.rs | module | pub |
-| `backup_sink` | projects/lumen/src/lib.rs | module | pub |
-| `config` | projects/lumen/src/lib.rs | module | pub |
-| `consumer` | projects/lumen/src/lib.rs | module | pub |
-| `coordinator` | projects/lumen/src/lib.rs | module | pub |
-| `log_entry` | projects/lumen/src/lib.rs | module | pub |
-| `metrics` | projects/lumen/src/lib.rs | module | pub |
-| `native_wire` | projects/lumen/src/lib.rs | module | pub |
-| `operator` | projects/lumen/src/lib.rs | module | pub |
-| `raft` | projects/lumen/src/lib.rs | module | pub |
-| `rdb` | projects/lumen/src/lib.rs | module | pub |
-| `routing` | projects/lumen/src/lib.rs | module | pub |
-| `segment_rdb` | projects/lumen/src/lib.rs | module | pub |
-| `spec` | projects/lumen/src/lib.rs | module | pub |
-| `storage` | projects/lumen/src/lib.rs | module | pub |
-| `tls` | projects/lumen/src/lib.rs | module | pub |
-| `tokenize` | projects/lumen/src/lib.rs | module | pub |
-| `types` | projects/lumen/src/lib.rs | module | pub |
-| `vector_index` | projects/lumen/src/lib.rs | module | pub |
-| `wal` | projects/lumen/src/lib.rs | module | pub |
-| `wal_nats` | projects/lumen/src/lib.rs | module | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `aof` | projects/lumen/src/lib.rs | module | pub | 23 |  |
+| `api` | projects/lumen/src/lib.rs | module | pub | 24 |  |
+| `auth` | projects/lumen/src/lib.rs | module | pub | 25 |  |
+| `backup_sink` | projects/lumen/src/lib.rs | module | pub | 26 |  |
+| `config` | projects/lumen/src/lib.rs | module | pub | 27 |  |
+| `consumer` | projects/lumen/src/lib.rs | module | pub | 28 |  |
+| `coordinator` | projects/lumen/src/lib.rs | module | pub | 29 |  |
+| `log_entry` | projects/lumen/src/lib.rs | module | pub | 31 |  |
+| `metrics` | projects/lumen/src/lib.rs | module | pub | 32 |  |
+| `native_wire` | projects/lumen/src/lib.rs | module | pub | 35 |  |
+| `operator` | projects/lumen/src/lib.rs | module | pub | 40 |  |
+| `raft` | projects/lumen/src/lib.rs | module | pub | 43 |  |
+| `rdb` | projects/lumen/src/lib.rs | module | pub | 44 |  |
+| `routing` | projects/lumen/src/lib.rs | module | pub | 45 |  |
+| `segment_rdb` | projects/lumen/src/lib.rs | module | pub | 57 |  |
+| `spec` | projects/lumen/src/lib.rs | module | pub | 61 |  |
+| `storage` | projects/lumen/src/lib.rs | module | pub | 62 |  |
+| `tls` | projects/lumen/src/lib.rs | module | pub | 63 |  |
+| `tokenize` | projects/lumen/src/lib.rs | module | pub | 64 |  |
+| `types` | projects/lumen/src/lib.rs | module | pub | 65 |  |
+| `vector_index` | projects/lumen/src/lib.rs | module | pub | 66 |  |
+| `wal` | projects/lumen/src/lib.rs | module | pub | 67 |  |
+| `wal_nats` | projects/lumen/src/lib.rs | module | pub | 68 |  |
+| `wal_relay` | projects/lumen/src/lib.rs | module | pub | 70 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

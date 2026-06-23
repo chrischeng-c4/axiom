@@ -14,53 +14,52 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/types.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/types.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `CreateCollectionRequest` | projects/lumen/src/types.rs | struct | pub |
-| `CreateCollectionResponse` | projects/lumen/src/types.rs | struct | pub |
-| `FieldSpec` | projects/lumen/src/types.rs | struct | pub |
-| `FieldType` | projects/lumen/src/types.rs | enum | pub |
-| `VectorMetric` | projects/lumen/src/types.rs | enum | pub |
-| `VectorBackend` | projects/lumen/src/types.rs | enum | pub |
-| `VectorQuantize` | projects/lumen/src/types.rs | enum | pub |
-| `VectorSpec` | projects/lumen/src/types.rs | struct | pub |
-| `Analyzer` | projects/lumen/src/types.rs | enum | pub |
-| `IndexRequest` | projects/lumen/src/types.rs | struct | pub |
-| `IndexItem` | projects/lumen/src/types.rs | struct | pub |
-| `FieldValue` | projects/lumen/src/types.rs | enum | pub |
-| `IndexResponse` | projects/lumen/src/types.rs | struct | pub |
-| `SearchRequest` | projects/lumen/src/types.rs | struct | pub |
-| `SortSpec` | projects/lumen/src/types.rs | struct | pub |
-| `SortOrder` | projects/lumen/src/types.rs | enum | pub |
-| `QueryNode` | projects/lumen/src/types.rs | enum | pub |
-| `ExistsQuery` | projects/lumen/src/types.rs | struct | pub |
-| `DuplicatedQuery` | projects/lumen/src/types.rs | struct | pub |
-| `RrfQuery` | projects/lumen/src/types.rs | struct | pub |
-| `HammingQuery` | projects/lumen/src/types.rs | struct | pub |
-| `HasChildQuery` | projects/lumen/src/types.rs | struct | pub |
-| `MatchQuery` | projects/lumen/src/types.rs | struct | pub |
-| `MatchOp` | projects/lumen/src/types.rs | enum | pub |
-| `TermQuery` | projects/lumen/src/types.rs | struct | pub |
-| `TermsQuery` | projects/lumen/src/types.rs | struct | pub |
-| `KnnQuery` | projects/lumen/src/types.rs | struct | pub |
-| `RangeQuery` | projects/lumen/src/types.rs | struct | pub |
-| `SearchHit` | projects/lumen/src/types.rs | struct | pub |
-| `SearchResponse` | projects/lumen/src/types.rs | struct | pub |
-| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub |
-| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub |
-| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub |
-| `StatsResponse` | projects/lumen/src/types.rs | struct | pub |
-| `FieldStats` | projects/lumen/src/types.rs | struct | pub |
-| `StorageStats` | projects/lumen/src/types.rs | struct | pub |
-| `CacheStats` | projects/lumen/src/types.rs | struct | pub |
-| `ApiError` | projects/lumen/src/types.rs | struct | pub |
-| `normalize` | projects/lumen/src/types.rs | function | pub |
-| `vector_spec` | projects/lumen/src/types.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Analyzer` | projects/lumen/src/types.rs | enum | pub | 147 |  |
+| `ApiError` | projects/lumen/src/types.rs | struct | pub | 554 |  |
+| `CacheStats` | projects/lumen/src/types.rs | struct | pub | 542 |  |
+| `CreateCollectionRequest` | projects/lumen/src/types.rs | struct | pub | 21 |  |
+| `CreateCollectionResponse` | projects/lumen/src/types.rs | struct | pub | 28 |  |
+| `DuplicateGroup` | projects/lumen/src/types.rs | struct | pub | 477 |  |
+| `DuplicatedQuery` | projects/lumen/src/types.rs | struct | pub | 326 |  |
+| `DuplicatesRequest` | projects/lumen/src/types.rs | struct | pub | 458 |  |
+| `DuplicatesResponse` | projects/lumen/src/types.rs | struct | pub | 484 |  |
+| `ExistsQuery` | projects/lumen/src/types.rs | struct | pub | 318 |  |
+| `FieldSpec` | projects/lumen/src/types.rs | struct | pub | 41 |  |
+| `FieldStats` | projects/lumen/src/types.rs | struct | pub | 520 |  |
+| `FieldType` | projects/lumen/src/types.rs | enum | pub | 74 |  |
+| `FieldValue` | projects/lumen/src/types.rs | enum | pub | 185 |  |
+| `HammingQuery` | projects/lumen/src/types.rs | struct | pub | 351 |  |
+| `HasChildQuery` | projects/lumen/src/types.rs | struct | pub | 362 |  |
+| `IndexItem` | projects/lumen/src/types.rs | struct | pub | 170 |  |
+| `IndexRequest` | projects/lumen/src/types.rs | struct | pub | 160 |  |
+| `IndexResponse` | projects/lumen/src/types.rs | struct | pub | 194 |  |
+| `KnnQuery` | projects/lumen/src/types.rs | struct | pub | 410 |  |
+| `MatchOp` | projects/lumen/src/types.rs | enum | pub | 382 |  |
+| `MatchQuery` | projects/lumen/src/types.rs | struct | pub | 372 |  |
+| `QueryNode` | projects/lumen/src/types.rs | enum | pub | 270 |  |
+| `RangeQuery` | projects/lumen/src/types.rs | struct | pub | 418 |  |
+| `RrfQuery` | projects/lumen/src/types.rs | struct | pub | 336 |  |
+| `SearchHit` | projects/lumen/src/types.rs | struct | pub | 432 |  |
+| `SearchRequest` | projects/lumen/src/types.rs | struct | pub | 207 |  |
+| `SearchResponse` | projects/lumen/src/types.rs | struct | pub | 439 |  |
+| `SortOrder` | projects/lumen/src/types.rs | enum | pub | 253 |  |
+| `SortSpec` | projects/lumen/src/types.rs | struct | pub | 244 |  |
+| `StatsResponse` | projects/lumen/src/types.rs | struct | pub | 503 |  |
+| `StorageStats` | projects/lumen/src/types.rs | struct | pub | 536 |  |
+| `TermQuery` | projects/lumen/src/types.rs | struct | pub | 393 |  |
+| `TermsQuery` | projects/lumen/src/types.rs | struct | pub | 400 |  |
+| `VectorBackend` | projects/lumen/src/types.rs | enum | pub | 101 |  |
+| `VectorMetric` | projects/lumen/src/types.rs | enum | pub | 90 |  |
+| `VectorQuantize` | projects/lumen/src/types.rs | enum | pub | 127 |  |
+| `VectorSpec` | projects/lumen/src/types.rs | struct | pub | 136 |  |
+| `normalize` | projects/lumen/src/types.rs | function | pub | 568 | normalize(mut self) -> Self |
+| `vector_spec` | projects/lumen/src/types.rs | function | pub | 586 | vector_spec(&self) -> anyhow::Result<Option<VectorSpec>> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

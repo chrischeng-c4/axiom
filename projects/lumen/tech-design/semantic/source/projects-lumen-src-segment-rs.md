@@ -14,58 +14,57 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/segment.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/segment.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `ColumnRef` | projects/lumen/src/segment.rs | struct | pub |
-| `write_number_segment` | projects/lumen/src/segment.rs | function | pub |
-| `write_hash_segment` | projects/lumen/src/segment.rs | function | pub |
-| `write_vector_segment` | projects/lumen/src/segment.rs | function | pub |
-| `write_keyword_segment` | projects/lumen/src/segment.rs | function | pub |
-| `write_set_segment` | projects/lumen/src/segment.rs | function | pub |
-| `write_text_segment` | projects/lumen/src/segment.rs | function | pub |
-| `write_eid_segment` | projects/lumen/src/segment.rs | function | pub |
-| `SegmentReader` | projects/lumen/src/segment.rs | struct | pub |
-| `open` | projects/lumen/src/segment.rs | function | pub |
-| `applied_seq` | projects/lumen/src/segment.rs | function | pub |
-| `n_docs` | projects/lumen/src/segment.rs | function | pub |
-| `number_at` | projects/lumen/src/segment.rs | function | pub |
-| `number_distinct_count` | projects/lumen/src/segment.rs | function | pub |
-| `number_value_postings` | projects/lumen/src/segment.rs | function | pub |
-| `number_value_df` | projects/lumen/src/segment.rs | function | pub |
-| `number_range` | projects/lumen/src/segment.rs | function | pub |
-| `number_sorted_bits_at` | projects/lumen/src/segment.rs | function | pub |
-| `number_sorted_postings_at` | projects/lumen/src/segment.rs | function | pub |
-| `number_range_df` | projects/lumen/src/segment.rs | function | pub |
-| `number_range_distinct_count` | projects/lumen/src/segment.rs | function | pub |
-| `number_range_index_window` | projects/lumen/src/segment.rs | function | pub |
-| `number_values_all` | projects/lumen/src/segment.rs | function | pub |
-| `hash_at` | projects/lumen/src/segment.rs | function | pub |
-| `vector_at` | projects/lumen/src/segment.rs | function | pub |
-| `vectors_slice` | projects/lumen/src/segment.rs | function | pub |
-| `keyword_at` | projects/lumen/src/segment.rs | function | pub |
-| `keyword_postings` | projects/lumen/src/segment.rs | function | pub |
-| `keyword_terms_all` | projects/lumen/src/segment.rs | function | pub |
-| `keyword_df` | projects/lumen/src/segment.rs | function | pub |
-| `set_at` | projects/lumen/src/segment.rs | function | pub |
-| `set_postings` | projects/lumen/src/segment.rs | function | pub |
-| `set_df` | projects/lumen/src/segment.rs | function | pub |
-| `set_elements_all` | projects/lumen/src/segment.rs | function | pub |
-| `text_postings` | projects/lumen/src/segment.rs | function | pub |
-| `text_postings_arc` | projects/lumen/src/segment.rs | function | pub |
-| `text_doc_len` | projects/lumen/src/segment.rs | function | pub |
-| `text_doc_lens` | projects/lumen/src/segment.rs | function | pub |
-| `text_token_df` | projects/lumen/src/segment.rs | function | pub |
-| `text_doc_count` | projects/lumen/src/segment.rs | function | pub |
-| `text_total_doc_len` | projects/lumen/src/segment.rs | function | pub |
-| `eid_at` | projects/lumen/src/segment.rs | function | pub |
-| `eid_count` | projects/lumen/src/segment.rs | function | pub |
-| `eids_all` | projects/lumen/src/segment.rs | function | pub |
-| `text_tokens_all` | projects/lumen/src/segment.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ColumnRef` | projects/lumen/src/segment.rs | struct | pub | 182 |  |
+| `SegmentReader` | projects/lumen/src/segment.rs | struct | pub | 1522 |  |
+| `applied_seq` | projects/lumen/src/segment.rs | function | pub | 1672 | applied_seq(&self) -> u64 |
+| `eid_at` | projects/lumen/src/segment.rs | function | pub | 2434 | eid_at(&self, id: u32) -> Option<String> |
+| `eid_count` | projects/lumen/src/segment.rs | function | pub | 2443 | eid_count(&self) -> u32 |
+| `eids_all` | projects/lumen/src/segment.rs | function | pub | 2454 | eids_all(&self) -> Option<Vec<String>> |
+| `hash_at` | projects/lumen/src/segment.rs | function | pub | 2089 | hash_at(&self, id: u32) -> Option<u64> |
+| `keyword_at` | projects/lumen/src/segment.rs | function | pub | 2146 | keyword_at(&self, id: u32) -> Option<String> |
+| `keyword_df` | projects/lumen/src/segment.rs | function | pub | 2215 | keyword_df(&self, value: &str) -> Option<u64> |
+| `keyword_postings` | projects/lumen/src/segment.rs | function | pub | 2175 | keyword_postings(&self, value: &str) -> Option<roaring::RoaringBitmap> |
+| `keyword_terms_all` | projects/lumen/src/segment.rs | function | pub | 2194 | keyword_terms_all(&self) -> Option<Vec<(String, roaring::RoaringBitmap)>> |
+| `n_docs` | projects/lumen/src/segment.rs | function | pub | 1677 | n_docs(&self) -> u32 |
+| `number_at` | projects/lumen/src/segment.rs | function | pub | 1839 | number_at(&self, id: u32) -> Option<f64> |
+| `number_distinct_count` | projects/lumen/src/segment.rs | function | pub | 1870 | number_distinct_count(&self) -> u64 |
+| `number_range` | projects/lumen/src/segment.rs | function | pub | 1972 | number_range(         &self,         lo: Option<(u64, bool)>,         hi: Option<(u64, bool)>,     ) -> Option<roaring::RoaringBitmap> |
+| `number_range_df` | projects/lumen/src/segment.rs | function | pub | 2024 | number_range_df(&self, lo: Option<(u64, bool)>, hi: Option<(u64, bool)>) -> Option<u64> |
+| `number_range_distinct_count` | projects/lumen/src/segment.rs | function | pub | 2043 | number_range_distinct_count(         &self,         lo: Option<(u64, bool)>,         hi: Option<(u64, bool)>,     ) -> Option<u64> |
+| `number_range_index_window` | projects/lumen/src/segment.rs | function | pub | 2057 | number_range_index_window(         &self,         lo: Option<(u64, bool)>,         hi: Option<(u64, bool)>,     ) -> Option<(u32, u32)> |
+| `number_sorted_bits_at` | projects/lumen/src/segment.rs | function | pub | 2004 | number_sorted_bits_at(&self, i: u32) -> Option<u64> |
+| `number_sorted_postings_at` | projects/lumen/src/segment.rs | function | pub | 2013 | number_sorted_postings_at(         &self,         i: u32,     ) -> Option<std::sync::Arc<roaring::RoaringBitmap>> |
+| `number_value_df` | projects/lumen/src/segment.rs | function | pub | 1916 | number_value_df(&self, bits: u64) -> Option<u64> |
+| `number_value_postings` | projects/lumen/src/segment.rs | function | pub | 1907 | number_value_postings(&self, bits: u64) -> Option<roaring::RoaringBitmap> |
+| `number_values_all` | projects/lumen/src/segment.rs | function | pub | 2075 | number_values_all(&self) -> Option<Vec<(u64, roaring::RoaringBitmap)>> |
+| `open` | projects/lumen/src/segment.rs | function | pub | 1571 | open(path: &Path) -> Result<SegmentReader> |
+| `set_at` | projects/lumen/src/segment.rs | function | pub | 2230 | set_at(&self, id: u32) -> Option<Vec<String>> |
+| `set_df` | projects/lumen/src/segment.rs | function | pub | 2281 | set_df(&self, value: &str) -> Option<u64> |
+| `set_elements_all` | projects/lumen/src/segment.rs | function | pub | 2298 | set_elements_all(&self) -> Option<Vec<(String, roaring::RoaringBitmap)>> |
+| `set_postings` | projects/lumen/src/segment.rs | function | pub | 2268 | set_postings(&self, value: &str) -> Option<roaring::RoaringBitmap> |
+| `text_doc_count` | projects/lumen/src/segment.rs | function | pub | 2414 | text_doc_count(&self) -> u64 |
+| `text_doc_len` | projects/lumen/src/segment.rs | function | pub | 2382 | text_doc_len(&self, id: u32) -> u32 |
+| `text_doc_lens` | projects/lumen/src/segment.rs | function | pub | 2391 | text_doc_lens(&self) -> Option<&[u32]> |
+| `text_postings` | projects/lumen/src/segment.rs | function | pub | 2347 | text_postings(&self, token: &str) -> Option<(Vec<u32>, Vec<u32>)> |
+| `text_postings_arc` | projects/lumen/src/segment.rs | function | pub | 2363 | text_postings_arc(&self, token: &str) -> Option<std::sync::Arc<(Vec<u32>, Vec<u32>)>> |
+| `text_token_df` | projects/lumen/src/segment.rs | function | pub | 2398 | text_token_df(&self, token: &str) -> usize |
+| `text_tokens_all` | projects/lumen/src/segment.rs | function | pub | 2470 | text_tokens_all(&self) -> Option<Vec<(String, Vec<u32>, Vec<u32>)>> |
+| `text_total_doc_len` | projects/lumen/src/segment.rs | function | pub | 2420 | text_total_doc_len(&self) -> u64 |
+| `vector_at` | projects/lumen/src/segment.rs | function | pub | 2104 | vector_at(&self, id: u32, dim: usize) -> Option<&[f32]> |
+| `vectors_slice` | projects/lumen/src/segment.rs | function | pub | 2117 | vectors_slice(&self, dim: usize) -> Option<&[f32]> |
+| `write_eid_segment` | projects/lumen/src/segment.rs | function | pub | 1379 | write_eid_segment(path: &Path, applied_seq: u64, eids: &[&str]) -> Result<()> |
+| `write_hash_segment` | projects/lumen/src/segment.rs | function | pub | 578 | write_hash_segment(path: &Path, applied_seq: u64, values: &[Option<u64>]) -> Result<()> |
+| `write_keyword_segment` | projects/lumen/src/segment.rs | function | pub | 1056 | write_keyword_segment(     path: &Path,     applied_seq: u64,     values: &[Option<&str>],     postings: &std::collections::BTreeMap<String, roaring::RoaringBitmap>, ) -> Result<()> |
+| `write_number_segment` | projects/lumen/src/segment.rs | function | pub | 480 | write_number_segment(path: &Path, applied_seq: u64, values: &[Option<f64>]) -> Result<()> |
+| `write_set_segment` | projects/lumen/src/segment.rs | function | pub | 1157 | write_set_segment(     path: &Path,     applied_seq: u64,     values: &[Option<&[String]>],     postings: &std::collections::BTreeMap<String, roaring::RoaringBitmap>, ) -> Result<()> |
+| `write_text_segment` | projects/lumen/src/segment.rs | function | pub | 1308 | write_text_segment(     path: &Path,     applied_seq: u64,     tokens: &std::collections::BTreeMap<String, crate::storage::Postings>,     lens: &[u32],     doc_count: u64,     total_doc_len: u64, ) -> Result<()> |
+| `write_vector_segment` | projects/lumen/src/segment.rs | function | pub | 623 | write_vector_segment(     path: &Path,     applied_seq: u64,     dim: usize,     vectors: &[Option<&[f32]>], ) -> Result<()> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

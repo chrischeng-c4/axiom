@@ -14,17 +14,16 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/tls.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/tls.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `PeerTlsConfig` | projects/lumen/src/tls.rs | struct | pub |
-| `from_env` | projects/lumen/src/tls.rs | function | pub |
-| `rustls_server_config` | projects/lumen/src/tls.rs | function | pub |
-| `rustls_client_config` | projects/lumen/src/tls.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `PeerTlsConfig` | projects/lumen/src/tls.rs | struct | pub | 28 |  |
+| `from_env` | projects/lumen/src/tls.rs | function | pub | 39 | from_env() -> Result<Option<Self>> |
+| `rustls_client_config` | projects/lumen/src/tls.rs | function | pub | 97 | rustls_client_config(&self) -> Result<rustls::ClientConfig> |
+| `rustls_server_config` | projects/lumen/src/tls.rs | function | pub | 78 | rustls_server_config(&self) -> Result<rustls::ServerConfig> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

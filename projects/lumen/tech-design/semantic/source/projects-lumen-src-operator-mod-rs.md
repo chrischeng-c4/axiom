@@ -14,18 +14,17 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/lumen/src/operator/mod.rs` captured as a per-file rust-source-unit (td_ast) during lumen standardization onto the per-file codegen ladder.
+Public API manifest for `projects/lumen/src/operator/mod.rs` generated from AST during Score force-regeneration standardization.
 
 ### Symbols
 
-| Name | Target | Kind | Visibility |
-|------|--------|------|------------|
-| `crd` | projects/lumen/src/operator/mod.rs | module | pub |
-| `lease` | projects/lumen/src/operator/mod.rs | module | pub |
-| `reconcile` | projects/lumen/src/operator/mod.rs | module | pub |
-| `render` | projects/lumen/src/operator/mod.rs | module | pub |
-| `crd_yaml` | projects/lumen/src/operator/mod.rs | function | pub |
-
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `crd` | projects/lumen/src/operator/mod.rs | module | pub | 15 |  |
+| `crd_yaml` | projects/lumen/src/operator/mod.rs | function | pub | 25 | crd_yaml() -> String |
+| `lease` | projects/lumen/src/operator/mod.rs | module | pub | 16 |  |
+| `reconcile` | projects/lumen/src/operator/mod.rs | module | pub | 17 |  |
+| `render` | projects/lumen/src/operator/mod.rs | module | pub | 18 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
