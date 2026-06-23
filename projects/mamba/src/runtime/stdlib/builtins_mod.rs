@@ -110,6 +110,33 @@ fn arg_or_kw(pos_args: &[MbValue], idx: usize, kwargs: &Option<MbValue>, name: &
         .filter(|v| !v.is_none())
 }
 
+fn open_flags_for_mode(mode: MbValue) -> MbValue {
+    let mode_s = mode.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    }).unwrap_or_else(|| "r".to_string());
+    let mut flags = if mode_s.contains('+') {
+        0x0002 // O_RDWR
+    } else if mode_s.contains('w') || mode_s.contains('a') || mode_s.contains('x') {
+        0x0001 // O_WRONLY
+    } else {
+        0x0000 // O_RDONLY
+    };
+    if mode_s.contains('a') {
+        flags |= 0x0008; // O_APPEND
+    }
+    if mode_s.contains('w') {
+        flags |= 0x0200 | 0x0400; // O_CREAT | O_TRUNC
+    }
+    if mode_s.contains('x') {
+        flags |= 0x0200 | 0x0800; // O_CREAT | O_EXCL
+    }
+    MbValue::from_int(flags)
+}
+
 // @spec .aw/changes/mamba-stdlib-builtins/groups/stdlib-builtins-module/specs/mamba-stdlib-builtins-spec.md#R1
 
 unsafe extern "C" fn dispatch_print(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -289,13 +316,17 @@ unsafe extern "C" fn dispatch_input(args_ptr: *const MbValue, nargs: usize) -> M
 unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
     let (pos, kwargs) = split_kwargs(args);
-    let path = pos.first().copied().unwrap_or_else(MbValue::none);
+    let mut path = pos.first().copied().unwrap_or_else(MbValue::none);
     let mode = arg_or_kw(&pos, 1, &kwargs, "mode").unwrap_or_else(|| {
         MbValue::from_ptr(MbObject::new_str("r".to_string()))
     });
     let encoding = arg_or_kw(&pos, 3, &kwargs, "encoding").unwrap_or_else(MbValue::none);
     let errors = arg_or_kw(&pos, 4, &kwargs, "errors").unwrap_or_else(MbValue::none);
     let closefd = arg_or_kw(&pos, 6, &kwargs, "closefd").unwrap_or_else(|| MbValue::from_bool(true));
+    if let Some(opener) = arg_or_kw(&pos, 7, &kwargs, "opener") {
+        let opener_args = MbValue::from_ptr(MbObject::new_list(vec![path, open_flags_for_mode(mode)]));
+        path = super::super::builtins::mb_call_spread(opener, opener_args);
+    }
     super::super::file_io::mb_open_ex(path, mode, encoding, errors, closefd)
 }
 
