@@ -14700,9 +14700,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         }
                         return MbValue::none();
                     }
-                    // Per-instance bound method (types.MethodType assigned to
-                    // an instance attribute) shadows the class method — Python
-                    // instance-dict lookup order.
+                    // MRO-based method lookup for regular instances
+                    let method = lookup_method(class_name, &name);
+                    if !method.is_none() && is_data_descriptor(method) {
+                        let callable = invoke_descriptor_get(method, receiver);
+                        return super::builtins::mb_call_spread(callable, args);
+                    }
+                    // Instance-dict callables shadow non-data class attrs.
+                    // `obj.attr()` lowers directly here, so mirror
+                    // `mb_getattr`'s descriptor order before binding class
+                    // methods: data descriptor, instance field, class attr.
                     {
                         let field = fields.read().ok().and_then(|f| f.get(&name).copied());
                         if let Some(fv) = field {
@@ -14736,10 +14743,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     }
                                 }
                             }
+                            if super::builtins::mb_callable(fv).as_bool() == Some(true) {
+                                super::rc::retain_if_ptr(fv);
+                                return super::builtins::mb_call_spread(fv, args);
+                            }
                         }
                     }
-                    // MRO-based method lookup for regular instances
-                    let method = lookup_method(class_name, &name);
                     if !method.is_none() {
                         // R1 P1: Unwrap classmethod/staticmethod descriptors.
                         // For @classmethod, pass class name string as first arg instead of instance.
