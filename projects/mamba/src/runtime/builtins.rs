@@ -2378,6 +2378,39 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     make_type_object(&class_name)
 }
 
+pub fn mb_type3_kwargs(name: MbValue, bases: MbValue, dict: MbValue, kwargs: MbValue) -> MbValue {
+    let type_obj = mb_type3(name, bases, dict);
+    let Some(class_name) = super::class::resolve_class_name(type_obj) else {
+        return type_obj;
+    };
+    let metaclass = kwargs.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read()
+                .ok()
+                .and_then(|map| {
+                    map.get(&super::dict_ops::DictKey::Str("metaclass".to_string()))
+                        .copied()
+                })
+        } else {
+            None
+        }
+    });
+    if let Some(meta) = metaclass {
+        let Some(meta_name) = super::class::resolve_class_name(meta) else {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("metaclass must be a class".to_string())),
+            );
+            return MbValue::none();
+        };
+        super::class::mb_class_set_metaclass(
+            MbValue::from_ptr(MbObject::new_str(class_name)),
+            MbValue::from_ptr(MbObject::new_str(meta_name)),
+        );
+    }
+    type_obj
+}
+
 /// range(stop) — produce a CPython-style reusable range handle.
 /// CPython requires every `range()` argument to be an integer (or a subclass
 /// such as `bool`); a `float`/`str`/etc. raises

@@ -5629,8 +5629,17 @@ impl<'a> AstLowerer<'a> {
                             | "Request"
                     ) || self.dataclasses_kwarg_idents.contains(name.as_str())
                 );
+                let is_type_metaclass_kwargs = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name) if name == "type"
+                ) && (has_dstar
+                    || args.iter().any(|a| matches!(
+                        a,
+                        ast::CallArg::Keyword { name, .. } if name == "metaclass"
+                    )));
                 let pack_trailing_kwargs = (is_method_call && (has_any_kwargs || has_dstar))
-                    || (is_native_kwargs_ident && (has_any_kwargs || has_dstar));
+                    || (is_native_kwargs_ident && (has_any_kwargs || has_dstar))
+                    || (is_type_metaclass_kwargs && (has_any_kwargs || has_dstar));
 
                 // `f(**d)` / `f(a, **d)` / `f(k=1, **d)` to a bare-Ident callee
                 // with a `**mapping` splat: the static func_param_info reorder
